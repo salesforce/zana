@@ -122,7 +122,7 @@ describe('late start of an on-demand seat through the real launch path (#580)', 
     expect((await spawn(record.id, '0:w1:1')).ok).toBe(true);
   });
 
-  it('through the engine path (pre-issued authorisations) revokes the unused one and starts the seat later', async () => {
+  it('fails closed: a pre-authorised plan with an on-demand seat is refused before anything is spawned, naming the seat', async () => {
     onDemand(0);
     const launchRequestId = reqId();
     const tasks = SLOT_IDS.map((slotId) => ({ slotId, initialTask: `task ${slotId}` }));
@@ -131,12 +131,8 @@ describe('late start of an on-demand seat through the real launch path (#580)', 
     if (!authorized.ok) return;
     const slots = authorized.value.slots.map(({ slotId, initialTask, authorizationId }) => ({ slotId, initialTask, authorizationId }));
     const launched = await launchTeam('team1', 'p1', { callerPrincipalId: 'owner', launchRequestId, requirePreauthorization: true, admissionDigest: 'adm', coordinationMode: 'structured', slots } as never);
-    expect(launched).toMatchObject({ ok: true });
-    const record = recordFor(launchRequestId);
-    expect(worker(record, '0:w1:0')?.sessionId).toBeUndefined();
-    const late = await spawn(record.id, '0:w1:0');
-    expect(late).toMatchObject({ ok: true });
-    expect(worker(recordFor(launchRequestId), '0:w1:0')?.sessionId).toBeTruthy();
+    expect(launched).toMatchObject({ ok: false, code: 'UNSUPPORTED', message: expect.stringMatching(/pre-authorized plan.*turn it off for: w1/) });
+    expect(h.creates).toHaveLength(0);
   });
 
   it('skips an on-demand seat whose persona is unknown, like any other seat', async () => {
@@ -157,15 +153,10 @@ describe('late start of an on-demand seat through the real launch path (#580)', 
 describe('review round 1: late seat, deadline and cleanup (#580)', () => {
   it('F5/A1: a seat started after the launch deadline still starts (its authorisation does not inherit it)', async () => {
     onDemand(0);
-    const launchRequestId = reqId();
-    const tasks = SLOT_IDS.map((slotId) => ({ slotId, initialTask: `task ${slotId}` }));
-    const authorized = authorizeTeamLaunch('owner', 'team1', 'p1', launchRequestId, { deadlineMs: 60_000 }, tasks as never, 'structured', 'adm');
-    expect(authorized.ok).toBe(true);
-    if (!authorized.ok) return;
-    const slots = authorized.value.slots.map(({ slotId, initialTask, authorizationId }) => ({ slotId, initialTask, authorizationId }));
-    const launched = await launchTeam('team1', 'p1', { callerPrincipalId: 'owner', launchRequestId, requirePreauthorization: true, admissionDigest: 'adm', coordinationMode: 'structured', policy: { deadlineMs: 60_000 }, slots } as never);
+    const req = durableReq({ policy: { deadlineMs: 60_000 } });
+    const launched = await launchTeam('team1', 'p1', req as never);
     expect(launched).toMatchObject({ ok: true });
-    const record = recordFor(launchRequestId);
+    const record = recordFor(req.launchRequestId);
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.now() + 3 * 60 * 60 * 1000);
     try {

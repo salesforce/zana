@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   atomicDurableWrite,
@@ -321,6 +321,13 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
   // already start jobs) races a new launch and flips its in-progress record to
   // completed=INTERRUPTED between claim and complete -> "already finalized".
   const inFlightLaunches = new Set<string>();
+  // Never-started on-demand seats by run, refreshed by every successful write (see neverStartedSlotsSync).
+  let neverStartedIndex: Map<string, string[]> | undefined;
+  let neverStartedStamp: string | undefined;
+  let neverStartedReported = false;
+  function fileStamp(): string {
+    try { const info = statSync(opts.filePath); return `${info.mtimeMs}:${info.size}`; } catch { return 'missing'; }
+  }
 
   function readState(): { state: TeamLifecycleStateFile; hash: string | null } {
     const bytes = readRawFile(opts.filePath);
@@ -341,6 +348,8 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     state.records = state.records.filter((record) => active.includes(record) || terminal.includes(record));
     state.revision += 1;
     durableWrite(opts.filePath, Buffer.from(JSON.stringify(splitDeferredSeats(state))), { expectedHash });
+    neverStartedIndex = indexNeverStarted(state.records);
+    neverStartedStamp = fileStamp();
   }
 
   async function claim(input: TeamLifecycleClaimInput): Promise<TeamLifecycleClaimResult> {
@@ -507,7 +516,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const snapshot = readState();
       const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
-      if (record?.state !== 'active' || worker?.onDemand !== true || worker.process !== 'spawning' || worker.sessionId !== undefined) return false;
+      if (record?.state !== 'active' || !worker || !isClaimedDeferredWorker(worker)) return false;
       worker.process = 'authorized';
       record.revision += 1;
       record.updatedAt = now();
@@ -564,6 +573,8 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       if (record.capacity) record.capacity.launched += 1;
       record.launchResult.workers.push(boundedIdentity(worker));
       record.launchResult.launched = record.launchResult.workers.length;
+      // Keep the persisted launch result consistent: consumers of workerSessionIds see on-demand seats too.
+      if (Array.isArray(record.launchResult.workerSessionIds)) record.launchResult.workerSessionIds.push(sessionId);
       record.revision += 1;
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
@@ -656,10 +667,11 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       if (record.state !== 'active') return { ...clone(record), releasedSlotIds: [] };
       const releasedSlotIds: string[] = [];
       for (const worker of record.workers) {
-        if (isDeferredWorker(worker) || worker.onDemand === true && worker.sessionId === undefined && worker.process === 'spawning') {
+        if (isDeferredWorker(worker) || isClaimedDeferredWorker(worker)) {
+          // A seat that never had a session never took capacity, so it is finished here but not listed
+          // in releasedSlotIds: the host releases a launch's capacity for every listed slot.
           worker.process = 'canceled';
           worker.capacityReleased = true;
-          releasedSlotIds.push(worker.slotId);
         }
         if (worker.transport === 'MODERN' && worker.bindingState === 'RESERVED') {
           worker.bindingState = 'TERMINAL';
@@ -869,7 +881,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
             continue;
           }
           if (worker.sessionId !== undefined && recoveredSessionIds.has(worker.sessionId)) continue;
-          if (worker.onDemand === true && worker.sessionId === undefined && worker.process === 'spawning') {
+          if (isClaimedDeferredWorker(worker)) {
             // Mid-start at the crash: back to waiting while the run is live; on a run being canceled it is finished.
             worker.process = record.state === 'active' ? 'authorized' : 'canceled';
             if (worker.process === 'canceled') worker.capacityReleased = true;
@@ -909,18 +921,20 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
-  /** Slots of a run whose on-demand seat never got a session. Synchronous read for callers that cannot await. */
-  let neverStartedMemo: { hash: string; records: TeamLifecycleRecord[] } | undefined;
-  let neverStartedReported = false;
+  /**
+   * Slots of a run whose on-demand seat never got a session. Synchronous and cached: the file is read once
+   * (the first call), after that the answer comes from the index that every successful write refreshes, so
+   * Resume availability never reads or hashes the lifecycle file again.
+   */
   function neverStartedSlotsSync(callerPrincipalId: string, launchRequestId: string): string[] {
     try {
-      const bytes = readRawFile(opts.filePath);
-      if (bytes === null) return [];
-      const hash = hashBytes(bytes);
-      if (neverStartedMemo?.hash !== hash) neverStartedMemo = { hash, records: readState().state.records };
-      const record = neverStartedMemo.records.find((candidate) =>
-        candidate.callerPrincipalId === callerPrincipalId && candidate.launchRequestId === launchRequestId);
-      return (record?.workers ?? []).filter((worker) => worker.onDemand === true && worker.sessionId === undefined).map((worker) => worker.slotId);
+      // A stat is enough to notice a file changed behind our back (another writer, a restore); no read or hash unless it did.
+      const stamp = fileStamp();
+      if (!neverStartedIndex || neverStartedStamp !== stamp) {
+        neverStartedIndex = indexNeverStarted(readState().state.records);
+        neverStartedStamp = stamp;
+      }
+      return [...(neverStartedIndex.get(`${callerPrincipalId}\u0000${launchRequestId}`) ?? [])];
     } catch (error) {
       // Fail safe: every on-demand seat then counts as started, so Resume is not offered on a guess. Say so once.
       if (!neverStartedReported) {
@@ -1425,9 +1439,14 @@ function boundedOperationResult(result: TeamLaunchOperationResult): TeamLaunchOp
 }
 
 function boundedIdentity(worker: Omit<TeamLaunchedWorker, 'sessionId'> & { sessionId?: string }): TeamLaunchedWorker {
+  const fields = boundedSeatIdentity(worker);
+  return { sessionId: boundedString(worker.sessionId, 'session id'), ...fields };
+}
+
+/** The identity of a worker without its session: what a seat that has not started can be checked on. */
+function boundedSeatIdentity(worker: Omit<TeamLaunchedWorker, 'sessionId'>): Omit<TeamLaunchedWorker, 'sessionId'> {
   if (!worker || typeof worker !== 'object') throw new Error('invalid team worker identity');
   return {
-    sessionId: boundedString(worker.sessionId, 'session id'),
     cohortId: boundedString(worker.cohortId, 'worker cohort id'),
     slotId: boundedString(worker.slotId, 'slot id'),
     personaId: boundedString(worker.personaId, 'persona id'),
@@ -1438,7 +1457,7 @@ function boundedIdentity(worker: Omit<TeamLaunchedWorker, 'sessionId'> & { sessi
 
 function boundedWorker(worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): Omit<TeamLifecycleWorker, 'capacityReleased'> {
   const deferred = worker.process === 'authorized' && worker.sessionId === undefined && worker.transport !== 'MODERN' && worker.onDemand === true;
-  const identity = boundedIdentity(deferred ? { ...worker, sessionId: 'deferred' } : worker);
+  const identity = deferred ? boundedSeatIdentity(worker) : boundedIdentity(worker);
   if (!(worker.process in processTransitions) || (worker.attention !== 'active' && worker.attention !== 'blocked')
     || !(worker.task in taskTransitions) || !(worker.delivery in deliveryTransitions)
     || worker.transport !== undefined && worker.transport !== 'CLI' && worker.transport !== 'MODERN'
@@ -1450,9 +1469,8 @@ function boundedWorker(worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): O
     || worker.transport !== 'MODERN' && (worker.threadId !== undefined || worker.generation !== undefined || worker.bindingState !== undefined || worker.modernContext !== undefined)) {
     throw new Error('invalid team worker lifecycle state');
   }
-  const { sessionId: boundSession, ...identityRest } = identity;
   return {
-    ...identityRest, ...(deferred ? {} : { sessionId: boundSession }), ...(worker.onDemand === true ? { onDemand: true as const } : {}), process: worker.process, attention: worker.attention, task: worker.task, delivery: worker.delivery,
+    ...identity, ...(worker.onDemand === true ? { onDemand: true as const } : {}), process: worker.process, attention: worker.attention, task: worker.task, delivery: worker.delivery,
     ...(worker.transport === undefined ? {} : { transport: worker.transport }),
     ...(worker.threadId === undefined ? {} : { threadId: worker.threadId }),
     ...(worker.generation === undefined ? {} : { generation: worker.generation }),
@@ -1652,10 +1670,32 @@ function isLaunchResult(value: unknown): value is TeamLaunchResult {
 }
 
 function isIdentity(value: unknown): value is TeamLaunchedWorker {
+  return isSeatIdentity(value) && isBoundedString((value as Partial<TeamLaunchedWorker>).sessionId);
+}
+
+/** Identity without the session id; a seat that has not started has none. */
+function isSeatIdentity(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const worker = value as Partial<TeamLaunchedWorker>;
-  return isBoundedString(worker.sessionId) && isBoundedString(worker.cohortId) && isBoundedString(worker.slotId)
+  return isBoundedString(worker.cohortId) && isBoundedString(worker.slotId)
     && isBoundedString(worker.personaId) && isBoundedString(worker.projectId) && isBoundedString(worker.authorizationId);
+}
+
+/**
+ * A seat that starts on demand, was claimed for a start (`spawning`) and has no session yet:
+ * it is either mid-start or its starter is gone. One definition for every site that asks.
+ */
+export function isClaimedDeferredWorker(worker: Pick<TeamLifecycleWorker, 'onDemand' | 'sessionId' | 'process'> | undefined): boolean {
+  return worker?.onDemand === true && worker.sessionId === undefined && worker.process === 'spawning';
+}
+
+function indexNeverStarted(records: readonly TeamLifecycleRecord[]): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const record of records) {
+    const slots = record.workers.filter((worker) => worker.onDemand === true && worker.sessionId === undefined).map((worker) => worker.slotId);
+    if (slots.length > 0) index.set(`${record.callerPrincipalId}\u0000${record.launchRequestId}`, slots);
+  }
+  return index;
 }
 
 /** A seat that starts on demand and has not started: authorized, CLI, no session. */
@@ -1677,8 +1717,7 @@ function isWorker(value: unknown): value is TeamLifecycleWorker {
     && (candidate.process === 'authorized' || candidate.process === 'spawning'
       || candidate.process === 'spawn-failed' || candidate.process === 'canceled');
   if (candidate.onDemand !== undefined && candidate.onDemand !== true) return false;
-  if (!deferred && !isIdentity(value)) return false;
-  if (deferred && !isIdentity({ ...value, sessionId: 'deferred' })) return false;
+  if (!(deferred ? isSeatIdentity(value) : isIdentity(value))) return false;
   const worker = value as Partial<TeamLifecycleWorker>;
   const transport = worker.transport ?? 'CLI';
   return typeof worker.process === 'string' && worker.process in processTransitions

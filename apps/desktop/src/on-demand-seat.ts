@@ -6,6 +6,8 @@
  * deferred, the fail-closed message, and the per-run spawner registry with its once-only fence.
  */
 
+import { isClaimedDeferredWorker, type TeamWorkerProcessState } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
+
 export type DeferredSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string; retryable?: true };
 
 interface SeatLike { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }
@@ -27,16 +29,22 @@ export function deferredSeatsOf<T extends SeatLike>(team: TeamLike, seats: reado
 export function onDemandLaunchProblem(
   team: TeamLike,
   deferred: readonly SeatLike[],
-  launch: { durable: boolean; structured: boolean }
+  launch: { durable: boolean; structured: boolean; preauthorized?: boolean }
 ): string | undefined {
   if (deferred.length === 0) return undefined;
   const names = deferred.map((seat) => seat.label || seat.personaId).join(', ');
+  // Fail closed: a pre-authorized plan fixes who may start, and when, at launch. A seat that starts on demand
+  // would need a new authorization minted hours later, outside that approval, so the launch is refused instead.
+  if (launch.preauthorized) {
+    return `Start on demand can't be used with a pre-authorized plan, because those seats would start without the approval given at launch; turn it off for: ${names}`;
+  }
   if (team.transport === 'MODERN') return `Start on demand isn't available for Modern squads yet; turn it off for: ${names}`;
   if (!launch.durable || !launch.structured) {
     return `Start on demand only works for plan-driven Squads; turn it off for: ${names}`;
   }
   return undefined;
 }
+
 
 export interface DeferredSeatHooks {
   /** Atomically move a never-started seat to spawning; false when another caller already did. */
@@ -172,4 +180,50 @@ export function isTransientSeatRefusal(code: string | undefined, message = ''): 
   if (code === 'STALE_PREFLIGHT') return /capacity changed/i.test(message);
   if (code === 'DENIED') return /concurrent launch limit/i.test(message);
   return false;
+}
+
+interface LifecycleSeat { slotId: string; process: TeamWorkerProcessState; sessionId?: string; onDemand?: true }
+interface HooksDeps<R> {
+  recordId: string;
+  lifecycle: {
+    get(recordId: string): Promise<{ workers: readonly LifecycleSeat[] } | undefined>;
+    claimDeferredSpawn(recordId: string, slotId: string): Promise<boolean>;
+    reopenDeferredSpawn(recordId: string, slotId: string): Promise<boolean>;
+    failDeferredSeat(recordId: string, slotId: string, reason: string): Promise<R | undefined>;
+  };
+  /** Open the seat's session (the launch path for one worker). */
+  startSeat(slotId: string): Promise<{ ok: true; value: { id: string } } | { ok: false; code?: string; message: string }>;
+  closeSession(sessionId: string): Promise<unknown>;
+  /** Called with the lifecycle record after a seat is failed. */
+  track(record: R): void;
+  /** Called with the session id of a seat that started. */
+  onStarted(sessionId: string): void;
+}
+
+/** Why a seat that did not start is recorded as failed. */
+export const SEAT_NOT_STARTED_REASON = 'This seat could not be started.';
+
+/** The registry hooks for one run, over the lifecycle store and the launch path for one seat. */
+export function createDeferredSeatHooks<R>(deps: HooksDeps<R>): DeferredSeatHooks {
+  const seatOf = async (slotId: string) => (await deps.lifecycle.get(deps.recordId))?.workers.find((worker) => worker.slotId === slotId);
+  return {
+    claim: (slotId) => deps.lifecycle.claimDeferredSpawn(deps.recordId, slotId),
+    sessionOf: async (slotId) => (await seatOf(slotId))?.sessionId,
+    isStuck: async (slotId) => {
+      const seat = await seatOf(slotId);
+      return isClaimedDeferredWorker(seat);
+    },
+    close: async (sessionId) => { await deps.closeSession(sessionId); },
+    start: async (slotId) => {
+      const started = await deps.startSeat(slotId);
+      if (started.ok) deps.onStarted(started.value.id);
+      return started.ok ? { ok: true, sessionId: started.value.id }
+        : { ok: false, message: started.message, ...(isTransientSeatRefusal(started.code, started.message) ? { retryable: true as const } : {}) };
+    },
+    markFailed: async (slotId) => {
+      const failed = await deps.lifecycle.failDeferredSeat(deps.recordId, slotId, SEAT_NOT_STARTED_REASON);
+      if (failed) deps.track(failed);
+    },
+    reopen: (slotId) => deps.lifecycle.reopenDeferredSpawn(deps.recordId, slotId)
+  };
 }

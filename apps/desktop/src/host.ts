@@ -112,7 +112,7 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
-import { coldStartCanceled, createDeferredSeatRegistry, deferredSeatsOf, isTransientSeatRefusal, onDemandLaunchProblem } from './on-demand-seat.js';
+import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, deferredSeatsOf, onDemandLaunchProblem } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -1208,6 +1208,7 @@ const deferredSeats = createDeferredSeatRegistry({
     const current = await teamLifecycle.get(recordId);
     // A run that is already ending is finished by its own teardown, not by this message.
     if (current?.state !== 'active' || current.workers.find((worker) => worker.slotId === slotId)?.sessionId !== undefined) return;
+    // The seat is failed and the engine then takes it out of rotation: its unit goes to another seat or to a person.
     const failed = await teamLifecycle.failDeferredSeat(recordId, slotId,
       'This seat could not start because the app restarted and lost track of it. Resume the run to start it.');
     if (failed) teamLifecycleIntegration.track(failed);
@@ -5858,7 +5859,7 @@ export async function launchTeam(
     }
   }
   const onDemandSeats = deferredSeatsOf(team, expectedSlots);
-  const onDemandProblem = onDemandLaunchProblem(team, onDemandSeats, { durable: durableCoordination, structured: !!structured });
+  const onDemandProblem = onDemandLaunchProblem(team, onDemandSeats, { durable: durableCoordination, structured: !!structured, preauthorized: structured?.requirePreauthorization === true });
   if (onDemandProblem) {
     revokeRequestAuthorizations();
     return { ok: false, code: 'UNSUPPORTED', message: onDemandProblem };
@@ -5953,7 +5954,14 @@ export async function launchTeam(
     tabNamerPrompt: string | null,
     /** MAIN-only spawn extras for the CLI path (Modern ignores them). */
     spawnExtras?: { authoredPlanPaths?: readonly string[] },
-    /** A seat started after launch: its launch-time authorization has expired, so a fresh one is minted. */
+    /**
+     * A seat started after launch: its launch-time authorization has expired, so a fresh one is minted.
+     * Only reachable without `requirePreauthorization`: a pre-authorized launch with on-demand seats is refused
+     * up front (onDemandLaunchProblem), so this never mints an authorization outside an approved plan.
+     * The seat is started from `team`, `personaSnapshot`, `project` and `currentConfig` as captured at launch, so a
+     * persona or team edited since then does not change a seat that has not started yet; this is deliberate, the
+     * run keeps the configuration it was approved with.
+     */
     lateSeat = false
   ): Promise<Result<{ id: string }>> => {
     const { slotId, personaId } = expectedSlot;
@@ -6276,25 +6284,14 @@ export async function launchTeam(
        }
   }
 
-  deferredSeats.register(claim.record.id, deferredSlotIds, {
-    claim: (slotId) => teamLifecycle.claimDeferredSpawn(claim.record.id, slotId),
-    sessionOf: async (slotId) => (await teamLifecycle.get(claim.record.id))?.workers.find((worker) => worker.slotId === slotId)?.sessionId,
-    isStuck: async (slotId) => {
-      const seat = (await teamLifecycle.get(claim.record.id))?.workers.find((worker) => worker.slotId === slotId);
-      return seat?.process === 'spawning' && seat.sessionId === undefined;
-    },
-    close: async (sessionId) => { await terminateSession(sessionId); },
-    start: async (slotId) => {
-      const seat = expectedSlots.find((candidate) => candidate.slotId === slotId)!;
-      const started = await startWorkerSeat(seat, true);
-      if (started.ok) teamLaunchSessions.set(started.value.id, cohortId);
-      return started.ok ? { ok: true, sessionId: started.value.id } : { ok: false, message: started.message, ...(isTransientSeatRefusal(started.code, started.message) ? { retryable: true as const } : {}) };
-    },
-    markFailed: async (slotId) => {
-      teamLifecycleIntegration.track((await teamLifecycle.updateWorker(claim.record.id, slotId, { process: 'spawn-failed' })).record);
-    },
-    reopen: (slotId) => teamLifecycle.reopenDeferredSpawn(claim.record.id, slotId)
-  });
+  deferredSeats.register(claim.record.id, deferredSlotIds, createDeferredSeatHooks({
+    recordId: claim.record.id,
+    lifecycle: teamLifecycle,
+    startSeat: (slotId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true),
+    closeSession: terminateSession,
+    track: (failed) => teamLifecycleIntegration.track(failed),
+    onStarted: (sessionId) => teamLaunchSessions.set(sessionId, cohortId)
+  }));
 
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
   // a declared slot or a standalone persona id, it opens exactly once here.

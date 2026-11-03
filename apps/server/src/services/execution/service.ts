@@ -393,6 +393,8 @@ interface ExtractedLifecycle {
     authorizationId?: string;
     projectId?: string;
     process?: string;
+    /** Set on a seat that starts on demand (it may have no session). */
+    onDemand?: true;
     task?: string;
     exitCode?: number;
     exitSignal?: number;
@@ -1905,124 +1907,182 @@ export class ExecutionService {
       await this.releaseUndeliveredAssignments(record.id, assignments);
       return;
     }
-    const workerOf = (assignment: ExecutionDispatchAssignment) =>
-      lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
-    // A seat that starts on demand has a lifecycle worker with no session yet (`authorized`, or
-    // `spawning` while another dispatch is starting it); it is started below, after the eligibility
-    // check. Any other session-less worker is released. Seats that are already running go first so
-    // they never wait for another seat to start.
-    const isDeferred = (assignment: ExecutionDispatchAssignment) => {
-      const candidate = workerOf(assignment);
-      return !candidate?.sessionId && (candidate?.process === 'authorized' || candidate?.process === 'spawning');
-    };
-    const ordered = [...assignments.filter((a) => !isDeferred(a)), ...assignments.filter(isDeferred)];
-    for (const assignment of ordered) {
-      const worker = workerOf(assignment);
-      const deferredSeat = isDeferred(assignment);
-      if (!worker || (!worker.sessionId && !deferredSeat)) {
+    // Seats that are already running are delivered to first, so they never wait for a cold start. Seats that
+    // start on demand then start together (a few at a time), and each is delivered to once its start settles.
+    const ready: Array<{ assignment: ExecutionDispatchAssignment; sessionId?: string }> = [];
+    let quarantined = false;
+    for (const assignment of assignments) {
+      const verdict = this.assignmentVerdict(record, assignment, lifecycle?.workers);
+      if (verdict === 'release') { await this.releaseUndeliveredAssignments(record.id, [assignment]); continue; }
+      if (verdict === 'quarantine') { quarantined = (await this.quarantineDeadSeat(record, assignment)) || quarantined; continue; }
+      ready.push({ assignment, sessionId: verdict.sessionId });
+    }
+    const deferred = ready.filter((entry) => entry.sessionId === undefined);
+    for (const entry of ready.filter((candidate) => candidate.sessionId !== undefined)) {
+      await this.deliverAssignment(record, entry.assignment, entry.sessionId!);
+    }
+    const started = await this.startDeferredSeats(lifecycle?.recordId, deferred.map((entry) => entry.assignment.slotId));
+    for (const entry of deferred) {
+      const outcome = started.get(entry.assignment.slotId);
+      if (outcome?.sessionId === undefined) {
+        // A refusal that will not pass takes the seat out of rotation, so the unit is not offered to it again.
+        if (outcome?.final) quarantined = (await this.quarantineDeadSeat(record, entry.assignment)) || quarantined;
+        else await this.releaseUndeliveredAssignments(record.id, [entry.assignment]);
+        continue;
+      }
+      // The run may have ended while the seat was starting: stop the session, give it nothing, release the unit.
+      const current = await this.deps.store.get(record.id);
+      if (!current || isResumeGrantTerminal(current.state)) {
+        try { this.deps.closeWorkerSession?.(outcome.sessionId); } catch (error) { this.deps.logError?.(`on-demand seat ${entry.assignment.slotId} could not be closed after the run ended`, error); }
+        await this.releaseUndeliveredAssignments(record.id, [entry.assignment]);
+        continue;
+      }
+      await this.deliverAssignment(record, entry.assignment, outcome.sessionId);
+    }
+    // A unit re-homed or blocked by the quarantine is dispatched again; the quarantined seat is excluded this time.
+    if (quarantined) await this.cascadeDispatch(record.id);
+  }
+
+  /**
+   * What to do with one assignment before delivery: `release` it, `quarantine` its seat (it can never
+   * start), or deliver it, to `sessionId` or, when absent, to a seat that starts on demand and must be started first.
+   */
+  private assignmentVerdict(
+    record: ExecutionRecord, assignment: ExecutionDispatchAssignment, workers: ExtractedLifecycle['workers']
+  ): 'release' | 'quarantine' | { sessionId?: string } {
+    const worker = workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
+    if (!worker) return 'release';
+    // A seat that starts on demand has a lifecycle worker with no session yet (`authorized`, or `spawning` while
+    // another dispatch is starting it). Any other session-less worker is released; one that already ended is quarantined.
+    const waitingSeat = !worker.sessionId && (worker.process === 'authorized' || worker.process === 'spawning');
+    if (!worker.sessionId && !waitingSeat) return worker.onDemand === true && worker.process && DEAD_WORKER_PROCESSES.has(worker.process) ? 'quarantine' : 'release';
+    // Never DISPATCH to a worker whose process has already terminated. A restart
+    // reconciles a prior-run worker to a terminal `process` (`exited`/`spawn-failed`/
+    // `canceled`) but RETAINS its `sessionId` (team-lifecycle-store reconcileStartup),
+    // so a recovered board can re-dispatch a completed unit to that stale sessionId.
+    // The dead session's `reply()` may still be accepted by the surviving PTY (or the
+    // agent-state sits at a stale busy value), so the assignment is counted delivered,
+    // the worker never heartbeats, and the claim churns dispatch<->lease-reclaim to the
+    // run timeout (live run f0f44413: 5/6 units done, 6th reclaimed 3x then timed out).
+    // Release instead -> coordinator parks (HUMAN_BLOCKER). Deterministic, not a
+    // liveness heuristic - a terminal process is authoritative.
+    if (worker.process && DEAD_WORKER_PROCESSES.has(worker.process)) return 'release';
+    // Never TYPE an assignment into a dead-agent's surviving shell (remote-opencode
+    // zombie: outer wrapper alive, inner agent gone - a raw stdin write would be
+    // eval'd by the bash prompt). Release instead; the next dispatch/reconcile cycle
+    // re-delivers once a healthy worker exists or parks the coordinator. `'unknown'`/
+    // `'alive'`/unwired => deliver as before (claude-family path byte-unchanged).
+    if (worker.sessionId !== undefined && this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
+      // Same dead-agent zombie as the reconcile path: release the assignment
+      // AND reap the surviving outer shell/tmux wrapper (host tmux-kill close).
+      this.deps.closeWorkerSession?.(worker.sessionId);
+      return 'release';
+    }
+    const unit = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
+    const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
+    const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
+    if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization
+      && evaluateSlotEligibility(unit.routing, slotRouteSnapshot(authorization, model)).status !== 'PASS') return 'release';
+    return { sessionId: worker.sessionId };
+  }
+
+  /** Push one assignment's text to a live session; the receipt rules are explained inline. */
+  private async deliverAssignment(record: ExecutionRecord, assignment: ExecutionDispatchAssignment, sessionId: string): Promise<void> {
+    const text = assignmentText(record, assignment);
+    if (this.deps.deliverAssignment) {
+      const correlation = assignmentCorrelation(record.id, assignment);
+      if (!correlation) {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        continue;
+        return;
       }
-      // Never DISPATCH to a worker whose process has already terminated. A restart
-      // reconciles a prior-run worker to a terminal `process` (`exited`/`spawn-failed`/
-      // `canceled`) but RETAINS its `sessionId` (team-lifecycle-store reconcileStartup),
-      // so a recovered board can re-dispatch a completed unit to that stale sessionId.
-      // The dead session's `reply()` may still be accepted by the surviving PTY (or the
-      // agent-state sits at a stale busy value), so the assignment is counted delivered,
-      // the worker never heartbeats, and the claim churns dispatch↔lease-reclaim to the
-      // run timeout (live run f0f44413: 5/6 units done, 6th reclaimed 3× then timed out).
-      // Release instead → coordinator parks (HUMAN_BLOCKER). Deterministic, not a
-      // liveness heuristic — a terminal process is authoritative.
-      if (worker.process && DEAD_WORKER_PROCESSES.has(worker.process)) {
-        await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        continue;
-      }
-      // Never TYPE an assignment into a dead-agent's surviving shell (remote-opencode
-      // zombie: outer wrapper alive, inner agent gone — a raw stdin write would be
-      // eval'd by the bash prompt). Release instead; the next dispatch/reconcile cycle
-      // re-delivers once a healthy worker exists or parks the coordinator. `'unknown'`/
-      // `'alive'`/unwired ⇒ deliver as before (claude-family path byte-unchanged).
-      if (worker.sessionId !== undefined && this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
-        // Same dead-agent zombie as the reconcile path: release the assignment
-        // AND reap the surviving outer shell/tmux wrapper (host tmux-kill close).
-        this.deps.closeWorkerSession?.(worker.sessionId);
-        await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        continue;
-      }
-      const unit = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
-      const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
-      const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
-      if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization) {
-        const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(authorization, model));
-        if (eligibility.status !== 'PASS') {
-          await this.releaseUndeliveredAssignments(record.id, [assignment]);
-          continue;
-        }
-      }
-      let sessionId = worker.sessionId;
-      if (sessionId === undefined) {
-        sessionId = await this.startDeferredSeat(lifecycle?.recordId, assignment.slotId);
-        // The run may have ended while the seat was starting: give it nothing and let the unit be re-offered.
-        const current = sessionId === undefined ? undefined : await this.deps.store.get(record.id);
-        if (sessionId === undefined || !current || isResumeGrantTerminal(current.state)) {
-          await this.releaseUndeliveredAssignments(record.id, [assignment]);
-          continue;
-        }
-      }
-      const text = assignmentText(record, assignment);
-      if (this.deps.deliverAssignment) {
-        const correlation = assignmentCorrelation(record.id, assignment);
-        if (!correlation) {
-          await this.releaseUndeliveredAssignments(record.id, [assignment]);
-          continue;
-        }
-        // `uncertain`/throw keeps the claim and deliberately does NOT redeliver here: the member
-        // may already hold the assignment, and a blind resend would duplicate work. Recovery is
-        // owned by the claim-lease sweep instead (reconcileActive → classifyExpiredClaim): a
-        // member that never received it emits no output, so its lease is never output-renewed.
-        // At lease expiry an idle member is reclaimed (SILENT_WORKER); a member reporting
-        // 'working' is renewed until the durable stall/wall-clock ceilings. The no-progress
-        // reclaim then escalates (escalateKickoffFailures): re-home to an untried slot, which
-        // redelivers under a FRESH claimGeneration/idempotency key, else a HUMAN_BLOCKER —
-        // never a resend to the same member that may hold it. Requires claim recovery
-        // observe+enforce (config default on).
-        try {
-          const receipt = await this.deps.deliverAssignment(sessionId, text, correlation);
-          // Runtime completion is delivery evidence, never an authenticated work outcome.
-          if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        } catch (error) {
-          // A lost receipt may follow acceptance. Preserve the claim; never retry blindly.
-          this.deps.logError?.(`execution assignment delivery uncertain for ${record.id}/${assignment.workUnitId}`, error);
-        }
-        continue;
-      }
+      // `uncertain`/throw keeps the claim and deliberately does NOT redeliver here: the member
+      // may already hold the assignment, and a blind resend would duplicate work. Recovery is
+      // owned by the claim-lease sweep instead (reconcileActive -> classifyExpiredClaim): a
+      // member that never received it emits no output, so its lease is never output-renewed.
+      // At lease expiry an idle member is reclaimed (SILENT_WORKER); a member reporting
+      // 'working' is renewed until the durable stall/wall-clock ceilings. The no-progress
+      // reclaim then escalates (escalateKickoffFailures): re-home to an untried slot, which
+      // redelivers under a FRESH claimGeneration/idempotency key, else a HUMAN_BLOCKER -
+      // never a resend to the same member that may hold it. Requires claim recovery
+      // observe+enforce (config default on).
       try {
-        // Idle-gated: never inject an assignment into a mid-turn worker (the
-        // cascade fires from the worker's own completion, so it is busy). Falls
-        // back to the raw reply when the host doesn't wire the idle-gated dep.
-        const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
-        const delivered = await deliver(sessionId, text);
-        if (delivered) {
-          try { this.deps.triggerDeliveryDrain?.(sessionId); } catch { /* nudge best-effort */ }
-        } else {
-          await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        }
-      } catch {
+        const receipt = await this.deps.deliverAssignment(sessionId, text, correlation);
+        // Runtime completion is delivery evidence, never an authenticated work outcome.
+        if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      } catch (error) {
+        // A lost receipt may follow acceptance. Preserve the claim; never retry blindly.
+        this.deps.logError?.(`execution assignment delivery uncertain for ${record.id}/${assignment.workUnitId}`, error);
+      }
+      return;
+    }
+    try {
+      // Idle-gated: never inject an assignment into a mid-turn worker (the
+      // cascade fires from the worker's own completion, so it is busy). Falls
+      // back to the raw reply when the host doesn't wire the idle-gated dep.
+      const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
+      const delivered = await deliver(sessionId, text);
+      if (delivered) {
+        try { this.deps.triggerDeliveryDrain?.(sessionId); } catch { /* nudge best-effort */ }
+      } else {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
       }
+    } catch {
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
     }
   }
 
-  /** Ask the host to start a seat left closed at launch. Returns its session id, or undefined when it did not start. */
-  private async startDeferredSeat(recordId: string | undefined, slotId: string): Promise<string | undefined> {
-    if (!recordId || !this.deps.spawnDeferredWorker) return undefined;
+  /**
+   * A seat that ended without ever having a session (a start that failed for good, or one lost in a restart)
+   * can never take this unit. Reclaim it as "no progress on that seat" so the unit is re-homed to another seat,
+   * or blocked to a person when none is left, instead of being offered to the same dead seat again and again.
+   * Returns true when the unit changed.
+   */
+  private async quarantineDeadSeat(record: ExecutionRecord, assignment: ExecutionDispatchAssignment): Promise<boolean> {
+    try {
+      if (assignment.claimId === undefined || assignment.claimGeneration === undefined) throw new Error('assignment has no claim fence');
+      const reclaimed = await this.deps.store.reclaimExpiredClaims(record.id, [{
+        workUnitId: assignment.workUnitId, claimId: assignment.claimId, claimGeneration: assignment.claimGeneration,
+        reason: NO_PROGRESS_CLAIM_REASON.PROVEN_DEAD, force: true
+      }]);
+      await this.escalateKickoffFailures(reclaimed);
+      return true;
+    } catch (error) {
+      this.deps.logError?.(`on-demand seat ${assignment.slotId} of ${record.id} could not be taken out of rotation`, error);
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      return false;
+    }
+  }
+
+  /** At most this many on-demand seats start at the same time within one dispatch. */
+  private static readonly DEFERRED_START_CONCURRENCY = 3;
+
+  /**
+   * Start the given on-demand seats a few at a time. Resolves per slot with its session id, or with no session and
+   * `final` when the seat will not start (a refusal that may pass keeps the seat waiting, so it is not final).
+   */
+  private async startDeferredSeats(recordId: string | undefined, slotIds: readonly string[]): Promise<Map<string, { sessionId?: string; final?: true }>> {
+    const outcomes = new Map<string, { sessionId?: string; final?: true }>();
+    const queue = [...new Set(slotIds)];
+    const lane = async () => {
+      for (let slotId = queue.shift(); slotId !== undefined; slotId = queue.shift()) {
+        outcomes.set(slotId, await this.startDeferredSeat(recordId, slotId));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(ExecutionService.DEFERRED_START_CONCURRENCY, queue.length) }, lane));
+    return outcomes;
+  }
+
+  /** Ask the host to start a seat left closed at launch. */
+  private async startDeferredSeat(recordId: string | undefined, slotId: string): Promise<{ sessionId?: string; final?: true }> {
+    if (!recordId || !this.deps.spawnDeferredWorker) return {};
     try {
       const started = await this.deps.spawnDeferredWorker(recordId, slotId);
-      if (!started.ok) this.deps.logError?.(`on-demand seat ${slotId} of ${recordId} did not start: ${started.message}`, new Error(started.message));
-      return started.ok ? started.sessionId : undefined;
+      if (started.ok) return { sessionId: started.sessionId };
+      this.deps.logError?.(`on-demand seat ${slotId} of ${recordId} did not start: ${started.message}`, new Error(started.message));
+      return started.retryable === true ? {} : { final: true };
     } catch (error) {
       this.deps.logError?.(`on-demand seat ${slotId} of ${recordId} failed to start`, error);
-      return undefined;
+      return { final: true };
     }
   }
 

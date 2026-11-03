@@ -215,3 +215,62 @@ describe('review round 2 (#580)', () => {
     spy.mockRestore();
   });
 });
+
+describe('review round 3 (#580): capacity, launch result and the cached read', () => {
+  const result = { ok: true as const, value: { launchRequestId: 'r', launched: 1, cohortId: 'c', workers: [{ sessionId: 's1', cohortId: 'c', slotId: '1:v:0', personaId: 'v', projectId: 'p', authorizationId: 'a1' }], workerSessionIds: ['s1'], failedSlots: [] } };
+
+  it('binding a seat adds its session to workerSessionIds as well as workers', async () => {
+    const { store, id } = await open();
+    await store.addDeferredWorker(id, seat);
+    await store.addWorker(id, running);
+    await store.complete(id, result);
+    await store.claimDeferredSpawn(id, '0:w:0');
+    const bound = await store.bindDeferredWorker(id, '0:w:0', { sessionId: 'late', authorizationId: 'a-new', delivery: 'bound-at-spawn' });
+    expect(bound.launchResult.workerSessionIds).toEqual(['s1', 'late']);
+    expect(bound.launchResult.workers.map((w) => w.sessionId)).toEqual(['s1', 'late']);
+  });
+
+  it('cancel finishes never-started seats but does not list them as released capacity (they never took any)', async () => {
+    const { store, id } = await open();
+    await store.addDeferredWorker(id, seat);
+    await store.addWorker(id, running);
+    await store.complete(id, result);
+    const canceled = await store.cancel(id);
+    expect(canceled.releasedSlotIds).not.toContain('0:w:0');
+    expect(canceled.workers.find((w) => w.slotId === '0:w:0')).toMatchObject({ process: 'canceled', capacityReleased: true });
+  });
+
+  it('cancel also finishes a seat that was claimed but not bound, without listing it', async () => {
+    const { store, id } = await open();
+    await store.addDeferredWorker(id, seat);
+    await store.complete(id, { ok: true, value: { ...result.value, workers: [], workerSessionIds: [], launched: 0 } });
+    await store.claimDeferredSpawn(id, '0:w:0');
+    const canceled = await store.cancel(id);
+    expect(canceled.releasedSlotIds).toEqual([]);
+    expect(canceled.state).toBe('canceled');
+  });
+
+  it('a failed seat has capacityReleased set, and failing it twice changes nothing', async () => {
+    const { store, id } = await open();
+    await store.addDeferredWorker(id, seat);
+    await store.addWorker(id, running);
+    await store.complete(id, result);
+    const failed = await store.failDeferredSeat(id, '0:w:0', 'gone');
+    expect(failed?.workers.find((w) => w.slotId === '0:w:0')).toMatchObject({ process: 'spawn-failed', capacityReleased: true, exitReason: 'gone' });
+    expect(await store.failDeferredSeat(id, '0:w:0', 'gone')).toBeUndefined();
+  });
+
+  it('answers never-started slots from a cache that every write refreshes, and picks up a change made by another writer', async () => {
+    const { store, id, filePath } = await open();
+    await store.addDeferredWorker(id, seat);
+    expect(store.neverStartedSlotsSync('o', 'r')).toEqual(['0:w:0']);
+    await store.claimDeferredSpawn(id, '0:w:0');
+    await store.bindDeferredWorker(id, '0:w:0', { sessionId: 'late', authorizationId: 'a-new', delivery: 'bound-at-spawn' }).catch(() => undefined);
+    expect(store.neverStartedSlotsSync('o', 'r')).toEqual([]);
+    // a second store on the same file writes: the first notices through the file stamp
+    const other = createTeamLifecycleStore({ filePath });
+    await other.addDeferredWorker(id, { ...seat, slotId: '0:w:1', authorizationId: 'a-other' });
+    expect(store.neverStartedSlotsSync('o', 'r')).toEqual(['0:w:1']);
+  });
+});
+

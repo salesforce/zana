@@ -29,6 +29,7 @@ async function setup(filePath: string, opts: {
   deliverAssignment?: (...args: any[]) => Promise<any>;
   units?: Array<Record<string, unknown>>;
   slotIds?: string[];
+  closeWorkerSession?: (sessionId: string) => void;
 } = {}) {
   const slotIds = opts.slotIds ?? ['slot-1'];
   const store = createExecutionStore({ filePath, id: () => 'execution-1' });
@@ -48,6 +49,7 @@ async function setup(filePath: string, opts: {
     replyToSession: () => true,
     deliverAssignment: deliverAssignment as never,
     resolveExactNativeRecoverySnapshots: () => [],
+    ...(opts.closeWorkerSession ? { closeWorkerSession: opts.closeWorkerSession } : {}),
     ...(opts.spawnDeferredWorker ? { spawnDeferredWorker: opts.spawnDeferredWorker } : {})
   } as never);
   const started = await service.start('owner', 'project-1', {
@@ -58,6 +60,7 @@ async function setup(filePath: string, opts: {
   return { service, store, deliverAssignment };
 }
 
+const isTerminal = (state?: string) => state === 'STOPPED' || state === 'FAILED' || state === 'COMPLETED' || state === 'CANCELED';
 const unitState = async (store: ReturnType<typeof createExecutionStore>, index = 0) => (await store.get('execution-1'))?.workUnits?.[index];
 
 describe('REQ-4 starting a deferred seat when its first unit is dispatched', () => {
@@ -112,17 +115,83 @@ describe('REQ-5 two dispatches at once start the seat once', () => {
   }));
 });
 
-describe('REQ-6 a failed spawn releases the assignment undelivered', () => {
+describe('REQ-6 a failed spawn never delivers, and a seat that cannot start does not wedge the unit', () => {
   it.each([
     ['a refusal', async () => ({ ok: false as const, message: 'spawn-failed' })],
     ['a thrown error', async () => { throw new Error('pty exploded'); }]
-  ])('leaves the unit READY and delivers nothing after %s', async (_label, spawn) => fixture(async (filePath) => {
+  ])('blocks the only unit to a person after %s, because no other seat can take it (not offered to the dead seat again)', async (_label, spawn) => fixture(async (filePath) => {
     const spawnDeferredWorker = vi.fn(spawn);
     const { service, store, deliverAssignment } = await setup(filePath, { spawnDeferredWorker });
     await service.dispatchReady(coordinator).catch(() => undefined);
     expect(spawnDeferredWorker).toHaveBeenCalledWith('lifecycle-1', 'slot-1');
     expect(deliverAssignment).not.toHaveBeenCalled();
+    expect((await unitState(store))?.state).toBe('BLOCKED');
+    expect((await store.get('execution-1'))?.blockers?.[0]).toMatchObject({ audience: 'human', resolved: false });
+  }));
+
+  it('re-homes the unit to a running seat when the on-demand seat cannot start', async () => fixture(async (filePath) => {
+    const spawnDeferredWorker = vi.fn(async () => ({ ok: false as const, message: 'gone' }));
+    const { service, store, deliverAssignment } = await setup(filePath, {
+      slotIds: ['slot-1', 'slot-2'], spawnDeferredWorker, units: [unit('a')],
+      workers: [deferredWorker, { slotId: 'slot-2', sessionId: 'worker-2', projectId: 'project-1', process: 'running' }]
+    });
+    await service.dispatchReady(coordinator);
+    expect(spawnDeferredWorker).toHaveBeenCalledTimes(1);
+    expect(await unitState(store)).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-2' });
+    expect(deliverAssignment).toHaveBeenCalledWith('worker-2', expect.any(String), expect.anything());
+  }));
+
+  it('keeps the unit READY for a refusal that may pass (retryable): the seat stays waiting', async () => fixture(async (filePath) => {
+    const spawnDeferredWorker = vi.fn(async () => ({ ok: false as const, message: 'busy', retryable: true as const }));
+    const { service, store } = await setup(filePath, { spawnDeferredWorker });
+    await service.dispatchReady(coordinator);
     expect((await unitState(store))?.state).toBe('READY');
+  }));
+
+  it('a seat that ended without ever starting (restart) quarantines its unit instead of releasing it forever', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { workers: [{ slotId: 'slot-1', projectId: 'project-1', process: 'spawn-failed', onDemand: true }] });
+    await service.dispatchReady(coordinator);
+    expect((await unitState(store))?.state).toBe('BLOCKED');
+  }));
+});
+
+describe('a start that returns after the run ended', () => {
+  it('stops the new session and releases the assignment instead of leaking the session', async () => fixture(async (filePath) => {
+    const closeWorkerSession = vi.fn();
+    let finish!: () => void;
+    const spawnDeferredWorker = vi.fn(async () => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return { ok: true as const, sessionId: 'late-session' };
+    });
+    const { service, store, deliverAssignment } = await setup(filePath, { spawnDeferredWorker, closeWorkerSession });
+    const dispatching = service.dispatchReady(coordinator);
+    await vi.waitFor(() => expect(spawnDeferredWorker).toHaveBeenCalled());
+    const record = await store.get('execution-1');
+    await store.transition(record!.id, record!.stateVersion, 'STOPPED', 'info', 'test stop');
+    finish();
+    await dispatching;
+    expect(isTerminal((await store.get('execution-1'))?.state)).toBe(true);
+    expect(closeWorkerSession).toHaveBeenCalledWith('late-session');
+    expect(deliverAssignment).not.toHaveBeenCalled();
+  }));
+});
+
+describe('several on-demand seats in one dispatch start together', () => {
+  it('starts them concurrently, not one after another', async () => fixture(async (filePath) => {
+    let inflight = 0; let peak = 0;
+    const spawnDeferredWorker = vi.fn(async (_r: string, slotId: string) => {
+      inflight += 1; peak = Math.max(peak, inflight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inflight -= 1;
+      return { ok: true as const, sessionId: `late-${slotId}` };
+    });
+    const { service, deliverAssignment } = await setup(filePath, {
+      slotIds: ['slot-1', 'slot-2'], units: [unit('a'), unit('b')], spawnDeferredWorker,
+      workers: [deferredWorker, { ...deferredWorker, slotId: 'slot-2' }]
+    });
+    await service.dispatchReady(coordinator);
+    expect(peak).toBe(2);
+    expect(deliverAssignment).toHaveBeenCalledTimes(2);
   }));
 });
 

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Team } from '@zana-ai/zcc-domain/product';
-import { jobCoordinatorPrompt } from '../team-coordinator-prompt.js';
+import { jobCoordinatorPrompt, type RosterEntry } from '../team-coordinator-prompt.js';
 import { createDesktopNativeRecovery } from '../team-launch-support.js';
 
 const team: Team = { id: 't', name: 'Doc Squad', description: 'x', orchestratorPersonaId: 'lead', slots: [{ personaId: 'lead' }], source: 'builtin' } as never;
-const prompt = (roster: Array<{ sessionId?: string; slotId: string; label: string; startsWhenNeeded?: true }>) =>
+const prompt = (roster: RosterEntry[]) =>
   jobCoordinatorPrompt({ team, executionId: 'e', job: { objective: 'Ship' }, roster, planReady: false });
 
 describe('coordinator roster with seats that start on demand (#580)', () => {

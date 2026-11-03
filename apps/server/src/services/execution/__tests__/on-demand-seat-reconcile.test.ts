@@ -65,7 +65,8 @@ describe('on-demand seats and the run state (#580)', () => {
     });
     await service.dispatchReady(coordinator);
     expect(logError).toHaveBeenCalledWith(expect.stringContaining('slot-1'), expect.any(Error));
-    expect((await store.get('execution-1'))?.workUnits?.[0].state).toBe('READY');
+    // the seat can never start, so the unit goes to a person rather than back to the same seat
+    expect((await store.get('execution-1'))?.workUnits?.[0].state).toBe('BLOCKED');
   }));
 
   it('delivers through the idle-gated path to the new session when no receipt transport is wired', async () => withDir(async (dir) => {

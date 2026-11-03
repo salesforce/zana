@@ -14,7 +14,7 @@ import { createDeferredSeatRegistry, type DeferredSeatHooks } from '../on-demand
  * launchTeam path with a faked pty layer (the shared on-demand-seat-harness.ts).
  */
 const host = await import('../host.js');
-const { authorizeTeamLaunch, launchTeam } = host;
+const { launchTeam } = host;
 
 const projectDir = realpathSync(mkdtempSync(join(h.root, 'proj-')));
 mkdirSync(projectDir, { recursive: true });
@@ -55,7 +55,6 @@ afterAll(() => {
 });
 
 const SLOT_IDS = ['0:w1:0', '0:w1:1', '1:w2:0', 'orchestrator:orch'];
-const tasks = () => SLOT_IDS.map((slotId) => ({ initialTask: `task for ${slotId}` }));
 const reqId = () => `req-${seq}-${Math.random().toString(36).slice(2)}`;
 
 const lifecycleFile = () => join(h.root, 'team-lifecycle.json');
@@ -251,6 +250,7 @@ describe('REQ-10 the spawner is released when the run ends or is canceled', () =
 describe('OBL registry obligations (CodeNod correctness)', () => {
   const hooks = (over: Partial<DeferredSeatHooks> = {}): DeferredSeatHooks => ({
     claim: vi.fn(async () => true), sessionOf: vi.fn(async () => 'sess'), start: vi.fn(async () => ({ ok: true as const, sessionId: 'sess' })),
+    isStuck: vi.fn(async () => false), close: vi.fn(async () => undefined), reopen: vi.fn(async () => true),
     markFailed: vi.fn(async () => undefined), ...over
   });
 
