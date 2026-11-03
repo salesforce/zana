@@ -451,6 +451,88 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
+  /**
+   * Record a seat that starts on demand: authorized, no session yet. It takes no capacity and is
+   * not part of the launch result until {@link bindDeferredWorker} gives it a session.
+   */
+  async function addDeferredWorker(
+    recordId: string,
+    worker: Omit<TeamLifecycleWorker, 'capacityReleased' | 'sessionId' | 'process' | 'transport'>
+  ): Promise<TeamLifecycleRecord> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    const bounded = boundedWorker({ ...worker, process: 'authorized' });
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      if (!record) throw new Error(`unknown team lifecycle record "${safeRecordId}"`);
+      if (record.outcome.status !== 'in-progress' || record.state !== 'active') {
+        throw new Error('team lifecycle launch is not active');
+      }
+      if (record.workers.some((candidate) => candidate.slotId === bounded.slotId
+        || candidate.authorizationId === bounded.authorizationId)) {
+        throw new Error('duplicate team lifecycle worker');
+      }
+      record.workers.push({ ...bounded, capacityReleased: false });
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /** Atomic once-only fence: the single caller that moves a never-started seat to `spawning` may spawn it. */
+  async function claimDeferredSpawn(recordId: string, slotId: string): Promise<boolean> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    const safeSlotId = boundedString(slotId, 'slot id');
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
+      if (record?.state !== 'active' || !isDeferredWorker(worker)) return false;
+      worker.process = 'spawning';
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return true;
+    });
+  }
+
+  /** Give a claimed seat its session: it joins the launch result and takes one launch of capacity. */
+  async function bindDeferredWorker(
+    recordId: string,
+    slotId: string,
+    binding: { sessionId: string; authorizationId: string; delivery: TeamWorkerDeliveryState }
+  ): Promise<TeamLifecycleRecord> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    const safeSlotId = boundedString(slotId, 'slot id');
+    const sessionId = boundedString(binding.sessionId, 'session id');
+    const authorizationId = boundedString(binding.authorizationId, 'authorization id');
+    if (!(binding.delivery in deliveryTransitions)) throw new Error('invalid worker delivery state');
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      if (!record) throw new Error(`unknown team lifecycle record "${safeRecordId}"`);
+      const worker = record.workers.find((candidate) => candidate.slotId === safeSlotId);
+      if (record.state !== 'active' || worker?.process !== 'spawning' || worker.sessionId !== undefined || worker.transport === 'MODERN') {
+        throw new Error('team lifecycle seat is not waiting for a session');
+      }
+      if (record.workers.some((candidate) => candidate !== worker
+        && (candidate.sessionId === sessionId || candidate.authorizationId === authorizationId))) {
+        throw new Error('duplicate team lifecycle worker');
+      }
+      worker.sessionId = sessionId;
+      worker.authorizationId = authorizationId;
+      worker.delivery = binding.delivery;
+      if (record.capacity) record.capacity.launched += 1;
+      record.launchResult.workers.push(boundedIdentity(worker));
+      record.launchResult.launched = record.launchResult.workers.length;
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
   async function addWorker(
     recordId: string,
     worker: Omit<TeamLifecycleWorker, 'capacityReleased'>
@@ -511,11 +593,12 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
           ...worker, process: 'running', attention: 'active', task: 'unknown',
           delivery: 'bound-at-spawn', capacityReleased: false
         }));
+        const deferredSeats = record.workers.filter(isDeferredWorker);
         record.workers = record.state === 'cancel-pending' || record.workers.some((worker) => worker.transport === 'MODERN')
           ? [...resultWorkers, ...record.workers.filter((worker) =>
               (worker.transport === 'MODERN' || !terminalProcesses.has(worker.process))
               && !launchResult.workers.some((candidate) => identityKey(candidate) === identityKey(worker)))]
-          : resultWorkers;
+          : [...resultWorkers, ...deferredSeats];
       }
       record.outcome = { status: 'completed', result: boundedResult };
       record.revision += 1;
@@ -535,6 +618,11 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       if (record.state !== 'active') return { ...clone(record), releasedSlotIds: [] };
       const releasedSlotIds: string[] = [];
       for (const worker of record.workers) {
+        if (isDeferredWorker(worker)) {
+          worker.process = 'canceled';
+          worker.capacityReleased = true;
+          releasedSlotIds.push(worker.slotId);
+        }
         if (worker.transport === 'MODERN' && worker.bindingState === 'RESERVED') {
           worker.bindingState = 'TERMINAL';
           worker.process = 'canceled';
@@ -557,7 +645,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     return runExclusive(async () => {
       const record = readState().state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
-      return record?.state === 'active' && record.outcome.status === 'in-progress'
+      return record?.state === 'active' && launchAllowsSpawn(record)
         && worker?.process === 'spawning' && worker.transport !== 'MODERN';
     });
   }
@@ -569,7 +657,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const snapshot = readState();
       const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
-      if (record?.state !== 'active' || record.outcome.status !== 'in-progress'
+      if (record?.state !== 'active' || !launchAllowsSpawn(record)
         || worker?.process !== 'spawning' || worker.transport === 'MODERN') return false;
       worker.process = 'running';
       record.revision += 1;
@@ -825,7 +913,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
-  return { claim, complete, setLaunchResult, addWorker, updateWorker, workerMaySpawn, claimWorkerRunning,
+  return { claim, complete, setLaunchResult, addWorker, addDeferredWorker, claimDeferredSpawn, bindDeferredWorker, updateWorker, workerMaySpawn, claimWorkerRunning,
     reserveModernWorker, acknowledgeModernWorker, markModernWorkerUncertain, modernWorkerMayClose, reconcileModernWorkers,
     fenceCancel: cancel, cancel, reconcileStartup, list, get, findRequest, findModernWorkerBinding };
 }
@@ -1091,7 +1179,7 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         for (const record of await opts.store.list()) {
           if (record.capacity) {
             opts.restoreCapacity?.(record.capacity, record.workers
-              .filter((worker) => !worker.capacityReleased)
+              .filter((worker) => !worker.capacityReleased && worker.sessionId !== undefined)
               .map((worker) => worker.authorizationId));
           }
           track(record);
@@ -1282,7 +1370,8 @@ function boundedIdentity(worker: Omit<TeamLaunchedWorker, 'sessionId'> & { sessi
 }
 
 function boundedWorker(worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): Omit<TeamLifecycleWorker, 'capacityReleased'> {
-  const identity = boundedIdentity(worker);
+  const deferred = worker.process === 'authorized' && worker.sessionId === undefined && worker.transport !== 'MODERN';
+  const identity = boundedIdentity(deferred ? { ...worker, sessionId: 'deferred' } : worker);
   if (!(worker.process in processTransitions) || (worker.attention !== 'active' && worker.attention !== 'blocked')
     || !(worker.task in taskTransitions) || !(worker.delivery in deliveryTransitions)
     || worker.transport !== undefined && worker.transport !== 'CLI' && worker.transport !== 'MODERN'
@@ -1294,8 +1383,9 @@ function boundedWorker(worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): O
     || worker.transport !== 'MODERN' && (worker.threadId !== undefined || worker.generation !== undefined || worker.bindingState !== undefined || worker.modernContext !== undefined)) {
     throw new Error('invalid team worker lifecycle state');
   }
+  const { sessionId: boundSession, ...identityRest } = identity;
   return {
-    ...identity, process: worker.process, attention: worker.attention, task: worker.task, delivery: worker.delivery,
+    ...identityRest, ...(deferred ? {} : { sessionId: boundSession }), process: worker.process, attention: worker.attention, task: worker.task, delivery: worker.delivery,
     ...(worker.transport === undefined ? {} : { transport: worker.transport }),
     ...(worker.threadId === undefined ? {} : { threadId: worker.threadId }),
     ...(worker.generation === undefined ? {} : { generation: worker.generation }),
@@ -1471,8 +1561,25 @@ function isIdentity(value: unknown): value is TeamLaunchedWorker {
     && isBoundedString(worker.personaId) && isBoundedString(worker.projectId) && isBoundedString(worker.authorizationId);
 }
 
+/** A seat that starts on demand and has not started: authorized, CLI, no session. */
+function isDeferredWorker(worker: TeamLifecycleWorker | undefined): worker is TeamLifecycleWorker & { sessionId: undefined } {
+  return worker?.process === 'authorized' && worker.sessionId === undefined && worker.transport !== 'MODERN';
+}
+
+/** Workers spawn while the launch is in progress, or later for a seat that starts on demand. */
+function launchAllowsSpawn(record: TeamLifecycleRecord): boolean {
+  return record.outcome.status === 'in-progress' || record.outcome.status === 'completed' && record.outcome.result.ok === true;
+}
+
 function isWorker(value: unknown): value is TeamLifecycleWorker {
-  if (!isIdentity(value)) return false;
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<TeamLifecycleWorker>;
+  // A seat that starts on demand has no session until it starts, and none if it never does.
+  const deferred = candidate.sessionId === undefined && candidate.transport !== 'MODERN'
+    && (candidate.process === 'authorized' || candidate.process === 'spawning'
+      || candidate.process === 'spawn-failed' || candidate.process === 'canceled');
+  if (!deferred && !isIdentity(value)) return false;
+  if (deferred && !isIdentity({ ...value, sessionId: 'deferred' })) return false;
   const worker = value as Partial<TeamLifecycleWorker>;
   const transport = worker.transport ?? 'CLI';
   return typeof worker.process === 'string' && worker.process in processTransitions

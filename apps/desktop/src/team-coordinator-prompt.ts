@@ -150,7 +150,7 @@ export function jobCoordinatorPrompt(input: {
   structuredTask?: string;
   executionId?: string;
   job: NonNullable<TeamLaunchRequestInput['jobContext']>;
-  roster: Array<{ sessionId: string; slotId: string; label: string }>;
+  roster: Array<{ sessionId?: string; slotId: string; label: string; startsWhenNeeded?: true }>;
   /**
    * Host-computed plan readiness. TRUE when the durable record already carries a
    * valid seeded work DAG (Flow A: good plan provided). The host dispatches those
@@ -197,7 +197,14 @@ export function jobCoordinatorPrompt(input: {
 }): string {
   const sources = input.job.sourceBundle?.sources ?? [];
   const sourceMetadata = JSON.stringify(sources.length ? sources : []);
-  const rosterLines = input.roster.map((worker) => `- ${worker.label} — session \`${worker.sessionId}\`, slot \`${worker.slotId}\``);
+  const running = input.roster.filter((worker) => worker.sessionId);
+  const rosterLines = running.map((worker) => `- ${worker.label} — session \`${worker.sessionId}\`, slot \`${worker.slotId}\``);
+  const waiting = input.roster.filter((worker) => worker.startsWhenNeeded);
+  const waitingBlock = waiting.length === 0 ? '' : [
+    'Seats that start when their first unit is ready (not running yet, so no session id):',
+    ...waiting.map((worker) => `- ${worker.label}, slot \`${worker.slotId}\``),
+    'The engine starts each of these seats when it assigns its first unit. Do not message them or wait for them to appear; assign work to their slots as normal.'
+  ].join('\n');
   const hasSources = sources.length > 0;
   // One of four kickoff arms, keyed on host-computed plan readiness then on
   // whether a plan-file handoff path was provided. Each arm is a named helper; the
@@ -213,7 +220,8 @@ export function jobCoordinatorPrompt(input: {
     : legacyMcpKickoffLines(hasSources);
   return [
     `You are coordinator of Team "${input.team.name}"${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Your coordinator identity, execution binding, and worker roster are already host-bound. Do not discover, register, recover, or replace them during normal kickoff.`,
-    `Workers are already running:\n${rosterLines.join('\n') || '- No workers.'}`,
+    `Workers are already running:\n${rosterLines.join('\n') || (waiting.length ? '- No workers are running yet.' : '- No workers.')}`,
+    ...(waitingBlock ? [waitingBlock] : []),
     ...(input.recoveryResume ? [
       'Recovery resume: this coordinator reopened its trusted native session for this same execution slot.',
       // A planless run has no retained plan to resume: a plan this session

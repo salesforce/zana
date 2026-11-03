@@ -382,6 +382,8 @@ export class ExecutionSnapshotTimeoutError extends Error {
 }
 
 interface ExtractedLifecycle {
+  /** Lifecycle record id; the deferred-seat spawner is keyed by it. */
+  recordId?: string;
   orchestratorSessionId?: string;
   orchestratorAuthorizationId?: string;
   retainOrchestrator?: boolean;
@@ -416,6 +418,7 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
   const orchestratorAuthorizationId = orchestratorWorker?.authorizationId || lifecycle.orchestratorAuthorizationId;
 
   return {
+    ...(typeof lifecycle.id === 'string' ? { recordId: lifecycle.id } : {}),
     orchestratorSessionId,
     orchestratorAuthorizationId,
     retainOrchestrator: lifecycle.retainOrchestrator === true,
@@ -1904,7 +1907,10 @@ export class ExecutionService {
     }
     for (const assignment of assignments) {
       const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
-      if (!worker?.sessionId) {
+      // A seat that starts on demand has a lifecycle worker (`authorized`) but no session yet;
+      // it is started below, after the eligibility check. Any other session-less worker is released.
+      const deferredSeat = !worker?.sessionId && worker?.process === 'authorized';
+      if (!worker || (!worker.sessionId && !deferredSeat)) {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
         continue;
       }
@@ -1927,7 +1933,7 @@ export class ExecutionService {
       // eval'd by the bash prompt). Release instead; the next dispatch/reconcile cycle
       // re-delivers once a healthy worker exists or parks the coordinator. `'unknown'`/
       // `'alive'`/unwired ⇒ deliver as before (claude-family path byte-unchanged).
-      if (this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
+      if (worker.sessionId !== undefined && this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
         // Same dead-agent zombie as the reconcile path: release the assignment
         // AND reap the surviving outer shell/tmux wrapper (host tmux-kill close).
         this.deps.closeWorkerSession?.(worker.sessionId);
@@ -1940,6 +1946,14 @@ export class ExecutionService {
       if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization) {
         const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(authorization, model));
         if (eligibility.status !== 'PASS') {
+          await this.releaseUndeliveredAssignments(record.id, [assignment]);
+          continue;
+        }
+      }
+      let sessionId = worker.sessionId;
+      if (sessionId === undefined) {
+        sessionId = await this.startDeferredSeat(lifecycle?.recordId, assignment.slotId);
+        if (sessionId === undefined) {
           await this.releaseUndeliveredAssignments(record.id, [assignment]);
           continue;
         }
@@ -1962,7 +1976,7 @@ export class ExecutionService {
         // never a resend to the same member that may hold it. Requires claim recovery
         // observe+enforce (config default on).
         try {
-          const receipt = await this.deps.deliverAssignment(worker.sessionId, text, correlation);
+          const receipt = await this.deps.deliverAssignment(sessionId, text, correlation);
           // Runtime completion is delivery evidence, never an authenticated work outcome.
           if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
         } catch (error) {
@@ -1976,15 +1990,27 @@ export class ExecutionService {
         // cascade fires from the worker's own completion, so it is busy). Falls
         // back to the raw reply when the host doesn't wire the idle-gated dep.
         const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
-        const delivered = await deliver(worker.sessionId, text);
+        const delivered = await deliver(sessionId, text);
         if (delivered) {
-          try { this.deps.triggerDeliveryDrain?.(worker.sessionId); } catch { /* nudge best-effort */ }
+          try { this.deps.triggerDeliveryDrain?.(sessionId); } catch { /* nudge best-effort */ }
         } else {
           await this.releaseUndeliveredAssignments(record.id, [assignment]);
         }
       } catch {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
       }
+    }
+  }
+
+  /** Ask the host to start a seat left closed at launch. Returns its session id, or undefined when it did not start. */
+  private async startDeferredSeat(recordId: string | undefined, slotId: string): Promise<string | undefined> {
+    if (!recordId || !this.deps.spawnDeferredWorker) return undefined;
+    try {
+      const started = await this.deps.spawnDeferredWorker(recordId, slotId);
+      return started.ok ? started.sessionId : undefined;
+    } catch (error) {
+      this.deps.logError?.(`on-demand seat ${slotId} failed to start`, error);
+      return undefined;
     }
   }
 
@@ -3369,7 +3395,10 @@ export class ExecutionService {
     if (lifecycle.workers.some((worker) => worker.task === 'caller-reported-failed')) {
       return this.transitionOrCurrent(record, 'FAILED', 'error', 'A Team slot reported failure');
     }
-    if (lifecycle.workers.length > 0 && lifecycle.workers.every((worker) =>
+    // A seat that starts on demand and never started is not a live worker; once everything else has
+    // ended it can no longer be used, so it must not keep the run open.
+    const startedWorkers = lifecycle.workers.filter((worker) => worker.sessionId !== undefined || worker.process !== 'authorized');
+    if (startedWorkers.length > 0 && startedWorkers.every((worker) =>
       worker.process === 'exited' || worker.process === 'spawn-failed' || worker.process === 'canceled')) {
       // Build a self-diagnosing per-slot detail from the exit info captured at the
       // PTY exit event (exit code + provider explanation). Historically this was a

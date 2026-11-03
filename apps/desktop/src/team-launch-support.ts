@@ -1,3 +1,4 @@
+import { deferredSeatsOf } from './on-demand-seat.js';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import type { LaunchProfileId, Persona, Project, Team, TeamJobLaunchResponse, TeamJobRenewedSources } from '@zana-ai/zcc-domain/product';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
@@ -62,7 +63,11 @@ export function createDesktopNativeRecovery(deps: DesktopNativeRecoveryDeps) {
   /** Total slots of the record's team, or undefined when the team is unknown. */
   function totalSlots(record: ExecutionRecord): number | undefined {
     const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
-    return team ? deps.expandTeamSlots(team).length : undefined;
+    if (!team) return undefined;
+    // A seat that starts on demand and never started has no snapshot to restore; it starts again when needed.
+    const snapshotted = new Set((record.nativeRecoverySnapshots ?? []).map((snapshot) => snapshot.slotId));
+    const neverStarted = new Set(deferredSeatsOf(team, deps.expandTeamSlots(team)).map((seat) => seat.slotId));
+    return deps.expandTeamSlots(team).filter((slot) => !neverStarted.has(slot.slotId) || snapshotted.has(slot.slotId)).length;
   }
   function availability(record: ExecutionRecord): { available: boolean; restorableSlots: number; totalSlots: number; reason?: 'PARTIAL_RESTORE' } {
     const restorableSlots = compatibleSnapshots(record).length;
