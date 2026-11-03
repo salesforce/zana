@@ -6257,8 +6257,6 @@ export async function launchTeam(
        if (onDemandSeats.includes(expectedSlot)) {
          // Started later by the engine (see deferredSeats); only the lifecycle record and roster know it now.
          deferredSlotIds.push(slotId);
-         const preissuedId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
-         if (preissuedId) launchAuthorization.revoke(preissuedId);
          teamLifecycleIntegration.track(await teamLifecycle.addDeferredWorker(claim.record.id, {
            authorizationId: randomUUID(), cohortId, slotId, personaId, projectId: targetProjectId,
            attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
@@ -6289,7 +6287,7 @@ export async function launchTeam(
     lifecycle: teamLifecycle,
     startSeat: (slotId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true),
     closeSession: terminateSession,
-    track: (failed) => teamLifecycleIntegration.track(failed),
+    track: teamLifecycleIntegration.track,
     onStarted: (sessionId) => teamLaunchSessions.set(sessionId, cohortId)
   }));
 
