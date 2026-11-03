@@ -43,12 +43,19 @@ export interface DeferredSeatHooks {
   claim(slotId: string): Promise<boolean>;
   /** Session of a seat that has started, if any. */
   sessionOf(slotId: string): Promise<string | undefined>;
+  /** Whether a seat is still waiting on a start nobody holds (claimed, no session). */
+  isStuck(slotId: string): Promise<boolean>;
   /** Start the seat's session. */
   start(slotId: string): Promise<DeferredSpawnResult>;
+  /** Close a session that started after its run had ended. */
+  close(sessionId: string): Promise<void>;
   /** Record a seat that did not start and cannot be retried. */
   markFailed(slotId: string): Promise<void>;
-  /** Put a claimed seat back to waiting after a refusal that may pass (busy provider, capacity). */
-  reopen(slotId: string): Promise<void>;
+  /**
+   * Put a claimed seat back to waiting after a refusal that may pass. Returns false when the run is
+   * no longer active, so the caller can finish the seat instead.
+   */
+  reopen(slotId: string): Promise<boolean>;
 }
 
 export interface DeferredSeatRegistryOptions {
@@ -58,51 +65,67 @@ export interface DeferredSeatRegistryOptions {
   onOrphan?: (recordId: string, slotId: string) => Promise<void>;
 }
 
+type Entry = { hooks: DeferredSeatHooks; inflight: Map<string, Promise<DeferredSpawnResult>> };
+type Log = (message: string, error?: unknown) => void;
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** Run a recording step; one retry, then report with the run and seat. */
+async function settle(log: Log, recordId: string, slotId: string, step: () => Promise<unknown>): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try { await step(); return; } catch (error) {
+      if (attempt === 1) log(`on-demand seat settle failed for ${recordId}/${slotId}`, error);
+    }
+  }
+}
+
+/** Start one seat: claim it, start it, and settle it whichever way that ends. */
+async function startSeat(log: Log, runs: Map<string, Entry>, recordId: string, slotId: string, entry: Entry): Promise<DeferredSpawnResult> {
+  const { hooks } = entry;
+  try {
+    if (!await hooks.claim(slotId)) {
+      const sessionId = await hooks.sessionOf(slotId);
+      if (sessionId) return { ok: true, sessionId };
+      // Only a seat that is claimed but has no session and nobody starting it needs settling; a seat that already ended does not.
+      if (await hooks.isStuck(slotId)) await settle(log, recordId, slotId, () => hooks.markFailed(slotId));
+      return { ok: false, message: 'the seat is not waiting to start' };
+    }
+  } catch (error) {
+    log(`on-demand seat claim failed for ${recordId}/${slotId}`, error);
+    return { ok: false, message: messageOf(error) };
+  }
+  // The run may have ended while the claim was pending: a released run starts nothing.
+  if (runs.get(recordId) !== entry) {
+    await settle(log, recordId, slotId, () => hooks.markFailed(slotId));
+    return { ok: false, message: 'the run ended before the seat could start' };
+  }
+  let result: DeferredSpawnResult;
+  try { result = await hooks.start(slotId); } catch (error) { result = { ok: false, message: messageOf(error) }; }
+  if (result.ok) {
+    // The run may also end while the session is starting: close it rather than hand it work.
+    if (runs.get(recordId) === entry) return { ok: true, sessionId: result.sessionId };
+    await settle(log, recordId, slotId, () => hooks.close(result.ok ? result.sessionId : ''));
+    return { ok: false, message: 'the run ended while the seat was starting' };
+  }
+  log(`on-demand seat ${slotId} of ${recordId} did not start: ${result.message}`);
+  const retryable = result.retryable === true;
+  // A refusal that may pass keeps the seat waiting, but only while the run is still active.
+  const reopened = retryable ? await reopenOrFinish(log, recordId, slotId, hooks) : false;
+  if (!retryable) await settle(log, recordId, slotId, () => hooks.markFailed(slotId));
+  return reopened ? { ok: false, message: result.message, retryable: true } : { ok: false, message: result.message };
+}
+
+/** Put a seat back to waiting; when the run is no longer active, finish it so the run can close. */
+async function reopenOrFinish(log: Log, recordId: string, slotId: string, hooks: DeferredSeatHooks): Promise<boolean> {
+  let reopened = false;
+  await settle(log, recordId, slotId, async () => { reopened = await hooks.reopen(slotId); });
+  if (!reopened) await settle(log, recordId, slotId, () => hooks.markFailed(slotId));
+  return reopened;
+}
+
 /** Spawners for runs that still have seats waiting; empty for a team without on-demand seats. */
 export function createDeferredSeatRegistry(options: DeferredSeatRegistryOptions = {}) {
-  type Entry = { hooks: DeferredSeatHooks; inflight: Map<string, Promise<DeferredSpawnResult>> };
   const runs = new Map<string, Entry>();
   const log = options.log ?? (() => undefined);
-
-  /** Run a recording step; one retry, then report. */
-  async function record(label: string, recordId: string, slotId: string, step: () => Promise<void>): Promise<void> {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try { await step(); return; } catch (error) {
-        if (attempt === 1) log(`on-demand seat ${label} failed for ${recordId}/${slotId}`, error);
-      }
-    }
-  }
-
-  async function run(recordId: string, slotId: string, entry: Entry): Promise<DeferredSpawnResult> {
-    try {
-      if (!await entry.hooks.claim(slotId)) {
-        const sessionId = await entry.hooks.sessionOf(slotId);
-        if (sessionId) return { ok: true, sessionId };
-        // Claimed earlier but never bound and nobody in this process is starting it: do not leave it stuck.
-        await record('settle', recordId, slotId, () => entry.hooks.markFailed(slotId));
-        return { ok: false, message: 'the seat is not waiting to start' };
-      }
-    } catch (error) {
-      log(`on-demand seat claim failed for ${recordId}/${slotId}`, error);
-      return { ok: false, message: error instanceof Error ? error.message : String(error) };
-    }
-    // The run may have ended while the claim was pending: a released run starts nothing.
-    if (runs.get(recordId) !== entry) {
-      await record('settle', recordId, slotId, () => entry.hooks.markFailed(slotId));
-      return { ok: false, message: 'the run ended before the seat could start' };
-    }
-    let result: DeferredSpawnResult;
-    try {
-      result = await entry.hooks.start(slotId);
-    } catch (error) {
-      result = { ok: false, message: error instanceof Error ? error.message : String(error) };
-    }
-    if (result.ok) return { ok: true, sessionId: result.sessionId };
-    log(`on-demand seat ${slotId} of ${recordId} did not start: ${result.message}`);
-    await record('settle', recordId, slotId, () => result.ok === false && result.retryable ? entry.hooks.reopen(slotId) : entry.hooks.markFailed(slotId));
-    return result.retryable ? { ok: false, message: result.message, retryable: true } : { ok: false, message: result.message };
-  }
-
   return {
     register(recordId: string, slotIds: readonly string[], hooks: DeferredSeatHooks): void {
       if (slotIds.length > 0) runs.set(recordId, { hooks, inflight: new Map() });
@@ -116,7 +139,7 @@ export function createDeferredSeatRegistry(options: DeferredSeatRegistryOptions 
       }
       const shared = entry.inflight.get(slotId);
       if (shared) return shared;
-      const started = run(recordId, slotId, entry);
+      const started = startSeat(log, runs, recordId, slotId, entry);
       entry.inflight.set(slotId, started);
       started.then(() => entry.inflight.delete(slotId), () => entry.inflight.delete(slotId));
       return started;
@@ -139,7 +162,14 @@ export function coldStartCanceled(
   return current?.state !== 'active' || (!lateSeat && current.outcome.status !== 'in-progress');
 }
 
-/** Refusals that may pass on a later try: another Squad is cold-starting the provider, or the machine is at its session limit. */
-export function isTransientSeatRefusal(code: string | undefined): boolean {
-  return code === 'CANCEL_PENDING' || code === 'RESOURCE_LIMIT' || code === 'CAPACITY';
+/**
+ * Refusals that may pass on a later try: another Squad is cold-starting the provider account (CANCEL_PENDING),
+ * the machine is at its live-session limit (RESOURCE_LIMIT, or STALE_PREFLIGHT "launch capacity changed"),
+ * or the run's own concurrent limit is reached (DENIED "concurrent launch limit"). Anything else is final.
+ */
+export function isTransientSeatRefusal(code: string | undefined, message = ''): boolean {
+  if (code === 'CANCEL_PENDING' || code === 'RESOURCE_LIMIT') return true;
+  if (code === 'STALE_PREFLIGHT') return /capacity changed/i.test(message);
+  if (code === 'DENIED') return /concurrent launch limit/i.test(message);
+  return false;
 }

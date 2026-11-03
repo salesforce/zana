@@ -1206,8 +1206,10 @@ const deferredSeats = createDeferredSeatRegistry({
   // No spawner for this run (the app restarted, or the run ended): fail the seat once, visibly, so its units are not re-offered forever.
   onOrphan: async (recordId, slotId) => {
     const current = await teamLifecycle.get(recordId);
-    if (current?.workers.find((worker) => worker.slotId === slotId)?.sessionId !== undefined) return;
-    const failed = await teamLifecycle.failDeferredSeat(recordId, slotId);
+    // A run that is already ending is finished by its own teardown, not by this message.
+    if (current?.state !== 'active' || current.workers.find((worker) => worker.slotId === slotId)?.sessionId !== undefined) return;
+    const failed = await teamLifecycle.failDeferredSeat(recordId, slotId,
+      'This seat could not start because the app restarted and lost track of it. Resume the run to start it.');
     if (failed) teamLifecycleIntegration.track(failed);
   }
 });
@@ -6277,18 +6279,21 @@ export async function launchTeam(
   deferredSeats.register(claim.record.id, deferredSlotIds, {
     claim: (slotId) => teamLifecycle.claimDeferredSpawn(claim.record.id, slotId),
     sessionOf: async (slotId) => (await teamLifecycle.get(claim.record.id))?.workers.find((worker) => worker.slotId === slotId)?.sessionId,
+    isStuck: async (slotId) => {
+      const seat = (await teamLifecycle.get(claim.record.id))?.workers.find((worker) => worker.slotId === slotId);
+      return seat?.process === 'spawning' && seat.sessionId === undefined;
+    },
+    close: async (sessionId) => { await terminateSession(sessionId); },
     start: async (slotId) => {
       const seat = expectedSlots.find((candidate) => candidate.slotId === slotId)!;
       const started = await startWorkerSeat(seat, true);
       if (started.ok) teamLaunchSessions.set(started.value.id, cohortId);
-      return started.ok ? { ok: true, sessionId: started.value.id } : { ok: false, message: started.message, ...(isTransientSeatRefusal(started.code) ? { retryable: true as const } : {}) };
+      return started.ok ? { ok: true, sessionId: started.value.id } : { ok: false, message: started.message, ...(isTransientSeatRefusal(started.code, started.message) ? { retryable: true as const } : {}) };
     },
     markFailed: async (slotId) => {
       teamLifecycleIntegration.track((await teamLifecycle.updateWorker(claim.record.id, slotId, { process: 'spawn-failed' })).record);
     },
-    reopen: async (slotId) => {
-      await teamLifecycle.reopenDeferredSpawn(claim.record.id, slotId);
-    }
+    reopen: (slotId) => teamLifecycle.reopenDeferredSpawn(claim.record.id, slotId)
   });
 
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
@@ -6682,7 +6687,10 @@ inboxActionRegistry.register(SQUAD_LAUNCH_PROPOSAL_ACTION, squadProposalService.
  */
 /** A finished, stopped, failed or dismissed run keeps no spawner for seats that never started. */
 async function releaseDeferredSeatsOf(record: { callerPrincipalId: string; teamLaunchRequestId: string }): Promise<void> {
-  const lifecycle = await teamLifecycle.findRequest(record.callerPrincipalId, record.teamLaunchRequestId).catch(() => undefined);
+  const lifecycle = await teamLifecycle.findRequest(record.callerPrincipalId, record.teamLaunchRequestId).catch((error) => {
+    logMainError(`could not look up the lifecycle record of ${record.teamLaunchRequestId} to release its on-demand seats`, error);
+    return undefined;
+  });
   if (lifecycle) deferredSeats.release(lifecycle.id);
 }
 

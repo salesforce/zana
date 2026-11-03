@@ -59,6 +59,7 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
     }
     getSession(id: string) { return h.sessions.get(id) ?? null; }
     list() { return [...h.sessions.values()]; }
+    liveCount() { return h.sessions.size; }
     reply() {}
     setRestoreCapabilityId() {}
     async waitForReady(id: string) { return h.sessions.get(id); }

@@ -42,15 +42,22 @@ describe('coldStartCanceled / isTransientSeatRefusal', () => {
     expect(coldStartCanceled(undefined, true)).toBe(true);
   });
   it('treats a busy provider or a full machine as passing, and anything else as final', () => {
-    for (const code of ['CANCEL_PENDING', 'RESOURCE_LIMIT', 'CAPACITY']) expect(isTransientSeatRefusal(code)).toBe(true);
-    for (const code of ['DENIED', 'DEADLINE_EXCEEDED', undefined]) expect(isTransientSeatRefusal(code)).toBe(false);
+    expect(isTransientSeatRefusal('CANCEL_PENDING')).toBe(true);
+    expect(isTransientSeatRefusal('RESOURCE_LIMIT')).toBe(true);
+    expect(isTransientSeatRefusal('STALE_PREFLIGHT', 'launch capacity changed after preflight')).toBe(true);
+    expect(isTransientSeatRefusal('DENIED', 'principal concurrent launch limit reached')).toBe(true);
+    expect(isTransientSeatRefusal('STALE_PREFLIGHT', 'launch stores changed after preflight')).toBe(false);
+    expect(isTransientSeatRefusal('DENIED', 'principal launch budget exhausted')).toBe(false);
+    expect(isTransientSeatRefusal('DEADLINE_EXCEEDED')).toBe(false);
+    expect(isTransientSeatRefusal(undefined)).toBe(false);
+    expect(isTransientSeatRefusal('CAPACITY')).toBe(false);
   });
 });
 
 describe('createDeferredSeatRegistry', () => {
   const hooks = (over: Partial<DeferredSeatHooks> = {}): DeferredSeatHooks => ({
     claim: vi.fn(async () => true), sessionOf: vi.fn(async () => undefined),
-    start: vi.fn(async () => ({ ok: true as const, sessionId: 'sess' })), markFailed: vi.fn(async () => undefined), reopen: vi.fn(async () => undefined), ...over
+    start: vi.fn(async () => ({ ok: true as const, sessionId: 'sess' })), markFailed: vi.fn(async () => undefined), reopen: vi.fn(async () => true), isStuck: vi.fn(async () => true), close: vi.fn(async () => undefined), ...over
   });
 
   it('registers nothing without seats and refuses to start anything', async () => {

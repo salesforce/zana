@@ -5,7 +5,7 @@ import { createDeferredSeatRegistry, type DeferredSeatHooks } from '../on-demand
 const hooks = (over: Partial<DeferredSeatHooks> = {}): DeferredSeatHooks => ({
   claim: vi.fn(async () => true), sessionOf: vi.fn(async () => undefined),
   start: vi.fn(async () => ({ ok: true as const, sessionId: 'sess' })),
-  markFailed: vi.fn(async () => undefined), reopen: vi.fn(async () => undefined), ...over
+  markFailed: vi.fn(async () => undefined), reopen: vi.fn(async () => true), isStuck: vi.fn(async () => true), close: vi.fn(async () => undefined), ...over
 });
 
 describe('a store error while claiming does not escape (F6)', () => {
@@ -61,7 +61,7 @@ describe('recording a failed seat is retried and reported (F7)', () => {
 
 describe('a refusal that may pass keeps the seat waiting (A4)', () => {
   it('reopens the seat and reports it as retryable instead of failing it for good', async () => {
-    const reopen = vi.fn(async () => undefined);
+    const reopen = vi.fn(async () => true);
     const markFailed = vi.fn(async () => undefined);
     const registry = createDeferredSeatRegistry();
     registry.register('r', ['s'], hooks({ start: vi.fn(async () => ({ ok: false as const, message: 'provider busy', retryable: true as const })), reopen, markFailed }));
@@ -108,5 +108,47 @@ describe('release fences a claim that was already pending (F2)', () => {
     expect(await pending).toEqual({ ok: false, message: 'the run ended before the seat could start' });
     expect(start).not.toHaveBeenCalled();
     expect(markFailed).toHaveBeenCalledWith('s');
+  });
+});
+
+describe('review round 2 (#580)', () => {
+  it('N1: a run released while the seat is starting closes the new session and hands it no work', async () => {
+    let finish!: (value: { ok: true; sessionId: string }) => void;
+    const close = vi.fn(async () => undefined);
+    const registry = createDeferredSeatRegistry();
+    registry.register('r', ['s'], hooks({ start: vi.fn(() => new Promise<{ ok: true; sessionId: string }>((resolve) => { finish = resolve; })), close }));
+    const pending = registry.spawn('r', 's');
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    registry.release('r');
+    finish({ ok: true, sessionId: 'late' });
+    expect(await pending).toEqual({ ok: false, message: 'the run ended while the seat was starting' });
+    expect(close).toHaveBeenCalledWith('late');
+  });
+
+  it('A9: a retryable refusal on a run that is no longer active finishes the seat instead of leaving it starting', async () => {
+    const markFailed = vi.fn(async () => undefined);
+    const registry = createDeferredSeatRegistry();
+    registry.register('r', ['s'], hooks({
+      start: vi.fn(async () => ({ ok: false as const, message: 'run ended', retryable: true as const })),
+      reopen: vi.fn(async () => false), markFailed
+    }));
+    expect(await registry.spawn('r', 's')).toEqual({ ok: false, message: 'run ended' });
+    expect(markFailed).toHaveBeenCalledWith('s');
+  });
+
+  it('A9: a retryable refusal on a live run reopens the seat and is reported as retryable', async () => {
+    const markFailed = vi.fn(async () => undefined);
+    const registry = createDeferredSeatRegistry();
+    registry.register('r', ['s'], hooks({ start: vi.fn(async () => ({ ok: false as const, message: 'busy', retryable: true as const })), markFailed }));
+    expect(await registry.spawn('r', 's')).toEqual({ ok: false, message: 'busy', retryable: true });
+    expect(markFailed).not.toHaveBeenCalled();
+  });
+
+  it('A13: a seat that already ended is not settled again on every dispatch', async () => {
+    const markFailed = vi.fn(async () => undefined);
+    const registry = createDeferredSeatRegistry();
+    registry.register('r', ['s'], hooks({ claim: vi.fn(async () => false), sessionOf: vi.fn(async () => undefined), isStuck: vi.fn(async () => false), markFailed }));
+    expect(await registry.spawn('r', 's')).toEqual({ ok: false, message: 'the seat is not waiting to start' });
+    expect(markFailed).not.toHaveBeenCalled();
   });
 });

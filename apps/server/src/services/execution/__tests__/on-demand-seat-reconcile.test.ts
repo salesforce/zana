@@ -123,4 +123,21 @@ describe('review round 1: seats still starting and refusals (#580)', () => {
     expect(order[0]).toBe('deliver:worker-2');
     expect(order).toContain('spawn');
   }));
+
+  it('N1: when the run ended while the seat was starting, nothing is delivered and the unit is released', async () => withDir(async (dir) => {
+    const deliverAssignment = vi.fn(async () => ({ state: 'accepted' as const }));
+    let service!: Awaited<ReturnType<typeof build>>['service'];
+    const built = await build(dir, [{ slotId: 'slot-1', projectId: 'project-1', process: 'authorized' }], 'lc-1', {
+      deliverAssignment,
+      spawnDeferredWorker: async () => {
+        // the run is stopped while the seat is starting
+        const record = await built.store.get('execution-1');
+        await built.store.transition('execution-1', record!.stateVersion, 'STOPPED', 'info', 'stopped');
+        return { ok: true as const, sessionId: 'late' };
+      }
+    });
+    service = built.service;
+    await service.dispatchReady(coordinator).catch(() => undefined);
+    expect(deliverAssignment).not.toHaveBeenCalled();
+  }));
 });

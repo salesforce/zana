@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { h } from './on-demand-seat-harness.js';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TeamLifecycleRecord } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { registerThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
@@ -190,14 +190,52 @@ describe('review round 1: late seat, deadline and cleanup (#580)', () => {
     expect(h.creates).toHaveLength(before);
   });
 
-  it('A2: after a restart (no spawner for the run) the seat is failed once with a plain reason', async () => {
+  it('A2/N3: a start for a live run that has lost its spawner (as after a restart) fails the seat once, with the plain reason', async () => {
     onDemand(0);
     const req = durableReq();
     await launchTeam('team1', 'p1', req as never);
     const record = recordFor(req.launchRequestId);
-    await host.cancelTeamLaunch(req.callerPrincipalId, req.launchRequestId);
+    // A restart loses the in-memory spawner while the record stays active. Re-reading the lifecycle file with a
+    // fresh process-level registry is not possible in one process, so ask the way the engine would for a run
+    // the registry has released (the terminal hook), which leaves the stored record active until teardown.
+    await h.squadOpts.onTerminal({ callerPrincipalId: req.callerPrincipalId, teamLaunchRequestId: req.launchRequestId, id: 'exec', projectId: 'p1', state: 'COMPLETED' }).catch(() => undefined);
     expect((await spawn(record.id, '0:w1:1')).ok).toBe(false);
-    expect(worker(recordFor(req.launchRequestId), '0:w1:1')?.process).toBe('canceled');
+    const seat = worker(recordFor(req.launchRequestId), '0:w1:1');
+    expect(seat).toMatchObject({ process: 'spawn-failed', exitReason: expect.stringContaining('app restarted') });
+    // asking again settles nothing new
+    expect((await spawn(record.id, '0:w1:1')).ok).toBe(false);
+  });
+
+  it('A12: a start that arrives while the run is being canceled (a started seat still closing) leaves the restart message off', async () => {
+    onDemand(0);
+    const req = durableReq();
+    await launchTeam('team1', 'p1', req as never);
+    const record = recordFor(req.launchRequestId);
+    // the run is canceling but a started seat has not exited yet, so the record stays cancel-pending
+    h.sessions.get([...h.sessions.keys()][0])!.status = 'running';
+    await h.squadOpts.onTerminal({ callerPrincipalId: req.callerPrincipalId, teamLaunchRequestId: req.launchRequestId, id: 'exec', projectId: 'p1', state: 'COMPLETED' }).catch(() => undefined);
+    const stored = JSON.parse(readFileSync(lifecycleFile(), 'utf8'));
+    const entry = stored.records.find((r: { id: string }) => r.id === record.id);
+    entry.state = 'cancel-pending';
+    writeFileSync(lifecycleFile(), JSON.stringify(stored));
+    expect((await spawn(record.id, '0:w1:1')).ok).toBe(false);
+    expect(worker(recordFor(req.launchRequestId), '0:w1:1')?.exitReason).toBeUndefined();
+    expect(worker(recordFor(req.launchRequestId), '0:w1:1')?.process).toBe('authorized');
+  });
+
+  it('A10: a start refused because the machine is at its live-session limit leaves the seat waiting, and it starts once there is room', async () => {
+    onDemand(0);
+    const req = durableReq();
+    await launchTeam('team1', 'p1', req as never);
+    const record = recordFor(req.launchRequestId);
+    // the coordinator and the running seat already fill the smallest allowed session limit (2)
+    expect(h.sessions.size).toBeGreaterThanOrEqual(2);
+    h.config = { ...h.config, maxLiveSessions: 2 };
+    const refused = await spawn(record.id, '0:w1:0');
+    expect(refused).toMatchObject({ ok: false, message: expect.stringMatching(/capacity changed/) });
+    expect(worker(recordFor(req.launchRequestId), '0:w1:0')?.process).toBe('authorized');
+    h.config = { ...h.config, maxLiveSessions: 50 };
+    expect((await spawn(record.id, '0:w1:0')).ok).toBe(true);
   });
 
   it('F3: a run that reaches a terminal state (completed, failed, stopped, dismissed) forgets the spawner', async () => {

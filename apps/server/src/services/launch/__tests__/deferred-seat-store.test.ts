@@ -143,10 +143,10 @@ describe('review round 1 fixes', () => {
   it('A2: fails a seat nobody can start any more, once, with a plain reason, and frees its capacity', async () => {
     const { store, id } = await open();
     await store.addDeferredWorker(id, seat);
-    const failed = await store.failDeferredSeat(id, '0:w:0');
-    expect(failed?.workers[0]).toMatchObject({ process: 'spawn-failed', capacityReleased: true, exitReason: expect.stringContaining('Resume the run') });
-    expect(await store.failDeferredSeat(id, '0:w:0')).toBeUndefined();
-    expect(await store.failDeferredSeat(id, 'nope')).toBeUndefined();
+    const failed = await store.failDeferredSeat(id, '0:w:0', 'Resume the run to start it.');
+    expect(failed?.workers[0]).toMatchObject({ process: 'spawn-failed', capacityReleased: true, exitReason: 'Resume the run to start it.' });
+    expect(await store.failDeferredSeat(id, '0:w:0', 'again')).toBeUndefined();
+    expect(await store.failDeferredSeat(id, 'nope', 'x')).toBeUndefined();
   });
 
   it('puts a seat that was mid-start at a restart back to waiting, and reports never-started slots', async () => {
@@ -160,5 +160,58 @@ describe('review round 1 fixes', () => {
     expect((await restarted.get(id))!.workers.find((w) => w.slotId === '0:w:0')?.process).toBe('authorized');
     expect(restarted.neverStartedSlotsSync('o', 'r').sort()).toEqual(['0:w:0', '0:w:1']);
     expect(restarted.neverStartedSlotsSync('o', 'unknown')).toEqual([]);
+  });
+});
+
+describe('review round 2 (#580)', () => {
+  it('A9: a run canceled while a seat is starting finishes that seat, so the record reaches canceled', async () => {
+    const { store, id } = await open();
+    await store.addDeferredWorker(id, seat);
+    await store.claimDeferredSpawn(id, '0:w:0');
+    await store.cancel(id);
+    const record = (await store.get(id))!;
+    expect(record.workers[0]).toMatchObject({ process: 'canceled', capacityReleased: true });
+    expect(record.state).toBe('canceled');
+    expect(await store.reopenDeferredSpawn(id, '0:w:0')).toBe(false);
+  });
+
+  it('A9: after a restart, a seat that was mid-start on a canceled run is finished, not revived', async () => {
+    const { store, id, filePath } = await open();
+    await store.addDeferredWorker(id, seat);
+    await store.addWorker(id, running);
+    await store.complete(id, { ok: true, value: { launchRequestId: 'r', launched: 1, cohortId: 'c', workers: [{ sessionId: 's1', cohortId: 'c', slotId: '1:v:0', personaId: 'v', projectId: 'p', authorizationId: 'a1' }], failedSlots: [] } });
+    await store.claimDeferredSpawn(id, '0:w:0');
+    const state = JSON.parse(readFileSync(filePath, 'utf8'));
+    state.records[0].state = 'cancel-pending';
+    writeFileSync(filePath, JSON.stringify(state));
+    const restarted = createTeamLifecycleStore({ filePath });
+    await restarted.reconcileStartup(new Set());
+    expect((await restarted.get(id))!.workers.find((w) => w.slotId === '0:w:0')).toMatchObject({ process: 'canceled', capacityReleased: true });
+  });
+
+  it('N4: a worker with no session that is not a recorded on-demand seat still makes the file invalid', async () => {
+    const { store, id, filePath } = await open();
+    await store.addWorker(id, running);
+    const state = JSON.parse(readFileSync(filePath, 'utf8'));
+    delete state.records[0].workers[0].sessionId;
+    state.records[0].workers[0].process = 'authorized';
+    writeFileSync(filePath, JSON.stringify(state));
+    await expect(createTeamLifecycleStore({ filePath }).list()).rejects.toThrow('corrupt team lifecycle store');
+    state.records[0].workers[0].onDemand = true;
+    writeFileSync(filePath, JSON.stringify(state));
+    expect((await createTeamLifecycleStore({ filePath }).list())[0].workers).toHaveLength(1);
+  });
+
+  it('N5/A11: never-started slots are read once per file version and a read error is reported once', async () => {
+    const { store, id, filePath } = await open();
+    await store.addDeferredWorker(id, seat);
+    expect(store.neverStartedSlotsSync('o', 'r')).toEqual(['0:w:0']);
+    expect(store.neverStartedSlotsSync('o', 'r')).toEqual(['0:w:0']);
+    const spy = (await import('vitest')).vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    writeFileSync(filePath, '{ not json');
+    expect(store.neverStartedSlotsSync('o', 'r')).toEqual([]);
+    expect(store.neverStartedSlotsSync('o', 'r')).toEqual([]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });

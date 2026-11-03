@@ -1962,7 +1962,9 @@ export class ExecutionService {
       let sessionId = worker.sessionId;
       if (sessionId === undefined) {
         sessionId = await this.startDeferredSeat(lifecycle?.recordId, assignment.slotId);
-        if (sessionId === undefined) {
+        // The run may have ended while the seat was starting: give it nothing and let the unit be re-offered.
+        const current = sessionId === undefined ? undefined : await this.deps.store.get(record.id);
+        if (sessionId === undefined || !current || isResumeGrantTerminal(current.state)) {
           await this.releaseUndeliveredAssignments(record.id, [assignment]);
           continue;
         }
