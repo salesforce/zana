@@ -25,6 +25,7 @@ import {
 } from './persona-store.js';
 import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import type { Project, Persona } from '@zana-ai/zcc-domain/product';
+import { toPersonaSummary } from '@zana-ai/zcc-domain/product';
 
 describe('PersonaStore', () => {
   let store: PersonaStore;
@@ -568,6 +569,46 @@ describe('PersonaStore', () => {
     unsubscribe();
     store.refresh();
     expect(fired).toBe(false);
+  });
+
+  it('REQ-5/REQ-6: keeps a valid reasoningLevel and round-trips it through save, reload and summary (#584)', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      const saved = store.saveUser({ name: `Effort ${level}`, reasoningLevel: level });
+      expect(saved.reasoningLevel).toBe(level);
+    }
+    const saved = store.saveUser({ name: 'Effort Round Trip', reasoningLevel: 'xhigh' });
+    store.refresh();
+    const reloaded = store.list().find((p) => p.id === saved.id);
+    expect(reloaded?.reasoningLevel).toBe('xhigh');
+    expect(toPersonaSummary(reloaded as Persona).reasoningLevel).toBe('xhigh');
+  });
+
+  it('REQ-5: rejects an invalid reasoningLevel the same way as an invalid modelLevel (#584)', () => {
+    // @ts-expect-error bad enum
+    expect(() => store.saveUser({ name: 'Bad Effort', reasoningLevel: 'bogus' })).toThrow();
+    // @ts-expect-error thread-only value the CLI flag does not accept
+    expect(() => store.saveUser({ name: 'Bad Effort 2', reasoningLevel: 'ultracode' })).toThrow();
+    // @ts-expect-error wrong type
+    expect(() => store.saveUser({ name: 'Bad Effort 3', reasoningLevel: 3 })).toThrow();
+  });
+
+  it('REQ-2/REQ-6: a persona without reasoningLevel saves and loads with no such key (#584)', () => {
+    const saved = store.saveUser({ name: 'No Effort', modelLevel: 'high' });
+    expect(saved.reasoningLevel).toBeUndefined();
+    expect('reasoningLevel' in saved).toBe(false);
+    store.refresh();
+    const reloaded = store.list().find((p) => p.id === saved.id);
+    expect(reloaded && 'reasoningLevel' in reloaded).toBe(false);
+    expect(reloaded?.modelLevel).toBe('high');
+    expect(toPersonaSummary(reloaded as Persona).reasoningLevel).toBeUndefined();
+  });
+
+  it('REQ-6: clearing reasoningLevel on a re-save removes it (#584)', () => {
+    const saved = store.saveUser({ name: 'Clear Effort', reasoningLevel: 'max' });
+    const cleared = store.saveUser({ id: saved.id, name: 'Clear Effort' });
+    expect(cleared.reasoningLevel).toBeUndefined();
+    store.refresh();
+    expect(store.list().find((p) => p.id === saved.id)?.reasoningLevel).toBeUndefined();
   });
 
   it('Phase 3 — model level and execution state persistence, validation, and migration', () => {
