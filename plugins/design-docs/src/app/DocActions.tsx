@@ -209,7 +209,7 @@ export function useDocActions(projects: ProjectInfo[]): {
         )}
         <MenuItem icon={Copy} label="Copy chat reference" hint="Paste into any thread" onSelect={run(() => void copy(designDocDirective(doc.id), 'reference'))} />
         <MenuItem icon={Link2} label="Copy doc link" hint="Paste into another doc" onSelect={run(() => void copy(crossDocMarkdownLink(doc), 'doc link'))} />
-        <MenuItem icon={Hash} label="Copy id" hint={doc.slug} onSelect={run(() => void copy(doc.id, 'id'))} />
+        <MenuItem icon={Hash} label="Copy id" hint={doc.id} onSelect={run(() => void copy(doc.id, 'id'))} />
         <MenuItem icon={Download} label="Download .zip" hint={`${doc.slug}.zip`} onSelect={run(() => void download(doc))} />
         {doc.projectLocked ? (
           <MenuItem icon={FolderInput} label="Map to a Project…" hint="Peer-owned" onSelect={run(() => setMapping(true))} />
