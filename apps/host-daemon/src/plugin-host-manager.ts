@@ -484,6 +484,7 @@ export class PluginHostManager {
           }),
           detached: supportsProcessGroups(),
           stdio: ["ignore", "ignore", "pipe", "ipc"],
+          windowsHide: true,
         },
       );
     } catch (error) {

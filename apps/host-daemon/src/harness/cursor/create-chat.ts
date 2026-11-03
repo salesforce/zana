@@ -19,7 +19,7 @@ function defaultRunCreateChat(binary: string, cwd: string): Promise<string | nul
     execFile(
       binary,
       ['create-chat'],
-      { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_STDOUT_BYTES },
+      { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_STDOUT_BYTES, windowsHide: true },
       (err, stdout) => {
         if (err) return resolve(null);
         resolve(String(stdout ?? ''));

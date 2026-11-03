@@ -39,7 +39,8 @@ export function probeClaudeIdentity(
     execFileSync(command, [...args], {
       encoding: 'utf8',
       timeout: PROBE_TIMEOUT_MS,
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true
     })
 ): boolean {
   if (identityCache.has(bin)) return identityCache.get(bin)!;
