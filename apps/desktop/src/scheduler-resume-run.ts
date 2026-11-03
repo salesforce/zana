@@ -19,7 +19,7 @@
  * later can pick a newer conversation in the same folder and reopen the wrong one.
  * Every host service is injected so the logic is testable without the host.
  */
-import type { CreateTerminalRequest, Project, Result, ScheduledTask, ScheduleRun, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { CreateTerminalRequest, Project, Result, ScheduledTask, ScheduleRun, ScheduleRunConversation, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { latestResumableRun, resumableRun } from '@zana-ai/zcc-domain/schedule-health';
 import type { NativeConversationResume } from '@zana-ai/zcc-host-daemon/harness/registration';
 
@@ -33,8 +33,8 @@ interface Registration {
   nativeConversationId?: (session: TerminalSession) => string | undefined;
 }
 
-export interface ResumeRunDeps {
-  getTask: (scheduleId: string) => ScheduledTask | undefined;
+/** The host services the shared core needs; schedule and goal resolvers both inject these. */
+export interface ResumeCoreDeps {
   listProjects: () => Project[];
   /** Live (not exited) sessions of a project. */
   listLiveSessions: (projectId: string) => TerminalSession[];
@@ -43,10 +43,14 @@ export interface ResumeRunDeps {
   realpath: (path: string) => string;
 }
 
+export interface ResumeRunDeps extends ResumeCoreDeps {
+  getTask: (scheduleId: string) => ScheduledTask | undefined;
+}
+
 type ResumableRegistration = Registration & { nativeConversationResume: NonNullable<Registration['nativeConversationResume']> };
-const fail = <T = ResumeRunValue>(code: string, message: string): Result<T> => ({ ok: false, code, message });
-const NO_CONVERSATION = "This run didn't record a conversation to reopen";
-const UNSUPPORTED = "This agent can't reopen a past conversation";
+export const fail = <T = ResumeRunValue>(code: string, message: string): Result<T> => ({ ok: false, code, message });
+export const NO_CONVERSATION = "This run didn't record a conversation to reopen";
+export const UNSUPPORTED = "This agent can't reopen a past conversation";
 
 /**
  * Opens still waiting for their terminal, by project + harness + conversation id.
@@ -80,7 +84,7 @@ const moved = () => fail<{ cwd?: string }>('CONVERSATION_MOVED', "This run's con
  * that names none starts in a machine, global or home default resolved at launch, which the record
  * cannot tell us, so there is nothing to compare against.
  */
-function checkFolder(project: Project, recordedCwd: string, deps: Pick<ResumeRunDeps, 'realpath'>): Result<{ cwd?: string }> {
+function checkFolder(project: Project, recordedCwd: string, subject: string, deps: Pick<ResumeCoreDeps, 'realpath'>): Result<{ cwd?: string }> {
   if (project.remote) {
     const named = project.remote.remotePath?.trim();
     // `project.path` also counts: a local-agent-with-remote-tools session records the project's own path.
@@ -89,7 +93,7 @@ function checkFolder(project: Project, recordedCwd: string, deps: Pick<ResumeRun
   }
   let cwd: string;
   try { cwd = deps.realpath(project.path); }
-  catch { return fail<{ cwd?: string }>('PROJECT_MISSING', 'The project folder for this schedule is missing'); }
+  catch { return fail<{ cwd?: string }>('PROJECT_MISSING', `The project folder for this ${subject} is missing`); }
   let recorded: string | undefined;
   try { recorded = deps.realpath(recordedCwd); } catch { recorded = undefined; }
   return recorded === cwd ? { ok: true, value: { cwd } } : moved();
@@ -97,11 +101,11 @@ function checkFolder(project: Project, recordedCwd: string, deps: Pick<ResumeRun
 
 /** Reuse an already open tab (the run's own, or any live tab of the same harness on the same conversation), else launch once. */
 async function reuseOrLaunch(
-  project: Project, task: ScheduledTask, run: ScheduleRun, id: string, cwd: string | undefined,
-  registration: ResumableRegistration, deps: ResumeRunDeps
+  project: Project, title: string, runSessionId: string | undefined, id: string, cwd: string | undefined,
+  registration: ResumableRegistration, deps: ResumeCoreDeps
 ): Promise<Result<ResumeRunValue>> {
   const live = deps.listLiveSessions(project.id);
-  const ownTab = run.sessionId ? live.find((session) => session.id === run.sessionId) : undefined;
+  const ownTab = runSessionId ? live.find((session) => session.id === runSessionId) : undefined;
   if (ownTab) return { ok: true, value: { session: ownTab, reused: true } };
   // An id only means something within its own harness, but the resume tab opens under the harness's fixed
   // resume profile, not the recorded one (claude-yolo reopens as claude): compare harnesses, not profile names.
@@ -122,7 +126,7 @@ async function reuseOrLaunch(
       cwd,
       cols: 80,
       rows: 24,
-      title: `↺ ${task.name}`,
+      title,
       ...resume
     } as CreateTerminalRequest);
     return created.ok ? { ok: true, value: { session: created.value, reused: false } } : created;
@@ -130,6 +134,31 @@ async function reuseOrLaunch(
   opening.set(key, open);
   try { return await open; }
   finally { opening.delete(key); }
+}
+
+export interface ResumeConversationInput {
+  project: Project;
+  /** Tab title for a newly opened tab. */
+  title: string;
+  /** What the user calls the owner of the run, for plain error texts ("schedule", "goal"). */
+  subject: string;
+  /** The run's own pty id: its tab is reused while it is still open. */
+  runForTab: { sessionId?: string };
+  conversation: ScheduleRunConversation;
+}
+
+/**
+ * The shared tail of every "reopen a finished run" resolver: check the folder (Rule 2),
+ * pick the harness, then reuse an open tab or launch once. The caller has already
+ * validated that the conversation id is valid (`resumableRun`).
+ */
+export async function resumeConversation(input: ResumeConversationInput, deps: ResumeCoreDeps): Promise<Result<ResumeRunValue>> {
+  const { project, conversation } = input;
+  const folder = checkFolder(project, conversation.cwd, input.subject, deps);
+  if (!folder.ok) return folder;
+  const registration = deps.registrationFor(conversation.profile);
+  if (!registration?.nativeConversationResume) return fail('UNSUPPORTED', UNSUPPORTED);
+  return reuseOrLaunch(project, input.title, input.runForTab.sessionId, conversation.id!, folder.value.cwd, registration as ResumableRegistration, deps);
 }
 
 export async function resumeScheduledRun(input: ResumeRunInput, deps: ResumeRunDeps): Promise<Result<ResumeRunValue>> {
@@ -145,10 +174,5 @@ export async function resumeScheduledRun(input: ResumeRunInput, deps: ResumeRunD
 
   const project = deps.listProjects().find((candidate) => candidate.id === task.projectId);
   if (!project) return fail('PROJECT_MISSING', 'The project for this schedule is no longer registered');
-  const folder = checkFolder(project, conversation.cwd, deps);
-  if (!folder.ok) return folder;
-
-  const registration = deps.registrationFor(conversation.profile);
-  if (!registration?.nativeConversationResume) return fail('UNSUPPORTED', UNSUPPORTED);
-  return reuseOrLaunch(project, task, run, conversation.id!, folder.value.cwd, registration as ResumableRegistration, deps);
+  return resumeConversation({ project, title: `↺ ${task.name}`, subject: 'schedule', runForTab: run, conversation }, deps);
 }

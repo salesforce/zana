@@ -103,6 +103,15 @@ it('exposes run query, retry, resume and dismiss through their own scheduler IPC
   ]);
 });
 
+it('exposes goal resume through its own goals IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({ ok: true });
+  await api.goals.resumeIteration({ goalId: 'g1', iterationId: 'i1' });
+  expect(electron.invoke.mock.calls).toEqual([[IPC.goals.resumeIteration, { goalId: 'g1', iterationId: 'i1' }]]);
+});
+
 it('forwards plugin settings read options to the getSettings IPC channel', async () => {
   await import('./preload.js');
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];

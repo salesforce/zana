@@ -1940,6 +1940,8 @@ export interface CcApi {
     runNow(id: string): Promise<Result<Goal>>;
     /** Check reserved workers without starting or resuming work. False means still unconfirmed. */
     reconcile(id: string): Promise<Result<boolean>>;
+    /** Reopen a finished iteration's agent conversation in a new tab (latest resumable one when `iterationId` is omitted). */
+    resumeIteration(input: { goalId: string; iterationId?: string }): Promise<Result<{ session: TerminalSession; reused: boolean }>>;
     onChanged(cb: (goals: Goal[]) => void): () => void;
   };
   /**
