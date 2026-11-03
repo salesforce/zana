@@ -1,6 +1,7 @@
+import { removeTreeWithoutFollowingLinksAsync } from '@zana-ai/zcc-agent-process-utils';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { mkdir, open, readdir, realpath, rename } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import type { AgentRuntimeSkillRoot } from '@zana-ai/zcc-agent-runtime';
 import {
@@ -40,7 +41,7 @@ export function createSkillSnapshotStore(dataDir: string) {
     const active = new Set([...retained.values()].flatMap(ids => [...ids]));
     for (const id of catalogs.keys()) {
       if (active.has(id)) continue;
-      await rm(join(root, id), { recursive: true, force: true });
+      await removeTreeWithoutFollowingLinksAsync(join(root, id));
       catalogs.delete(id);
     }
   }
@@ -56,7 +57,7 @@ export function createSkillSnapshotStore(dataDir: string) {
             if (!entry.isDirectory() || !match || join(parent, entry.name) === root) continue;
             try { process.kill(Number(match[1]), 0); }
             catch (error) {
-              if ((error as NodeJS.ErrnoException).code === 'ESRCH') await rm(join(parent, entry.name), { recursive: true, force: true });
+              if ((error as NodeJS.ErrnoException).code === 'ESRCH') await removeTreeWithoutFollowingLinksAsync(join(parent, entry.name));
             }
           }
           initialized = true;
@@ -151,7 +152,7 @@ export function createSkillSnapshotStore(dataDir: string) {
               try { await handle.writeFile(file.content); } finally { await handle.close(); }
             }
             await rename(temporary, join(root, id));
-          } finally { await rm(temporary, { recursive: true, force: true }); }
+          } finally { await removeTreeWithoutFollowingLinksAsync(temporary); }
           roots = expandDirectoryRootsToRuntimeSkillRoots(sources.map((_, index) => join(root, id, String(index))));
           catalogs.set(id, roots);
         }
@@ -169,7 +170,7 @@ export function createSkillSnapshotStore(dataDir: string) {
         disposed = true;
         retained.clear();
         catalogs.clear();
-        await rm(root, { recursive: true, force: true });
+        await removeTreeWithoutFollowingLinksAsync(root);
       });
     }
   };
