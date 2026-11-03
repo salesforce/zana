@@ -95,6 +95,7 @@ import {
 } from "./session-options.js";
 import {
   createClaudeSkillPluginsRoot,
+  createSkillCopyBudget,
   ensureClaudeSkillPlugin,
 } from "./skill-plugins.js";
 import { buildReadonlyBashUpdatedInput } from "./readonly-bash-policy.js";
@@ -396,6 +397,10 @@ function nextInteractiveRequestId(): string {
   return `interaction-${interactiveRequestIdCounter}`;
 }
 let configuredSkillRoots: ClaudeCodeSkillRoot[] | null = null;
+// The roots from the last skills/configure, kept so each thread start can
+// refresh the copies of user folders (configure is sent once per bridge).
+let configuredSkillRootInputs: readonly { id: string; path: string }[] | null =
+  null;
 let skillPluginsRoot: string | null = null;
 let bridgeTempDir: string | null = null;
 
@@ -404,6 +409,7 @@ function assembleSkillPlugins(
 ): ClaudeCodeSkillRoot[] {
   const takenNames = new Map<string, string>();
   const assembled: ClaudeCodeSkillRoot[] = [];
+  const budget = createSkillCopyBudget();
   for (const root of roots) {
     try {
       assembled.push({
@@ -417,6 +423,7 @@ function assembleSkillPlugins(
             owned: root.id.startsWith("native-") ? "user" : "zana",
           },
           takenNames,
+          budget,
         }),
       });
     } catch (error) {
@@ -2581,6 +2588,7 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       await handleThreadNameSet(request.id, request.params);
       break;
     case "skills/configure":
+      configuredSkillRootInputs = request.params.roots;
       configuredSkillRoots = assembleSkillPlugins(request.params.roots);
       sendResult(request.id, { ok: true });
       break;
@@ -2850,6 +2858,10 @@ async function handleThreadFork(
 function toClaudeSessionParams(
   params: z.infer<typeof canonicalThreadStartParamsSchema>,
 ): Record<string, unknown> {
+  if (configuredSkillRootInputs !== null) {
+    // Synchronous, so two thread starts never write the same copy at once.
+    configuredSkillRoots = assembleSkillPlugins(configuredSkillRootInputs);
+  }
   return buildClaudeSessionParams({
     threadId: params.threadId,
     cwd: params.cwd,

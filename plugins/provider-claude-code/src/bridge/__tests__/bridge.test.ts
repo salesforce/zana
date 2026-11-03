@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -6175,10 +6176,35 @@ describe("canonical skills/configure", () => {
           { id: "native-claude-1", path: missingRoot, skills: [] },
         ],
       });
-      await bridge.waitForResponse(1);
+      const configured = await bridge.waitForResponse(1);
       const lines = stderr.mock.calls.map((call) => String(call[0])).join("");
       expect(lines).toContain('skipping injected skill root "native-claude-1"');
       expect(lines).not.toContain('"native-claude-0"');
+      expect(configured).toMatchObject({ result: { ok: true } });
+      bridge.sendRequest(2, "thread/start", {
+        threadId: "thread-native-copy",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(2);
+      const plugins = (getLatestQueryOptions() as { plugins?: { path: string }[] })
+        .plugins;
+      expect(plugins).toHaveLength(1);
+      const skills = join(plugins?.[0]?.path ?? "", "skills");
+      expect(lstatSync(skills).isSymbolicLink()).toBe(false);
+      expect(existsSync(join(skills, "demo", "SKILL.md"))).toBe(true);
+      // A2: a skill added after configure reaches the next thread start.
+      mkdirSync(join(nativeRoot, "added"), { recursive: true });
+      writeFileSync(join(nativeRoot, "added", "SKILL.md"), "---\nname: added\n---\n");
+      bridge.sendRequest(3, "thread/start", {
+        threadId: "thread-native-copy-2",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(3);
+      expect(existsSync(join(skills, "added", "SKILL.md"))).toBe(true);
     } finally {
       stderr.mockRestore();
       bridge.sendRequest(99, "skills/configure", { roots: [] });
