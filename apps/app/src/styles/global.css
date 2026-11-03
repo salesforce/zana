@@ -41888,6 +41888,15 @@ body.split-frame-guard webview {
   border-radius: 8px;
 }
 
+.team-slot-on-demand {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .team-slot-reorder {
   display: inline-flex;
   align-items: center;
