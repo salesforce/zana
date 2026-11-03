@@ -591,6 +591,13 @@ export function projectPersonaFields(p: Persona): Persona {
 function parsePersona(content: string): Persona | null {
   try {
     const raw = JSON.parse(content);
+    // Forward compatibility: a persona file written by a newer Zana may carry an
+    // effort level this version does not know. Ignore just that field (the file
+    // is not rewritten) instead of dropping the whole persona.
+    if (raw && typeof raw === 'object' && raw.reasoningLevel !== undefined
+      && !(PERSONA_REASONING_LEVELS as readonly unknown[]).includes(raw.reasoningLevel)) {
+      delete raw.reasoningLevel;
+    }
     const sanitized = sanitizePersona(raw);
     if (!sanitized) return null;
     const migrated = migratePersonaIfNeeded(sanitized);

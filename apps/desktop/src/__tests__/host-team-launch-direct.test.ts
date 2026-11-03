@@ -196,10 +196,10 @@ beforeEach(() => {
   threadProviderHandles = [
     registerThreadProvider('test', { id: 'claude-code', displayName: 'Claude Code',
       capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
-        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'] }, composerActions: [] }),
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'], reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }, composerActions: [] }),
     registerThreadProvider('test', { id: 'acp-opencode', displayName: 'OpenCode',
       capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
-        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'] }, composerActions: [] })
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'], reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }, composerActions: [] })
   ];
   seq += 1;
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
@@ -683,6 +683,17 @@ describe('launchTeam Modern structured path', () => {
     expect(snapshotEffort('0:w1:0')).toBe('high');
     expect(snapshotEffort('0:w1:1')).toBe('high');
     expect(snapshotEffort('1:w2:0')).toBeUndefined();
+  });
+
+  it('gives a non-Claude Modern seat no reasoning effort even when its persona sets one (#584)', async () => {
+    h.personas[1] = persona('w1', { baseProfile: 'opencode', reasoningLevel: 'high' });
+    const req = structuredReq();
+    const result = await launchTeam('team1', 'p1', req);
+    expect(result).toMatchObject({ ok: true, value: { failedSlots: [] } });
+    const creates = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    expect(creates.filter((request) => request.providerId === 'acp-opencode').length).toBeGreaterThan(0);
+    expect(creates.filter((request) => request.providerId === 'acp-opencode').every((request) => request.reasoningLevel === undefined)).toBe(true);
+    expect(creates.filter((request) => request.providerId === 'claude-code').every((request) => request.reasoningLevel === undefined)).toBe(true);
   });
 
   it.each([

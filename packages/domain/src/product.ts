@@ -4496,9 +4496,11 @@ export interface Persona {
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
   /**
    * Reasoning effort → claude `--effort`. Applies to Claude personas launched as
-   * terminal / CLI Agent and CLI Squad seats; other harnesses ignore it, and
-   * thread (Modern conversation) launches do not carry it. Absent means the
-   * harness default (no flag emitted).
+   * terminal / CLI Agent and CLI Squad seats. Modern Squad seats carry it too
+   * (as the thread `reasoningLevel`) but only on the Claude provider, and only for
+   * a level that provider declares; other harnesses and plain thread
+   * (Modern conversation) launches ignore it. Absent means the harness default
+   * (no flag emitted).
    */
   reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';

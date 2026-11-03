@@ -617,6 +617,18 @@ describe('PersonaStore', () => {
     }
   });
 
+  it('forward compat: a file with an unknown reasoningLevel still loads, without the field, and is not rewritten (#584)', () => {
+    mkdirSync(userDir, { recursive: true });
+    const file = join(userDir, 'future.json');
+    writeFileSync(file, JSON.stringify({ id: 'future', name: 'Future', modelLevel: 'high', reasoningLevel: 'ultra-max' }, null, 2));
+    const before = readFileSync(file);
+    store.refresh();
+    const loaded = store.list().find((p) => p.id === 'future');
+    expect(loaded?.modelLevel).toBe('high');
+    expect(loaded && 'reasoningLevel' in loaded).toBe(false);
+    expect(readFileSync(file).equals(before)).toBe(true);
+  });
+
   it('OBL-009/REQ-2: loading and listing a persona file without the field leaves its bytes untouched (#584)', () => {
     mkdirSync(userDir, { recursive: true });
     const file = join(userDir, 'legacy.json');

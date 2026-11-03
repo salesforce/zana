@@ -179,6 +179,19 @@ export function getThreadProvider(providerId: string): ThreadProviderRecord | un
   return currentProvider(canonicalThreadProviderId(providerId));
 }
 
+/**
+ * The persona reasoning effort a Modern seat may carry for `providerId`: only the
+ * Claude provider takes a persona's `--effort` vocabulary, and only for levels it
+ * declares. Any other provider (or an undeclared level) gets none, so a seat never
+ * receives an effort its runtime would reject or silently misread.
+ */
+export function personaEffortForProvider<T extends string>(providerId: string, level: T | undefined): T | undefined {
+  if (!level) return undefined;
+  const provider = getThreadProvider(providerId);
+  if (provider?.id !== 'claude-code') return undefined;
+  return provider.capabilities.reasoningLevels?.includes(level) ? level : undefined;
+}
+
 export function canonicalThreadProviderId(providerId: string): string {
   if (providerId === 'claude' || providerId === 'claude-yolo') return 'claude-code';
   if (providerId === 'cursor') return 'acp-cursor';

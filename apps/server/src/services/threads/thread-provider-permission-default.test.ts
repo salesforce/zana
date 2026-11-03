@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   permissionModeForLaunchProfile,
+  personaEffortForProvider,
   registerThreadProvider
 } from './thread-provider-catalog.js';
 
@@ -48,5 +49,33 @@ describe('permissionModeForLaunchProfile', () => {
 
   it.each([{ modes: [] }, { modes: ['unknown-mode'] }])('keeps the conservative fallback for invalid modes $modes', ({ modes }) => {
     expect(permissionModeForLaunchProfile(register(modes))).toBe('accept-edits');
+  });
+});
+
+describe('personaEffortForProvider', () => {
+  function registerProvider(id: string, reasoningLevels?: string[]) {
+    registrations.push(registerThreadProvider('effort-test', {
+      id, displayName: id, capabilities: { supportsServiceTier: false, fork: 'none', permissionModes: ['full'], ...(reasoningLevels ? { reasoningLevels } : {}) }
+    }));
+  }
+
+  it('keeps a declared level on the Claude provider (including the claude alias)', () => {
+    registerProvider('claude-code', ['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(personaEffortForProvider('claude-code', 'xhigh')).toBe('xhigh');
+    expect(personaEffortForProvider('claude', 'max')).toBe('max');
+  });
+
+  it('drops an absent level and a level the Claude provider does not declare', () => {
+    registerProvider('claude-code', ['low', 'medium']);
+    expect(personaEffortForProvider('claude-code', undefined)).toBeUndefined();
+    expect(personaEffortForProvider('claude-code', 'max')).toBeUndefined();
+  });
+
+  it('gives a Claude provider with no declared levels, a non-Claude provider and an unknown provider none', () => {
+    registerProvider('claude-code');
+    expect(personaEffortForProvider('claude-code', 'high')).toBeUndefined();
+    registerProvider('acp-opencode', ['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(personaEffortForProvider('acp-opencode', 'high')).toBeUndefined();
+    expect(personaEffortForProvider('nope', 'high')).toBeUndefined();
   });
 });

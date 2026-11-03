@@ -100,7 +100,7 @@ import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
 import { teamRunNamerInput } from './team-run-title.js';
 import { MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, harnessFamilyOf, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
-import { canonicalThreadProviderId, getThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
+import { canonicalThreadProviderId, getThreadProvider, personaEffortForProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
@@ -5874,7 +5874,7 @@ export async function launchTeam(
         const permissionMode = unrestricted || persona.permissionMode === 'bypassPermissions' ? 'full' as const
           : wantsAuto && supportsAuto ? 'auto' as const : 'accept-edits' as const;
         modernSlots.set(slot.slotId, { providerId,
-          model: resolveModelTarget(provider, input).targetId, reasoningLevel: persona.reasoningLevel, permissionMode, systemPrompt: persona.appendSystemPrompt });
+          model: resolveModelTarget(provider, input).targetId, reasoningLevel: personaEffortForProvider(providerId, persona.reasoningLevel), permissionMode, systemPrompt: persona.appendSystemPrompt });
       }
       const preflight = await squadRuntime().preflightSquadRuntime({ projectId: targetProjectId,
         ...(project.hostId ? { hostId: project.hostId } : {}), providerIds: [...new Set([...modernSlots.values()].map(slot => slot.providerId))],
