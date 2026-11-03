@@ -6,6 +6,13 @@ import {
   rmdirSync,
   unlinkSync,
 } from "node:fs";
+import {
+  lstat,
+  readdir,
+  realpath,
+  rmdir,
+  unlink,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 /**
@@ -62,21 +69,34 @@ function removeUnlessDirectoryAt(
 ): boolean {
   const stat = lstatOrNull(path);
   if (stat === null) return true;
-  if (stat.isSymbolicLink()) {
-    removeLink(path);
-    return true;
-  }
-  if (!stat.isDirectory()) {
-    unlinkSync(path);
-    return true;
-  }
-  // `null` is a junction whose target is gone: still a link, never a folder.
-  const realPath = realPathOrNull(path);
-  if (realPath === null || !samePath(realPath, expectedRealPath)) {
-    removeLink(path);
-    return true;
-  }
-  return false;
+  const kind = classifyEntry(stat, () =>
+    realPathOrNull(path) ?? null,
+    expectedRealPath,
+  );
+  if (kind === "directory") return false;
+  if (kind === "link") removeLink(path);
+  else unlinkSync(path);
+  return true;
+}
+
+type EntryKind = "link" | "file" | "directory";
+
+/**
+ * The one rule both walks share: what an entry is. A symlink is a link, a
+ * non-directory is a file, and a directory is entered only when its real path
+ * (`null` is a junction whose target is gone) is the path walked to; anything
+ * else is a link the runtime did not report as one.
+ */
+function classifyEntry(
+  stat: Pick<Stats, "isSymbolicLink" | "isDirectory">,
+  realPathOf: () => string | null,
+  expectedRealPath: string,
+): EntryKind {
+  if (stat.isSymbolicLink()) return "link";
+  if (!stat.isDirectory()) return "file";
+  const realPath = realPathOf();
+  if (realPath === null || !samePath(realPath, expectedRealPath)) return "link";
+  return "directory";
 }
 
 /**
@@ -123,18 +143,80 @@ function samePath(left: string, right: string): boolean {
     : left === right;
 }
 
+const YIELD_EVERY_ENTRIES = 8;
+
 /**
- * Async twin of `removeTreeWithoutFollowingLinks`, with the same safety rules.
- * Contract stub: behaviour lands in u-core.
+ * Async twin of `removeTreeWithoutFollowingLinks`, with the same safety rules
+ * (`classifyEntry` is shared) and the same stop-at-first-failure behaviour.
+ * Entries are removed one at a time and the event loop is yielded to every few
+ * entries, so a large tree never blocks the process for the whole walk.
  */
 export async function removeTreeWithoutFollowingLinksAsync(
-  _root: string,
-  _options?: RemoveTreeAsyncOptions,
+  root: string,
 ): Promise<void> {
-  throw new Error("not implemented: removeTreeWithoutFollowingLinksAsync");
+  const path = resolve(root);
+  if ((await lstatOrNullAsync(path)) === null) return;
+  const walk = { entries: 0 };
+  await removeEntryAsync(path, await canonicalPathAsync(path), walk);
 }
 
-export interface RemoveTreeAsyncOptions {
-  /** Reserved for the async walk (for example a cancellation signal). */
-  signal?: AbortSignal;
+async function removeEntryAsync(
+  path: string,
+  expectedRealPath: string,
+  walk: { entries: number },
+): Promise<void> {
+  walk.entries += 1;
+  if (walk.entries % YIELD_EVERY_ENTRIES === 0) {
+    await new Promise<void>((done) => setImmediate(done));
+  }
+  const stat = await lstatOrNullAsync(path);
+  if (stat === null) return;
+  const realPath = stat.isDirectory() && !stat.isSymbolicLink()
+    ? await realPathOrNullAsync(path)
+    : null;
+  const kind = classifyEntry(stat, () => realPath, expectedRealPath);
+  if (kind === "file") {
+    await unlink(path);
+    return;
+  }
+  if (kind === "link") {
+    await removeLinkAsync(path);
+    return;
+  }
+  for (const name of await readdir(path)) {
+    await removeEntryAsync(join(path, name), join(expectedRealPath, name), walk);
+  }
+  await rmdir(path);
+}
+
+async function canonicalPathAsync(path: string): Promise<string> {
+  return join(await realpath(dirname(path)), basename(path));
+}
+
+async function removeLinkAsync(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "EISDIR") throw error;
+    await rmdir(path);
+  }
+}
+
+async function lstatOrNullAsync(path: string): Promise<Stats | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function realPathOrNullAsync(path: string): Promise<string | null> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }

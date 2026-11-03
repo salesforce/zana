@@ -110,7 +110,13 @@ describe("sweepOrphanTempDirs", () => {
     return dir;
   }
 
-  function sweep(extra: Partial<Parameters<typeof sweepOrphanTempDirs>[0]> = {}) {
+  /** Creating a child bumps a dir's mtime, so backdate after populating it. */
+  function backdate(dir: string, ageMs = HOUR_MS): void {
+    const when = new Date(Date.now() - ageMs);
+    utimesSync(dir, when, when);
+  }
+
+    function sweep(extra: Partial<Parameters<typeof sweepOrphanTempDirs>[0]> = {}) {
     return sweepOrphanTempDirs({ tempRoot: root, prefixes: PREFIXES, ...extra });
   }
 
@@ -230,6 +236,7 @@ describe("sweepOrphanTempDirs", () => {
         const dir = makeDir("bb-provider-bridge-999999-fixture-abc");
         mkdirSync(join(dir, "skills", "plugin"), { recursive: true });
         symlinkSync(target, join(dir, "skills", "plugin", "skills"), "junction");
+        backdate(dir);
 
         const result = await sweep({ isAlive: () => false });
 
@@ -295,6 +302,7 @@ describe("sweepOrphanTempDirs", () => {
         const stuck = makeDir("zcc-host-999991-fixture-abc");
         const inner = join(stuck, "inner");
         mkdirSync(inner);
+        backdate(stuck);
         chmodSync(inner, 0o000);
         locked.push(inner);
         const fine = makeDir("zcc-host-999992-fixture-abc");
