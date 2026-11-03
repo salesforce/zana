@@ -679,6 +679,16 @@ describe('personaArgs_build — persona reasoning effort (#584)', () => {
     expect(args).not.toContain('--permission-mode');
   });
 
+  it('OBL-007: with a permission mode the argument list ends --permission-mode <mode> --effort <level>', () => {
+    const args = personaArgs_build({ id: 'p', name: 'P', permissionMode: 'plan', reasoningLevel: 'high' }, 'claude');
+    expect(args.slice(-4)).toEqual(['--permission-mode', 'plan', '--effort', 'high']);
+  });
+
+  it('OBL-006: claude-yolo with max effort and a permission mode yields exactly --effort max', () => {
+    expect(personaArgs_build({ id: 'p', name: 'P', permissionMode: 'plan', reasoningLevel: 'max' }, 'claude-yolo'))
+      .toEqual(['--effort', 'max']);
+  });
+
   it('REQ-7: non-Claude harnesses ignore reasoningLevel', () => {
     for (const profile of ['codex', 'codex-yolo', 'opencode', 'cursor', 'pi'] as const) {
       const without = personaArgs_build({ id: 'p', name: 'P' }, profile);

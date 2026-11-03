@@ -19,12 +19,14 @@ vi.mock('electron', () => ({
 
 import {
   PersonaStore,
+  sanitizePersona,
   migratePersonaIfNeeded,
   projectPersonaFields,
   resolvePersonaLaunch
 } from './persona-store.js';
 import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import type { Project, Persona } from '@zana-ai/zcc-domain/product';
+import { registerListPersonasTool } from './register-personas-mcp-tool.js';
 import { toPersonaSummary } from '@zana-ai/zcc-domain/product';
 
 describe('PersonaStore', () => {
@@ -601,6 +603,44 @@ describe('PersonaStore', () => {
     expect(reloaded && 'reasoningLevel' in reloaded).toBe(false);
     expect(reloaded?.modelLevel).toBe('high');
     expect(toPersonaSummary(reloaded as Persona).reasoningLevel).toBeUndefined();
+  });
+
+  it('OBL-001/REQ-5: sanitizePersona keeps each allowed level, omits absence, nulls every other defined value (#584)', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      expect(sanitizePersona({ id: 'p', name: 'P', reasoningLevel: level })?.reasoningLevel).toBe(level);
+    }
+    const absent = sanitizePersona({ id: 'p', name: 'P' });
+    expect(absent).not.toBeNull();
+    expect(absent && 'reasoningLevel' in absent).toBe(false);
+    for (const bad of [null, '', 'extra-high', 'ultracode', 'High', 3, true, {}]) {
+      expect(sanitizePersona({ id: 'p', name: 'P', reasoningLevel: bad }), String(bad)).toBeNull();
+    }
+  });
+
+  it('OBL-009/REQ-2: loading and listing a persona file without the field leaves its bytes untouched (#584)', () => {
+    mkdirSync(userDir, { recursive: true });
+    const file = join(userDir, 'legacy.json');
+    writeFileSync(file, JSON.stringify({ id: 'legacy', name: 'Legacy', modelLevel: 'high' }, null, 2));
+    const before = readFileSync(file);
+    store.refresh();
+    const loaded = store.list().find((p) => p.id === 'legacy');
+    expect(loaded?.modelLevel).toBe('high');
+    expect(loaded && 'reasoningLevel' in loaded).toBe(false);
+    expect(readFileSync(file).equals(before)).toBe(true);
+  });
+
+  it('OBL-004/REQ-6: list_personas returns reasoningLevel from a reloaded persona (#584)', async () => {
+    const saved = store.saveUser({ name: 'Listed Effort', reasoningLevel: 'xhigh' });
+    store.refresh();
+    let handler: (() => Promise<{ content: Array<{ text: string }> }>) | undefined;
+    const fakeServer = { registerTool: (_n: string, _c: unknown, h: typeof handler) => { handler = h; } };
+    registerListPersonasTool(fakeServer as never, {
+      listPersonas: () => store.list().map((p) => toPersonaSummary(p))
+    });
+    const result = await handler!();
+    const listed = JSON.parse(result.content[0].text) as Array<{ id: string; reasoningLevel?: string }> | { personas: Array<{ id: string; reasoningLevel?: string }> };
+    const rows = Array.isArray(listed) ? listed : listed.personas;
+    expect(rows.find((r) => r.id === saved.id)?.reasoningLevel).toBe('xhigh');
   });
 
   it('REQ-6: clearing reasoningLevel on a re-save removes it (#584)', () => {
