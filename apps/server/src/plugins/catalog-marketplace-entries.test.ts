@@ -6,6 +6,7 @@ import {
 } from './catalog-marketplace-entries.js';
 import type { MarketplaceCatalogRow } from './marketplace-store.js';
 import type { MarketplaceIndex } from './marketplace.js';
+import { parsePluginSource } from '@zana-ai/zcc-domain';
 
 function catalog(
   over: Partial<MarketplaceCatalogRow> & { cachedIndex: MarketplaceIndex }
@@ -127,6 +128,17 @@ describe('projectCatalogMarketplaceEntries', () => {
 });
 
 describe('resolveCatalogInstallSpec', () => {
+  it.each([
+    { ref: 'a'.repeat(40), subdir: 'plugins/notes & more' },
+    { range: '^1.0.0', subdir: 'plugins/notes', tagPrefix: 'notes-' },
+    { subdir: 'plugins/notes' }
+  ])('preserves Git catalog source options through the UI install spec: %o', (options) => {
+    const url = 'https://example.test/monorepo.git';
+    const index: MarketplaceIndex = { ...NOTES, plugins: [{ ...NOTES.plugins[0]!, source: { git: { url, ...options } } }] };
+    const spec = resolveCatalogInstallSpec([catalog({ cachedIndex: index })], 'notes');
+    expect(parsePluginSource(spec!)).toMatchObject({ kind: 'git', url, subdir: options.subdir,
+      selector: 'range' in options ? { kind: 'range', range: options.range, tagPrefix: options.tagPrefix } : { kind: 'ref', ref: options.ref ?? 'HEAD' } });
+  });
   it('returns the npm spec main owns for a listed id', () => {
     expect(resolveCatalogInstallSpec([catalog({ cachedIndex: NOTES })], 'notes')).toBe(
       'npm:@zana/notes@1.2.0'
