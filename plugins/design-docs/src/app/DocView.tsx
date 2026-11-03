@@ -416,7 +416,7 @@ export function DocView({
             leading={
               treeShown ? null : (
                 <>
-                  {treeInline ? <IconButton icon={PanelLeftOpen} label="Show files" onClick={() => setTreeOpen(true)} /> : null}
+                  {treeInline ? <IconButton icon={PanelLeftOpen} label="Show files" hint="Show the file list" onClick={() => setTreeOpen(true)} /> : null}
                   <FileSwitcher doc={data} activePath={activePath} onOpen={openPath} onPathChanged={pathChanged} hasDraft={hasDraft} />
                 </>
               )

@@ -442,7 +442,7 @@ export function FileTree({
           onClose={() => setAddMenu(false)}
           className="dd-menu dd-menu-add"
           align="start"
-          anchor={<IconButton icon={Plus} label="Add to doc" size={13} active={addMenu} disabled={full} onClick={() => setAddMenu(!addMenu)} />}
+          anchor={<IconButton icon={Plus} label="Add to doc" hint="Add a file, template, or upload" size={13} active={addMenu} disabled={full} onClick={() => setAddMenu(!addMenu)} />}
         >
           <MenuItem icon={FilePlus2} label="New blank file…" hint="Type a name like notes.md" onSelect={() => { setAddMenu(false); setCreating(true); }} />
           <MenuItem icon={LayoutTemplate} label="From template…" hint="Add a template's files" onSelect={() => { setAddMenu(false); setFromTemplate(true); }} />
