@@ -14,6 +14,38 @@ import { join } from "node:path";
 export interface ClaudeSkillPluginRoot {
   id: string;
   path: string;
+  /**
+   * Who owns the folder at `path`. `"zana"` roots (Zana's own snapshots) may be
+   * linked; `"user"` roots are copied, never linked. Absent means `"user"`.
+   */
+  owned?: "zana" | "user";
+}
+
+/** Caps for one `copySkillTree` call. */
+export interface CopySkillTreeLimits {
+  maxDepth: number;
+  maxFiles: number;
+  maxBytes: number;
+}
+
+/** What `copySkillTree` copied and what it left out. */
+export interface CopySkillTreeResult {
+  files: number;
+  bytes: number;
+  /** Symlinks, junctions and other non-regular entries that were skipped. */
+  skipped: number;
+}
+
+/**
+ * Copy the regular files of `source` into `destination` without following any
+ * link inside the source. Not implemented yet.
+ */
+export function copySkillTree(
+  _source: string,
+  _destination: string,
+  _limits: CopySkillTreeLimits,
+): CopySkillTreeResult {
+  throw new Error("not implemented: copySkillTree");
 }
 
 interface ClaudePluginManifest {
