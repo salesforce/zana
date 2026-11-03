@@ -1,11 +1,15 @@
 /** Hard limits for persisted peer-sync data and protocol packets. */
 // Version 1 carried hashes only and cannot acknowledge a durable payload.
 // Version 3 adds delta offers: ancestors the recipient already holds may be omitted.
-export const PEER_PROTOCOL_VERSION = 3;
+export const PEER_PROTOCOL_VERSION = 4;
 /** Oldest protocol still spoken; handshakes open at this version and advertise PEER_PROTOCOL_VERSION. */
 export const PEER_MIN_PROTOCOL_VERSION = 2;
 /** First protocol in which senders may omit ancestors known to the recipient. */
 export const PEER_DELTA_PROTOCOL_VERSION = 3;
+/** First protocol whose offers and transfers may carry the advisory project name/tag hint. */
+export const PEER_PROJECT_HINT_PROTOCOL_VERSION = 4;
+export const MAX_PEER_PROJECT_NAME = 120;
+export const MAX_PEER_PROJECT_TAG = 64;
 export const MAX_PEER_GROUP_MEMBERS = 8;
 export const MAX_PEER_PACKET_BYTES = 512 * 1024;
 export const MAX_PEER_CHUNK_BYTES = 256 * 1024;

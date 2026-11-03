@@ -950,15 +950,15 @@ describe('peer protocol negotiation', () => {
     return sent;
   };
 
-  it('opens at protocol 2, upgrades to 3 with delta-aware peers and omits ancestry they hold', async () => {
+  it('opens at protocol 2, upgrades to 4 with delta-aware peers and omits ancestry they hold', async () => {
     const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
     const { doc, next } = authored(a);
     const peers = transport(a, b), sent = record(peers);
     expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
     const handshake = sent.find((item) => item.method === 'handshake')!.body;
-    expect(handshake).toMatchObject({ protocolVersion: 2, maxProtocolVersion: 3 });
-    expect(sent.find((item) => item.method === 'transfer')!.body).toMatchObject({ protocolVersion: 3 });
-    expect(a.sync.peerProtocol('replica-b')).toBe(3);
+    expect(handshake).toMatchObject({ protocolVersion: 2, maxProtocolVersion: 4 });
+    expect(sent.find((item) => item.method === 'transfer')!.body).toMatchObject({ protocolVersion: 4 });
+    expect(a.sync.peerProtocol('replica-b')).toBe(4);
     expect(a.sync.compactionBlocker()).toBeNull();
     next(); sent.length = 0;
     expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
@@ -995,8 +995,9 @@ describe('peer protocol negotiation', () => {
       grantEpoch: 1, groupId: 'group', rosterEpoch: 1 };
     expect(b.service.handshake('machine-a', hello).protocolVersion).toBe(2);
     expect(b.service.handshake('machine-a', { ...hello, maxProtocolVersion: 3 }).protocolVersion).toBe(3);
+    expect(b.service.handshake('machine-a', { ...hello, maxProtocolVersion: 4 }).protocolVersion).toBe(4);
     expect(b.service.handshake('machine-a', { ...hello, protocolVersion: 3 }).protocolVersion).toBe(3);
-    expect(() => b.service.handshake('machine-a', { ...hello, protocolVersion: 4 })).toThrow('unsupported peer protocol version');
+    expect(() => b.service.handshake('machine-a', { ...hello, protocolVersion: 5 })).toThrow('unsupported peer protocol version');
   });
   it('rejects unconfigured and non-roster requests with a typed PeerProtocolError', () => {
     const unpaired = fixture('b');

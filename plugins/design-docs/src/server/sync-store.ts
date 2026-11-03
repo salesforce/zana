@@ -11,7 +11,7 @@ import {
   MAX_PEER_STORED_HISTORY_IDENTITIES,
   MAX_PEER_SESSION_BYTES, MAX_PEER_CHUNK_BYTES, MAX_PEER_STAGED_SESSIONS, MAX_PEER_SESSION_BLOBS,
    MAX_PEER_CLOSURE_BYTES, MAX_PEER_TRANSFER_BYTES, PEER_RETRY_MAX_MS, PEER_STAGE_IDLE_MS,
-  MAX_PEER_STORED_OPERATIONS, PEER_COMPACTION_BATCH, PEER_DELTA_PROTOCOL_VERSION, PEER_MIN_PROTOCOL_VERSION, PEER_PROTOCOL_VERSION,
+  MAX_PEER_STORED_OPERATIONS, PEER_COMPACTION_BATCH, PEER_DELTA_PROTOCOL_VERSION, PEER_MIN_PROTOCOL_VERSION, PEER_PROTOCOL_VERSION, PEER_PROJECT_HINT_PROTOCOL_VERSION, MAX_PEER_PROJECT_NAME, MAX_PEER_PROJECT_TAG,
   MAX_PEER_TOMBSTONES
 } from '../shared/peer-limits.js';
 import {
@@ -27,7 +27,7 @@ import {
 import { createCheckpointHash, createScopeHash, validateAppliedReceipt, validateOperation, validateSessionOffer,
   createTransferHash, peerBlobHash, transferQuery, validateTransfer,
    type PeerSessionOffer, type PeerTransfer, type PeerChunk, type PeerReceiptQuery, type PeerHandshake, type PeerMissing,
-   type PeerAncestryPage, type PeerAncestorStubs } from './peer-protocol.js';
+   type PeerAncestryPage, type PeerAncestorStubs, type PeerProjectHint } from './peer-protocol.js';
 import { MAX_FILES_PER_DOC, MAX_COMMENTS_PER_DOC, MAX_THREAD_LINKS_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
 import type { DocActor, PeerConflictPage, PeerConflictReview, PeerConflictFile, PeerResolutionChoice } from '../shared/contract.js';
 import { normalizeDocPath } from '../shared/paths.js';
@@ -700,11 +700,48 @@ export class DesignDocSyncStore {
     try { return fn(); } finally { this.verifiedVersions = null; }
   }
 
+  /** Protocol-4 advisory label of the doc's project (the sender's own id), or undefined when none is known or the peer is older. */
+  private projectHint(docId: string, protocolVersion: number): PeerProjectHint | undefined {
+    if (protocolVersion < PEER_PROJECT_HINT_PROTOCOL_VERSION) return undefined;
+    try {
+      // docs-kind: allow Looked up by primary key; the id already names one doc.
+      const doc = this.db.prepare('SELECT project_id FROM docs WHERE id = ?').get(docId) as { project_id: string | null } | undefined;
+      const refs = this.db.prepare('SELECT project_json FROM sync_doc_references WHERE doc_id = ?').get(docId) as { project_json: string } | undefined;
+      const id = refs ? JSON.parse(refs.project_json) as string | null : doc?.project_id ?? null;
+      if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(id)) return undefined;
+      const row = this.db.prepare('SELECT name, tag FROM dd_project_refs WHERE project_id = ?').get(id) as { name: string | null; tag: string | null } | undefined;
+      const name = row?.name?.trim().slice(0, MAX_PEER_PROJECT_NAME), tag = row?.tag?.trim().slice(0, MAX_PEER_PROJECT_TAG);
+      if (!name && !tag) return undefined;
+      return { id, ...(name ? { name } : {}), ...(tag ? { tag } : {}) };
+    } catch {
+      return undefined; // advisory only: a missing lazy table never blocks sync
+    }
+  }
+
+  /**
+   * Remember the peer's project name/tag under its foreign id so Map-to-a-Project can suggest a match. Advisory:
+   * never touches a project registered here, never throws, and only older-than-4 packets carrying it are refused.
+   */
+  private recordProjectHint(packet: { protocolVersion: number; project?: PeerProjectHint }): void {
+    const hint = packet.project;
+    if (!hint) return;
+    if (packet.protocolVersion < PEER_PROJECT_HINT_PROTOCOL_VERSION) throw new PeerProtocolError('invalid', 'project hint requires protocol 4');
+    try {
+      this.db.prepare(`INSERT INTO dd_project_refs (project_id, name, tag, last_seen) VALUES (?, ?, ?, ?)
+        ON CONFLICT (project_id) DO UPDATE SET name = excluded.name, tag = excluded.tag, last_seen = excluded.last_seen
+        WHERE project_id NOT IN (SELECT project_id FROM dd_project_live)`).run(hint.id, hint.name ?? null, hint.tag ?? null, Date.now());
+    } catch {
+      // Lazy tables absent (restore in progress): the hint is only a convenience.
+    }
+  }
+
   outgoing(intent: FrozenSyncIntent, handshake: Omit<PeerSessionOffer, 'sessionId' | 'versions' | 'heads' | 'scopeHash'>): PeerSessionOffer {
     return this.db.transaction(() => {
       const offer = this.outgoingOffer(intent, handshake);
       // Advisory marker only (outside scopeHash): flag private manual heads so the receiver gates before an inbound session exists.
-      return this.isManualOutbound(intent.repoId, intent.memberReplicaId, intent.docId, intent.frozenHead) ? { ...offer, manual: true } : offer;
+      const hint = this.projectHint(intent.docId, offer.protocolVersion);
+      const marked = this.isManualOutbound(intent.repoId, intent.memberReplicaId, intent.docId, intent.frozenHead) ? { ...offer, manual: true } : offer;
+      return hint ? { ...marked, project: hint } : marked;
     });
   }
 
@@ -898,6 +935,8 @@ export class DesignDocSyncStore {
       // returned transfer are byte-identical: acceptTransferReceipt compares whole-object hashes, and createTransferHash
       // enumerates explicit fields (manual excluded), so scopeHash is unaffected while receipt matching stays consistent.
       if (this.isManualOutbound(intent.repoId, intent.memberReplicaId, intent.docId, intent.frozenHead)) body.manual = true;
+      const projectHint = this.projectHint(intent.docId, handshake.protocolVersion);
+      if (projectHint) body.project = projectHint;
       const transfer = { ...body, scopeHash: createTransferHash(body) };
       validateTransfer(transfer, { repoId: transfer.repoId, localReplicaId: transfer.recipientReplicaId,
         remoteReplicaId: transfer.senderReplicaId, groupId: transfer.groupId, rosterEpoch: transfer.rosterEpoch,
@@ -926,6 +965,7 @@ export class DesignDocSyncStore {
   stageTransfer(transfer: PeerTransfer): void {
     this.db.transaction(() => {
       this.requireTransferIdentity(transfer);
+      this.recordProjectHint(transfer);
       for (const version of transfer.versions) if (Object.values(transfer.heads).includes(version.operation.id) &&
         (transfer.manual === true || (version.operation.kind !== 'delete' &&
           this.hasManualDoc(transfer.repoId, transfer.senderReplicaId, version.operation.docId)))) {
@@ -1198,6 +1238,7 @@ export class DesignDocSyncStore {
       if (offer.stubs !== undefined && offer.protocolVersion < PEER_DELTA_PROTOCOL_VERSION) {
         throw new PeerProtocolError('invalid', 'ancestor stubs require delta protocol');
       }
+      this.recordProjectHint(offer);
       for (const stub of offer.stubs ?? []) this.saveStub(local.repoId, local.replicaId, stub);
       for (const version of versions) {
         if (offer.heads[version.operation.docId] === version.operation.id &&
