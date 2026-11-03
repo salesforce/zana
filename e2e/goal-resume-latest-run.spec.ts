@@ -16,7 +16,7 @@ import { join } from 'node:path';
 test.use({ launchEnv: { ANTHROPIC_API_KEY: 'goal-resume-latest-run-e2e-key' } });
 
 interface Launch { session: string; argv: string[] }
-interface GoalFile { iteration: number; history: { iterations: Array<{ id: string; sessionId?: string; finishedAt?: string; conversation?: { id?: string; profile?: string } }> } }
+interface GoalFile { iteration: number; history: { iterations: Array<{ id: string; sessionId?: string; finishedAt?: string; verdict?: string; conversation?: { id?: string; profile?: string } }> } }
 
 test('Resume reopens the finished goal run\'s conversation in a new tab, sends nothing and records no iteration', async ({ app }) => {
   test.setTimeout(240_000);
@@ -63,8 +63,8 @@ exit 0
     // 1. One iteration runs to the end and records its conversation.
     await expect.poll(() => {
       const it = read().history.iterations[0];
-      return !!it?.finishedAt && !!it.conversation?.id;
-    }, { message: 'the iteration finishes and keeps its conversation', timeout: 90_000 }).toBe(true);
+      return !!it?.finishedAt && !!it.conversation?.id && !!it.verdict;
+    }, { message: 'the iteration finishes, is evaluated and keeps its conversation', timeout: 90_000 }).toBe(true);
     const before = read();
     const conversationId = before.history.iterations[0]!.conversation!.id!;
     expect(before.history.iterations, 'one iteration so far').toHaveLength(1);
