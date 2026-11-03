@@ -48,6 +48,32 @@ describe('server fail-closed restore fencing', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('restore fence degraded'));
   });
 
+  it('records the project list so a removed project keeps its name', async () => {
+    let list: Array<{ id: string; name: string; tag: string }> = [{ id: 'p1', name: 'Gone Soon', tag: 'gs' }];
+    const database = createTestDatabase();
+    const host = createFakePluginHost({ pluginId: 'design-docs', database, listProjects: async () => list as never });
+    hosts.push(host);
+    host.harness.sdk.stub('peers.localIdentity', async () => ({ id: 'app-a' }));
+    host.harness.sdk.stub('peers.list', async () => []);
+    plugin(host.zcc);
+    await host.harness.callRpc('projects', {});
+    const doc = await host.harness.callRpc('create', { title: 'D', template: 'blank', projectId: 'p1' }) as { id: string };
+    expect(doc.id).toBeTruthy();
+    // The agent tool resolves a named project through the same live list.
+    await host.harness.callAgentTool('design_doc_create', { title: 'By tool', template: 'blank', projectId: 'p1' });
+    // The CLI verifies a named --project against the same live list.
+    const cli = await host.harness.runCli(['create', '--title', 'By cli', '--template', 'blank', '--project', 'p1']);
+    expect(cli.exitCode ?? 0).toBe(0);
+    list = [];
+    await host.harness.callRpc('projects', {});
+    // A project that no longer exists is named from the stored label.
+    // A doc whose project was never registered is looked up through the stored-label fallback.
+    database.prepare('UPDATE docs SET project_id = ? WHERE id = ?').run('ghost', doc.id);
+    const shown = await host.harness.runCli(['export', doc.id]);
+    expect(shown.exitCode ?? 0).toBe(0);
+    await expect(host.harness.callRpc('removedProjects', {})).resolves.toEqual([{ id: 'p1', label: 'Gone Soon (project removed)' }]);
+  });
+
   it('keeps backup available before asynchronous fence verification finishes', async () => {
     const { host } = wired();
     plugin(host.zcc);

@@ -184,6 +184,26 @@ describe('PeersSettingsView', () => {
     await waitFor(() => expect(api.repair).toHaveBeenCalledWith('h2'));
   });
 
+  it('says why Reconnect did not bring the computer back', async () => {
+    api.list.mockResolvedValue({ links: [link({ hostId: 'h2', peerInstanceId: 'p2', peerName: 'Other', connected: false })] });
+    api.repair.mockResolvedValueOnce({ ok: true, connected: false, reason: 'peer-offline' });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not reconnect. That computer is offline');
+  });
+
+  it('gives a generic reason when Reconnect fails without one, and stays quiet when it connects', async () => {
+    api.list.mockResolvedValue({ links: [link({ hostId: 'h2', peerInstanceId: 'p2', peerName: 'Other', connected: false })] });
+    api.repair.mockResolvedValueOnce({ ok: true, connected: false });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('The other computer did not answer');
+    api.repair.mockResolvedValueOnce({ ok: true, connected: true });
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+    await waitFor(() => expect(api.repair).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
   it('offers no ordinary actions for an unclaimed link', async () => {
     api.list.mockResolvedValue({ links: [link({ state: 'unclaimed', connected: false, uses: [] })] });
     render(<PeersSettingsView />);

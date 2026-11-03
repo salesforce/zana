@@ -164,7 +164,7 @@ describe('peer review regressions', () => {
     expect(next.versions).toEqual(original.versions); expect(next.blobs).toEqual(original.blobs);
     const body = { sessionId: original.sessionId, scopeHash: original.scopeHash, stage: 'synced' as const, heads: original.heads, appliedHeads: original.heads };
     expect(() => a.sync.acceptTransferReceipt(intent, original, { ...body, checkpointHash: canonicalPeerHash(body) })).toThrow('matching');
-    expect(await a.service.deliverPending(transport(a, b, 2))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b, 2))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('approved');
     expect(b.db.prepare("SELECT state FROM sync_transfers WHERE direction = 'in'").all()).toEqual([{ state: 'quarantined' }]);
   });
@@ -194,7 +194,7 @@ describe('peer review regressions', () => {
     b.store.update(doc.id, { status: 'implemented', expectedHead: b.sync.head('repo', doc.id) }, actor);
     const descendant = b.sync.head('repo', doc.id)!;
     b.db.prepare("UPDATE sync_intents SET state = 'blocked' WHERE frozen_head <> ?").run(descendant);
-    expect(await b.service.deliverPending(transport(b, c))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await b.service.deliverPending(transport(b, c))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(c.store.readFile(doc.id, 'README.md').content).toBe('descendant');
     const fake = a.service.createOffer(a.sync.readyIntents('repo')[0]!);
     await expect(c.service.offer('app-a', fake, fence())).rejects.toThrow('not a roster member');
@@ -243,7 +243,7 @@ describe('peer review regressions', () => {
     a.store.writeFile(doc.id, { path: 'README.md', content: 'PRIVATE LATER' }, actor);
     const pending = b.sync.readyIntents('repo');
     expect(pending.map((intent) => intent.memberReplicaId)).toEqual(['replica-c']);
-    expect(await b.service.deliverPending(transport(b, c))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await b.service.deliverPending(transport(b, c))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(c.store.readFile(doc.id, 'README.md').content).toBe('shared');
     expect(c.sync.operations('repo').every((op) => op.replicaId === 'replica-a')).toBe(true);
     expect(c.sync.readyIntents('repo')).toEqual([]);
@@ -271,7 +271,7 @@ describe('peer review regressions', () => {
       }
       return result;
     };
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(windows).toBeGreaterThan(1);
     expect(b.store.readFile(doc.id, 'README.md').content).toBe(files(24)[0]!.content);
     expect(b.store.history(doc.id).some((row) => b.store.revisionContent(doc.id, row.id).content === files(12)[0]!.content)).toBe(true);
@@ -342,7 +342,7 @@ describe('peer review regressions', () => {
     a.sync.prepareManual(); b.sync.prepareManual();
     a.store.writeFile(doc.id, { path: 'README.md', content: 'later private draft' }, actor);
     const restarted = new DesignDocPeerService(new DesignDocSyncStore(a.db, { now: () => 1000 }));
-    expect(await restarted.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await restarted.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('consented snapshot');
     expect(a.db.prepare("SELECT state FROM sync_manual_sessions WHERE direction = 'out'").all()).toEqual([{ state: 'accepted' }]);
   });
@@ -368,14 +368,14 @@ describe('peer review regressions', () => {
     expect(b.sync.readyIntents('repo')).toEqual([]);
     expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_receipts').get()).toEqual({ n: 1 });
     expect(c.sync.readyIntents('repo')).toEqual([]);
-    expect(await b.service.deliverPending(peers)).toEqual({ attempted: 0, synced: 0, blocked: 0 });
+    expect(await b.service.deliverPending(peers)).toEqual({ attempted: 0, synced: 0, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
   });
 
   it('receipt cleanup is transactional and never marks synced when cleanup fails', async () => {
     const a = fixture('a'), b = fixture('b');
     a.store.create({ title: 'Receipt transaction', status: 'approved', template: 'blank' }, actor);
     a.db.runScript("CREATE TRIGGER fail_transfer_cleanup BEFORE DELETE ON sync_transfers BEGIN SELECT RAISE(ABORT, 'cleanup fault'); END;");
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await a.service.deliverPending(transport(a, b))).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(a.db.prepare('SELECT * FROM sync_receipts').all()).toEqual([]);
     expect(a.sync.readyIntents('repo', 100, true)).toHaveLength(1);
     expect(a.db.prepare("SELECT COUNT(*) AS n FROM sync_transfers WHERE direction = 'out'").get()).toEqual({ n: 1 });

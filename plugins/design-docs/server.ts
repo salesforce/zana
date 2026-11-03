@@ -177,10 +177,13 @@ export default function plugin(zcc: ZccPluginApi): void {
   const endpoint = pluginHttpEndpoint(zcc.pluginId);
   const changed = (docId: string) => zcc.realtime.publish(CHANGED_CHANNEL, { docId });
   const actorFor = createActorResolver((threadId) => zcc.sdk.threads.get({ threadId }));
-  const projects = createProjectNames(() => zcc.sdk.projects.list());
+  const projects = createProjectNames(() => zcc.sdk.projects.list(), {
+    onRefresh: (list) => store.projectRefs.observe(list),
+    removedLabel: (id) => store.projectRefs.removedLabel(id),
+  });
   const reports = new RenderReports();
 
-  registerDesignDocTools(zcc, { store, changed, actorFor, projects, kit, reports });
+  registerDesignDocTools(zcc, { store, changed, actorFor, projects, listProjects: () => zcc.sdk.projects.list(), kit, reports });
   registerAgentContext(zcc, store, (message) => zcc.log.warn(message), projects);
   registerPanelThreadLinks(zcc, store, changed);
   const pageUrl = (docId: string, path: string) => standalonePageUrl(productServerUrl(), endpoint, docId, path);
@@ -188,6 +191,7 @@ export default function plugin(zcc: ZccPluginApi): void {
     store,
     changed,
     projects,
+    listProjects: () => zcc.sdk.projects.list(),
     caller: createCliCaller(zcc.sdk, actorFor),
     readLocalFile: createLocalFileReader(zcc.sdk),
     writeLocalFile: createLocalFileWriter(zcc.sdk),

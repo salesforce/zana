@@ -75,6 +75,13 @@ export const DESIGN_DOCS_STYLES = `
 .dd-field-help { margin: 8px 0 0; font-size: 12px; }
 .dd-field-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
 .dd-field-inline .dd-select { width: auto; max-width: 180px; }
+.dd-map-row .dd-field-inline { flex-wrap: wrap; }
+.dd-map-source { display: block; font-size: 12px; margin: 2px 0 6px; }
+.dd-map-titles-primary { font-weight: 600; }
+.dd-map-row .dd-field-inline { margin-top: 4px; }
+.dd-map-mapped { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.dd-map-mapped .dd-field-inline { margin-bottom: 8px; align-items: center; }
+.dd-map-row .dd-field-inline .dd-select { flex: 1 1 auto; min-width: 180px; max-width: 100%; width: auto; }
 .dd-form { display: flex; flex-direction: column; gap: 14px; }
 
 .dd-segmented {
@@ -106,6 +113,14 @@ export const DESIGN_DOCS_STYLES = `
 .dd-icon-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
 .dd-icon-btn.danger:hover:not(:disabled) { color: var(--danger); }
 .dd-icon-btn:disabled { opacity: 0.35; cursor: default; }
+.dd-icon-btn[data-tip] { position: relative; }
+.dd-icon-btn[data-tip]:hover::after, .dd-icon-btn[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  width: max-content; max-width: 220px; padding: 4px 8px; border-radius: 6px;
+  background: var(--bg-elevated, var(--bg-panel)); color: var(--text-primary); border: 1px solid var(--border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); font-size: 11px; line-height: 1.35; text-align: left; white-space: normal; pointer-events: none;
+}
 
 /* ── Peers view (inside the workbench) ──────────────────────────────── */
 .dd-peers-view { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; background: var(--bg-base); }
@@ -276,6 +291,9 @@ export const DESIGN_DOCS_STYLES = `
   font-size: 13px;
 }
 .dd-context-menu { position: fixed; z-index: 60; }
+.dd-menu-add { min-width: 300px; }
+.dd-menu-add .dd-menu-label { white-space: nowrap; flex: 0 0 auto; }
+.dd-menu-add .dd-menu-hint { flex: 1 1 auto; text-align: right; max-width: none; }
 .dd-pop-end { right: 0; }
 .dd-pop-start { left: 0; }
 .dd-menu-item {
@@ -472,6 +490,8 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-row-alt::before { content: ''; position: absolute; left: -8px; top: 0; height: 50%; width: 6px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .dd-doc-row-badge { flex: 0 0 auto; margin-top: 1px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent-gold) 14%, transparent); color: var(--accent-gold); font-size: 10.5px; font-weight: 600; line-height: 16px; }
 .dd-list-group + .dd-list-group { margin-top: 4px; }
+.dd-list-actions { padding: 10px 10px 6px; margin-top: 6px; }
+.dd-list-unassigned { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
 .dd-list-section {
   position: sticky;
   top: 0;
@@ -550,6 +570,15 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dd-doc-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; min-width: 0; }
 .dd-doc-project { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 12px; }
+.dd-sync-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted, #888); display: inline-block; }
+.dd-sync-waiting .dd-sync-dot, .dd-sync-dot.dd-sync-waiting { background: var(--accent-amber, #d9a400); }
+.dd-sync-needs-choice .dd-sync-dot, .dd-sync-dot.dd-sync-needs-choice { background: var(--accent-orange, #e07a1f); }
+.dd-sync-failed .dd-sync-dot, .dd-sync-dot.dd-sync-failed { background: var(--accent-red, #d64545); }
+.dd-sync-up-to-date .dd-sync-dot { background: var(--accent-green, #3a9d5d); }
+.dd-sync-line { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; background: none; border: 0; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.dd-sync-line:hover { background: var(--bg-hover, rgba(128,128,128,.15)); }
+.dd-sync-help-body { padding: 10px 12px; max-width: 280px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.dd-sync-help-body p { margin: 0; }
 .dd-doc-updated { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .dd-editable {
   display: block;
