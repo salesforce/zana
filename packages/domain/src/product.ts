@@ -4495,8 +4495,10 @@ export interface Persona {
   microVmImage?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
   /**
-   * Reasoning effort → claude `--effort`. Applies to Claude personas only; other
-   * harnesses ignore it. Absent means the harness default (no flag emitted).
+   * Reasoning effort → claude `--effort`. Applies to Claude personas launched as
+   * terminal / CLI Agent and CLI Squad seats; other harnesses ignore it, and
+   * thread (Modern conversation) launches do not carry it. Absent means the
+   * harness default (no flag emitted).
    */
   reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';

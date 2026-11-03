@@ -2,9 +2,10 @@ import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult, HarnessRoleTarget } from '@zana-ai/zcc-domain/harness-adapter';
-import type { HarnessFamily, LaunchProfileId, Persona, PersonaInput, PersonaReasoningLevel } from '@zana-ai/zcc-domain/product';
+import { PERSONA_REASONING_LEVELS, type HarnessFamily, type LaunchProfileId, type Persona, type PersonaInput, type PersonaReasoningLevel } from '@zana-ai/zcc-domain/product';
 import {
   harnessFamilyOf,
+  isClaudeProfile,
   profileLabel,
   providerCapabilities,
   providerUiSchema,
@@ -515,6 +516,15 @@ function PersonaField({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Picker labels; typed as a Record so adding a level to the tuple fails typecheck here. */
+const REASONING_LEVEL_LABELS: Record<PersonaReasoningLevel, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra-high',
+  max: 'Max'
+};
+
 /** The create/edit form. */
 function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null; projectId?: string; onClose: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
@@ -531,7 +541,7 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
   const [baseProfile, setBaseProfile] = useState<LaunchProfileId | ''>(persona?.baseProfile ?? '');
   const [modelLevel, setModelLevel] = useState<string>(persona?.modelLevel ?? 'default');
   const [reasoningLevel, setReasoningLevel] = useState<string>(persona?.reasoningLevel ?? 'default');
-  const showReasoning = ['', 'claude', 'claude-yolo'].includes(baseProfile);
+  const showReasoning = baseProfile === '' || isClaudeProfile(baseProfile);
   const [executionState, setExecutionState] = useState<string>(persona?.executionState ?? 'default');
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [harnessRouting, setHarnessRouting] = useState<PersonaRouting>(
@@ -795,11 +805,7 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
               onChange={setReasoningLevel}
               options={[
                 { value: 'default', label: 'Use harness default (unset)' },
-                { value: 'low', label: 'Low' },
-                { value: 'medium', label: 'Medium' },
-                { value: 'high', label: 'High' },
-                { value: 'xhigh', label: 'Extra-high' },
-                { value: 'max', label: 'Max' }
+                ...PERSONA_REASONING_LEVELS.map((level) => ({ value: level, label: REASONING_LEVEL_LABELS[level] }))
               ]}
             />
             <p className="settings-help persona-form-hint">Sets how hard Claude thinks for this persona. Other agents ignore it.</p>
