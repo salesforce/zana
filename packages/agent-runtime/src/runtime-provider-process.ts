@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstat, readdir } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
@@ -38,22 +38,17 @@ import type {
  * exact pid prefix only, and a matching entry that is a link is unlinked as a
  * link by the link-safe walk. Never throws: it must not change exit handling.
  */
-async function removeBridgeTempDirs(pid: number): Promise<void> {
+async function removeBridgeTempDirs(pid: number | undefined): Promise<void> {
   try {
     const root = tmpdir();
+    // `undefined` (the child never started) matches no directory.
     const prefix = `bb-provider-bridge-${pid}-`;
     for (const name of await readdir(root)) {
       if (!name.startsWith(prefix)) continue;
-      const path = join(root, name);
-      try {
-        if ((await lstat(path)).isFile()) continue;
-        await removeTreeWithoutFollowingLinksAsync(path);
-      } catch {
-        // A leftover dir is swept at the next start.
-      }
+      await removeTreeWithoutFollowingLinksAsync(join(root, name));
     }
   } catch {
-    // Unreadable temp folder: nothing to clean up.
+    // Leftovers are swept at the next start; this must never change exit handling.
   }
 }
 
@@ -591,7 +586,7 @@ export class RuntimeProviderProcessManager {
         });
       } finally {
         finalizeExit();
-        if (child.pid !== undefined) void removeBridgeTempDirs(child.pid);
+        void removeBridgeTempDirs(child.pid);
       }
     };
 
