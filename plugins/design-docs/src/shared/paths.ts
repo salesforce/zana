@@ -307,8 +307,7 @@ export function parseCrossDocLink(href: string): CrossDocLink | null {
 
 /**
  * Markdown link to a doc, ready to paste anywhere in Design Docs. Uses the id,
- * not the slug: an id resolves from any project, a slug only within the same
- * project or global docs. `path` defaults to the doc's entry file, so the link
+ * not the slug: an id names exactly one doc and resolves from any project. `path` defaults to the doc's entry file, so the link
  * can be turned into a relative one when it is pasted into the same doc.
  */
 export function crossDocMarkdownLink(doc: { id: string; title: string; entryPath?: string }, path?: string): string {

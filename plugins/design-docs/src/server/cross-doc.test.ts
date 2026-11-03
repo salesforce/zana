@@ -36,11 +36,11 @@ describe('resolveCrossDocTarget', () => {
       expect(resolveCrossDocTarget(store, a2.id, path, { docId: a1.id }), path).toEqual({ error: 'missing-file' });
     }
   });
-  it('lets a doc read same-project and global docs but not another project, and global callers see only global docs', () => {
+  it('resolves across projects and between global and project docs', () => {
     const { store, a1, a2, b1, g1, g2 } = setup();
-    expect(resolveCrossDocTarget(store, b1.id, null, { docId: a1.id })).toEqual({ error: 'forbidden' });
+    expect(resolveCrossDocTarget(store, b1.id, null, { docId: a1.id })).toMatchObject({ docId: b1.id });
     expect(resolveCrossDocTarget(store, g1.id, null, { docId: a1.id })).toMatchObject({ docId: g1.id });
-    expect(resolveCrossDocTarget(store, a2.id, null, { docId: g1.id })).toEqual({ error: 'forbidden' });
+    expect(resolveCrossDocTarget(store, a2.id, null, { docId: g1.id })).toMatchObject({ docId: a2.id });
     expect(resolveCrossDocTarget(store, g2.id, null, { docId: g1.id })).toMatchObject({ docId: g2.id });
     expect(resolveCrossDocTarget(store, g1.id, 'README.md', { docId: g1.id })).toMatchObject({ docId: g1.id });
   });
@@ -51,7 +51,7 @@ describe('resolveCrossDocTarget', () => {
     const other = store.create({ title: 'Shared elsewhere', projectId: 'p2', files: [{ path: 'README.md', content: 'x' }] }, UI_USER);
     expect(resolveCrossDocTarget(store, last.id, null, { docId: a1.id })).toMatchObject({ docId: last.id });
     expect(resolveCrossDocTarget(store, a1.id, null, { docId: last.id })).toMatchObject({ docId: a1.id });
-    expect(resolveCrossDocTarget(store, other.id, null, { docId: last.id })).toEqual({ error: 'forbidden' });
+    expect(resolveCrossDocTarget(store, other.id, null, { docId: last.id })).toMatchObject({ docId: other.id });
   });
   it('treats unassigned received docs as reachable only from themselves and honours mappings', () => {
     const { store, a1, g1 } = setup();
@@ -82,7 +82,7 @@ describe('resolveCrossDocLink RPC', () => {
     const call = (args: unknown) => rpc.resolveCrossDocLink!(args);
     expect(call({ fromDoc: a1.id, href: `doc://${a2.slug}/api/auth.md#x` })).toEqual({ docId: a2.id, path: 'api/auth.md' });
     expect(call({ fromDoc: a1.id, href: `doc:${a2.id}` })).toEqual({ docId: a2.id, path: a2.entryPath });
-    expect(call({ fromDoc: a1.id, href: `doc://${b1.slug}` })).toEqual({ error: 'forbidden' });
+    expect(call({ fromDoc: a1.id, href: `doc://${b1.slug}` })).toEqual({ docId: b1.id, path: b1.entryPath });
     expect(call({ fromDoc: a1.id, href: 'doc://x/../y' })).toEqual({ error: 'missing-doc' });
     expect(() => call({ fromDoc: a1.id })).toThrow(/href/);
     expect(() => call({ href: 'doc://x' })).toThrow(/fromDoc/);

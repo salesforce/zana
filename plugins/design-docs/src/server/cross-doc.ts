@@ -2,14 +2,12 @@
  * Main-side resolution of `doc://` cross-doc links. The renderer's parse is
  * advisory; every call here re-validates the ref and path.
  *
- * Visibility rule (UX scoping, NOT an authorization boundary): `caller.docId`
- * is supplied by the renderer, so a compromised renderer can name any doc as
- * the caller. The rule only keeps links from crossing project boundaries in
- * normal use. The target must be in the caller's effective project (including a
- * project a received doc is mapped to) or genuinely global. A global caller
- * sees only global docs. Unassigned received docs (foreign project, unmapped)
- * are reachable only from themselves, and see only themselves. A doc may
- * always link to itself. Scope is computed by doc id on the server.
+ * Links resolve across projects: a link names a doc by id, and project is only
+ * how docs are filed. The one exception is an unassigned received doc (foreign
+ * project, not yet mapped): it is reachable only from itself and links to it
+ * from elsewhere report `forbidden` until the user maps it to a project. The
+ * caller id is renderer-supplied, so this is UX scoping, not an authorization
+ * boundary. A doc may always link to itself.
  */
 import { DesignDocPathError, normalizeDocPath } from '../shared/paths.js';
 import type { DesignDocStore } from './store.js';
@@ -31,7 +29,6 @@ export function resolveCrossDocTarget(
     const from = store.scopeOf(source.id);
     const to = store.scopeOf(target.id);
     if (!from || !to || from.unassigned || to.unassigned) return { error: 'forbidden' };
-    if (!to.global && (from.projectId === null || to.projectId !== from.projectId)) return { error: 'forbidden' };
   }
   let wanted = target.entryPath;
   if (path !== null) {

@@ -9,7 +9,9 @@ import { createHarness, type Harness } from './test-harness.js';
 function scenario() {
   const harness = createHarness();
   const target = harness.store.create({ title: 'Target Spec', projectId: 'p1', files: [{ path: 'README.md', content: 'entry' }, { path: 'api.md', content: 'api' }] }, UI_USER);
-  const other = harness.store.create({ title: 'Secret Spec', projectId: 'p2', files: [{ path: 'README.md', content: 'x' }] }, UI_USER);
+  // An unmapped doc received from a paired computer: the one kind a link cannot reach.
+  const other = harness.store.create({ title: 'Secret Spec', files: [{ path: 'README.md', content: 'x' }] }, UI_USER);
+  harness.store.db.prepare('INSERT OR REPLACE INTO sync_doc_references (doc_id, project_json, threads_json) VALUES (?, ?, ?)').run(other.id, JSON.stringify('foreign-1'), '[]');
   const source = harness.store.create({
     title: 'Source',
     projectId: 'p1',
@@ -54,7 +56,7 @@ describe('cross-doc links in a preview', () => {
     fireEvent.click(within(pane).getByText('Gone'));
     await waitFor(() => expect(harness.toasts.map((t) => t.message)).toContain('That file does not exist in the linked design doc'));
     fireEvent.click(within(pane).getByText('Secret'));
-    await waitFor(() => expect(harness.toasts.map((t) => t.message)).toContain('You cannot open that design doc from here'));
+    await waitFor(() => expect(harness.toasts.map((t) => t.message)).toContain('That doc came from a paired computer and is not mapped to a project yet. Map it to a project (doc menu, Map to a Project) and the link will open'));
     fireEvent.click(within(pane).getByText('Bad'));
     expect(harness.toasts.map((t) => t.message)).toContain('This doc link is not valid');
     expect(harness.navigateCalls.filter((call) => JSON.stringify(call).includes('subPath'))).toEqual([]);

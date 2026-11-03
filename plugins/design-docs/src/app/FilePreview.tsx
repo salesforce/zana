@@ -29,7 +29,7 @@ const DOCS_PANEL = 'design-docs';
 const CROSS_DOC_ERRORS = {
   'missing-doc': 'That design doc does not exist (or was removed)',
   'missing-file': 'That file does not exist in the linked design doc',
-  forbidden: 'You cannot open that design doc from here'
+  forbidden: 'That doc came from a paired computer and is not mapped to a project yet. Map it to a project (doc menu, Map to a Project) and the link will open'
 } as const;
 
 const MAX_INLINE_IMAGES = 24;
