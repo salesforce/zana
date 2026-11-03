@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { realpathSync } from 'node:fs';
 import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { resumeScheduledRun } from '../scheduler-resume-run.js';
+import { resumeGoalIteration } from '../goal-resume-run.js';
 import type { FeedDigestResult, FollowUp, FollowUpCreateInput, FollowUpStatus, FollowUpUpdateInput, Goal, GoalCreateInput, GoalStatus, GoalUpdateInput, Result, ScheduleCreateInput, ScheduleGroup, ScheduleGroupInput, ScheduleRunQueryResult, ScheduleRunRef, ScheduleUpdateInput, ScheduledTask } from '@zana-ai/zcc-domain/product';
 
 export function registerSchedulerIpc(): void {
@@ -215,6 +216,26 @@ export function registerSchedulerIpc(): void {
       }
     }
   );
+  // Reopen a finished goal iteration's conversation in a new tab. Same shape as
+  // scheduler:resumeRun: strict input, dependencies read from ctx at call time.
+  const resumeIterationSchema = z.object({ goalId: z.string().min(1).max(256), iterationId: z.string().min(1).max(256).optional() }).strict();
+  productHandle(IPC.goals.resumeIteration, async (input: unknown): Promise<Result<unknown>> => {
+    const parsed = resumeIterationSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, code: 'BAD_INPUT', message: parsed.error.message };
+    try {
+      return await resumeGoalIteration(parsed.data, {
+        getGoal: (id) => ctx.goals.list().find((goal) => goal.id === id),
+        listProjects: () => store.listProjects(),
+        listLiveSessions: (projectId) => ctx.ptys.list(projectId).filter((session) => session.status !== 'exited'),
+        createInteractiveTerminal: (req) => ctx.createInteractiveTerminal(req),
+        registrationFor: (profile) => registrationFor(profile),
+        realpath: (path) => realpathSync(path)
+      });
+    } catch (err) {
+      ctx.logMainError(`goal resume iteration (goalId=${parsed.data.goalId}, iterationId=${parsed.data.iterationId ?? 'latest'})`, err);
+      return { ok: false, code: 'RESUME_FAILED', message: "Couldn't reopen this run's conversation. Try again in a moment." };
+    }
+  });
   ctx.goals.on('changed', () => {
     ctx.safeSend(IPC.goals.onChanged, ctx.goals.list());
   });
