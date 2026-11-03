@@ -231,10 +231,11 @@ const reqId = () => `req-${seq}-${Math.random().toString(36).slice(2)}`;
 
 const lifecycleFile = () => join(h.root, 'team-lifecycle.json');
 const recordFor = (launchRequestId: string): TeamLifecycleRecord => {
-  const state = JSON.parse(readFileSync(lifecycleFile(), 'utf8')) as { records: TeamLifecycleRecord[] };
-  const record = state.records.find((candidate) => candidate.launchRequestId === launchRequestId);
-  expect(record).toBeDefined();
-  return record!;
+  const state = JSON.parse(readFileSync(lifecycleFile(), 'utf8')) as { records: Array<TeamLifecycleRecord & { deferredSeats?: TeamLifecycleRecord['workers'] }> };
+  const stored = state.records.find((candidate) => candidate.launchRequestId === launchRequestId);
+  expect(stored).toBeDefined();
+  // Seats that have not started are stored under their own key (an older app ignores it); read them back among the workers.
+  return { ...stored!, workers: [...stored!.workers, ...(stored!.deferredSeats ?? [])] };
 };
 const worker = (record: TeamLifecycleRecord, slotId: string) => record.workers.find((w) => w.slotId === slotId);
 const durableReq = (extra: Record<string, unknown> = {}) => ({

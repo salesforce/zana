@@ -29,23 +29,39 @@ describe('coordinator roster with seats that start on demand (#580)', () => {
 
 describe('exact-native Resume totals with on-demand seats (#580)', () => {
   const snap = (slotId: string) => ({ slotId, role: 'worker', personaId: 'pe', profileId: 'claude', nativeConversationId: 'n' });
-  const api = (slots: Array<{ startOnDemand?: boolean }>, expanded: string[]) => createDesktopNativeRecovery({
+  const api = (slots: Array<{ startOnDemand?: boolean }>, expanded: string[], neverStartedSlots?: (record: never) => string[]) => createDesktopNativeRecovery({
     projects: { listProjects: () => [{ id: 'pr' }] as never },
     teams: { list: () => [{ id: 't', slots }] as never },
     personas: { list: () => [{ id: 'pe' }] as never },
     expandTeamSlots: () => expanded.map((slotId) => ({ slotId, role: 'worker' as const, personaId: 'pe' })),
-    resolveTeamProfile: () => 'claude' as never
+    resolveTeamProfile: () => 'claude' as never,
+    ...(neverStartedSlots ? { neverStartedSlots } : {})
   });
 
-  it('counts an on-demand seat that had started (it has a snapshot) like any other seat', () => {
+  it('without a lifecycle record, an on-demand seat with a snapshot counts and one without does not', () => {
     const recovery = api([{ startOnDemand: true }, {}], ['0:pe:0', '1:pe:0']);
     expect(recovery.totalSlots({ teamId: 't', nativeRecoverySnapshots: [snap('0:pe:0'), snap('1:pe:0')] } as never)).toBe(2);
-  });
-
-  it('leaves a never-started on-demand seat out of the total', () => {
-    const recovery = api([{ startOnDemand: true }, {}], ['0:pe:0', '1:pe:0']);
     expect(recovery.totalSlots({ teamId: 't', nativeRecoverySnapshots: [snap('1:pe:0')] } as never)).toBe(1);
     expect(recovery.totalSlots({ teamId: 't' } as never)).toBe(1);
+  });
+
+  it('Q4: a seat that started but left no snapshot still counts, so Resume is not offered for a worker that would start cold', () => {
+    const recovery = api([{ startOnDemand: true }, {}], ['0:pe:0', '1:pe:0'], () => []);
+    const record = { projectId: 'pr', teamId: 't', nativeRecoverySnapshots: [snap('1:pe:0')] } as never;
+    expect(recovery.totalSlots(record)).toBe(2);
+    expect(recovery.availability(record)).toMatchObject({ available: false, reason: 'PARTIAL_RESTORE' });
+  });
+
+  it('Q4: a seat the lifecycle says never started is left out of the total, so Resume stays available', () => {
+    const recovery = api([{ startOnDemand: true }, {}], ['0:pe:0', '1:pe:0'], () => ['0:pe:0']);
+    const record = { projectId: 'pr', teamId: 't', nativeRecoverySnapshots: [snap('1:pe:0')] } as never;
+    expect(recovery.totalSlots(record)).toBe(1);
+    expect(recovery.availability(record)).toEqual({ available: true, restorableSlots: 1, totalSlots: 1 });
+  });
+
+  it('a lifecycle report only matters for on-demand rows', () => {
+    const recovery = api([{}, {}], ['0:pe:0', '1:pe:0'], () => ['0:pe:0']);
+    expect(recovery.totalSlots({ teamId: 't' } as never)).toBe(2);
   });
 
   it('does not know the total for an unknown team', () => {

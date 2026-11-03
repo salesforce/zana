@@ -32,6 +32,8 @@ export interface DesktopNativeRecoveryDeps {
   personas: { list(): Persona[] };
   expandTeamSlots(team: Team): ReadonlyArray<{ slotId: string; role: 'worker' | 'orchestrator'; personaId: string }>;
   resolveTeamProfile(project: Project, personas: readonly Persona[], persona: Persona): LaunchProfileId;
+  /** Slots of this run whose on-demand seat never got a session, from the lifecycle record. */
+  neverStartedSlots?(record: ExecutionRecord): readonly string[];
   /**
    * Modern teams only: the provider/host/worktree a slot must resume on, or undefined when it
    * cannot (provider unresolved, retained worktree missing on disk). Main-side existence check.
@@ -64,10 +66,16 @@ export function createDesktopNativeRecovery(deps: DesktopNativeRecoveryDeps) {
   function totalSlots(record: ExecutionRecord): number | undefined {
     const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
     if (!team) return undefined;
+    const expanded = deps.expandTeamSlots(team);
     // A seat that starts on demand and never started has no snapshot to restore; it starts again when needed.
+    // "Never started" is the lifecycle record's word (no session), not the team row's: a seat that did
+    // start but left no snapshot still counts, so Resume is not offered for a worker that would start cold.
+    const onDemand = new Set(deferredSeatsOf(team, expanded).map((seat) => seat.slotId));
+    // Without a lifecycle record to ask, an on-demand seat with no snapshot is taken as never started.
     const snapshotted = new Set((record.nativeRecoverySnapshots ?? []).map((snapshot) => snapshot.slotId));
-    const neverStarted = new Set(deferredSeatsOf(team, deps.expandTeamSlots(team)).map((seat) => seat.slotId));
-    return deps.expandTeamSlots(team).filter((slot) => !neverStarted.has(slot.slotId) || snapshotted.has(slot.slotId)).length;
+    const neverStarted = deps.neverStartedSlots ? new Set(deps.neverStartedSlots(record)) : undefined;
+    return expanded.filter((slot) => !(onDemand.has(slot.slotId)
+      && (neverStarted ? neverStarted.has(slot.slotId) : !snapshotted.has(slot.slotId)))).length;
   }
   function availability(record: ExecutionRecord): { available: boolean; restorableSlots: number; totalSlots: number; reason?: 'PARTIAL_RESTORE' } {
     const restorableSlots = compatibleSnapshots(record).length;

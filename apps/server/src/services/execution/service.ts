@@ -208,7 +208,7 @@ function assignmentCorrelation(executionId: string, claim: { claimId?: string; c
   return { executionId, assignmentId: claim.claimId, idempotencyKey: `${executionId}:${claim.claimId}:${claim.claimGeneration}` };
 }
 
-export type DeferredWorkerSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string };
+export type DeferredWorkerSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string; retryable?: true };
 
 export interface ExecutionServiceDeps {
   store: ReturnType<typeof createExecutionStore>;
@@ -1905,11 +1905,20 @@ export class ExecutionService {
       await this.releaseUndeliveredAssignments(record.id, assignments);
       return;
     }
-    for (const assignment of assignments) {
-      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
-      // A seat that starts on demand has a lifecycle worker (`authorized`) but no session yet;
-      // it is started below, after the eligibility check. Any other session-less worker is released.
-      const deferredSeat = !worker?.sessionId && worker?.process === 'authorized';
+    const workerOf = (assignment: ExecutionDispatchAssignment) =>
+      lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
+    // A seat that starts on demand has a lifecycle worker with no session yet (`authorized`, or
+    // `spawning` while another dispatch is starting it); it is started below, after the eligibility
+    // check. Any other session-less worker is released. Seats that are already running go first so
+    // they never wait for another seat to start.
+    const isDeferred = (assignment: ExecutionDispatchAssignment) => {
+      const candidate = workerOf(assignment);
+      return !candidate?.sessionId && (candidate?.process === 'authorized' || candidate?.process === 'spawning');
+    };
+    const ordered = [...assignments.filter((a) => !isDeferred(a)), ...assignments.filter(isDeferred)];
+    for (const assignment of ordered) {
+      const worker = workerOf(assignment);
+      const deferredSeat = isDeferred(assignment);
       if (!worker || (!worker.sessionId && !deferredSeat)) {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
         continue;
@@ -2007,9 +2016,10 @@ export class ExecutionService {
     if (!recordId || !this.deps.spawnDeferredWorker) return undefined;
     try {
       const started = await this.deps.spawnDeferredWorker(recordId, slotId);
+      if (!started.ok) this.deps.logError?.(`on-demand seat ${slotId} of ${recordId} did not start: ${started.message}`, new Error(started.message));
       return started.ok ? started.sessionId : undefined;
     } catch (error) {
-      this.deps.logError?.(`on-demand seat ${slotId} failed to start`, error);
+      this.deps.logError?.(`on-demand seat ${slotId} of ${recordId} failed to start`, error);
       return undefined;
     }
   }

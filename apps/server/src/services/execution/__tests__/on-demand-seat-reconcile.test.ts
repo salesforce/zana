@@ -8,9 +8,10 @@ import { createExecutionArtifactStore } from '../artifact-store.js';
 
 /** #580: a seat that never started must not keep a finished run open, and a lifecycle id is optional. */
 const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
-const unit = { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check'] };
+const unitBase = (id: string) => ({ id, title: id.toUpperCase(), task: `do ${id}`, dependencies: [], files: [`${id}.txt`], verification: ['check'] });
+const unit = (id: string) => unitBase(id);
 
-async function build(dir: string, workers: unknown[], lifecycleId: string | undefined, over: Record<string, unknown> = {}) {
+async function build(dir: string, workers: unknown[], lifecycleId: string | undefined, over: Record<string, any> = {}) {
   const filePath = join(dir, 'executions.json');
   const store = createExecutionStore({ filePath, id: () => 'execution-1' });
   const spawnDeferredWorker = vi.fn(async () => ({ ok: true as const, sessionId: 'late' }));
@@ -19,7 +20,8 @@ async function build(dir: string, workers: unknown[], lifecycleId: string | unde
     artifacts: createExecutionArtifactStore({ filePath: `${filePath}.artifacts`, id: () => 'artifact-1' }),
     authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
       version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
-        { slotId: coordinator.slotId, personaId: 'lead', authorizationIdDigest: 'l' }, { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w' }]
+        { slotId: coordinator.slotId, personaId: 'lead', authorizationIdDigest: 'l' },
+        ...((over.slotIds as string[] | undefined) ?? ['slot-1']).map((slotId) => ({ slotId, personaId: 'worker', authorizationIdDigest: `${slotId}-d` }))]
     } } }),
     launchTeam: async () => ({ ok: true }),
     getTeamLaunch: async () => ({ ...(lifecycleId ? { id: lifecycleId } : {}), orchestratorSessionId: 'coordinator', workers }),
@@ -32,7 +34,7 @@ async function build(dir: string, workers: unknown[], lifecycleId: string | unde
   } as never);
   const started = await service.start('owner', 'project-1', {
     version: 1 as const, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Build', slots: [{ initialTask: 'Run' }],
-    coordinationMode: 'job-team', workUnits: [unit]
+    coordinationMode: 'job-team', workUnits: (over.units as never) ?? [unit('a')]
   } as never);
   if (!started.ok) throw new Error(started.message);
   return { service, store, spawnDeferredWorker };
@@ -85,5 +87,40 @@ describe('on-demand seats and the run state (#580)', () => {
     await rm(join(dir, 'executions.json'), { force: true });
     const exitedAndSeat = await build(dir, [exited, seat], 'lc-1');
     expect(await exitedAndSeat.service.status('owner', 'project-1', 'execution-1')).toMatchObject({ state: 'FAILED' });
+  }));
+});
+
+describe('review round 1: seats still starting and refusals (#580)', () => {
+  const spawningSeat = { slotId: 'slot-1', projectId: 'project-1', process: 'spawning' };
+
+  it('F1: a seat that another dispatch is still starting (spawning, no session) reaches the spawner instead of being released', async () => withDir(async (dir) => {
+    const { service, store, spawnDeferredWorker } = await build(dir, [spawningSeat], 'lc-1');
+    await service.dispatchReady(coordinator);
+    expect(spawnDeferredWorker).toHaveBeenCalledWith('lc-1', 'slot-1');
+    expect((await store.get('execution-1'))?.workUnits?.[0].state).toBe('CLAIMED');
+  }));
+
+  it('A4: a refused late start is logged with the run, seat and reason', async () => withDir(async (dir) => {
+    const logError = vi.fn();
+    const { service } = await build(dir, [{ slotId: 'slot-1', projectId: 'project-1', process: 'authorized' }], 'lc-1', {
+      spawnDeferredWorker: async () => ({ ok: false, message: 'provider busy' }), logError
+    });
+    await service.dispatchReady(coordinator);
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('slot-1 of lc-1 did not start: provider busy'), expect.any(Error));
+  }));
+
+  it('A5: a seat that is already running is served before one that has to be started', async () => withDir(async (dir) => {
+    const order: string[] = [];
+    const { service } = await build(dir, [
+      { slotId: 'slot-1', projectId: 'project-1', process: 'authorized' },
+      { slotId: 'slot-2', sessionId: 'worker-2', projectId: 'project-1', process: 'running' }
+    ], 'lc-1', {
+      units: [unit('a'), unit('b')], slotIds: ['slot-1', 'slot-2'],
+      spawnDeferredWorker: async () => { order.push('spawn'); return { ok: true as const, sessionId: 'late' }; },
+      deliverAssignment: vi.fn(async (sessionId: string) => { order.push(`deliver:${sessionId}`); return { state: 'accepted' as const }; })
+    });
+    await service.dispatchReady(coordinator);
+    expect(order[0]).toBe('deliver:worker-2');
+    expect(order).toContain('spawn');
   }));
 });

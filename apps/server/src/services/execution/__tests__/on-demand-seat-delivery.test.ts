@@ -141,11 +141,14 @@ describe('REQ-7 routing does not need a live session', () => {
 });
 
 describe('OBL-004 a second dispatch sees a claimed but unbound seat', () => {
-  it('waits for the one spawn and delivers both assignments to one session', async () => fixture(async (filePath) => {
+  // Changed in fix-review-1 with the coordinator's approval (blocker qa-test-change-1): the engine gives a busy
+  // slot only one unit (store.ts freeSlots excludes CLAIMED slots), so two simultaneous deliveries to one seat
+  // cannot happen. The defect behind it, a second dispatch releasing a session-less `spawning` seat, stays pinned.
+  it('lets the second dispatch join the one spawn: one spawn, one delivery to the new session, the other unit stays READY', async () => fixture(async (filePath) => {
     let release!: (value: DeferredWorkerSpawnResult) => void;
     const spawnDeferredWorker = vi.fn(() => new Promise<DeferredWorkerSpawnResult>((resolve) => { release = resolve; }));
     let workers: Array<Record<string, unknown>> = [deferredWorker];
-    const { service, deliverAssignment } = await setup(filePath, { spawnDeferredWorker, units: [unit('a'), unit('b')], workersRef: () => workers } as never);
+    const { service, store, deliverAssignment } = await setup(filePath, { spawnDeferredWorker, units: [unit('a'), unit('b')], workersRef: () => workers } as never);
     const first = service.dispatchReady(coordinator);
     await vi.waitFor(() => expect(spawnDeferredWorker).toHaveBeenCalled());
     // the store claim has moved the seat to spawning, with no session yet
@@ -153,9 +156,25 @@ describe('OBL-004 a second dispatch sees a claimed but unbound seat', () => {
     const second = service.dispatchReady(coordinator);
     release({ ok: true, sessionId: 'late-session' });
     await Promise.all([first, second]);
-    // COR-002: the second dispatch must join the one spawn, not release its assignment.
-    expect(deliverAssignment).toHaveBeenCalledTimes(2);
-    for (const call of deliverAssignment.mock.calls) expect(call[0]).toBe('late-session');
+    expect(spawnDeferredWorker).toHaveBeenCalledTimes(1);
+    expect(deliverAssignment).toHaveBeenCalledTimes(1);
+    expect(deliverAssignment.mock.calls[0][0]).toBe('late-session');
+    expect(await unitState(store, 0)).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1' });
+    expect(await unitState(store, 1)).toMatchObject({ state: 'READY' });
+  }));
+
+  it('hands the next unit to the same session with no second spawn once the first one completes', async () => fixture(async (filePath) => {
+    const spawnDeferredWorker = vi.fn(async () => ({ ok: true as const, sessionId: 'late-session' }));
+    let workers: Array<Record<string, unknown>> = [deferredWorker];
+    const { service, store, deliverAssignment } = await setup(filePath, { spawnDeferredWorker, units: [unit('a'), unit('b')], workersRef: () => workers } as never);
+    await service.dispatchReady(coordinator);
+    workers = [{ slotId: 'slot-1', sessionId: 'late-session', projectId: 'project-1', process: 'running' }];
+    const claimed = await unitState(store, 0);
+    await service.completeWork({ ...coordinator, role: 'worker', slotId: 'slot-1', principalId: 'late-session' } as never, 'a', 'done',
+      { claimId: claimed!.claimId!, claimGeneration: claimed!.claimGeneration! });
+    expect(spawnDeferredWorker).toHaveBeenCalledTimes(1);
+    expect(deliverAssignment.mock.calls.map((call) => call[0])).toEqual(['late-session', 'late-session']);
+    expect(await unitState(store, 1)).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1' });
   }));
 });
 

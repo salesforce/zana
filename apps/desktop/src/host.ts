@@ -56,7 +56,7 @@ import { resolveIconPath } from './resolve-icon-path.js';
 import { createProductRouteSquadRuntime, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { createRuntimeRecovery } from './runtime/runtime-recovery.js';
 import { createTeamProductOps } from './team-product-ops.js';
-import { jobCoordinatorPrompt } from './team-coordinator-prompt.js';
+import { jobCoordinatorPrompt, type RosterEntry } from './team-coordinator-prompt.js';
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
@@ -112,7 +112,7 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
-import { coldStartCanceled, createDeferredSeatRegistry, deferredSeatsOf, onDemandLaunchProblem } from './on-demand-seat.js';
+import { coldStartCanceled, createDeferredSeatRegistry, deferredSeatsOf, isTransientSeatRefusal, onDemandLaunchProblem } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -1201,7 +1201,16 @@ async function withPreparedNativeSession<T extends { profile: LaunchProfileId; r
 const launchAuthorizationBySession = new Map<string, string>();
 const launchPrincipals = new Map<string, LaunchPrincipal>();
 /** Spawners for Squad seats that start on demand, keyed by lifecycle record; empty unless a team opts in. */
-const deferredSeats = createDeferredSeatRegistry();
+const deferredSeats = createDeferredSeatRegistry({
+  log: (message, error) => logMainError(message, error),
+  // No spawner for this run (the app restarted, or the run ended): fail the seat once, visibly, so its units are not re-offered forever.
+  onOrphan: async (recordId, slotId) => {
+    const current = await teamLifecycle.get(recordId);
+    if (current?.workers.find((worker) => worker.slotId === slotId)?.sessionId !== undefined) return;
+    const failed = await teamLifecycle.failDeferredSeat(recordId, slotId);
+    if (failed) teamLifecycleIntegration.track(failed);
+  }
+});
 const launchAuthorization = new LaunchAuthorizationService({
   resolvePrincipal: (id) => launchPrincipals.get(id)
 });
@@ -5021,7 +5030,7 @@ function currentLaunchCapacityUsage(): number {
  */
 function orchestratorPrompt(
   team: Team,
-  roster: Array<{ sessionId?: string; slotId: string; label: string; startsWhenNeeded?: true }>,
+  roster: RosterEntry[],
   goal?: string
 ): string {
   const base = team.initialPrompt?.trim() ?? '';
@@ -5199,6 +5208,7 @@ const desktopNativeRecovery = createDesktopNativeRecovery({
   personas,
   expandTeamSlots,
   resolveTeamProfile: resolvedTeamProfile,
+  neverStartedSlots: (record) => teamLifecycle.neverStartedSlotsSync(record.callerPrincipalId, record.teamLaunchRequestId),
   modernSlotExpectation: (record, project, profile) => {
     // Main-side existence check: a Modern resume needs the retained checkout on disk.
     try {
@@ -5673,7 +5683,7 @@ export async function launchTeam(
   const workerCeiling = hasOrchestrator ? MAX_TABS_PER_LAUNCH - 1 : MAX_TABS_PER_LAUNCH;
   let launched = 0;
   // Roster handed to the orchestrator: each opened worker's id + display label.
-  const roster: Array<{ sessionId?: string; slotId: string; label: string; startsWhenNeeded?: true }> = [];
+  const roster: RosterEntry[] = [];
   const workers: TeamLaunchedWorker[] = [];
   const failedSlots: TeamFailedWorkerSlot[] = [];
   const launchRequestId = structured?.launchRequestId ?? randomUUID();
@@ -5965,7 +5975,7 @@ export async function launchTeam(
         }),
         scope: launchExecutionScope(project, request, currentConfig),
         storeRevision: launchDigest({ team, personas: personaSnapshot }),
-         projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt: launchDeadlineAt
+         projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt: lateSeat ? undefined : launchDeadlineAt
       };
       const authorized = launchAuthorization.authorize({
         principal: teamPrincipalRef, projectId: targetProjectId,
@@ -6271,10 +6281,13 @@ export async function launchTeam(
       const seat = expectedSlots.find((candidate) => candidate.slotId === slotId)!;
       const started = await startWorkerSeat(seat, true);
       if (started.ok) teamLaunchSessions.set(started.value.id, cohortId);
-      return started.ok ? { ok: true, sessionId: started.value.id } : { ok: false, message: started.message };
+      return started.ok ? { ok: true, sessionId: started.value.id } : { ok: false, message: started.message, ...(isTransientSeatRefusal(started.code) ? { retryable: true as const } : {}) };
     },
     markFailed: async (slotId) => {
       teamLifecycleIntegration.track((await teamLifecycle.updateWorker(claim.record.id, slotId, { process: 'spawn-failed' })).record);
+    },
+    reopen: async (slotId) => {
+      await teamLifecycle.reopenDeferredSpawn(claim.record.id, slotId);
     }
   });
 
@@ -6403,6 +6416,7 @@ export async function launchTeam(
 
   const result: LaunchTeamResult = { launchRequestId, launched, cohortId, workers, failedSlots, orchestratorSessionId, workerSessionIds };
   if (durableCoordination && !orchestratorSessionId) {
+    deferredSeats.release(claim.record.id);
     await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
   }
   const operationResult: Result<LaunchTeamResult> = durableCoordination && !orchestratorSessionId
@@ -6666,6 +6680,12 @@ inboxActionRegistry.register(SQUAD_LAUNCH_PROPOSAL_ACTION, squadProposalService.
  * awaited: delivery (thread liveness, queued turns) must never hold up the engine's
  * terminal path. The notifier never throws.
  */
+/** A finished, stopped, failed or dismissed run keeps no spawner for seats that never started. */
+async function releaseDeferredSeatsOf(record: { callerPrincipalId: string; teamLaunchRequestId: string }): Promise<void> {
+  const lifecycle = await teamLifecycle.findRequest(record.callerPrincipalId, record.teamLaunchRequestId).catch(() => undefined);
+  if (lifecycle) deferredSeats.release(lifecycle.id);
+}
+
 export async function handleSquadTerminalWithReport(
   record: Parameters<typeof squadWorktreeRuntime.handleSquadWorktreeTerminal>[0]
 ): Promise<SquadWorktreeTerminalOutcome | undefined> {
@@ -6762,7 +6782,10 @@ const squadExecutionService = new SquadExecutionService({
   withExecutionLifecycleLock: withSquadWorktreeLifecycleLock,
   mayResumeRetainedWorktree: (executionId) => !squadWorktreeHasActiveFollowUp(executionId),
   prepareSquadWorktree: squadWorktreeRuntime.prepareSquadWorktree,
-  onTerminal: async (record) => { await handleSquadTerminalWithReport(record); },
+  onTerminal: async (record) => {
+    await releaseDeferredSeatsOf(record);
+    await handleSquadTerminalWithReport(record);
+  },
   onHumanBlocker: (record, blocker) => squadProposalNotifier.onHumanBlocker(record, blocker),
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),

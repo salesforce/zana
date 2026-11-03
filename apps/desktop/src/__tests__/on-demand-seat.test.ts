@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { coldStartCanceled, createDeferredSeatRegistry, deferredSeatsOf, lifecycleSeatId, onDemandLaunchProblem, type DeferredSeatHooks } from '../on-demand-seat.js';
+import { coldStartCanceled, createDeferredSeatRegistry, deferredSeatsOf, isTransientSeatRefusal, onDemandLaunchProblem, type DeferredSeatHooks } from '../on-demand-seat.js';
 
 const seat = (slotId: string, personaId = 'p', label?: string, role: 'worker' | 'orchestrator' = 'worker') => ({ slotId, personaId, label, role });
 
@@ -33,7 +33,7 @@ describe('onDemandLaunchProblem', () => {
   });
 });
 
-describe('coldStartCanceled / lifecycleSeatId', () => {
+describe('coldStartCanceled / isTransientSeatRefusal', () => {
   it('cancels a launch-time wait when the run is no longer launching, but lets a late seat outlive the launch call', () => {
     expect(coldStartCanceled({ state: 'active', outcome: { status: 'in-progress' } }, false)).toBe(false);
     expect(coldStartCanceled({ state: 'active', outcome: { status: 'completed' } }, false)).toBe(true);
@@ -41,13 +41,16 @@ describe('coldStartCanceled / lifecycleSeatId', () => {
     expect(coldStartCanceled({ state: 'canceled', outcome: { status: 'completed' } }, true)).toBe(true);
     expect(coldStartCanceled(undefined, true)).toBe(true);
   });
-  it('names a seat', () => { expect(lifecycleSeatId('r', 's')).toBe('deferred:r:s'); });
+  it('treats a busy provider or a full machine as passing, and anything else as final', () => {
+    for (const code of ['CANCEL_PENDING', 'RESOURCE_LIMIT', 'CAPACITY']) expect(isTransientSeatRefusal(code)).toBe(true);
+    for (const code of ['DENIED', 'DEADLINE_EXCEEDED', undefined]) expect(isTransientSeatRefusal(code)).toBe(false);
+  });
 });
 
 describe('createDeferredSeatRegistry', () => {
   const hooks = (over: Partial<DeferredSeatHooks> = {}): DeferredSeatHooks => ({
     claim: vi.fn(async () => true), sessionOf: vi.fn(async () => undefined),
-    start: vi.fn(async () => ({ ok: true as const, sessionId: 'sess' })), markFailed: vi.fn(async () => undefined), ...over
+    start: vi.fn(async () => ({ ok: true as const, sessionId: 'sess' })), markFailed: vi.fn(async () => undefined), reopen: vi.fn(async () => undefined), ...over
   });
 
   it('registers nothing without seats and refuses to start anything', async () => {

@@ -144,13 +144,16 @@ function legacyMcpKickoffLines(hasSources: boolean): string[] {
  *    plan with a single `execution.plan.register`; the host auto-dispatches on
  *    register, so the coordinator STILL never calls `dispatch_ready`.
  */
+/** A seat is either running (has a session id) or waiting to start; never neither. */
+export type RosterEntry = { slotId: string; label: string } & ({ sessionId: string; startsWhenNeeded?: undefined } | { startsWhenNeeded: true; sessionId?: undefined });
+
 export function jobCoordinatorPrompt(input: {
   team: Team;
   persona?: Persona;
   structuredTask?: string;
   executionId?: string;
   job: NonNullable<TeamLaunchRequestInput['jobContext']>;
-  roster: Array<{ sessionId?: string; slotId: string; label: string; startsWhenNeeded?: true }>;
+  roster: Array<RosterEntry>;
   /**
    * Host-computed plan readiness. TRUE when the durable record already carries a
    * valid seeded work DAG (Flow A: good plan provided). The host dispatches those

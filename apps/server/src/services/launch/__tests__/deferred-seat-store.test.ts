@@ -108,3 +108,57 @@ describe('deferred seats in the lifecycle store', () => {
     expect((await createTeamLifecycleStore({ filePath }).list())[0].workers[0].sessionId).toBe('s1');
   });
 });
+
+describe('review round 1 fixes', () => {
+  it('A3: an older app still reads the file, because seats without a session are stored under their own key', async () => {
+    const { store, id, filePath } = await open();
+    await store.addDeferredWorker(id, seat);
+    await store.addWorker(id, running);
+    const onDisk = JSON.parse(readFileSync(filePath, 'utf8')).records[0];
+    // the previous validator needs a session id on every entry of `workers`
+    expect(onDisk.workers.every((w: { sessionId?: string }) => typeof w.sessionId === 'string' && w.sessionId.length > 0)).toBe(true);
+    expect(onDisk.deferredSeats).toHaveLength(1);
+    // and the new code reads them back among the workers
+    expect((await createTeamLifecycleStore({ filePath }).get(id))!.workers.map((w) => w.slotId).sort()).toEqual(['0:w:0', '1:v:0']);
+  });
+
+  it('A6: only an on-demand seat may spawn after the launch call has returned', async () => {
+    const { store, id } = await open();
+    await store.addWorker(id, running);
+    await store.complete(id, { ok: true, value: { launchRequestId: 'r', launched: 1, cohortId: 'c', workers: [{ sessionId: 's1', cohortId: 'c', slotId: '1:v:0', personaId: 'v', projectId: 'p', authorizationId: 'a1' }], failedSlots: [] } });
+    await store.updateWorker(id, '1:v:0', { process: 'running' });
+    expect(await store.workerMaySpawn(id, '1:v:0')).toBe(false);
+  });
+
+  it('reopens a claimed seat that did not start, only while it has no session', async () => {
+    const { store, id } = await open();
+    await store.addDeferredWorker(id, seat);
+    expect(await store.reopenDeferredSpawn(id, '0:w:0')).toBe(false);
+    await store.claimDeferredSpawn(id, '0:w:0');
+    expect(await store.reopenDeferredSpawn(id, '0:w:0')).toBe(true);
+    expect((await store.get(id))!.workers[0].process).toBe('authorized');
+    expect(await store.claimDeferredSpawn(id, '0:w:0')).toBe(true);
+  });
+
+  it('A2: fails a seat nobody can start any more, once, with a plain reason, and frees its capacity', async () => {
+    const { store, id } = await open();
+    await store.addDeferredWorker(id, seat);
+    const failed = await store.failDeferredSeat(id, '0:w:0');
+    expect(failed?.workers[0]).toMatchObject({ process: 'spawn-failed', capacityReleased: true, exitReason: expect.stringContaining('Resume the run') });
+    expect(await store.failDeferredSeat(id, '0:w:0')).toBeUndefined();
+    expect(await store.failDeferredSeat(id, 'nope')).toBeUndefined();
+  });
+
+  it('puts a seat that was mid-start at a restart back to waiting, and reports never-started slots', async () => {
+    const { store, id, filePath } = await open();
+    await store.addDeferredWorker(id, seat);
+    await store.addDeferredWorker(id, { ...seat, slotId: '0:w:1', authorizationId: 'b' });
+    await store.complete(id, { ok: true, value: { launchRequestId: 'r', launched: 0, cohortId: 'c', workers: [], failedSlots: [] } });
+    await store.claimDeferredSpawn(id, '0:w:0');
+    const restarted = createTeamLifecycleStore({ filePath });
+    await restarted.reconcileStartup(new Set());
+    expect((await restarted.get(id))!.workers.find((w) => w.slotId === '0:w:0')?.process).toBe('authorized');
+    expect(restarted.neverStartedSlotsSync('o', 'r').sort()).toEqual(['0:w:0', '0:w:1']);
+    expect(restarted.neverStartedSlotsSync('o', 'unknown')).toEqual([]);
+  });
+});
