@@ -70,12 +70,18 @@ describe('REQ-7 resumeGoalIteration opens the conversation', () => {
   });
   it('OBL-002 with no iterationId, reopens the newest FINISHED iteration, not a newer one still running', async () => {
     const g = goal([
-      iter({ id: 'running', finishedAt: undefined, verdict: undefined, conversation: conv({ id: 'running-conv' }) as never }),
+      iter({ id: 'running', at: at(1), finishedAt: undefined, verdict: undefined, conversation: conv({ id: 'running-conv' }) as never }),
       iter({ id: 'finished', conversation: conv({ id: 'finished-conv' }) as never })
     ]);
     const { deps, spy } = setup(g);
     await go(deps);
     expect((spy.createInteractiveTerminal!.mock.calls[0]![0] as { extraArgs: string[] }).extraArgs).toEqual(['--resume', 'finished-conv']);
+  });
+  it('refuses an explicit iterationId of an iteration that is still running', async () => {
+    const g = goal([iter({ id: 'running', finishedAt: undefined, verdict: undefined, conversation: conv({ id: 'running-conv' }) as never })]);
+    const { deps, spy } = setup(g);
+    await expect(go(deps, { goalId: 'g1', iterationId: 'running' })).resolves.toEqual({ ok: false, code: 'RUN_NOT_FINISHED', message: 'This run is still going' });
+    expect(spy.createInteractiveTerminal).not.toHaveBeenCalled();
   });
   it('uses an explicit iterationId', async () => {
     const g = goal([iter({ id: 'new', conversation: conv({ id: 'new-conv' }) as never }), iter({ id: 'old', conversation: conv({ id: 'old-conv' }) as never })]);

@@ -17,14 +17,13 @@ import type {
   ScheduleRunQueryResult,
   ScheduleRunReasonCode,
   ScheduleRunRef,
-  ScheduleRunConversation,
   ScheduleRunTrigger,
   ScheduleUpdateInput
 } from '@zana-ai/zcc-domain/product';
 import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery as parseEveryShared } from '@zana-ai/zcc-domain/parse-every';
 import { nextCronRunAt } from '@zana-ai/zcc-domain/parse-cron';
 import { isCronCadence, previousCronSlots, slotsBetween, validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
-import { collectRunRows, isOpenProblem, isProblemRun, isRecoveryMode, isValidConversationId, runReason, SCHEDULE_REASONS } from '@zana-ai/zcc-domain/schedule-health';
+import { collectRunRows, isOpenProblem, isProblemRun, isRecoveryMode, runReason, SCHEDULE_REASONS } from '@zana-ai/zcc-domain/schedule-health';
 import { normalizeCatchUp, normalizeRequiredMcps, normalizeRetry } from './schedule-validation.js';
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';

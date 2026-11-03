@@ -40,7 +40,7 @@ describe('REQ-10 Resume on the Goals view', () => {
     const buttons = screen.getAllByRole('button', { name: 'Resume this run' });
     expect(buttons).toHaveLength(1);
     fireEvent.click(buttons[0]!);
-    await vi.waitFor(() => expect(h.resumeIteration).toHaveBeenCalledWith({ goalId: 'g1' }));
+    await vi.waitFor(() => expect(h.resumeIteration).toHaveBeenCalledWith({ goalId: 'g1', iterationId: 'new' }));
     await vi.waitFor(() => expect(h.navigate).toHaveBeenCalledWith(expect.stringContaining('new-pty')));
   });
   it('skips a newer iteration that is not finished or recorded no conversation', () => {

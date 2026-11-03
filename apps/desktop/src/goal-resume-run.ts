@@ -9,7 +9,7 @@
  * validated again here by `resumableRun`.
  */
 import type { Goal, Result } from '@zana-ai/zcc-domain/product';
-import { latestResumableRun, resumableRun } from '@zana-ai/zcc-domain/schedule-health';
+import { finishedIteration, latestResumableRun, resumableRun } from '@zana-ai/zcc-domain/schedule-health';
 import { fail, NO_CONVERSATION, resumeConversation, type ResumeCoreDeps, type ResumeRunValue } from './scheduler-resume-run.js';
 
 export interface ResumeGoalInput { goalId: string; iterationId?: string }
@@ -25,9 +25,11 @@ export async function resumeGoalIteration(input: ResumeGoalInput, deps: ResumeGo
 
   const iterations = goal.history?.iterations ?? [];
   const iteration = input.iterationId === undefined
-    ? latestResumableRun(iterations)
+    ? latestResumableRun(iterations.filter(finishedIteration))
     : iterations.find((candidate) => candidate.id === input.iterationId);
   if (input.iterationId !== undefined && !iteration) return fail('RUN_NOT_FOUND', "This run is no longer in the goal's history");
+  // The worker of an unfinished iteration is still writing its conversation (and owns the open tab): never offered.
+  if (iteration && !finishedIteration(iteration)) return fail('RUN_NOT_FINISHED', 'This run is still going');
   // One rule for "latest" and an explicit iteration: launched, not a Squad run, valid recorded id.
   if (!iteration || !resumableRun(iteration)) return fail('NO_CONVERSATION', NO_CONVERSATION);
 

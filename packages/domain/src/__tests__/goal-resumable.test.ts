@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GoalIteration, ScheduleRun } from '../product.js';
-import { latestResumableRun, resumableRun } from '../schedule-health.js';
+import { finishedIteration, latestResumableRun, resumableRun } from '../schedule-health.js';
 
 const conversation = { profile: 'claude', id: 'conv-1', cwd: '/p', startedAt: '2026-01-01T00:00:00.000Z' } as const;
 const iteration = (over: Partial<GoalIteration> = {}): GoalIteration => ({ id: 'i1', at: '2026-01-01T00:00:00.000Z', sessionId: 's1', launchState: 'running', conversation, ...over });
@@ -44,5 +44,14 @@ describe('REQ-6 a Goal iteration is not offered when it cannot be reopened', () 
   ])('refuses %s', (_name, over) => {
     expect(resumableRun(iteration(over))).toBe(false);
     expect(latestResumableRun([iteration(over)])).toBeUndefined();
+  });
+});
+
+describe('finishedIteration', () => {
+  it('is true once the iteration is stamped finished or scored, false while it runs', () => {
+    expect(finishedIteration({ finishedAt: '2026-01-01T00:10:00.000Z' })).toBe(true);
+    expect(finishedIteration({ verdict: 'pass' })).toBe(true);
+    expect(finishedIteration({})).toBe(false);
+    expect(finishedIteration(undefined as never)).toBe(false);
   });
 });

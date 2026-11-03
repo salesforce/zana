@@ -40,7 +40,7 @@ import { squadPicklistOption } from '@/components/SquadTransportChip';
 import { useNowTick } from '@/hooks/useNowTick';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { useNavigate } from 'react-router-dom';
-import { latestResumableRun } from '@zana-ai/zcc-domain/schedule-health';
+import { finishedIteration, latestResumableRun } from '@zana-ai/zcc-domain/schedule-health';
 import { canResumeIteration, resumeGoalIteration } from '../../components/goals/resumeGoalIteration.js';
 import { platformShortcut } from '../../lib/platformShortcut.js';
 
@@ -303,9 +303,7 @@ function GoalRow({
   const pending = iterations.filter(it => it.launchState === 'pending');
   const latest = iterations[0];
   // Resume sits on the newest finished iteration that recorded a conversation; never for Squad goals or old iterations.
-  const resumableId = goal.assignment?.kind === 'team'
-    ? undefined
-    : latestResumableRun(iterations.filter(it => (it.finishedAt || it.verdict) && canResumeIteration(goal, it)))?.id;
+  const resumableId = latestResumableRun(iterations.filter(it => finishedIteration(it) && canResumeIteration(goal, it)))?.id;
 
   const setStatus = async (status: GoalStatus, verb: string) => {
     const result = await product.goals.setStatus(goal.id, status);
@@ -497,7 +495,7 @@ function GoalRow({
                         {it.rationale}
                       </span>
                     )}
-                    {resumableId !== undefined && it.id === resumableId && <ResumeRunButton goal={goal} />}
+                    {resumableId !== undefined && it.id === resumableId && <ResumeRunButton goal={goal} iterationId={it.id} />}
                     {(it.report || it.error) && (
                       <button
                         type="button"
@@ -1015,17 +1013,17 @@ function formatRelative(d: Date): string {
 }
 
 /** Own component so the router hook only runs when a Resume is actually offered. */
-function ResumeRunButton({ goal }: { goal: Goal }) {
+function ResumeRunButton({ goal, iterationId }: { goal: Goal; iterationId: string }) {
   const navigate = useNavigate();
   return (
     <button
       type="button"
       className="scheduler-run-report-btn"
-      title="Reopen this run's conversation"
+      title="Reopen this run's conversation in a new tab"
       aria-label="Resume this run"
       onClick={(e) => {
         e.stopPropagation();
-        void resumeGoalIteration(goal, undefined, navigate);
+        void resumeGoalIteration(goal, iterationId, navigate);
       }}
     >
       <MessageSquareReply size={13} strokeWidth={1.75} />

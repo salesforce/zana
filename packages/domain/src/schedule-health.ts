@@ -140,6 +140,11 @@ export function resumableRun(run: ResumableRunLike): boolean {
     && isValidConversationId(conversation.id);
 }
 
+/** Whether a Goal iteration has finished its turn (stamped `finishedAt` or scored). A running worker is not offered for Resume. */
+export function finishedIteration(iteration: { finishedAt?: string; verdict?: string }): boolean {
+  return !!(iteration && (iteration.finishedAt || iteration.verdict));
+}
+
 /** The newest run that {@link resumableRun} accepts, newest first by `at`. */
 export function latestResumableRun<T extends ResumableRunLike & { at: string }>(runs: readonly T[] | undefined): T | undefined {
   let best: T | undefined;
