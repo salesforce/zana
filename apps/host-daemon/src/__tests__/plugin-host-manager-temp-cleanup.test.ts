@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => ({
   removeSpy: vi.fn(),
+  sweepSpy: vi.fn(),
   forkError: null as Error | null,
 }));
 
@@ -31,6 +32,7 @@ vi.mock("@zana-ai/zcc-agent-process-utils", async (importOriginal) => {
     ...actual,
     removeTreeWithoutFollowingLinksAsync: (...args: unknown[]) =>
       hoisted.removeSpy(...args),
+    sweepOrphanTempDirs: (...args: unknown[]) => hoisted.sweepSpy(...args),
   };
 });
 
@@ -97,6 +99,8 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
       typeof import("@zana-ai/zcc-agent-process-utils")
     >("@zana-ai/zcc-agent-process-utils");
     hoisted.removeSpy.mockReset();
+    hoisted.sweepSpy.mockReset();
+    hoisted.sweepSpy.mockResolvedValue({ inspected: 0, removed: 0, skipped: 0, failed: 0 });
     hoisted.removeSpy.mockImplementation((...args: unknown[]) =>
       actual.removeTreeWithoutFollowingLinksAsync(
         ...(args as Parameters<
@@ -263,4 +267,46 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
     expect(name).toMatch(new RegExp(`^zcc-host-${process.pid}-fixture-`));
     expect(typeof realCreateTempDir).toBe("function");
   });
+
+  // OBL-004 / REQ-11: one background sweep per daemon process, never awaited.
+  it("REQ-11 sweeps once per process for both prefixes and never waits for it", async () => {
+    vi.resetModules();
+    const fresh = await import("../plugin-host-manager.js");
+    // A sweep that never finishes must not delay construction or a call.
+    hoisted.sweepSpy.mockReturnValue(new Promise(() => undefined));
+    const make = () => {
+      const manager = new fresh.PluginHostManager({
+        dataDir,
+        logger,
+        fetchArtifact: vi.fn(async () => artifactSource),
+      });
+      managers.push(manager as unknown as InstanceType<typeof PluginHostManager>);
+      return manager;
+    };
+    const first = make();
+    make();
+
+    expect(hoisted.sweepSpy).toHaveBeenCalledTimes(1);
+    expect(hoisted.sweepSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prefixes: expect.arrayContaining(["bb-provider-bridge", "zcc-host"]),
+      }),
+    );
+    await expect(first.call(callCommand())).resolves.toBeDefined();
+  });
+
+  it("REQ-11 a failing sweep is swallowed and does not reach the logger as an error throw", async () => {
+    vi.resetModules();
+    const fresh = await import("../plugin-host-manager.js");
+    hoisted.sweepSpy.mockRejectedValue(new Error("sweep exploded"));
+    const manager = new fresh.PluginHostManager({
+      dataDir,
+      logger,
+      fetchArtifact: vi.fn(async () => artifactSource),
+    });
+    managers.push(manager as unknown as InstanceType<typeof PluginHostManager>);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect(manager.call(callCommand())).resolves.toBeDefined();
+  });
 });
+

@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
+  lutimesSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -245,6 +247,27 @@ describe("sweepOrphanTempDirs", () => {
         expect(readFileSync(join(target, "my-skill", "SKILL.md"), "utf8")).toBe(
           "keep me\n",
         );
+      } finally {
+        rmSync(target, { recursive: true, force: true });
+      }
+    });
+
+    it("REQ-8 leaves a matching top-level symlink alone and removes the real dir beside it (CTX-5, OBL-008)", async () => {
+      const target = userFolder();
+      try {
+        const link = join(root, "bb-provider-bridge-999999-fixture-link");
+        symlinkSync(target, link, "junction");
+        // Age the link itself, or the recency guard skips it for the wrong reason.
+        const old = new Date(Date.now() - HOUR_MS);
+        lutimesSync(link, old, old);
+        const real = makeDir("bb-provider-bridge-999998-fixture-real");
+
+        const result = await sweep({ isAlive: () => false });
+
+        expect(existsSync(real)).toBe(false);
+        expect(lstatSync(link).isSymbolicLink()).toBe(true);
+        expect(existsSync(join(target, "my-skill", "SKILL.md"))).toBe(true);
+        expect(result.removed).toBe(1);
       } finally {
         rmSync(target, { recursive: true, force: true });
       }
