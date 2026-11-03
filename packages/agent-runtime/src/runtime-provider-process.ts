@@ -1,11 +1,10 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
 import {
-  removeTreeWithoutFollowingLinksAsync,
+  PLUGIN_TEMP_DIR_PREFIXES,
+  removeOwnedTempDirs,
   sanitizeInheritedChildProcessEnv,
   spawnPortablePipedProcess,
   sweepOrphanTempDirs,
@@ -31,25 +30,8 @@ import type {
   AgentRuntimeSkillRoot,
 } from "./types.js";
 
-/**
- * Remove the `bb-provider-bridge-<pid>-*` temp dirs a bridge child left in the
- * temp folder. The child cleans up after itself when it can; a hard kill or a
- * crash skips that, so the parent does it once the child is gone. Matches the
- * exact pid prefix only, and a matching entry that is a link is unlinked as a
- * link by the link-safe walk. Never throws: it must not change exit handling.
- */
-async function removeBridgeTempDirs(pid: number | undefined): Promise<void> {
-  try {
-    const root = tmpdir();
-    // `undefined` (the child never started) matches no directory.
-    const prefix = `bb-provider-bridge-${pid}-`;
-    for (const name of await readdir(root)) {
-      if (!name.startsWith(prefix)) continue;
-      await removeTreeWithoutFollowingLinksAsync(join(root, name));
-    }
-  } catch {
-    // Leftovers are swept at the next start; this must never change exit handling.
-  }
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export interface RuntimeProviderProcess {
@@ -439,9 +421,46 @@ export class RuntimeProviderProcessManager {
   private sweepOrphanTempDirsOnce(): void {
     if (this.orphanSweepStarted) return;
     this.orphanSweepStarted = true;
-    void sweepOrphanTempDirs({
-      prefixes: ["bb-provider-bridge", "zcc-host"],
-    }).catch(() => undefined);
+    void sweepOrphanTempDirs({ prefixes: PLUGIN_TEMP_DIR_PREFIXES })
+      .then((result) => {
+        if (result.failed > 0) {
+          this.args.onStderr?.(
+            `Could not remove ${result.failed} orphaned plugin temp director${result.failed === 1 ? "y" : "ies"}.`,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        this.args.onStderr?.(
+          `Orphaned plugin temp directory sweep failed: ${errorMessage(error)}`,
+        );
+      });
+  }
+
+  /**
+   * The parent-side cleanup of a bridge's temp dir after the child exited. The
+   * child removes its own dir when it can; a hard kill or a crash skips that.
+   * Failures are reported on the runtime's diagnostic channel and never change
+   * exit handling.
+   */
+  private async removeBridgeTempDirs(
+    providerId: string,
+    pid: number | undefined,
+  ): Promise<void> {
+    try {
+      const { failures } = await removeOwnedTempDirs({
+        prefix: "bb-provider-bridge",
+        pid,
+      });
+      for (const failure of failures) {
+        this.args.onStderr?.(
+          `Could not remove the temporary directory of provider "${providerId}" (pid ${pid}): ${errorMessage(failure.error)}`,
+        );
+      }
+    } catch (error) {
+      this.args.onStderr?.(
+        `Could not clean up the temporary directory of provider "${providerId}" (pid ${pid}): ${errorMessage(error)}`,
+      );
+    }
   }
 
   private getAdapter(
@@ -586,7 +605,7 @@ export class RuntimeProviderProcessManager {
         });
       } finally {
         finalizeExit();
-        void removeBridgeTempDirs(child.pid);
+        void this.removeBridgeTempDirs(args.providerId, child.pid);
       }
     };
 

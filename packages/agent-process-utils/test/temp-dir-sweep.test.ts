@@ -301,7 +301,7 @@ describe("sweepOrphanTempDirs", () => {
 
     it("REQ-10 defaults to inspecting at most 200 entries", async () => {
       for (let i = 0; i < 230; i += 1) {
-        mkdirSync(join(root, `unrelated-${i}`));
+        makeDir(`zcc-host-${800000 + i}-fixture-abc`);
       }
       const result = await sweep({ isAlive: () => true });
       expect(result.inspected).toBe(200);

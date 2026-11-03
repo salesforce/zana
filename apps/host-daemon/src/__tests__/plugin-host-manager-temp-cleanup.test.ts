@@ -48,9 +48,6 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 const { PluginHostManager } = await import("../plugin-host-manager.js");
-const { createPluginProcessTempDir: realCreateTempDir } = await import(
-  "@zana-ai/zcc-agent-process-utils"
-);
 
 type PluginCall = Extract<HostRpcCommand, { type: "plugin.host.call" }>;
 
@@ -265,7 +262,6 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
     const tempDir = await startWorker(manager);
     const name = tempDir.split(/[\\/]/).pop() ?? "";
     expect(name).toMatch(new RegExp(`^zcc-host-${process.pid}-fixture-`));
-    expect(typeof realCreateTempDir).toBe("function");
   });
 
   // OBL-004 / REQ-11: one background sweep per daemon process, never awaited.
@@ -305,7 +301,11 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
       fetchArtifact: vi.fn(async () => artifactSource),
     });
     managers.push(manager as unknown as InstanceType<typeof PluginHostManager>);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor(() => logger.warn.mock.calls.length > 0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      "Orphaned plugin temp directory sweep failed",
+    );
     await expect(manager.call(callCommand())).resolves.toBeDefined();
   });
 });

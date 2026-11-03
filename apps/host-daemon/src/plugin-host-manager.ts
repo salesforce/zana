@@ -60,6 +60,8 @@ interface WorkerState {
   child: ChildProcess;
   closed: Promise<void>;
   tempDir: string;
+  /** Settles once the temp dir is removed; a failure is already logged. */
+  tempDirRemoved: Promise<void>;
   pending: Map<string, PendingCall>;
   ready: Promise<void>;
   resolveReady: () => void;
@@ -248,10 +250,14 @@ let orphanSweepStarted = false;
  */
 function sweepOrphanTempDirsOnce(
   logger: PluginHostManagerOptions["logger"],
+  signal: AbortSignal,
 ): void {
   if (orphanSweepStarted) return;
   orphanSweepStarted = true;
-  void sweepOrphanTempDirs({ prefixes: ["bb-provider-bridge", "zcc-host"] })
+  void sweepOrphanTempDirs({
+    prefixes: ["bb-provider-bridge", "zcc-host"],
+    signal,
+  })
     .then((result) => {
       if (result.removed > 0 || result.failed > 0) {
         logger.info({ ...result }, "Swept orphaned plugin temp directories");
@@ -272,9 +278,11 @@ export class PluginHostManager {
   private readonly retiredGenerations = new Map<string, Set<string>>();
   private readonly workerMutationTails = new Map<string, Promise<void>>();
   private shuttingDown = false;
+  /** Stops the startup sweep between entries when the daemon shuts down. */
+  private readonly sweepAbort = new AbortController();
 
   constructor(private readonly options: PluginHostManagerOptions) {
-    sweepOrphanTempDirsOnce(options.logger);
+    sweepOrphanTempDirsOnce(options.logger, this.sweepAbort.signal);
   }
 
   async call(command: PluginHostCallCommand): Promise<PluginHostCallResult> {
@@ -401,6 +409,7 @@ export class PluginHostManager {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.sweepAbort.abort();
     await Promise.allSettled([...this.workerMutationTails.values()]);
     await Promise.all(
       [...this.workers.values()].map((worker) =>
@@ -531,7 +540,9 @@ export class PluginHostManager {
       throw error;
     }
     const closed = new Promise<void>((resolve) => child.once("close", resolve));
-    void closed
+    // One removal per worker. The stop path awaits this same promise instead
+    // of walking the tree a second time beside it.
+    const tempDirRemoved = closed
       .then(() => removeTreeWithoutFollowingLinksAsync(tempDir))
       .catch((error) => {
         this.options.logger.warn(
@@ -554,6 +565,7 @@ export class PluginHostManager {
       child,
       closed,
       tempDir,
+      tempDirRemoved,
       pending: new Map(),
       ready,
       resolveReady,
@@ -1057,16 +1069,9 @@ export class PluginHostManager {
       "Host plugin worker stopped",
     );
     this.rejectPendingCalls(worker, reason);
-    try {
-      await removeTreeWithoutFollowingLinksAsync(worker.tempDir);
-    } catch (error) {
-      // Never thrown from the stop path: a leftover temp dir is cheap, and the
-      // next daemon start sweeps it once its owner pid is gone.
-      this.options.logger.warn(
-        { pluginId: worker.pluginId, err: error },
-        "Failed to remove host plugin temporary directory",
-      );
-    }
+    // Never thrown from the stop path: a leftover temp dir is cheap, and the
+    // next daemon start sweeps it once its owner pid is gone.
+    await worker.tempDirRemoved;
   }
 
   private cancelWorkerIdleTimer(worker: WorkerState): void {
