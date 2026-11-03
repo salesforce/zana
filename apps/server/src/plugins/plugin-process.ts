@@ -1,7 +1,7 @@
 import { runPluginSourceCommand as run } from './plugin-source-command.js';
 import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { resolveBundledNpmCli } from '@zana-ai/zcc-plugin-build';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
 
@@ -29,6 +29,8 @@ export async function defaultCloneGit(
   spec: string,
   signal?: AbortSignal
 ): Promise<{ commit: string; refKind: 'branch' | 'tag' | 'commit' }> {
+  // Git resolves a relative dest against the child's cwd, which is not process.cwd().
+  dest = resolve(dest);
   mkdirSync(dirname(dest), { recursive: true });
   // Neither the clone nor its UUID parent may be a child's working directory:
   // Windows can retain that directory handle briefly after the child exits.

@@ -1,6 +1,5 @@
 import { readCatalogIcon } from './catalog-icon.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -1916,7 +1915,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         await removeManagedGeneration(opts.dataDir, dest);
         throw error;
       } finally {
-        if (freshCache) await rm(freshCache, { recursive: true, force: true });
+        if (freshCache) await removePluginTemporaryDirectory(freshCache);
       }
     }
     if (source.kind === 'git') {

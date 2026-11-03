@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -27,7 +27,7 @@ vi.mock('node:fs/promises', async original => {
 let root: string;
 let service: ReturnType<typeof createPluginService>;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'plugin-cleanup-')); locks.path = ''; locks.code = 'EPERM'; locks.removals = [];
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'plugin-cleanup-'))); locks.path = ''; locks.code = 'EPERM'; locks.removals = [];
   vi.stubEnv('ZCC_OFFICIAL_MARKETPLACE_URL', 'off'); vi.stubEnv('ZCC_INTERNAL_MARKETPLACE_SOURCE', 'off');
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -75,6 +75,25 @@ it('does not block healthy plugin management when startup pruning encounters a l
   expect(service.get('fixture')).toMatchObject({ enabled: true, status: 'running' });
   expect(locks.removals[0]?.options).toMatchObject({ maxRetries: 5, retryDelay: 100 });
   expect(console.warn).toHaveBeenCalled();
+});
+
+it('preserves the npm recovery failure when its fresh cache cleanup is locked', async () => {
+  let installs = 0;
+  service = createPluginService({ dataDir: root, bundledRoot: join(root, 'bundled'), hostVersion: '2.3.1', activationStabilizationMs: 0, spawnNpm: async (args, dir) => {
+    if (args[0] !== 'install') return { code: 0, stdout: '', stderr: '' };
+    if (++installs > 1) { locks.path = join(dir, '..', 'npm-recovery-cache'); return { code: 1, stdout: '', stderr: 'registry unavailable' }; }
+    const packageRoot = join(dir, 'node_modules/remote-fixture'); mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: 'zcc-plugin-remote-fixture', version: '1.0.0',
+      zcc: { name: 'Remote fixture', description: 'Fixture', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
+    writeFileSync(join(packageRoot, 'server.mjs'), 'export default () => {};');
+    return { code: 0, stdout: '', stderr: '' };
+  } });
+  await service.install('npm:remote-fixture@1.0.0');
+  await service.hardReload();
+  await vi.waitFor(() => expect(service.recoveryStatus().phase).toBe('complete'), { timeout: 10_000 });
+  expect(service.recoveryStatus().failed[0]?.message).toContain('registry unavailable');
+  expect(locks.removals.map(removal => removal.path)).toEqual([locks.path]);
+  expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('npm-recovery-cache'));
 });
 
 it('preserves promotion validation errors when the rejected candidate is locked', async () => {
