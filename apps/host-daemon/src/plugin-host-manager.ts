@@ -257,8 +257,12 @@ function sweepOrphanTempDirsOnce(
   void sweepOrphanTempDirs({
     prefixes: ["bb-provider-bridge", "zcc-host"],
     signal,
+    onFailure: (path, error) =>
+      logger.warn({ path, err: error }, "Failed to remove an orphaned plugin temp directory"),
   })
     .then((result) => {
+      // A sweep cut short by this manager's shutdown lets a later manager run it.
+      if (signal.aborted) orphanSweepStarted = false;
       if (result.removed > 0 || result.failed > 0) {
         logger.info({ ...result }, "Swept orphaned plugin temp directories");
       }

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -30,6 +31,11 @@ async function reapedPid(): Promise<number> {
   return pid;
 }
 
+const canChmodLock =
+  process.platform !== "win32" &&
+  typeof process.getuid === "function" &&
+  process.getuid() !== 0;
+
 describe("temp dir sweep, review round 1", () => {
   let root: string;
   beforeEach(() => {
@@ -38,6 +44,11 @@ describe("temp dir sweep, review round 1", () => {
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
   });
+
+  function backdate(dir: string, ageMs = HOUR_MS): void {
+    const when = new Date(Date.now() - ageMs);
+    utimesSync(dir, when, when);
+  }
 
   function makeDir(name: string, ageMs = HOUR_MS): string {
     const dir = join(root, name);
@@ -104,6 +115,47 @@ describe("temp dir sweep, review round 1", () => {
     expect(existsSync(tree)).toBe(false);
   });
 
+  it("R2-F5 reports an unreadable temp root through onFailure and counts it", async () => {
+    const file = join(root, "not-a-dir");
+    writeFileSync(file, "x");
+    const failures: { path: string; error: unknown }[] = [];
+    const result = await sweepOrphanTempDirs({
+      tempRoot: file,
+      prefixes: PLUGIN_TEMP_DIR_PREFIXES,
+      onFailure: (path, error) => failures.push({ path, error }),
+    });
+    expect(result.failed).toBe(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.path).toBe(file);
+  });
+
+  it.skipIf(!canChmodLock)(
+    "R2-F5 reports the path of a dir the sweep could not remove",
+    async () => {
+      const stuck = makeDir("zcc-host-999991-fixture-stuck");
+      const inner = join(stuck, "inner");
+      mkdirSync(inner);
+      writeFileSync(join(inner, "f.txt"), "x");
+      backdate(stuck);
+      chmodSync(inner, 0o000);
+      const other = makeDir("zcc-host-999992-fixture-fine");
+      const failures: string[] = [];
+      try {
+        const result = await sweepOrphanTempDirs({
+          tempRoot: root,
+          prefixes: PLUGIN_TEMP_DIR_PREFIXES,
+          isAlive: () => false,
+          onFailure: (path) => failures.push(path),
+        });
+        expect(result.failed).toBe(1);
+        expect(failures).toEqual([stuck]);
+        expect(existsSync(other)).toBe(false);
+      } finally {
+        chmodSync(inner, 0o700);
+      }
+    },
+  );
+
   describe("removeOwnedTempDirs", () => {
     it("F2/A6 removes only the exact pid's dirs for the prefix", async () => {
       const pid = await reapedPid();
@@ -146,16 +198,66 @@ describe("temp dir sweep, review round 1", () => {
       expect(existsSync(dir)).toBe(true);
     });
 
-    it("F3/A3 records a failure and still removes the other dirs", async () => {
+    it("a missing temp root gives an empty result", async () => {
+      const result = await removeOwnedTempDirs({
+        prefix: "bb-provider-bridge",
+        pid: 4242,
+        tempRoot: join(root, "missing"),
+        isAlive: () => false,
+      });
+      expect(result).toEqual({ removed: 0, failures: [] });
+    });
+
+    it("R2-F3 stops reading at the first matching dir", async () => {
       const pid = await reapedPid();
-      const dir = makeDir(`bb-provider-bridge-${pid}-fixture-abc`, 0);
+      const first = makeDir(`bb-provider-bridge-${pid}-fixture-aaa`);
+      const second = makeDir(`bb-provider-bridge-${pid}-fixture-bbb`);
       const result = await removeOwnedTempDirs({
         prefix: "bb-provider-bridge",
         pid,
-        tempRoot: join(root, "missing"),
+        tempRoot: root,
       });
-      expect(result).toEqual({ removed: 0, failures: [] });
-      expect(existsSync(dir)).toBe(true);
+      // A process creates one such dir, so exactly one is taken per call.
+      expect(result.removed).toBe(1);
+      expect([existsSync(first), existsSync(second)].filter(Boolean)).toHaveLength(1);
     });
+
+    it("R2-F5 records an unreadable temp root as a failure", async () => {
+      const file = join(root, "not-a-dir");
+      writeFileSync(file, "x");
+      const result = await removeOwnedTempDirs({
+        prefix: "bb-provider-bridge",
+        pid: 4242,
+        tempRoot: file,
+        isAlive: () => false,
+      });
+      expect(result.removed).toBe(0);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]?.path).toBe(file);
+    });
+
+    it.skipIf(!canChmodLock)(
+      "R2-F2 records a dir it cannot remove and still tries the next pid-matching call",
+      async () => {
+        const pid = await reapedPid();
+        const stuck = makeDir(`bb-provider-bridge-${pid}-fixture-stuck`);
+        const inner = join(stuck, "inner");
+        mkdirSync(inner);
+        writeFileSync(join(inner, "f.txt"), "x");
+        chmodSync(inner, 0o000);
+        try {
+          const result = await removeOwnedTempDirs({
+            prefix: "bb-provider-bridge",
+            pid,
+            tempRoot: root,
+          });
+          expect(result.removed).toBe(0);
+          expect(result.failures).toHaveLength(1);
+          expect(result.failures[0]?.path).toBe(stuck);
+        } finally {
+          chmodSync(inner, 0o700);
+        }
+      },
+    );
   });
 });

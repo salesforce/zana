@@ -5,8 +5,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -87,7 +85,7 @@ describe("bridge temp dir cleanup failure reporting with mocked helpers (#552)",
     rmSync(base, { recursive: true, force: true });
   });
 
-  function createManager(): RuntimeProviderProcessManager {
+  function createManager(opts: { withoutOnStderr?: boolean } = {}): RuntimeProviderProcessManager {
     const identityRegistry = new RuntimeThreadIdentityRegistry();
     let nextRequestId = 1;
     const manager = new RuntimeProviderProcessManager({
@@ -115,7 +113,7 @@ describe("bridge temp dir cleanup failure reporting with mocked helpers (#552)",
       onProviderIdentityWaitersInterrupted: (providerProcess) =>
         identityRegistry.resolvePendingIdentityWaiters(providerProcess.identity),
       onProviderThreadDetached: (threadId) => identityRegistry.clearThread(threadId),
-      onStderr: (line) => { stderrLines.push(line); },
+      ...(opts.withoutOnStderr ? {} : { onStderr: (line: string) => { stderrLines.push(line); } }),
       skillRoots: [],
       workspacePath: base,
     });
@@ -156,20 +154,6 @@ describe("bridge temp dir cleanup failure reporting with mocked helpers (#552)",
     return { bridgeDir, providerProcess };
   }
 
-  it("F3 reports dirs the first-start sweep could not remove", async () => {
-    hoisted.sweep.mockResolvedValue({ inspected: 3, removed: 0, skipped: 0, failed: 2 });
-    const manager = createManager();
-    await manager.ensureProvider({ processKey: "fake", providerId: "fake" });
-    await waitFor(() => stderrLines.some((line) => /2 orphaned plugin temp directories/.test(line)));
-  });
-
-  it("F3 reports a single failed dir in the singular", async () => {
-    hoisted.sweep.mockResolvedValue({ inspected: 1, removed: 0, skipped: 0, failed: 1 });
-    const manager = createManager();
-    await manager.ensureProvider({ processKey: "fake", providerId: "fake" });
-    await waitFor(() => stderrLines.some((line) => /1 orphaned plugin temp directory\./.test(line)));
-  });
-
   it("F3 reports a sweep that rejects and still starts the bridge", async () => {
     hoisted.sweep.mockRejectedValue(new Error("sweep exploded"));
     const manager = createManager();
@@ -196,5 +180,49 @@ describe("bridge temp dir cleanup failure reporting with mocked helpers (#552)",
     providerProcess.child.kill("SIGKILL");
     await expect(providerProcess.exitFinalized).resolves.toBeUndefined();
     await waitFor(() => stderrLines.some((line) => /Could not clean up .*not an error object/.test(line)));
+  });
+
+  it("R2-F4 shutdown aborts the first-start sweep", async () => {
+    let signal: AbortSignal | undefined;
+    hoisted.sweep.mockImplementation((options: { signal: AbortSignal }) => {
+      signal = options.signal;
+      return new Promise(() => undefined);
+    });
+    const manager = createManager();
+    await manager.ensureProvider({ processKey: "fake", providerId: "fake" });
+    expect(signal?.aborted).toBe(false);
+
+    await manager.shutdown();
+
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("R2-F1 falls back to the console when the host sets no onStderr", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      hoisted.sweep.mockRejectedValue(new Error("sweep exploded"));
+      const manager = createManager({ withoutOnStderr: true });
+      await manager.ensureProvider({ processKey: "fake", providerId: "fake" });
+      await waitFor(() =>
+        warn.mock.calls.some(([line]) => /sweep failed: sweep exploded/.test(String(line))),
+      );
+      expect(stderrLines).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("R2-F5 reports the path of each orphan the sweep could not remove", async () => {
+    hoisted.sweep.mockImplementation(
+      async (options: { onFailure: (path: string, error: unknown) => void }) => {
+        options.onFailure("/tmp/zcc-host-1-x", new Error("EBUSY: simulated"));
+        return { inspected: 1, removed: 0, skipped: 0, failed: 1 };
+      },
+    );
+    const manager = createManager();
+    await manager.ensureProvider({ processKey: "fake", providerId: "fake" });
+    await waitFor(() =>
+      stderrLines.some((line) => /\/tmp\/zcc-host-1-x.*EBUSY: simulated/.test(line)),
+    );
   });
 });

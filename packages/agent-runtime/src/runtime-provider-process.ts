@@ -164,6 +164,8 @@ export class RuntimeProviderProcessManager {
   private readonly currentProcessByConfiguration = new Map<string, string>();
   private shuttingDown = false;
   private orphanSweepStarted = false;
+  /** Stops the startup sweep between entries when the runtime shuts down. */
+  private readonly sweepAbort = new AbortController();
 
   constructor(args: RuntimeProviderProcessManagerArgs) {
     this.args = args;
@@ -378,6 +380,7 @@ export class RuntimeProviderProcessManager {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.sweepAbort.abort();
     const shutdownPromises: Promise<void>[] = [];
 
     for (const [processKey, providerProcess] of this.processes) {
@@ -421,19 +424,18 @@ export class RuntimeProviderProcessManager {
   private sweepOrphanTempDirsOnce(): void {
     if (this.orphanSweepStarted) return;
     this.orphanSweepStarted = true;
-    void sweepOrphanTempDirs({ prefixes: PLUGIN_TEMP_DIR_PREFIXES })
-      .then((result) => {
-        if (result.failed > 0) {
-          this.args.onStderr?.(
-            `Could not remove ${result.failed} orphaned plugin temp director${result.failed === 1 ? "y" : "ies"}.`,
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        this.args.onStderr?.(
-          `Orphaned plugin temp directory sweep failed: ${errorMessage(error)}`,
-        );
-      });
+    void sweepOrphanTempDirs({
+      prefixes: PLUGIN_TEMP_DIR_PREFIXES,
+      signal: this.sweepAbort.signal,
+      onFailure: (path, error) =>
+        this.reportCleanupProblem(
+          `Could not remove the orphaned plugin temp directory ${path}: ${errorMessage(error)}`,
+        ),
+    }).catch((error: unknown) => {
+      this.reportCleanupProblem(
+        `Orphaned plugin temp directory sweep failed: ${errorMessage(error)}`,
+      );
+    });
   }
 
   /**
@@ -452,15 +454,25 @@ export class RuntimeProviderProcessManager {
         pid,
       });
       for (const failure of failures) {
-        this.args.onStderr?.(
+        this.reportCleanupProblem(
           `Could not remove the temporary directory of provider "${providerId}" (pid ${pid}): ${errorMessage(failure.error)}`,
         );
       }
     } catch (error) {
-      this.args.onStderr?.(
+      this.reportCleanupProblem(
         `Could not clean up the temporary directory of provider "${providerId}" (pid ${pid}): ${errorMessage(error)}`,
       );
     }
+  }
+
+  /**
+   * Cleanup problems go to `onStderr` when the host set one. The host daemon
+   * does not, so without a fallback they would vanish; they go to the console
+   * (which the daemon logs) instead.
+   */
+  private reportCleanupProblem(message: string): void {
+    if (this.args.onStderr !== undefined) this.args.onStderr(message);
+    else console.warn(message);
   }
 
   private getAdapter(

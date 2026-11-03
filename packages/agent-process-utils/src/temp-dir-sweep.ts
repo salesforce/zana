@@ -23,6 +23,8 @@ export interface SweepOrphanTempDirsOptions {
   now?: () => number;
   /** Stops the sweep between entries, for example on shutdown. */
   signal?: AbortSignal;
+  /** Called with the path and error of each dir that could not be removed. */
+  onFailure?: (path: string, error: unknown) => void;
 }
 
 export interface SweepOrphanTempDirsResult {
@@ -71,7 +73,10 @@ async function matchingNames(
   let dir;
   try {
     dir = await opendir(tempRoot);
-  } catch {
+  } catch (error) {
+    // A missing temp folder is a clean state; anything else (EACCES, EMFILE)
+    // is a failure the caller should see.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return names;
   }
   let scanned = 0;
@@ -130,12 +135,18 @@ export async function sweepOrphanTempDirs(
     skipped: 0,
     failed: 0,
   };
-  const names = await matchingNames(
-    tempRoot,
-    pattern,
-    options.maxEntries ?? DEFAULT_MAX_ENTRIES,
-    options.signal,
-  );
+  let names: string[];
+  try {
+    names = await matchingNames(
+      tempRoot,
+      pattern,
+      options.maxEntries ?? DEFAULT_MAX_ENTRIES,
+      options.signal,
+    );
+  } catch (error) {
+    options.onFailure?.(tempRoot, error);
+    return { ...result, failed: 1 };
+  }
   for (const name of names) {
     if (result.removed >= MAX_REMOVED_PER_SWEEP) break;
     if (options.signal?.aborted === true) break;
@@ -149,8 +160,9 @@ export async function sweepOrphanTempDirs(
       }
       await removeTreeWithoutFollowingLinksAsync(path);
       result.removed += 1;
-    } catch {
+    } catch (error) {
       result.failed += 1;
+      options.onFailure?.(path, error);
     }
   }
   return result;
@@ -182,12 +194,20 @@ export async function removeOwnedTempDirs(options: {
   const tempRoot = options.tempRoot ?? tmpdir();
   const isAlive = options.isAlive ?? processIsAlive;
   if (isAlive(pid)) return result;
-  const names = await matchingNames(
-    tempRoot,
-    new RegExp(`^${escapeRegExp(options.prefix)}-${pid}-`),
-    MAX_REMOVED_PER_SWEEP,
-    undefined,
-  );
+  // A process creates one such dir, so stop reading the temp folder at the
+  // first match instead of scanning all of it on every exit.
+  let names: string[];
+  try {
+    names = await matchingNames(
+      tempRoot,
+      new RegExp(`^${escapeRegExp(options.prefix)}-${pid}-`),
+      1,
+      undefined,
+    );
+  } catch (error) {
+    result.failures.push({ path: tempRoot, error });
+    return result;
+  }
   for (const name of names) {
     const path = join(tempRoot, name);
     try {

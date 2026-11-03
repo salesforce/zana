@@ -3,9 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -216,6 +214,55 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.any(Error) }),
       "Orphaned plugin temp directory sweep failed",
+    );
+  });
+
+  it("R2-F6 a sweep cut short by shutdown lets the next manager run it", async () => {
+    vi.resetModules();
+    const fresh = await import("../plugin-host-manager.js");
+    hoisted.sweepSpy.mockImplementation(
+      (options: { signal: AbortSignal }) =>
+        new Promise((resolve) => {
+          options.signal.addEventListener("abort", () =>
+            resolve({ inspected: 0, removed: 0, skipped: 0, failed: 0 }),
+          );
+        }),
+    );
+    const make = () =>
+      new fresh.PluginHostManager({
+        dataDir,
+        logger,
+        fetchArtifact: vi.fn(async () => artifactSource),
+      });
+    const first = make();
+    await first.shutdown();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    hoisted.sweepSpy.mockResolvedValue({ inspected: 0, removed: 0, skipped: 0, failed: 0 });
+    const second = make();
+    managers.push(second as unknown as InstanceType<typeof PluginHostManager>);
+
+    expect(hoisted.sweepSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("R2-F5 logs the path of an orphan the daemon sweep could not remove", async () => {
+    vi.resetModules();
+    const fresh = await import("../plugin-host-manager.js");
+    hoisted.sweepSpy.mockImplementation(
+      async (options: { onFailure: (path: string, error: unknown) => void }) => {
+        options.onFailure("/tmp/zcc-host-1-x", new Error("EBUSY: simulated"));
+        return { inspected: 1, removed: 0, skipped: 0, failed: 1 };
+      },
+    );
+    const manager = new fresh.PluginHostManager({
+      dataDir,
+      logger,
+      fetchArtifact: vi.fn(async () => artifactSource),
+    });
+    managers.push(manager as unknown as InstanceType<typeof PluginHostManager>);
+    await waitFor(() => logger.warn.mock.calls.length > 0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/tmp/zcc-host-1-x" }),
+      "Failed to remove an orphaned plugin temp directory",
     );
   });
 });
