@@ -40,8 +40,12 @@ sleep 1
 sleep 1
 exit 0
 ` });
-  const launches = (): Launch[] => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
+  // The goal's evaluator also runs the fake binary (`claude --print`); only agent sessions count here.
+  const launches = (): Launch[] => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as Launch) : [])
+    .filter(launch => !launch.argv.includes('--print'));
   const screenshots = process.env.ZCC_E2E_SCREENSHOTS === '1' ? process.env.ZCC_E2E_SCREENSHOT_DIR : undefined;
+  // The global Goals route, as pending-worker-recovery.spec.ts opens it.
+  const openGoals = () => window.evaluate(() => { history.pushState({}, '', '/goals'); dispatchEvent(new PopStateEvent('popstate')); });
   let goalId: string | undefined, projectId: string | undefined;
   try {
     await window.evaluate(binary => window.cc.config.set({ claudeBinary: binary, defaultHarness: 'claude', tmuxScope: 'off' }), agent.path);
@@ -69,7 +73,7 @@ exit 0
 
     // 2. The Goals view offers Resume; clicking it reopens the conversation.
     if (screenshots) await window.setViewportSize({ width: 1440, height: 900 });
-    await window.locator('.nav-item').filter({ hasText: 'Goals' }).first().click();
+    await openGoals();
     const row = window.locator('.scheduler-card').filter({ hasText: 'Resumable goal' });
     await expect(row).toBeVisible({ timeout: 15_000 });
     await row.locator('.scheduler-card-main').first().click();
@@ -93,7 +97,7 @@ exit 0
     if (screenshots) await captureElectronScreenshot(electron, window, join(screenshots, '02-reopened-tab.png'));
 
     // 3. A second click switches to the same tab.
-    await window.locator('.nav-item').filter({ hasText: 'Goals' }).first().click();
+    await openGoals();
     const again = window.locator('.scheduler-card').filter({ hasText: 'Resumable goal' });
     await again.locator('.scheduler-card-main').first().click();
     await again.getByRole('button', { name: /^Resume/ }).click();
