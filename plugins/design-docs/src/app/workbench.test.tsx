@@ -755,6 +755,10 @@ describe('doc header', () => {
     fireEvent.click(menuItem(/Copy chat reference/));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`::design-doc{id="${doc.id}"}`));
     expect(harness.toasts.at(-1)).toEqual({ message: 'Copied reference', kind: 'info' });
+    more();
+    fireEvent.click(menuItem(/Copy doc link/));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`[Lifecycle](doc://${doc.id}/README.md)`));
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Copied doc link', kind: 'info' });
     writeText.mockRejectedValueOnce(new Error('denied'));
     more();
     fireEvent.click(menuItem(/Copy id/));

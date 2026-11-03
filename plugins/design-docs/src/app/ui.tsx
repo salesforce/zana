@@ -103,10 +103,13 @@ export function IconButton({
   active = false,
   danger = false,
   disabled = false,
-  size = 14
+  size = 14,
+  hint
 }: {
   icon: Icon;
   label: string;
+  /** Visible hover/focus tooltip text; the native title tooltip is skipped when set. */
+  hint?: string;
   onClick(): void;
   active?: boolean;
   danger?: boolean;
@@ -117,7 +120,8 @@ export function IconButton({
     <button
       type="button"
       className={`icon-btn dd-icon-btn${active ? ' on' : ''}${danger ? ' danger' : ''}`}
-      title={label}
+      title={hint ? undefined : label}
+      data-tip={hint}
       aria-label={label}
       aria-pressed={active || undefined}
       disabled={disabled}

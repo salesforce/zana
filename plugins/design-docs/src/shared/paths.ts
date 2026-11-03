@@ -305,6 +305,43 @@ export function parseCrossDocLink(href: string): CrossDocLink | null {
   }
 }
 
+/**
+ * Markdown link to a doc, ready to paste anywhere in Design Docs. Uses the id,
+ * not the slug: an id resolves from any project, a slug only within the same
+ * project or global docs. `path` defaults to the doc's entry file, so the link
+ * can be turned into a relative one when it is pasted into the same doc.
+ */
+export function crossDocMarkdownLink(doc: { id: string; title: string; entryPath?: string }, path?: string): string {
+  const target = path ?? doc.entryPath;
+  const text = path ? (path.split('/').pop() ?? path) : doc.title;
+  const label = text.replace(/[\\[\]]/g, '\\$&').replace(/\s+/g, ' ').trim() || doc.id;
+  const suffix = target ? `/${target.split('/').map(encodeURIComponent).join('/')}` : '';
+  return `[${label}](doc://${doc.id}${suffix})`;
+}
+
+/** `to` as a link from the folder of `fromPath`, e.g. `../diagrams/a.mmd`. */
+export function relativeDocPath(fromPath: string, to: string): string {
+  const base = fromPath.split('/').slice(0, -1);
+  const target = to.split('/');
+  let shared = 0;
+  while (shared < base.length && shared < target.length - 1 && base[shared] === target[shared]) shared += 1;
+  return [...base.slice(shared).map(() => '..'), ...target.slice(shared)].join('/');
+}
+
+/**
+ * Pasted text that is exactly a markdown link to a file of this same doc,
+ * rewritten as the relative link it should be (relative links survive export
+ * and rename-free moves of the whole doc). Null when it is anything else.
+ */
+export function localizeDocLink(text: string, docId: string, fromPath: string): string | null {
+  const match = text.trim().match(/^\[((?:[^\]\\]|\\.)*)\]\((doc:\/\/[^)\s]+)\)$/i);
+  if (!match) return null;
+  const link = parseCrossDocLink(match[2]!);
+  if (!link || link.docRef !== docId || !link.path) return null;
+  const relative = relativeDocPath(fromPath, link.path).split('/').map((part) => (part === '..' ? part : encodeURIComponent(part))).join('/');
+  return `[${match[1]}](${relative}${link.anchor ? `#${encodeURIComponent(link.anchor)}` : ''})`;
+}
+
 /** Sort paths so a folder's files precede its subfolders, both alphabetically. */
 export function comparePaths(a: string, b: string): number {
   const as = a.split('/');

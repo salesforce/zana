@@ -174,3 +174,22 @@ test('opens a cross-doc link', async ({ app, home }) => {
   await expect.poll(() => win.url(), { timeout: 30_000 }).toContain(target.id);
   await expect(win.getByText('Target API page').first()).toBeVisible({ timeout: 30_000 });
 });
+
+test('opens a relative link to a nested file in the same doc', async ({ app, home }) => {
+  test.setTimeout(120_000);
+  const win = app.window;
+  await installDesignDocs(win);
+  const projectId = await addProject(win, home, 'dd-gaps-relative');
+  const doc = await rpc<Doc>(win, 'create', { title: 'Relative link doc', template: 'technical', projectId });
+  const readme = await rpc<{ revision: number; fileId: string }>(win, 'readFile', { doc: doc.id, path: 'README.md' });
+  await rpc(win, 'writeFile', {
+    doc: doc.id, path: 'README.md', content: 'Context text.\n\n[x](diagrams/architecture.mmd)\n\n## Goals\n',
+    baseRevision: readme.revision, baseFileId: readme.fileId
+  });
+
+  await win.getByRole('button', { name: /^Design Docs/ }).click();
+  await win.getByText('Relative link doc').first().click();
+  await expect.poll(() => win.url()).toContain(doc.id);
+  await win.getByRole('link', { name: 'x', exact: true }).click();
+  await expect.poll(() => decodeURIComponent(win.url()), { timeout: 30_000 }).toContain('architecture.mmd');
+});

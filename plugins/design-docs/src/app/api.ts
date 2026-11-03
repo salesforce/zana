@@ -124,6 +124,8 @@ export interface DesignDocsApi {
   /** Resolve a `doc://` link written in `fromDoc`; the server authorizes the target. */
   resolveCrossDocLink(fromDoc: string, href: string): Promise<{ docId: string; path: string } | { error: 'missing-doc' | 'missing-file' | 'forbidden' }>;
   templates(): Promise<TemplateInfo[]>;
+  /** Add a template's files to an existing doc; never overwrites. */
+  addFromTemplate(docId: string, templateKey: string): Promise<{ added: string[] }>;
   templateNew(args: { label: string; description?: string }): Promise<DesignDocDetail>;
   templateDuplicate(template: string): Promise<DesignDocDetail>;
   templateUpdateMeta(template: string, patch: UpdateArgs): Promise<DesignDocSummary>;
@@ -224,6 +226,7 @@ export function createApi(call: Call): DesignDocsApi {
   return {
     resolveCrossDocLink: (fromDoc, href) => typed('resolveCrossDocLink', { fromDoc, href }),
     templates: () => typed('templates'),
+    addFromTemplate: (docId, templateKey) => typed('addFromTemplate', { docId, templateKey }),
     templateNew: (args) => typed('templateNew', args),
     templateDuplicate: (template) => typed('templateDuplicate', { template }),
     templateUpdateMeta: (template, patch) => typed('templateUpdateMeta', { template, ...patch }),

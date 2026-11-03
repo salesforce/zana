@@ -106,6 +106,14 @@ export const DESIGN_DOCS_STYLES = `
 .dd-icon-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
 .dd-icon-btn.danger:hover:not(:disabled) { color: var(--danger); }
 .dd-icon-btn:disabled { opacity: 0.35; cursor: default; }
+.dd-icon-btn[data-tip] { position: relative; }
+.dd-icon-btn[data-tip]:hover::after, .dd-icon-btn[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  width: max-content; max-width: 220px; padding: 4px 8px; border-radius: 6px;
+  background: var(--bg-elevated, var(--bg-panel)); color: var(--text-primary); border: 1px solid var(--border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); font-size: 11px; line-height: 1.35; text-align: left; white-space: normal; pointer-events: none;
+}
 
 /* ── Peers view (inside the workbench) ──────────────────────────────── */
 .dd-peers-view { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; background: var(--bg-base); }

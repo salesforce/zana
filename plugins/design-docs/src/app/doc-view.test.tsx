@@ -421,6 +421,74 @@ describe('previewing files', () => {
   });
 });
 
+describe('pasting doc links', () => {
+  const paste = (input: HTMLTextAreaElement, text: string) =>
+    fireEvent.paste(input, { clipboardData: { getData: () => text } });
+
+  it('turns a link to a file of this doc into a relative link, and leaves other text alone', async () => {
+    const harness = createHarness();
+    const doc = harness.store.create(
+      { title: 'Paste', projectId: 'p1', files: [{ path: 'README.md', content: 'Start: ' }, { path: 'diagrams/flow.mmd', content: 'flowchart LR\n  A --> B' }] },
+      UI_USER
+    );
+    const other = simpleDoc(harness);
+    renderDoc(harness, doc.id);
+    await findPane('README.md');
+    fireEvent.click(modeButton('Edit'));
+    const input = editor('README.md');
+    input.setSelectionRange(7, 7);
+
+    paste(input, `[flow.mmd](doc://${doc.id}/diagrams/flow.mmd)`);
+    expect(editor('README.md').value).toBe('Start: [flow.mmd](diagrams/flow.mmd)');
+
+    // Another doc's link stays a cross-doc link: it only works through doc://.
+    const before = editor('README.md').value;
+    paste(editor('README.md'), `[Other](doc://${other.id}/README.md)`);
+    expect(editor('README.md').value).toBe(before);
+  });
+
+  it('copies a file link from the row menu', async () => {
+    const harness = createHarness();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const doc = simpleDoc(harness);
+    renderDoc(harness, doc.id, { path: 'api.md' });
+    await findPane('api.md');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for api.md' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Copy link/ }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`[api.md](doc://${doc.id}/api.md)`));
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Copied link', kind: 'info' });
+  });
+});
+
+describe('adding from a template', () => {
+  it('shows tooltips and adds template files, never overwriting', async () => {
+    const harness = createHarness();
+    const doc = harness.store.create({ title: 'Tpl', projectId: 'p1', files: [{ path: 'notes.md', content: 'x' }] }, UI_USER);
+    renderDoc(harness, doc.id);
+    await findPane('notes.md');
+    expect(screen.getByRole('button', { name: 'Add files' }).getAttribute('data-tip')).toMatch(/Upload/);
+    expect(screen.getByRole('button', { name: 'New file' }).getAttribute('data-tip')).toMatch(/blank/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add from template' }));
+    const select = await screen.findByRole('combobox');
+    await waitFor(() => expect(select.querySelectorAll('option').length).toBeGreaterThan(1));
+    expect((within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(select, { target: { value: 'technical' } });
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add files' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Added'))).toBe(true));
+
+    // Second add clashes on the same paths: nothing is overwritten and the error is shown.
+    fireEvent.click(screen.getByRole('button', { name: 'Add from template' }));
+    const again = await screen.findByRole('combobox');
+    await waitFor(() => expect(again.querySelectorAll('option').length).toBeGreaterThan(1));
+    fireEvent.change(again, { target: { value: 'technical' } });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not add the template'))).toBe(true));
+  });
+});
+
 describe('editing files', () => {
   it('edits, reverts and saves with the keyboard', async () => {
     const harness = createHarness();

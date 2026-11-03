@@ -11,6 +11,9 @@ import {
   mediaTypeOf,
   isCrossDocScheme,
   normalizeDocPath,
+  crossDocMarkdownLink,
+  localizeDocLink,
+  relativeDocPath,
   parseCrossDocLink,
   resolveDocLink,
   shieldCrossDocLinks,
@@ -154,5 +157,46 @@ describe('shieldCrossDocLinks', () => {
     expect(unshieldCrossDocHref('https://x.io')).toBe('https://x.io');
     const bad = 'https://doc-link.invalid/?h=%E0%A4%A';
     expect(unshieldCrossDocHref(bad)).toBe(bad);
+  });
+});
+
+describe('crossDocMarkdownLink', () => {
+  it('builds a link the parser accepts', () => {
+    const link = crossDocMarkdownLink({ id: 'dd_abc123', title: 'Auth [v2]\n design', entryPath: 'README.md' });
+    expect(link).toBe('[Auth \\[v2\\] design](doc://dd_abc123/README.md)');
+    expect(parseCrossDocLink('doc://dd_abc123/README.md')).toEqual({ docRef: 'dd_abc123', path: 'README.md', anchor: null });
+  });
+  it('links a specific file with its name as label and encodes the path', () => {
+    const link = crossDocMarkdownLink({ id: 'dd_x', title: 'T', entryPath: 'README.md' }, 'my diagrams/a b.mmd');
+    expect(link).toBe('[a b.mmd](doc://dd_x/my%20diagrams/a%20b.mmd)');
+    expect(parseCrossDocLink('doc://dd_x/my%20diagrams/a%20b.mmd')?.path).toBe('my diagrams/a b.mmd');
+  });
+  it('falls back to the id for an empty title and omits an unknown entry', () => {
+    expect(crossDocMarkdownLink({ id: 'dd_x', title: '  ' })).toBe('[dd_x](doc://dd_x)');
+  });
+});
+
+describe('relativeDocPath', () => {
+  it.each([
+    ['README.md', 'diagrams/a.mmd', 'diagrams/a.mmd'],
+    ['diagrams/a.mmd', 'README.md', '../README.md'],
+    ['a/b/c.md', 'a/d/e.md', '../d/e.md'],
+    ['a/b.md', 'a/c.md', 'c.md']
+  ])('%s -> %s', (from, to, expected) => {
+    expect(relativeDocPath(from, to)).toBe(expected);
+    expect(resolveDocLink(from, expected)).toBe(to);
+  });
+});
+
+describe('localizeDocLink', () => {
+  it('rewrites a link to this doc as a relative link, keeping label and anchor', () => {
+    expect(localizeDocLink('[Flow](doc://dd_1/diagrams/a%20b.mmd#top)', 'dd_1', 'README.md')).toBe('[Flow](diagrams/a%20b.mmd#top)');
+    expect(localizeDocLink('  [R](doc://dd_1/README.md)\n', 'dd_1', 'notes/x.md')).toBe('[R](../README.md)');
+  });
+  it('leaves other docs, entry-less links and ordinary text alone', () => {
+    expect(localizeDocLink('[X](doc://dd_2/a.md)', 'dd_1', 'README.md')).toBeNull();
+    expect(localizeDocLink('[X](doc://dd_1)', 'dd_1', 'README.md')).toBeNull();
+    expect(localizeDocLink('text [X](doc://dd_1/a.md) more', 'dd_1', 'README.md')).toBeNull();
+    expect(localizeDocLink('[X](doc://dd_1/../a.md)', 'dd_1', 'README.md')).toBeNull();
   });
 });
