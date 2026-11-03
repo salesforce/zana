@@ -1,5 +1,7 @@
 import {
   chmodSync,
+  lstatSync,
+  symlinkSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -8,11 +10,12 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   copySkillTree,
   createClaudeSkillPluginsRoot,
@@ -99,5 +102,31 @@ describe("review round 1 fixes (#587)", () => {
       readdirSync(pluginPath).filter((n) => /^\.(old|tmp)-/u.test(n)),
     ).toEqual([]);
     expect(existsSync(join(pluginPath, "skills", "more.md"))).toBe(true);
+  });
+
+  it("A10: an unchanged plugin.json is not rewritten", () => {
+    const pluginPath = ensure();
+    const manifest = join(pluginPath, ".claude-plugin", "plugin.json");
+    const old = new Date(Date.now() - 100_000);
+    utimesSync(manifest, old, old);
+    ensure();
+    expect(lstatSync(manifest).mtimeMs).toBeLessThan(Date.now() - 50_000);
+  });
+
+  it("F6: a huge flat directory is refused while it is listed", () => {
+    for (let i = 0; i < 9; i += 1) writeFileSync(join(src, `f${i}`), "x");
+    expect(() =>
+      copySkillTree(src, join(base, "out"), { ...LIMITS, maxFiles: 2 }),
+    ).toThrow(/maxEntries|maxFiles/u);
+  });
+
+  it("F7 (junction in source): a link is skipped and its target not copied", () => {
+    const secret = join(base, "secret");
+    mkdirSync(secret);
+    writeFileSync(join(secret, "token.txt"), "t");
+    symlinkSync(secret, join(src, "escape"), "junction");
+    const result = copySkillTree(src, join(base, "out"), LIMITS);
+    expect(result.skipped).toBe(1);
+    expect(existsSync(join(base, "out", "escape"))).toBe(false);
   });
 });

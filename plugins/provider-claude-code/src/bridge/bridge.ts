@@ -406,6 +406,7 @@ let bridgeTempDir: string | null = null;
 
 function assembleSkillPlugins(
   roots: readonly { id: string; path: string }[],
+  previous: readonly ClaudeCodeSkillRoot[] = [],
 ): ClaudeCodeSkillRoot[] {
   const takenNames = new Map<string, string>();
   const assembled: ClaudeCodeSkillRoot[] = [];
@@ -430,9 +431,29 @@ function assembleSkillPlugins(
       process.stderr.write(
         `claude bridge: skipping injected skill root "${root.id}": could not assemble its plugin: ${error instanceof Error ? error.message : String(error)}\n`,
       );
+      // Keep the root's last good copy when a refresh fails (an edit in
+      // progress, a busy file), so a thread still gets its skills.
+      const kept = previous.find((entry) => entry.id === root.id);
+      if (kept !== undefined) assembled.push(kept);
     }
   }
   return assembled;
+}
+
+// Thread starts refresh user skill copies at most this often; configure always
+// refreshes. A scan of every root blocks the shared bridge's event loop.
+const SKILL_REFRESH_MIN_INTERVAL_MS = 5_000;
+let lastSkillRefreshMs = 0;
+
+function refreshSkillRootsForThreadStart(): void {
+  if (configuredSkillRootInputs === null) return;
+  const now = Date.now();
+  if (now - lastSkillRefreshMs < SKILL_REFRESH_MIN_INTERVAL_MS) return;
+  lastSkillRefreshMs = now;
+  configuredSkillRoots = assembleSkillPlugins(
+    configuredSkillRootInputs,
+    configuredSkillRoots ?? [],
+  );
 }
 
 function requireSkillPluginsRoot(): string {
@@ -2590,6 +2611,7 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
     case "skills/configure":
       configuredSkillRootInputs = request.params.roots;
       configuredSkillRoots = assembleSkillPlugins(request.params.roots);
+      lastSkillRefreshMs = Date.now();
       sendResult(request.id, { ok: true });
       break;
   }
@@ -2858,10 +2880,8 @@ async function handleThreadFork(
 function toClaudeSessionParams(
   params: z.infer<typeof canonicalThreadStartParamsSchema>,
 ): Record<string, unknown> {
-  if (configuredSkillRootInputs !== null) {
-    // Synchronous, so two thread starts never write the same copy at once.
-    configuredSkillRoots = assembleSkillPlugins(configuredSkillRootInputs);
-  }
+  // Synchronous, so two thread starts never write the same copy at once.
+  refreshSkillRootsForThreadStart();
   return buildClaudeSessionParams({
     threadId: params.threadId,
     cwd: params.cwd,

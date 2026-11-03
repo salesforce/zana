@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  opendirSync,
   readSync,
   readdirSync,
   realpathSync,
@@ -99,10 +100,9 @@ export function ensureClaudeSkillPlugin(args: {
     author: { name: "zcc" },
     skills: "./skills",
   };
-  writeFileSync(
+  writeManifestIfChanged(
     join(pluginPath, ".claude-plugin", "plugin.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
-    "utf8",
   );
   const skillsLink = join(pluginPath, "skills");
   if ((args.root.owned ?? "user") === "user") {
@@ -124,6 +124,16 @@ export function ensureClaudeSkillPlugin(args: {
     symlinkSync(args.root.path, skillsLink, "junction");
   }
   return pluginPath;
+}
+
+/** Rewrite only when the content differs: readers may have it open. */
+function writeManifestIfChanged(path: string, content: string): void {
+  try {
+    if (readFileSync(path, "utf8") === content) return;
+  } catch {
+    // Missing or unreadable: write it below.
+  }
+  writeFileSync(path, content, "utf8");
 }
 
 /**
@@ -157,8 +167,16 @@ export interface SkillCopyBudget {
   bytes: number;
 }
 
+const BUDGET_DEADLINE_MS = 20_000;
+const BUDGET_FILES = 10_000;
+const BUDGET_BYTES = 64 * 1024 * 1024;
+
 export function createSkillCopyBudget(now = Date.now()): SkillCopyBudget {
-  return { deadlineMs: now + 20_000, files: 10_000, bytes: 64 * 1024 * 1024 };
+  return {
+    deadlineMs: now + BUDGET_DEADLINE_MS,
+    files: BUDGET_FILES,
+    bytes: BUDGET_BYTES,
+  };
 }
 
 /** Directories, links and files together may number this many times maxFiles. */
@@ -180,7 +198,7 @@ function scanTree(source: string, limits: CopySkillTreeLimits): TreeScan {
   const realRoot = realpathSync.native(source);
   let seen = 0;
   const walk = (relDir: string, depth: number): void => {
-    for (const name of readdirSync(join(source, relDir))) {
+    for (const name of listNames(join(source, relDir), () => seen, limits)) {
       // Every entry counts, so many empty dirs or links cannot dodge a cap.
       seen += 1;
       if (seen > limits.maxFiles * ENTRY_CAP_FACTOR) {
@@ -225,6 +243,28 @@ function scanTree(source: string, limits: CopySkillTreeLimits): TreeScan {
   walk("", 0);
   scan.entries.sort();
   return scan;
+}
+
+/** Directory entries, stopping once the entry cap would be passed. */
+function listNames(
+  dir: string,
+  seenSoFar: () => number,
+  limits: CopySkillTreeLimits,
+): string[] {
+  const cap = limits.maxFiles * ENTRY_CAP_FACTOR;
+  const names: string[] = [];
+  const handle = opendirSync(dir);
+  try {
+    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+      names.push(entry.name);
+      if (seenSoFar() + names.length > cap) {
+        throw new Error(`skill root exceeds maxEntries (${cap})`);
+      }
+    }
+  } finally {
+    handle.closeSync();
+  }
+  return names;
 }
 
 function sameRealPath(path: string, expected: string): boolean {
@@ -284,15 +324,12 @@ function copyScanned(
     mkdirSync(join(destination, rel), { mode: 0o700 });
   }
   let bytes = 0;
-  const checkedParents = new Set<string>();
   for (const file of scan.files) {
-    // The scan and this read resolve paths separately: re-check the parent.
+    // The scan and this read resolve paths separately: re-check the parent
+    // right before every open, which leaves only the open itself unchecked.
     const parent = file.rel.includes(sep) ? file.rel.slice(0, file.rel.lastIndexOf(sep)) : "";
-    if (!checkedParents.has(parent)) {
-      if (!sameRealPath(join(source, parent), join(realSource, parent))) {
-        throw new Error("skill folder changed while it was copied");
-      }
-      checkedParents.add(parent);
+    if (!sameRealPath(join(source, parent), join(realSource, parent))) {
+      throw new Error("skill folder changed while it was copied");
     }
     const data = readRegularFile(join(source, file.rel), file.size);
     bytes += data.length;
@@ -318,10 +355,18 @@ export function copySkillTree(
   destination: string,
   limits: CopySkillTreeLimits,
 ): CopySkillTreeResult {
+  return copyScannedInto(source, destination, scanTree(source, limits), limits);
+}
+
+function copyScannedInto(
+  source: string,
+  destination: string,
+  scan: TreeScan,
+  limits: CopySkillTreeLimits,
+): CopySkillTreeResult {
   if (lstatOrNull(destination) !== null) {
     throw new Error(`copy destination already exists: ${destination}`);
   }
-  const scan = scanTree(source, limits);
   try {
     return copyScanned(source, destination, scan, limits);
   } catch (error) {
@@ -374,33 +419,44 @@ function refreshSkillCopy(
   }
   const suffix = randomBytes(6).toString("hex");
   const temp = join(pluginPath, `.tmp-${suffix}`);
-  copySkillTree(sourcePath, temp, SKILL_COPY_LIMITS);
+  copyScannedInto(sourcePath, temp, scan, SKILL_COPY_LIMITS);
   try {
     writeFileSync(join(temp, COPY_MARKER), fingerprint, {
       encoding: "utf8",
       mode: 0o600,
     });
+    publishCopy(temp, skills, join(pluginPath, `.old-${suffix}`), hasOldCopy);
   } catch (error) {
     removeCopiedTree(temp);
     throw error;
   }
-  // Publish without a window where `skills` is missing or half removed: move
-  // the old copy aside, rename the new one in, and put the old one back if
-  // that fails.
-  const aside = join(pluginPath, `.old-${suffix}`);
+}
+
+/**
+ * Put the staged copy at `skills` without a window where `skills` is missing
+ * or half removed: move the old copy aside, rename the new one in, and put the
+ * old one back if that fails. On failure `temp` is left for the caller.
+ */
+function publishCopy(
+  temp: string,
+  skills: string,
+  aside: string,
+  hasOldCopy: boolean,
+): void {
   if (hasOldCopy) renameSync(skills, aside);
   try {
     renameSync(temp, skills);
   } catch (error) {
     if (hasOldCopy) renameSync(aside, skills);
-    removeCopiedTree(temp);
     throw error;
   }
   if (hasOldCopy) {
     try {
       removeCopiedTree(aside);
-    } catch {
-      // A leftover .old- dir sits in our own temp dir; the bridge cleans it up.
+    } catch (error) {
+      process.stderr.write(
+        `claude bridge: could not remove a replaced skill copy: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
     }
   }
 }

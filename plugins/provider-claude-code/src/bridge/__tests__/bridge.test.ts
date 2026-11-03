@@ -6197,6 +6197,8 @@ describe("canonical skills/configure", () => {
       // A2: a skill added after configure reaches the next thread start.
       mkdirSync(join(nativeRoot, "added"), { recursive: true });
       writeFileSync(join(nativeRoot, "added", "SKILL.md"), "---\nname: added\n---\n");
+      // Thread starts refresh at most every 5 s; move the clock past that.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 6_000 });
       bridge.sendRequest(3, "thread/start", {
         threadId: "thread-native-copy-2",
         cwd: "/tmp/worktree",
@@ -6205,7 +6207,34 @@ describe("canonical skills/configure", () => {
       });
       await bridge.waitForResponse(3);
       expect(existsSync(join(skills, "added", "SKILL.md"))).toBe(true);
+      // A9: a refresh that fails keeps the root's last good copy.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 20_000 });
+      rmSync(nativeRoot, { recursive: true, force: true });
+      bridge.sendRequest(5, "thread/start", {
+        threadId: "thread-native-copy-4",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(5);
+      const kept = (getLatestQueryOptions() as { plugins?: { path: string }[] })
+        .plugins;
+      expect(kept).toHaveLength(1);
+      expect(existsSync(join(kept?.[0]?.path ?? "", "skills", "demo", "SKILL.md"))).toBe(true);
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() - 20_000 + 1_000 });
+      // A thread start inside the interval does not rescan (rate limit).
+      mkdirSync(join(nativeRoot, "too-soon"), { recursive: true });
+      writeFileSync(join(nativeRoot, "too-soon", "SKILL.md"), "x\n");
+      bridge.sendRequest(4, "thread/start", {
+        threadId: "thread-native-copy-3",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(4);
+      expect(existsSync(join(skills, "too-soon"))).toBe(false);
     } finally {
+      vi.useRealTimers();
       stderr.mockRestore();
       bridge.sendRequest(99, "skills/configure", { roots: [] });
       bridge.restore();
