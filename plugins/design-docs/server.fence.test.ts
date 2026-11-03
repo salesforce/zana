@@ -48,6 +48,21 @@ describe('server fail-closed restore fencing', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('restore fence degraded'));
   });
 
+  it('records the project list so a removed project keeps its name', async () => {
+    let list: Array<{ id: string; name: string; tag: string }> = [{ id: 'p1', name: 'Gone Soon', tag: 'gs' }];
+    const host = createFakePluginHost({ pluginId: 'design-docs', database: createTestDatabase(), listProjects: async () => list as never });
+    hosts.push(host);
+    host.harness.sdk.stub('peers.localIdentity', async () => ({ id: 'app-a' }));
+    host.harness.sdk.stub('peers.list', async () => []);
+    plugin(host.zcc);
+    await host.harness.callRpc('projects', {});
+    const doc = await host.harness.callRpc('create', { title: 'D', template: 'blank', projectId: 'p1' }) as { id: string };
+    expect(doc.id).toBeTruthy();
+    list = [];
+    await host.harness.callRpc('projects', {});
+    await expect(host.harness.callRpc('removedProjects', {})).resolves.toEqual([{ id: 'p1', label: 'Gone Soon (project removed)' }]);
+  });
+
   it('keeps backup available before asynchronous fence verification finishes', async () => {
     const { host } = wired();
     plugin(host.zcc);

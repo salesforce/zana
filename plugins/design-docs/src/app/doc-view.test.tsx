@@ -447,6 +447,23 @@ describe('pasting doc links', () => {
     expect(editor('README.md').value).toBe(before);
   });
 
+  it('does not rewrite a link pasted into a non-Markdown file', async () => {
+    const harness = createHarness();
+    const doc = harness.store.create(
+      { title: 'Paste code', projectId: 'p1', files: [{ path: 'README.md', content: 'x' }, { path: 'data.json', content: '{}' }] },
+      UI_USER
+    );
+    renderDoc(harness, doc.id, { path: 'data.json' });
+    await findPane('data.json');
+    fireEvent.click(modeButton('Edit'));
+    const input = editor('data.json');
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & { clipboardData?: unknown };
+    event.clipboardData = { getData: () => `[x](doc://${doc.id}/README.md)` };
+    input.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(editor('data.json').value).toBe('{}');
+  });
+
   it('copies a file link from the row menu', async () => {
     const harness = createHarness();
     const writeText = vi.fn(async () => undefined);
