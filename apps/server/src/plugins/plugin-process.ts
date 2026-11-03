@@ -1,8 +1,9 @@
 import { runPluginSourceCommand as run } from './plugin-source-command.js';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { resolveBundledNpmCli } from '@zana-ai/zcc-plugin-build';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
 
 const MARKETPLACE_MAX_BYTES = 1_048_576;
 export const MARKETPLACE_FETCH_TIMEOUT_MS = 15_000;
@@ -19,7 +20,7 @@ export async function defaultSpawnNpm(
     return await run(process.execPath, [resolveBundledNpmCli(), ...args,
       '--fetch-retries=0', '--fetch-timeout=15000', ...(cache ? ['--cache', cache] : [])
     ], cwd, { env: { ELECTRON_RUN_AS_NODE: '1' }, timeoutMs: 120_000, signal });
-  } finally { if (cache) rmSync(cache, { recursive: true, force: true }); }
+  } finally { if (cache) await removePluginTemporaryDirectory(cache); }
 }
 
 export async function defaultCloneGit(
@@ -28,12 +29,17 @@ export async function defaultCloneGit(
   spec: string,
   signal?: AbortSignal
 ): Promise<{ commit: string; refKind: 'branch' | 'tag' | 'commit' }> {
+  // Git resolves a relative dest against the child's cwd, which is not process.cwd().
+  dest = resolve(dest);
   mkdirSync(dirname(dest), { recursive: true });
+  // Neither the clone nor its UUID parent may be a child's working directory:
+  // Windows can retain that directory handle briefly after the child exits.
+  const cwd = dirname(dirname(dest));
   if (spec.startsWith('commit:') || /^[a-f0-9]{7,40}$/i.test(spec)) {
     const commit = spec.replace(/^commit:/, '');
     if (!/^[a-f0-9]{7,40}$/i.test(commit)) throw new Error('Invalid Git commit');
     for (const args of [['init', dest], ['-C', dest, 'fetch', '--depth', '1', '--', url, commit], ['-C', dest, 'checkout', '--detach', 'FETCH_HEAD']]) {
-      const result = await run('git', args, dirname(dest), { signal });
+      const result = await run('git', args, cwd, { signal });
       if (result.code !== 0) throw new Error('Git could not materialize the selected commit');
     }
   } else {
@@ -41,12 +47,12 @@ export async function defaultCloneGit(
     const cloneArgs = ['clone', '--depth', '1'];
     if (spec && spec !== 'HEAD') cloneArgs.push('--branch', spec.replace(/^ref:/, ''));
     cloneArgs.push('--', url, dest);
-    const cloned = await run('git', cloneArgs, dirname(dest), { signal });
+    const cloned = await run('git', cloneArgs, cwd, { signal });
     if (cloned.code !== 0) throw new Error('Git clone failed');
   }
-  const head = await run('git', ['-C', dest, 'rev-parse', 'HEAD'], dest, { signal });
+  const head = await run('git', ['-C', dest, 'rev-parse', 'HEAD'], cwd, { signal });
   if (head.code !== 0) throw new Error('Git rev-parse failed');
-  const branch = await run('git', ['-C', dest, 'symbolic-ref', '--quiet', 'HEAD'], dest, { signal });
+  const branch = await run('git', ['-C', dest, 'symbolic-ref', '--quiet', 'HEAD'], cwd, { signal });
   return { commit: head.stdout.trim(), refKind: spec.startsWith('commit:') || /^[a-f0-9]{7,40}$/i.test(spec) ? 'commit' : branch.code === 0 ? 'branch' : 'tag' };
 }
 
