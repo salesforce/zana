@@ -11,6 +11,7 @@ import { registerThreadProvider } from '@zana-ai/zcc-server/services/threads/thr
 
 import { createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createDesktopNativeRecovery } from '../team-launch-support.js';
+import { createDeferredSeatRegistry, type DeferredSeatHooks } from '../on-demand-seat.js';
 
 /**
  * #580 acceptance tests for starting a Squad seat on demand, through the real host.ts
@@ -414,5 +415,69 @@ describe('REQ-10 the spawner is released when the run ends or is canceled', () =
     expect(await spawn(record.id, '0:w1:0')).toMatchObject({ ok: false });
     expect(h.creates).toHaveLength(before);
     expect(worker(recordFor(req.launchRequestId), '0:w1:0')?.process).toBe('canceled');
+  });
+});
+
+describe('OBL registry obligations (CodeNod correctness)', () => {
+  const hooks = (over: Partial<DeferredSeatHooks> = {}): DeferredSeatHooks => ({
+    claim: vi.fn(async () => true), sessionOf: vi.fn(async () => 'sess'), start: vi.fn(async () => ({ ok: true as const, sessionId: 'sess' })),
+    markFailed: vi.fn(async () => undefined), ...over
+  });
+
+  it('OBL-005: two concurrent spawns call start once and share the session', async () => {
+    const reg = createDeferredSeatRegistry();
+    const h2 = hooks();
+    reg.register('r', ['s'], h2);
+    const [a, b] = await Promise.all([reg.spawn('r', 's'), reg.spawn('r', 's')]);
+    expect(h2.start).toHaveBeenCalledTimes(1);
+    expect(a).toEqual({ ok: true, sessionId: 'sess' });
+    expect(b).toEqual(a);
+  });
+
+  it('OBL-007: a thrown start is reported and the seat is marked failed', async () => {
+    const reg = createDeferredSeatRegistry();
+    const h2 = hooks({ start: vi.fn(async () => { throw new Error('boom'); }) });
+    reg.register('r', ['s'], h2);
+    expect(await reg.spawn('r', 's')).toEqual({ ok: false, message: 'boom' });
+    expect(h2.markFailed).toHaveBeenCalledWith('s');
+  });
+
+  it('REQ-6: a refused start marks the seat failed', async () => {
+    const reg = createDeferredSeatRegistry();
+    const h2 = hooks({ start: vi.fn(async () => ({ ok: false as const, message: 'no' })) });
+    reg.register('r', ['s'], h2);
+    expect(await reg.spawn('r', 's')).toEqual({ ok: false, message: 'no' });
+    expect(h2.markFailed).toHaveBeenCalledWith('s');
+  });
+
+  it('a caller that loses the store claim gets the winner session, or a plain refusal when none', async () => {
+    const reg = createDeferredSeatRegistry();
+    reg.register('r', ['s'], hooks({ claim: vi.fn(async () => false) }));
+    expect(await reg.spawn('r', 's')).toEqual({ ok: true, sessionId: 'sess' });
+    reg.register('q', ['s'], hooks({ claim: vi.fn(async () => false), sessionOf: vi.fn(async () => undefined) }));
+    expect(await reg.spawn('q', 's')).toMatchObject({ ok: false });
+  });
+
+  it('OBL-012 / REQ-3: registers nothing without deferred seats; release forgets the run', async () => {
+    const reg = createDeferredSeatRegistry();
+    reg.register('none', [], hooks());
+    expect(reg.has('none')).toBe(false);
+    reg.register('r', ['s'], hooks());
+    expect(reg.has('r')).toBe(true);
+    reg.release('r');
+    expect(reg.has('r')).toBe(false);
+    expect(await reg.spawn('r', 's')).toMatchObject({ ok: false });
+  });
+
+  it('OBL-002: no start after release when the claim was already pending', async () => {
+    const reg = createDeferredSeatRegistry();
+    let resolveClaim!: (v: boolean) => void;
+    const h2 = hooks({ claim: vi.fn(() => new Promise<boolean>((r) => { resolveClaim = r; })) });
+    reg.register('r', ['s'], h2);
+    const pending = reg.spawn('r', 's');
+    reg.release('r');
+    resolveClaim(true);
+    await pending;
+    expect(h2.start).not.toHaveBeenCalled();
   });
 });

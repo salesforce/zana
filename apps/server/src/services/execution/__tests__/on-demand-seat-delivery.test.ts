@@ -23,6 +23,8 @@ const runningWorker = { slotId: 'slot-1', sessionId: 'worker-1', projectId: 'pro
 
 async function setup(filePath: string, opts: {
   workers?: Array<Record<string, unknown>>;
+  noCoordinator?: boolean;
+  workersRef?: () => Array<Record<string, unknown>>;
   spawnDeferredWorker?: (recordId: string, slotId: string) => Promise<DeferredWorkerSpawnResult>;
   deliverAssignment?: (...args: any[]) => Promise<any>;
   units?: Array<Record<string, unknown>>;
@@ -41,7 +43,7 @@ async function setup(filePath: string, opts: {
       ]
     } } }),
     launchTeam: async () => ({ ok: true }),
-    getTeamLaunch: async () => ({ id: 'lifecycle-1', orchestratorSessionId: 'coordinator', workers: opts.workers ?? [deferredWorker] }),
+    getTeamLaunch: async () => ({ id: 'lifecycle-1', orchestratorSessionId: opts.noCoordinator ? undefined : 'coordinator', workers: opts.workersRef ? opts.workersRef() : (opts.workers ?? [deferredWorker]) }),
     cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
     replyToSession: () => true,
     deliverAssignment: deliverAssignment as never,
@@ -135,5 +137,46 @@ describe('REQ-7 routing does not need a live session', () => {
     await service.dispatchReady(coordinator);
     expect(await unitState(store)).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1' });
     expect(spawnDeferredWorker).toHaveBeenCalledWith('lifecycle-1', 'slot-1');
+  }));
+});
+
+describe('OBL-004 a second dispatch sees a claimed but unbound seat', () => {
+  it('waits for the one spawn and delivers both assignments to one session', async () => fixture(async (filePath) => {
+    let release!: (value: DeferredWorkerSpawnResult) => void;
+    const spawnDeferredWorker = vi.fn(() => new Promise<DeferredWorkerSpawnResult>((resolve) => { release = resolve; }));
+    let workers: Array<Record<string, unknown>> = [deferredWorker];
+    const { service, deliverAssignment } = await setup(filePath, { spawnDeferredWorker, units: [unit('a'), unit('b')], workersRef: () => workers } as never);
+    const first = service.dispatchReady(coordinator);
+    await vi.waitFor(() => expect(spawnDeferredWorker).toHaveBeenCalled());
+    // the store claim has moved the seat to spawning, with no session yet
+    workers = [{ slotId: 'slot-1', projectId: 'project-1', process: 'spawning' }];
+    const second = service.dispatchReady(coordinator);
+    release({ ok: true, sessionId: 'late-session' });
+    await Promise.all([first, second]);
+    // COR-002: the second dispatch must join the one spawn, not release its assignment.
+    expect(deliverAssignment).toHaveBeenCalledTimes(2);
+    for (const call of deliverAssignment.mock.calls) expect(call[0]).toBe('late-session');
+  }));
+});
+
+describe('OBL-014 a never-started seat does not keep a dead run open (design D7, seam doc)', () => {
+  const exited = { slotId: 'slot-2', sessionId: 'worker-2', projectId: 'project-1', process: 'exited', task: 'unknown' };
+
+  it('fails the run as all-exited when every started worker has exited and only a never-started seat remains', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { slotIds: ['slot-1', 'slot-2'], workers: [deferredWorker, exited], noCoordinator: true });
+    await service.status('owner', 'project-1', 'execution-1');
+    expect((await store.get('execution-1'))?.state).toBe('FAILED');
+  }));
+
+  it('keeps the run RUNNING while a started worker is still alive next to a never-started seat', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { slotIds: ['slot-1', 'slot-2'], workers: [deferredWorker, { ...exited, process: 'running' }], noCoordinator: true });
+    await service.status('owner', 'project-1', 'execution-1');
+    expect((await store.get('execution-1'))?.state).toBe('RUNNING');
+  }));
+
+  it('control: the same exited worker with no deferred seat also fails (old behaviour)', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { slotIds: ['slot-2'], workers: [exited], noCoordinator: true });
+    await service.status('owner', 'project-1', 'execution-1');
+    expect((await store.get('execution-1'))?.state).toBe('FAILED');
   }));
 });
