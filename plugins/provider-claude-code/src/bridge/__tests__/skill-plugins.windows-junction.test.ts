@@ -1,5 +1,6 @@
 import type * as Fs from "node:fs";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -95,7 +96,7 @@ describe("claude skill plugins on Windows-like runtimes", () => {
     pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
     const pluginPath = ensureClaudeSkillPlugin({
       pluginsRoot,
-      root: { id: "native-claude-0", path: otherRoot },
+      root: { id: "native-claude-0", path: otherRoot, owned: "zana" },
     });
     skillsLink = join(pluginPath, "skills");
     // The link now points at the user's real folder, as after a catalog change.
@@ -109,6 +110,13 @@ describe("claude skill plugins on Windows-like runtimes", () => {
     rmSync(baseDir, { recursive: true, force: true });
   });
 
+  // The root is user-owned (native-*), so the old junction is replaced by a
+  // real copy, not re-pointed at the other root.
+  function expectCopied(): void {
+    expect(() => readlinkSync(skillsLink)).toThrow();
+    expect(existsSync(join(skillsLink, ".zcc-skill-copy"))).toBe(true);
+  }
+
   function repoint(): void {
     ensureClaudeSkillPlugin({
       pluginsRoot,
@@ -116,12 +124,12 @@ describe("claude skill plugins on Windows-like runtimes", () => {
     });
   }
 
-  it("re-points a junction reported as a directory without emptying its target", () => {
+  it("replaces a junction reported as a directory with a copy without emptying its target", () => {
     windows.linksLookLikeDirectories = true;
 
     repoint();
 
-    expect(readlinkSync(skillsLink)).toBe(otherRoot);
+    expectCopied();
     expect(readFileSync(join(userSkills, "my-skill", "SKILL.md"), "utf8")).toBe(
       "keep me\n",
     );
@@ -130,7 +138,7 @@ describe("claude skill plugins on Windows-like runtimes", () => {
     );
   });
 
-  it("re-points a junction reported as a directory whose target is gone", () => {
+  it("replaces a junction reported as a directory with a copy whose target is gone", () => {
     windows.linksLookLikeDirectories = true;
     rmSync(skillsLink);
     const removed = join(baseDir, "removed");
@@ -140,15 +148,15 @@ describe("claude skill plugins on Windows-like runtimes", () => {
 
     repoint();
 
-    expect(readlinkSync(skillsLink)).toBe(otherRoot);
+    expectCopied();
   });
 
-  it("removes the junction with rmdir when unlink refuses it", () => {
+  it("replaces the junction by rmdir when unlink refuses it", () => {
     windows.unlinkError = "EPERM";
 
     repoint();
 
-    expect(readlinkSync(skillsLink)).toBe(otherRoot);
+    expectCopied();
     expect(readFileSync(join(userSkills, "my-skill", "SKILL.md"), "utf8")).toBe(
       "keep me\n",
     );

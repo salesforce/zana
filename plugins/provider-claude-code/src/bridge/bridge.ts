@@ -95,6 +95,7 @@ import {
 } from "./session-options.js";
 import {
   createClaudeSkillPluginsRoot,
+  createSkillCopyBudget,
   ensureClaudeSkillPlugin,
 } from "./skill-plugins.js";
 import { buildReadonlyBashUpdatedInput } from "./readonly-bash-policy.js";
@@ -396,31 +397,68 @@ function nextInteractiveRequestId(): string {
   return `interaction-${interactiveRequestIdCounter}`;
 }
 let configuredSkillRoots: ClaudeCodeSkillRoot[] | null = null;
+// The roots from the last skills/configure, kept so each thread start can
+// refresh the copies of user folders (configure is sent once per bridge).
+let configuredSkillRootInputs: readonly { id: string; path: string }[] | null =
+  null;
 let skillPluginsRoot: string | null = null;
 let bridgeTempDir: string | null = null;
 
 function assembleSkillPlugins(
   roots: readonly { id: string; path: string }[],
+  previous: readonly ClaudeCodeSkillRoot[] = [],
 ): ClaudeCodeSkillRoot[] {
   const takenNames = new Map<string, string>();
   const assembled: ClaudeCodeSkillRoot[] = [];
+  const budget = createSkillCopyBudget();
   for (const root of roots) {
     try {
       assembled.push({
         id: root.id,
         localPluginPath: ensureClaudeSkillPlugin({
           pluginsRoot: requireSkillPluginsRoot(),
-          root: { id: root.id, path: root.path },
+          root: {
+            id: root.id,
+            path: root.path,
+            // native-* roots are the user's own folders: copied, never linked.
+            owned: root.id.startsWith("native-") ? "user" : "zana",
+          },
           takenNames,
+          budget,
         }),
       });
     } catch (error) {
       process.stderr.write(
         `claude bridge: skipping injected skill root "${root.id}": could not assemble its plugin: ${error instanceof Error ? error.message : String(error)}\n`,
       );
+      // Keep the root's last good copy when a refresh fails (an edit in
+      // progress, a busy file), so a thread still gets its skills.
+      const kept = previous.find((entry) => entry.id === root.id);
+      if (kept !== undefined) assembled.push(kept);
     }
   }
   return assembled;
+}
+
+// Thread starts refresh user skill copies at most this often; configure always
+// refreshes. The refresh is synchronous (so two thread starts never write one
+// copy at once) and blocks the shared event loop, so it is bounded by the
+// shared budget deadline inside every walk and copy, and an unchanged root
+// costs one scan and no copy. Known limit: "owned" is inferred from the id
+// prefix below, not from the real source, so a user folder that arrives under
+// another id is still junction-linked (a follow-up issue is needed).
+const SKILL_REFRESH_MIN_INTERVAL_MS = 5_000;
+let lastSkillRefreshMs = 0;
+
+function refreshSkillRootsForThreadStart(): void {
+  if (configuredSkillRootInputs === null) return;
+  const now = Date.now();
+  if (now - lastSkillRefreshMs < SKILL_REFRESH_MIN_INTERVAL_MS) return;
+  lastSkillRefreshMs = now;
+  configuredSkillRoots = assembleSkillPlugins(
+    configuredSkillRootInputs,
+    configuredSkillRoots ?? [],
+  );
 }
 
 function requireSkillPluginsRoot(): string {
@@ -2523,6 +2561,8 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       );
       break;
     case "thread/start":
+      // Explicit, not hidden in the params builder: this writes skill copies.
+      refreshSkillRootsForThreadStart();
       await handleThreadStart(
         request.id,
         claudeThreadStartParamsSchema.parse(
@@ -2531,6 +2571,8 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       );
       break;
     case "thread/resume":
+      // Explicit, not hidden in the params builder: this writes skill copies.
+      refreshSkillRootsForThreadStart();
       await handleThreadResume(
         request.id,
         claudeThreadResumeParamsSchema.parse({
@@ -2540,6 +2582,8 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       );
       break;
     case "thread/fork":
+      // Explicit, not hidden in the params builder: this writes skill copies.
+      refreshSkillRootsForThreadStart();
       await handleThreadFork(
         request.id,
         claudeThreadForkParamsSchema.parse({
@@ -2576,7 +2620,9 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       await handleThreadNameSet(request.id, request.params);
       break;
     case "skills/configure":
+      configuredSkillRootInputs = request.params.roots;
       configuredSkillRoots = assembleSkillPlugins(request.params.roots);
+      lastSkillRefreshMs = Date.now();
       sendResult(request.id, { ok: true });
       break;
   }
