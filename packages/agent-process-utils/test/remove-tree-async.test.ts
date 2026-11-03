@@ -235,5 +235,35 @@ describe("removeTreeWithoutFollowingLinksAsync", () => {
       expect(ticks).toBeGreaterThan(1);
       expect(existsSync(tree)).toBe(false);
     });
+
+    it("Q2 stops, and deletes nothing through a link, when a directory is swapped for a link after it was checked", async () => {
+      const victim = join(base, "victim");
+      mkdirSync(victim, { recursive: true });
+      writeFileSync(join(victim, "keep-me.txt"), "user data");
+      writeFileSync(join(victim, "keep-me-too.txt"), "more user data");
+      const tree = join(base, "tree");
+      const inner = join(tree, "inner");
+      mkdirSync(inner, { recursive: true });
+      writeFileSync(join(inner, "a.txt"), "a");
+      writeFileSync(join(inner, "b.txt"), "b");
+      let swapped = false;
+
+      await expect(
+        removeTreeWithoutFollowingLinksAsync(tree, {
+          // Just after `inner` was listed and just before its first child is removed,
+          // replace `inner` with a link to the user's folder, as a racing plugin could.
+          beforeChild: (directory) => {
+            if (swapped || directory !== inner) return;
+            swapped = true;
+            rmSync(inner, { recursive: true, force: true });
+            symlinkSync(victim, inner, "junction");
+          },
+        }),
+      ).rejects.toThrow(/changed while it was being removed/);
+
+      expect(swapped).toBe(true);
+      expect(existsSync(join(victim, "keep-me.txt"))).toBe(true);
+      expect(existsSync(join(victim, "keep-me-too.txt"))).toBe(true);
+    });
   });
 });

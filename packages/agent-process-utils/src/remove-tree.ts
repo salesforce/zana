@@ -154,17 +154,28 @@ const YIELD_EVERY_ENTRIES = 8;
  */
 export async function removeTreeWithoutFollowingLinksAsync(
   root: string,
+  hooks?: RemoveTreeAsyncHooks,
 ): Promise<void> {
   const path = resolve(root);
   if ((await lstatOrNullAsync(path)) === null) return;
-  const walk = { entries: 0 };
+  const walk: AsyncWalk = { entries: 0, hooks };
   await removeEntryAsync(path, await canonicalPathAsync(path), walk);
+}
+
+/** @internal Test seam: runs just before each child of a directory is removed, so a test can swap the directory for a link at that exact moment. */
+export interface RemoveTreeAsyncHooks {
+  beforeChild?: (directory: string, child: string) => Promise<void> | void;
+}
+
+interface AsyncWalk {
+  entries: number;
+  hooks: RemoveTreeAsyncHooks | undefined;
 }
 
 async function removeEntryAsync(
   path: string,
   expectedRealPath: string,
-  walk: { entries: number },
+  walk: AsyncWalk,
 ): Promise<void> {
   walk.entries += 1;
   if (walk.entries % YIELD_EVERY_ENTRIES === 0) {
@@ -187,9 +198,27 @@ async function removeEntryAsync(
   const names = await ignoreMissing(() => readdir(path));
   if (names === undefined) return;
   for (const name of names) {
+    await walk.hooks?.beforeChild?.(path, name);
+    // The directory was checked before it was listed. Another process (a plugin
+    // owns its temp dir) could have swapped it for a link since, and a child
+    // path would then resolve through that link. Check again right before each
+    // removal and stop, leaving the rest on disk, if it is no longer the
+    // directory this walk entered. This narrows the window to the gap between
+    // this check and the unlink; it cannot close it without directory handles.
+    if (!(await stillTheDirectory(path, expectedRealPath))) {
+      throw new Error(`temp dir changed while it was being removed: ${path}`);
+    }
     await removeEntryAsync(join(path, name), join(expectedRealPath, name), walk);
   }
   await ignoreMissing(() => rmdir(path));
+}
+
+/** True while `path` is still a real directory (not a link) at the real path the walk entered. */
+async function stillTheDirectory(path: string, expectedRealPath: string): Promise<boolean> {
+  const stat = await lstatOrNullAsync(path);
+  if (stat === null || stat.isSymbolicLink() || !stat.isDirectory()) return false;
+  const real = await realPathOrNullAsync(path);
+  return real !== null && samePath(real, expectedRealPath);
 }
 
 /**
