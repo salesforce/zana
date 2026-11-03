@@ -18,6 +18,9 @@ export interface UnassignedForeignProject {
   foreignProjectId: string;
   docCount: number;
   sampleTitles: string[];
+  /** The sender's own name and tag for this project (advisory hint), for display instead of the id. */
+  senderName: string | null;
+  senderTag: string | null;
   /** A registered project matching the stored tag, then name. Never applied automatically. */
   suggestion: { projectId: string; name: string; basis: 'tag' | 'name' } | null;
 }
@@ -27,6 +30,8 @@ export interface ProjectMapping {
   localProjectId: string;
   docCount: number;
   sampleTitles: string[];
+  senderName: string | null;
+  senderTag: string | null;
   /** False when the local project is no longer registered (the mapping is ignored until it reappears). */
   localRegistered: boolean;
 }
@@ -207,7 +212,7 @@ export class DesignDocProjectRefs {
         const titles = this.db.prepare(`SELECT d.title FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
           WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ? ORDER BY d.updated_at DESC, d.id LIMIT ${SAMPLE_TITLES}`)
           .all(key) as Array<{ title: string }>;
-        return { foreignProjectId: row.fid, localProjectId: row.lid, docCount: count?.n ?? 0, sampleTitles: titles.map((t) => t.title), localRegistered: live.has(row.lid) };
+        return { foreignProjectId: row.fid, localProjectId: row.lid, docCount: count?.n ?? 0, sampleTitles: titles.map((t) => t.title), ...this.senderLabel(row.fid), localRegistered: live.has(row.lid) };
       });
     } catch {
       return [];
@@ -233,9 +238,24 @@ export class DesignDocProjectRefs {
       const titles = this.db.prepare(`SELECT d.title FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
         WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ? ORDER BY d.updated_at DESC, d.id LIMIT ${SAMPLE_TITLES}`)
         .all(JSON.stringify(row.fid)) as Array<{ title: string }>;
-      out.push({ foreignProjectId: row.fid, docCount: row.n, sampleTitles: titles.map((t) => t.title), suggestion: this.suggest(row.fid, registered) });
+      out.push({ foreignProjectId: row.fid, docCount: row.n, sampleTitles: titles.map((t) => t.title), ...this.senderLabel(row.fid), suggestion: this.suggest(row.fid, registered) });
     }
     return out;
+  }
+
+  /**
+   * The sender's name/tag for a foreign project id, safe to render: bidi/control characters removed,
+   * blanks as null. The hint is advisory and unauthenticated, so it is display text only.
+   */
+  private senderLabel(foreignId: string): { senderName: string | null; senderTag: string | null } {
+    try {
+      const stored = this.db.prepare('SELECT name, tag FROM dd_project_refs WHERE project_id = ?').get(foreignId) as { name: string | null; tag: string | null } | undefined;
+      // eslint-disable-next-line no-control-regex
+      const clean = (value: string | null | undefined) => (value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim() || null;
+      return { senderName: clean(stored?.name), senderTag: clean(stored?.tag) };
+    } catch {
+      return { senderName: null, senderTag: null };
+    }
   }
 
   /** Tag match first, then name. More than one candidate at the deciding tier means no suggestion. */

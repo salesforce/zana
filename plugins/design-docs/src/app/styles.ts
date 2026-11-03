@@ -483,6 +483,7 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-row-alt::before { content: ''; position: absolute; left: -8px; top: 0; height: 50%; width: 6px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .dd-doc-row-badge { flex: 0 0 auto; margin-top: 1px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent-gold) 14%, transparent); color: var(--accent-gold); font-size: 10.5px; font-weight: 600; line-height: 16px; }
 .dd-list-group + .dd-list-group { margin-top: 4px; }
+.dd-list-actions { padding: 6px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
 .dd-list-section {
   position: sticky;
   top: 0;

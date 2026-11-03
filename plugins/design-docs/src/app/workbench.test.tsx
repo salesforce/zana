@@ -551,9 +551,9 @@ describe('doc list', () => {
     rightClick('Peer owned');
     expect(screen.queryByRole('menuitem', { name: /Move to project/ })).toBeNull();
     fireEvent.click(menuItem(/Map to a Project/));
-    expect(await screen.findByRole('dialog', { name: /Map peer projects/ })).toBeTruthy();
-    fireEvent.click(within(screen.getByRole('dialog', { name: /Map peer projects/ })).getByText('Close', { selector: '.btn' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Map peer projects/ })).toBeNull());
+    expect(await screen.findByRole('dialog', { name: /Map projects from other computers/ })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('dialog', { name: /Map projects from other computers/ })).getByText('Close', { selector: '.btn' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Map projects from other computers/ })).toBeNull());
     fireEvent.keyDown(document.body, { key: 'Escape' });
     rightClick('Mine');
     expect((menuItem(/Move to project/) as HTMLButtonElement).disabled).toBe(false);

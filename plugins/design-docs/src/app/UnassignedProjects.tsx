@@ -1,9 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { errorMessage, toast, useApi, type ProjectInfo, type UnassignedProject } from './api.js';
-import { useProjectMappings } from './hooks.js';
+import { useProjectMappings, useProjects } from './hooks.js';
 import { Dialog } from './ui.js';
 
 export const UNASSIGNED_LABEL = 'Unassigned from peers';
+
+/** The sender's name for a project, or a neutral label; ids are never shown. */
+function senderLabel(item: { senderName: string | null }): string {
+  return item.senderName ?? 'Unnamed project';
+}
+
+function Titles({ titles, total }: { titles: string[]; total: number }) {
+  if (!titles.length) return null;
+  const more = total - titles.length;
+  return (
+    <span className="dd-muted dd-map-titles">
+      {titles.map((title) => `“${title}”`).join(' · ')}
+      {more > 0 ? ` · +${more} more` : ''}
+    </span>
+  );
+}
 
 /**
  * Map projects of other computers to local ones. Nothing is applied unless the user confirms a row;
@@ -11,7 +27,7 @@ export const UNASSIGNED_LABEL = 'Unassigned from peers';
  */
 export function UnassignedProjectsDialog({
   unassigned,
-  projects,
+  projects: initialProjects,
   onClose,
   onChanged
 }: {
@@ -27,6 +43,15 @@ export function UnassignedProjectsDialog({
   const mappings = useProjectMappings(true);
   const [unmapping, setUnmapping] = useState<string | null>(null);
   const [confirmUnmap, setConfirmUnmap] = useState<string | null>(null);
+  // Re-read the Projects each time the dialog opens and when the window regains focus, so a Project
+  // added meanwhile can be picked without reloading the app.
+  const fresh = useProjects();
+  const reloadProjects = fresh.reload;
+  useEffect(() => {
+    window.addEventListener('focus', reloadProjects);
+    return () => window.removeEventListener('focus', reloadProjects);
+  }, [reloadProjects]);
+  const projects = fresh.data ?? initialProjects;
   const localName = (id: string) => projects.find((project) => project.id === id)?.name;
 
   const unmap = async (foreignProjectId: string) => {
@@ -45,8 +70,7 @@ export function UnassignedProjectsDialog({
     }
   };
 
-  const confirm = async (foreignProjectId: string) => {
-    const local = picks[foreignProjectId];
+  const confirm = async (foreignProjectId: string, local: string) => {
     if (!local || busy) return;
     setBusy(foreignProjectId);
     try {
@@ -61,33 +85,31 @@ export function UnassignedProjectsDialog({
     }
   };
 
+  const rows = [...unassigned].sort((a, b) =>
+    (a.senderName ?? a.sampleTitles[0] ?? '').localeCompare(b.senderName ?? b.sampleTitles[0] ?? '', undefined, { sensitivity: 'base' }));
   return (
-    <Dialog title="Map peer projects" onClose={onClose} wide footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
+    <Dialog title="Map projects from other computers" onClose={onClose} wide footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
       <p className="dd-field-help dd-muted">
-        These docs came from other computers and refer to a Project this computer does not know. Pick a local Project for each one to show its docs there.
+        These docs came from a project on another computer. Choose which of your Projects they belong to.
       </p>
-      {unassigned.length === 0 ? <div className="dd-list-empty dd-muted">Nothing to map.</div> : null}
-      {unassigned.map((item) => {
-        const picked = picks[item.foreignProjectId] ?? '';
+      {rows.length === 0 ? <div className="dd-list-empty dd-muted">Nothing to map.</div> : null}
+      {rows.map((item) => {
         const suggestion = item.suggestion;
+        // A suggestion is preselected but nothing is applied until the user presses Map.
+        const picked = picks[item.foreignProjectId] ?? suggestion?.projectId ?? '';
+        const label = senderLabel(item);
         return (
-          <section key={item.foreignProjectId} className="dd-field" aria-label={`Peer project ${item.foreignProjectId}`}>
-            <span className="dd-field-label" title={item.foreignProjectId}>
-              {item.foreignProjectId} · {item.docCount} {item.docCount === 1 ? 'doc' : 'docs'}
+          <section key={item.foreignProjectId} className="dd-field dd-map-row" aria-label={`Project ${label}`}>
+            <span className="dd-field-label">
+              {label}
+              {item.senderTag ? <span className="dd-muted"> · {item.senderTag}</span> : null}
+              <span className="dd-muted"> · from another computer · {item.docCount} {item.docCount === 1 ? 'doc' : 'docs'}</span>
             </span>
-            {item.sampleTitles.length ? <span className="dd-muted">{item.sampleTitles.join(' · ')}</span> : null}
-            {suggestion ? (
-              <span className="dd-muted">
-                Suggested: {suggestion.name} (matched by {suggestion.basis}){' '}
-                <button type="button" className="btn" onClick={() => setPicks({ ...picks, [item.foreignProjectId]: suggestion.projectId })}>
-                  Use suggestion
-                </button>
-              </span>
-            ) : null}
+            <Titles titles={item.sampleTitles} total={item.docCount} />
             <span className="dd-field-inline">
               <select
                 className="dd-input dd-select"
-                aria-label={`Local Project for ${item.foreignProjectId}`}
+                aria-label={`Your Project for ${label}`}
                 value={picked}
                 onChange={(event) => setPicks({ ...picks, [item.foreignProjectId]: event.target.value })}
               >
@@ -95,26 +117,28 @@ export function UnassignedProjectsDialog({
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>
                     {project.name}
+                    {suggestion?.projectId === project.id ? ` (suggested: same ${suggestion.basis})` : ''}
                   </option>
                 ))}
               </select>
-              <button type="button" className="btn primary" disabled={!picked || busy !== null} onClick={() => void confirm(item.foreignProjectId)}>
-                Confirm
+              <button type="button" className="btn primary" disabled={!picked || busy !== null} onClick={() => void confirm(item.foreignProjectId, picked)}>
+                Map
               </button>
             </span>
           </section>
         );
       })}
       {mappings.data?.length ? (
-        <section className="dd-field" aria-label="Mapped on this machine">
-          <span className="dd-field-label">Mapped on this machine</span>
+        <section className="dd-field dd-map-row" aria-label="Already mapped">
+          <span className="dd-field-label">Already mapped</span>
           {mappings.data.map((mapping) => {
             const name = localName(mapping.localProjectId);
+            const label = senderLabel(mapping);
             return (
-              <span key={mapping.foreignProjectId} className="dd-field-inline" role="group" aria-label={`Mapping ${mapping.foreignProjectId}`}>
-                <span title={mapping.foreignProjectId}>
-                  {mapping.foreignProjectId} {'→'} {name ?? (mapping.localRegistered ? mapping.localProjectId : 'Project removed')} · {mapping.docCount} {mapping.docCount === 1 ? 'doc' : 'docs'}
-                  {mapping.sampleTitles.length ? <span className="dd-muted"> ({mapping.sampleTitles.join(' · ')})</span> : null}
+              <span key={mapping.foreignProjectId} className="dd-field-inline" role="group" aria-label={`Mapping ${label}`}>
+                <span>
+                  <strong>{label}</strong> <span className="dd-muted">(other computer)</span> {'→'} {name ?? (mapping.localRegistered ? 'Another Project' : 'Project removed from this machine')} · {mapping.docCount} {mapping.docCount === 1 ? 'doc' : 'docs'}
+                  <Titles titles={mapping.sampleTitles} total={mapping.docCount} />
                 </span>
                 {confirmUnmap === mapping.foreignProjectId ? (
                   <>
@@ -124,7 +148,7 @@ export function UnassignedProjectsDialog({
                     <button type="button" className="btn" onClick={() => setConfirmUnmap(null)}>Cancel</button>
                   </>
                 ) : (
-                  <button type="button" className="btn" aria-label={`Unmap ${mapping.foreignProjectId}`} disabled={unmapping !== null} onClick={() => setConfirmUnmap(mapping.foreignProjectId)}>
+                  <button type="button" className="btn" aria-label={`Unmap ${label}`} disabled={unmapping !== null} onClick={() => setConfirmUnmap(mapping.foreignProjectId)}>
                     Unmap
                   </button>
                 )}

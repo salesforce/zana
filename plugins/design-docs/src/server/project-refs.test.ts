@@ -236,8 +236,7 @@ describe('listUnassignedForeignProjects', () => {
     received('plain', 'f5');
     received('mapped', 'f6');
     received('global', null);
-    refs.observe([{ id: 'f1', name: 'Whatever', tag: 'APP' }, { id: 'f2', name: 'site' }, { id: 'f3', name: 'Zed' },
-      { id: 'f4', name: 'X', tag: 'dup' }, { id: 'f5', name: 'Ghost' }]);
+    refs.observe([{ id: 'f1', name: 'Whatever', tag: 'APP' }, { id: 'f2', name: 'site' }, { id: 'f3', name: 'Zed\u202eevil\u0007', tag: '\u200b' }]);
     await refs.mapForeignProject(list, 'f6', 'p1');
     const registered = [...PROJECTS, { id: 'p3', name: 'Dup 1', tag: 'dup' }, { id: 'p4', name: 'Dup 2', tag: 'dup' }];
     const out = await refs.listUnassignedForeignProjects(async () => registered);
@@ -249,8 +248,26 @@ describe('listUnassignedForeignProjects', () => {
     expect(by.f3!.suggestion).toBeNull();
     expect(by.f4!.suggestion).toBeNull();
     expect(by.f5!.suggestion).toBeNull();
+    // Sender labels come from the stored hint; a missing name is null.
+    expect(by.f1).toMatchObject({ senderName: 'Whatever', senderTag: 'APP' });
+    expect(by.f2).toMatchObject({ senderName: 'site', senderTag: null });
     expect(await refs.listUnassignedForeignProjects(async () => { throw new Error('down'); })).toHaveLength(5);
     expect((await refs.listUnassignedForeignProjects())[0]!.suggestion).toBeNull();
+  });
+});
+
+describe('sender labels', () => {
+  it('strips control and bidirectional characters, and mappings carry the label', async () => {
+    const { received, refs } = setup();
+    received('doc', 'f1');
+    received('blank', 'f2');
+    refs.observe([{ id: 'f1', name: 'Zed\u202eevil\u0007', tag: '\u200b' }]);
+    const out = await refs.listUnassignedForeignProjects(async () => []);
+    const by = Object.fromEntries(out.map((item) => [item.foreignProjectId, item]));
+    expect(by.f1).toMatchObject({ senderName: 'Zedevil', senderTag: null });
+    expect(by.f2).toMatchObject({ senderName: null, senderTag: null });
+    await refs.mapForeignProject(list, 'f1', 'p1');
+    expect(refs.listProjectMappings(PROJECTS)[0]).toMatchObject({ foreignProjectId: 'f1', senderName: 'Zedevil', senderTag: null });
   });
 });
 

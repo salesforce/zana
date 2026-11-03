@@ -399,9 +399,11 @@ function DocList({
             />
             {unassignedOpen ? (
               <>
-                <button type="button" className="btn dd-head-btn" onClick={() => setMapping(true)}>
-                  <FolderOpen size={12} aria-hidden /> Map to a Project…
-                </button>
+                <div className="dd-list-actions">
+                  <button type="button" className="btn dd-head-btn" onClick={() => setMapping(true)}>
+                    <FolderOpen size={12} aria-hidden /> Map to a Project…
+                  </button>
+                </div>
                 {unassignedList.map((doc) => row(doc, { key: 'unassigned', kind: 'project', label: UNASSIGNED_LABEL, entries: [], count: 0 }, false))}
               </>
             ) : null}

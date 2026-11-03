@@ -83,6 +83,8 @@ export interface ProjectMapping {
   localProjectId: string;
   docCount: number;
   sampleTitles: string[];
+  senderName: string | null;
+  senderTag: string | null;
   localRegistered: boolean;
 }
 
@@ -91,6 +93,9 @@ export interface UnassignedProject {
   foreignProjectId: string;
   docCount: number;
   sampleTitles: string[];
+  /** The sender's own project name and tag (advisory), shown instead of the id. */
+  senderName: string | null;
+  senderTag: string | null;
   /** Advisory only; never applied without the user's confirmation. */
   suggestion: { projectId: string; name: string; basis: 'tag' | 'name' } | null;
 }

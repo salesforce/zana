@@ -10,6 +10,8 @@ const item: UnassignedProject = {
   foreignProjectId: 'far-1',
   docCount: 2,
   sampleTitles: ['Alpha', 'Beta'],
+  senderName: 'Sender App',
+  senderTag: 'app',
   suggestion: { projectId: 'p1', name: 'App', basis: 'name' }
 };
 
@@ -50,22 +52,51 @@ const setup = (map: (args: unknown) => unknown, extra: Record<string, (args?: un
 const projects = [{ id: 'p1', name: 'App' }, { id: 'p2', name: 'Site' }];
 
 describe('UnassignedProjectsDialog', () => {
-  it('maps only after an explicit pick and Confirm; suggestion is not applied by itself', async () => {
+  it('shows the sender name and titles, never the id; preselects the suggestion but maps only on Map', async () => {
     const { harness, calls } = setup(async () => ({}));
     const onChanged = vi.fn();
-    harness.render(<UnassignedProjectsDialog unassigned={[item]} projects={projects} onClose={() => undefined} onChanged={onChanged} />);
-    const dialog = screen.getByRole('dialog', { name: 'Map peer projects' });
-    expect(within(dialog).getByText(/far-1 · 2 docs/)).toBeTruthy();
-    expect(within(dialog).getByText('Alpha · Beta')).toBeTruthy();
-    const confirm = within(dialog).getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
-    expect(confirm.disabled).toBe(true);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Use suggestion' }));
-    expect((within(dialog).getByLabelText('Local Project for far-1') as HTMLSelectElement).value).toBe('p1');
+    harness.render(<UnassignedProjectsDialog unassigned={[{ ...item, docCount: 5 }]} projects={projects} onClose={() => undefined} onChanged={onChanged} />);
+    const dialog = screen.getByRole('dialog', { name: 'Map projects from other computers' });
+    expect(within(dialog).getByText('Sender App')).toBeTruthy();
+    expect(within(dialog).getByText(/from another computer · 5 docs/)).toBeTruthy();
+    expect(within(dialog).getByText('“Alpha” · “Beta” · +3 more')).toBeTruthy();
+    expect(dialog.textContent).not.toContain('far-1');
+    const select = within(dialog).getByLabelText('Your Project for Sender App') as HTMLSelectElement;
+    expect(select.value).toBe('p1');
+    expect(within(dialog).getByRole('option', { name: 'App (suggested: same name)' })).toBeTruthy();
     expect(calls).toEqual([]);
-    fireEvent.change(within(dialog).getByLabelText('Local Project for far-1'), { target: { value: 'p2' } });
-    fireEvent.click(confirm);
+    fireEvent.change(select, { target: { value: 'p2' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Map' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(calls).toEqual([{ foreignProjectId: 'far-1', localProjectId: 'p2' }]);
+  });
+
+  it('maps the preselected suggestion when Map is pressed', async () => {
+    const { harness, calls } = setup(async () => ({}));
+    harness.render(<UnassignedProjectsDialog unassigned={[item]} projects={projects} onClose={() => undefined} onChanged={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    await waitFor(() => expect(calls).toEqual([{ foreignProjectId: 'far-1', localProjectId: 'p1' }]));
+  });
+
+  it('labels a project without a sender name neutrally and tells rows apart by titles', () => {
+    const { harness } = setup(async () => ({}));
+    const a = { ...item, foreignProjectId: 'far-a', senderName: null, senderTag: null, suggestion: null, sampleTitles: ['Zeta doc'] };
+    const b = { ...item, foreignProjectId: 'far-b', senderName: null, senderTag: null, suggestion: null, sampleTitles: ['Alpha doc'] };
+    harness.render(<UnassignedProjectsDialog unassigned={[a, b]} projects={projects} onClose={() => undefined} onChanged={() => undefined} />);
+    const sections = screen.getAllByRole('region', { name: 'Project Unnamed project' });
+    expect(sections).toHaveLength(2);
+    expect(sections[0]!.textContent).toContain('Alpha doc');
+    expect(sections[1]!.textContent).toContain('Zeta doc');
+    expect((screen.getAllByRole('button', { name: 'Map' })[0] as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('offers a Project added after the app loaded when the dialog opens', async () => {
+    let calls = 0;
+    const { harness } = setup(async () => ({}), { projects: () => (calls += 1, calls === 1 ? [{ id: 'p1', name: 'App' }] : [{ id: 'p1', name: 'App' }, { id: 'p9', name: 'Brand new' }]) });
+    harness.render(<UnassignedProjectsDialog unassigned={[{ ...item, suggestion: null }]} projects={[{ id: 'p1', name: 'App' }]} onClose={() => undefined} onChanged={() => undefined} />);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'App' })).toBeTruthy());
+    fireEvent.focus(window);
+    expect(await screen.findByRole('option', { name: 'Brand new' })).toBeTruthy();
   });
 
   it('reports a failed mapping and shows an empty state', async () => {
@@ -74,8 +105,8 @@ describe('UnassignedProjectsDialog', () => {
     });
     const onChanged = vi.fn();
     const view = harness.render(<UnassignedProjectsDialog unassigned={[{ ...item, suggestion: null, sampleTitles: [] }]} projects={projects} onClose={() => undefined} onChanged={onChanged} />);
-    fireEvent.change(screen.getByLabelText('Local Project for far-1'), { target: { value: 'p1' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.change(screen.getByLabelText('Your Project for Sender App'), { target: { value: 'p1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
     await waitFor(() => expect(harness.toasts.some((toast) => toast.kind === 'error' && toast.message.includes('nope'))).toBe(true));
     expect(onChanged).not.toHaveBeenCalled();
     view.unmount();
@@ -84,9 +115,9 @@ describe('UnassignedProjectsDialog', () => {
   });
 });
 
-describe('Mapped on this machine', () => {
-  const mapping = { foreignProjectId: 'far-9', localProjectId: 'p1', docCount: 1, sampleTitles: ['Zed'], localRegistered: true };
-  const dead = { foreignProjectId: 'far-8', localProjectId: 'gone', docCount: 2, sampleTitles: [], localRegistered: false };
+describe('Already mapped', () => {
+  const mapping = { foreignProjectId: 'far-9', localProjectId: 'p1', docCount: 1, sampleTitles: ['Zed'], senderName: 'Nine', senderTag: null, localRegistered: true };
+  const dead = { foreignProjectId: 'far-8', localProjectId: 'gone', docCount: 2, sampleTitles: [], senderName: null, senderTag: null, localRegistered: false };
   const open = (extra: Record<string, (args?: unknown) => unknown>) => {
     const { harness } = setup(async () => ({}), { listProjectMappings: () => [mapping, dead], ...extra });
     const onChanged = vi.fn();
@@ -97,13 +128,14 @@ describe('Mapped on this machine', () => {
   it('lists mappings and unmaps only after confirmation', async () => {
     const calls: unknown[] = [];
     const { onChanged } = open({ unmapForeignProject: (args) => { calls.push(args); return { removed: true }; } });
-    const section = await screen.findByRole('region', { name: 'Mapped on this machine' });
-    expect(within(section).getByText(/far-9 → App · 1 doc/)).toBeTruthy();
-    expect(within(section).getByText(/far-8 → Project removed · 2 docs/)).toBeTruthy();
-    fireEvent.click(within(section).getByRole('button', { name: 'Unmap far-9' }));
+    const section = await screen.findByRole('region', { name: 'Already mapped' });
+    expect(within(section).getByRole('group', { name: 'Mapping Nine' }).textContent).toMatch(/Nine.*→ App · 1 doc.*“Zed”/);
+    expect(within(section).getByRole('group', { name: 'Mapping Unnamed project' }).textContent).toMatch(/→ Project removed from this machine · 2 docs/);
+    expect(section.textContent).not.toMatch(/far-/);
+    fireEvent.click(within(section).getByRole('button', { name: 'Unmap Nine' }));
     expect(calls).toEqual([]);
     fireEvent.click(within(section).getByRole('button', { name: 'Cancel' }));
-    fireEvent.click(within(section).getByRole('button', { name: 'Unmap far-9' }));
+    fireEvent.click(within(section).getByRole('button', { name: 'Unmap Nine' }));
     fireEvent.click(within(section).getByRole('button', { name: 'Confirm unmap' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(calls).toEqual([{ foreignProjectId: 'far-9' }]);
@@ -111,7 +143,7 @@ describe('Mapped on this machine', () => {
 
   it('shows an error toast when unmap fails', async () => {
     const { harness, onChanged } = open({ unmapForeignProject: () => { throw new Error('boom'); } });
-    fireEvent.click(await screen.findByRole('button', { name: 'Unmap far-9' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Unmap Nine' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm unmap' }));
     await waitFor(() => expect(harness.toasts.some((toast) => toast.kind === 'error' && toast.message.includes('boom'))).toBe(true));
     expect(onChanged).not.toHaveBeenCalled();
@@ -132,7 +164,7 @@ describe('Workbench unassigned bucket', () => {
     expect(within(group).getByText('Peer doc')).toBeTruthy();
     expect((await screen.findAllByText('Old (project removed)')).length).toBeGreaterThan(0);
     fireEvent.click(within(group).getByRole('button', { name: /Map to a Project/ }));
-    expect(await screen.findByRole('dialog', { name: 'Map peer projects' })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: 'Map projects from other computers' })).toBeTruthy();
     // The all-projects list excludes unassigned docs so they are not also shown under Global.
     expect(calls.some((args) => (args as { excludeUnassigned?: boolean }).excludeUnassigned === true)).toBe(true);
   });
