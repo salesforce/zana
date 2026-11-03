@@ -17,7 +17,9 @@ export async function runPluginSourceCommand(command: string, args: string[], cw
   try {
     return await new Promise((resolve, reject) => {
       const child = spawn(command, args, {
-        cwd, shell: false, detached: process.platform !== 'win32',
+        // windowsHide: the server runs under Electron (a GUI process), so on
+        // Windows a console child such as git would otherwise open a window.
+        cwd, shell: false, detached: process.platform !== 'win32', windowsHide: true,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', npm_config_update_notifier: 'false', ...options.env },
         stdio: ['ignore', stdoutFd, stderrFd]
       });
