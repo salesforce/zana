@@ -23,8 +23,8 @@ async function savedLevel(window: Page, name: string) {
   }, name);
 }
 
-test('persona editor sets, shows and clears Reasoning effort', async ({ app, electron }, testInfo) => {
-  const { window } = app;
+test('persona editor sets, shows and clears Reasoning effort', async ({ app }, testInfo) => {
+  const { window, electron } = app;
   const name = 'Effort Persona';
   await openPersonas(window);
 
