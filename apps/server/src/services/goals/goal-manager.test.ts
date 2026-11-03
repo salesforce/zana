@@ -1747,13 +1747,13 @@ describe('REQ-1..REQ-3, REQ-6, REQ-12 recording the conversation of an iteration
       expect(iterationOf(manager, goal.id).conversation!.id).toBeUndefined();
       manager.stopAll();
     });
-    it('leaves the conversation as it was when the session is gone', async () => {
+    it('fills the detected id from the launch session when the pty is already gone at finish', async () => {
       const state: { id?: string } = {}; registryOverride.fn = detecting(state);
       const { manager, input, ptys } = durableManager();
       const goal = await manager.create({ ...input, activate: true });
-      const sid = ptys.sessions[0].id; state.id = 'detected-7'; ptys.getSession = () => null as never;
+      const sid = ptys.sessions[0].id; state.id = 'detected-9'; ptys.getSession = () => null as never;
       await manager.onAgentFinished(sid);
-      expect(iterationOf(manager, goal.id).conversation!.id).toBeUndefined();
+      expect(iterationOf(manager, goal.id).conversation!.id).toBe('detected-9');
       manager.stopAll();
     });
     it('does not overwrite an id recorded at launch', async () => {

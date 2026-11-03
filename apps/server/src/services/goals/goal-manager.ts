@@ -295,7 +295,7 @@ export class GoalManager extends EventEmitter {
     if (epoch !== this.epoch) return;
     for (const live of this.live.values()) this.clearRetry(live);
     for (const live of this.live.values()) this.clearTerminalRetry(live);
-    this.live.clear(); this.startMsBySession.clear();
+    this.live.clear(); this.startMsBySession.clear(); this.launchedSessions.clear();
     for (const timer of this.squadPollTimers.values()) clearTimeout(timer);
     this.squadPollTimers.clear();
     for (const goal of goals) this.live.set(goal.id, this.makeLive(goal));
@@ -473,7 +473,7 @@ export class GoalManager extends EventEmitter {
       else if (!deleteGoal(id, this.deps.store.listProjects())) throw new Error('Goal could not be removed');
     }
     this.clearRetry(live); this.clearTerminalRetry(live); this.clearSquadPolls(id); this.live.delete(id);
-    for (const iteration of live.goal.history.iterations) if (iteration.sessionId) this.startMsBySession.delete(iteration.sessionId);
+    for (const iteration of live.goal.history.iterations) if (iteration.sessionId) { this.startMsBySession.delete(iteration.sessionId); this.launchedSessions.delete(iteration.sessionId); }
     this.emit('changed');
   }
 
@@ -508,7 +508,7 @@ export class GoalManager extends EventEmitter {
     // Every live goal is gone, so no session's finish will ever consume its
     // start-time entry — drop them all so the map can't leak across a stop/start
     // (Rule 3). A finish stamp only matters while its goal is live.
-    this.startMsBySession.clear();
+    this.startMsBySession.clear(); this.launchedSessions.clear();
   }
 
   private onProjectRemovedNow(projectId: string) {
@@ -522,7 +522,7 @@ export class GoalManager extends EventEmitter {
         // Drop any pending start-time stamps for this goal's sessions — with the
         // goal gone, onAgentFinished will never fire to clean them up (Rule 3).
         for (const it of live.goal.history.iterations) {
-          if (it.sessionId) this.startMsBySession.delete(it.sessionId);
+          if (it.sessionId) { this.startMsBySession.delete(it.sessionId); this.launchedSessions.delete(it.sessionId); }
         }
         this.live.delete(id);
         dropped += 1;
@@ -963,6 +963,7 @@ export class GoalManager extends EventEmitter {
     await this.commit(live, next);
     this.reindex(live);
     this.startMsBySession.set(session.id, startMs);
+    this.launchedSessions.set(session.id, session);
     this.emit('changed');
   }
 
@@ -1127,6 +1128,14 @@ export class GoalManager extends EventEmitter {
   }
 
   private startMsBySession = new Map<string, number>();
+  /**
+   * The session object returned at launch, kept until the iteration finishes.
+   * `PtyManager.getSession` returns null once the pty has exited (the live entry
+   * is removed before the Stop hook can land), and a harness that detects its id
+   * after launch (Codex, OpenCode) stamps it on this same object, so the finish
+   * stamp reads it from here rather than relying on the pty still being live.
+   */
+  private launchedSessions = new Map<string, ReturnType<PtyManager['create']>>();
 
   /**
    * A goal worker finished its turn (Stop hook). Stamp the iteration, then run
@@ -1144,10 +1153,10 @@ export class GoalManager extends EventEmitter {
       const startMs = this.startMsBySession.get(sessionId);
       const durationMs = it.durationMs ?? (startMs !== undefined ? Math.max(0, Date.now() - startMs) : undefined);
       // A harness that detects its id after launch has stamped it on the session by now.
-      const detected = it.conversation ? withDetectedConversationId(it.conversation, registrationFor(it.conversation.profile), this.deps?.ptys.getSession(sessionId) ?? undefined) : undefined;
+      const detected = it.conversation ? withDetectedConversationId(it.conversation, registrationFor(it.conversation.profile), this.deps?.ptys.getSession(sessionId) ?? this.launchedSessions.get(sessionId)) : undefined;
       await this.commit(live, { ...live.goal, history: { ...live.goal.history, iterations: live.goal.history.iterations.map((entry, idx) =>
         idx === match.idx ? { ...it, finishedAt: new Date().toISOString(), ...(durationMs !== undefined ? { durationMs } : {}), ...(detected ? { conversation: detected } : {}) } : entry) } });
-      this.startMsBySession.delete(sessionId);
+      this.startMsBySession.delete(sessionId); this.launchedSessions.delete(sessionId);
       this.evaluating.add(match.id); this.emit('changed');
       return match.id;
     });

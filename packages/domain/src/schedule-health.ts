@@ -140,7 +140,11 @@ export function resumableRun(run: ResumableRunLike): boolean {
     && isValidConversationId(conversation.id);
 }
 
-/** Whether a Goal iteration has finished its turn (stamped `finishedAt` or scored). A running worker is not offered for Resume. */
+/**
+ * Whether a Goal iteration has finished its turn (stamped `finishedAt` or scored). A running worker is not offered for Resume.
+ * An iteration orphaned by an app crash (no `finishedAt`, no verdict) is deliberately not finished here: it is still
+ * counted as unresolved by the Goal manager, so offering Resume on it would race a worker the manager believes is live.
+ */
 export function finishedIteration(iteration: { finishedAt?: string; verdict?: string }): boolean {
   return !!(iteration && (iteration.finishedAt || iteration.verdict));
 }
