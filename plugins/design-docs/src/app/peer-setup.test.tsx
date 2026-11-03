@@ -469,7 +469,7 @@ describe('out of sync notice', () => {
     expect(sync).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Sync Now' }));
     await waitFor(() => expect(screen.queryByText(/out of sync/)).toBeNull());
-    expect(harness.toasts.at(-1)?.message).toBe('Synced 1 peers');
+    expect(harness.toasts.at(-1)?.message).toBe('Synced with your other computers');
   });
 
   it('a peer state push re-checks at once; ignored before a group exists', async () => {
@@ -510,7 +510,7 @@ describe('out of sync notice', () => {
     cleanup();
     const harness = mount({ groupStatus: async () => configured, peersOutOfSync: async () => ({ outOfSync: true }), syncNow: async () => ({ attempted: 2, synced: 1, blocked: 1 }) });
     fireEvent.click(await screen.findByRole('button', { name: 'Sync Now' }));
-    await waitFor(() => expect(harness.toasts.at(-1)?.message).toBe('Synced 1/2; 1 blocked'));
+    await waitFor(() => expect(harness.toasts.at(-1)?.message).toBe('Synced 1. Some changes are waiting for another computer. They will send on their own.'));
   });
 
   it('stays quiet when in sync or when the check fails', async () => {

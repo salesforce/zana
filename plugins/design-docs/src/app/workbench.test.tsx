@@ -183,7 +183,7 @@ describe('peers view', () => {
     expect((screen.getByRole('button', { name: 'Syncing' }) as HTMLButtonElement).disabled).toBe(true);
     finish({ attempted: 2, synced: 2, blocked: 0 });
     await screen.findByRole('button', { name: 'Sync' });
-    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2 peers', kind: 'info' });
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced with your other computers', kind: 'info' });
     expect(syncNow).toHaveBeenCalledOnce();
   });
 
@@ -204,7 +204,7 @@ describe('peers view', () => {
     fireEvent.click(busy);
     finish({ attempted: 3, synced: 2, blocked: 1 });
     await within(rail).findByRole('button', { name: /^Sync peers/ });
-    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2/3; 1 blocked', kind: 'info' });
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2. Some changes are waiting for another computer. They will send on their own.', kind: 'info' });
     expect(syncNow).toHaveBeenCalledOnce();
   });
 

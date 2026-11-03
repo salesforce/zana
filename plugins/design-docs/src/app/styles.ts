@@ -483,7 +483,7 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-row-alt::before { content: ''; position: absolute; left: -8px; top: 0; height: 50%; width: 6px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .dd-doc-row-badge { flex: 0 0 auto; margin-top: 1px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent-gold) 14%, transparent); color: var(--accent-gold); font-size: 10.5px; font-weight: 600; line-height: 16px; }
 .dd-list-group + .dd-list-group { margin-top: 4px; }
-.dd-list-actions { padding: 6px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.dd-list-actions { padding: 10px 10px 6px; margin-top: 6px; border-top: 1px solid var(--border); }
 .dd-list-section {
   position: sticky;
   top: 0;
@@ -562,6 +562,15 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dd-doc-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; min-width: 0; }
 .dd-doc-project { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 12px; }
+.dd-sync-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted, #888); display: inline-block; }
+.dd-sync-waiting .dd-sync-dot, .dd-sync-dot.dd-sync-waiting { background: var(--accent-amber, #d9a400); }
+.dd-sync-needs-choice .dd-sync-dot, .dd-sync-dot.dd-sync-needs-choice { background: var(--accent-orange, #e07a1f); }
+.dd-sync-failed .dd-sync-dot, .dd-sync-dot.dd-sync-failed { background: var(--accent-red, #d64545); }
+.dd-sync-up-to-date .dd-sync-dot { background: var(--accent-green, #3a9d5d); }
+.dd-sync-line { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; background: none; border: 0; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.dd-sync-line:hover { background: var(--bg-hover, rgba(128,128,128,.15)); }
+.dd-sync-help-body { padding: 10px 12px; max-width: 280px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.dd-sync-help-body p { margin: 0; }
 .dd-doc-updated { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .dd-editable {
   display: block;

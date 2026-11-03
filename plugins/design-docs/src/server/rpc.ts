@@ -248,6 +248,12 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     removePeer: (raw) => requirePairing(deps).remove(requiredString(onlyKeys(raw, ['replicaId']), 'replicaId')),
 
+    docSyncStatuses: (raw) => {
+      const args = onlyKeys(raw ?? {}, ['doc']);
+      const doc = args.doc === undefined ? undefined : requiredString(args, 'doc');
+      return deps.peerSync?.docSyncStatuses(doc) ?? [];
+    },
+
     syncNow: async () => {
       if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
       const result = await deps.peerSync.syncNow(deps.sdk.peers);

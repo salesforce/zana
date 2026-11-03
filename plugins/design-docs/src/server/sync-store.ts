@@ -1673,6 +1673,43 @@ export class DesignDocSyncStore {
     });
   }
 
+  /**
+   * Per-doc sync state against every other computer in the group, worst state wins:
+   * needs-choice (conflict) > failed > waiting (retrying or other computer busy/offline) > unsent (no delivery queued
+   * for the current version) > up-to-date. Bounded; one doc when `docId` is given. Read-only.
+   */
+  docSyncStatuses(docId?: string): DocSyncStatus[] {
+    const local = this.localRepository();
+    if (!local?.groupId || local.rosterEpoch < 1) return [];
+    const members = this.members(local.repoId).filter((member) => member.replicaId !== local.replicaId &&
+      !this.isRetiringReplica(local.repoId, member.replicaId));
+    const heads = (docId
+      ? this.db.prepare('SELECT doc_id, head_id FROM sync_doc_heads WHERE repo_id = ? AND doc_id = ?').all(local.repoId, docId)
+      : this.db.prepare('SELECT doc_id, head_id FROM sync_doc_heads WHERE repo_id = ? ORDER BY doc_id LIMIT ?').all(local.repoId, MAX_DOC_SYNC_STATUS)
+    ) as Array<{ doc_id: string; head_id: string }>;
+    const known = this.db.prepare('SELECT 1 FROM sync_peer_known WHERE repo_id = ? AND member_replica_id = ? AND head_id = ?');
+    const intent = this.db.prepare(`SELECT i.state AS state, r.error AS error FROM sync_intents i LEFT JOIN sync_retry r ON r.intent_id = i.id
+      WHERE i.repo_id = ? AND i.doc_id = ? AND i.frozen_head = ? AND i.member_replica_id = ?`);
+    const receipt = this.db.prepare('SELECT stage FROM sync_receipts WHERE repo_id = ? AND member_replica_id = ? AND frozen_head = ?');
+    const conflict = this.db.prepare('SELECT 1 FROM sync_conflicts WHERE repo_id = ? AND doc_id = ? LIMIT 1');
+    return heads.map((row) => {
+      let state: DocSyncState = 'up-to-date', computers = 0;
+      const raise = (next: DocSyncState) => { if (SYNC_STATE_RANK[next] > SYNC_STATE_RANK[state]) state = next; };
+      if (conflict.get(local.repoId, row.doc_id)) raise('needs-choice');
+      for (const member of members) {
+        if (known.get(local.repoId, member.replicaId, row.head_id)) continue;
+        computers++;
+        const queued = intent.get(local.repoId, row.doc_id, row.head_id, member.replicaId) as { state: string; error: string | null } | undefined;
+        const stage = (receipt.get(local.repoId, member.replicaId, row.head_id) as { stage: PeerReceiptStage } | undefined)?.stage;
+        if (stage === 'conflict') raise('needs-choice');
+        else if (!queued) raise('unsent');
+        else if (queued.state === 'blocked') raise(queued.error && !isOfflineSyncError(queued.error) ? 'failed' : 'waiting');
+        else raise('waiting');
+      }
+      return { docId: row.doc_id, state, computers: state === 'up-to-date' ? 0 : computers };
+    });
+  }
+
   private markKnown(repoId: string, member: string, head: string): void {
     const pending = [head], seen = new Set<string>();
     while (pending.length) {
@@ -1941,6 +1978,17 @@ function toIntent(row: IntentRow): FrozenSyncIntent {
 export function delivered(stage: PeerReceiptStage): boolean {
   return stage === 'synced' || stage === 'merged';
 }
+
+/** A failed delivery that only means the other computer was not reachable; it is retried on its own. */
+export function isOfflineSyncError(message: string): boolean {
+  return /unavailable|timed? ?out|not connected|disconnect|ECONN|ENOTFOUND|EHOSTUNREACH|authorization changed/i.test(message);
+}
+
+export type DocSyncState = 'up-to-date' | 'unsent' | 'waiting' | 'needs-choice' | 'failed';
+export interface DocSyncStatus { docId: string; state: DocSyncState; /** Computers not yet holding this doc's latest version. */ computers: number }
+
+const SYNC_STATE_RANK: Record<DocSyncState, number> = { 'up-to-date': 0, unsent: 1, waiting: 2, failed: 3, 'needs-choice': 4 };
+const MAX_DOC_SYNC_STATUS = 2000;
 
 /** The newest stubs ride inline (one page at most); older ones go first as separate ancestry pages. */
 function inlineStubs(stubs: PeerOperation[]): PeerAncestorStubs {

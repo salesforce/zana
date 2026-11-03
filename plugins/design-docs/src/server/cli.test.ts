@@ -183,7 +183,7 @@ describe('zcc design-docs', () => {
     expect(await runCli(deps, ['revoke-peer'], ctx)).toMatchObject({ exitCode: 2 });
     expect(await runCli(deps, ['remove-peer', 'replica'], ctx)).toMatchObject({ exitCode: 1, stderr: 'SDK peers.revoke unavailable\n' });
     expect(await runCli(deps, ['enable'], ctx)).toMatchObject({ exitCode: 2 });
-    expect(JSON.parse((await runCli(deps, ['sync'], ctx)).stdout!)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(JSON.parse((await runCli(deps, ['sync'], ctx)).stdout!)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     delete deps.pairing; delete deps.peerSync;
     expect(await runCli(deps, ['peers'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('unavailable') });
     expect(await runCli(deps, ['sync'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('unavailable') });

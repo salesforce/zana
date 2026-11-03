@@ -168,7 +168,10 @@ export interface DesignDocsApi {
   /** Only whether a connected peer's database differs; never names or counts. */
   peersOutOfSync(): Promise<{ outOfSync: boolean }>;
   removePeer(replicaId: string): Promise<GroupStatus>;
-  syncNow(): Promise<{ attempted: number; synced: number; blocked: number }>;
+  /** `blocked` is the total not delivered; the breakdown is absent from older servers. */
+  syncNow(): Promise<SyncSummary>;
+  /** Sync state of every doc (or one) against the other computers; `[]` when sync is not set up. */
+  docSyncStatuses(doc?: string): Promise<DocSyncStatus[]>;
   peerConflicts(doc: string, cursor?: string): Promise<PeerConflictPage>;
   peerConflictReview(doc: string, remoteHead: string): Promise<PeerConflictReview>;
   peerConflictFile(doc: string, remoteHead: string, path: string): Promise<PeerConflictFile>;
@@ -206,6 +209,10 @@ export interface DesignDocsApi {
   /** Start an agent thread that exports the doc as a site and pushes it to GitHub Pages. */
   publish(doc: string, args: { repo?: string; branch: string; folder: PublishFolder; projectId?: string }): Promise<{ threadId: string; projectId: string }>;
 }
+
+export interface SyncSummary { attempted: number; synced: number; blocked: number; waiting?: number; needsChoice?: number; failed?: number }
+export type DocSyncState = 'up-to-date' | 'unsent' | 'waiting' | 'needs-choice' | 'failed';
+export interface DocSyncStatus { docId: string; state: DocSyncState; computers: number }
 
 export interface PeerStatus {
   configured: boolean;
@@ -260,6 +267,7 @@ export function createApi(call: Call): DesignDocsApi {
     peersOutOfSync: () => typed('peersOutOfSync'),
     removePeer: (replicaId) => typed('removePeer', { replicaId }),
     syncNow: () => typed('syncNow'),
+    docSyncStatuses: (doc) => typed('docSyncStatuses', doc ? { doc } : undefined),
     peerConflicts: (doc, cursor) => typed('peerConflicts', { doc, cursor }),
     peerConflictReview: (doc, remoteHead) => typed('peerConflictReview', { doc, remoteHead }),
     peerConflictFile: (doc, remoteHead, path) => typed('peerConflictFile', { doc, remoteHead, path }),

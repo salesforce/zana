@@ -28,7 +28,8 @@ import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } fr
 import { MAX_AGENT_PROMPT_LENGTH, TEMPLATE_COMMENTS_RULE } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
-import { defaultAgentProject, errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
+import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, type ProjectInfo, type TemplateInfo } from './api.js';
+import { needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
 import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
@@ -106,6 +107,7 @@ function DocRow({
   alternative = false,
   projectName,
   unseen,
+  syncState,
   now,
   menuOpen,
   onSelect,
@@ -118,6 +120,8 @@ function DocRow({
   projectName: string | null;
   /** An agent edited it since the user last opened it. */
   unseen: boolean;
+  /** Only passed for states worth a mark. */
+  syncState?: DocSyncState;
   now: number;
   menuOpen: boolean;
   onSelect(): void;
@@ -141,6 +145,9 @@ function DocRow({
     >
       <span className="dd-doc-row-top">
         <span className="dd-doc-row-title">{doc.title}</span>
+        {syncState ? (
+          <span className={`dd-sync-dot dd-sync-${syncState}`} role="img" title={SYNC_STATE_LABEL[syncState]} aria-label={SYNC_STATE_LABEL[syncState]} />
+        ) : null}
         {alternative ? (
           <span className="dd-doc-row-badge" title="An alternative to the doc above">
             Alt
@@ -287,6 +294,7 @@ function DocList({
     if (showProjects) return doc.projectId ? names.get(doc.projectId) ?? 'Unknown project' : 'Global';
     return doc.projectId ? null : 'Global';
   };
+  const syncStates = useDocSyncStatuses(docs.data);
   const row = (doc: DesignDocSummary, section: ListSection, alternative: boolean) => (
     <DocRow
       key={doc.id}
@@ -295,6 +303,7 @@ function DocList({
       alternative={alternative}
       projectName={alternative ? null : projectLabel(doc, section)}
       unseen={doc.id !== activeId && unseenAgentEdit(doc, seen)}
+      syncState={needsAttention(syncStates.get(doc.id)?.state) ? syncStates.get(doc.id)?.state : undefined}
       now={now}
       menuOpen={menu?.doc.id === doc.id}
       onSelect={() => onSelect(doc.id)}
@@ -399,12 +408,12 @@ function DocList({
             />
             {unassignedOpen ? (
               <>
+                {unassignedList.map((doc) => row(doc, { key: 'unassigned', kind: 'project', label: UNASSIGNED_LABEL, entries: [], count: 0 }, false))}
                 <div className="dd-list-actions">
                   <button type="button" className="btn dd-head-btn" onClick={() => setMapping(true)}>
                     <FolderOpen size={12} aria-hidden /> Map to a Project…
                   </button>
                 </div>
-                {unassignedList.map((doc) => row(doc, { key: 'unassigned', kind: 'project', label: UNASSIGNED_LABEL, entries: [], count: 0 }, false))}
               </>
             ) : null}
           </section>

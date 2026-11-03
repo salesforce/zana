@@ -294,7 +294,7 @@ describe('durable independent-store payload replication', () => {
         if (method === at && !retired) retire();
         return result;
       };
-      expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+      expect(await a.service.deliverPending(peers)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
       expect(retired).toBe(true); expect(laterCalls).toBe(0);
       expect(a.db.prepare('SELECT * FROM sync_receipts').all()).toEqual([]);
       expect(a.db.prepare('SELECT * FROM sync_retry').all()).toEqual([]);
@@ -320,7 +320,7 @@ describe('durable independent-store payload replication', () => {
       return result;
     };
     if (mode === 'syncNow') await expect(a.service.syncNow(peers)).rejects.toThrow('retiring');
-    else expect(await a.service.deliverPending(peers)).toEqual({ attempted: 0, synced: 0, blocked: 0 });
+    else expect(await a.service.deliverPending(peers)).toEqual({ attempted: 0, synced: 0, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(laterCalls).toBe(0); expect(retired).toBe(true);
     expect(a.db.prepare("SELECT state FROM sync_manual_sessions WHERE direction = 'out'").all()).toEqual([{ state: 'waiting' }]);
     expect(a.db.prepare('SELECT * FROM sync_retry').all()).toEqual([]);
@@ -335,14 +335,14 @@ describe('durable independent-store payload replication', () => {
     expect(pending.members.map((member) => member.replicaId)).toContain('replica-b');
     expect(a.service.status().members.map((member) => member.replicaId)).not.toContain('replica-b');
     const peers = transport(a, b); peers.list = vi.fn(peers.list);
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await a.service.deliverPending(peers)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(peers.list).not.toHaveBeenCalled(); expect(peers.call).not.toHaveBeenCalled();
     expect(a.db.prepare('SELECT state FROM sync_intents').get()).toEqual({ state: 'blocked' });
     expect(a.db.prepare('SELECT * FROM sync_retry').all()).toEqual([]);
     expect(a.db.prepare('SELECT * FROM sync_receipts').all()).toEqual([]);
     expect(a.db.prepare("SELECT header_json FROM sync_transfers WHERE direction = 'out'").get()).toEqual({ header_json: expect.stringContaining(transfer.sessionId) });
     expect(a.sync.version('repo', intent.frozenHead)).not.toBeNull();
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 0, synced: 0, blocked: 0 });
+    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 0, synced: 0, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
   });
 
   it('blocks equal-epoch divergent histories and omitted digests before sending frozen bytes', async () => {
@@ -351,7 +351,7 @@ describe('durable independent-store payload replication', () => {
     govern(a, left); govern(b, right);
     const doc = a.store.create({ title: 'Divergent roster', status: 'approved', template: 'blank' }, user);
     const peers = transport(a, b);
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await a.service.deliverPending(peers)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(vi.mocked(peers.call).mock.calls.map((call) => call[1])).toEqual(['handshake']);
     expect(b.store.find(doc.id)).toBeNull();
     const offer = a.service.createOffer(a.sync.readyIntents('repo', 100, true)[0]!);
@@ -398,7 +398,7 @@ describe('durable independent-store payload replication', () => {
     govern(a, left); govern(b, left);
     const doc = a.store.create({ title: 'Checkpoint digest', status: 'approved', template: 'blank' }, user);
     const transfer = a.service.createTransfer(a.sync.readyIntents('repo')[0]!, 1), query = transferQuery(transfer);
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     const receipt = b.service.receiptQuery('machine-a', query);
     expect(receipt).not.toHaveProperty('rosterDigest');
     b.restart(); expect(b.service.receiptQuery('machine-a', query)).toEqual(receipt);
@@ -416,7 +416,7 @@ describe('durable independent-store payload replication', () => {
     a.store.create({ title: 'Legacy checkpoint', status: 'approved', template: 'blank' }, user);
     const transfer = a.service.createTransfer(a.sync.readyIntents('repo')[0]!, 1), query = transferQuery(transfer);
     expect(query).not.toHaveProperty('rosterDigest');
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     const root = managedRoot(); govern(b, root); b.restart();
     expect(root.rosterEpoch).toBe(transfer.rosterEpoch);
     expect(() => b.service.receiptQuery('machine-a', query)).toThrow('authorization');
@@ -432,7 +432,7 @@ describe('durable independent-store payload replication', () => {
     const peers = transport(a, b), list = peers.list;
     let calls = 0;
     peers.list = async (args) => { const grants = await list(args); if (++calls > 1) govern(a, right); return grants; };
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await a.service.deliverPending(peers)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(b.store.find(doc.id)).not.toBeNull();
     expect(a.db.prepare('SELECT * FROM sync_receipts').all()).toEqual([]);
     expect(a.sync.readyIntents('repo', 100, true)).toHaveLength(1);
@@ -497,7 +497,7 @@ describe('durable independent-store payload replication', () => {
     };
     const transfer = a.service.createTransfer(a.sync.readyIntents('repo')[0]!, 1);
     expect(transfer.blobs.reduce((sum, blob) => sum + blob.bytes, 0)).toBeLessThanOrEqual(MAX_PEER_SESSION_BYTES);
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(chunks).toBeGreaterThan(96);
     expect(maximum).toBeLessThan(MAX_PEER_PACKET_BYTES);
     for (const file of files) expect(b.store.readFile(doc.id, file.path).content).toBe(file.content);
@@ -538,11 +538,11 @@ describe('durable independent-store payload replication', () => {
   it('uses public grant epoch and fails closed when public grant info is unavailable', async () => {
     const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
     a.store.create({ title: 'Epoch 9', status: 'approved', template: 'blank' }, user);
-    expect(await a.service.deliverPending(transport(a, b, false, 9))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b, false, 9))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     const c = fixture('a'), d = fixture('b'); c.pair(); d.pair();
     c.store.create({ title: 'No grant', status: 'approved', template: 'blank' }, user);
     const peers = transport(c, d); peers.list = async () => [];
-    expect(await c.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await c.service.deliverPending(peers)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(peers.call).not.toHaveBeenCalled();
   });
 
@@ -557,7 +557,7 @@ describe('durable independent-store payload replication', () => {
       if (reason === 'disconnected') grant.connected = false;
       if (reason === 'invalid-epoch') grant.grantEpoch = 0;
       peers.list = async () => reason === 'ambiguous' ? [grant, grant] : [grant];
-      expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+      expect(await a.service.deliverPending(peers)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
       expect(peers.call).not.toHaveBeenCalled();
       expect(b.sync.operations('repo')).toEqual([]);
       expect(a.sync.readyIntents('repo', 100, true)).toHaveLength(1);
@@ -579,7 +579,7 @@ describe('durable independent-store payload replication', () => {
         if (reason === 'roster') a.pair();
         return grants;
       };
-      expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+      expect(await a.service.deliverPending(peers)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
       expect(b.store.find(doc.id)).not.toBeNull();
       expect(a.sync.readyIntents('repo', 100, true)).toHaveLength(1);
       expect(a.db.prepare('SELECT * FROM sync_receipts').all()).toEqual([]);
@@ -605,7 +605,7 @@ describe('durable independent-store payload replication', () => {
         return b.service.receiveTransfer(method as 'transfer' | 'chunk' | 'apply', 'app-instance-0', body, fence(9));
       }
     };
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.find(doc.id)).not.toBeNull();
   });
 
@@ -770,7 +770,7 @@ describe('durable independent-store payload replication', () => {
     const first = a.service.deliverPending(peers);
     expect(a.service.deliverPending(peers)).toBe(first);
     release();
-    expect(await first).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await first).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(a.sync.readyIntents('repo', 100, true)).toHaveLength(1);
   });
   it('requires explicit pairing and never bootstraps old milestone documents automatically', async () => {
@@ -780,9 +780,9 @@ describe('durable independent-store payload replication', () => {
     expect(a.service.status()).toEqual({ configured: false, members: [] });
     expect(() => a.service.handshake('machine-b', {})).toThrow('not configured');
     a.pair(); b.pair();
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 0, synced: 0, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 0, synced: 0, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.find(doc.id)).toBeNull();
-    expect(await a.service.syncNow(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 1 });
+    expect(await a.service.syncNow(transport(a, b))).toMatchObject({ attempted: 1, synced: 1, blocked: 1 });
     expect(b.store.readFile(doc.id, 'README.md').content).toBe(a.store.readFile(doc.id, 'README.md').content);
     expect(b.sync.readyIntents('repo')).toEqual([]);
   });
@@ -797,7 +797,7 @@ describe('durable independent-store payload replication', () => {
     a.store.setCommentStatus(doc.id, comment.id, 'resolved', user, 'agreed');
     a.store.linkThread(doc.id, 'foreign-thread', 'Private agent', 'author');
     a.store.update(doc.id, { status: 'approved', expectedHead: a.sync.head('repo', doc.id) }, user);
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('actual body'.repeat(1000));
     expect(b.store.readFile(doc.id, 'asset.png').content).toBe('AAEC/w==');
     expect(b.store.get(doc.id)).toMatchObject({ title: 'Payload', summary: 'Real content', tags: ['sync'], status: 'approved',
@@ -816,7 +816,7 @@ describe('durable independent-store payload replication', () => {
     const doc = a.store.create({ title: 'Durable', status: 'implemented', files: [{ path: 'README.md', content: 'durable bytes' }] }, user);
     const transfer = a.service.createTransfer(a.sync.readyIntents('repo')[0]!, 1);
     a.restart(); b.restart();
-    expect(await a.service.deliverPending(transport(a, b, true))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b, true))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     const history = b.store.history(doc.id), revision = b.store.summary(doc.id).revision;
     b.restart();
     const receipt = await b.service.receiveTransfer('apply', 'machine-a', transferQuery(transfer), fence()) as { stage: string };
@@ -837,13 +837,13 @@ describe('durable independent-store payload replication', () => {
     a.store.update(doc.id, { status: 'draft', expectedHead: a.sync.head('repo', doc.id) }, user);
     const unrelated = a.store.create({ title: 'Unrelated', template: 'blank' }, user);
     a.restart();
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('approved bytes');
     expect(b.sync.head('repo', doc.id)).toBe(frozen);
     expect(b.store.summary(doc.id).status).toBe('approved');
     expect(b.store.find(unrelated.id)).toBeNull();
     expect(JSON.stringify(b.sync.operations('repo'))).not.toContain(a.sync.head('repo', doc.id));
-    expect(await a.service.syncNow(transport(a, b))).toEqual({ attempted: 2, synced: 2, blocked: 1 });
+    expect(await a.service.syncNow(transport(a, b))).toMatchObject({ attempted: 2, synced: 2, blocked: 1 });
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('PRIVATE NEW DRAFT');
     expect(b.store.find(unrelated.id)).not.toBeNull();
   });
@@ -857,7 +857,7 @@ describe('durable independent-store payload replication', () => {
     a.store.update(doc.id, { status: 'implemented', expectedHead: a.sync.head('repo', doc.id) }, user);
     const incoming = a.sync.readyIntents('repo')[0]!.frozenHead;
     const local = b.sync.head('repo', doc.id);
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await a.service.deliverPending(transport(a, b))).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('local fork');
     expect(b.sync.head('repo', doc.id)).toBe(local);
     expect(b.sync.version('repo', incoming)!.closure.files[0]!.content).toBe('remote fork');
@@ -865,7 +865,7 @@ describe('durable independent-store payload replication', () => {
     expect(a.sync.readyIntents('repo', 100, true)).toHaveLength(1);
     b.restart();
     expect(b.sync.version('repo', incoming)).not.toBeNull();
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 0, synced: 0, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 0, synced: 0, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
   });
 
   it('manual sharing converges a resolved multi-parent fork without leaking private parents before consent', async () => {
@@ -876,7 +876,7 @@ describe('durable independent-store payload replication', () => {
     a.store.update(doc.id, { status: 'implemented', expectedHead: a.sync.head('repo', doc.id) }, user);
     b.store.writeFile(doc.id, { path: 'README.md', content: 'ONE\ntwo\nthree' }, user);
     const remoteHead = a.sync.head('repo', doc.id)!, localHead = b.sync.head('repo', doc.id)!;
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await a.service.deliverPending(transport(a, b))).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     const resolved = b.service.resolveConflict({ docId: doc.id, expectedHead: localHead, remoteHead, choice: 'merge' }, user);
     expect(b.changed).toHaveBeenLastCalledWith(doc.id);
     expect(b.store.summary(doc.id).status).toBe('implemented');
@@ -895,7 +895,7 @@ describe('durable independent-store payload replication', () => {
   it('chunks packet-sized payload and rejects metadata-only receipts, wrong identity and revocation', async () => {
     const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
     const doc = a.store.create({ title: 'Large', status: 'approved', files: [{ path: 'README.md', content: 'x'.repeat(300_000) }] }, user);
-    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(transport(a, b))).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('x'.repeat(300_000));
     expect(a.sync.readyIntents('repo')).toHaveLength(0);
     const c = fixture('a'), d = fixture('b'); c.pair(); d.pair();
@@ -903,7 +903,7 @@ describe('durable independent-store payload replication', () => {
     const peers = transport(c, d);
     const real = peers.call;
     peers.call = async (peerId, method, body, args) => method === 'apply' ? { received: 1 } : real(peerId, method, body, args);
-    expect(await c.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await c.service.deliverPending(peers)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(c.sync.readyIntents('repo', 100, true)).toHaveLength(1);
     const offer = c.service.createOffer(c.sync.readyIntents('repo', 100, true)[0]!);
     await expect(d.service.offer('machine-x', offer, fence())).rejects.toThrow('not a roster member');
@@ -954,14 +954,14 @@ describe('peer protocol negotiation', () => {
     const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
     const { doc, next } = authored(a);
     const peers = transport(a, b), sent = record(peers);
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     const handshake = sent.find((item) => item.method === 'handshake')!.body;
     expect(handshake).toMatchObject({ protocolVersion: 2, maxProtocolVersion: 4 });
     expect(sent.find((item) => item.method === 'transfer')!.body).toMatchObject({ protocolVersion: 4 });
     expect(a.sync.peerProtocol('replica-b')).toBe(4);
     expect(a.sync.compactionBlocker()).toBeNull();
     next(); sent.length = 0;
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect((sent.find((item) => item.method === 'transfer')!.body.versions as unknown[])).toHaveLength(2);
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('second');
     // A receiver also accepts session offers whose omitted parents it holds.
@@ -978,9 +978,9 @@ describe('peer protocol negotiation', () => {
     const { doc, next } = authored(a);
     const peers = transport(a, b);
     const sent = record(peers, (method, result) => method === 'handshake' ? { ...(result as object), protocolVersion: 2 } : result);
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     next(); sent.length = 0;
-    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(peers)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     // A protocol-2 receiver would reject any data packet above 2 or any omitted parent.
     for (const item of sent.filter((entry) => entry.method !== 'handshake')) expect(item.body.protocolVersion).toBe(2);
     expect((sent.find((item) => item.method === 'transfer')!.body.versions as unknown[])).toHaveLength(3);

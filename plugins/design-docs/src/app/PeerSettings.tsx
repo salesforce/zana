@@ -4,6 +4,7 @@ import type { GroupStatus, PeerLifecycleReason, RepairResult } from '../shared/p
 import { NOT_CONNECTED, ownerText, stuckJob } from '../shared/peer-group.js';
 import { useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import { PEER_STATE_CHANNEL } from '../shared/contract.js';
+import { syncResultMessage } from './sync-status.js';
 import { errorMessage, toast, useApi, type ConnectionView, type PeerStatus } from './api.js';
 import { IconButton, Spinner } from './ui.js';
 
@@ -47,7 +48,7 @@ export function usePeerSync(): PeerSync {
     setSyncing(true);
     void api
       .syncNow()
-      .then((result) => toast(result.blocked ? `Synced ${result.synced}/${result.attempted}; ${result.blocked} blocked` : `Synced ${result.synced} peers`))
+      .then((result) => { const message = syncResultMessage(result); toast(message.text, message.kind); })
       .catch((error) => toast(errorMessage(error), 'error'))
       .finally(() => { if (mounted.current) { setSyncing(false); refresh(); } });
   };
@@ -285,7 +286,7 @@ export function PeerSettings() {
   const syncNow = () => {
     setBusy(true);
     void api.syncNow()
-      .then((result) => { toast(result.blocked ? `Synced ${result.synced}/${result.attempted}; ${result.blocked} blocked` : `Synced ${result.synced} peers`); if (mounted.current) checkDrift(); })
+      .then((result) => { const message = syncResultMessage(result); toast(message.text, message.kind); if (mounted.current) checkDrift(); })
       .catch((failure) => { if (mounted.current) setError(errorMessage(failure)); })
       .finally(() => { if (mounted.current) setBusy(false); });
   };

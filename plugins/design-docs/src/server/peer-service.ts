@@ -2,7 +2,10 @@ import type { PluginPeerRequest, PluginSdkPeers, ZccPluginApi } from '@zana-ai/z
 import { negotiateProtocol, validateAppliedReceipt, validateHandshake, validateSessionOffer, validateAncestryPage,
   validateTransfer, validateChunk, validateReceiptQuery, transferQuery, validateMissing, validateManualConsent,
   type PeerHandshake, type PeerSessionOffer, type PeerSessionExpectation, type PeerTransfer } from './peer-protocol.js';
-import { DesignDocSyncStore, delivered, type FrozenSyncIntent } from './sync-store.js';
+import { DesignDocSyncStore, delivered, isOfflineSyncError, type DocSyncStatus, type FrozenSyncIntent } from './sync-store.js';
+
+/** What one sync pass did. `blocked` is the legacy total of everything not delivered. */
+export interface SyncSummary { attempted: number; synced: number; blocked: number; waiting: number; needsChoice: number; failed: number }
 import { MAX_PEER_CHUNK_BYTES, MAX_PEER_WINDOW_CHUNKS, PEER_CALL_TIMEOUT_MS, PEER_COMPACTION_BATCH, PEER_MIN_PROTOCOL_VERSION, PEER_PENDING_TICK_MS, PEER_PROTOCOL_VERSION } from '../shared/peer-limits.js';
 import { PeerProtocolError, type PeerAppliedReceipt } from '../shared/peer-contract.js';
 import type { DocActor, PeerResolutionChoice } from '../shared/contract.js';
@@ -11,7 +14,7 @@ type ReceiverFence = Pick<PluginPeerRequest, 'signal' | 'scope' | 'grantEpoch' |
 
 /** Platform authenticates pair/capability; DD verifies store, roster and payload. */
 export class DesignDocPeerService {
-  private running: Promise<{ attempted: number; synced: number; blocked: number }> | null = null;
+  private running: Promise<SyncSummary> | null = null;
   private readonly abort = new AbortController();
   private timer: ReturnType<typeof setInterval> | null = null;
   private scheduleDelivery: (() => void) | null = null;
@@ -127,8 +130,11 @@ export class DesignDocPeerService {
       rosterEpoch: local.rosterEpoch, members: this.sync.members(local.repoId) };
   }
 
+  /** Read-only per-doc sync state for the UI. */
+  docSyncStatuses(docId?: string): DocSyncStatus[] { return this.sync.docSyncStatuses(docId); }
+
   /** User invocation authorizes a database-wide persisted snapshot, never buffers. */
-  async syncNow(peers: PluginSdkPeers): Promise<{ attempted: number; synced: number; blocked: number }> {
+  async syncNow(peers: PluginSdkPeers): Promise<SyncSummary> {
     this.requireGroup();
     this.sync.prepareManual();
     const local = this.requireGroup();
@@ -151,19 +157,19 @@ export class DesignDocPeerService {
       } catch (error) { awaiting++; this.warnOnce(`manual sync with ${member.machineId} awaiting`, error); }
     }
     const result = await this.deliverPending(peers);
-    return { ...result, blocked: result.blocked + awaiting };
+    return { ...result, blocked: result.blocked + awaiting, waiting: result.waiting + awaiting };
   }
 
   /** Reconnect/startup callers may deliver frozen intents only, not current drafts. */
-  deliverPending(peers: PluginSdkPeers): Promise<{ attempted: number; synced: number; blocked: number }> {
+  deliverPending(peers: PluginSdkPeers): Promise<SyncSummary> {
     if (this.running) return this.running;
     this.running = this.deliver(peers).finally(() => { this.running = null; });
     return this.running;
   }
 
-  private async deliver(peers: PluginSdkPeers): Promise<{ attempted: number; synced: number; blocked: number }> {
+  private async deliver(peers: PluginSdkPeers): Promise<SyncSummary> {
     const local = this.requireGroup();
-    let attempted = 0, synced = 0, blocked = 0;
+    let attempted = 0, synced = 0, blocked = 0, waiting = 0, needsChoice = 0, failed = 0;
     // Retry explicit frozen manual consent after restart/reconnect, never recapture drafts.
     for (const consent of this.sync.manualConsents()) {
       if (this.sync.isRetiringReplica(local.repoId, local.replicaId)) break;
@@ -241,11 +247,21 @@ export class DesignDocPeerService {
           throw new PeerProtocolError('invalid', 'authorization changed before receipt');
         }
         this.sync.acceptTransferReceipt(intent, transfer, applied);
-        if (delivered(applied.stage)) synced++; else { blocked++; this.sync.deferIntent(intent, applied.stage); }
-      } catch (error) { blocked++; this.sync.deferIntent(intent, error instanceof Error ? error.message : 'peer delivery failed'); }
+        if (delivered(applied.stage)) synced++;
+        else {
+          blocked++;
+          if (applied.stage === 'conflict') needsChoice++; else waiting++;
+          this.sync.deferIntent(intent, applied.stage);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'peer delivery failed';
+        blocked++;
+        if (isOfflineSyncError(message)) waiting++; else failed++;
+        this.sync.deferIntent(intent, message);
+      }
     }
     if (synced > 0) this.compactAfterSync();
-    return { attempted, synced, blocked };
+    return { attempted, synced, blocked, waiting, needsChoice, failed };
   }
 
   /**
