@@ -143,6 +143,12 @@ describe('REQ-9 plain refusals', () => {
     await expect(go(deps)).resolves.toEqual({ ok: false, code: 'NO_CONVERSATION', message: "This run didn't record a conversation to reopen" });
     expect(spy.createInteractiveTerminal).not.toHaveBeenCalled();
   });
+  it('refuses a Squad goal that kept older profile iterations with a conversation', async () => {
+    const { deps, spy } = setup(goal([iter()], { assignment: { kind: 'team', teamId: 't1' } as never }));
+    await expect(go(deps)).resolves.toEqual({ ok: false, code: 'NO_CONVERSATION', message: "This run didn't record a conversation to reopen" });
+    await expect(go(deps, { goalId: 'g1', iterationId: 'i1' })).resolves.toMatchObject({ ok: false, code: 'NO_CONVERSATION' });
+    expect(spy.createInteractiveTerminal).not.toHaveBeenCalled();
+  });
   it('NO_CONVERSATION for an explicit bad iteration too', async () => {
     const { deps } = setup(goal([iter({ id: 'bad', conversation: conv({ id: '--x' }) as never })]));
     await expect(go(deps, { goalId: 'g1', iterationId: 'bad' })).resolves.toMatchObject({ code: 'NO_CONVERSATION' });

@@ -23,6 +23,9 @@ export async function resumeGoalIteration(input: ResumeGoalInput, deps: ResumeGo
   const goal = deps.getGoal(input.goalId);
   if (!goal) return fail('NOT_FOUND', 'This goal is no longer available');
 
+  // A goal switched to a Squad keeps older profile iterations with a conversation; Resume is never offered for a Squad goal (the renderer's rule, enforced here too).
+  if (goal.assignment?.kind === 'team') return fail('NO_CONVERSATION', NO_CONVERSATION);
+
   const iterations = goal.history?.iterations ?? [];
   const iteration = input.iterationId === undefined
     ? latestResumableRun(iterations.filter(finishedIteration))
