@@ -71,3 +71,13 @@ describe('PersonaEditor reasoning effort save payload (#584)', () => {
     expect((await clickSave()).reasoningLevel).toBeUndefined();
   });
 });
+
+describe('PersonaEditor reasoning effort details view (#584)', () => {
+  it('shows the same label as the picker, not the raw value', () => {
+    const { container } = render(
+      <PersonaEditor persona={{ id: 'v', name: 'V', source: 'builtin', reasoningLevel: 'xhigh' }} mode="view" onClose={() => {}} />
+    );
+    expect(container.textContent).toContain('Extra-high');
+    expect(container.textContent).not.toContain('xhigh');
+  });
+});

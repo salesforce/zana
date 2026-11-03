@@ -448,7 +448,7 @@ function PersonaDetail({
             <PersonaField label="Model level" value={persona.modelLevel} />
           )}
           {persona.reasoningLevel && (
-            <PersonaField label="Reasoning effort" value={persona.reasoningLevel} />
+            <PersonaField label="Reasoning effort" value={REASONING_LEVEL_LABELS[persona.reasoningLevel]} />
           )}
           {persona.executionState && (
             <PersonaField label="Execution state" value={persona.executionState} />

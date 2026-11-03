@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { PersonaEditor } from '../PersonaEditor.js';
 
 // Static-markup coverage of the Reasoning effort picker (#584). The save and
-// clear round trip needs a live click, so the built-app E2E covers it
+// clear round trip needs a live click: PersonaEditor.reasoning-save.test.tsx
+// covers the save payload, and the built-app E2E covers the full flow
 // (e2e/persona-reasoning-effort.spec.ts).
 const edit = (persona: Parameters<typeof PersonaEditor>[0]['persona']) =>
   renderToStaticMarkup(<PersonaEditor persona={persona} mode="edit" onClose={() => {}} />);
@@ -51,7 +52,7 @@ describe('PersonaEditor reasoning effort (REQ-8)', () => {
       <PersonaEditor persona={{ id: 'w', name: 'W', source: 'builtin' }} mode="view" onClose={() => {}} />
     );
     expect(withLevel).toContain('Reasoning effort');
-    expect(withLevel).toContain('high');
+    expect(withLevel).toContain('High');
     expect(without).not.toContain('Reasoning effort');
   });
 });
