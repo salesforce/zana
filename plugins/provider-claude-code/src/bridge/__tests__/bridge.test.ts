@@ -6157,6 +6157,35 @@ describe("canonical skills/configure", () => {
       rmSync(stagedRoot, { recursive: true, force: true });
     }
   });
+
+  it("copies a native-* root instead of linking it and skips one that cannot be copied (#587)", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const stagedRoot = mkdtempSync(join(tmpdir(), "bb-claude-skill-native-"));
+    const nativeRoot = join(stagedRoot, "home", "skills");
+    mkdirSync(join(nativeRoot, "demo"), { recursive: true });
+    writeFileSync(join(nativeRoot, "demo", "SKILL.md"), "---\nname: demo\n---\n");
+    const missingRoot = join(stagedRoot, "gone", "skills");
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      bridge.sendRequest(1, "skills/configure", {
+        roots: [
+          { id: "native-claude-0", path: nativeRoot, skills: [] },
+          { id: "native-claude-1", path: missingRoot, skills: [] },
+        ],
+      });
+      await bridge.waitForResponse(1);
+      const lines = stderr.mock.calls.map((call) => String(call[0])).join("");
+      expect(lines).toContain('skipping injected skill root "native-claude-1"');
+      expect(lines).not.toContain('"native-claude-0"');
+    } finally {
+      stderr.mockRestore();
+      bridge.sendRequest(99, "skills/configure", { roots: [] });
+      bridge.restore();
+      rmSync(stagedRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("canonical model context-window hint", () => {
