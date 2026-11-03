@@ -92,6 +92,21 @@ describe('addFromTemplate', () => {
     expect(store.readFile(doc.id, 'README.md').content).toContain('Base Doc');
   });
 
+  it('with skipExisting keeps clashing files and adds the rest', () => {
+    const { ctx, store, key, doc } = setup();
+    store.writeFile(doc.id, { path: 'NOTES/A.md', content: 'mine' }, agent);
+    const result = addFromTemplate(ctx, { docId: doc.id, templateKey: key, skipExisting: true }, agent);
+    expect(result.added.sort()).toEqual(['img/p.png', 'notes/page.html']);
+    expect(result.skipped).toEqual(['notes/a.md']);
+    expect(store.readFile(doc.id, 'NOTES/A.md').content).toBe('mine');
+  });
+
+  it('with skipExisting still fails when nothing would be added', () => {
+    const { ctx, changes, doc } = setup();
+    expect(() => addFromTemplate(ctx, { docId: doc.id, templateKey: 'blank', skipExisting: true }, agent)).toThrow(/nothing to add/);
+    expect(changes).toEqual([]);
+  });
+
   it('enforces the file-count limit atomically', () => {
     const { ctx, store, key, doc } = setup();
     const files = Array.from({ length: MAX_FILES_PER_DOC - 2 }, (_, i) => ({ path: `f/${i}.md`, content: 'x' }));

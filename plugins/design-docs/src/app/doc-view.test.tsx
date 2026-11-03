@@ -485,13 +485,31 @@ describe('adding from a template', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add files' }));
     await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Added'))).toBe(true));
 
-    // Second add clashes on the same paths: nothing is overwritten and the error is shown.
+    // Adding again: every file already exists, so the dialog explains and blocks the add.
     openTemplates();
     const again = await screen.findByRole('combobox');
     await waitFor(() => expect(again.querySelectorAll('option').length).toBeGreaterThan(1));
     fireEvent.change(again, { target: { value: 'technical' } });
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }));
-    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not add the template'))).toBe(true));
+    const second = screen.getByRole('dialog');
+    await waitFor(() => expect(within(second).getByText(/nothing to add/)).toBeTruthy());
+    expect((within(second).getByRole('button', { name: 'Add files' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('skips files the doc already has and adds the rest', async () => {
+    const harness = createHarness();
+    const doc = harness.store.create({ title: 'Tpl', projectId: 'p1', files: [{ path: 'README.md', content: 'mine' }] }, UI_USER);
+    renderDoc(harness, doc.id);
+    await findPane('README.md');
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^From template/ }));
+    const select = await screen.findByRole('combobox');
+    await waitFor(() => expect(select.querySelectorAll('option').length).toBeGreaterThan(1));
+    fireEvent.change(select, { target: { value: 'technical' } });
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/left unchanged: README\.md/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add files' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => /kept your existing README\.md/.test(toast.message))).toBe(true));
+    expect(harness.store.readFile(doc.id, 'README.md').content).toBe('mine');
   });
 });
 

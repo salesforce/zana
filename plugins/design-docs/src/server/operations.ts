@@ -417,10 +417,11 @@ export function readTemplate(ctx: OperationContext, raw: unknown): TemplateReadR
 
 /**
  * Writes a template's files into an existing doc as one atomic change. Never
- * overwrites: a path the doc already has (any letter case) fails the whole call.
+ * overwrites: a path the doc already has (any letter case) fails the whole call,
+ * unless `skipExisting` is true, which leaves those files alone and adds the rest.
  * Size and count limits are the store's, as for any other write.
  */
-export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocActor): { added: string[] } {
+export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocActor): { added: string[]; skipped: string[] } {
   const input = asInput(raw);
   const ref = docRef(ctx, requiredString(input, 'docId'));
   const templateKey = requiredString(input, 'templateKey');
@@ -429,12 +430,16 @@ export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocA
   const doc = ctx.store.get(ref);
   const title = optionalString(input, 'title') ?? doc.title;
   const summary = optionalString(input, 'summary') ?? doc.summary;
-  const files = renderTemplateFiles(template, { title, summary });
+  const rendered = renderTemplateFiles(template, { title, summary });
+  const skipExisting = input.skipExisting === true;
   const existing = new Set(doc.files.map((file) => file.path.toLowerCase()));
-  for (const file of files) {
-    if (existing.has(file.path.toLowerCase())) {
-      throw new DesignDocError('conflict', `${file.path} already exists in ${doc.id}; add_from_template never overwrites. Rename or delete it first.`);
-    }
+  const clashes = rendered.filter((file) => existing.has(file.path.toLowerCase()));
+  if (clashes.length && !skipExisting) {
+    throw new DesignDocError('conflict', `${clashes[0]!.path} already exists in ${doc.id}; add_from_template never overwrites. Rename or delete it first.`);
+  }
+  const files = rendered.filter((file) => !existing.has(file.path.toLowerCase()));
+  if (!files.length) {
+    throw new DesignDocError('conflict', `every file of template ${template.id} already exists in ${doc.id}; nothing to add`);
   }
   const results = ctx.store.writeFiles(
     doc.id,
@@ -442,5 +447,5 @@ export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocA
     actor
   );
   ctx.changed(doc.id);
-  return { added: results.map((result) => result.path) };
+  return { added: results.map((result) => result.path), skipped: clashes.map((file) => file.path) };
 }

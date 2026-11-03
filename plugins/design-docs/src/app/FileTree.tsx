@@ -101,20 +101,23 @@ function PathInput({
   );
 }
 
-/** Pick a template and add its files to this doc. Never overwrites: a clash fails the whole add. */
-function TemplateDialog({ docId, onClose, onAdded }: { docId: string; onClose(): void; onAdded(firstPath: string | null): void }) {
+/** Pick a template and add its files to this doc. Files the doc already has are left alone, never overwritten. */
+function TemplateDialog({ docId, existing, onClose, onAdded }: { docId: string; existing: readonly string[]; onClose(): void; onAdded(firstPath: string | null): void }) {
   const api = useApi();
   const templates = useTemplates();
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const list = templates.data ?? [];
   const chosen = list.find((template) => template.key === key) ?? null;
+  const have = new Set(existing.map((path) => path.toLowerCase()));
+  const skipped = chosen ? chosen.files.filter((path) => have.has(path.toLowerCase())) : [];
+  const fresh = chosen ? chosen.files.filter((path) => !have.has(path.toLowerCase())) : [];
   const add = async () => {
     if (!chosen) return;
     setBusy(true);
     try {
-      const result = await api.addFromTemplate(docId, chosen.key);
-      toast(`Added ${result.added.length} file${result.added.length === 1 ? '' : 's'} from ${chosen.label}`);
+      const result = await api.addFromTemplate(docId, chosen.key, skipped.length > 0);
+      toast(`Added ${result.added.length} file${result.added.length === 1 ? '' : 's'} from ${chosen.label}${result.skipped.length ? `; kept your existing ${result.skipped.join(', ')}` : ''}`);
       onAdded(result.added[0] ?? null);
       onClose();
     } catch (error) {
@@ -130,7 +133,7 @@ function TemplateDialog({ docId, onClose, onAdded }: { docId: string; onClose():
       footer={
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn primary" disabled={!chosen || busy} onClick={() => void add()}>Add files</button>
+          <button type="button" className="btn primary" disabled={!chosen || busy || fresh.length === 0} onClick={() => void add()}>Add files</button>
         </>
       }
     >
@@ -145,7 +148,9 @@ function TemplateDialog({ docId, onClose, onAdded }: { docId: string; onClose():
       </label>
       {chosen ? (
         <p className="dd-muted dd-field-help">
-          {chosen.description ? `${chosen.description} ` : ''}Adds {chosen.files.join(', ')}. Existing files are never overwritten: if one has the same path, nothing is added.
+          {chosen.description ? `${chosen.description} ` : ''}
+          {fresh.length ? `Adds ${fresh.join(', ')}.` : 'Every file of this template is already in the doc, so there is nothing to add.'}
+          {skipped.length ? ` Already here and left unchanged: ${skipped.join(', ')}.` : ''}
         </p>
       ) : (
         <p className="dd-muted dd-field-help">Adds the template's files to this doc, alongside what is already here.</p>
@@ -436,7 +441,8 @@ export function FileTree({
         <Popover
           open={addMenu}
           onClose={() => setAddMenu(false)}
-          className="dd-menu"
+          className="dd-menu dd-menu-add"
+          align="start"
           anchor={<IconButton icon={Plus} label="Add to doc" size={13} active={addMenu} disabled={full} onClick={() => setAddMenu(!addMenu)} />}
         >
           <MenuItem icon={FilePlus2} label="New blank file…" hint="Type a name like notes.md" onSelect={() => { setAddMenu(false); setCreating(true); }} />
@@ -466,7 +472,7 @@ export function FileTree({
         ) : null}
       </div>
       {confirm ? <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} /> : null}
-      {fromTemplate ? <TemplateDialog docId={doc.id} onClose={() => setFromTemplate(false)} onAdded={(path) => { if (path) onOpen(path); }} /> : null}
+      {fromTemplate ? <TemplateDialog docId={doc.id} existing={doc.files.map((file) => file.path)} onClose={() => setFromTemplate(false)} onAdded={(path) => { if (path) onOpen(path); }} /> : null}
     </nav>
   );
 }

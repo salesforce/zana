@@ -284,6 +284,9 @@ export const DESIGN_DOCS_STYLES = `
   font-size: 13px;
 }
 .dd-context-menu { position: fixed; z-index: 60; }
+.dd-menu-add { min-width: 300px; }
+.dd-menu-add .dd-menu-label { white-space: nowrap; flex: 0 0 auto; }
+.dd-menu-add .dd-menu-hint { flex: 1 1 auto; text-align: right; max-width: none; }
 .dd-pop-end { right: 0; }
 .dd-pop-start { left: 0; }
 .dd-menu-item {
