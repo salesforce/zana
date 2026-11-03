@@ -4408,6 +4408,10 @@ export interface PluginHarnessOverrideV1 extends HarnessModelRoutingV1 {
   defaultHarness?: HarnessFamily;
 }
 
+/** Reasoning-effort levels a persona can request (Claude `--effort` vocabulary). */
+export const PERSONA_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type PersonaReasoningLevel = (typeof PERSONA_REASONING_LEVELS)[number];
+
 /**
  * A named, reusable Claude Code personality (Reviewer, Architect, Bug-hunter…)
  * that composes native `claude` CLI flags. A persona is **not** a new launch
@@ -4490,6 +4494,11 @@ export interface Persona {
    */
   microVmImage?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
+  /**
+   * Reasoning effort → claude `--effort`. Applies to Claude personas only; other
+   * harnesses ignore it. Absent means the harness default (no flag emitted).
+   */
+  reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
   harnessRouting?: PersonaHarnessRoutingV1;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
@@ -4522,6 +4531,8 @@ export interface PersonaSummary {
   baseProfile?: LaunchProfileId;
   model?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
+  /** Claude-only reasoning effort; ignored by other harnesses. */
+  reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
   /** Provenance (builtin / user / project / extension). Non-sensitive; lets a
    *  discovery surface show the source badge. */
@@ -4537,6 +4548,7 @@ export function toPersonaSummary(p: Persona): PersonaSummary {
     baseProfile: p.baseProfile,
     model: p.model,
     modelLevel: p.modelLevel,
+    reasoningLevel: p.reasoningLevel,
     executionState: p.executionState,
     source: p.source
   };
