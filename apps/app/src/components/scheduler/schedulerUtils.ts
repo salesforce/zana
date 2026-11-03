@@ -182,6 +182,19 @@ export function pickLiveRun(
 }
 
 /**
+ * The rows the Recent runs list shows: the newest `retain` rows, plus the newest real (non-skip) run when it
+ * falls outside them. The scheduler keeps that run beyond `retain` so a burst of overlap skips can't push a
+ * long run's own outcome out of history; without this the list would show only "Previous run still active".
+ * Rows kept beyond `retain` only because their session is still open are deliberately not listed: the newest
+ * real run is the one that matters here.
+ */
+export function recentRunRows(runs: readonly ScheduleRun[], retain: number | undefined): ScheduleRun[] {
+  const visible = runs.slice(0, Math.max(1, retain ?? 10));
+  const newestReal = runs.find((run) => run.result !== 'skipped');
+  return newestReal && !visible.includes(newestReal) ? [...visible, newestReal] : visible;
+}
+
+/**
  * Whether a run's pty/thread is still open: listed for its project and `running` or `starting`.
  * The one rule for "this run is open" on the Overview, the schedule row and the info panel.
  */

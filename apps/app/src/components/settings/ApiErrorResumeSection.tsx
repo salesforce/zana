@@ -130,6 +130,7 @@ function RuleRow({ rule, n, error, apply, onRemove }: {
         When the error matches
         <input
           type="text"
+          className="settings-input"
           aria-label={`When the error matches (rule ${n})`}
           value={rule.match}
           onChange={(e) => apply(rule.id, { match: e.target.value }, false)}
@@ -149,6 +150,7 @@ function RuleRow({ rule, n, error, apply, onRemove }: {
         Send
         <input
           type="text"
+          className="settings-input"
           maxLength={D.maxMessageChars}
           aria-label={`Send (rule ${n})`}
           value={rule.message}
@@ -160,6 +162,7 @@ function RuleRow({ rule, n, error, apply, onRemove }: {
         After (seconds)
         <input
           type="number"
+          className="settings-input"
           min={D.minDelaySeconds}
           max={D.maxDelaySeconds}
           aria-label={`After (seconds) (rule ${n})`}
@@ -219,14 +222,14 @@ function CapControls({ current, draft, save }: {
       <div className="api-error-resume-cap-line">
         Stop after
         <input
-          type="number" min={D.minPerWindow} max={D.maxPerWindowLimit} aria-label="Messages before stopping"
+          type="number" className="settings-input" min={D.minPerWindow} max={D.maxPerWindowLimit} aria-label="Messages before stopping"
           value={current.maxPerWindow}
           onChange={(e) => { const n = parseInt(e.target.value, 10); if (!Number.isNaN(n)) draft({ maxPerWindow: n }); }}
           onBlur={(e) => void save({ maxPerWindow: clamp(parseInt(e.target.value, 10), D.minPerWindow, D.maxPerWindowLimit, D.maxPerWindow) })}
         />
         messages in
         <input
-          type="number" min={D.minWindowMinutes} max={D.maxWindowMinutes} aria-label="Minutes in the window"
+          type="number" className="settings-input" min={D.minWindowMinutes} max={D.maxWindowMinutes} aria-label="Minutes in the window"
           value={current.windowMinutes}
           onChange={(e) => { const n = parseInt(e.target.value, 10); if (!Number.isNaN(n)) draft({ windowMinutes: n }); }}
           onBlur={(e) => void save({ windowMinutes: clamp(parseInt(e.target.value, 10), D.minWindowMinutes, D.maxWindowMinutes, D.windowMinutes) })}
@@ -274,6 +277,7 @@ function ErrorCheck({ rows }: { rows: ApiErrorResumeRule[] }) {
       <label>
         Check an error
         <textarea
+          className="settings-textarea"
           aria-label="Error text to check"
           value={checkText}
           onChange={(e) => setCheckText(e.target.value)}

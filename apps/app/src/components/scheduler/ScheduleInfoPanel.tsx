@@ -40,7 +40,8 @@ import {
   formatDuration,
   formatRelative,
   isSessionAlive as isSessionOpen,
-  pickLiveRun
+  pickLiveRun,
+  recentRunRows
 } from './schedulerUtils.js';
 
 /** "14:30", or with the date when not today: linear backoff can wait days. */
@@ -235,7 +236,7 @@ export function ScheduleInfoPanel({
           <p className="scheduler-run-empty">No runs recorded yet. The first fire will appear here.</p>
         ) : (
           <ul className="scheduler-run-list">
-            {runs.slice(0, Math.max(1, task.history?.retain ?? 10)).map((run, i) => {
+            {recentRunRows(runs, task.history?.retain).map((run, i) => {
               const reason = runReason(run);
               // The same predicate the server and Problems use (a paused schedule's
               // missed marker can't be caught up, so no Run now there).

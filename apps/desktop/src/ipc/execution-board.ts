@@ -31,7 +31,7 @@ type ExecutionCaller = { kind: 'window'; window: BrowserWindow } | { kind: 'shar
 export function registerExecutionBoardIpc(): void {
   const { safeHandle, safeHandleFromWindow, ptys, teams, personas, windows,
     executionStore, executionResumeTokens, executionSources, squadProposals, squadExecutionService, teamLifecycle,
-    startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability, squadWorktreeAction } = ctx;
+    startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability, squadWorktreeAction, retirePlanHandoff } = ctx;
 
   // The product-server credential identifies the authenticated instance owner.
   // A remote caller never supplies a window or receives a fabricated local one.
@@ -158,6 +158,8 @@ export function registerExecutionBoardIpc(): void {
       const owner = await executionBoardOwner(projectId, executionId);
       if (!owner) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
       const result = await squadExecutionService.dismiss(owner, projectId, executionId);
+      // A dismissed run is never relaunched, so a kept inferred plan file goes too.
+      if (result.ok) await retirePlanHandoff(projectId, executionId);
       return result.ok ? { ok: true, value: result.value } : { ok: false, code: result.code, message: result.message };
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution dismissal unavailable' })
@@ -289,6 +291,8 @@ export function registerExecutionBoardIpc(): void {
       // Interactive product routes identify the authenticated instance owner;
       // never derive authority from the requested execution record.
       const result = await squadExecutionService.recoverTimedOut('interactive:local', projectId, executionId, expectedStateVersion, clientRequestId);
+      // The successor runs under its own id; the timed-out run's kept plan file is no longer read.
+      if (result.ok) await retirePlanHandoff(projectId, executionId);
       return result.ok
         ? { ok: true, value: executionProjection(result.value) }
         : { ok: false, code: result.code, message: result.message };

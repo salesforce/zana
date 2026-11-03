@@ -148,7 +148,10 @@ the opening prompt." A Squad run needs an Orchestrator, so crown one slot. The
 Orchestrator is launched first and always gets its own tab. Removing the
 crowned row clears the Orchestrator.
 
-A Squad can hold up to 64 slots.
+A Squad can hold up to 64 slot rows, but one run starts at most 32 tabs,
+including the Orchestrator. If the rows add up to more, Zana starts the
+Orchestrator and the first 31 workers in row order, and drops the rest without
+a warning.
 
 ### Opening prompt
 
@@ -476,8 +479,10 @@ user** for a personal copy, or edit the file.
 
 A worktree is a separate checkout of your Project on its own branch. A Squad
 run that uses one works there instead of in your working folder. Turn it on
-with **Worktree isolation** (see above). Worktrees are created under
-`~/.zcc/worktrees`.
+with **Worktree isolation** (see above). Squad worktrees are created inside
+the Project, under `.worktrees/`, each on its own branch whose name starts with
+`zcc/`. Squad details shows the path and branch under **Retained worktree**
+when a run keeps one.
 
 Worktrees need a local Git Project. If the Project is remote, a quick-agent
 Project, or not a Git repository, the run works in the Project folder
@@ -497,7 +502,10 @@ a run finishes** (see above):
   branch. Your base checkout must be clean and on the recorded base branch.
   New files Zana itself writes under `.zcc/` (its own activity records) do not count as changes. `.zana/` holds Zana plan handoff files and is never committed. If the
   checkout is not clean, or the merge conflicts or fails, Zana keeps the
-  worktree and deletes nothing. The automatic commit may stay on the Squad's branch. Zana's
+  worktree and deletes nothing. The automatic commit may stay on the Squad's branch.
+  If the merge succeeds but Zana then cannot remove the worktree or delete the
+  branch, your changes are already in the base branch and the leftover
+  worktree or branch stays in place. Zana's
   own `.zana/` plan files are never committed. Everything else in the worktree
   is committed, including local notes, so choose **Keep worktree** if it may
   hold files you do not want in your Project's history. If a commit hook rejects the automatic commit, Zana keeps the worktree.

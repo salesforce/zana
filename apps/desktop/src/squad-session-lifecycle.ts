@@ -221,12 +221,44 @@ export function cleanupOrchestratorOnExit(
   deps.teamPlanHandoff.forget(executionId);
   deps.inferredPlanCorrection.forget(executionId);
   return deps.executionStore.getInProject(exitedSession.projectId, executionId).then((execution) => {
-    const handoffRoot = execution?.squadWorktree?.path ?? deps.projects.listProjects().find((candidate) => candidate.id === exitedSession.projectId)?.path;
+    const handoffRoot = handoffRootOf(deps, exitedSession.projectId, execution);
     if (handoffRoot) return deps.cleanupHandoffFiles(handoffRoot, executionId, { keepAuthoredPlan: mayRelaunchPlanless(execution) });
   }).then(() => undefined).catch(() => {});
 }
 
-/** Still planless, not superseded, and in a state retry or recovery may relaunch. */
+export type PlanHandoffRetirementDeps = Pick<SessionExitTeardownDeps, 'executionStore' | 'projects' | 'cleanupHandoffFiles' | 'logError'>;
+
+/**
+ * Remove a run's `.zana/` handoff files once it can no longer be relaunched under
+ * its own id. Coordinator exit keeps the authored plan of a still-relaunchable
+ * planless run for a retry. Three things end that: a board dismiss, a timeout
+ * recovery (the successor runs under its own id), and a terminal transition that
+ * no retry accepts (e.g. stopped on an unresolved blocker after the coordinator
+ * already exited). Their callers run this after the change has landed. A FAILED
+ * run that is never dismissed keeps its plan file: the store's history cap prunes
+ * only the record. The record is re-read from main's store for that project.
+ * Best effort: a failure is logged and never changes the caller's result.
+ */
+export function createPlanHandoffRetirement(deps: PlanHandoffRetirementDeps) {
+  return async function retirePlanHandoff(projectId: string, executionId: string): Promise<void> {
+    try {
+      const execution = await deps.executionStore.getInProject(projectId, executionId);
+      if (!execution || mayRelaunchPlanless(execution)) return;
+      const handoffRoot = handoffRootOf(deps, projectId, execution);
+      if (handoffRoot) await deps.cleanupHandoffFiles(handoffRoot, executionId);
+    } catch (error) {
+      deps.logError(`execution plan handoff cleanup ${executionId}`, error);
+    }
+  };
+}
+
+/** The worktree that held the run's handoff files, else its registered project folder. */
+function handoffRootOf(deps: Pick<SessionExitTeardownDeps, 'projects'>, projectId: string, execution: ExecutionRecord | undefined): string | undefined {
+  return execution?.squadWorktree?.path ?? deps.projects.listProjects().find((candidate) => candidate.id === projectId)?.path;
+}
+
+/** Still planless, not dismissed or superseded, and in a state retry or recovery may relaunch. */
 function mayRelaunchPlanless(execution: ExecutionRecord | undefined): boolean {
-  return !!execution && !execution.workUnits?.length && !execution.successorExecutionId && isResumableExecutionState(execution);
+  return !!execution && !execution.workUnits?.length && execution.dismissedAt === undefined && !execution.successorExecutionId
+    && isResumableExecutionState(execution);
 }

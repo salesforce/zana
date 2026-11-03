@@ -65,9 +65,10 @@ describe('SquadExecutionService API-error recovery hooks', () => {
     const { record, unit } = await startClaimed(service, store);
     const delivered = replyToSession.mock.calls.find((call) => (call as unknown[])[0] === 'worker-1')?.[1];
     expect(delivered).toBe(assignmentText(record, {
-      workUnitId: unit.id, slotId: 'slot-1', title: unit.title ?? '', task: unit.task, files: unit.files,
+      workUnitId: unit.id, slotId: 'slot-1', title: unit.title ?? '', task: unit.task, files: unit.files, verification: unit.verification,
       claimId: unit.claimId, claimGeneration: unit.claimGeneration
     }));
+    expect(delivered).toContain('Verification (run these before you complete the unit):\n- check a');
     expect(delivered).toContain(`Claim fence: claimId=${unit.claimId}; claimGeneration=${unit.claimGeneration}.`);
   }));
 

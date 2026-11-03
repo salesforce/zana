@@ -15,7 +15,11 @@ export function marketplaceInstallSpec(entry: MarketplaceEntry): string {
   const git = entry.source.git;
   if (!git) throw new Error(`marketplace entry ${entry.id} has no installable source`);
   const selector = git.range ? `semver:${git.range}` : git.ref ?? 'HEAD';
-  return `git:${git.url}@${selector}`;
+  const options = new URLSearchParams();
+  if (git.subdir !== undefined) options.set('subdir', git.subdir);
+  if (git.range && git.tagPrefix !== undefined) options.set('tagPrefix', git.tagPrefix);
+  const suffix = options.size ? `#${options}` : '';
+  return `git:${git.url}@${selector}${suffix}`;
 }
 
 export function exactResolutionLabel(
