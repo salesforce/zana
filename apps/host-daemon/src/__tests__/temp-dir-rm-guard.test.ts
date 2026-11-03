@@ -140,8 +140,7 @@ describe("orphan sweep wiring (REQ-11)", () => {
     );
     expect(callers.length).toBeGreaterThan(0);
     for (const { text } of callers) {
-      expect(text).toMatch(/bb-provider-bridge/);
-      expect(text).toMatch(/zcc-host/);
+      expect(text).toMatch(/prefixes:\s*PLUGIN_TEMP_DIR_PREFIXES\b/);
     }
   });
 

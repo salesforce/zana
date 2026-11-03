@@ -152,9 +152,18 @@ const YIELD_EVERY_ENTRIES = 8;
  * Entries are removed one at a time and the event loop is yielded to every few
  * entries, so a large tree never blocks the process for the whole walk.
  */
-export async function removeTreeWithoutFollowingLinksAsync(
+export async function removeTreeWithoutFollowingLinksAsync(root: string): Promise<void> {
+  await removeTreeAsyncWithHooks(root, undefined);
+}
+
+/**
+ * @internal Not part of the package API (`index.ts` does not re-export it).
+ * The same walk with a test seam, so a test can swap a directory for a link at
+ * the exact moment between the check and the removal.
+ */
+export async function removeTreeAsyncWithHooks(
   root: string,
-  hooks?: RemoveTreeAsyncHooks,
+  hooks: RemoveTreeAsyncHooks | undefined,
 ): Promise<void> {
   const path = resolve(root);
   if ((await lstatOrNullAsync(path)) === null) return;
@@ -205,7 +214,10 @@ async function removeEntryAsync(
     // removal and stop, leaving the rest on disk, if it is no longer the
     // directory this walk entered. This narrows the window to the gap between
     // this check and the unlink; it cannot close it without directory handles.
-    if (!(await stillTheDirectory(path, expectedRealPath))) {
+    const state = await directoryState(path, expectedRealPath);
+    // Gone: an overlapping cleaner finished first, which is the goal reached.
+    if (state === "gone") return;
+    if (state === "changed") {
       throw new Error(`temp dir changed while it was being removed: ${path}`);
     }
     await removeEntryAsync(join(path, name), join(expectedRealPath, name), walk);
@@ -213,12 +225,21 @@ async function removeEntryAsync(
   await ignoreMissing(() => rmdir(path));
 }
 
-/** True while `path` is still a real directory (not a link) at the real path the walk entered. */
-async function stillTheDirectory(path: string, expectedRealPath: string): Promise<boolean> {
+/**
+ * `same` while `path` is still a real directory (not a link) at the real path
+ * the walk entered; `gone` when it no longer exists (removed by someone else);
+ * `changed` when it became a link, a file, or a different real path.
+ */
+async function directoryState(
+  path: string,
+  expectedRealPath: string,
+): Promise<"same" | "gone" | "changed"> {
   const stat = await lstatOrNullAsync(path);
-  if (stat === null || stat.isSymbolicLink() || !stat.isDirectory()) return false;
+  if (stat === null) return "gone";
+  if (stat.isSymbolicLink() || !stat.isDirectory()) return "changed";
   const real = await realPathOrNullAsync(path);
-  return real !== null && samePath(real, expectedRealPath);
+  if (real === null) return "gone";
+  return samePath(real, expectedRealPath) ? "same" : "changed";
 }
 
 /**

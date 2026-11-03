@@ -21,6 +21,7 @@
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  BRIDGE_TEMP_DIR_PREFIX,
   createPluginProcessTempDir,
   removeTreeWithoutFollowingLinks,
 } from "@zana-ai/zcc-agent-process-utils";
@@ -57,8 +58,8 @@ if (
 
 const tempDir = await createPluginProcessTempDir({
   pluginId,
-  prefix: "bb-provider-bridge",
-  // The parent removes `bb-provider-bridge-<child pid>-*` after this process
+  prefix: BRIDGE_TEMP_DIR_PREFIX,
+  // The parent removes `bb-provider-bridge-<child pid>@*` after this process
   // exits, and a later sweep finds orphans by the same pid.
   ownerPid: process.pid,
 });

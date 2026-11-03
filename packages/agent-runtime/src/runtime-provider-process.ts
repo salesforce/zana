@@ -3,11 +3,13 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
 import {
+  BRIDGE_TEMP_DIR_PREFIX,
   PLUGIN_TEMP_DIR_PREFIXES,
   removeOwnedTempDirs,
   sanitizeInheritedChildProcessEnv,
   spawnPortablePipedProcess,
   sweepOrphanTempDirs,
+  tempDirForEnv,
 } from "@zana-ai/zcc-agent-process-utils";
 import type {
   ProviderAdapter,
@@ -163,7 +165,8 @@ export class RuntimeProviderProcessManager {
    */
   private readonly currentProcessByConfiguration = new Map<string, string>();
   private shuttingDown = false;
-  private orphanSweepStarted = false;
+  /** Temp roots already swept; one sweep per root and manager. */
+  private readonly sweptTempRoots = new Set<string>();
   /** Stops the startup sweep between entries when the runtime shuts down. */
   private readonly sweepAbort = new AbortController();
 
@@ -421,10 +424,11 @@ export class RuntimeProviderProcessManager {
    * bridges and host workers whose owner is gone (a crash or hard kill leaves
    * them, with links into user folders).
    */
-  private sweepOrphanTempDirsOnce(): void {
-    if (this.orphanSweepStarted) return;
-    this.orphanSweepStarted = true;
+  private sweepOrphanTempDirsOnce(tempRoot: string): void {
+    if (this.sweptTempRoots.has(tempRoot)) return;
+    this.sweptTempRoots.add(tempRoot);
     void sweepOrphanTempDirs({
+      tempRoot,
       prefixes: PLUGIN_TEMP_DIR_PREFIXES,
       signal: this.sweepAbort.signal,
       onFailure: (path, error) =>
@@ -447,11 +451,15 @@ export class RuntimeProviderProcessManager {
   private async removeBridgeTempDirs(
     providerId: string,
     pid: number | undefined,
+    tempRoot: string,
   ): Promise<void> {
     try {
+      // Only the exact `<prefix>-<child pid>@` name is looked up, under the
+      // temp folder the child itself used (its own environment), not ours.
       const { failures } = await removeOwnedTempDirs({
-        prefix: "bb-provider-bridge",
+        prefix: BRIDGE_TEMP_DIR_PREFIX,
         pid,
+        tempRoot,
       });
       for (const failure of failures) {
         this.reportCleanupProblem(
@@ -516,7 +524,10 @@ export class RuntimeProviderProcessManager {
       env[PROVIDER_BRIDGE_RECORD_DIR_ENV] = join(recordRoot, args.providerId);
     }
 
-    this.sweepOrphanTempDirsOnce();
+    // The child makes its temp dir under the temp folder of its own
+    // environment, which `env` can set apart from this process.
+    const childTempRoot = tempDirForEnv(env);
+    this.sweepOrphanTempDirsOnce(childTempRoot);
     const child = spawnPortablePipedProcess({
       command: processConfig.command,
       args: processConfig.args,
@@ -617,7 +628,7 @@ export class RuntimeProviderProcessManager {
         });
       } finally {
         finalizeExit();
-        void this.removeBridgeTempDirs(args.providerId, child.pid);
+        void this.removeBridgeTempDirs(args.providerId, child.pid, childTempRoot);
       }
     };
 

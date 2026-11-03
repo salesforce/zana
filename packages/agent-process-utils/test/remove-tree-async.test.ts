@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { removeTreeWithoutFollowingLinksAsync } from "../src/index.js";
+import { removeTreeAsyncWithHooks } from "../src/remove-tree.js";
 
 // Real directories only: the safety rule is about what the operating system
 // does, so none of these tests replace the file system with a mock.
@@ -249,7 +250,7 @@ describe("removeTreeWithoutFollowingLinksAsync", () => {
       let swapped = false;
 
       await expect(
-        removeTreeWithoutFollowingLinksAsync(tree, {
+        removeTreeAsyncWithHooks(tree, {
           // Just after `inner` was listed and just before its first child is removed,
           // replace `inner` with a link to the user's folder, as a racing plugin could.
           beforeChild: (directory) => {
@@ -264,6 +265,33 @@ describe("removeTreeWithoutFollowingLinksAsync", () => {
       expect(swapped).toBe(true);
       expect(existsSync(join(victim, "keep-me.txt"))).toBe(true);
       expect(existsSync(join(victim, "keep-me-too.txt"))).toBe(true);
+    });
+
+    it("treats a directory that another cleaner removed mid-walk as done, not as changed", async () => {
+      const tree = join(base, "tree");
+      const inner = join(tree, "inner");
+      mkdirSync(inner, { recursive: true });
+      writeFileSync(join(inner, "a.txt"), "a");
+      let removedElsewhere = false;
+
+      await expect(
+        removeTreeAsyncWithHooks(tree, {
+          beforeChild: (directory) => {
+            if (removedElsewhere || directory !== inner) return;
+            removedElsewhere = true;
+            rmSync(inner, { recursive: true, force: true });
+          },
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(removedElsewhere).toBe(true);
+      expect(existsSync(tree)).toBe(false);
+    });
+
+    it("does not export the hooks seam from the package entry", async () => {
+      const entry = await import("../src/index.js");
+      expect(entry).not.toHaveProperty("removeTreeAsyncWithHooks");
+      expect(entry.removeTreeWithoutFollowingLinksAsync.length).toBe(1);
     });
   });
 });

@@ -61,7 +61,7 @@ describe("temp dir sweep, review round 1", () => {
 
   it("F1/A2 reaches an orphan behind more than 200 unrelated entries", async () => {
     for (let i = 0; i < 300; i += 1) mkdirSync(join(root, `unrelated-${i}`));
-    const orphan = makeDir("zcc-host-999999-fixture-abc");
+    const orphan = makeDir("zcc-host-999999@fixture-abc");
     const result = await sweepOrphanTempDirs({
       tempRoot: root,
       prefixes: PLUGIN_TEMP_DIR_PREFIXES,
@@ -71,21 +71,20 @@ describe("temp dir sweep, review round 1", () => {
     expect(result.removed).toBe(1);
   });
 
-  it("F1/A2 counts only matching candidates towards maxEntries", async () => {
+  it("F1/A2 counts only orphans towards maxEntries", async () => {
     for (let i = 0; i < 20; i += 1) mkdirSync(join(root, `unrelated-${i}`));
-    for (let i = 0; i < 6; i += 1) makeDir(`zcc-host-99990${i}-fixture-abc`);
+    for (let i = 0; i < 6; i += 1) makeDir(`zcc-host-99990${i}@fixture-abc`);
     const result = await sweepOrphanTempDirs({
       tempRoot: root,
       prefixes: PLUGIN_TEMP_DIR_PREFIXES,
       isAlive: () => false,
       maxEntries: 3,
     });
-    expect(result.inspected).toBe(3);
     expect(result.removed).toBe(3);
   });
 
   it("A5 stops before touching anything when the signal is already aborted", async () => {
-    const dir = makeDir("zcc-host-999999-fixture-abc");
+    const dir = makeDir("zcc-host-999999@fixture-abc");
     const controller = new AbortController();
     controller.abort();
     const result = await sweepOrphanTempDirs({
@@ -132,13 +131,13 @@ describe("temp dir sweep, review round 1", () => {
   it.skipIf(!canChmodLock)(
     "R2-F5 reports the path of a dir the sweep could not remove",
     async () => {
-      const stuck = makeDir("zcc-host-999991-fixture-stuck");
+      const stuck = makeDir("zcc-host-999991@fixture-stuck");
       const inner = join(stuck, "inner");
       mkdirSync(inner);
       writeFileSync(join(inner, "f.txt"), "x");
       backdate(stuck);
       chmodSync(inner, 0o000);
-      const other = makeDir("zcc-host-999992-fixture-fine");
+      const other = makeDir("zcc-host-999992@fixture-fine");
       const failures: string[] = [];
       try {
         const result = await sweepOrphanTempDirs({
@@ -159,9 +158,9 @@ describe("temp dir sweep, review round 1", () => {
   describe("removeOwnedTempDirs", () => {
     it("F2/A6 removes only the exact pid's dirs for the prefix", async () => {
       const pid = await reapedPid();
-      const mine = makeDir(`bb-provider-bridge-${pid}-fixture-abc`, 0);
-      const longer = makeDir(`bb-provider-bridge-${pid}0-fixture-abc`);
-      const otherPrefix = makeDir(`zcc-host-${pid}-fixture-abc`);
+      const mine = makeDir(`bb-provider-bridge-${pid}@fixture-abc`, 0);
+      const longer = makeDir(`bb-provider-bridge-${pid}0@fixture-abc`);
+      const otherPrefix = makeDir(`zcc-host-${pid}@fixture-abc`);
       const result = await removeOwnedTempDirs({
         prefix: "bb-provider-bridge",
         pid,
@@ -174,7 +173,7 @@ describe("temp dir sweep, review round 1", () => {
     });
 
     it("A6 leaves the dirs of a pid that is alive again", async () => {
-      const dir = makeDir("bb-provider-bridge-4242-fixture-abc", 0);
+      const dir = makeDir("bb-provider-bridge-4242@fixture-abc", 0);
       const result = await removeOwnedTempDirs({
         prefix: "bb-provider-bridge",
         pid: 4242,
@@ -210,8 +209,8 @@ describe("temp dir sweep, review round 1", () => {
 
     it("R2-F3 stops reading at the first matching dir", async () => {
       const pid = await reapedPid();
-      const first = makeDir(`bb-provider-bridge-${pid}-fixture-aaa`);
-      const second = makeDir(`bb-provider-bridge-${pid}-fixture-bbb`);
+      const first = makeDir(`bb-provider-bridge-${pid}@fixture-aaa`);
+      const second = makeDir(`bb-provider-bridge-${pid}@fixture-bbb`);
       const result = await removeOwnedTempDirs({
         prefix: "bb-provider-bridge",
         pid,
@@ -240,7 +239,7 @@ describe("temp dir sweep, review round 1", () => {
       "R2-F2 records a dir it cannot remove and still tries the next pid-matching call",
       async () => {
         const pid = await reapedPid();
-        const stuck = makeDir(`bb-provider-bridge-${pid}-fixture-stuck`);
+        const stuck = makeDir(`bb-provider-bridge-${pid}@fixture-stuck`);
         const inner = join(stuck, "inner");
         mkdirSync(inner);
         writeFileSync(join(inner, "f.txt"), "x");

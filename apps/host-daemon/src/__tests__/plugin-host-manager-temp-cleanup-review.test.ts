@@ -249,7 +249,7 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
     const fresh = await import("../plugin-host-manager.js");
     hoisted.sweepSpy.mockImplementation(
       async (options: { onFailure: (path: string, error: unknown) => void }) => {
-        options.onFailure("/tmp/zcc-host-1-x", new Error("EBUSY: simulated"));
+        options.onFailure("/tmp/zcc-host-1@x", new Error("EBUSY: simulated"));
         return { inspected: 1, removed: 0, skipped: 0, failed: 1 };
       },
     );
@@ -261,7 +261,7 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
     managers.push(manager as unknown as InstanceType<typeof PluginHostManager>);
     await waitFor(() => logger.warn.mock.calls.length > 0);
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ path: "/tmp/zcc-host-1-x" }),
+      expect.objectContaining({ path: "/tmp/zcc-host-1@x" }),
       "Failed to remove an orphaned plugin temp directory",
     );
   });

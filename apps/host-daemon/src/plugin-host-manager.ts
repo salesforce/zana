@@ -12,6 +12,8 @@ import type {
 import type { HostPathWatchChange, HostWatcher } from "@zana-ai/zcc-host-watcher";
 import { jsonValueSchema, type JsonValue } from "@zana-ai/zcc-domain/thread-runtime";
 import {
+  HOST_TEMP_DIR_PREFIX,
+  PLUGIN_TEMP_DIR_PREFIXES,
   createPluginProcessTempDir,
   killProcessGroup,
   supportsProcessGroups,
@@ -255,7 +257,7 @@ function sweepOrphanTempDirsOnce(
   if (orphanSweepStarted) return;
   orphanSweepStarted = true;
   void sweepOrphanTempDirs({
-    prefixes: ["bb-provider-bridge", "zcc-host"],
+    prefixes: PLUGIN_TEMP_DIR_PREFIXES,
     signal,
     onFailure: (path, error) =>
       logger.warn({ path, err: error }, "Failed to remove an orphaned plugin temp directory"),
@@ -499,7 +501,7 @@ export class PluginHostManager {
     });
     const tempDir = await createPluginProcessTempDir({
       pluginId: command.pluginId,
-      prefix: "zcc-host",
+      prefix: HOST_TEMP_DIR_PREFIX,
     });
     const shellPath = this.options.shellEnv?.().PATH;
     const startedAtMs = performance.now();

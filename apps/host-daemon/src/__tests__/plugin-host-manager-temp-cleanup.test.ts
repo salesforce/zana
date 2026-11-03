@@ -261,7 +261,7 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
     const manager = createManager();
     const tempDir = await startWorker(manager);
     const name = tempDir.split(/[\\/]/).pop() ?? "";
-    expect(name).toMatch(new RegExp(`^zcc-host-${process.pid}-fixture-`));
+    expect(name).toMatch(new RegExp(`^zcc-host-${process.pid}@fixture-`));
   });
 
   // OBL-004 / REQ-11: one background sweep per daemon process, never awaited.
