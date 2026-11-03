@@ -2,7 +2,7 @@ import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult, HarnessRoleTarget } from '@zana-ai/zcc-domain/harness-adapter';
-import type { HarnessFamily, LaunchProfileId, Persona, PersonaInput } from '@zana-ai/zcc-domain/product';
+import type { HarnessFamily, LaunchProfileId, Persona, PersonaInput, PersonaReasoningLevel } from '@zana-ai/zcc-domain/product';
 import {
   harnessFamilyOf,
   profileLabel,
@@ -446,6 +446,9 @@ function PersonaDetail({
           {persona.modelLevel && (
             <PersonaField label="Model level" value={persona.modelLevel} />
           )}
+          {persona.reasoningLevel && (
+            <PersonaField label="Reasoning effort" value={persona.reasoningLevel} />
+          )}
           {persona.executionState && (
             <PersonaField label="Execution state" value={persona.executionState} />
           )}
@@ -527,6 +530,8 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
   const [description, setDescription] = useState(persona?.description ?? '');
   const [baseProfile, setBaseProfile] = useState<LaunchProfileId | ''>(persona?.baseProfile ?? '');
   const [modelLevel, setModelLevel] = useState<string>(persona?.modelLevel ?? 'default');
+  const [reasoningLevel, setReasoningLevel] = useState<string>(persona?.reasoningLevel ?? 'default');
+  const showReasoning = ['', 'claude', 'claude-yolo'].includes(baseProfile);
   const [executionState, setExecutionState] = useState<string>(persona?.executionState ?? 'default');
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [harnessRouting, setHarnessRouting] = useState<PersonaRouting>(
@@ -596,6 +601,9 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
       description: description.trim() || undefined,
       baseProfile: baseProfile || undefined,
       modelLevel: !baseProfile && modelLevel !== 'default' ? modelLevel as any : undefined,
+      // Reasoning effort only has an effect on Claude, so it is saved only for
+      // a neutral or Claude persona. 'default' clears it.
+      reasoningLevel: showReasoning && reasoningLevel !== 'default' ? (reasoningLevel as PersonaReasoningLevel) : undefined,
       executionState: !baseProfile && executionState !== 'default' ? executionState as any : undefined,
       // Structured controls replace legacy routing fields. Keeping old values
       // here makes a profile change silently route through hidden stale state.
@@ -775,6 +783,28 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
           <StencilForm label={`Loading ${profileLabel(baseProfile as LaunchProfileId)} settings`} />
         )}
         </div>
+
+        {showReasoning && (
+          <div className="scheduler-form-field">
+            <label htmlFor="persona-reasoning-effort">Reasoning effort</label>
+            <PopoverPicklist
+              id="persona-reasoning-effort"
+              value={reasoningLevel}
+              ariaLabel="Reasoning effort"
+              searchable={false}
+              onChange={setReasoningLevel}
+              options={[
+                { value: 'default', label: 'Use harness default (unset)' },
+                { value: 'low', label: 'Low' },
+                { value: 'medium', label: 'Medium' },
+                { value: 'high', label: 'High' },
+                { value: 'xhigh', label: 'Extra-high' },
+                { value: 'max', label: 'Max' }
+              ]}
+            />
+            <p className="settings-help persona-form-hint">Sets how hard Claude thinks for this persona. Other agents ignore it.</p>
+          </div>
+        )}
 
         {!baseProfile && (
           <p className="settings-help persona-form-hint">
