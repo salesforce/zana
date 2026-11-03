@@ -1214,6 +1214,7 @@ const api: CcApi = {
     delete: (id) => ipcRenderer.invoke(IPC.goals.delete, id),
     setStatus: (id, status) => ipcRenderer.invoke(IPC.goals.setStatus, id, status),
     runNow: (id) => ipcRenderer.invoke(IPC.goals.runNow, id),
+    resumeIteration: (input) => ipcRenderer.invoke(IPC.goals.resumeIteration, input),
     reconcile: (id) => ipcRenderer.invoke(IPC.goals.reconcile, id),
     onChanged: (cb) => {
       const handler = (_e: unknown, goals: Parameters<typeof cb>[0]) => cb(goals);

@@ -128,7 +128,9 @@ export function isValidConversationId(id: unknown): id is string {
  * valid conversation id. Main and the renderer both decide with this one rule,
  * so an explicit run id never gets past checks that "latest" applies.
  */
-export function resumableRun(run: ScheduleRun): boolean {
+export type ResumableRunLike = Partial<Pick<ScheduleRun, 'launchKind' | 'executionId' | 'marker' | 'result' | 'launchState' | 'conversation'>>;
+
+export function resumableRun(run: ResumableRunLike): boolean {
   if (!run || typeof run !== 'object') return false;
   if (run.launchKind === 'team' || run.executionId) return false;
   if (run.marker || run.result === 'skipped') return false;
@@ -139,8 +141,8 @@ export function resumableRun(run: ScheduleRun): boolean {
 }
 
 /** The newest run that {@link resumableRun} accepts, newest first by `at`. */
-export function latestResumableRun(runs: readonly ScheduleRun[] | undefined): ScheduleRun | undefined {
-  let best: ScheduleRun | undefined;
+export function latestResumableRun<T extends ResumableRunLike & { at: string }>(runs: readonly T[] | undefined): T | undefined {
+  let best: T | undefined;
   let bestMs = -Infinity;
   for (const run of runs ?? []) {
     if (!resumableRun(run)) continue;

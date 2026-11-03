@@ -738,6 +738,7 @@ export const IPC = {
     setStatus: 'goals:setStatus',
     runNow: 'goals:runNow',
     reconcile: 'goals:reconcile',
+    resumeIteration: 'goals:resumeIteration',
     onChanged: 'goals:onChanged'
   },
   followups: {
