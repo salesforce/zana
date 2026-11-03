@@ -19,6 +19,8 @@ import type {
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import type { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
+import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { buildRunConversation, withDetectedConversationId } from '../scheduler/run-conversation.js';
 import type { LaunchTerminal } from '../launch/terminal-launcher.js';
 import type { TranscriptRef } from '../followups/idle-triage.js';
 import type { IInboxStore } from '../inbox/inbox-store.js';
@@ -953,8 +955,9 @@ export class GoalManager extends EventEmitter {
       return;
     } finally { this.pendingLaunches--; }
     if (this.live.get(id) !== live) return;
+    const conversation = buildRunConversation(registrationFor(effectiveProfile), session, effectiveProfile, startedAt);
     const next: Goal = { ...live.goal, status: goal.status, iteration: live.goal.iteration + 1, updatedAt: startedAt,
-      history: { ...live.goal.history, iterations: live.goal.history.iterations.map(it => it.id === iterId ? { ...it, sessionId: session.id, launchState: 'running' as const } : it) } };
+      history: { ...live.goal.history, iterations: live.goal.history.iterations.map(it => it.id === iterId ? { ...it, sessionId: session.id, launchState: 'running' as const, ...(conversation ? { conversation } : {}) } : it) } };
     // If this save fails, leave the durable reservation. Never treat an already
     // spawned worker as a failed launch or retry it automatically.
     await this.commit(live, next);
@@ -1140,8 +1143,10 @@ export class GoalManager extends EventEmitter {
       if (it.verdict !== undefined) return null;
       const startMs = this.startMsBySession.get(sessionId);
       const durationMs = it.durationMs ?? (startMs !== undefined ? Math.max(0, Date.now() - startMs) : undefined);
+      // A harness that detects its id after launch has stamped it on the session by now.
+      const detected = it.conversation ? withDetectedConversationId(it.conversation, registrationFor(it.conversation.profile), this.deps?.ptys.getSession(sessionId) ?? undefined) : undefined;
       await this.commit(live, { ...live.goal, history: { ...live.goal.history, iterations: live.goal.history.iterations.map((entry, idx) =>
-        idx === match.idx ? { ...it, finishedAt: new Date().toISOString(), ...(durationMs !== undefined ? { durationMs } : {}) } : entry) } });
+        idx === match.idx ? { ...it, finishedAt: new Date().toISOString(), ...(durationMs !== undefined ? { durationMs } : {}), ...(detected ? { conversation: detected } : {}) } : entry) } });
       this.startMsBySession.delete(sessionId);
       this.evaluating.add(match.id); this.emit('changed');
       return match.id;
