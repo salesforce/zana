@@ -549,9 +549,11 @@ describe('doc list', () => {
     await screen.findByText('Peer owned', { selector: '.dd-doc-row-title' });
     const rightClick = (title: string) => fireEvent.contextMenu(screen.getByText(title, { selector: '.dd-doc-row-title' }).closest('button')!, { clientX: 40, clientY: 60 });
     rightClick('Peer owned');
-    const locked = menuItem(/Move to project/) as HTMLButtonElement;
-    expect(locked.disabled).toBe(true);
-    expect(locked.title).toContain('Map to a Project');
+    expect(screen.queryByRole('menuitem', { name: /Move to project/ })).toBeNull();
+    fireEvent.click(menuItem(/Map to a Project/));
+    expect(await screen.findByRole('dialog', { name: /Map peer projects/ })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('dialog', { name: /Map peer projects/ })).getByText('Close', { selector: '.btn' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Map peer projects/ })).toBeNull());
     fireEvent.keyDown(document.body, { key: 'Escape' });
     rightClick('Mine');
     expect((menuItem(/Move to project/) as HTMLButtonElement).disabled).toBe(false);

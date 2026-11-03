@@ -193,3 +193,33 @@ test('opens a relative link to a nested file in the same doc', async ({ app, hom
   await win.getByRole('link', { name: 'x', exact: true }).click();
   await expect.poll(() => decodeURIComponent(win.url()), { timeout: 30_000 }).toContain('architecture.mmd');
 });
+
+test('scrolls to a heading anchor, and adds a template twice with numbered names', async ({ app, home }) => {
+  test.setTimeout(150_000);
+  const win = app.window;
+  await installDesignDocs(win);
+  const projectId = await addProject(win, home, 'dd-gaps-anchor');
+  const doc = await rpc<Doc>(win, 'create', { title: 'Anchor doc', template: 'blank', projectId });
+  const readme = await rpc<{ revision: number; fileId: string }>(win, 'readFile', { doc: doc.id, path: 'README.md' });
+  const filler = Array.from({ length: 80 }, (_, i) => `Filler paragraph ${i}.`).join('\n\n');
+  await rpc(win, 'writeFile', {
+    doc: doc.id, path: 'README.md', content: `[go](#final-notes)\n\n${filler}\n\n## Final Notes\n\nEnd.\n`,
+    baseRevision: readme.revision, baseFileId: readme.fileId
+  });
+
+  await win.getByRole('button', { name: /^Design Docs/ }).click();
+  await win.getByText('Anchor doc').first().click();
+  await expect.poll(() => win.url()).toContain(doc.id);
+  await expect(win.getByRole('heading', { name: 'Final Notes' })).not.toBeInViewport();
+  await win.getByRole('link', { name: 'go', exact: true }).click();
+  await expect(win.getByRole('heading', { name: 'Final Notes' })).toBeInViewport({ timeout: 15_000 });
+
+  for (const expected of ['README-2.md', 'README-3.md']) {
+    await win.getByRole('button', { name: 'Add to doc' }).click();
+    await win.getByRole('menuitem', { name: /^From template/ }).click();
+    await win.getByRole('combobox').selectOption({ label: 'Technical design' });
+    await win.getByRole('dialog').getByRole('button', { name: 'Add files' }).click();
+    await expect(win.getByRole('dialog')).toHaveCount(0, { timeout: 15_000 });
+    await expect(win.getByRole('button', { name: expected })).toBeVisible({ timeout: 15_000 });
+  }
+});

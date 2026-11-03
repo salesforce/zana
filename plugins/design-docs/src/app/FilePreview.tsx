@@ -10,6 +10,7 @@ import { toast, useApi, type DocKind } from './api.js';
 import { codeFence, fenced, fileDataUrl, formatSubPath, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
 import { PageFrame } from './PageFrame.js';
+import { findHeading, onAnchorRequest, requestAnchor, takeAnchor } from './anchors.js';
 
 export interface PreviewFile {
   path: string;
@@ -168,6 +169,32 @@ export function FilePreview({
     };
   }, [quoteKey, markdown, file.kind, file.content]);
 
+  // Scroll to the heading a link named (`file.md#section`), once the host renderer has produced it.
+  useEffect(() => {
+    if (file.kind !== 'markdown') return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    const go = () => {
+      const anchor = takeAnchor(docId, file.path);
+      if (!anchor) return;
+      let tries = 0;
+      const attempt = () => {
+        if (cancelled) return;
+        const heading = contentRef.current ? findHeading(contentRef.current, anchor) : null;
+        if (heading) heading.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+        else if ((tries += 1) < 10) timer = setTimeout(attempt, 80);
+      };
+      attempt();
+    };
+    go();
+    const off = onAnchorRequest(go);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      off();
+    };
+  }, [docId, file.path, file.kind, markdown]);
+
   // For HTML pages the page frame sets the handle; this effect runs after the frame's.
   const ownsHandle = file.kind !== 'html';
   useEffect(() => {
@@ -196,6 +223,9 @@ export function FilePreview({
     if (href.startsWith('#')) {
       event.preventDefault();
       event.stopPropagation();
+      let anchorName = href.slice(1);
+      try { anchorName = decodeURIComponent(anchorName); } catch { /* keep raw text */ }
+      requestAnchor(docId, file.path, anchorName);
       return;
     }
     if (isCrossDocScheme(href)) {
@@ -208,8 +238,9 @@ export function FilePreview({
       }
       void api.resolveCrossDocLink(docId, href).then(
         (result) => {
-          if ('error' in result) toast(CROSS_DOC_ERRORS[result.error], 'error');
-          else if (result.docId === docId) onOpenPath?.(result.path);
+          if ('error' in result) { toast(CROSS_DOC_ERRORS[result.error], 'error'); return; }
+          requestAnchor(result.docId, result.path, link.anchor);
+          if (result.docId === docId) onOpenPath?.(result.path);
           else navigate.toPluginPanel(DOCS_PANEL, { subPath: formatSubPath({ docId: result.docId, path: result.path }) });
         },
         () => toast(CROSS_DOC_ERRORS['missing-doc'], 'error')
@@ -221,8 +252,13 @@ export function FilePreview({
     event.preventDefault();
     event.stopPropagation();
     const folderEntry = [...known].find((path) => path.startsWith(`${target}/`));
-    if (known.has(target)) onOpenPath?.(target);
-    else if (folderEntry) onOpenPath?.(folderEntry);
+    const hash = href.indexOf('#');
+    let relAnchor = hash >= 0 ? href.slice(hash + 1) : '';
+    try { relAnchor = decodeURIComponent(relAnchor); } catch { /* keep raw text */ }
+    if (known.has(target)) {
+      requestAnchor(docId, target, relAnchor);
+      onOpenPath?.(target);
+    } else if (folderEntry) onOpenPath?.(folderEntry);
     else toast(`${target} is not a file in this design doc`, 'error');
   };
 

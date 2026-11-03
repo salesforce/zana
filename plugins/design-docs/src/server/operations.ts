@@ -5,7 +5,7 @@
  */
 import { DOC_STATUSES, isDocStatus, type DesignDocDetail, type DocActor, type DocStatus, type TextEdit } from '../shared/contract.js';
 import { pageText } from '../shared/html-scan.js';
-import { fileKindOf, imageMediaTypeOf } from '../shared/paths.js';
+import { fileKindOf, imageMediaTypeOf, renameClashingPaths } from '../shared/paths.js';
 import { renderTemplateFiles } from '../shared/templates.js';
 import {
   commentLine,
@@ -418,11 +418,12 @@ export function readTemplate(ctx: OperationContext, raw: unknown): TemplateReadR
 /**
  * Writes a template's files into an existing doc as one atomic change. Never
  * overwrites: a path the doc already has (any letter case) fails the whole call,
- * unless `skipExisting` is true, which leaves those files alone and adds the rest.
+ * unless `renameOnConflict` is true, which numbers the clashing files (`a-2.md`).
  * Size and count limits are the store's, as for any other write.
  */
-export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocActor): { added: string[]; skipped: string[] } {
+export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocActor): { added: string[]; renamed: Array<{ from: string; to: string }> } {
   const input = asInput(raw);
+  const renameOnConflict = input.renameOnConflict === true;
   const ref = docRef(ctx, requiredString(input, 'docId'));
   const templateKey = requiredString(input, 'templateKey');
   const template = ctx.store.templateByKey(templateKey);
@@ -431,21 +432,27 @@ export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocA
   const title = optionalString(input, 'title') ?? doc.title;
   const summary = optionalString(input, 'summary') ?? doc.summary;
   const rendered = renderTemplateFiles(template, { title, summary });
-  const skipExisting = input.skipExisting === true;
   const existing = new Set(doc.files.map((file) => file.path.toLowerCase()));
   const clashes = rendered.filter((file) => existing.has(file.path.toLowerCase()));
-  if (clashes.length && !skipExisting) {
+  if (clashes.length && !renameOnConflict) {
     throw new DesignDocError('conflict', `${clashes[0]!.path} already exists in ${doc.id}; add_from_template never overwrites. Rename or delete it first.`);
   }
-  const files = rendered.filter((file) => !existing.has(file.path.toLowerCase()));
-  if (!files.length) {
-    throw new DesignDocError('conflict', `every file of template ${template.id} already exists in ${doc.id}; nothing to add`);
-  }
+  const renames = renameClashingPaths(rendered.map((file) => file.path), doc.files.map((file) => file.path));
+  const files = rendered.map((file) => {
+    const path = renames.get(file.path) ?? file.path;
+    if (!renames.size || file.encoding === 'base64' || typeof file.content !== 'string') return { ...file, path };
+    // Keep links between the added files pointing at each other, not at the doc's older copies.
+    let content = file.content;
+    for (const [from, to] of renames) {
+      content = content.split(`](${from}`).join(`](${to}`).split(`="${from}`).join(`="${to}`).split(`='${from}`).join(`='${to}`);
+    }
+    return { ...file, path, content };
+  });
   const results = ctx.store.writeFiles(
     doc.id,
     files.map((file) => ({ ...file, baseRevision: 0, baseFileId: null, note: `Added from template ${template.id}` })),
     actor
   );
   ctx.changed(doc.id);
-  return { added: results.map((result) => result.path), skipped: clashes.map((file) => file.path) };
+  return { added: results.map((result) => result.path), renamed: [...renames].map(([from, to]) => ({ from, to })) };
 }

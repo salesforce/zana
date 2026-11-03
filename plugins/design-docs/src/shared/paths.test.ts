@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  renameClashingPaths,
   MAX_PATH_DEPTH,
   MAX_PATH_LENGTH,
   codeLanguageOf,
@@ -198,5 +199,17 @@ describe('localizeDocLink', () => {
     expect(localizeDocLink('[X](doc://dd_1)', 'dd_1', 'README.md')).toBeNull();
     expect(localizeDocLink('text [X](doc://dd_1/a.md) more', 'dd_1', 'README.md')).toBeNull();
     expect(localizeDocLink('[X](doc://dd_1/../a.md)', 'dd_1', 'README.md')).toBeNull();
+  });
+});
+
+describe('renameClashingPaths', () => {
+  it('numbers clashes before the extension with one shared number, skipping taken names', () => {
+    expect(renameClashingPaths(['a.md', 'b/c.mmd'], ['x.md']).size).toBe(0);
+    expect([...renameClashingPaths(['README.md', 'diagrams/arch.mmd'], ['readme.md', 'diagrams/arch.mmd'])]).toEqual([
+      ['README.md', 'README-2.md'],
+      ['diagrams/arch.mmd', 'diagrams/arch-2.mmd']
+    ]);
+    expect([...renameClashingPaths(['a.md', 'a-2.md'], ['a.md'])]).toEqual([['a.md', 'a-3.md']]);
+    expect([...renameClashingPaths(['LICENSE'], ['LICENSE', 'LICENSE-2'])]).toEqual([['LICENSE', 'LICENSE-3']]);
   });
 });

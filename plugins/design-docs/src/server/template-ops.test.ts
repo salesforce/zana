@@ -92,19 +92,23 @@ describe('addFromTemplate', () => {
     expect(store.readFile(doc.id, 'README.md').content).toContain('Base Doc');
   });
 
-  it('with skipExisting keeps clashing files and adds the rest', () => {
+  it('with renameOnConflict numbers clashing files and keeps links between the added files', () => {
     const { ctx, store, key, doc } = setup();
     store.writeFile(doc.id, { path: 'NOTES/A.md', content: 'mine' }, agent);
-    const result = addFromTemplate(ctx, { docId: doc.id, templateKey: key, skipExisting: true }, agent);
-    expect(result.added.sort()).toEqual(['img/p.png', 'notes/page.html']);
-    expect(result.skipped).toEqual(['notes/a.md']);
+    const result = addFromTemplate(ctx, { docId: doc.id, templateKey: key, renameOnConflict: true }, agent);
+    expect(result.renamed).toEqual([{ from: 'notes/a.md', to: 'notes/a-2.md' }]);
+    expect(result.added.sort()).toEqual(['img/p.png', 'notes/a-2.md', 'notes/page.html']);
     expect(store.readFile(doc.id, 'NOTES/A.md').content).toBe('mine');
   });
 
-  it('with skipExisting still fails when nothing would be added', () => {
-    const { ctx, changes, doc } = setup();
-    expect(() => addFromTemplate(ctx, { docId: doc.id, templateKey: 'blank', skipExisting: true }, agent)).toThrow(/nothing to add/);
-    expect(changes).toEqual([]);
+  it('adds the same template repeatedly with rising numbers', () => {
+    const { ctx, store, doc } = setup();
+    addFromTemplate(ctx, { docId: doc.id, templateKey: 'blank', renameOnConflict: true }, agent);
+    const second = addFromTemplate(ctx, { docId: doc.id, templateKey: 'blank', renameOnConflict: true }, agent);
+    const third = addFromTemplate(ctx, { docId: doc.id, templateKey: 'blank', renameOnConflict: true }, agent);
+    expect(second.added).toEqual(['README-3.md']);
+    expect(third.added).toEqual(['README-4.md']);
+    expect(store.readFile(doc.id, 'README.md').content).toContain('Base Doc');
   });
 
   it('enforces the file-count limit atomically', () => {

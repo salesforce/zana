@@ -5,7 +5,8 @@ import { crossDocMarkdownLink } from '../shared/paths.js';
 import { copyText } from './clipboard.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
 import { saveBytes, siteZip } from './download.js';
-import { useDocs } from './hooks.js';
+import { useDocs, useUnassignedProjects } from './hooks.js';
+import { UnassignedProjectsDialog } from './UnassignedProjects.js';
 import { ConfirmDialog, Dialog, MenuItem, Spinner, type ConfirmRequest } from './ui.js';
 
 function MoveDialog({
@@ -161,6 +162,8 @@ export function useDocActions(projects: ProjectInfo[]): {
   const api = useApi();
   const [moving, setMoving] = useState<DesignDocSummary | null>(null);
   const [linking, setLinking] = useState<DesignDocSummary | null>(null);
+  const [mapping, setMapping] = useState(false);
+  const unassigned = useUnassignedProjects(mapping);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
 
   const update = async (doc: DesignDocSummary, patch: UpdateArgs) => {
@@ -209,13 +212,7 @@ export function useDocActions(projects: ProjectInfo[]): {
         <MenuItem icon={Hash} label="Copy id" hint={doc.slug} onSelect={run(() => void copy(doc.id, 'id'))} />
         <MenuItem icon={Download} label="Download .zip" hint={`${doc.slug}.zip`} onSelect={run(() => void download(doc))} />
         {doc.projectLocked ? (
-          <MenuItem
-            icon={FolderInput}
-            label="Move to project…"
-            hint="Peer-owned"
-            disabledReason={'This doc came from a peer, so its project belongs to the peer. Use "Map to a Project…" in the Design Docs panel to file it on this machine.'}
-            onSelect={() => undefined}
-          />
+          <MenuItem icon={FolderInput} label="Map to a Project…" hint="Peer-owned" onSelect={run(() => setMapping(true))} />
         ) : (
           <MenuItem icon={FolderInput} label="Move to project…" onSelect={run(() => setMoving(doc))} />
         )}
@@ -265,6 +262,9 @@ export function useDocActions(projects: ProjectInfo[]): {
       ) : null}
       {linking ? (
         <AlternativeDialog doc={linking} onClose={() => setLinking(null)} onPick={(alternativeTo) => update(linking, { alternativeTo })} />
+      ) : null}
+      {mapping ? (
+        <UnassignedProjectsDialog unassigned={unassigned.data ?? []} projects={projects} onClose={() => setMapping(false)} onChanged={() => unassigned.reload()} />
       ) : null}
       {confirm ? <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} /> : null}
     </>

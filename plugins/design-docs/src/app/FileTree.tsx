@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, LayoutT
 import type { DesignDocDetail, DesignDocFileMeta } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
-import { crossDocMarkdownLink, extensionOf, fileKindOf, isBinaryKind } from '../shared/paths.js';
+import { crossDocMarkdownLink, extensionOf, fileKindOf, isBinaryKind, renameClashingPaths } from '../shared/paths.js';
 import { errorMessage, toast, useApi, type DocKind } from './api.js';
 import { buildTree, type TreeNode } from './content.js';
 import { copyText } from './clipboard.js';
@@ -101,7 +101,7 @@ function PathInput({
   );
 }
 
-/** Pick a template and add its files to this doc. Files the doc already has are left alone, never overwritten. */
+/** Pick a template and add its files to this doc. Never overwrites: clashing files get a number (a-2.md). */
 function TemplateDialog({ docId, existing, onClose, onAdded }: { docId: string; existing: readonly string[]; onClose(): void; onAdded(firstPath: string | null): void }) {
   const api = useApi();
   const templates = useTemplates();
@@ -109,15 +109,14 @@ function TemplateDialog({ docId, existing, onClose, onAdded }: { docId: string; 
   const [busy, setBusy] = useState(false);
   const list = templates.data ?? [];
   const chosen = list.find((template) => template.key === key) ?? null;
-  const have = new Set(existing.map((path) => path.toLowerCase()));
-  const skipped = chosen ? chosen.files.filter((path) => have.has(path.toLowerCase())) : [];
-  const fresh = chosen ? chosen.files.filter((path) => !have.has(path.toLowerCase())) : [];
+  const renames = chosen ? renameClashingPaths(chosen.files, existing) : new Map<string, string>();
+  const names = chosen ? chosen.files.map((path) => renames.get(path) ?? path) : [];
   const add = async () => {
     if (!chosen) return;
     setBusy(true);
     try {
-      const result = await api.addFromTemplate(docId, chosen.key, skipped.length > 0);
-      toast(`Added ${result.added.length} file${result.added.length === 1 ? '' : 's'} from ${chosen.label}${result.skipped.length ? `; kept your existing ${result.skipped.join(', ')}` : ''}`);
+      const result = await api.addFromTemplate(docId, chosen.key, true);
+      toast(`Added ${result.added.length} file${result.added.length === 1 ? '' : 's'} from ${chosen.label}${result.renamed.length ? `; renamed ${result.renamed.map((rename) => `${rename.from} to ${rename.to}`).join(', ')} to keep your existing files` : ''}`);
       onAdded(result.added[0] ?? null);
       onClose();
     } catch (error) {
@@ -133,7 +132,7 @@ function TemplateDialog({ docId, existing, onClose, onAdded }: { docId: string; 
       footer={
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn primary" disabled={!chosen || busy || fresh.length === 0} onClick={() => void add()}>Add files</button>
+          <button type="button" className="btn primary" disabled={!chosen || busy} onClick={() => void add()}>Add files</button>
         </>
       }
     >
@@ -149,8 +148,8 @@ function TemplateDialog({ docId, existing, onClose, onAdded }: { docId: string; 
       {chosen ? (
         <p className="dd-muted dd-field-help">
           {chosen.description ? `${chosen.description} ` : ''}
-          {fresh.length ? `Adds ${fresh.join(', ')}.` : 'Every file of this template is already in the doc, so there is nothing to add.'}
-          {skipped.length ? ` Already here and left unchanged: ${skipped.join(', ')}.` : ''}
+          {`Adds ${names.join(', ')}.`}
+          {renames.size ? ` Files already in the doc are kept, so ${[...renames].map(([from, to]) => `${from} is added as ${to}`).join(', ')}.` : ''}
         </p>
       ) : (
         <p className="dd-muted dd-field-help">Adds the template's files to this doc, alongside what is already here.</p>

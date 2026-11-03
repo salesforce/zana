@@ -342,6 +342,34 @@ export function localizeDocLink(text: string, docId: string, fromPath: string): 
   return `[${match[1]}](${relative}${link.anchor ? `#${encodeURIComponent(link.anchor)}` : ''})`;
 }
 
+/**
+ * Names for incoming files that clash with `existing` paths (compared without
+ * letter case): one shared number is appended before the extension, `a.md` ->
+ * `a-2.md`, using the smallest number from 2 for which no renamed file collides
+ * with an existing path or with another incoming file. Returns old -> new for the
+ * clashing paths only; an empty map means nothing clashed.
+ */
+export function renameClashingPaths(incoming: readonly string[], existing: Iterable<string>): Map<string, string> {
+  const taken = new Set([...existing].map((path) => path.toLowerCase()));
+  const clashing = incoming.filter((path) => taken.has(path.toLowerCase()));
+  const renames = new Map<string, string>();
+  if (!clashing.length) return renames;
+  const others = new Set(incoming.filter((path) => !taken.has(path.toLowerCase())).map((path) => path.toLowerCase()));
+  const numbered = (path: string, n: number) => {
+    const slash = path.lastIndexOf('/') + 1;
+    const dot = path.lastIndexOf('.');
+    return dot > slash ? `${path.slice(0, dot)}-${n}${path.slice(dot)}` : `${path}-${n}`;
+  };
+  for (let n = 2; ; n += 1) {
+    const candidates = clashing.map((path) => numbered(path, n));
+    const free = candidates.every((path) => !taken.has(path.toLowerCase()) && !others.has(path.toLowerCase()));
+    if (free) {
+      clashing.forEach((path, index) => renames.set(path, candidates[index]!));
+      return renames;
+    }
+  }
+}
+
 /** Sort paths so a folder's files precede its subfolders, both alphabetically. */
 export function comparePaths(a: string, b: string): number {
   const as = a.split('/');

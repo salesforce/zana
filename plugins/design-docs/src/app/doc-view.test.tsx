@@ -3,7 +3,7 @@
 // @vitest-environment-options { "settings": { "handleDisabledFileLoadingAsSuccess": true } }
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { UI_USER } from '../server/rpc.js';
 import { MAX_BINARY_FILE_BYTES } from '../shared/limits.js';
 import { DocView, type DocLayout } from './DocView.js';
@@ -461,6 +461,46 @@ describe('pasting doc links', () => {
   });
 });
 
+describe('heading anchors', () => {
+  it('scrolls to the heading named by a same-file and a cross-file anchor link', async () => {
+    const harness = createHarness();
+    const scrolled: string[] = [];
+    // The test Markdown stub renders no headings; add one the way the host renderer would.
+    const addHeading = (text: string) => {
+      const heading = document.createElement('h2');
+      heading.textContent = text;
+      document.querySelector('[data-testid="plugin-markdown"]')?.append(heading);
+    };
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value(this: Element) { scrolled.push(this.textContent ?? ''); }
+    });
+    onTestFinished(() => {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
+      else delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    });
+    const doc = harness.store.create(
+      { title: 'Anchors', projectId: 'p1', files: [
+        { path: 'README.md', content: '[jump](#open-questions)\n\n[other](other.md#details)\n\n## Open Questions\n\ntext\n' },
+        { path: 'other.md', content: '# Other\n\n## Details\n\nbody\n' }
+      ] },
+      UI_USER
+    );
+    renderDoc(harness, doc.id);
+    await findPane('README.md');
+    const jump = await screen.findByText('jump');
+    fireEvent.click(jump);
+    addHeading('Open Questions');
+    await waitFor(() => expect(scrolled).toContain('Open Questions'));
+    fireEvent.click(screen.getByText('other'));
+    await findPane('other.md');
+    addHeading('Details');
+    await waitFor(() => expect(scrolled).toContain('Details'));
+  });
+});
+
 describe('adding from a template', () => {
   it('shows tooltips and adds template files, never overwriting', async () => {
     const harness = createHarness();
@@ -485,17 +525,18 @@ describe('adding from a template', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add files' }));
     await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Added'))).toBe(true));
 
-    // Adding again: every file already exists, so the dialog explains and blocks the add.
+    // Adding the same template again numbers the files instead of failing.
     openTemplates();
     const again = await screen.findByRole('combobox');
     await waitFor(() => expect(again.querySelectorAll('option').length).toBeGreaterThan(1));
     fireEvent.change(again, { target: { value: 'technical' } });
-    const second = screen.getByRole('dialog');
-    await waitFor(() => expect(within(second).getByText(/nothing to add/)).toBeTruthy());
-    expect((within(second).getByRole('button', { name: 'Add files' }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByText(/README\.md is added as README-2\.md/)).toBeTruthy());
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => /renamed README\.md to README-2\.md/.test(toast.message))).toBe(true));
+    expect(harness.store.get(doc.id).files.map((file) => file.path)).toContain('README-2.md');
   });
 
-  it('skips files the doc already has and adds the rest', async () => {
+  it('keeps an existing README and adds the template under a numbered name', async () => {
     const harness = createHarness();
     const doc = harness.store.create({ title: 'Tpl', projectId: 'p1', files: [{ path: 'README.md', content: 'mine' }] }, UI_USER);
     renderDoc(harness, doc.id);
@@ -505,10 +546,8 @@ describe('adding from a template', () => {
     const select = await screen.findByRole('combobox');
     await waitFor(() => expect(select.querySelectorAll('option').length).toBeGreaterThan(1));
     fireEvent.change(select, { target: { value: 'technical' } });
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText(/left unchanged: README\.md/)).toBeTruthy();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Add files' }));
-    await waitFor(() => expect(harness.toasts.some((toast) => /kept your existing README\.md/.test(toast.message))).toBe(true));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => /renamed README\.md to README-2\.md/.test(toast.message))).toBe(true));
     expect(harness.store.readFile(doc.id, 'README.md').content).toBe('mine');
   });
 });

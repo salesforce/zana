@@ -125,7 +125,7 @@ export interface DesignDocsApi {
   resolveCrossDocLink(fromDoc: string, href: string): Promise<{ docId: string; path: string } | { error: 'missing-doc' | 'missing-file' | 'forbidden' }>;
   templates(): Promise<TemplateInfo[]>;
   /** Add a template's files to an existing doc; never overwrites. */
-  addFromTemplate(docId: string, templateKey: string, skipExisting?: boolean): Promise<{ added: string[]; skipped: string[] }>;
+  addFromTemplate(docId: string, templateKey: string, renameOnConflict?: boolean): Promise<{ added: string[]; renamed: Array<{ from: string; to: string }> }>;
   templateNew(args: { label: string; description?: string }): Promise<DesignDocDetail>;
   templateDuplicate(template: string): Promise<DesignDocDetail>;
   templateUpdateMeta(template: string, patch: UpdateArgs): Promise<DesignDocSummary>;
@@ -226,7 +226,7 @@ export function createApi(call: Call): DesignDocsApi {
   return {
     resolveCrossDocLink: (fromDoc, href) => typed('resolveCrossDocLink', { fromDoc, href }),
     templates: () => typed('templates'),
-    addFromTemplate: (docId, templateKey, skipExisting) => typed('addFromTemplate', { docId, templateKey, ...(skipExisting ? { skipExisting: true } : {}) }),
+    addFromTemplate: (docId, templateKey, renameOnConflict) => typed('addFromTemplate', { docId, templateKey, ...(renameOnConflict ? { renameOnConflict: true } : {}) }),
     templateNew: (args) => typed('templateNew', args),
     templateDuplicate: (template) => typed('templateDuplicate', { template }),
     templateUpdateMeta: (template, patch) => typed('templateUpdateMeta', { template, ...patch }),
