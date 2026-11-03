@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -11,6 +12,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -462,6 +464,96 @@ describe("claude skill plugins copy user-owned roots (#587)", () => {
       expect(manifestOf(a).name).toBe(CLAUDE_SKILL_PLUGIN_NAME);
       expect(manifestOf(b).name).toMatch(/^zcc-global-skills-[0-9a-f]{8}$/u);
       expect(isLink(join(b, "skills"))).toBe(false);
+    });
+  });
+
+  describe("correctness obligations (OBL-001..007)", () => {
+    it("OBL-001: a root exactly at the byte and depth limits is copied", () => {
+      const deep = join(userSkills, "a", "b");
+      mkdirSync(deep, { recursive: true });
+      writeFileSync(join(deep, "f.txt"), "12345");
+      const sizes = listTree(userSkills)
+        .filter((p) => lstatSync(p).isFile())
+        .reduce((n, p) => n + lstatSync(p).size, 0);
+      const result = copySkillTree(userSkills, join(baseDir, "exact"), {
+        maxDepth: 3,
+        maxFiles: 3,
+        maxBytes: sizes,
+      });
+      expect(result.files).toBe(3);
+      expect(result.bytes).toBe(sizes);
+      expect(() =>
+        copySkillTree(userSkills, join(baseDir, "over"), {
+          maxDepth: 3,
+          maxFiles: 3,
+          maxBytes: sizes - 1,
+        }),
+      ).toThrow(/maxBytes/u);
+      expect(existsSync(join(baseDir, "over"))).toBe(false);
+    });
+
+    it("OBL-001: a limit failure leaves no skills directory and no .tmp- sibling", () => {
+      let deep = join(userSkills, "x");
+      for (let i = 0; i < 20; i += 1) deep = join(deep, `d${i}`);
+      mkdirSync(deep, { recursive: true });
+      const hash = createHash("sha256")
+        .update(`native-claude-0\0${userSkills}`)
+        .digest("hex")
+        .slice(0, 16);
+      expect(() => ensureUser()).toThrow(/maxDepth/u);
+      const pluginPath = join(pluginsRoot, hash);
+      expect(existsSync(join(pluginPath, "skills"))).toBe(false);
+      expect(
+        readdirSync(pluginPath).filter((n) => n.startsWith(".tmp-")),
+      ).toEqual([]);
+    });
+
+    it.skipIf(process.platform === "win32")(
+      "OBL-002: the plugin copy has 0o600 files, 0o700 directories and a 0o600 marker",
+      () => {
+        const skills = join(ensureUser(), "skills");
+        expect(statSync(join(skills, "top.md")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(skills, "demo")).mode & 0o777).toBe(0o700);
+        expect(statSync(join(skills, MARKER)).mode & 0o777).toBe(0o600);
+      },
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "OBL-002: a FIFO in the source is skipped and counted, not read",
+      () => {
+        execFileSync("mkfifo", [join(userSkills, "pipe")]);
+        const result = copySkillTree(userSkills, join(baseDir, "fifo"), LIMITS);
+        expect(result.skipped).toBe(1);
+        expect(existsSync(join(baseDir, "fifo", "pipe"))).toBe(false);
+      },
+    );
+
+    it("OBL-005: adding a link to the source triggers a recopy that still skips it", () => {
+      const pluginPath = ensureUser();
+      symlinkSync(secret, join(userSkills, "late-link"), "junction");
+      ensureUser();
+      expect(existsSync(join(pluginPath, "skills", "late-link"))).toBe(false);
+      expect(
+        readFileSync(join(pluginPath, "skills", MARKER), "utf8").split("\0")[4],
+      ).toBe("1");
+    });
+
+    it("OBL-005: a changed file mtime with the same size is picked up", () => {
+      const pluginPath = ensureUser();
+      writeFileSync(join(userSkills, "top.md"), "tap\n");
+      utimesSync(join(userSkills, "top.md"), new Date(), new Date(Date.now() + 5000));
+      ensureUser();
+      expect(readFileSync(join(pluginPath, "skills", "top.md"), "utf8")).toBe(
+        "tap\n",
+      );
+    });
+
+    it("OBL-007: the marker holds the fingerprint and the migrated copy leaves the old target intact", () => {
+      const pluginPath = ensureUser({ owned: "zana" });
+      ensureUser();
+      const marker = readFileSync(join(pluginPath, "skills", MARKER), "utf8");
+      expect(marker.startsWith(userSkills)).toBe(true);
+      expect(readdirSync(userSkills).sort()).toEqual(["demo", "top.md"]);
     });
   });
 });
