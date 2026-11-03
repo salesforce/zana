@@ -1,6 +1,6 @@
 import { readCatalogIcon } from './catalog-icon.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
@@ -856,9 +856,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     return next;
   }
 
-  function removeUnreferencedGeneration(root: string) {
+  async function removeUnreferencedGeneration(root: string) {
     const generation = managedGenerationDirectory(opts.dataDir, root);
-    if (generation && !store.list().some(row => managedGenerationDirectory(opts.dataDir, row.rootDir) === generation)) removeManagedGeneration(opts.dataDir, root);
+    if (generation && !store.list().some(row => managedGenerationDirectory(opts.dataDir, row.rootDir) === generation)) await removeManagedGeneration(opts.dataDir, root);
   }
   function ensureActivationRecovery(): Promise<void> {
     if (recovering) return recovering;
@@ -889,13 +889,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           if (journalCounts.get(id)! > 1) throw new Error('Multiple pending activation journals for this plugin; recovery order cannot be established');
           const current = store.get(journal.previous.id);
           if (journal.phase === 'committed' || journal.phase === 'restored') {
-            removeUnreferencedGeneration(journal.phase === 'committed' ? journal.previous.rootDir : journal.candidate.rootDir);
+            await removeUnreferencedGeneration(journal.phase === 'committed' ? journal.previous.rootDir : journal.candidate.rootDir);
             await activations.finish(journal);
             continue;
           }
           // An acknowledged removal or a different installation supersedes recovery.
           if (!current || current.installedAt !== journal.previous.installedAt) {
-            removeUnreferencedGeneration(journal.candidate.rootDir);
+            await removeUnreferencedGeneration(journal.candidate.rootDir);
             await activations.finish(journal);
             continue;
           }
@@ -906,7 +906,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
             toolPolicy: current.toolPolicy === 'true' ? 'true' : journal.previous.toolPolicy,
             lastActivationFailure: { version: journal.candidate.version, at: now(), detail: 'Interrupted update recovered; previous plugin-owned state restored.' } });
           journal = await activations.phase(journal, 'restored');
-          removeUnreferencedGeneration(journal.candidate.rootDir);
+          await removeUnreferencedGeneration(journal.candidate.rootDir);
           await activations.finish(journal);
         } catch (error) {
           const detail = `Plugin activation recovery requires attention at plugin-activations/${journal.id}: ${error instanceof Error ? error.message : String(error)}. Repair the recovery snapshot, then retry Enable or Reload.`;
@@ -1754,7 +1754,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       try {
         if (cloned.commit !== commit) throw new Error('Git candidate commit does not match its ref');
         try { return loadManifestFromDir(cloned.rootDir); } catch { throw new Error('Git candidate manifest is invalid'); }
-      } finally { removeManagedGeneration(opts.dataDir, cloned.rootDir); }
+      } finally { await removeManagedGeneration(opts.dataDir, cloned.rootDir); }
     },
     ...opts.updateResolver
   };
@@ -1912,10 +1912,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           catalogEntryId: null
         };
       } catch (error) {
-        removeManagedGeneration(opts.dataDir, dest);
+        await removeManagedGeneration(opts.dataDir, dest);
         throw error;
       } finally {
-        if (freshCache) await rm(freshCache, { recursive: true, force: true });
+        if (freshCache) await removePluginTemporaryDirectory(freshCache);
       }
     }
     if (source.kind === 'git') {
@@ -1930,7 +1930,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       const cloned = await cloneGitTree(source.url, selected?.commit ? `commit:${selected.commit}` : source.spec, sourceIntent.subdir);
       if (selected?.commit && cloned.commit !== selected.commit) {
-        removeManagedGeneration(opts.dataDir, cloned.rootDir);
+        await removeManagedGeneration(opts.dataDir, cloned.rootDir);
         throw new Error('Git candidate commit changed since the check');
       }
       if (selected?.tag) sourceIntent.resolvedTag = selected.tag;
@@ -1959,7 +1959,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (!contained) throw new Error(`marketplace git subdir is not contained: ${subdir}`);
       return { rootDir: contained, ...cloned };
     } catch (error) {
-      removeManagedGeneration(opts.dataDir, dest);
+      await removeManagedGeneration(opts.dataDir, dest);
       throw error;
     }
   }
@@ -1996,7 +1996,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await ensureActivationRecovery();
       id = loadManifestFromDir(materialized.rootDir).id;
     } catch (error) {
-      if (materialized.sourceKind === 'git' || materialized.sourceKind === 'npm') removeUnreferencedGeneration(materialized.rootDir);
+      if (materialized.sourceKind === 'git' || materialized.sourceKind === 'npm') await removeUnreferencedGeneration(materialized.rootDir);
       throw error;
     }
     let entered = false;
@@ -2006,7 +2006,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         return promoteMaterialized(materialized, enable, overrides, expectedId, expectedEpoch, expectedFingerprint, repairTransaction);
       }));
     } catch (error) {
-      if (!entered && (materialized.sourceKind === 'git' || materialized.sourceKind === 'npm')) removeUnreferencedGeneration(materialized.rootDir);
+      if (!entered && (materialized.sourceKind === 'git' || materialized.sourceKind === 'npm')) await removeUnreferencedGeneration(materialized.rootDir);
       throw error;
     }
   }
@@ -2048,7 +2048,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       // may point at an existing installation, including a managed generation.
       if ((materialized.sourceKind === 'git' || materialized.sourceKind === 'npm') &&
           !store.list().some((row) => resolve(row.rootDir) === resolve(materialized.rootDir))) {
-        removeManagedGeneration(opts.dataDir, materialized.rootDir);
+        await removeManagedGeneration(opts.dataDir, materialized.rootDir);
       }
       throw error;
     }
@@ -2098,8 +2098,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         // previous generation recorded by the durable rollback journal.
         await store.upsert(previous);
         await activateManaged(previous, row, expectedEpoch);
-        removeUnreferencedGeneration(existing.rootDir);
-      } finally { if (!recoveryBlocked.has(row.id)) removeUnreferencedGeneration(backupRoot); }
+        await removeUnreferencedGeneration(existing.rootDir);
+      } finally { if (!recoveryBlocked.has(row.id)) await removeUnreferencedGeneration(backupRoot); }
       await emitCapabilities();
       await syncCliSkill();
       return store.get(row.id)!;
@@ -2112,8 +2112,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       try {
         await store.upsert(previous);
         await activateManaged(previous, row, expectedEpoch);
-        removeUnreferencedGeneration(existing.rootDir);
-      } finally { if (!recoveryBlocked.has(row.id)) removeUnreferencedGeneration(backupRoot); }
+        await removeUnreferencedGeneration(existing.rootDir);
+      } finally { if (!recoveryBlocked.has(row.id)) await removeUnreferencedGeneration(backupRoot); }
       await emitCapabilities();
       await syncCliSkill();
       return store.get(row.id)!;
@@ -2124,8 +2124,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       try {
         await store.upsert(previous);
         await activateManaged(previous, row, expectedEpoch);
-        removeUnreferencedGeneration(existing.rootDir);
-      } finally { if (!recoveryBlocked.has(row.id)) removeUnreferencedGeneration(backupRoot); }
+        await removeUnreferencedGeneration(existing.rootDir);
+      } finally { if (!recoveryBlocked.has(row.id)) await removeUnreferencedGeneration(backupRoot); }
       await emitCapabilities();
       await syncCliSkill();
       return store.get(row.id)!;
@@ -2147,12 +2147,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await loadOne(row, () => isCurrent(row.id, epoch));
     } catch (error) {
       if (existing && resolve(existing.rootDir) !== resolve(row.rootDir)) {
-        removeUnreferencedGeneration(row.rootDir);
+        await removeUnreferencedGeneration(row.rootDir);
       }
       throw error;
     }
     if (existing && resolve(existing.rootDir) !== resolve(row.rootDir)) {
-      removeUnreferencedGeneration(existing.rootDir);
+      await removeUnreferencedGeneration(existing.rootDir);
     }
     await emitCapabilities();
     await syncCliSkill();
@@ -2212,20 +2212,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           if (store.get(row.id)?.status === 'degraded' && !sourceRecovery(previous)) throw new Error('Previous plugin failed to reload; activation recovery remains pending');
         }
         journal = await activations.phase(journal, 'restored');
-        removeUnreferencedGeneration(row.rootDir);
+        await removeUnreferencedGeneration(row.rootDir);
         await activations.finish(journal);
         finished = true;
         await emitCapabilities(); await emitAppsChanged();
         throw new Error(`Update to ${row.version} failed and was rolled back: ${detail}`);
       } finally { activating.delete(row.id); }
-      removeUnreferencedGeneration(previous.rootDir);
+      await removeUnreferencedGeneration(previous.rootDir);
       await activations.finish(journal);
       finished = true;
     } finally {
       if (journal && !finished) recoveryBlocked.add(row.id);
       if (!recoveryBlocked.has(row.id)) resume?.();
       // Never delete a generation required by a pending recovery journal.
-      if (!journal) removeUnreferencedGeneration(row.rootDir);
+      if (!journal) await removeUnreferencedGeneration(row.rootDir);
     }
   }
 
@@ -2532,7 +2532,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         const manifest = loadManifestFromDir(materialized.rootDir);
         if (manifest.id !== pluginId) throw new Error(`Pack member identity mismatch: expected ${pluginId}, received ${manifest.id}`);
       } catch (error) {
-        removeUnreferencedGeneration(materialized.rootDir);
+        await removeUnreferencedGeneration(materialized.rootDir);
         throw error;
       }
       const row = await installFromMaterialized(materialized, true, {
@@ -2618,7 +2618,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
             recoveryState.restored.push(row.id);
           } catch (error) {
             recoveryState.failed.push({ id: row.id, message: (error instanceof Error ? error.message : String(error)).slice(0, 1000) });
-          } finally { if (root && !recoveryBlocked.has(row.id)) removeUnreferencedGeneration(root); }
+          } finally { if (root && !recoveryBlocked.has(row.id)) await removeUnreferencedGeneration(root); }
         }
       })().catch(error => {
         recoveryState.failed.push({ id: 'recovery', message: error instanceof Error ? error.message : String(error) });
@@ -2745,7 +2745,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await uninstalled.add(id);
       if (row) {
         if (isManagedGeneration(opts.dataDir, row.rootDir)) {
-          removeUnreferencedGeneration(row.rootDir);
+          await removeUnreferencedGeneration(row.rootDir);
         } else if (row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
           rmSync(row.rootDir, { recursive: true, force: true });
         }
@@ -2784,7 +2784,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         await emitAppsChanged();
         return repaired;
       } catch (error) {
-        if (!recoveryBlocked.has(id)) removeUnreferencedGeneration(candidate.rootDir);
+        if (!recoveryBlocked.has(id)) await removeUnreferencedGeneration(candidate.rootDir);
         throw error;
       }
     },
@@ -3188,7 +3188,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         : { kind: 'git', url: intent.url, spec: `commit:${candidate.commit}`, selector: intent.selector };
       const materialized = await materialize(parsed, intent, candidate);
       if (!store.get(id) || pluginUpdateFingerprint(store.get(id)!, hostVersion, sdkVersion) !== check.fingerprint) {
-        removeManagedGeneration(opts.dataDir, materialized.rootDir);
+        await removeManagedGeneration(opts.dataDir, materialized.rootDir);
         throw new Error('Plugin changed while preparing its update; check again');
       }
       const next = await installFromMaterialized(materialized, store.get(id)!.enabled, {
@@ -3221,9 +3221,9 @@ function removeInstalledPluginCopy(dataDir: string, id: string): void {
   rmSync(copy, { recursive: true, force: true });
 }
 
-function removeManagedGeneration(dataDir: string, rootDir: string): void {
+async function removeManagedGeneration(dataDir: string, rootDir: string): Promise<void> {
   const generation = managedGenerationDirectory(dataDir, rootDir);
-  if (generation) rmSync(generation, { recursive: true, force: true });
+  if (generation) await removePluginTemporaryDirectory(generation);
 }
 
 function managedGenerationDirectory(dataDir: string, rootDir: string): string | undefined {
