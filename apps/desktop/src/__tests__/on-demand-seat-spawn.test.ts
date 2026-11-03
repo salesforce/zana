@@ -1,0 +1,418 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type {
+  SquadMemberControlRequest, SquadMemberDeliveryCompletion, SquadMemberDeliveryRequest, SquadMemberDeliveryResult, SquadMemberRuntimeRequest, SquadMemberStatus, SquadRuntimePreflightRequest,
+  SquadRuntimePreflightResult
+} from '@zana-ai/zcc-contracts/runtime';
+import type { TeamLifecycleRecord } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
+import { registerThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
+
+import { createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
+import { createDesktopNativeRecovery } from '../team-launch-support.js';
+
+/**
+ * #580 acceptance tests for starting a Squad seat on demand, through the real host.ts
+ * launchTeam path with a faked pty layer (the harness of host-team-launch-direct.test.ts).
+ * Written test first: they fail until the deferred seat, its spawner and its release exist.
+ */
+const h = vi.hoisted(() => {
+  const root = (require('node:fs') as typeof import('node:fs')).mkdtempSync(
+    require('node:path').join(require('node:os').tmpdir(), 'host-team-launch-direct-')
+  );
+  return {
+    root,
+    projects: [] as any[],
+    config: {} as any,
+    teams: [] as any[],
+    personas: [] as any[],
+    creates: [] as any[],
+    createImpl: null as null | ((opts: any) => any),
+    sessions: new Map<string, any>(),
+    dispatchReady: null as null | ((...args: any[]) => any),
+    modernMembers: new Map<string, SquadMemberRuntimeRequest>(),
+    modernStopped: new Set<string>(),
+    reserveOverride: null as null | ((reservation: any) => any),
+    afterModernAck: null as null | ((recordId: string, slotId: string, acknowledged: boolean) => Promise<void>),
+    squadOpts: undefined as any,
+    drainOpts: undefined as any,
+    runtime: {
+      preflightSquadRuntime: vi.fn<(request: SquadRuntimePreflightRequest) => Promise<SquadRuntimePreflightResult>>(),
+      createSquadMember: vi.fn<(request: SquadMemberRuntimeRequest) => Promise<{ threadId: string }>>(),
+      activateSquadMember: vi.fn<(request: SquadMemberRuntimeRequest) => Promise<{ threadId: string }>>(),
+      getSquadMemberStatus: vi.fn<(request: SquadMemberControlRequest) => Promise<SquadMemberStatus>>(),
+      isSquadMemberLive: vi.fn<(threadId: string, projectId: string, generation: number) => Promise<boolean>>(),
+      stopSquadMember: vi.fn<(threadId: string, projectId: string, generation: number) => Promise<boolean>>(),
+      deliverSquadMember: vi.fn<(request: SquadMemberDeliveryRequest) => Promise<SquadMemberDeliveryResult>>(),
+      completeSquadMemberDelivery: vi.fn<(request: SquadMemberDeliveryCompletion) => Promise<SquadMemberDeliveryResult>>(),
+      resumeSquadMember: vi.fn<(request: any) => Promise<any>>()
+    }
+  };
+});
+
+vi.stubEnv('ZCC_DATA_DIR', h.root);
+vi.stubEnv('ZCC_EXECUTION_STORE', 'json');
+
+vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
+  PtyManager: class {
+    setMcpBaseUrl() {}
+    setProjectRoots() {}
+    setRulesResolver() {}
+    create(opts: any) {
+      h.creates.push(opts);
+      if (h.createImpl) return h.createImpl(opts);
+      const session = { id: opts.preallocatedSessionId ?? opts.sessionId ?? `s${h.creates.length}`, status: 'running', projectId: opts.projectId, cohort: opts.cohort };
+      h.sessions.set(session.id, session);
+      return session;
+    }
+    getSession(id: string) { return h.sessions.get(id) ?? null; }
+    list() { return [...h.sessions.values()]; }
+    reply() {}
+    setRestoreCapabilityId() {}
+    async waitForReady(id: string) { return h.sessions.get(id); }
+    on() { return this; }
+    closeExpected() {}
+    close() { return true; }
+  },
+  isClaudeProfile: (p: string) => p === 'claude'
+}));
+
+vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
+  store: {
+    listProjects: () => h.projects,
+    getConfig: () => h.config,
+    getProjectSettings: () => ({}),
+    createScratchSubfolder: () => '/tmp/scratch',
+    ensureRemoteProjectLocalDir: (project: unknown) => project
+  },
+  scratchWorkspaceRoot: () => '/tmp/scratch-root',
+  worktreeRoot: () => '/tmp/zcc-worktrees',
+  worktreeTargetDir: (_p: unknown, slug: string) => `/tmp/zcc-worktrees/${slug}`
+}));
+
+vi.mock('@zana-ai/zcc-server/services/agents/persona-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/agents/persona-store')>();
+  class FakePersonaStore extends actual.PersonaStore {
+    list() { return h.personas; }
+    start() {}
+    stop() {}
+    refresh() {}
+    rebindProjects() {}
+  }
+  return { ...actual, PersonaStore: FakePersonaStore };
+});
+
+vi.mock('@zana-ai/zcc-server/services/agents/team-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/agents/team-store')>();
+  class FakeTeamStore extends actual.TeamStore {
+    list() { return h.teams; }
+    start() {}
+    stop() {}
+    refresh() {}
+    rebindProjects() {}
+  }
+  return { ...actual, TeamStore: FakeTeamStore };
+});
+
+vi.mock('@zana-ai/zcc-server/services/launch/team-lifecycle-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/launch/team-lifecycle-store')>();
+  return {
+    ...actual,
+    createTeamLifecycleStore: (...args: Parameters<typeof actual.createTeamLifecycleStore>) => {
+      const store = actual.createTeamLifecycleStore(...args);
+      const acknowledge = store.acknowledgeModernWorker;
+      // Test seam: run a hook strictly after main's acknowledge commits and before activation.
+      store.acknowledgeModernWorker = async (recordId, slotId, generation, threadId) => {
+        const acknowledged = await acknowledge(recordId, slotId, generation, threadId);
+        await h.afterModernAck?.(recordId, slotId, acknowledged);
+        return acknowledged;
+      };
+      const reserve = store.reserveModernWorker;
+      // Test seam: let a test reshape the reservation main receives (e.g. a fenced, non-creatable one).
+      store.reserveModernWorker = async (...reserveArgs: Parameters<typeof reserve>) => {
+        const reservation = await reserve(...reserveArgs);
+        return h.reserveOverride ? h.reserveOverride(reservation) : reservation;
+      };
+      return store;
+    }
+  };
+});
+
+// Capture main's wiring callbacks so the Modern delivery/settlement/status seams run directly.
+vi.mock('@zana-ai/zcc-server/services/execution/service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/execution/service')>();
+  const Wrapped = new Proxy(actual.SquadExecutionService, {
+    construct(target, args, newTarget) { h.squadOpts = args[0]; return Reflect.construct(target, args, newTarget); }
+  });
+  return { ...actual, SquadExecutionService: Wrapped };
+});
+vi.mock('@zana-ai/zcc-server/services/execution/execution-delivery-drain', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/execution/execution-delivery-drain')>();
+  const Wrapped = new Proxy(actual.ExecutionDeliveryDrainService, {
+    construct(target, args, newTarget) { h.drainOpts = args[0]; return Reflect.construct(target, args, newTarget); }
+  });
+  return { ...actual, ExecutionDeliveryDrainService: Wrapped };
+});
+
+vi.mock('electron', () => ({
+  safeStorage: { isEncryptionAvailable: () => false },
+  app: {
+    on: () => {},
+    whenReady: () => new Promise(() => {}),
+    getPath: () => h.root,
+    setName: () => {},
+    requestSingleInstanceLock: () => true,
+    quit: () => {}
+  },
+  BrowserWindow: { getAllWindows: () => [], getFocusedWindow: () => null },
+  ipcMain: { handle: () => {}, on: () => {} },
+  dialog: {}, shell: {}, screen: {},
+  Menu: { setApplicationMenu: () => {}, buildFromTemplate: () => ({}) },
+  nativeImage: { createFromPath: () => ({}) },
+  powerMonitor: { on: () => {} }
+}));
+vi.mock('../updater.js', () => ({ createUpdater: () => ({}) }));
+vi.mock('../runtime/runtime-supervisor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../runtime/runtime-supervisor.js')>();
+  return { ...actual, createProductRouteSquadRuntime: vi.fn(() => h.runtime) };
+});
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
+  ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
+  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json',
+  alwaysOnPluginMcpAllowlist: () => []
+}));
+
+const host = await import('../host.js');
+const { authorizeTeamLaunch, launchTeam } = host;
+
+const projectDir = realpathSync(mkdtempSync(join(h.root, 'proj-')));
+mkdirSync(projectDir, { recursive: true });
+
+const persona = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: id.toUpperCase(), baseProfile: 'claude', ...extra });
+let seq = 0;
+let threadProviderHandles: Array<{ unregister(): void }> = [];
+
+beforeEach(() => {
+  threadProviderHandles.forEach(handle => handle.unregister());
+  threadProviderHandles = [
+    registerThreadProvider('test', { id: 'claude-code', displayName: 'Claude Code',
+      capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'] }, composerActions: [] }),
+    registerThreadProvider('test', { id: 'acp-opencode', displayName: 'OpenCode',
+      capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'] }, composerActions: [] })
+  ];
+  seq += 1;
+  h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
+  h.config = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
+  h.personas = [persona('orch'), persona('w1'), persona('w2')];
+  h.teams = [{
+    id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch',
+    slots: [{ personaId: 'w1', quantity: 2 }, { personaId: 'w2', label: 'Second' }]
+  }];
+  h.creates.length = 0;
+  h.sessions.clear();
+  h.createImpl = null;
+  h.afterModernAck = null;
+  h.reserveOverride = null;
+});
+
+afterAll(() => {
+  threadProviderHandles.forEach(handle => handle.unregister());
+  vi.unstubAllEnvs();
+  rmSync(h.root, { recursive: true, force: true });
+});
+
+const SLOT_IDS = ['0:w1:0', '0:w1:1', '1:w2:0', 'orchestrator:orch'];
+const tasks = () => SLOT_IDS.map((slotId) => ({ initialTask: `task for ${slotId}` }));
+const reqId = () => `req-${seq}-${Math.random().toString(36).slice(2)}`;
+
+const lifecycleFile = () => join(h.root, 'team-lifecycle.json');
+const recordFor = (launchRequestId: string): TeamLifecycleRecord => {
+  const state = JSON.parse(readFileSync(lifecycleFile(), 'utf8')) as { records: TeamLifecycleRecord[] };
+  const record = state.records.find((candidate) => candidate.launchRequestId === launchRequestId);
+  expect(record).toBeDefined();
+  return record!;
+};
+const worker = (record: TeamLifecycleRecord, slotId: string) => record.workers.find((w) => w.slotId === slotId);
+const durableReq = (extra: Record<string, unknown> = {}) => ({
+  callerPrincipalId: 'owner', launchRequestId: reqId(), coordinationMode: 'structured' as const,
+  slots: SLOT_IDS.map((slotId) => ({ slotId, initialTask: `task ${slotId}` })), ...extra
+});
+const onDemandTeam = () => {
+  h.teams = [{
+    id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch',
+    slots: [{ personaId: 'w1', quantity: 2, startOnDemand: true }, { personaId: 'w2', label: 'Second' }]
+  }];
+};
+const spawn = (recordId: string, slotId: string) => h.squadOpts.spawnDeferredWorker(recordId, slotId) as Promise<{ ok: boolean; sessionId?: string; message?: string }>;
+
+describe('REQ-2 a launch with an on-demand seat does not spawn that seat', () => {
+  it('spawns only the other seats and the coordinator, and records the deferred seats without a session', async () => {
+    onDemandTeam();
+    const req = durableReq();
+    expect((await launchTeam('team1', 'p1', req as never)).ok).toBe(true);
+    expect(h.creates.map((c) => c.cohort?.slotId).sort()).toEqual(['1:w2:0', 'orchestrator:orch']);
+    const record = recordFor(req.launchRequestId);
+    for (const slotId of ['0:w1:0', '0:w1:1']) {
+      expect(worker(record, slotId)).toMatchObject({ process: 'authorized' });
+      expect(worker(record, slotId)?.sessionId).toBeUndefined();
+    }
+    expect(worker(record, '1:w2:0')?.sessionId).toBeTruthy();
+  });
+});
+
+describe('REQ-3 a team without startOnDemand spawns every seat as before', () => {
+  it('opens all four sessions and gives every worker a session', async () => {
+    const req = durableReq();
+    expect((await launchTeam('team1', 'p1', req as never)).ok).toBe(true);
+    expect(h.creates).toHaveLength(4);
+    expect(recordFor(req.launchRequestId).workers.every((w) => w.sessionId)).toBe(true);
+  });
+
+  it('registers no deferred spawner, so asking to start a running seat creates nothing', async () => {
+    const req = durableReq();
+    expect((await launchTeam('team1', 'p1', req as never)).ok).toBe(true);
+    const record = recordFor(req.launchRequestId);
+    expect(await spawn(record.id, '0:w1:0')).toMatchObject({ ok: false });
+    expect(h.creates).toHaveLength(4);
+  });
+
+  it('an explicit startOnDemand: false behaves like an absent field', async () => {
+    h.teams[0].slots[0].startOnDemand = false;
+    expect((await launchTeam('team1', 'p1', durableReq() as never)).ok).toBe(true);
+    expect(h.creates).toHaveLength(4);
+  });
+});
+
+describe('REQ-4 the spawner starts the seat with the standby prompt', () => {
+  it('creates the session once, binds it to the lifecycle record and uses the worker standby prompt', async () => {
+    onDemandTeam();
+    const req = durableReq();
+    await launchTeam('team1', 'p1', req as never);
+    const record = recordFor(req.launchRequestId);
+    const before = h.creates.length;
+    const result = await spawn(record.id, '0:w1:0');
+    expect(result).toMatchObject({ ok: true, sessionId: expect.any(String) });
+    expect(h.creates).toHaveLength(before + 1);
+    const created = h.creates.at(-1);
+    expect(created.cohort).toMatchObject({ role: 'worker', slotId: '0:w1:0' });
+    expect((created.extraArgs ?? []).join('\n')).toContain('Team worker standby.');
+    expect(worker(recordFor(req.launchRequestId), '0:w1:0')).toMatchObject({ process: 'running', sessionId: result.sessionId });
+    // the sibling on-demand seat is untouched
+    expect(worker(recordFor(req.launchRequestId), '0:w1:1')).toMatchObject({ process: 'authorized' });
+  });
+});
+
+describe('REQ-5 two requests for one seat spawn it once', () => {
+  it('shares one spawn between concurrent callers and answers a later caller with the same session', async () => {
+    onDemandTeam();
+    const req = durableReq();
+    await launchTeam('team1', 'p1', req as never);
+    const record = recordFor(req.launchRequestId);
+    const before = h.creates.length;
+    const [a, b] = await Promise.all([spawn(record.id, '0:w1:0'), spawn(record.id, '0:w1:0')]);
+    expect(h.creates).toHaveLength(before + 1);
+    expect(a).toMatchObject({ ok: true });
+    expect(b).toEqual(a);
+    expect(await spawn(record.id, '0:w1:0')).toEqual(a);
+    expect(h.creates).toHaveLength(before + 1);
+  });
+});
+
+describe('REQ-6 a failed spawn is reported and leaves the seat failed', () => {
+  it('returns ok:false, marks the seat spawn-failed and does not retry blindly', async () => {
+    onDemandTeam();
+    const req = durableReq();
+    await launchTeam('team1', 'p1', req as never);
+    const record = recordFor(req.launchRequestId);
+    h.createImpl = () => { throw new Error('spawn boom'); };
+    const result = await spawn(record.id, '0:w1:0');
+    expect(result).toMatchObject({ ok: false, message: expect.any(String) });
+    expect(worker(recordFor(req.launchRequestId), '0:w1:0')).toMatchObject({ process: 'spawn-failed' });
+  });
+});
+
+describe('REQ-8 an unsupported launch fails before anything is spawned', () => {
+  it('fails a Modern team naming the on-demand seats, with no session, member or lifecycle record', async () => {
+    onDemandTeam();
+    h.teams[0].transport = 'MODERN';
+    const req = durableReq();
+    const result = await launchTeam('team1', 'p1', req as never);
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining("Start on demand isn't available for Modern squads yet") });
+    expect(JSON.stringify(result)).toContain('w1');
+    expect(h.creates).toHaveLength(0);
+    expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
+  });
+
+  it('fails a launch without durable coordination (goal launch) naming the seats', async () => {
+    onDemandTeam();
+    const result = await launchTeam('team1', 'p1', { goal: 'ship it' });
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).toContain('w1');
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('fails an interactive launch without a request at all', async () => {
+    onDemandTeam();
+    expect(await launchTeam('team1', 'p1')).toMatchObject({ ok: false });
+    expect(h.creates).toHaveLength(0);
+  });
+});
+
+describe('REQ-9 restart and resume', () => {
+  it('keeps a never-started seat deferred after a restart and recovers a started one as before', async () => {
+    onDemandTeam();
+    const req = durableReq();
+    await launchTeam('team1', 'p1', req as never);
+    const record = recordFor(req.launchRequestId);
+    expect((await spawn(record.id, '0:w1:1')).ok).toBe(true);
+    const restarted = createTeamLifecycleStore({ filePath: lifecycleFile() });
+    await restarted.reconcileStartup(new Set());
+    const after = await restarted.get(record.id);
+    expect(after?.workers.find((w) => w.slotId === '0:w1:0')).toMatchObject({ process: 'authorized' });
+    expect(after?.workers.find((w) => w.slotId === '0:w1:1')).toMatchObject({ process: 'exited' });
+  });
+
+  it('keeps Resume available when the only seats without a snapshot are never-started on-demand seats', () => {
+    const snap = (slotId: string) => ({ slotId, role: 'worker', personaId: 'pe', profileId: 'claude', nativeConversationId: 'n' });
+    const team = { id: 't', slots: [{ personaId: 'pe', quantity: 1, startOnDemand: true }, { personaId: 'pe', quantity: 1 }] };
+    const api = createDesktopNativeRecovery({
+      projects: { listProjects: () => [{ id: 'pr' }] as never },
+      teams: { list: () => [team] as never },
+      personas: { list: () => [{ id: 'pe' }] as never },
+      expandTeamSlots: () => [{ slotId: '0:pe:0', role: 'worker' as const, personaId: 'pe' }, { slotId: '1:pe:0', role: 'worker' as const, personaId: 'pe' }],
+      resolveTeamProfile: () => 'claude' as never
+    });
+    const record = { projectId: 'pr', teamId: 't', nativeRecoverySnapshots: [snap('1:pe:0')] } as never;
+    expect(api.availability(record)).toEqual({ available: true, restorableSlots: 1, totalSlots: 1 });
+  });
+
+  it('still blocks a partial restore when a non-deferred seat lacks a snapshot (existing behaviour)', () => {
+    const snap = (slotId: string) => ({ slotId, role: 'worker', personaId: 'pe', profileId: 'claude', nativeConversationId: 'n' });
+    const api = createDesktopNativeRecovery({
+      projects: { listProjects: () => [{ id: 'pr' }] as never },
+      teams: { list: () => [{ id: 't', slots: [{ personaId: 'pe' }, { personaId: 'pe' }] }] as never },
+      personas: { list: () => [{ id: 'pe' }] as never },
+      expandTeamSlots: () => [{ slotId: '0:pe:0', role: 'worker' as const, personaId: 'pe' }, { slotId: '1:pe:0', role: 'worker' as const, personaId: 'pe' }],
+      resolveTeamProfile: () => 'claude' as never
+    });
+    expect(api.availability({ projectId: 'pr', teamId: 't', nativeRecoverySnapshots: [snap('0:pe:0')] } as never))
+      .toMatchObject({ available: false, reason: 'PARTIAL_RESTORE' });
+  });
+});
+
+describe('REQ-10 the spawner is released when the run ends or is canceled', () => {
+  it('refuses to spawn after cancel and creates no session', async () => {
+    onDemandTeam();
+    const req = durableReq();
+    await launchTeam('team1', 'p1', req as never);
+    const record = recordFor(req.launchRequestId);
+    expect((await host.cancelTeamLaunch(req.callerPrincipalId, req.launchRequestId)).ok).toBe(true);
+    const before = h.creates.length;
+    expect(await spawn(record.id, '0:w1:0')).toMatchObject({ ok: false });
+    expect(h.creates).toHaveLength(before);
+    expect(worker(recordFor(req.launchRequestId), '0:w1:0')?.process).toBe('canceled');
+  });
+});
