@@ -52,3 +52,5 @@ export async function resolveContainedReal(dir: string, entry: string): Promise<
     return null; // missing file, broken symlink, etc.
   }
 }
+
+export { openContainedFile, type ContainedFile, type OpenContainedOptions } from './open-contained.js';

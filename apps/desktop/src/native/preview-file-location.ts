@@ -12,6 +12,8 @@ export interface PreviewFileLocationDeps {
   projects: Project[];
   thread(id: string): Promise<{ hostId: string; cwd: string | null; projectId?: string } | null>;
   trustedRoot(root: string): Promise<string | null>;
+  /** Folders the user trusted for preview in Settings; read fresh on every call. */
+  trustedPreviewFolders?(): readonly string[];
 }
 
 async function containedPath(root: string, candidate: string): Promise<string | null> {
@@ -32,6 +34,9 @@ export async function previewFileLocation(input: Request, deps: PreviewFileLocat
   try {
     const projects = deps.projects.filter(project => !project.remote && (!project.hostId || project.hostId === deps.localHostId));
     let root: string | null = null;
+    // Trusted folders apply only to local desktop scopes: a local thread, a
+    // local project, or no remote scope at all.
+    let localScope = true;
     if (input.source === 'thread-storage') {
       if (!input.threadId || !await deps.thread(input.threadId)) return unavailable;
       // Confine the thread directory too: it must not be a symlink outside storage.
@@ -45,19 +50,26 @@ export async function previewFileLocation(input: Request, deps: PreviewFileLocat
       } else {
         // CLI preview panels have a PTY id rather than a conversation row.
         root = projects.find(project => project.id === input.projectId)?.path ?? null;
+        localScope = root !== null;
       }
     } else if (input.projectId) {
       root = projects.find(project => project.id === input.projectId)?.path ?? null;
+      localScope = root !== null;
     } else if (isAbsolute(input.path)) {
       for (const project of projects) {
         const candidate = await containedPath(project.path, input.path);
         if (candidate && (await stat(candidate)).isFile()) return { ok: true, path: candidate };
       }
     }
-    if (!root) return unavailable;
-    const path = await containedPath(root, input.path);
-    if (!path || !(await stat(path)).isFile()) return unavailable;
-    return { ok: true, path };
+    const path = root ? await containedPath(root, input.path) : null;
+    if (path && (await stat(path)).isFile()) return { ok: true, path };
+    if (localScope && input.source === 'workspace' && isAbsolute(input.path)) {
+      for (const folder of deps.trustedPreviewFolders?.() ?? []) {
+        const candidate = await containedPath(folder, input.path);
+        if (candidate && (await stat(candidate)).isFile()) return { ok: true, path: candidate };
+      }
+    }
+    return unavailable;
   } catch {
     return unavailable;
   }

@@ -118,6 +118,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   global: [
     { id: 'appearance', label: 'Appearance' },
     { id: 'cli-skills', label: 'CLI skills' },
+    { id: 'trusted-preview-folders', label: 'Trusted Preview Folders' },
     { id: 'debug', label: 'Debug' }
   ],
   composer: [

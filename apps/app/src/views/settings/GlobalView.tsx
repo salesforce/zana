@@ -7,6 +7,7 @@ import { PluginThemePicker, PluginThreadListPicker } from '@/plugins/PluginAppea
 import { DoctorSection } from '@/components/settings/DoctorSection';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { CliSkillsSettings } from './CliSkillsSettings';
+import { TrustedPreviewFoldersSection } from './TrustedPreviewFoldersSection';
 import { useSplitWorkspace } from '@/lib/split-layout/store';
 
 interface GlobalTabProps {
@@ -48,6 +49,8 @@ export function GlobalView({
       </Section>
 
       <CliSkillsSettings />
+
+      <TrustedPreviewFoldersSection config={config} />
 
       <Section
         anchorId="debug"

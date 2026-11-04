@@ -1,3 +1,4 @@
+import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
 import { isAgentsViewId } from '@zana-ai/zcc-domain/product';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { isNotificationLevel, isOwnNotificationLevel, isProjectIcon } from '@zana-ai/zcc-domain';
@@ -1102,6 +1103,10 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.inAppAgentTerminalsEnabled === 'boolean') {
     normalized.inAppAgentTerminalsEnabled = input.inAppAgentTerminalsEnabled;
+  }
+  if (Array.isArray(input.trustedPreviewFolders)) {
+    // Lenient on load; the strict writers live in desktop main.
+    normalized.trustedPreviewFolders = sanitizeStoredTrustedPreviewFolders(input.trustedPreviewFolders);
   }
   if (typeof input.autoOpenThreadPlanPanel === 'boolean') {
     normalized.autoOpenThreadPlanPanel = input.autoOpenThreadPlanPanel;

@@ -56,6 +56,26 @@ export function parseLocalFileMarkdownHref(href: string | undefined): string | n
   return null;
 }
 
+/**
+ * Whether a Preview control may be offered for `path`. Relative safe paths stay
+ * workspace-relative; absolute paths qualify only when contained by a known
+ * root. Shell-dynamic, home-relative and traversal paths never qualify. The
+ * server remains the authority on the actual read.
+ */
+export function isPreviewableConversationPath(
+  path: string,
+  previewRoots: readonly string[] = []
+): boolean {
+  if (!path || /[$`\0]/u.test(path) || path.startsWith('~')) return false;
+  const segments = path.split(/[/\\]/u);
+  if (segments.includes('..')) return false;
+  if (!path.startsWith('/') && !/^[a-z]:[\\/]/iu.test(path)) return true;
+  return previewRoots.some((root) => {
+    const normalized = root.replace(/\/+$/u, '');
+    return normalized.length > 0 && path.startsWith(`${normalized}/`);
+  });
+}
+
 /** Workspace-relative paths an assistant dump or attachment can open in the side-panel preview. */
 export function conversationFilePreviewPaths(
   text: string,

@@ -2549,6 +2549,13 @@ export interface AppConfig {
    */
   inAppAgentTerminalsEnabled?: boolean;
   /**
+   * Local folders the user has trusted for read-only file preview. Global and
+   * device-local: used only for local desktop threads, never for remote
+   * threads or machines. Written only by the desktop Settings folder chooser;
+   * renderer config patches cannot set it. At most 20 canonical absolute paths.
+   */
+  trustedPreviewFolders?: string[];
+  /**
    * Automatically open the thread secondary panel on the Plan pin when Plan
    * mode is active (native ACP Plan, `/plan`, or a durable plan artifact).
    * EXPERIMENTAL; default OFF. Plan-approval prompts still open the panel
