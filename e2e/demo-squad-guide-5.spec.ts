@@ -48,6 +48,8 @@ test.use({
   }
 });
 test.setTimeout(360_000);
+// Demo recording, not a regression test: run it only when recording (see docs/media/squad-guide-README.md).
+test.skip(!process.env.ZCC_E2E_RECORD_VIDEO, 'Demo recording only');
 
 async function tap(page: Page, target: Locator): Promise<void> {
   await target.scrollIntoViewIfNeeded();
