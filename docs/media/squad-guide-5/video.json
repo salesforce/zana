@@ -1,0 +1,44 @@
+{
+  "id": "squad-guide-5",
+  "title": "Start a Squad from a conversation",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "Start a Squad from a conversation",
+    "subline": "Ask an agent. Review the launch, or run it now.",
+    "chips": [
+      "Ask",
+      "Inbox card",
+      "Launch",
+      "Run now"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Start a Squad from a conversation."
+      },
+      {
+        "at": 3.4,
+        "text": "Ask an agent to prepare it."
+      },
+      {
+        "at": 5.8,
+        "text": "Review it, or run it now."
+      }
+    ],
+    "duration": 11,
+    "revealAt": 8.0
+  },
+  "closer": {
+    "headline": "Attach files, pick where it runs",
+    "subline": "Control what a Squad sees and where it works",
+    "chips": [
+      "Next: Files and location"
+    ],
+    "line": "Next: attach files and run in the right place.",
+    "duration": 5
+  }
+}

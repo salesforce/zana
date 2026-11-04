@@ -1,0 +1,25 @@
+# Squad guide video 1: transcript
+
+A Squad is a small team of AI agents working on one goal together.
+
+A Persona is one agent profile: a role, a model tier, and instructions.
+
+A Squad is a named group of Personas. Each Persona fills a slot, and each slot becomes a worker in the run.
+
+One of them, the Orchestrator, plans the work and keeps it moving. The others are workers that each take steps.
+
+Zana ships five built-in Squads, so you can start without building anything.
+
+Reach for a Squad when the work splits into pieces that can run side by side. For small, step-by-step tasks, a single agent is simpler.
+
+While a Squad runs, Flow view shows each agent, its status, and how work is handed off. Here, the run is waiting on you.
+
+When a Squad needs a decision, it asks in your Inbox.
+
+Answer it, and the Squad carries on. When it finishes, the result is posted to the Inbox too.
+
+Open Squad details to see what each agent did.
+
+A finished run isn't a guarantee. A person reviews the result, so always read it yourself.
+
+Next: your first Squad run.

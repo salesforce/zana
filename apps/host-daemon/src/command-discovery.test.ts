@@ -23,6 +23,7 @@ import type { HostProviderCommand } from "@zana-ai/zcc-host-daemon-contract";
 import {
   type CommandScanRoot,
   discoverProviderCommands as scanProviderCommands,
+  quotePlainScalars,
 } from "./command-discovery.js";
 import { resolveDeclaredScanRoots } from "./native-root-scan.js";
 
@@ -1210,17 +1211,91 @@ it('preserves author metadata and reports oversized manifests without returning 
 it('reports invalid frontmatter as a single-line diagnostic and skips the skill', async () => {
  const rootPath = path.join(tempRoot, 'broken-frontmatter');
  await writeFileEnsuringDir(path.join(rootPath, 'valid', 'SKILL.md'), '---\nname: valid\ndescription: Fine\n---\nBody');
- await writeFileEnsuringDir(path.join(rootPath, 'broken', 'SKILL.md'), '---\nname: broken\ndescription: Covers things. CRITICAL: this colon breaks YAML\n---\nBody');
+ await writeFileEnsuringDir(path.join(rootPath, 'broken', 'SKILL.md'), '---\nname: broken\ndescription: Covers things.\n  bad: indent\nother: [unclosed\n---\nBody');
  const diagnostics: string[] = [];
  const records = await scanProviderCommands({ roots: [{ rootPath, namePrefix: '', source: 'skill', origin: 'user', shape: 'skill' }], diagnostics });
  expect(records.map((record) => record.name)).toEqual(['valid']);
- expect(diagnostics).toEqual([expect.stringMatching(/^Invalid frontmatter in .*broken[\\/]SKILL\.md \(line 3\): bad indentation of a mapping entry$/)]);
+ expect(diagnostics).toHaveLength(1);
+ expect(diagnostics[0]).toMatch(/^Invalid frontmatter in .*broken[\\/]SKILL\.md/);
+});
+
+describe('lenient frontmatter recovery', () => {
+ const scan = async (name: string, files: Record<string, string>) => {
+  const rootPath = path.join(tempRoot, name);
+  for (const [dir, content] of Object.entries(files)) await writeFileEnsuringDir(path.join(rootPath, dir, 'SKILL.md'), content);
+  const diagnostics: string[] = [];
+  const records = await scanProviderCommands({ roots: [{ rootPath, namePrefix: '', source: 'skill', origin: 'user', shape: 'skill' }], diagnostics });
+  return { records, diagnostics };
+ };
+
+ it('recovers an unquoted description containing ": " identically to the quoted file', async () => {
+  const extra = 'argument-hint: topic: x\nallowed-tools: [Read, Bash]\nuser-invocable: false\ndisable-model-invocation: true\n';
+  const plain = `---\nname: s\ndescription: CRITICAL: This skill runs "Test Failure Sweeper User": skips \\ things\n${extra}---\nBody`;
+  const quoted = `---\nname: s\ndescription: "CRITICAL: This skill runs \\"Test Failure Sweeper User\\": skips \\\\ things"\nargument-hint: "topic: x"\nallowed-tools: [Read, Bash]\nuser-invocable: false\ndisable-model-invocation: true\n---\nBody`;
+  const a = await scan('lenient-a', { s: plain });
+  const b = await scan('lenient-b', { s: quoted });
+  expect(a.diagnostics).toEqual([]);
+  expect(a.records).toHaveLength(1);
+  expect(a.records[0]).toMatchObject({ name: 's', description: 'CRITICAL: This skill runs "Test Failure Sweeper User": skips \\ things', allowedTools: ['Read', 'Bash'], userInvocable: false, disableModelInvocation: true });
+  expect(a.records[0].description).toBe(b.records[0].description);
+  expect(a.records[0].argumentHint).toBe(b.records[0].argumentHint);
+  expect(a.records[0].allowedTools).toEqual(b.records[0].allowedTools);
+ });
+
+ it('leaves already-quoted, folded, and block frontmatter on the strict path', async () => {
+  const { records, diagnostics } = await scan('lenient-valid', {
+   q: '---\nname: q\ndescription: "A: b"\n---\n',
+   f: '---\nname: f\ndescription: >\n  folded: text\n  more\n---\n',
+   b: '---\nname: b\ndescription: |\n  block: text\n---\n',
+  });
+  expect(diagnostics).toEqual([]);
+  expect(records.map((r) => r.name).sort()).toEqual(['b', 'f', 'q']);
+  expect(records.find((r) => r.name === 'q')?.description).toBe('A: b');
+ });
+
+ it('still diagnoses a multiline plain description containing ": "', async () => {
+  const { records, diagnostics } = await scan('lenient-multiline', { m: '---\nname: m\ndescription: first: line\n  continued line\n---\n' });
+  expect(records).toEqual([]);
+  expect(diagnostics).toHaveLength(1);
+ });
+
+ it('still diagnoses broken YAML that quoting cannot fix', async () => {
+  const { records, diagnostics } = await scan('lenient-broken', { x: '---\nname: x\ndescription: a: b\nother: [unclosed\n---\n' });
+  expect(records).toEqual([]);
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatch(/^Invalid frontmatter in /);
+ });
+
+ it('still diagnoses a recovered file whose name is empty', async () => {
+  const { records, diagnostics } = await scan('lenient-noname', { n: '---\nname: ""\ndescription: a: b\n---\n' });
+  expect(records).toEqual([]);
+  expect(diagnostics).toHaveLength(1);
+ });
+
+ it('keeps YAML comment semantics when recovering', async () => {
+  const ok = await scan('lenient-comment', { c: '---\nname: review # legacy\ndescription: a: b # note\n---\n' });
+  expect(ok.diagnostics).toEqual([]);
+  expect(ok.records[0]).toMatchObject({ name: 'review', description: 'a: b' });
+  const empty = await scan('lenient-comment-empty', { e: '---\nname: # intentionally empty\ndescription: a: b\n---\n' });
+  expect(empty.records).toEqual([]);
+  expect(empty.diagnostics).toHaveLength(1);
+ });
+
+ it('recovers CRLF frontmatter', async () => {
+  const { records, diagnostics } = await scan('lenient-crlf', { r: '---\r\nname: r\r\ndescription: a: b\r\n---\r\nBody' });
+  expect(diagnostics).toEqual([]);
+  expect(records[0]).toMatchObject({ name: 'r', description: 'a: b' });
+ });
+
+ it('quotePlainScalars rewrites only plain single-line target keys', () => {
+  expect(quotePlainScalars('name: x\nother: a: b\ndescription: *anchor\nargument-hint: {a}')).toBe('name: "x"\nother: a: b\ndescription: *anchor\nargument-hint: {a}');
+ });
 });
 
 it('falls back to the plain error message when the parser gives no reason or position', async () => {
  const rootPath = path.join(tempRoot, 'opaque-frontmatter-error');
  await writeFileEnsuringDir(path.join(rootPath, 'opaque', 'SKILL.md'), '---\nname: opaque\n---\nBody');
- const load = vi.spyOn(yaml, 'load').mockImplementationOnce(() => { throw new Error('parser exploded'); });
+ const load = vi.spyOn(yaml, 'load').mockImplementation(() => { throw new Error('parser exploded'); });
  const diagnostics: string[] = [];
  try {
   const records = await scanProviderCommands({ roots: [{ rootPath, namePrefix: '', source: 'skill', origin: 'user', shape: 'skill' }], diagnostics });

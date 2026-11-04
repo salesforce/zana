@@ -31,6 +31,13 @@ the panel, reload, and verify the open panel updates while saved data survives.
 Agents can use their available computer-use tool to do this directly. A successful
 command does not prove the UI rendered; report any UI checks that could not run.
 
+If a UI bundle fails to load, previously registered pages stay reachable and
+show the error with a **Reload plugin** action. Reload rebuilds local TypeScript
+UI entries and retries the browser import without reinstalling. For a first-load
+failure, open the plugin's details under **Plugins** to see the same recovery
+action. Plugins that only contribute commands or settings do not gain sidebar
+pages when they fail.
+
 Keep `ZCC_SERVER_URL` and `ZCC_DATA_DIR` on the same running instance: normally
 port 8780 and `~/.zcc`; dev uses port 8781 and `~/.zcc-dev`. Diagnose backend
 failures with `zcc plugin logs <id> -n 50`.

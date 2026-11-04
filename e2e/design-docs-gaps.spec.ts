@@ -7,7 +7,7 @@ import { test, expect } from './fixtures/app.js';
 test.use({ e2e: true, initialConfig: { sponsorPromptDismissed: true } });
 
 // The comment keeps odd spacing and a newline on purpose: it must survive byte-for-byte.
-const AI_COMMENT = '<!-- AI Instructions: keep   this\n  exact -->';
+const AI_COMMENT = '<!-- keep   this\n  exact -->';
 
 interface Doc { id: string; slug: string; projectId: string | null }
 
@@ -73,6 +73,44 @@ test('adds a template to an existing doc and keeps AI comments', async ({ app })
 
   // Never overwrites: a second add of the same template conflicts.
   expect(await rpcError(win, 'addFromTemplate', { docId: doc.id, templateKey: key })).toMatch(/already exists/);
+});
+
+test('template import identifies by content: full export then import is a no-op', async ({ app }) => {
+  test.setTimeout(120_000);
+  const win = app.window;
+  await installDesignDocs(win);
+  await rpc(win, 'templateNew', { label: 'Import Kit', entryPath: 'a.md', files: [{ path: 'a.md', content: `${AI_COMMENT}\n# {{title}}\n` }] });
+
+  const count = async () => (await rpc<unknown[]>(win, 'templates')).length;
+  const before = await count();
+  const { bundleText } = await rpc<{ bundleText: string }>(win, 'templatesExport', {});
+
+  // Same content everywhere: nothing is added.
+  expect(await rpc<{ imported: unknown[]; skipped: number }>(win, 'templatesImport', { bundleText })).toMatchObject({ imported: [], skipped: before });
+  expect(await count()).toBe(before);
+
+  // Different content under an existing key: added once as a renamed copy, original untouched.
+  const edited = JSON.parse(bundleText) as { templates: Array<{ key: string; label: string; description: string }> };
+  const target = edited.templates.find((t) => t.label === 'Import Kit')!;
+  target.description = 'changed';
+  const { imported } = await rpc<{ imported: Array<{ title: string }> }>(win, 'templatesImport', { bundleText: JSON.stringify({ ...edited, templates: [target] }) });
+  expect(imported.map((d) => d.title)).toEqual(['Import Kit (copy)']);
+  expect(await count()).toBe(before + 1);
+
+  // Re-importing that same edited bundle is now a no-op too.
+  expect(await rpc<{ imported: unknown[]; skipped: number }>(win, 'templatesImport', { bundleText: JSON.stringify({ ...edited, templates: [target] }) })).toMatchObject({ imported: [], skipped: 1 });
+  expect(await count()).toBe(before + 1);
+});
+
+test('AGENTS.md stays in the doc but never reaches the published site', async ({ app }) => {
+  test.setTimeout(120_000);
+  const win = app.window;
+  await installDesignDocs(win);
+  const doc = await rpc<Doc>(win, 'create', { title: 'Ruled doc', template: 'blank' });
+  await rpc(win, 'writeFile', { doc: doc.id, path: 'AGENTS.md', content: 'Cite sources.\n', baseRevision: 0, baseFileId: null });
+  expect((await rpc<{ content: string }>(win, 'readFile', { doc: doc.id, path: 'AGENTS.md' })).content).toBe('Cite sources.\n');
+  const site = await rpc<{ files: Array<{ path: string }> }>(win, 'siteFiles', { doc: doc.id });
+  expect(site.files.map((f) => f.path)).toEqual(['README.md']);
 });
 
 test('creates and moves a doc to a named project; rejects an unknown project', async ({ app, home }) => {

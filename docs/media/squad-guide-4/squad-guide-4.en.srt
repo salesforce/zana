@@ -1,0 +1,43 @@
+1
+00:00:00,600 --> 00:00:01,919
+Pick the right Squad.
+
+2
+00:00:03,000 --> 00:00:04,676
+Five that come with Zana.
+
+3
+00:00:05,800 --> 00:00:07,017
+Choose by the job.
+
+4
+00:00:10,803 --> 00:00:15,109
+These are starting points for common jobs, so you can begin without building anything.
+
+5
+00:00:16,598 --> 00:00:19,656
+The Debug Squad is for finding the cause of a failure.
+
+6
+00:00:21,787 --> 00:00:25,381
+The Delivery Squad is for making a change that gets reviewed.
+
+7
+00:00:27,273 --> 00:00:31,100
+The Design Squad is for a technical design that gets challenged.
+
+8
+00:00:32,916 --> 00:00:36,721
+The Research Squad is for comparing options or surveying code.
+
+9
+00:00:38,618 --> 00:00:42,504
+The Review Squad is for a focused review of a diff or branch.
+
+10
+00:00:43,904 --> 00:00:49,266
+Use them as they are. Once you understand Squads, edit them or make your own.
+
+11
+00:00:50,266 --> 00:00:53,096
+Next: start a Squad from a conversation.

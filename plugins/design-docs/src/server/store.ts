@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { ALIAS_LIVE, DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT } from './project-refs.js';
 import type { PluginDatabase, PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
 import {
@@ -86,6 +86,10 @@ export function repairLegacyPeerSyncMigrationIndexes(db: PluginDatabase): void {
     for (const row of [...rows].reverse()) shift.run(row.id + 1, row.id);
   });
 }
+
+/** Built-ins shipped before offered ids were recorded. Frozen: never add to it; new built-ins need only a templates.ts entry. */
+const LEGACY_OFFERED_BUILTINS: readonly string[] = ['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank'];
+const OFFERED_KEY = 'templates.offered';
 
 /** An agent whose thread has no title yet. Never stored over a real title. */
 export const AGENT_FALLBACK_LABEL = 'Agent';
@@ -387,6 +391,15 @@ export class DesignDocStore {
   }
 
   templatesImport(text: unknown, actor: DocActor): DesignDocDetail[] {
+    return this.templatesImportReport(text, actor).imported;
+  }
+
+  /**
+   * Templates are identified by content, not key or label: an incoming template whose content digest matches an existing
+   * template (or an earlier bundle entry) is skipped, so export-then-import is a no-op. Different content under a taken key
+   * is added as a renamed copy.
+   */
+  templatesImportReport(text: unknown, actor: DocActor): { imported: DesignDocDetail[]; skipped: number } {
     if (typeof text !== 'string') throw new DesignDocError('invalid', 'bundleText must be a string');
     if (Buffer.byteLength(text) > MAX_TEMPLATE_BUNDLE_BYTES) throw new DesignDocError('limit', 'template bundle is too large');
     let value: unknown;
@@ -394,10 +407,19 @@ export class DesignDocStore {
     const parsed = templateBundleSchema.safeParse(value);
     if (!parsed.success) throw new DesignDocError('invalid', parsed.error.message);
     const templates = parsed.data.templates.map(sanitizeTemplateInput);
-    return this.db.transaction(() => templates.map((template) => {
-      if (this.templateByKey(template.key)) template = { ...template, key: this.randomId('custom_'), label: this.uniqueCopyName(template.label) };
-      return this.insertTemplate(template, actor);
-    }));
+    return this.db.transaction(() => {
+      const known = new Set(this.listTemplates().map(templateDigest));
+      const imported: DesignDocDetail[] = [];
+      let skipped = 0;
+      for (let template of templates) {
+        const digest = templateDigest(template);
+        if (known.has(digest)) { skipped++; continue; }
+        known.add(digest);
+        if (this.templateByKey(template.key)) template = { ...template, key: this.randomId('custom_'), label: this.uniqueCopyName(template.label) };
+        imported.push(this.insertTemplate(template, actor));
+      }
+      return { imported, skipped };
+    });
   }
 
   purgeTemplates(expectedBundle: string): void {
@@ -446,21 +468,31 @@ export class DesignDocStore {
     return row ? this.toTemplate(row) : null;
   }
 
+  /**
+   * Offers each built-in once per install: any id in DESIGN_DOC_TEMPLATES not yet recorded as offered is inserted
+   * (if absent) and then recorded. Later releases add a built-in by adding a templates.ts entry; a template the
+   * user deleted stays deleted because its id is already recorded.
+   */
   async seedBuiltinTemplates(kv: Pick<PluginKvStorage, 'get' | 'set'>): Promise<void> {
-    const marked = await kv.get<boolean>('templates.seed.v1');
-    if (!marked || this.countTemplates() === 0) this.insertMissingBuiltinTemplates();
-    await kv.set('templates.seed.v1', true);
+    let offered = await kv.get<string[]>(OFFERED_KEY);
+    if (!Array.isArray(offered)) offered = (await kv.get<boolean>('templates.seed.v1')) ? [...LEGACY_OFFERED_BUILTINS] : [];
+    if (this.countTemplates() === 0) offered = [];
+    const seen = new Set(offered);
+    const fresh = new Set(DESIGN_DOC_TEMPLATES.map((template) => template.id).filter((id) => !seen.has(id)));
+    if (fresh.size > 0) this.insertMissingBuiltinTemplates(fresh);
+    await kv.set(OFFERED_KEY, [...new Set([...offered, ...DESIGN_DOC_TEMPLATES.map((template) => template.id)])]);
   }
 
   private countTemplates(): number {
     return (this.db.prepare(`SELECT COUNT(*) AS count FROM docs WHERE ${TEMPLATE_ONLY}`).get() as { count: number }).count;
   }
 
-  private insertMissingBuiltinTemplates(): void {
+  private insertMissingBuiltinTemplates(only?: ReadonlySet<string>): void {
     const actor = JSON.stringify({ kind: 'user', label: 'Zana', threadId: null } satisfies DocActor);
     const at = this.now();
     this.db.transaction(() => {
       for (const [order, template] of DESIGN_DOC_TEMPLATES.entries()) {
+        if (only && !only.has(template.id)) continue;
         const origin = `builtin:${template.id}`;
         // docs-kind: allow Template registry insert is template-only by literal kind value.
         const exists = this.db.prepare(`SELECT 1 FROM docs WHERE ${TEMPLATE_ONLY} AND template_origin = ?`).get(origin);
@@ -1566,6 +1598,18 @@ export class DesignDocStore {
 }
 
 // ── Pure helpers ────────────────────────────────────────────────────────
+
+/**
+ * Content identity of a template: description, entry path and every file's path, encoding and bytes. Key and label are
+ * excluded so a renamed copy created by an earlier import is recognised as the same template on re-import.
+ */
+export function templateDigest(template: {
+  description: string; entryPath?: string | undefined; files: ReadonlyArray<{ path: string; content: string; encoding?: string | undefined }>
+}): string {
+  const files = [...template.files].map((file) => ({ path: file.path, encoding: file.encoding === 'base64' ? 'base64' : 'utf8', content: file.content }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return createHash('sha256').update(JSON.stringify([template.description, template.entryPath ?? null, files])).digest('hex');
+}
 
 export function sanitizeTemplateInput(value: unknown): Omit<TemplateInput, 'files'> & {
   files: Array<{ path: string; content: string; encoding: string; size: number }>

@@ -56,7 +56,7 @@ describe('Design Docs RPC', () => {
       await expect(Promise.resolve().then(() => call(name, { doc: copy.id, ...args }))).rejects.toThrow('not found');
     }
     const key = store.requireTemplate(copy.id).template_key!;
-    expect(call('templatesImport', call('templatesExport', { keys: [key] }))).toHaveLength(1);
+    expect(call('templatesImport', call('templatesExport', { keys: [key] }))).toMatchObject({ imported: [], skipped: 1 });
     call('templateDelete', { template: copy.id });
     expect(() => store.requireTemplate(copy.id)).toThrow('not found');
     expect(call('templatesRestoreBuiltins')).toBeInstanceOf(Array);
@@ -186,11 +186,11 @@ describe('Design Docs RPC', () => {
   });
   it('serves templates and projects without leaking paths', async () => {
     const { call } = setup();
-    expect(call('templates').map((template: { id: string }) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank']);
+    expect(call('templates').map((template: { id: string }) => template.id)).toEqual(['technical', 'product', 'adr', 'research', 'issue', 'api', 'report', 'html-design', 'blank']);
     expect(call('templates')[0].files).toContain('README.md');
     const custom = call('templateNew', { label: 'Mine' });
     const listed = call('templates') as Array<{ id: string; docId: string; origin: string }>;
-    expect(listed.filter((template) => template.origin === 'builtin')).toHaveLength(7);
+    expect(listed.filter((template) => template.origin === 'builtin')).toHaveLength(9);
     expect(listed.find((template) => template.docId === custom.id)?.origin).toBe('user');
     await expect(call('projects')).resolves.toEqual([{ id: 'p1', name: 'App' }, { id: 'q', name: 'Default Project', quickAgent: true }]);
   });

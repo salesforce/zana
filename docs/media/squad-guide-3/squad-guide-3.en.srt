@@ -1,0 +1,43 @@
+1
+00:00:00,600 --> 00:00:01,918
+Watch a Squad run.
+
+2
+00:00:03,000 --> 00:00:04,657
+Find it. Answer it.
+
+3
+00:00:05,800 --> 00:00:06,850
+Read the result.
+
+4
+00:00:10,803 --> 00:00:20,210
+Open the Agents board. Your running Squad is a card, with its status on it. Flow view shows the same run as a graph of who hands work to whom.
+
+5
+00:00:21,139 --> 00:00:28,978
+Open the card to see Squad details: the goal, and progress for each step. It refreshes on its own while the run is active.
+
+6
+00:00:29,904 --> 00:00:37,048
+If a worker needs a decision, the run pauses and asks you. The question waits in the Inbox, under Needs your answer.
+
+7
+00:00:37,350 --> 00:00:44,021
+Choose an answer and continue. A question is not an error. The run was simply waiting for you.
+
+8
+00:00:44,629 --> 00:00:50,081
+When the work is finished, the Inbox posts Squad completed, with a short summary of the result.
+
+9
+00:00:50,708 --> 00:00:54,307
+Open Squad details for the full record of every step.
+
+10
+00:00:54,608 --> 00:00:59,491
+That is the whole loop: find the run, answer when it asks, and read the result.
+
+11
+00:01:00,491 --> 00:01:02,583
+Next: pick the right Squad.

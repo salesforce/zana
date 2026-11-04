@@ -82,7 +82,9 @@ Launching from the composer, schedules and triggers is not affected.
 
 A Goal can run as an Agent or as a Squad.
 
-1. Open the Goal form.
+Goals are off by default. Turn them on in **Settings → Experimental → Goals**. Until then a Project has no Goals tab and you cannot create a Goal.
+
+1. Open the Goals tab in a Project, then press **New goal**.
 2. Set **Run as** to **Squad**.
 3. Choose the **Squad**, the **Project**, and **Squad planning**.
 4. Write the **Plan or prompt**. With **Plan provided in goal**, this is where the plan goes.

@@ -14,7 +14,7 @@ vi.mock('./shared-product-registration.js', () => ({
   productHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler),
   safeProductHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler)
 }));
-vi.mock('./ctx.js', () => ({ ctx: { safeSend: h.safeSend, refreshTitleBarOverlays: h.refreshTitleBarOverlays, invalidateLlmReuse: h.invalidateLlmReuse } }));
+vi.mock('./ctx.js', () => ({ ctx: { safeHandle: vi.fn(), safeSend: h.safeSend, refreshTitleBarOverlays: h.refreshTitleBarOverlays, invalidateLlmReuse: h.invalidateLlmReuse } }));
 vi.mock('./shared.js', () => ({ harnessVerifyState: h.verifyState }));
 vi.mock('@zana-ai/zcc-server/http/public-app-url', () => ({ presentAppConfig: (config: unknown) => config }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({

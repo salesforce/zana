@@ -11,7 +11,7 @@ import { isSafeRelPath } from '../../http/library-via-host.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { threadStorageRoot } from './thread-storage.js';
 import { confinePathToRoot } from './thread-path-confine.js';
-import { threadLocalPreviewRoots } from './thread-preview-roots.js';
+import { effectivePreviewRoots, matchPreviewRoots, trustedFoldersForTarget } from './preview-root-policy.js';
 
 export class PreviewFileError extends Error {
   constructor(
@@ -45,7 +45,12 @@ export interface PreviewFileResult {
 export interface PreviewFileDeps {
   assertPresentation?(threadId: string): void;
   dataDir: string;
-  getThread(id: string): { id: string; projectId: string; environmentId: string | null } | null;
+  getThread(id: string): { id: string; projectId: string; environmentId: string | null; hostId?: string | null } | null;
+  /**
+   * User-trusted preview folders that apply to this target. Must be empty for
+   * remote threads and machines; read fresh on every call.
+   */
+  trustedPreviewFolders?(target: { thread: { hostId?: string | null } | null; projectId: string }): readonly string[];
   getEnvironmentPath(environmentId: string): string | null;
   getProjectPath(projectId: string): string | null;
   emit(payload: ThreadOpenSignal): number;
@@ -56,6 +61,7 @@ export function previewFileDepsFromContext(ctx: ProductHttpContext): PreviewFile
     assertPresentation: (id) => assertDesktopPresentation(ctx.db, id),
     dataDir: ctx.dataDir,
     getThread: (id) => getConversationThread(ctx.db, id),
+    trustedPreviewFolders: (target) => trustedFoldersForTarget(ctx, target),
     getEnvironmentPath: (environmentId) => getEnvironment(ctx.db, environmentId)?.path ?? null,
     getProjectPath: (projectId) => ctx.toProjects().find((project) => project.id === projectId)?.path ?? null,
     emit: (payload) => {
@@ -101,14 +107,14 @@ export function openThreadFilePreview(deps: PreviewFileDeps, input: PreviewFileI
 
   let localPath: string | null = null;
   if (input.source === 'workspace' && isAbsolute(input.path)) {
-    for (const root of threadLocalPreviewRoots(deps.dataDir, thread?.projectId)) {
-      const relPath = confinePathToRoot(root, input.path);
-      if (relPath && isSafeRelPath(relPath)) {
-        // Actual reads enforce realpath containment and byte caps separately.
-        localPath = join(root, relPath);
-        break;
-      }
-    }
+    const roots = effectivePreviewRoots(
+      deps.dataDir,
+      thread?.projectId,
+      deps.trustedPreviewFolders?.({ thread, projectId }) ?? []
+    );
+    // Actual reads enforce realpath containment and byte caps separately.
+    const match = matchPreviewRoots(roots, input.path)[0];
+    if (match) localPath = join(match.root, match.rel);
   }
 
   const confined = localPath ?? (input.source === 'thread-storage'

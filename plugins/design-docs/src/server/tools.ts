@@ -97,7 +97,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
 
   zcc.agents.registerTool({
     name: 'design_doc_template_read',
-    description: 'Read a template\'s full files (including any <!-- AI Instructions --> comments) by key from design_doc_templates_list. base64 files are marked encoding "base64".',
+    description: 'Read a template\'s full files by key from design_doc_templates_list. base64 files are marked encoding "base64".',
     parameters: { type: 'object', properties: { key: { type: 'string', description: 'Template key.' } }, required: ['key'], additionalProperties: false },
     presentation: { label: { pending: 'Reading template', completed: 'Read template' }, icon: { glyph: 'Files' } },
     execute: async (input, ctx) => readTemplate(await context(ctx), input)
@@ -150,7 +150,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     name: 'design_doc_read',
     description:
       'Read a design doc. A design doc is a small project of files (markdown, mermaid .mmd diagrams, HTML mockups, code, images). ' +
-      'Without path: returns the manifest (files with revisions, open review comments) and the entry file. ' +
+      'Without path: returns the manifest (files with revisions, open review comments), the doc\'s AGENTS.md when it has one (instructions for working on this doc: follow them), and the entry file. ' +
       'With path: returns that file and its revision. includeAll=true returns every text file at once. ' +
       'For an HTML page it also says which files the page uses that the doc lacks, what previews block, and, ' +
       'from the last time the panel ran it, script errors and comments whose quote the page no longer shows. ' +

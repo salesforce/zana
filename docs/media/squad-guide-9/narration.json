@@ -1,0 +1,37 @@
+[
+  {
+    "id": "persona",
+    "caption": "Start from a built-in Persona",
+    "line": "A Persona is one reusable agent profile. Open Settings, Agents and Automation, Personas. Start from a built-in: right-click it and choose Duplicate. Or press New persona to start from scratch."
+  },
+  {
+    "id": "fields",
+    "caption": "Name, model level, instructions",
+    "line": "Open your copy. Give it a name and a one-line description. Leave the harness neutral, so it follows whichever tool you launch with. Set a model level, then add standing instructions in the system prompt. Save it."
+  },
+  {
+    "id": "duplicate",
+    "caption": "Duplicate a built-in Squad",
+    "line": "A Squad is a group of Personas. The easiest start is a copy of a built-in. Right-click a Squad in Settings, Squads, and choose Duplicate."
+  },
+  {
+    "id": "slots",
+    "caption": "Slots and the Orchestrator",
+    "line": "Open your copy. Each slot is one Persona and a tab count. Add a slot and choose your new Persona. The crown marks the Orchestrator, which every run needs."
+  },
+  {
+    "id": "options",
+    "caption": "Launch options",
+    "line": "Below the slots are the launch options. Default planning sets the planning mode. Launch approval can require your review before an agent starts the Squad. Worktree isolation and When a run finishes decide what happens to the checkout. Then save."
+  },
+  {
+    "id": "default",
+    "caption": "Set as default",
+    "line": "To have the composer preselect your Squad, right-click it and choose Set as default."
+  },
+  {
+    "id": "close",
+    "caption": "Personas are parts, Squads are groups",
+    "line": "Personas are the parts. A Squad is the group you launch."
+  }
+]

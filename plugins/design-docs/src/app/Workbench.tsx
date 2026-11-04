@@ -25,7 +25,7 @@ import {
   X
 } from 'lucide-react';
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
-import { MAX_AGENT_PROMPT_LENGTH, TEMPLATE_COMMENTS_RULE } from '../shared/agent-actions.js';
+import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
 import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, type ProjectInfo, type TemplateInfo } from './api.js';
@@ -52,6 +52,13 @@ const STATUS_OPTIONS: PopoverPicklistOption<StatusFilter>[] = [
   ...DOC_STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] })),
   { value: 'all', label: 'All statuses' }
 ];
+
+export function importSummary(imported: number, skipped: number): string {
+  const noun = (n: number) => `${n} template${n === 1 ? '' : 's'}`;
+  if (imported === 0 && skipped === 0) return 'No templates found in that file.';
+  if (imported === 0) return `Nothing imported: ${skipped === 1 ? 'that template is' : `all ${noun(skipped)} are`} already here.`;
+  return `Imported ${noun(imported)}${skipped ? `; skipped ${skipped} already here` : ''}.`;
+}
 
 function countedOption(value: string, label: string, count: number): PopoverPicklistOption<string> {
   return {
@@ -81,7 +88,6 @@ export function projectOptions(docs: DesignDocSummary[], projects: ProjectInfo[]
 export function draftingPrompt(brief: string): string {
   return [
     'Draft this design doc from the brief below. Fill in every section of its template with concrete, specific content grounded in this project, add diagrams where they help, and mark open questions and assumptions explicitly. Keep it concise.',
-    TEMPLATE_COMMENTS_RULE,
     'Brief:',
     brief.trim()
   ].join('\n\n');
@@ -651,8 +657,9 @@ function TemplateManager({ templates, onNew, onEdit, onChanged }: { templates: T
   const importTemplates = async (file: File | null) => {
     if (!file) return;
     try {
-      await api.templatesImport(await file.text());
+      const { imported, skipped } = await api.templatesImport(await file.text());
       onChanged();
+      toast(importSummary(imported.length, skipped));
     } catch (error) {
       toast(`Could not import templates: ${errorMessage(error)}`, 'error');
     } finally {

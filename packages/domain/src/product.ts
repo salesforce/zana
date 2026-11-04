@@ -2549,6 +2549,13 @@ export interface AppConfig {
    */
   inAppAgentTerminalsEnabled?: boolean;
   /**
+   * Local folders the user has trusted for read-only file preview. Global and
+   * device-local: used only for local desktop threads, never for remote
+   * threads or machines. Written only by the desktop Settings folder chooser;
+   * renderer config patches cannot set it. At most 20 canonical absolute paths.
+   */
+  trustedPreviewFolders?: string[];
+  /**
    * Automatically open the thread secondary panel on the Plan pin when Plan
    * mode is active (native ACP Plan, `/plan`, or a durable plan artifact).
    * EXPERIMENTAL; default OFF. Plan-approval prompts still open the panel
@@ -4408,6 +4415,10 @@ export interface PluginHarnessOverrideV1 extends HarnessModelRoutingV1 {
   defaultHarness?: HarnessFamily;
 }
 
+/** Reasoning-effort levels a persona can request, lowest first (each harness maps them to its own setting). */
+export const PERSONA_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type PersonaReasoningLevel = (typeof PERSONA_REASONING_LEVELS)[number];
+
 /**
  * A named, reusable Claude Code personality (Reviewer, Architect, Bug-hunter…)
  * that composes native `claude` CLI flags. A persona is **not** a new launch
@@ -4490,6 +4501,17 @@ export interface Persona {
    */
   microVmImage?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
+  /**
+   * Reasoning effort, harness neutral. Terminal / CLI Agent and CLI Squad
+   * launches map it in each harness's provider: Claude `--effort`, Codex
+   * `-c model_reasoning_effort`, PI `--thinking`, Grok `--reasoning-effort`
+   * (xhigh/max → high). OpenCode's TUI and cursor-agent have no launch flag,
+   * so they ignore it there. Modern Squad seats carry it as the thread
+   * `reasoningLevel` on any provider that declares levels, stepped down to the
+   * nearest declared level (the provider bridge maps it, e.g. to an OpenCode
+   * model variant). Plain thread launches ignore it. Absent = harness default.
+   */
+  reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
   harnessRouting?: PersonaHarnessRoutingV1;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
@@ -4522,6 +4544,8 @@ export interface PersonaSummary {
   baseProfile?: LaunchProfileId;
   model?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
+  /** Reasoning effort; each harness maps it to its own setting (see `Persona.reasoningLevel`). */
+  reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
   /** Provenance (builtin / user / project / extension). Non-sensitive; lets a
    *  discovery surface show the source badge. */
@@ -4537,6 +4561,7 @@ export function toPersonaSummary(p: Persona): PersonaSummary {
     baseProfile: p.baseProfile,
     model: p.model,
     modelLevel: p.modelLevel,
+    reasoningLevel: p.reasoningLevel,
     executionState: p.executionState,
     source: p.source
   };
@@ -6743,3 +6768,6 @@ export interface ExecutionBoardSnapshot {
 
 /** Stable text main raises when Zana Connect rejects this computer's credential (401/403). Survives IPC serialization. */
 export const CONNECT_ACCESS_REVOKED_MESSAGE = "This computer's access was revoked. Sign in again to reconnect.";
+
+/** Maximum folders a user can trust for file Preview; enforced in main, mirrored by the Settings UI. */
+export const TRUSTED_PREVIEW_FOLDERS_MAX = 20;

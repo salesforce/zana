@@ -15,7 +15,7 @@ Write design documents with your agents: specs, RFCs, ADRs, product briefs and A
 
 ## For agents
 
-Every thread is told about the current project's active docs. Agents get `design_doc_*` tools to list, read, create, edit, update and comment on docs, and the same operations as `zcc design-docs` on the command line. New tools `design_doc_template_read` and `design_doc_add_from_template` let agents work with templates. Edits are exact-match replacements with revision checks, so a concurrent edit by you is reported as a conflict instead of being overwritten. Agent prompts tell agents to follow `<!-- AI Instructions -->` template comments. Type `@` in the composer to attach a doc to a prompt.
+Every thread is told about the current project's active docs. Agents get `design_doc_*` tools to list, read, create, edit, update and comment on docs, and the same operations as `zcc design-docs` on the command line. New tools `design_doc_template_read` and `design_doc_add_from_template` let agents work with templates. Edits are exact-match replacements with revision checks, so a concurrent edit by you is reported as a conflict instead of being overwritten. Type `@` in the composer to attach a doc to a prompt.
 
 ## Ask agent
 
@@ -27,7 +27,7 @@ A doc with HTML pages can be published as a GitHub Pages site. Publish asks for 
 
 ## Project scoping
 
-Docs now belong to a Project or are global. Create with `--project <id>`, `--global`, or neither (the current project); move with `design_doc_update projectId` or `--global`. Agent prompts tell agents to follow `<!-- AI Instructions -->` template comments for guidance.
+Docs now belong to a Project or are global. Create with `--project <id>`, `--global`, or neither (the current project); move with `design_doc_update projectId` or `--global`.
 
 ## Peer docs
 

@@ -633,3 +633,155 @@ describe('PtyManager.create — isolated-worktree self-awareness layer', () => {
     expect(session.worktree).toBeUndefined();
   });
 });
+
+describe('personaArgs_build — persona reasoning effort (#584)', () => {
+  it('REQ-1: emits --effort with the persona level for a Claude persona', () => {
+    const args = personaArgs_build({ id: 'p', name: 'P', reasoningLevel: 'high' }, 'claude');
+    const idx = args.indexOf('--effort');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe('high');
+  });
+
+  it.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)('REQ-1: passes %s through unchanged', (level) => {
+    const args = personaArgs_build({ id: 'p', name: 'P', reasoningLevel: level }, 'claude');
+    expect(args).toEqual(['--effort', level]);
+  });
+
+  it('REQ-1: places --effort after --permission-mode, leaving other flag order alone', () => {
+    const args = personaArgs_build(
+      { id: 'p', name: 'P', appendSystemPrompt: 'x', permissionMode: 'plan', reasoningLevel: 'max' },
+      'claude'
+    );
+    expect(args.indexOf('--effort')).toBeGreaterThan(args.indexOf('--permission-mode'));
+    expect(args.indexOf('--append-system-prompt')).toBeLessThan(args.indexOf('--permission-mode'));
+  });
+
+  it('REQ-2: a persona without reasoningLevel launches with exactly the old arguments', () => {
+    const base: Persona = {
+      id: 'p', name: 'P', appendSystemPrompt: 'x', addDirs: ['/a'], allowedTools: ['Read'],
+      deniedTools: ['Write'], permissionMode: 'plan'
+    };
+    const args = personaArgs_build(base, 'claude');
+    expect(args).not.toContain('--effort');
+    expect(args).toEqual([
+      '--append-system-prompt', 'x', '--add-dir', '/a', '--allowedTools', 'Read',
+      '--disallowedTools', 'Write', '--permission-mode', 'plan'
+    ]);
+  });
+
+  it('REQ-3: claude-yolo gets --effort but never --permission-mode', () => {
+    const args = personaArgs_build(
+      { id: 'p', name: 'P', permissionMode: 'acceptEdits', reasoningLevel: 'xhigh' },
+      'claude-yolo'
+    );
+    expect(args).toContain('--effort');
+    expect(args[args.indexOf('--effort') + 1]).toBe('xhigh');
+    expect(args).not.toContain('--permission-mode');
+  });
+
+  it('OBL-007: with a permission mode the argument list ends --permission-mode <mode> --effort <level>', () => {
+    const args = personaArgs_build({ id: 'p', name: 'P', permissionMode: 'plan', reasoningLevel: 'high' }, 'claude');
+    expect(args.slice(-4)).toEqual(['--permission-mode', 'plan', '--effort', 'high']);
+  });
+
+  it('OBL-006: claude-yolo with max effort and a permission mode yields exactly --effort max', () => {
+    expect(personaArgs_build({ id: 'p', name: 'P', permissionMode: 'plan', reasoningLevel: 'max' }, 'claude-yolo'))
+      .toEqual(['--effort', 'max']);
+  });
+
+  it('REQ-7: the Claude builder adds no --effort for a non-Claude profile (each harness maps it itself)', () => {
+    for (const profile of ['codex', 'codex-yolo', 'opencode', 'cursor', 'pi'] as const) {
+      const without = personaArgs_build({ id: 'p', name: 'P' }, profile);
+      const withLevel = personaArgs_build({ id: 'p', name: 'P', reasoningLevel: 'max' }, profile);
+      expect(withLevel, profile).toEqual(without);
+      expect(withLevel, profile).not.toContain('--effort');
+    }
+  });
+});
+
+describe('PtyManager.create — persona reasoning effort (#584)', () => {
+  beforeEach(() => {
+    spawned.length = 0;
+  });
+
+  const create = (profile: 'claude' | 'claude-yolo' | 'codex', persona: Persona, extraArgs?: string[]) => {
+    const mgr = new PtyManager();
+    mgr.create({
+      projectId: 'proj1', profile, cwd: '/tmp', cols: 80, rows: 24,
+      config: { ...CONFIG, harnessCodexEnabled: true }, persona, extraArgs
+    });
+    return spawned[spawned.length - 1].args;
+  };
+
+  it('REQ-1/REQ-9: a Squad-seat style launch with a persona carries --effort', () => {
+    const argv = create('claude', { id: 'squad-qa', name: 'QA', modelLevel: 'medium', reasoningLevel: 'high' });
+    expect(argv[argv.indexOf('--effort') + 1]).toBe('high');
+    expect(argv.filter((a) => a === '--effort')).toHaveLength(1);
+  });
+
+  it('REQ-2: the spawn argv without reasoningLevel has no --effort and matches the persona-less shape', () => {
+    const persona: Persona = { id: 'p', name: 'P', modelLevel: 'medium' };
+    const withField = create('claude', { ...persona, reasoningLevel: 'low' });
+    const without = create('claude', persona);
+    expect(without).not.toContain('--effort');
+    expect(withField).toContain('--effort');
+    // The session id is random per spawn; everything else must be identical.
+    const stable = (argv: string[]) => argv.filter((a, i) => a !== argv[argv.indexOf('--session-id') + 1] || i === 0);
+    const removeEffort = withField.filter((a, i) => !(a === '--effort' || withField[i - 1] === '--effort'));
+    expect(stable(removeEffort)).toEqual(stable(without));
+  });
+
+  it('REQ-3: claude-yolo launch has --effort and no --permission-mode', () => {
+    const argv = create('claude-yolo', { id: 'p', name: 'P', permissionMode: 'plan', reasoningLevel: 'max' });
+    expect(argv).toContain('--effort');
+    expect(argv).not.toContain('--permission-mode');
+  });
+
+  it('REQ-4: a per-tab --effort in extraArgs comes after the persona one', () => {
+    const argv = create('claude', { id: 'p', name: 'P', reasoningLevel: 'low' }, ['--effort', 'max']);
+    const positions = argv.map((a, i) => (a === '--effort' ? i : -1)).filter((i) => i >= 0);
+    expect(positions).toHaveLength(2);
+    expect(argv[positions[0] + 1]).toBe('low');
+    expect(argv[positions[1] + 1]).toBe('max');
+  });
+
+  it('REQ-7: a Codex launch maps the level to -c model_reasoning_effort and adds nothing else', () => {
+    const base: Persona = { id: 'p', name: 'P', codexSandbox: 'workspace-write', codexApproval: 'never' };
+    const withLevel = create('codex', { ...base, reasoningLevel: 'max' });
+    const without = create('codex', base);
+    expect(withLevel).not.toContain('--effort');
+    const at = withLevel.indexOf('model_reasoning_effort="max"');
+    expect(at).toBeGreaterThan(0);
+    expect(withLevel[at - 1]).toBe('-c');
+    expect(without.some((a) => a.startsWith('model_reasoning_effort'))).toBe(false);
+    expect(withLevel.filter((_, i) => i !== at && i !== at - 1)).toEqual(without);
+  });
+});
+
+describe('persona reasoning effort on claude-resume and remote (#584 review round 1)', () => {
+  it('F1/A4: claude-resume gets --effort after --permission-mode', () => {
+    const args = personaArgs_build(
+      { id: 'p', name: 'P', permissionMode: 'plan', reasoningLevel: 'high' },
+      'claude-resume'
+    );
+    expect(args).toEqual(['--permission-mode', 'plan', '--effort', 'high']);
+  });
+
+  it('A5: the remote command carries the persona --effort', async () => {
+    const { ClaudeCodeProvider } = await import('../harness/claude/provider.js');
+    const { cmd } = new ClaudeCodeProvider().buildRemoteCommand({
+      profile: 'claude',
+      config: CONFIG,
+      remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' },
+      persona: { id: 'p', name: 'P', reasoningLevel: 'high' }
+    });
+    expect(cmd).toContain("'--effort' 'high'");
+    const bare = new ClaudeCodeProvider().buildRemoteCommand({
+      profile: 'claude',
+      config: CONFIG,
+      remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' },
+      persona: { id: 'p', name: 'P' }
+    });
+    expect(bare.cmd).not.toContain('--effort');
+  });
+});

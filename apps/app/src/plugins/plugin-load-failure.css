@@ -1,0 +1,13 @@
+.plugin-load-failure {
+  margin: auto;
+  padding: 28px;
+  width: 100%;
+  max-width: 620px;
+  min-width: 0;
+  color: var(--text-primary);
+}
+.plugin-load-failure h2 { margin: 0 0 12px; font-size: 20px; }
+.plugin-load-failure p { color: var(--text-muted); line-height: 1.6; }
+.plugin-load-failure details { margin: 20px 0; }
+.plugin-load-failure summary { cursor: pointer; }
+.plugin-load-failure pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }

@@ -49,7 +49,7 @@ describe('independent default marketplaces', () => {
     expect(value.listMarketplaces().map(row => row.name).sort()).toEqual(['internal', 'zana-community']);
     expect(value.listMarketplaces().every(row => row.official && row.lastError === null)).toBe(true);
     for (const url of ['https://github.com/salesforce/zana-marketplace.git', 'https://git.soma.salesforce.com/chatbots/zana-internal-marketplace.git']) {
-      expect(fetchCatalog).toHaveBeenCalledWith({ kind: 'git', url, ref: 'HEAD' }, expect.any(Function), { timeoutMs: 8_000, nonInteractive: true, includePacks: true });
+      expect(fetchCatalog).toHaveBeenCalledWith({ kind: 'git', url, ref: 'HEAD' }, expect.any(Function), { timeoutMs: 60_000, nonInteractive: true, includePacks: true });
     }
     expect(fetchCatalog).toHaveBeenCalledTimes(2);
   });

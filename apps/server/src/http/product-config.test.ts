@@ -29,3 +29,14 @@ it.each([undefined, 'Owner disconnected'])('rejects an unavailable desktop inste
   await expect(setProductConfig(ctx, {})).rejects.toThrow(message ?? 'Desktop config update failed');
   expect(h.set).not.toHaveBeenCalled();
 });
+it('strips the main-owned trusted preview folders from the standalone write', async () => {
+  h.set.mockReturnValue({ version: 1 });
+  await setProductConfig(ctx, { theme: 'light', trustedPreviewFolders: ['/etc'] });
+  expect(h.set).toHaveBeenCalledWith({ theme: 'light' });
+});
+it('strips the main-owned trusted preview folders before forwarding to desktop', async () => {
+  h.connected = true;
+  h.call.mockResolvedValue({ ok: true, value: { version: 1 } });
+  await setProductConfig(ctx, { theme: 'light', trustedPreviewFolders: ['/etc'] });
+  expect(h.call).toHaveBeenCalledWith('/private/config', 'product.invoke', { method: 'config.set', args: [{ theme: 'light' }] });
+});

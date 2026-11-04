@@ -98,4 +98,66 @@ describe('native preview file location', () => {
     vi.mocked(deps.thread).mockRejectedValueOnce(new Error('offline'));
     expect((await previewFileLocation(req, deps)).ok).toBe(false);
   });
+
+  describe('trusted preview folders', () => {
+    let trusted: string;
+    let file: string;
+    beforeEach(async () => {
+      trusted = join(base, 'trusted');
+      await mkdir(trusted);
+      file = join(trusted, 'notes.md');
+      await writeFile(file, 'hi');
+      deps = { ...deps, trustedPreviewFolders: vi.fn(() => [trusted]) };
+    });
+
+    it('opens an absolute workspace file under a trusted folder for local thread, project and unscoped requests', async () => {
+      for (const extra of [{ threadId: 'thread-1' }, { projectId: 'p1' }, { projectId: undefined }]) {
+        await expect(previewFileLocation(request({ path: file, ...extra }), deps)).resolves.toEqual({ ok: true, path: file });
+      }
+      expect(deps.trustedPreviewFolders).toHaveBeenCalled();
+    });
+
+    it('does not trust folders for relative paths, thread storage or when none are configured', async () => {
+      expect((await previewFileLocation(request({ path: 'notes.md' }), deps)).ok).toBe(false);
+      expect((await previewFileLocation(request({ source: 'thread-storage', threadId: 'thread-1', path: file }), deps)).ok).toBe(false);
+      const none = { ...deps, trustedPreviewFolders: () => [] as string[] };
+      expect((await previewFileLocation(request({ path: file }), none)).ok).toBe(false);
+      const absent = { ...deps, trustedPreviewFolders: undefined };
+      expect((await previewFileLocation(request({ path: file }), absent)).ok).toBe(false);
+    });
+
+    it('refuses trusted folders for remote scopes and unregistered projects', async () => {
+      vi.mocked(deps.thread).mockResolvedValueOnce({ hostId: 'remote', cwd: root });
+      expect((await previewFileLocation(request({ path: file, threadId: 'thread-1' }), deps)).ok).toBe(false);
+      expect((await previewFileLocation(request({ path: file, projectId: 'unknown' }), deps)).ok).toBe(false);
+      vi.mocked(deps.thread).mockResolvedValueOnce(null);
+      expect((await previewFileLocation(request({ path: file, threadId: 'pty', projectId: 'unknown' }), deps)).ok).toBe(false);
+      const remote = { ...deps, projects: [{ ...deps.projects[0], remote: { host: 'ssh.example' } }] as never };
+      expect((await previewFileLocation(request({ path: file }), remote)).ok).toBe(false);
+    });
+
+    it('refuses escapes, symlinks out of the trusted folder, directories and missing files', async () => {
+      const secret = join(base, 'secret.txt');
+      await writeFile(secret, 's');
+      await symlink(secret, join(trusted, 'leak.md'));
+      await mkdir(join(trusted, 'sub'));
+      for (const path of [join(trusted, 'leak.md'), join(trusted, 'sub'), join(trusted, 'nope.md'), join(trusted, '..', 'secret.txt'), secret]) {
+        expect((await previewFileLocation(request({ path, projectId: undefined }), deps)).ok).toBe(false);
+      }
+    });
+
+    it('ignores a trusted folder that was swapped for a symlink', async () => {
+      const elsewhere = join(base, 'elsewhere');
+      await mkdir(elsewhere);
+      await writeFile(join(elsewhere, 'notes.md'), 'x');
+      await rm(trusted, { recursive: true, force: true });
+      await symlink(elsewhere, trusted);
+      expect((await previewFileLocation(request({ path: file }), deps)).ok).toBe(false);
+    });
+
+    it('fails closed when the folder provider throws', async () => {
+      const boom = { ...deps, trustedPreviewFolders: () => { throw new Error('x'); } };
+      expect((await previewFileLocation(request({ path: file }), boom)).ok).toBe(false);
+    });
+  });
 });

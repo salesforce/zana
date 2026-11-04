@@ -866,8 +866,7 @@ export function ProjectsList({
                     aria-label={`Open ${displayName}`}
                     onClick={() => {
                       if (consumeProjectClick()) return;
-                      if (projectedDefault) openMachineThread(group.machine!, p);
-                      else enterProjectFocus(p.id);
+                      enterProjectFocus(p.id);
                     }}
                     {...(sortable ? attributes : {})}
                   >

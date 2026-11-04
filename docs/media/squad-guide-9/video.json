@@ -1,0 +1,44 @@
+{
+  "id": "squad-guide-9",
+  "title": "Build your own Persona and Squad",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "Build your own Persona and Squad",
+    "subline": "Parts of your own, grouped your way",
+    "chips": [
+      "Personas",
+      "Duplicate",
+      "Slots",
+      "Launch options"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Build your own Squad."
+      },
+      {
+        "at": 3.0,
+        "text": "Start from a built-in."
+      },
+      {
+        "at": 5.8,
+        "text": "Change what you need."
+      }
+    ],
+    "duration": 11,
+    "revealAt": 8.0
+  },
+  "closer": {
+    "headline": "Pick a Squad and run it",
+    "subline": "You have the whole guide",
+    "chips": [
+      "Squads docs"
+    ],
+    "line": "That is the Squad guide. Pick a Squad and run it.",
+    "duration": 5
+  }
+}

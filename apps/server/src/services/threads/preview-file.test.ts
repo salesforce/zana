@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -170,5 +170,64 @@ describe('openThreadFilePreview', () => {
       source: 'thread-storage',
       path: '../outside.md'
     })).toThrow(PreviewFileError);
+  });
+
+  describe('trusted preview folders', () => {
+    const trustedDir = () => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-preview-trusted-')));
+      mkdirSync(join(dir, 'sub'));
+      writeFileSync(join(dir, 'sub', 'a.md'), 'x');
+      return dir;
+    };
+
+    it('opens an absolute path under a trusted folder and passes the target to the provider', () => {
+      const dir = trustedDir();
+      const seen: unknown[] = [];
+      const d = deps({ trustedPreviewFolders: (target) => { seen.push(target); return [dir]; } });
+      const path = join(dir, 'sub', 'a.md');
+      expect(openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path }).path).toBe(path);
+      expect(seen[0]).toMatchObject({ projectId: 'proj-1', thread: { id: 'thr-1' } });
+      expect(d.emitted).toHaveLength(1);
+    });
+
+    it('opens through a symlinked directory that resolves into the trusted folder', () => {
+      const dir = trustedDir();
+      const alias = join(realpathSync(mkdtempSync(join(tmpdir(), 'zcc-preview-alias-'))), 'alias');
+      symlinkSync(dir, alias);
+      const d = deps({ trustedPreviewFolders: () => [dir] });
+      const path = join(alias, 'sub', 'a.md');
+      // Resolved-form match: the emitted path is the real location inside the trusted folder.
+      expect(openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path }).path).toBe(join(dir, 'sub', 'a.md'));
+    });
+
+    it('rejects absolute paths outside trusted folders, with no provider, or for sibling-prefix dirs', () => {
+      const dir = trustedDir();
+      const outside = trustedDir();
+      for (const d of [deps({ trustedPreviewFolders: () => [dir] }), deps(), deps({ trustedPreviewFolders: () => [] })]) {
+        expect(() => openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path: join(outside, 'sub', 'a.md') }))
+          .toThrow(PreviewFileError);
+        expect(d.emitted).toHaveLength(0);
+      }
+      const d = deps({ trustedPreviewFolders: () => [dir] });
+      expect(() => openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path: `${dir}-evil/a.md` })).toThrow(PreviewFileError);
+    });
+
+    it('passes a null thread for PTY owners', () => {
+      const dir = trustedDir();
+      const seen: unknown[] = [];
+      const d = deps({ getThread: () => null, trustedPreviewFolders: (target) => { seen.push(target); return [dir]; } });
+      const path = join(dir, 'sub', 'a.md');
+      openThreadFilePreview(d, { threadId: 'sess', projectId: 'proj-1', source: 'workspace', path });
+      expect(seen[0]).toEqual({ thread: null, projectId: 'proj-1' });
+    });
+
+    it('never consults trusted folders for thread-storage source', () => {
+      const dir = trustedDir();
+      let called = false;
+      const d = deps({ trustedPreviewFolders: () => { called = true; return [dir]; } });
+      expect(() => openThreadFilePreview(d, { threadId: 'thr-1', source: 'thread-storage', path: join(dir, 'sub', 'a.md') }))
+        .toThrow(PreviewFileError);
+      expect(called).toBe(false);
+    });
   });
 });

@@ -181,6 +181,8 @@ export const IPC = {
   config: {
     get: 'config:get',
     set: 'config:set',
+    addTrustedPreviewFolder: 'config:addTrustedPreviewFolder',
+    removeTrustedPreviewFolder: 'config:removeTrustedPreviewFolder',
     /** Broadcast to EVERY window after a `config:set` so other windows
      *  (per-project windows, the focus window) refresh their mirrored config
      *  flags live — without it a feature toggled off in one window keeps

@@ -16,7 +16,9 @@ import {
   finishReview,
   installAbortCleanup,
   ledgerEntryFor,
+  readGitConfigFlag,
   readGitEnablement,
+  resolveProbeModel,
   recordAndPruneHistory,
   resolveEnablement,
   startReview,
@@ -407,26 +409,197 @@ describe('checkTinynodVersion', () => {
   });
 });
 
+describe('resolveProbeModel / readGitConfigFlag', () => {
+  it('is off by default and for unrecognized values', () => {
+    expect(resolveProbeModel({ env: {} })).toBe(false);
+    expect(resolveProbeModel({ env: {}, readConfig: () => 'maybe' })).toBe(false);
+  });
+  it('honors the env switch over git config, and git config otherwise', () => {
+    expect(resolveProbeModel({ env: { ZANA_TINYNOD_PROBE_MODEL: '1' }, readConfig: () => 'false' })).toBe(true);
+    expect(resolveProbeModel({ env: { ZANA_TINYNOD_PROBE_MODEL: ' ' }, readConfig: () => 'true' })).toBe(true);
+    expect(resolveProbeModel({ env: { ZANA_TINYNOD_PROBE_MODEL: '0' }, readConfig: () => 'true' })).toBe(false);
+  });
+  it('reads an arbitrary git config key with routing variables removed', () => {
+    const run = vi.fn(() => ({ status: 0, stdout: 'true\n' }));
+    expect(readGitConfigFlag('/root', 'zana.tinynod.probeModel', { run, env: { GIT_DIR: '/x' } })).toBe('true');
+    expect(run).toHaveBeenCalledWith('git', ['config', '--get', 'zana.tinynod.probeModel'], expect.objectContaining({ cwd: '/root', env: {} }));
+  });
+});
+
 describe('ensureTinynodGateway', () => {
-  it('keeps a working TinyNod gateway credential', () => {
-    const run = vi.fn(() => ({ status: 0, stdout: 'claude-opus-5-5\n' }));
-    expect(ensureTinynodGateway({ run })).toEqual({ ok: true, refreshed: false });
-    expect(run).toHaveBeenCalledTimes(1);
+  const baseUrl = 'https://gw.example';
+  const goodModels = { status: 0, stdout: '{"data":[{"id":"claude-opus-5-5"}]}\n200' };
+  const http = (status: number, body = '{}') => ({ status: 0, stdout: `${body}\n${status}` });
+  const fsWith = (config: unknown) => ({ readFileSync: () => JSON.stringify(config) }) as never;
+  const fs = fsWith({ ai: { apiKey: 'old-key', model: 'claude-opus-5-5' } });
+  const router = (routes: Record<string, unknown[]>) => vi.fn((cmd: string, args: string[]) => {
+    const id = cmd === 'curl' ? String(args.at(-1)).replace(baseUrl, '') : cmd;
+    const queue = routes[id];
+    if (!queue?.length) throw new Error(`unexpected ${id}`);
+    return queue.length > 1 ? queue.shift() : queue[0];
+  });
+  const gateway = (run: unknown, extra = {}) => ensureTinynodGateway({ run: run as never, fs, baseUrl, devbar: 'devbar', env: {}, ...extra });
+  const devbarOk = { status: 0, stdout: 'new-token\n' };
+
+  it('probes /v1/models only, never tinynod models or model/info', () => {
+    const run = router({ '/v1/models': [goodModels] });
+    expect(gateway(run)).toEqual({ ok: true, refreshed: false, probed: true });
+    expect(run.mock.calls.some(([cmd, args]) => cmd === 'tinynod' || String(args).includes('model/info'))).toBe(false);
+    expect(run.mock.calls.every(([, args]) => !args.join(' ').includes('old-key'))).toBe(true);
+    expect(run.mock.calls.every(([, args]) => !args.includes('-L'))).toBe(true);
   });
 
-  it('refreshes an expired DevBar token and retries gateway access once', () => {
-    const run = vi.fn()
-      .mockReturnValueOnce({ status: 1 })
-      .mockReturnValueOnce({ status: 0, stdout: 'secret-token\n' })
-      .mockReturnValueOnce({ status: 0 })
-      .mockReturnValueOnce({ status: 0, stdout: 'claude-opus-5-5\n' });
-    expect(ensureTinynodGateway({ run, devbar: 'devbar' })).toEqual({ ok: true, refreshed: true });
-    expect(run).toHaveBeenNthCalledWith(3, 'tinynod', ['config', 'set', 'ai.apiKey', 'secret-token'], expect.any(Object));
+  it('skips the probe and stays advisory when no endpoint is known', () => {
+    const run = vi.fn();
+    expect(ensureTinynodGateway({ run, fs, env: {}, baseUrl: '' })).toEqual({ ok: true, refreshed: false, probed: false });
+    expect(run).not.toHaveBeenCalled();
   });
 
-  it('stays advisory when DevBar cannot repair gateway access', () => {
-    const run = vi.fn().mockReturnValueOnce({ status: 1 }).mockReturnValueOnce({ status: 1 });
-    expect(ensureTinynodGateway({ run, devbar: 'devbar' })).toEqual({ ok: false, reason: 'TinyNod gateway unavailable and DevBar token refresh failed' });
+  it('reads SALESFORCE_CLAUDE_ENDPOINT and TINYNOD_HOME', () => {
+    const readFileSync = vi.fn(() => JSON.stringify({ ai: { apiKey: 'k' } }));
+    const run = vi.fn(() => goodModels);
+    ensureTinynodGateway({ run: run as never, fs: { readFileSync } as never, env: { SALESFORCE_CLAUDE_ENDPOINT: 'https://env.example/', TINYNOD_HOME: '/th' } });
+    expect(String(readFileSync.mock.calls[0][0])).toBe('/th/config.json');
+    expect(run.mock.calls[0][1].at(-1)).toBe('https://env.example/v1/models');
+  });
+
+  it('refreshes only on 401/403, stores the token, and re-probes once', () => {
+    const run = router({ '/v1/models': [http(401), goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] });
+    expect(gateway(run)).toEqual({ ok: true, refreshed: true, probed: true });
+    expect(run).toHaveBeenCalledWith('tinynod', ['config', 'set', 'ai.apiKey', 'new-token'], expect.any(Object));
+  });
+
+  it('keeps only the first line of devbar output', () => {
+    const run = router({ '/v1/models': [http(401), goodModels], devbar: [{ status: 0, stdout: 'new-token\nextra\n' }], tinynod: [{ status: 0 }] });
+    gateway(run);
+    expect(run).toHaveBeenCalledWith('tinynod', ['config', 'set', 'ai.apiKey', 'new-token'], expect.any(Object));
+  });
+
+  it('refreshes when no key is stored, and says so if devbar supplies none', () => {
+    const unreadable = { readFileSync: () => { throw new Error('ENOENT'); } } as never;
+    expect(gateway(router({ '/v1/models': [goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] }), { fs: unreadable })).toEqual({ ok: true, refreshed: true, probed: true });
+    expect(gateway(router({ devbar: [{ status: 1 }] }), { fs: unreadable })).toMatchObject({ kind: 'missing', reason: 'TinyNod has no ai.apiKey configured and DevBar did not supply one' });
+  });
+
+  it('refreshes at most once: a persistent 403 is "lacks access", not another refresh', () => {
+    const run = router({ '/v1/models': [http(403)], devbar: [devbarOk], tinynod: [{ status: 0 }] });
+    expect(gateway(run)).toMatchObject({ ok: false, kind: 'denied', reason: 'TinyNod gateway key lacks access even after a DevBar refresh (HTTP 403)' });
+    expect(run.mock.calls.filter(([cmd]) => cmd === 'devbar')).toHaveLength(1);
+  });
+
+  it('reports refresh and store failures distinctly', () => {
+    expect(gateway(router({ '/v1/models': [http(401)], devbar: [{ status: 1 }] }))).toMatchObject({ kind: 'refresh', reason: 'DevBar token refresh failed' });
+    expect(gateway(router({ '/v1/models': [http(401)], devbar: [{ status: 0, stdout: 't' }], tinynod: [{ status: 1 }] }))).toMatchObject({ kind: 'store' });
+  });
+
+  it('refuses to send or store a key with unexpected characters', () => {
+    const run = router({ '/v1/models': [http(401)], devbar: [{ status: 0, stdout: 'bad"key\n' }] });
+    expect(gateway(run)).toMatchObject({ kind: 'badkey' });
+    expect(run.mock.calls.some(([cmd]) => cmd === 'tinynod')).toBe(false);
+    const stored = router({});
+    expect(gateway(stored, { fs: fsWith({ ai: { apiKey: 'a"b\nheader = x' } }) })).toMatchObject({ kind: 'badkey' });
+    expect(stored).not.toHaveBeenCalledWith('curl', expect.anything(), expect.anything());
+  });
+
+  it('stops when the time budget is spent before refresh or chat probe', () => {
+    for (const [first, extra] of [[http(401), {}], [goodModels, { probeModel: true }]] as const) {
+      let t = 0;
+      const inner = router({ '/v1/models': [first] });
+      const run = vi.fn((...args: unknown[]) => { t += 45_000; return (inner as never as (...a: unknown[]) => unknown)(...args); });
+      expect(gateway(run, { now: () => t, ...extra })).toMatchObject({ ok: false, kind: 'budget' });
+    }
+  });
+
+  it('disables curl default configuration before any other argument', () => {
+    const run = router({ '/v1/models': [goodModels] });
+    gateway(run);
+    expect(run.mock.calls[0][0]).toBe('curl');
+    expect(run.mock.calls[0][1][0]).toBe('--disable');
+  });
+
+  it('stops between refresh steps when the budget runs out, and rejects a result that finishes late', () => {
+    const scenario = (spendAfter: string, routes: Record<string, unknown[]>) => {
+      let t = 0;
+      const inner = router(routes);
+      const run = vi.fn((cmd: string, args: string[], opts: { timeout?: number }) => {
+        const out = (inner as never as (...a: unknown[]) => unknown)(cmd, args, opts);
+        if (cmd === spendAfter || (cmd === 'curl' && spendAfter === 'curl')) t += 41_000;
+        return out;
+      });
+      return { run, result: gateway(run, { now: () => t }) };
+    };
+    expect(scenario('devbar', { '/v1/models': [http(401)], devbar: [devbarOk], tinynod: [{ status: 0 }] }).result).toMatchObject({ kind: 'budget' });
+    expect(scenario('tinynod', { '/v1/models': [http(401), goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] }).result).toMatchObject({ kind: 'budget' });
+    expect(scenario('curl', { '/v1/models': [goodModels] }).result).toMatchObject({ kind: 'budget' });
+  });
+
+  it('caps each subprocess timeout to the remaining budget', () => {
+    let t = 0;
+    const inner = router({ '/v1/models': [http(401), goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] });
+    const run = vi.fn((cmd: string, args: string[], opts: { timeout?: number }) => {
+      if (cmd === 'curl') t += 30_000;
+      return (inner as never as (...a: unknown[]) => unknown)(cmd, args, opts);
+    });
+    gateway(run, { now: () => t });
+    const devbarCall = run.mock.calls.find(([cmd]) => cmd === 'devbar')!;
+    expect(devbarCall[2].timeout).toBe(10_000);
+  });
+
+  it.each([
+    ['timeout (curl 28)', { status: 28 }, 'timeout', 'TinyNod gateway timed out'],
+    ['timeout (spawn)', { status: null, error: { code: 'ETIMEDOUT' } }, 'timeout', 'TinyNod gateway timed out'],
+    ['tls (curl 60)', { status: 60 }, 'tls', 'TinyNod gateway unreachable: TLS error'],
+    ['connect (curl 7)', { status: 7 }, 'connect', 'TinyNod gateway unreachable: connection failed'],
+    ['curl missing', { status: null, error: { code: 'ENOENT' } }, 'connect', 'TinyNod gateway unreachable: connection failed (curl not found)'],
+    ['other curl exit', { status: 3 }, 'connect', 'TinyNod gateway unreachable: connection failed (curl exit 3)'],
+    ['empty list', http(200, '{"data":[]}'), 'empty', 'TinyNod gateway returned an empty model list'],
+    ['unparseable body', http(200, '<html>portal</html>'), 'malformed', 'TinyNod gateway response was not recognizable'],
+    ['data is not an array', http(200, '{"data":"error"}'), 'malformed', 'TinyNod gateway response was not recognizable'],
+    ['no data field', http(200, '{}'), 'malformed', 'TinyNod gateway response was not recognizable'],
+    ['server error', http(502), 'http', 'TinyNod gateway returned HTTP 502'],
+    ['no status line', { status: 0, stdout: 'garbage' }, 'malformed', 'TinyNod gateway response was not recognizable'],
+  ])('%s never triggers a refresh', (_name, response, kind, reason) => {
+    const run = router({ '/v1/models': [response] });
+    expect(gateway(run)).toEqual({ ok: false, kind, reason });
+    expect(run.mock.calls.some(([cmd]) => cmd === 'devbar')).toBe(false);
+  });
+
+  describe('opt-in configured-model probe', () => {
+    it('is not sent unless requested', () => {
+      const run = router({ '/v1/models': [goodModels] });
+      gateway(run);
+      expect(run.mock.calls.some(([, args]) => String(args.at(-1)).includes('chat'))).toBe(false);
+    });
+
+    it('passes on 200 and skips when no model is configured', () => {
+      expect(gateway(router({ '/v1/models': [goodModels], '/v1/chat/completions': [http(200)] }), { probeModel: true })).toEqual({ ok: true, refreshed: false, probed: true });
+      expect(gateway(router({ '/v1/models': [goodModels] }), { probeModel: true, fs: fsWith({ ai: { apiKey: 'k' } }) })).toEqual({ ok: true, refreshed: false, probed: true });
+    });
+
+    it('names the model when the key cannot use it, without a refresh', () => {
+      const run = router({ '/v1/models': [goodModels], '/v1/chat/completions': [http(403)] });
+      expect(gateway(run, { probeModel: true, fs: fsWith({ ai: { apiKey: 'k', model: 'opus' } }) })).toMatchObject({ ok: false, kind: 'model', reason: 'model opus not allowed for this key' });
+      expect(run.mock.calls.some(([cmd]) => cmd === 'devbar')).toBe(false);
+    });
+
+    it.each([
+      [http(401), 'auth'],
+      [http(500), 'http'],
+      [{ status: 28 }, 'timeout'],
+      [{ status: 7 }, 'connect'],
+    ])('classifies chat probe failure %#', (response, kind) => {
+      const run = router({ '/v1/models': [goodModels], '/v1/chat/completions': [response] });
+      expect(gateway(run, { probeModel: true })).toMatchObject({ ok: false, kind });
+    });
+
+    it('sends a one-token request with the key only on stdin', () => {
+      const run = router({ '/v1/models': [goodModels], '/v1/chat/completions': [http(200)] });
+      gateway(run, { probeModel: true });
+      const chat = run.mock.calls.find(([, args]) => String(args.at(-1)).endsWith('/v1/chat/completions'))!;
+      expect(chat[2].input).toContain('Bearer old-key');
+      expect(chat[2].input).toContain('\\"max_tokens\\":1');
+      expect(chat[1].join(' ')).not.toContain('old-key');
+    });
   });
 });
 
