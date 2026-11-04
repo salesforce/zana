@@ -16,10 +16,13 @@
  * launcher injection OFF, matching this. The one non-default override note kept
  * below is `mcpArgs` — see why the cursor MCP bridge is externally blocked.
  *
- * This mirrors the MCP-less posture the remote ssh path already ships with —
- * the spawn, the tab, resume, and the Agents-board classification all work; the
- * MCP/hook bridge for cursor-agent is a follow-up (blocked end-to-end anyway
- * until the machine is logged into `cursor-agent`).
+ * The spawn, the tab, resume, and the Agents-board classification all work.
+ * The one launcher-injectable surface is `--plugin-dir`: when a tool policy is
+ * required, a per-session plugin directory carries the blocking native-tool
+ * hook (see `native-tool-gate.ts`). The zcc-inbox MCP server and plugin
+ * instructions are NOT delivered to a Cursor PTY (MCP approval lives in
+ * Cursor's shared data directory); loading of the hook is unverified-live
+ * because it needs a logged-in `cursor-agent`.
  *
  * Rule 6: the concrete profile literals (`'cursor'`, `'cursor-resume'`) and the
  * provider id (`'cursor-agent'`) appear ONLY here + the registry — `PtyManager`

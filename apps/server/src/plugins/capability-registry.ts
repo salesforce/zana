@@ -25,6 +25,7 @@ export class CapabilityRegistry {
 }
 
 export const capabilityRegistry = new CapabilityRegistry();
+const ACP_CURSOR_VETO_LIMIT = 'modern/acp-cursor: permission requests Cursor raises over ACP are decided by host policy, but a tool it runs without raising a request is not gated, and request coverage is unverified against a logged-in cursor-agent';
 // Exact bridge registrations; only the awaited native-policy transport can advertise a veto.
 for (const harness of ['claude-code', 'codex', 'pi', 'acp', 'acp-opencode', 'acp-cursor']) {
   for (const headless of [false, true]) {
@@ -39,6 +40,11 @@ for (const harness of ['claude-code', 'codex', 'pi', 'acp', 'acp-opencode', 'acp
     // MCP tool calls emit no client approval and remain outside the veto — documented,
     // not silently covered.
     if (harness === 'codex') capabilityRegistry.register(key, 'tool-before-native', { available: true });
+    // Cursor over ACP: permission requests the agent raises are decided by host policy
+    // before any allow, but an agent running with permissions pre-granted raises none,
+    // and no live Cursor login was available to prove which requests it raises. The
+    // Modern veto therefore stays unadvertised for it.
+    if (harness === 'acp-cursor') capabilityRegistry.register(key, 'tool-before-native', { available: false, reason: ACP_CURSOR_VETO_LIMIT });
     capabilityRegistry.register(key, 'interactions', headless ? { available: false, reason: 'Headless interaction presentation is unavailable' } : { available: true });
   }
 }

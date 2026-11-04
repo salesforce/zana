@@ -16,7 +16,7 @@ Handed to `export default function plugin(zcc)`.
 | `realtime.publish` | Events |
 | `background.service` / `schedule` | Long-running work |
 | `remoteEnvironment.provide` / `refresh` | Environment variables for sessions on non-primary machines (manifest allowlist `zcc.extra.remoteEnvironment`; held in memory, never stored) |
-| `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata`. For a PTY launch (Claude, Codex, OpenCode) it runs once per session with `surface: 'pty'`, the real `sessionId`, `threadId`, `projectId` and `provider.id`; `instructions` (and `contributeInstructions`) are delivered as Claude `--append-system-prompt`, folded into Codex `developer_instructions`, or listed as a private per-session file in OpenCode's config `instructions`. Each contribution is capped at 4096 characters and the total at 16000; a throwing `configure` is written to the plugin log and other plugins still contribute. Remote PTYs are not covered; `tools` do not apply to a PTY |
+| `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata`. For a PTY launch (Claude, Codex, OpenCode) it runs once per session with `surface: 'pty'`, the real `sessionId`, `threadId`, `projectId` and `provider.id`; `instructions` (and `contributeInstructions`) are delivered as Claude `--append-system-prompt`, folded into Codex `developer_instructions`, or listed as a private per-session file in OpenCode's config `instructions`. Each contribution is capped at 4096 characters and the total at 16000; a throwing `configure` is written to the plugin log and other plugins still contribute. Cursor PTYs receive no instructions (see the Cursor notes below the parity matrix). Remote PTYs are not covered; `tools` do not apply to a PTY |
 | `ui.requestInput` | Host prompt |
 | `ui.requestToolApproval` / `ui.consumeApproval` | Await main's approval sheet in an active server tool; verify and burn its scoped proof (see `approvals`) |
 | `status.needsConfiguration` / `configured` | Mark the plugin "Needs configuration" in the Plugins hub (e.g. until the user signs in), and clear it once set up; both apply live without a reload |
@@ -420,10 +420,18 @@ package version selected for development dependencies.
 | Modern / acp-cursor | unavailable | unavailable | available | available |
 | PTY / claude (hook base, visible) | available | unavailable | available | available |
 | PTY / codex (hook base, visible) | available | unavailable | available | available |
-| PTY / opencode | unavailable | unavailable | available | created and exit only |
-| PTY / cursor | unavailable | unavailable | available | created and exit only |
+| PTY / opencode (hook base) | available | unavailable | available | created and exit only |
+| PTY / cursor (hook base) | available | unavailable | available | created and exit only |
+| PTY / opencode, cursor (missing hook base) | unavailable | unavailable | available | created and exit only |
 | PTY / Claude or Codex (hook base, headless) | available | unavailable | available | created and exit only |
 | PTY / missing hook base, or remote headless | unavailable | unavailable | available | created and exit only |
+
+Cursor notes (cursor-agent 2026.08.11 source; the hook loading itself is unverified-live, because no logged-in cursor-agent was available):
+
+- PTY Native Before is the blocking `preToolUse` hook of a per-session `--plugin-dir` directory, `failClosed`, so a crash, timeout or invalid reply denies. A command typed into the TUI, Tab completion edits and remote launches are not gated.
+- PTY lifecycle stays "created and exit only": no turn-end hook is wired for Cursor, so it never reports active or idle.
+- Not delivered on a Cursor PTY: the `zcc-inbox` MCP server and plugin instructions. Cursor asks for per-server MCP approval and keeps it in its own shared data directory (`mcp-approvals.json`), which Zana does not write for a PTY launch; rules and MCP in the plugin directory are unverified-live, so neither is claimed.
+- Modern / acp-cursor Native Before stays unavailable: permission requests Cursor raises over ACP are decided by host policy before any allow (unit-tested with the Cursor dialect), but a tool it runs without raising a request is not gated, and request coverage is unverified against a logged-in cursor-agent.
 
 #### Dispatch admission request
 

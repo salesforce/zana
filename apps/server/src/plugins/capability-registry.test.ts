@@ -33,6 +33,14 @@ describe('surface wiring registry', () => {
       expect(unwired).toMatchObject({ available: false, reason: expect.stringContaining('not wired') });
     }
   });
+  it('keeps the Cursor ACP veto unadvertised and says why', () => {
+    for (const headless of [false, true]) {
+      const row = capabilityRegistry.describe({ surface: 'modern', harness: 'acp-cursor', headless, hookBase: true })
+        .find(item => item.id === 'tool-before-native');
+      expect(row).toMatchObject({ available: false, reason: expect.stringContaining('without raising a request') });
+      expect(row?.reason).toContain('unverified');
+    }
+  });
   it.each(['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell', 'unknown'])('advertises PTY message admission only for wired harness %s', harness => {
     for (const headless of [false, true]) for (const hookBase of [false, true]) {
       const row = capabilityRegistry.describe({ surface: 'pty', harness, headless, hookBase }).find(item => item.id === 'message-admission');

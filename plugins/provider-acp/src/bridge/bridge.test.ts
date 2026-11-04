@@ -3071,6 +3071,29 @@ describe("acp bridge", () => {
     },
   );
 
+  it.each(["full", "accept-edits"] as const)(
+    "refuses a Cursor-dialect permission request the policy denies in %s mode",
+    async (permissionMode) => {
+      const { providerThreadId } = await startThread({
+        dialectId: "cursor",
+        permissionMode,
+        permissionEscalation: "ask",
+      });
+      const turnId = sendTurnRequest("turn/start", providerThreadId, {
+        input: [{ type: "text", text: "request-permission", mentions: [] }],
+      });
+      await waitForResponse(turnId);
+      const asked = await answerPolicy({ action: "deny", reason: "no shell" });
+      await waitForTurnCompleted();
+
+      expect(asked).toMatchObject({ toolName: "acp.execute" });
+      expect(agentMessageTexts()).toContain("permission:no");
+      expect(
+        output.messages.filter((message) => message.method === "interaction/request"),
+      ).toHaveLength(0);
+    },
+  );
+
   it("refuses a permission request when the policy answer is invalid", async () => {
     const { providerThreadId } = await startThread({ permissionMode: "full" });
     const turnId = sendTurnRequest("turn/start", providerThreadId, {
