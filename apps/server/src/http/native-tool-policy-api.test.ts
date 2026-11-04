@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NATIVE_TOOL_POLICY_EVENT_MAX_BYTES } from '@zana-ai/zcc-contracts/runtime';
-import { NATIVE_TOOL_POLICY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
+import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
 import type { ProductHttpContext } from './product-context.js';
 import { startProductServer, type ProductServer } from './product-server.js';
 
@@ -105,5 +105,55 @@ describe('POST /api/v1/native-tool-policy (main-owned PTYs without a runtime sup
     const { server } = await boot();
     const response = await fetch(new URL(NATIVE_TOOL_POLICY_PATH, server.url));
     expect(response.status).not.toBe(200);
+  });
+});
+
+describe('POST /api/v1/dispatch-admission (PTY input without a runtime supervisor)', () => {
+  const admission = { projectId: 'project-1', sessionId: 'session-1', entry: 'reply', origin: 'user' };
+  const postAdmission = async (url: string, body: string, proof?: string) => {
+    const response = await fetch(new URL(DISPATCH_ADMISSION_PATH, url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(proof ? { [NATIVE_TOOL_POLICY_PROOF_HEADER]: proof } : {}) },
+      body
+    });
+    return { status: response.status, json: await response.json() as unknown };
+  };
+
+  it('admits a signed request as a pty dispatch and returns the decision', async () => {
+    const { server } = await boot();
+    const admitDispatch = vi.fn(async () => ({ action: 'reject', message: 'blocked' }) as const);
+    server.ctx.plugins = { admitDispatch } as unknown as ProductHttpContext['plugins'];
+    const body = JSON.stringify(admission);
+    await expect(postAdmission(server.url, body, signNativeToolPolicyRequest(secret, body))).resolves.toEqual({
+      status: 200, json: { action: 'reject', message: 'blocked' }
+    });
+    expect(admitDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'project-1', sessionId: 'session-1', surface: 'pty', entry: 'reply', origin: 'user'
+    }));
+  });
+
+  it('refuses unsigned, mis-signed, malformed and over-specified requests without asking plugins', async () => {
+    const { server } = await boot();
+    const admitDispatch = vi.fn();
+    server.ctx.plugins = { admitDispatch } as unknown as ProductHttpContext['plugins'];
+    const body = JSON.stringify(admission);
+    expect((await postAdmission(server.url, body)).status).toBe(403);
+    expect((await postAdmission(server.url, body, signNativeToolPolicyRequest('x'.repeat(64), body))).status).toBe(403);
+    const notJson = 'nope';
+    expect((await postAdmission(server.url, notJson, signNativeToolPolicyRequest(secret, notJson))).status).toBe(400);
+    const extra = JSON.stringify({ ...admission, threadId: 'smuggled' });
+    expect((await postAdmission(server.url, extra, signNativeToolPolicyRequest(secret, extra))).status).toBe(400);
+    const badEntry = JSON.stringify({ ...admission, entry: 'fork' });
+    expect((await postAdmission(server.url, badEntry, signNativeToolPolicyRequest(secret, badEntry))).status).toBe(400);
+    expect(admitDispatch).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when no plugin host is installed, as for a Modern send (nothing can veto)', async () => {
+    const { server } = await boot();
+    server.ctx.plugins = undefined;
+    const body = JSON.stringify(admission);
+    await expect(postAdmission(server.url, body, signNativeToolPolicyRequest(secret, body))).resolves.toMatchObject({
+      status: 200, json: { action: 'proceed' }
+    });
   });
 });

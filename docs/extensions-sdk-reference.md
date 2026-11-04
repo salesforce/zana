@@ -301,7 +301,7 @@ authority; a plugin only ever supplies identifiers and bounded JSON.
 | --- | --- |
 | `zcc.host.projectCall({ projectId, hostId?, method, input? })` | Project-bound host RPC. Main resolves `projectId` → host/root before the call reaches the host daemon; a plugin cannot forge a root path or a token. Returns `{ result }`. |
 | `zcc.ui.interactions.get/upsert/acknowledge/cancel` | Resumable, correlation-keyed interactions. `upsert({ projectId, correlationId, kind, payload })` is idempotent per correlation id while the row exists. Pending rows count toward per-plugin+project (100) and global (10,000) quotas; exceeding either throws `INTERACTION_CAPACITY_EXCEEDED`. Ack/cancel free capacity. Pending rows expire to `ack-timeout` 30 days after creation; acknowledgement instead starts a new 30-day resolution window (`expiresAt`), after which an unresolved row becomes `cancelled`. Generation-checked acknowledgement/resolution rejects stale or expired writes even between sweeps. Terminal rows retain their correlation key as a tombstone for 7 days after the deadline or explicit resolution/cancellation, then are deleted; the same correlation id may be reused after deletion. Cleanup runs at startup and daily (also opportunistically during service use). |
-| `zcc.hooks.on(handler)` | One message-dispatch admission handler per plugin. `handler({ dispatchId, threadId, projectId, generation })` returns `{ action: 'proceed' }`, `{ action: 'wait', reason, overrideable }`, or `{ action: 'reject', message }`. A `reject` is terminal and cannot be bypassed. A `wait` can only be overridden by an explicit, authenticated human Send-now action in the UI — a plugin, agent, or programmatic caller can never invoke the override itself. `overrideable: false` additionally blocks even the human override (force-flush included). |
+| `zcc.hooks.on(handler)` | One message-dispatch admission handler per plugin. `handler({ dispatchId, threadId?, sessionId?, projectId, generation, surface, entry, origin })` returns `{ action: 'proceed' }`, `{ action: 'wait', reason, overrideable }`, or `{ action: 'reject', message }`. A `reject` is terminal and cannot be bypassed. A `wait` can only be overridden by an explicit, authenticated human Send-now action in the UI — a plugin, agent, or programmatic caller can never invoke the override itself. `overrideable: false` additionally blocks even the human override (force-flush included). |
 | `zcc.sdk.capabilities.forThread({ threadId })` / `forExecution({ executionId })` | Live capability descriptors (`{ id, available, reason? }`) derived from main's own registered host/provider state — never from a caller-supplied provider id, so a spoofed id cannot report a capability as available that main did not actually wire. `forExecution` always reports provider-specific descriptors (native tool hooks) as unavailable, since an execution can span more than one provider slot. |
 | `zcc.ui.registerProjectTabAvailability({ tabId, evaluate })` | `evaluate({ projectId })` returns `{ available, reason? }` for a `projectTab` registered by the same plugin. An unavailable tab stays visible, disabled, with the bounded `reason` shown to the user — it never silently disappears. A throwing/erroring `evaluate` degrades to unavailable rather than crashing the tab. |
 | `zcc.agents.registerPersonas(personas)` / `registerTeams(teams)` | Namespaced persona/team contributions (`ext:<pluginId>:<slug>` ids), host-stamped provenance. Replaces this plugin's own prior generation wholesale on each call; cannot override a user or built-in record. Cleared automatically on uninstall, disable, or crash. |
@@ -392,12 +392,35 @@ package version selected for development dependencies.
 | Modern / acp | unavailable | unavailable | available | available |
 | Modern / acp-opencode | unavailable | unavailable | available | available |
 | Modern / acp-cursor | unavailable | unavailable | available | available |
-| PTY / claude (hook base, visible) | available | unavailable | unavailable | unavailable |
-| PTY / codex (hook base, visible) | available | unavailable | unavailable | unavailable |
-| PTY / opencode | unavailable | unavailable | unavailable | unavailable |
-| PTY / cursor | unavailable | unavailable | unavailable | unavailable |
-| PTY / Claude or Codex (hook base, headless) | available | unavailable | unavailable | unavailable |
-| PTY / missing hook base, or remote headless | unavailable | unavailable | unavailable | unavailable |
+| PTY / claude (hook base, visible) | available | unavailable | available | unavailable |
+| PTY / codex (hook base, visible) | available | unavailable | available | unavailable |
+| PTY / opencode | unavailable | unavailable | available | unavailable |
+| PTY / cursor | unavailable | unavailable | available | unavailable |
+| PTY / Claude or Codex (hook base, headless) | available | unavailable | available | unavailable |
+| PTY / missing hook base, or remote headless | unavailable | unavailable | available | unavailable |
+
+#### Dispatch admission request
+
+Every admitted dispatch carries `surface` (`'modern' | 'pty'`), `entry`, and `origin`.
+`entry` is `initial` (a create or a PTY opening prompt), `reply` (a send to an
+existing thread or PTY), `fork`, `squad-member-start`, or `job-team-dispatch`.
+`origin` is `user`, `agent`, or `system` (Zana-generated turns such as compaction,
+wrap-up, and parent notifications). Names a `threadId` for Modern sends and forks,
+and a `sessionId` for a PTY reply; an initial dispatch (a Modern create, a PTY
+launch prompt) names neither, because the target does not exist yet. A PTY is not
+a thread: do not read `threadId` as a thread when `surface === 'pty'`.
+
+Only a Modern reply can be held: `wait` there is recorded and can be released by
+the human Send-now action. Create, fork, and every PTY dispatch cannot be held, so
+a `wait` is a refusal (error code `dispatch_waiting` or `DISPATCH_WAITING`) and
+nothing is recorded or created. Admission failure or timeout always rejects.
+
+Admitted: Modern create and send, Modern fork, PTY opening prompts (interactive
+launch, CLI Agent spawn, control-plane launch), CLI Agent and inbox/menu-bar
+reply, and Job Team dispatch. Not admitted: raw keystrokes (`term.write`), because
+terminal input is not a message; Stop and background-task stop; Zana's own PTY
+recovery nudges and agent-to-agent mesh messages; squad member start (its own
+entry, `squad-member-start`, is reserved).
 
 A registered agent tool (`agents.registerTool`) is reachable from Modern
 Claude/Codex threads; `zcc.mcpServers` is the matching path for Claude/Codex

@@ -198,6 +198,27 @@ export const NativeToolPolicyDecisionSchema = z.discriminatedUnion('action', [
 export type NativeToolPolicyRequest = z.infer<typeof NativeToolPolicyRequestSchema>;
 export type NativeToolPolicyDecision = z.infer<typeof NativeToolPolicyDecisionSchema>;
 
+/**
+ * One PTY dispatch (initial prompt, reply, Job Team task) that Electron-main is
+ * about to forward. Main asserts the identity; an unbound PTY has no thread, and
+ * a launch has no session until it spawns, so neither id is required.
+ */
+export const DispatchAdmissionMainRequestSchema = z.object({
+  sessionId: SessionIdSchema.max(256).optional(),
+  projectId: ProjectIdSchema.max(256),
+  entry: z.enum(['initial', 'reply', 'job-team-dispatch']),
+  origin: z.enum(['user', 'agent', 'system'])
+}).strict();
+export type DispatchAdmissionMainRequest = z.infer<typeof DispatchAdmissionMainRequestSchema>;
+
+/** The admission answer main acts on; a wait is a refusal for a PTY, which cannot hold input. */
+export const DispatchAdmissionMainDecisionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('proceed') }).strict(),
+  z.object({ action: z.literal('reject'), message: z.string().min(1).max(1024) }).strict(),
+  z.object({ action: z.literal('wait'), reason: z.string().min(1).max(1024) }).strict()
+]);
+export type DispatchAdmissionMainDecision = z.infer<typeof DispatchAdmissionMainDecisionSchema>;
+
 /** Main-attested request for one Modern squad participant. Never renderer input. */
 export const SquadMemberRuntimeRequestSchema = z.object({
   bindingId: z.string().uuid(),
@@ -542,6 +563,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     // them, so main asserts the live session's identity on this channel.
     operation: z.literal('plugins-tool-policy'),
     request: NativeToolPolicyRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // Admission for PTY input main owns: the server holds the plugin handlers.
+    operation: z.literal('plugins-dispatch-admission'),
+    request: DispatchAdmissionMainRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     // OBL-018 pre-spawn readiness: main reads the tool-policy inventory before a

@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
+import { DispatchAdmissionMainRequestSchema, NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
+import { admitMainOwnedDispatch } from '../plugins/dispatch-admission.js';
 import { decideMainOwnedToolPolicy } from '../plugins/native-tool-policy.js';
 import { headerValue } from './browser-request-guard.js';
 import { sendJson } from './json.js';
-import { NATIVE_TOOL_POLICY_PATH, NATIVE_TOOL_POLICY_INVENTORY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER } from './native-tool-policy-proof.js';
+import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, NATIVE_TOOL_POLICY_INVENTORY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER } from './native-tool-policy-proof.js';
 import type { ProductHttpContext } from './product-context.js';
 
 class BodyTooLarge extends Error {}
@@ -91,5 +92,45 @@ export async function handleNativeToolPolicyInventoryApi(
   sendJson(response, 200, ctx.plugins
     ? await ctx.plugins.toolPolicyReadiness()
     : { ready: false, required: [], reason: 'plugin service is unavailable' });
+  return true;
+}
+
+/**
+ * PTY dispatch admission for when no runtime supervisor carries the request
+ * (`pnpm dev`). Same proof as the tool-policy route; the body is the strict
+ * request main asserted from its own state.
+ */
+export async function handleDispatchAdmissionApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  path: string,
+  method: string
+): Promise<boolean> {
+  if (path !== DISPATCH_ADMISSION_PATH || method !== 'POST') return false;
+  let body: string;
+  try {
+    body = await readBody(request);
+  } catch (error) {
+    if (!(error instanceof BodyTooLarge)) throw error;
+    sendJson(response, 413, { error: 'dispatch admission request is too large' });
+    return true;
+  }
+  if (!ctx.verifyNativeToolPolicy?.(headerValue(request.headers, NATIVE_TOOL_POLICY_PROOF_HEADER), body)) {
+    sendJson(response, 403, { error: 'dispatch admission request is not signed by the desktop app' });
+    return true;
+  }
+  let parsed: ReturnType<typeof DispatchAdmissionMainRequestSchema.safeParse>;
+  try {
+    parsed = DispatchAdmissionMainRequestSchema.safeParse(JSON.parse(body));
+  } catch {
+    sendJson(response, 400, { error: 'dispatch admission request is not JSON' });
+    return true;
+  }
+  if (!parsed.success) {
+    sendJson(response, 400, { error: 'invalid dispatch admission request' });
+    return true;
+  }
+  sendJson(response, 200, await admitMainOwnedDispatch(ctx, parsed.data));
   return true;
 }

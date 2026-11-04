@@ -40,6 +40,7 @@ import { activateSquadMemberConversation, completeSquadMemberDelivery, createSqu
 import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
+import { admitMainOwnedDispatch } from './plugins/dispatch-admission.js';
 import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
 import { hasLocalThreadWork } from './services/threads/local-thread-work.js';
 import { holdThreadProviderStartup } from './services/threads/thread-provider-catalog.js';
@@ -658,6 +659,14 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
         id: message.id,
         value: await decideMainOwnedToolPolicy(productContext?.plugins, message.request)
+      });
+    }
+    if (message.operation === 'plugins-dispatch-admission') {
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await admitMainOwnedDispatch(productContext ?? undefined, message.request)
       });
     }
     if (message.operation === 'plugins-tool-policy-inventory') {

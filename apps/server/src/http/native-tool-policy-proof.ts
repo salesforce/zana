@@ -12,6 +12,8 @@ export const NATIVE_TOOL_POLICY_PROOF_HEADER = 'x-zcc-native-tool-policy-proof';
 export const NATIVE_TOOL_POLICY_PATH = '/api/v1/native-tool-policy';
 /** Pre-spawn readiness route (OBL-018); main posts an empty signed body, same proof scheme. */
 export const NATIVE_TOOL_POLICY_INVENTORY_PATH = '/api/v1/native-tool-policy-inventory';
+/** PTY dispatch admission route (same proof scheme); main posts the strict request. */
+export const DISPATCH_ADMISSION_PATH = '/api/v1/dispatch-admission';
 /** Covers main's 4 s request timeout with margin; a proof is never reused. */
 export const NATIVE_TOOL_POLICY_PROOF_TTL_MS = 10_000;
 const MAX_USED = 1024;

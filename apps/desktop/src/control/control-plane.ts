@@ -137,7 +137,14 @@ export interface ControlPlaneDeps {
     summarize: boolean
   ) => Promise<{ closed: number; summarized: number; entryId?: string }>;
   /** Inject a line at a session's prompt (the reply() primitive). */
-  replyTerminal: (sessionId: string, text: string) => boolean;
+  /**
+   * Deliver text to a live session. Resolves to a `refused` verdict when plugin
+   * dispatch admission turned the input away, so the caller sees why.
+   */
+  replyTerminal: (
+    sessionId: string,
+    text: string
+  ) => boolean | Promise<boolean | { refused: { code: string; message: string } }>;
   /** Live agent state for a session — drives `run --wait` and `status`. */
   getAgentStatus: (sessionId: string) => AgentState;
   /** True when the session id is a currently-live pty (caller-class attestation). */
@@ -708,7 +715,8 @@ export async function dispatchOp(
       if (text.length > MAX_REPLY) {
         return { ok: false, code: 'BAD_ARGS', message: `text exceeds ${MAX_REPLY} chars` };
       }
-      const accepted = deps.replyTerminal(id, text);
+      const accepted = await deps.replyTerminal(id, text);
+      if (typeof accepted === 'object') return { ok: false, ...accepted.refused };
       if (!accepted) return { ok: false, code: 'NOT_FOUND', message: `session not replyable: ${id}` };
       return { ok: true, value: true };
     }

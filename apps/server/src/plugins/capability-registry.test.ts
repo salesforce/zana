@@ -10,6 +10,13 @@ describe('surface wiring registry', () => {
       expect(capabilities.find(row => row.id === 'tool-after-native')?.available).toBe(false);
     }
   });
+  it.each(['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell', 'unknown'])('advertises PTY message admission only for wired harness %s', harness => {
+    for (const headless of [false, true]) for (const hookBase of [false, true]) {
+      const row = capabilityRegistry.describe({ surface: 'pty', harness, headless, hookBase }).find(item => item.id === 'message-admission');
+      expect(row?.available).toBe(harness !== 'unknown');
+      if (harness === 'unknown') expect(row).toMatchObject({ reason: expect.stringContaining('not wired') });
+    }
+  });
   // Codex is no longer in this list: p0-modern-codex-veto wires its Modern veto.
   it.each(['pi', 'acp', 'acp-opencode', 'acp-cursor', 'spoofed-claude'])('does not infer Modern native hooks for %s', harness => {
     const rows = capabilityRegistry.describe({ surface: 'modern', harness, headless: false, hookBase: true });

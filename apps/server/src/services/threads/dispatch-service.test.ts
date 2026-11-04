@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createConversationThread, createEnvironment, getDispatchAdmissionGeneration, openDatabase, upsertHost } from '@zana-ai/zcc-db';
 import { describe, expect, it, vi } from 'vitest';
-import { admitDispatch } from './dispatch-service.js';
+import { admissionRefusal, admitDispatch } from './dispatch-service.js';
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'zcc-dispatch-service-'));
@@ -16,7 +16,7 @@ function fixture() {
     environmentId: environment.id,
     providerId: 'claude-code'
   });
-  const request = { threadId: thread.id, projectId: 'project' };
+  const request = { threadId: thread.id, projectId: 'project', surface: 'modern', entry: 'reply', origin: 'user' } as const;
   return {
     db,
     request,
@@ -181,6 +181,40 @@ describe('admitDispatch', () => {
       await expect(admitDispatch({ db: f.db, plugins: undefined } as never, f.request)).resolves.toEqual({
         decision: { action: 'proceed' },
         generation: 1
+      });
+    } finally { f.cleanup(); }
+  });
+});
+
+describe('admissionRefusal', () => {
+  it('maps reject, wait and proceed', () => {
+    expect(admissionRefusal({ decision: { action: 'reject', message: 'no' }, generation: 1 })).toEqual({ code: 'dispatch_rejected', message: 'no' });
+    expect(admissionRefusal({ decision: { action: 'wait', reason: 'busy', overrideable: true }, generation: 1 })).toEqual({ code: 'dispatch_waiting', message: 'busy' });
+    expect(admissionRefusal({ decision: { action: 'proceed' }, generation: 1 })).toBeNull();
+  });
+});
+
+describe('admitDispatch without a thread', () => {
+  const pty = { projectId: 'project', sessionId: 's1', surface: 'pty', entry: 'initial', origin: 'system' } as const;
+
+  it('passes the full identity to plugins and does not touch thread admission state', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockResolvedValue({ action: 'wait', reason: 'later', overrideable: true, pluginId: 'p' });
+      const outcome = await admitDispatch(f.ctx(admit), pty);
+      expect(outcome).toEqual({ decision: { action: 'wait', reason: 'later', overrideable: true, pluginId: 'p' }, generation: 1, pluginId: 'p' });
+      expect(admit).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', surface: 'pty', entry: 'initial', origin: 'system', generation: 1 }));
+      expect(getDispatchAdmissionGeneration(f.db, f.request.threadId)).toBeNull();
+      await expect(admitDispatch(f.ctx(vi.fn().mockResolvedValue({ action: 'reject', message: 'no' })), pty)).resolves.toMatchObject({ decision: { action: 'reject' } });
+      await expect(admitDispatch(f.ctx(vi.fn().mockResolvedValue({ action: 'proceed' })), pty)).resolves.toMatchObject({ decision: { action: 'proceed' } });
+    } finally { f.cleanup(); }
+  });
+
+  it('fails closed when a plugin throws', async () => {
+    const f = fixture();
+    try {
+      await expect(admitDispatch(f.ctx(vi.fn().mockRejectedValue(new Error('x'))), pty)).resolves.toEqual({
+        decision: { action: 'reject', message: 'Plugin dispatch admission unavailable' }, generation: 1
       });
     } finally { f.cleanup(); }
   });

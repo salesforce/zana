@@ -74,6 +74,7 @@ export interface IpcCtx {
   inboxSummary: any;
   memoCounters: () => Record<string, import('@zana-ai/zcc-llm').WorkloadMemoCounters>;
   invalidateLlmReuse: () => void;
+  admitPtyDispatch: any;
   isTeamWorkerRestore: any;
   keepAwake: any;
   launchAuthorizedTerminal: any;

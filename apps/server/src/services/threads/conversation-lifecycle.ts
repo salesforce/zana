@@ -95,7 +95,8 @@ import {
   recordThreadExecutionMode
 } from './conversation-plan.js';
 import { applyLoggedConversationLifecycleEvent } from './conversation-lifecycle-outcome.js';
-import { admitDispatch } from './dispatch-service.js';
+import { admissionRefusal, admitDispatch } from './dispatch-service.js';
+import type { DispatchOrigin } from '@zana-ai/zcc-domain';
 import { findOpenConversationTurn } from './conversation-host-recovery.js';
 import {
   ensureConversationThreadIsWritable,
@@ -125,7 +126,7 @@ export async function sendConversationTurn(
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; retainQueuedRow?: boolean } = {}
+  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; origin?: DispatchOrigin; retainQueuedRow?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   return withConversationSend(ctx.db, threadId, lease => sendConversationTurnWithLease(lease, ctx, threadId, input, mode, execution, options));
 }
@@ -145,7 +146,7 @@ async function sendConversationTurnWithLease(
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; retainQueuedRow?: boolean } = {}
+  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; origin?: DispatchOrigin; retainQueuedRow?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -157,7 +158,10 @@ async function sendConversationTurnWithLease(
   if (!options.skipAdmission) {
     const outcome = await admitDispatch(ctx, {
       threadId: live.id,
-      projectId: live.projectId
+      projectId: live.projectId,
+      surface: 'modern',
+      entry: 'reply',
+      origin: options.origin ?? 'user'
     }, () => {
       lease.assertCurrent();
       const current = getConversationThread(ctx.db, threadId);
@@ -749,6 +753,7 @@ export async function forkConversation(
     originPluginId?: string | null;
     agentContextSeed?: unknown[];
     title?: string;
+    origin?: DispatchOrigin;
   }
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
@@ -758,6 +763,16 @@ export async function forkConversation(
   if (!thread.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
+  // A fork starts a new line of work from the source thread. It cannot be held
+  // for later, so a wait is a refusal and nothing is created.
+  const refusal = admissionRefusal(await admitDispatch(ctx, {
+    threadId: thread.id,
+    projectId: thread.projectId,
+    surface: 'modern',
+    entry: 'fork',
+    origin: options?.origin ?? 'user'
+  }));
+  if (refusal) throw new ThreadCreateError(409, refusal.code, refusal.message);
   const forkCapability = getThreadProvider(thread.providerId)?.capabilities.fork;
   resolveConversationForkPoint({
     events: listConversationThreadEvents(ctx.db, thread.id, { omitPayloadTypes: ['turn/diff/updated'] }),

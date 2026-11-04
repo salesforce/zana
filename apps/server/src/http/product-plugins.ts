@@ -270,7 +270,9 @@ export function createAttachedProductPluginService(
         ctx,
         threadId,
         [{ type: 'text', text: prompt, mentions: [], ...(visibility ? { visibility } : {}) }],
-        mode ?? 'start'
+        mode ?? 'start',
+        undefined,
+        { origin: 'system' }
       );
       return { id: thread.id };
     },
@@ -350,7 +352,8 @@ export function createAttachedProductPluginService(
         visibility,
         originPluginId: pluginId,
         agentContextSeed,
-        title
+        title,
+        origin: 'system'
       });
       return { id: thread.id };
     },
@@ -433,6 +436,7 @@ export function createAttachedProductPluginService(
           title: title?.trim() || `Plugin: ${pluginId}`,
           parentThreadId,
           originPluginId: pluginId,
+          origin: 'system',
           ...(visibility ? { visibility } : {}),
           ...(environment ? { environment } : {}),
           ...(hostId ? { hostId } : {}),

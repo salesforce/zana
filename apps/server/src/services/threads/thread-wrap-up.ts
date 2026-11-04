@@ -460,7 +460,7 @@ export function threadWrapUps(ctx: ProductHttpContext): ThreadWrapUpRegistry {
       hasPendingInteraction: (id) => ctx.pendingInteractions.hasPendingThreadInteraction(id),
       hostOnline: (thread) => ctx.hostHub.connectedHostIds?.().includes(thread.hostId) === true,
       getStatus: (id) => getConversationThread(ctx.db, id)?.status,
-      send: (id, text) => sendConversationTurn(ctx, id, [{ type: 'text', text, mentions: [] }], 'queue-if-active'),
+      send: (id, text) => sendConversationTurn(ctx, id, [{ type: 'text', text, mentions: [] }], 'queue-if-active', undefined, { origin: 'system' }),
       subscribe: (listener) => ctx.hub.subscribe('threads:updated', listener),
       messages: (id) => conversationMessageTexts(ctx, id),
       digest: (id) => conversationDigest(ctx, id),

@@ -86,6 +86,6 @@ export async function queueParentSystemMessage(
     return true;
   }
   const { sendConversationTurn } = await import('./conversation-lifecycle.js');
-  await sendConversationTurn(ctx, parentThread.id, args.input, 'auto', undefined, { drain: true });
+  await sendConversationTurn(ctx, parentThread.id, args.input, 'auto', undefined, { drain: true, origin: 'system' });
   return true;
 }

@@ -519,6 +519,17 @@ describe('dispatchOp', () => {
     expect(r).toMatchObject({ ok: false, code: 'NOT_FOUND' });
   });
 
+  it('term.reply surfaces an admission refusal with its code instead of NOT_FOUND', async () => {
+    const deps = makeDeps({ replyTerminal: async () => ({ refused: { code: 'DISPATCH_REJECTED', message: 'blocked by policy' } }) });
+    const r = await dispatchOp('term.reply', { sessionId: 's', text: 'hi' }, deps);
+    expect(r).toEqual({ ok: false, code: 'DISPATCH_REJECTED', message: 'blocked by policy' });
+  });
+
+  it('term.reply accepts an async delivery', async () => {
+    const deps = makeDeps({ replyTerminal: async () => true });
+    expect(await dispatchOp('term.reply', { sessionId: 's', text: 'hi' }, deps)).toEqual({ ok: true, value: true });
+  });
+
   it('term.create rejects an unknown profile before touching the creator', async () => {
     const createTerminal = vi.fn(() => ({ ok: true as const, value: { id: 's' } as any }));
     const deps = makeDeps({ createTerminal });

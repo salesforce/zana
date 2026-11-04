@@ -56,11 +56,27 @@ export type DispatchAdmissionDecision =
   | { action: 'wait'; reason: string; overrideable: boolean; pluginId?: string }
   | { action: 'reject'; message: string };
 
+/** Where the dispatch lands: a Modern thread or a PTY Electron-main owns. */
+export type DispatchSurface = 'pty' | 'modern';
+/** Which input path produced the dispatch. */
+export type DispatchEntry = 'initial' | 'reply' | 'fork' | 'squad-member-start' | 'job-team-dispatch';
+/** Who produced the text: a person, another agent, or Zana itself. */
+export type DispatchOrigin = 'user' | 'agent' | 'system';
+
+/**
+ * Host-owned identity for one dispatch. Names a thread (Modern) or a session
+ * (PTY); a PTY dispatch carries no `threadId` because an unbound PTY is not a
+ * thread, and an initial dispatch may name neither before the target exists.
+ */
 export interface DispatchAdmissionContract {
   dispatchId: string;
-  threadId: string;
+  threadId?: string;
+  sessionId?: string;
   projectId: string;
   generation: number;
+  surface: DispatchSurface;
+  entry: DispatchEntry;
+  origin: DispatchOrigin;
 }
 
 export interface LifecycleEventContract {

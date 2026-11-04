@@ -42,6 +42,16 @@ for (const harness of ['claude-code', 'codex', 'pi', 'acp', 'acp-opencode', 'acp
     capabilityRegistry.register(key, 'interactions', headless ? { available: false, reason: 'Headless interaction presentation is unavailable' } : { available: true });
   }
 }
+// PTY message admission is wired in Electron main for the initial prompt, CLI Agent
+// reply, and Job Team dispatch, and does not depend on the hook base. Raw keystrokes
+// (`term.write`) are not dispatches and stay outside it.
+for (const harness of ['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell']) {
+  for (const headless of [false, true]) {
+    for (const hookBase of [false, true]) {
+      capabilityRegistry.register({ surface: 'pty', harness, headless, hookBase }, 'message-admission', { available: true });
+    }
+  }
+}
 for (const harness of ['claude', 'codex']) {
   for (const headless of [false, true]) {
     const key: CapabilitySurfaceKey = { surface: 'pty', harness, headless, hookBase: true };

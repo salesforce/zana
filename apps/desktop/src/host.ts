@@ -12,6 +12,12 @@ import {
   supervisorToolPolicyDecider,
   warnNativeToolPolicy
 } from './runtime/native-tool-policy.js';
+import {
+  createMainDispatchAdmission,
+  dispatchEntryForPrincipal,
+  dispatchOriginForPrincipal,
+  productRouteDispatchAdmissionDecider
+} from './runtime/dispatch-admission.js';
 import { localMetadataProjects, localProjectPathOptions } from '@zana-ai/zcc-server/services/projects/project-metadata';
 import { invokeSharedProduct } from './ipc/shared-product-registry.js';
 import { createInteractionResponder } from './interaction-proof.js';
@@ -3288,7 +3294,11 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
 
 async function replyToSquadMember(sessionId: string, text: string, correlation?: { assignmentId: string; idempotencyKey: string }): Promise<boolean> {
   const session = ptys.getSession(sessionId);
-  if (session) return ptys.reply(sessionId, text);
+  if (session) {
+    const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'job-team-dispatch', origin: 'system' });
+    if (refusal) return false;
+    return ptys.reply(sessionId, text);
+  }
   const binding = (await teamLifecycle.list()).flatMap(record => record.state === 'active' ? record.workers : [])
     .find(worker => worker.transport === 'MODERN' && worker.threadId === sessionId && worker.bindingState === 'BOUND'
       && worker.process === 'running' && !worker.capacityReleased);
@@ -3319,6 +3329,23 @@ export const nativeToolPolicyHook = createNativeToolPolicyHook({
 const productRouteNativeToolPolicyInventory = productRouteToolPolicyInventory({
   serverUrl: productServerUrl,
   credential: ensureProductServerCredential
+});
+
+const productRouteDispatchAdmission = productRouteDispatchAdmissionDecider({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Plugin dispatch admission for PTY input main forwards (initial prompt, reply,
+ * Job Team task). Same decider order as {@link nativeToolPolicyHook}. Returns
+ * null to proceed or the refusal; unreachable admission refuses. Raw keystrokes
+ * (`term.write`) are not dispatches and are never admitted.
+ */
+export const admitPtyDispatch = createMainDispatchAdmission({
+  supervised: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.admitDispatch(request) : null),
+  productRoute: () => (process.env.ELECTRON_RENDERER_URL ? productRouteDispatchAdmission : null),
+  log: warnNativeToolPolicy
 });
 
 /**
@@ -4543,6 +4570,17 @@ async function launchAuthorizedTerminal(
   const foundProject = projects.find((candidate) => candidate.id === req.projectId);
   if (!foundProject) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
   const project = foundProject;
+  // Opening prompt of a fresh launch: admitted before anything is authorized or spawned.
+  // A restore re-attaches existing work and carries no new dispatch.
+  if (req.prompt?.trim() && !req.resumeSessionId && !spawnOpts?.resume && !spawnOpts?.reconnectTmuxId
+    && !spawnOpts?.preallocatedSessionId) {
+    const refusal = await admitPtyDispatch({
+      projectId: project.id,
+      entry: dispatchEntryForPrincipal(principal),
+      origin: dispatchOriginForPrincipal(principal)
+    });
+    if (refusal) return { ok: false, code: refusal.code, message: refusal.message };
+  }
   if (project.remote) await refreshRemoteStartPathHosts(productServerUrl());
   const config = store.getConfig();
   const personaSnapshot = personas.list();
@@ -8172,6 +8210,7 @@ function registerIpc() {
     get invalidateLlmReuse() { return invalidateLlmReuse; },
     get isTeamWorkerRestore() { return isTeamWorkerRestore; },
     get keepAwake() { return keepAwake; },
+    get admitPtyDispatch() { return admitPtyDispatch; },
     get launchAuthorizedTerminal() { return launchAuthorizedTerminal; },
     get launchAutonomousTeam() { return launchAutonomousTeam; },
     get launchTeam() { return launchTeam; },
@@ -10028,7 +10067,12 @@ async function bootstrapNormal() {
     // Close-idle action uses — one summarize-then-close path for every surface.
     summarizeAndCloseTerminals: (projectId, sessionIds, summarize) =>
       closeSummary.summarizeAndClose(projectId, sessionIds, { summarize }),
-    replyTerminal: (sessionId, text) => ptys.reply(sessionId, text),
+    replyTerminal: async (sessionId, text) => {
+      const session = ptys.getSession(sessionId);
+      if (!session) return ptys.reply(sessionId, text);
+      const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'reply', origin: 'user' });
+      return refusal ? { refused: refusal } : ptys.reply(sessionId, text);
+    },
     getAgentStatus: (sessionId) => agentStatus.get(sessionId),
     isLiveSession: (sessionId) => ptys.getSession(sessionId) !== null,
     // App-attested orchestrator gate: a session is promoted past agent-class

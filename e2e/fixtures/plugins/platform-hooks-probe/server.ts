@@ -67,7 +67,16 @@ export default function plugin(zcc: ZccPluginApi) {
   zcc.log.info('platform-hooks-probe loaded');
 
   let dispatchSelection: DispatchSelection = { kind: 'proceed' };
-  let dispatchEvents: Array<{ dispatchId: string; generation: number; decision: DispatchAdmissionDecision }> = [];
+  let dispatchEvents: Array<{
+    dispatchId: string;
+    generation: number;
+    decision: DispatchAdmissionDecision;
+    surface?: string;
+    entry?: string;
+    origin?: string;
+    sessionId?: string;
+    threadId?: string;
+  }> = [];
   let toolPolicySelection: ToolPolicySelection = 'allow';
   let toolPolicyDenyReason = DEFAULT_TOOL_POLICY_DENY_REASON;
   let toolPolicyEvents: ToolPolicyEventRow[] = [];
@@ -219,7 +228,12 @@ export default function plugin(zcc: ZccPluginApi) {
     const event = {
       dispatchId: request.dispatchId,
       generation: request.generation,
-      decision
+      decision,
+      surface: request.surface,
+      entry: request.entry,
+      origin: request.origin,
+      ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+      ...(request.threadId ? { threadId: request.threadId } : {})
     };
     dispatchEvents = [...dispatchEvents, event].slice(-DISPATCH_EVENTS_MAX);
     zcc.realtime.publish('hooks-probe-dispatch-event', event);

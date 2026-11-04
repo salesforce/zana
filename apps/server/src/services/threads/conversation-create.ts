@@ -77,6 +77,8 @@ import {
 } from './conversation-execution-mode.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import { recordThreadExecutionMode } from './conversation-plan.js';
+import { admissionRefusal, admitDispatch } from './dispatch-service.js';
+import type { DispatchOrigin } from '@zana-ai/zcc-domain';
 import { persistConversationPluginMetadataSeed } from './conversation-plugin-metadata.js';
 import { realpath } from 'node:fs/promises';
 
@@ -107,6 +109,8 @@ export interface CreateConversationInput {
   originPluginId?: string | null;
   pluginMetadata?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
   automatedSkillIds?: string[];
+  /** Who produced the opening prompt; absent means a person. */
+  origin?: DispatchOrigin;
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -365,6 +369,17 @@ export async function createConversationFromRequest(
   }
 
   let project = requireProject(ctx, input.projectId);
+  // Main-authorized creates are squad member starts, admitted by their own entry.
+  // A create cannot be held for later, so a wait is a refusal and nothing is created.
+  if (!authorizedContext) {
+    const refusal = admissionRefusal(await admitDispatch(ctx, {
+      projectId: project.id,
+      surface: 'modern',
+      entry: 'initial',
+      origin: input.origin ?? 'user'
+    }));
+    if (refusal) throw new ThreadCreateError(409, refusal.code, refusal.message);
+  }
   const boundRemote = boundRemoteHostId(project);
   if (boundRemote === null) {
     throw new ThreadCreateError(409, REMOTE_HOST_DAEMON_REQUIRED, REMOTE_HOST_DAEMON_REQUIRED_MESSAGE);
