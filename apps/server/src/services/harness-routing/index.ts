@@ -94,6 +94,7 @@ export const HARNESS_ROUTING_MIGRATION_INVENTORY: readonly HarnessRoutingMigrati
   ...entries('personas', 'already-canonical', 'Retain current canonical portable and adapter-scoped persona intent', [
     'modelLevel', 'executionState', 'harnessRouting'
   ]),
+  ...entries('personas', 'already-canonical', 'Retain portable persona reasoning effort unchanged', ['reasoningLevel']),
   ...entries('personas', 'already-canonical', 'Retain portable persona facet unchanged', [
     'appendSystemPrompt', 'allowedTools', 'deniedTools', 'addDirs'
   ]),

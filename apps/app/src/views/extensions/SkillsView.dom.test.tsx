@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   native: vi.fn(),
@@ -209,4 +209,50 @@ it('filters by harness and load state; shared ZCC skills appear under every harn
   await waitFor(() => expect(screen.queryByText('review')).toBeNull());
   expect(screen.getByText('lint')).toBeTruthy();
   expect(screen.queryByText('gus-work')).toBeNull();
+});
+const fm = (harness: string, path: string, line: number) =>
+  `${harness}: Invalid frontmatter in ${path} (line ${line}): bad yaml`;
+const withDiagnostics = (diagnostics: string[]) =>
+  state.native.mockResolvedValue({ skills: [skill], diagnostics });
+it('renders one in-flow status entry for the same file reported by three harnesses', async () => {
+  withDiagnostics([fm('Claude Code', '/a/SKILL.md', 2), fm('Codex', '/a/SKILL.md', 3), fm('OpenCode', '/a/SKILL.md', 4)]);
+  render(<SkillsBody />);
+  const status = await screen.findByRole('status');
+  expect(status.className).toBe('skills-discovery-notes');
+  expect(status.querySelectorAll('li')).toHaveLength(1);
+  expect(status.textContent).not.toContain('Codex:');
+});
+it('renders two entries for two different files', async () => {
+  withDiagnostics([fm('Claude Code', '/a/SKILL.md', 2), fm('Codex', '/b/SKILL.md', 2)]);
+  render(<SkillsBody />);
+  expect((await screen.findByRole('status')).querySelectorAll('li')).toHaveLength(2);
+});
+it('caps at three entries with an N more expander', async () => {
+  withDiagnostics([1, 2, 3, 4, 5].map((i) => fm('Codex', `/s${i}/SKILL.md`, 1)));
+  render(<SkillsBody />);
+  const status = await screen.findByRole('status');
+  expect(status.querySelectorAll('li')).toHaveLength(3);
+  fireEvent.click(screen.getByRole('button', { name: '2 more' }));
+  expect(status.querySelectorAll('li')).toHaveLength(5);
+  expect(screen.queryByRole('button', { name: '2 more' })).toBeNull();
+});
+it('dismisses the notice and re-shows it when a new diagnostic appears', async () => {
+  withDiagnostics([fm('Codex', '/a/SKILL.md', 1)]);
+  render(<SkillsBody />);
+  await screen.findByRole('status');
+  fireEvent.click(within(screen.getByRole('status')).getByRole('button', { name: 'Dismiss' }));
+  expect(screen.queryByRole('status')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh skills', exact: true }));
+  await screen.findByText('grill-me').catch(() => undefined);
+  await waitFor(() => expect(state.native).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole('status')).toBeNull();
+  withDiagnostics([fm('Codex', '/a/SKILL.md', 1), fm('Codex', '/new/SKILL.md', 1)]);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh skills', exact: true }));
+  const status = await screen.findByRole('status');
+  expect(status.querySelectorAll('li')).toHaveLength(2);
+});
+it('renders no notice without diagnostics', async () => {
+  render(<SkillsBody />);
+  await screen.findByText('grill-me');
+  expect(screen.queryByRole('status')).toBeNull();
 });

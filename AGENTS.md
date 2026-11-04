@@ -42,6 +42,7 @@ Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enable
 - Never use `TINYNOD_SKIP_HOOK` to hide findings. It skips TinyNod only; Zana verification still runs.
 - The full pre-hook skip is a separate permission. If used, list every skipped gate (Zana verification and TinyNod).
 - Never run `tinynod hooks install` or change global `core.hooksPath`; Zana owns `.githooks`.
+- To exercise the pre-push hook or the TinyNod adapter without pushing, follow "Test the hook without pushing" in the guide. Do not read, print, or curl with the TinyNod key; the hook reads its own config.
 
 ## Product Design Rules
 

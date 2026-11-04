@@ -1,0 +1,63 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+import { PersonaEditor } from '../PersonaEditor.js';
+
+// Static-markup coverage of the Reasoning effort picker (#584). The save and
+// clear round trip needs a live click: PersonaEditor.reasoning-save.test.tsx
+// covers the save payload, and the built-app E2E covers the full flow
+// (e2e/persona-reasoning-effort.spec.ts).
+const edit = (persona: Parameters<typeof PersonaEditor>[0]['persona']) =>
+  renderToStaticMarkup(<PersonaEditor persona={persona} mode="edit" onClose={() => {}} />);
+
+describe('PersonaEditor reasoning effort (REQ-8)', () => {
+  it('shows the picker for a new persona with no base profile', () => {
+    const html = edit(null);
+    expect(html).toContain('Reasoning effort');
+    expect(html).toContain('id="persona-reasoning-effort"');
+  });
+
+  it('shows the picker for a neutral persona and a Claude-pinned persona', () => {
+    expect(edit({ id: 'n', name: 'N', source: 'user' })).toContain('id="persona-reasoning-effort"');
+    expect(edit({ id: 'c', name: 'C', source: 'user', baseProfile: 'claude' })).toContain('id="persona-reasoning-effort"');
+    expect(edit({ id: 'y', name: 'Y', source: 'user', baseProfile: 'claude-yolo' })).toContain('id="persona-reasoning-effort"');
+  });
+
+  it('shows the picker for a persona pinned to another agent harness (each maps it itself)', () => {
+    for (const baseProfile of ['codex', 'opencode', 'cursor', 'pi', 'grok'] as const) {
+      expect(edit({ id: baseProfile, name: 'H', source: 'user', baseProfile }), baseProfile).toContain('id="persona-reasoning-effort"');
+    }
+  });
+
+  it('hides the picker for a shell persona', () => {
+    expect(edit({ id: 's', name: 'S', source: 'user', baseProfile: 'shell' })).not.toContain('Reasoning effort');
+  });
+
+  it('explains what the setting does in plain words', () => {
+    const html = edit({ id: 'n', name: 'N', source: 'user' });
+    expect(html).toContain('Sets how hard the agent thinks. Claude, Codex, PI and Grok take it at launch; in a Squad, OpenCode and Cursor use their closest level. Agents with no reasoning setting ignore it.');
+  });
+
+  it('preselects the saved level', () => {
+    const html = edit({ id: 'n', name: 'N', source: 'user', reasoningLevel: 'xhigh' });
+    expect(html).toContain('Extra-high');
+  });
+
+  it('shows the default label when no level is saved', () => {
+    const html = edit({ id: 'n', name: 'N', source: 'user' });
+    const start = html.indexOf('id="persona-reasoning-effort"');
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(html.slice(start, start + 600)).toContain('Use harness default (unset)');
+  });
+
+  it('adds a read-only line in the details view only when a level is set', () => {
+    const withLevel = renderToStaticMarkup(
+      <PersonaEditor persona={{ id: 'v', name: 'V', source: 'builtin', reasoningLevel: 'high' }} mode="view" onClose={() => {}} />
+    );
+    const without = renderToStaticMarkup(
+      <PersonaEditor persona={{ id: 'w', name: 'W', source: 'builtin' }} mode="view" onClose={() => {}} />
+    );
+    expect(withLevel).toContain('Reasoning effort');
+    expect(withLevel).toContain('High');
+    expect(without).not.toContain('Reasoning effort');
+  });
+});

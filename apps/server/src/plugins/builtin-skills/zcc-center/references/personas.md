@@ -18,4 +18,4 @@ Personas are reusable launch flag bundles, not runtimes. Store in `~/.zcc/person
 }
 ```
 
-Required fields: `id`, `name`. `baseProfile`: `claude`, `claude-resume`, `claude-yolo`, or `shell`. `model`: `opus`, `sonnet`, `haiku`, or `default`. `permissionMode`: `default`, `acceptEdits`, `plan`, or `bypassPermissions`; ignored for `claude-yolo`. `initialPrompt` is Claude-only. Invalid JSON or invalid enum is silently skipped. Matching `builtin:*` ID shadows built-in persona.
+Required fields: `id`, `name`. `baseProfile`: `claude`, `claude-resume`, `claude-yolo`, or `shell`. `model`: `opus`, `sonnet`, `haiku`, or `default`. `permissionMode`: `default`, `acceptEdits`, `plan`, or `bypassPermissions`; ignored for `claude-yolo`. `reasoningLevel` (optional): `low`, `medium`, `high`, `xhigh`, or `max`. Each harness maps it: Claude `--effort`, Codex `model_reasoning_effort`, PI `--thinking`, Grok `--reasoning-effort` (xhigh/max become high); OpenCode and Cursor use it only in Modern Squads; any other value skips the persona. `initialPrompt` is Claude-only. Invalid JSON or invalid enum is silently skipped. Matching `builtin:*` ID shadows built-in persona.

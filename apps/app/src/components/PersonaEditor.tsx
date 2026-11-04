@@ -2,7 +2,7 @@ import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult, HarnessRoleTarget } from '@zana-ai/zcc-domain/harness-adapter';
-import type { HarnessFamily, LaunchProfileId, Persona, PersonaInput } from '@zana-ai/zcc-domain/product';
+import { PERSONA_REASONING_LEVELS, type HarnessFamily, type LaunchProfileId, type Persona, type PersonaInput, type PersonaReasoningLevel } from '@zana-ai/zcc-domain/product';
 import {
   harnessFamilyOf,
   profileLabel,
@@ -446,6 +446,9 @@ function PersonaDetail({
           {persona.modelLevel && (
             <PersonaField label="Model level" value={persona.modelLevel} />
           )}
+          {persona.reasoningLevel && (
+            <PersonaField label="Reasoning effort" value={REASONING_LEVEL_LABELS[persona.reasoningLevel]} />
+          )}
           {persona.executionState && (
             <PersonaField label="Execution state" value={persona.executionState} />
           )}
@@ -512,6 +515,15 @@ function PersonaField({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Picker labels; typed as a Record so adding a level to the tuple fails typecheck here. */
+const REASONING_LEVEL_LABELS: Record<PersonaReasoningLevel, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra-high',
+  max: 'Max'
+};
+
 /** The create/edit form. */
 function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null; projectId?: string; onClose: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
@@ -527,6 +539,8 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
   const [description, setDescription] = useState(persona?.description ?? '');
   const [baseProfile, setBaseProfile] = useState<LaunchProfileId | ''>(persona?.baseProfile ?? '');
   const [modelLevel, setModelLevel] = useState<string>(persona?.modelLevel ?? 'default');
+  const [reasoningLevel, setReasoningLevel] = useState<string>(persona?.reasoningLevel ?? 'default');
+  const showReasoning = baseProfile === '' || harnessFamilyOf(baseProfile) !== null;
   const [executionState, setExecutionState] = useState<string>(persona?.executionState ?? 'default');
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [harnessRouting, setHarnessRouting] = useState<PersonaRouting>(
@@ -596,6 +610,10 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
       description: description.trim() || undefined,
       baseProfile: baseProfile || undefined,
       modelLevel: !baseProfile && modelLevel !== 'default' ? modelLevel as any : undefined,
+      // Reasoning effort is saved for a neutral persona or one pinned to an agent
+      // harness (each maps it to its own setting); a shell persona drops it.
+      // 'default' clears it.
+      reasoningLevel: showReasoning && reasoningLevel !== 'default' ? (reasoningLevel as PersonaReasoningLevel) : undefined,
       executionState: !baseProfile && executionState !== 'default' ? executionState as any : undefined,
       // Structured controls replace legacy routing fields. Keeping old values
       // here makes a profile change silently route through hidden stale state.
@@ -775,6 +793,24 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
           <StencilForm label={`Loading ${profileLabel(baseProfile as LaunchProfileId)} settings`} />
         )}
         </div>
+
+        {showReasoning && (
+          <div className="scheduler-form-field">
+            <label htmlFor="persona-reasoning-effort">Reasoning effort</label>
+            <PopoverPicklist
+              id="persona-reasoning-effort"
+              value={reasoningLevel}
+              ariaLabel="Reasoning effort"
+              searchable={false}
+              onChange={setReasoningLevel}
+              options={[
+                { value: 'default', label: 'Use harness default (unset)' },
+                ...PERSONA_REASONING_LEVELS.map((level) => ({ value: level, label: REASONING_LEVEL_LABELS[level] }))
+              ]}
+            />
+            <p className="settings-help persona-form-hint">Sets how hard the agent thinks. Claude, Codex, PI and Grok take it at launch; in a Squad, OpenCode and Cursor use their closest level. Agents with no reasoning setting ignore it.</p>
+          </div>
+        )}
 
         {!baseProfile && (
           <p className="settings-help persona-form-hint">

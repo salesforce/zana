@@ -100,7 +100,7 @@ import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
 import { teamRunNamerInput } from './team-run-title.js';
 import { MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, harnessFamilyOf, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
-import { canonicalThreadProviderId, getThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
+import { canonicalThreadProviderId, getThreadProvider, personaEffortForProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
@@ -5847,7 +5847,7 @@ export async function launchTeam(
   if (expectedSlots.length > runLimit) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${runLimit}` };
   }
-  const modernSlots = new Map<string, { providerId: string; model?: string; permissionMode?: 'accept-edits' | 'auto' | 'full'; systemPrompt?: string }>();
+  const modernSlots = new Map<string, { providerId: string; model?: string; reasoningLevel?: Persona['reasoningLevel']; permissionMode?: 'accept-edits' | 'auto' | 'full'; systemPrompt?: string }>();
   let modernHostId: string | undefined;
   if (team.transport === 'MODERN') {
     try {
@@ -5874,7 +5874,7 @@ export async function launchTeam(
         const permissionMode = unrestricted || persona.permissionMode === 'bypassPermissions' ? 'full' as const
           : wantsAuto && supportsAuto ? 'auto' as const : 'accept-edits' as const;
         modernSlots.set(slot.slotId, { providerId,
-          model: resolveModelTarget(provider, input).targetId, permissionMode, systemPrompt: persona.appendSystemPrompt });
+          model: resolveModelTarget(provider, input).targetId, reasoningLevel: personaEffortForProvider(providerId, persona.reasoningLevel), permissionMode, systemPrompt: persona.appendSystemPrompt });
       }
       const preflight = await squadRuntime().preflightSquadRuntime({ projectId: targetProjectId,
         ...(project.hostId ? { hostId: project.hostId } : {}), providerIds: [...new Set([...modernSlots.values()].map(slot => slot.providerId))],
@@ -6003,7 +6003,7 @@ export async function launchTeam(
           modernContext: { teamId: team.id, cohortId, role: expectedSlot.role, projectId: targetProjectId,
             hostId: modernHostId!, providerId: selected.providerId, worktreePath: effective.cwd,
             ...(structured?.executionId ? { executionId: structured.executionId } : {}),
-            personaSnapshot: { id: personaId, profile: profileFor(personaId), model: selected.model,
+            personaSnapshot: { id: personaId, profile: profileFor(personaId), model: selected.model, reasoningLevel: selected.reasoningLevel,
               permissionMode: selected.permissionMode, systemPrompt: selected.systemPrompt } }
         });
         teamLifecycleIntegration.track(record);
@@ -6072,7 +6072,7 @@ export async function launchTeam(
         const runtimeRequest = { bindingId: reservation.threadId, generation: reservation.generation,
           projectId: targetProjectId, teamId: team.id, cohortId, hostId: modernHostId!, providerId: selected.providerId,
           role: expectedSlot.role, worktreePath: effective.cwd, executionId: structured?.executionId,
-          model: selected.model, permissionMode: selected.permissionMode,
+          model: selected.model, reasoningLevel: selected.reasoningLevel, permissionMode: selected.permissionMode,
           automatedSkillIds: structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds,
           prompt: [selected.systemPrompt, !durableCoordination ? personaSnapshot.find(persona => persona.id === personaId)?.initialPrompt : undefined,
              request.prompt ?? 'Await squad instructions.'].filter(Boolean).join('\n\n'), title: (request.title ?? personaName(personaId)).slice(0, 120) };

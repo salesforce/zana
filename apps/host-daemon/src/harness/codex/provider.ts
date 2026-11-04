@@ -547,7 +547,12 @@ export class CodexProvider extends BaseLaunchProvider {
     // otherwise conflict with the bypass), keeping only `-m`. Parity with how
     // claude-yolo drops `--permission-mode`.
     const modelValue = persona.model || persona.harnessRouting?.byAdapter?.codex?.modelTargetId || persona.harnessRouting?.byAdapter?.codex?.compatibility?.model;
-    return codexOptionArgs(modelValue, undefined, undefined);
+    // Persona reasoning effort → codex's `model_reasoning_effort` config key
+    // (the same key the Codex thread provider sets). The persona levels are a
+    // subset of codex's, so the value passes through unchanged. `-c` is a global
+    // option, valid before or after `resume`. Absent = no flag.
+    const effort = persona.reasoningLevel ? ['-c', `model_reasoning_effort=${tomlValue(persona.reasoningLevel)}`] : [];
+    return [...codexOptionArgs(modelValue, undefined, undefined), ...effort];
   }
 
   /** Project-settings twin of {@link personaArgs}; same codex flag dialect. */
