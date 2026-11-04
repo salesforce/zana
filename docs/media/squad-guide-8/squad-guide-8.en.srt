@@ -1,0 +1,39 @@
+1
+00:00:00,600 --> 00:00:02,002
+Give a Squad an aim.
+
+2
+00:00:03,000 --> 00:00:05,121
+Judged after every iteration.
+
+3
+00:00:05,800 --> 00:00:07,768
+The outcome lands in your Inbox.
+
+4
+00:00:10,802 --> 00:00:20,541
+A Goal is an aim the app keeps working toward, one iteration at a time, until it is met or the app gives up. Open Goals and press New goal.
+
+5
+00:00:20,842 --> 00:00:28,262
+Set Run as to Squad, and write the plan or prompt. Then choose the Squad, the Project, and Squad planning.
+
+6
+00:00:28,564 --> 00:00:38,185
+Max iterations is a hard ceiling on how many times the Goal runs. The no-progress limit is how many stalled rounds pass before it escalates to you.
+
+7
+00:00:38,485 --> 00:00:46,731
+Each iteration runs as a durable Squad job. After each one, the app judges the result and decides whether to go again.
+
+8
+00:00:47,618 --> 00:00:53,890
+When the Goal ends, its outcome appears in your Inbox, titled Goal, followed by its name.
+
+9
+00:00:54,191 --> 00:00:56,797
+A Goal keeps going until the aim is met.
+
+10
+00:00:57,797 --> 00:01:00,925
+Next: build your own Persona and Squad.

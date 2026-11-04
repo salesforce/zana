@@ -1,0 +1,37 @@
+[
+  {
+    "id": "intro",
+    "caption": "Built-in Squads",
+    "line": "These are starting points for common jobs, so you can begin without building anything."
+  },
+  {
+    "id": "debug",
+    "caption": "Debug: find the cause of a failure",
+    "line": "The Debug Squad is for finding the cause of a failure."
+  },
+  {
+    "id": "delivery",
+    "caption": "Delivery: a change, built and reviewed",
+    "line": "The Delivery Squad is for making a change that gets reviewed."
+  },
+  {
+    "id": "design",
+    "caption": "Design: a design that gets challenged",
+    "line": "The Design Squad is for a technical design that gets challenged."
+  },
+  {
+    "id": "research",
+    "caption": "Research: compare options, survey code",
+    "line": "The Research Squad is for comparing options or surveying code."
+  },
+  {
+    "id": "review",
+    "caption": "Review: a focused review of a diff",
+    "line": "The Review Squad is for a focused review of a diff or branch."
+  },
+  {
+    "id": "close",
+    "caption": "Use them, edit them, or make your own",
+    "line": "Use them as they are. Once you understand Squads, edit them or make your own."
+  }
+]

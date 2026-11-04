@@ -1,0 +1,141 @@
+<!doctype html>
+<!-- Squad guide opener/closer card, designed at 1920 x 1080 and scaled to the video size.
+     Deterministic: render(t) draws second t; card.cjs captures it frame by frame.
+     Query: mode=opener|closer, cfg=<video.json as JSON>, app=<image>, vo=<seconds,...> (spoken length per line).
+     Same visual language as docs/media/squads/intro.html: light grid backdrop, Zana mark, Squad members, app rising. -->
+<html><head><meta charset="utf-8">
+<style>
+  :root { --ink: #111827; --muted: #5b6475; --blue: #2563eb; --sans: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100vw; height: 100vh; overflow: hidden; background: #eef2f9; }
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden; font-family: var(--sans); color: var(--ink); }
+  #bg { position: absolute; inset: 0; background: linear-gradient(160deg, #f4f7fc 0%, #e9eef8 55%, #eae8f8 100%); overflow: hidden; }
+  .glow { position: absolute; width: 900px; height: 900px; border-radius: 50%; filter: blur(110px); opacity: .55; }
+  #grid { position: absolute; inset: -100px; background-image: linear-gradient(rgba(37,99,235,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(37,99,235,.05) 1px, transparent 1px); background-size: 64px 64px; }
+  #squad { position: absolute; left: 960px; top: 300px; width: 300px; height: 300px; margin: -150px 0 0 -150px; }
+  #squad svg { width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 18px 38px rgba(30,41,80,.28)); }
+  #headline { position: absolute; left: 160px; right: 160px; top: 500px; text-align: center; font-size: 112px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.08; }
+  #headline .w { display: inline-block; padding: 0 6px; }
+  #headline .w.hl { background: linear-gradient(120deg, #3b82f6, #8b5cf6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #subline { position: absolute; left: 160px; right: 160px; top: 760px; text-align: center; font-size: 34px; font-weight: 500; color: var(--muted); }
+  #chips { position: absolute; left: 160px; right: 160px; top: 840px; display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; }
+  .chip { padding: 12px 24px; border-radius: 999px; background: #fff; box-shadow: 0 10px 26px rgba(30,41,80,.14), 0 0 0 1px rgba(15,23,42,.07); font-size: 26px; font-weight: 700; color: #1f2937; white-space: nowrap; }
+  #version { position: absolute; left: 0; right: 0; bottom: 60px; text-align: center; font-size: 22px; color: var(--muted); }
+  #win { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden; background: #111 center / cover no-repeat;
+         box-shadow: 0 2px 6px rgba(15,23,42,.08), 0 30px 80px rgba(30,41,80,.28), 0 0 0 1px rgba(15,23,42,.08); }
+  #caption { position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%); padding: 14px 28px; border-radius: 16px; background: rgba(17,24,39,.8); color: #fff; font-size: 30px; line-height: 1.3; font-weight: 500; text-align: center; opacity: 0; width: max-content; max-width: 1450px; }
+  #white { position: absolute; inset: 0; background: #f4f7fc; pointer-events: none; }
+</style></head>
+<body>
+<div id="stage">
+  <div id="bg"><div class="glow" id="glow1" style="background:#bfe3ff"></div><div class="glow" id="glow2" style="background:#d6ccff"></div><div id="grid"></div></div>
+  <div id="squad">
+    <!-- Squad icon: a crowned orchestrator linked to three workers -->
+    <svg viewBox="0 0 300 300" aria-hidden="true">
+      <g stroke="rgba(59,130,246,.55)" stroke-width="4" stroke-dasharray="8 9" fill="none" id="sq-links">
+        <path d="M150 105 L60 215"/><path d="M150 105 L150 235"/><path d="M150 105 L240 215"/>
+      </g>
+      <g id="sq-nodes">
+        <circle cx="150" cy="85" r="46" fill="#f5b83d"/><path d="M122 80 l10 -22 l18 16 l18 -16 l10 22 z" fill="#241a00"/>
+        <circle cx="60" cy="225" r="34" fill="#3b82f6"/><circle cx="150" cy="245" r="34" fill="#3b82f6"/><circle cx="240" cy="225" r="34" fill="#8b5cf6"/>
+      </g>
+    </svg>
+  </div>
+  <div id="headline"></div>
+  <div id="subline"></div>
+  <div id="chips"></div>
+  <div id="version"></div>
+  <div id="win"></div>
+  <div id="caption"></div>
+  <div id="white"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const p = (t, s, e) => clamp((t - s) / (e - s));
+const lerp = (a, b, k) => a + (b - a) * k;
+const eOut = (x) => 1 - Math.pow(1 - clamp(x), 3);
+const eIO = (x) => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const eBack = (x) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const set = (el, o, tr) => { el.style.opacity = o; if (tr !== undefined) el.style.transform = tr; el.style.visibility = o <= 0.001 ? 'hidden' : 'visible'; };
+
+const params = new URLSearchParams(location.search);
+const CFG = JSON.parse(params.get('cfg') || '{}');
+const MODE = params.get('mode') === 'closer' ? 'closer' : 'opener';
+const CARD = (MODE === 'closer' ? CFG.closer : CFG.opener) || {};
+$('win').style.backgroundImage = `url("${params.get('app') || ''}")`;
+// Scale the 1920 x 1080 design to the video size.
+const SCALE = innerWidth / 1920;
+$('stage').style.transform = `scale(${SCALE})`;
+
+// Voice-over cues. Opener: CARD.lines [{at, text}]. Closer: one line starting at 0.6 s.
+const VO = MODE === 'closer'
+  ? (CARD.line ? [[0.6, 3, CARD.line]] : [])
+  : (CARD.lines || []).map((l) => [l.at, 3, l.text]);
+(params.get('vo') || '').split(',').filter(Boolean).forEach((d, i) => { if (VO[i]) VO[i][1] = Number(d); });
+const DURATION = CARD.duration || 8;
+const REVEAL = MODE === 'closer' ? 0 : (CARD.revealAt || DURATION - 3);
+window.TIMING = { VO, DURATION, MODE };
+
+// Headline: last word gradient-highlighted.
+const words = String(CARD.headline || '').split(/\s+/).filter(Boolean);
+$('headline').innerHTML = words.map((w, i) => `<span class="w${i === words.length - 1 ? ' hl' : ''}"></span>`).join(' ');
+document.querySelectorAll('#headline .w').forEach((el, i) => { el.textContent = words[i]; });
+$('subline').textContent = CARD.subline || '';
+$('chips').innerHTML = '';
+(CARD.chips || []).forEach((c) => { const el = document.createElement('div'); el.className = 'chip'; el.textContent = c; $('chips').appendChild(el); });
+$('version').textContent = MODE === 'closer' && CFG.version ? `Recorded on Zana ${CFG.version}` : '';
+
+function render(t) {
+  $('glow1').style.transform = `translate(${-200 + Math.sin(t * 0.3) * 120}px, ${-300 + Math.cos(t * 0.25) * 80}px)`;
+  $('glow2').style.transform = `translate(${1250 + Math.cos(t * 0.27) * 140}px, ${560 + Math.sin(t * 0.33) * 90}px)`;
+  $('grid').style.transform = `translate(${(t * 8) % 64}px, ${(t * 5) % 64}px)`;
+
+  // Card content: opener builds up then hands to the app at REVEAL; closer builds in after the app shrinks away.
+  const base = MODE === 'closer' ? 0.5 : 0.2;
+  const out = MODE === 'closer' ? 0 : eIO(p(t, REVEAL, REVEAL + 0.8));
+  const sq = eBack(p(t, base, base + 0.7));
+  set($('squad'), p(t, base, base + 0.25) * (1 - out), `translateY(${-out * 90}px) scale(${lerp(0.5, 1, sq)}) rotate(${lerp(-10, 0, sq)}deg)`);
+  document.querySelectorAll('#sq-nodes circle, #sq-nodes path').forEach((n, i) => { n.style.opacity = clamp((t - base - 0.2 - i * 0.07) / 0.3); });
+  $('sq-links').style.strokeDashoffset = -t * 18;
+  document.querySelectorAll('#headline .w').forEach((el, i) => {
+    const k = eOut(p(t, base + 0.5 + i * 0.12, base + 0.95 + i * 0.12));
+    el.style.opacity = k * (1 - out); el.style.transform = `translateY(${(1 - k) * 30 - out * 70}px)`;
+  });
+  const sk = eOut(p(t, base + 1.0, base + 1.5)); set($('subline'), sk * (1 - out), `translateY(${(1 - sk) * 16 - out * 60}px)`);
+  document.querySelectorAll('.chip').forEach((el, i) => {
+    const at = base + 1.4 + i * 0.18, k = eBack(p(t, at, at + 0.5));
+    set(el, p(t, at, at + 0.2) * (1 - out), `scale(${lerp(0.5, 1, k)}) translateY(${-out * 50}px)`);
+  });
+  set($('version'), eOut(p(t, base + 1.8, base + 2.3)) * (1 - out));
+
+  // App window: opener rises and fills from REVEAL; closer starts full frame and shrinks away.
+  const win = $('win');
+  if (MODE === 'opener') {
+    const rise = eOut(p(t, REVEAL, REVEAL + 0.8)), fill = eIO(p(t, REVEAL + 0.4, DURATION - 0.05));
+    if (rise <= 0) win.style.display = 'none';
+    else {
+      const sc = lerp(0.74, 1, fill);
+      win.style.display = 'block'; win.style.opacity = clamp(rise * 1.6);
+      win.style.transform = `translate(${(1920 - 1920 * sc) / 2}px, ${(1080 - 1080 * sc) / 2 + (1 - rise) * 260}px) scale(${sc})`;
+      win.style.borderRadius = `${lerp(20, 0, fill) / sc}px`;
+    }
+  } else {
+    const gone = eIO(p(t, 0.1, 0.9));
+    if (gone >= 1) win.style.display = 'none';
+    else {
+      const sc = lerp(1, 0.6, gone);
+      win.style.display = 'block'; win.style.opacity = 1 - clamp((gone - 0.5) * 2);
+      win.style.transform = `translate(${(1920 - 1920 * sc) / 2}px, ${(1080 - 1080 * sc) / 2 - gone * 120}px) scale(${sc})`;
+      win.style.borderRadius = `${lerp(0, 20, gone) / sc}px`;
+    }
+  }
+  const cap = $('caption'), v = VO.find(([a, d]) => t >= a - 0.1 && t < a + d + 0.35);
+  if (v) { if (cap.textContent !== v[2]) cap.textContent = v[2]; cap.style.opacity = p(t, v[0] - 0.1, v[0] + 0.12) * (1 - p(t, v[0] + v[1] + 0.15, v[0] + v[1] + 0.35)); } else cap.style.opacity = 0;
+  $('white').style.opacity = MODE === 'opener' ? 1 - p(t, 0, 0.35) : 0;
+}
+window.render = render;
+render(0);
+</script>
+</body></html>
