@@ -36108,12 +36108,6 @@ body.split-frame-guard webview {
   width: 100%;
 }
 
-/* Message actions extend below their row and must stay above the next sticky prompt. */
-.thread-timeline-item:hover,
-.thread-timeline-item:focus-within {
-  z-index: 5;
-}
-
 .thread-timeline-item.is-user,
 .thread-timeline-item.is-assistant {
   align-items: flex-start;
@@ -36266,6 +36260,9 @@ body.split-frame-guard webview {
 }
 
 .thread-timeline-bubble {
+  /* Contain embedded message layers while allowing sibling action buttons
+     to stay above the next pinned prompt. */
+  isolation: isolate;
   min-width: 0;
 }
 
@@ -36814,6 +36811,8 @@ body.split-frame-guard webview {
 }
 
 .thread-message-actions {
+  /* Raise the controls, not the reply text, above pinned prompts. */
+  z-index: 5;
   display: flex;
   justify-content: flex-end;
   gap: 2px;
