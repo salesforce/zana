@@ -2233,6 +2233,8 @@ export function createPluginApi(
           peerLifecycle.abort(new Error(`plugin context is stale: ${pluginId}`));
           hostWorkerExitHandlers.length = 0; hostSignalHandlers.clear();
           options?.interruptPluginInteractions?.(pluginId);
+          // In-flight storage work (database backups) is cancelled up front; the handles themselves outlive the hooks.
+          storageLifecycle.abort();
           // Hooks run while the database and worker are still usable; each is bounded so a hung hook cannot stall teardown.
           const deadline = Date.now() + DISPOSE_TOTAL_BUDGET_MS;
           for (const hook of [...disposeHooks].reverse()) {
@@ -2245,7 +2247,6 @@ export function createPluginApi(
           for (const handle of sqliteHandles) {
             try { handle.close(); } catch (error) { disposalErrors.push(error); }
           }
-          storageLifecycle.abort();
           sqliteHandles.length = 0;
           sharedDatabase = null;
           sharedSqlite = null;
