@@ -36,3 +36,47 @@ it('enforces opt-in human proof at HTTP boundary and persists every response act
     }
   } finally { await server.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+it('enforces human proof bound to the PTY session at the HTTP boundary', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pty-interaction-proof-'));
+  const secret = 's'.repeat(32);
+  const server = await startProductServer({ dataDir: dir, origins: { serverPort: 0, devAppPort: 5173 }, uiSendSecret: secret });
+  try {
+    const store = server.ctx.ptyInteractions;
+    store.noteSession({ sessionId: 'pty-1', projectId: 'p' });
+    store.noteSession({ sessionId: 'pty-2', projectId: 'p' });
+    const ask = (sessionId: string, requireHuman: boolean) => {
+      const pending = store.request({ pluginId: 'fixture', sessionId, rendererId: 'form', title: 'Confirm', payload: {}, requireHuman, timeoutMs: 5000 });
+      return { pending, id: store.list(sessionId)[0]!.id };
+    };
+    const url = (sessionId: string, tail: string) => new URL(`api/v1/pty-sessions/${sessionId}/${tail}`, server.url);
+    const post = (sessionId: string, id: string, headers: Record<string, string> = {}) =>
+      fetch(url(sessionId, `interactions/${id}/respond`), { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{"value":true}' });
+    const body = '{"value":true}';
+
+    const required = ask('pty-1', true);
+    expect((await (await fetch(url('pty-1', 'interactions'))).json())).toHaveLength(1);
+    expect((await post('pty-1', required.id)).status).toBe(403);
+    expect((await post('pty-1', required.id, { [INTERACTION_PROOF_HEADER]: 'forged' })).status).toBe(403);
+    // A proof minted for another session, or for a thread of the same id, is refused.
+    const other = signInteractionProof(secret, { sessionId: 'pty-2', interactionId: required.id, body }, 'human', 'window:7');
+    expect((await post('pty-1', required.id, { [INTERACTION_PROOF_HEADER]: other })).status).toBe(403);
+    const asThread = signInteractionProof(secret, { threadId: 'pty-1', interactionId: required.id, body }, 'human', 'window:7');
+    expect((await post('pty-1', required.id, { [INTERACTION_PROOF_HEADER]: asThread })).status).toBe(403);
+    const token = signInteractionProof(secret, { sessionId: 'pty-1', interactionId: required.id, body }, 'human', 'window:7');
+    const ok = await post('pty-1', required.id, { [INTERACTION_PROOF_HEADER]: token });
+    expect(ok.status).toBe(200);
+    await expect(required.pending).resolves.toEqual({ outcome: 'submitted', value: true, actor: 'human' });
+    expect((await post('pty-1', required.id, { [INTERACTION_PROOF_HEADER]: token })).status).toBe(403);
+
+    const optional = ask('pty-1', false);
+    expect((await post('pty-1', optional.id, { 'x-zcc-caller-credential': 'agent-token' })).status).toBe(200);
+    await expect(optional.pending).resolves.toEqual({ outcome: 'submitted', value: true, actor: 'agent' });
+
+    const cancelled = ask('pty-2', false);
+    expect((await fetch(url('pty-1', `interactions/${cancelled.id}/cancel`), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(404);
+    expect((await fetch(url('pty-2', `interactions/${cancelled.id}/cancel`), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
+    await expect(cancelled.pending).resolves.toEqual({ outcome: 'cancelled', reason: 'user' });
+    expect((await fetch(url('missing', 'interactions'))).status).toBe(200);
+  } finally { await server.close(); rmSync(dir, { recursive: true, force: true }); }
+});

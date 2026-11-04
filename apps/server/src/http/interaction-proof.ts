@@ -5,11 +5,15 @@ export const INTERACTION_PROOF_HEADER = 'x-zcc-interaction-proof';
 export const INTERACTION_PROOF_TTL_MS = 10_000;
 const MAX_USED = 4096;
 
-export interface InteractionProofBinding {
-  threadId: string;
+/**
+ * What a proof is bound to: a thread, or a PTY session that has no thread
+ * record. Exactly one of the two keys is set, and the two never share a MAC
+ * domain, so a thread proof cannot answer a session interaction or the reverse.
+ */
+export type InteractionProofBinding = {
   interactionId: string;
   body: string;
-}
+} & ({ threadId: string; sessionId?: undefined } | { sessionId: string; threadId?: undefined });
 
 type ActorProof = {
   actor: InteractionActor;
@@ -19,8 +23,14 @@ type ActorProof = {
 };
 
 function mac(secret: string, binding: InteractionProofBinding, proof: ActorProof): Buffer {
+  const keyed = typeof binding.sessionId === 'string' && typeof binding.threadId !== 'string'
+    ? ['pty-interaction-response', binding.sessionId]
+    : typeof binding.threadId === 'string' && typeof binding.sessionId !== 'string'
+      ? ['interaction-response', binding.threadId]
+      : null;
+  if (!keyed) throw new Error('Interaction proof binds exactly one of threadId or sessionId');
   return createHmac('sha256', secret).update(JSON.stringify([
-    'interaction-response', binding.threadId, binding.interactionId,
+    ...keyed, binding.interactionId,
     createHash('sha256').update(binding.body).digest('hex'),
     proof.actor, proof.source, proof.expiresAt, proof.nonce
   ])).digest();
@@ -41,6 +51,7 @@ export function createInteractionProofVerifier(secret: string, now: () => number
   const used = new Map<string, number>();
   return (token: unknown, binding: InteractionProofBinding): InteractionActor | null => {
     if (typeof token !== 'string' || token.length > 1024) return null;
+    if ((typeof binding.threadId === 'string') === (typeof binding.sessionId === 'string')) return null;
     const parts = /^([A-Za-z0-9_-]+)\.([a-f0-9]{64})$/.exec(token);
     if (!parts) return null;
     let proof: ActorProof;

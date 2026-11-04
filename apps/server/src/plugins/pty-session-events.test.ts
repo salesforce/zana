@@ -76,3 +76,30 @@ describe('PtyLifecycleEventMainRequestSchema', () => {
     expect(PtyLifecycleEventMainRequestSchema.safeParse({ ...base, kind: 'created', profile: 'Bad Profile' }).success).toBe(false);
   });
 });
+
+describe('emitMainOwnedPtyLifecycle session tracking', () => {
+  const tracked = (emit = vi.fn().mockResolvedValue(undefined)) => {
+    const ptyInteractions = { noteSession: vi.fn(), endSession: vi.fn() };
+    return { ptyInteractions, ctx: { plugins: { emitThreadEvent: emit }, ptyInteractions } as never };
+  };
+
+  it.each(['created', 'active', 'idle'] as const)('notes the session live on %s', (kind) => {
+    const { ctx: c, ptyInteractions } = tracked();
+    emitMainOwnedPtyLifecycle(c, { ...base, kind });
+    expect(ptyInteractions.noteSession).toHaveBeenCalledWith({ sessionId: 's1', projectId: 'p1' });
+    expect(ptyInteractions.endSession).not.toHaveBeenCalled();
+  });
+
+  it.each(['failed', 'deleted'] as const)('ends the session on %s', (kind) => {
+    const { ctx: c, ptyInteractions } = tracked();
+    emitMainOwnedPtyLifecycle(c, { ...base, kind });
+    expect(ptyInteractions.endSession).toHaveBeenCalledWith('s1');
+    expect(ptyInteractions.noteSession).not.toHaveBeenCalled();
+  });
+
+  it('tracks the session even when no plugin service exists', () => {
+    const ptyInteractions = { noteSession: vi.fn(), endSession: vi.fn() };
+    expect(emitMainOwnedPtyLifecycle({ ptyInteractions } as never, { ...base, kind: 'created' })).toEqual({ delivered: false });
+    expect(ptyInteractions.noteSession).toHaveBeenCalledOnce();
+  });
+});

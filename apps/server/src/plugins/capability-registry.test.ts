@@ -10,6 +10,13 @@ describe('surface wiring registry', () => {
       expect(capabilities.find(row => row.id === 'tool-after-native')?.available).toBe(false);
     }
   });
+  it.each(['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell'])('offers PTY interactions for %s only with a visible monitor', harness => {
+    for (const hookBase of [false, true]) {
+      const row = (headless: boolean) => capabilityRegistry.describe({ surface: 'pty', harness, headless, hookBase }).find(item => item.id === 'interactions');
+      expect(row(false)).toMatchObject({ available: true, reason: expect.stringContaining('Agents monitor') });
+      expect(row(true)).toMatchObject({ available: false, reason: expect.stringContaining('Headless') });
+    }
+  });
   it('says what the OpenCode PTY veto leaves ungated, and nothing is advertised without the gate', () => {
     for (const headless of [false, true]) {
       const wired = capabilityRegistry.describe({ surface: 'pty', harness: 'opencode', headless, hookBase: true })

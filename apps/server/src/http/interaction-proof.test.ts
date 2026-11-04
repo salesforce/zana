@@ -43,4 +43,28 @@ describe('interaction actor proof', () => {
     now += INTERACTION_PROOF_TTL_MS;
     expect(verify(signInteractionProof(secret, binding, 'human', 'window', now), binding)).toBe('human');
   });
+  describe('PTY session binding', () => {
+    const session = { sessionId: 'pty-1', interactionId: 'interaction', body: '{"value":true}' };
+    it('verifies a session proof once and binds the session id', () => {
+      const verify = createInteractionProofVerifier(secret, () => at);
+      const token = signInteractionProof(secret, session, 'human', 'window:7', at);
+      expect(verify(token, { ...session, sessionId: 'pty-2' })).toBeNull();
+      expect(verify(token, session)).toBe('human');
+      expect(verify(token, session)).toBeNull();
+    });
+    it('keeps thread and session proofs in separate domains, even for the same id', () => {
+      const verify = createInteractionProofVerifier(secret, () => at);
+      const sessionToken = signInteractionProof(secret, { ...session, sessionId: 'same' }, 'human', 'w', at);
+      expect(verify(sessionToken, { threadId: 'same', interactionId: 'interaction', body: session.body })).toBeNull();
+      const threadToken = signInteractionProof(secret, { threadId: 'same', interactionId: 'interaction', body: session.body }, 'human', 'w', at);
+      expect(verify(threadToken, { ...session, sessionId: 'same' })).toBeNull();
+    });
+    it('refuses a binding that names both keys or neither', () => {
+      const verify = createInteractionProofVerifier(secret, () => at);
+      const token = signInteractionProof(secret, session, 'human', 'w', at);
+      expect(verify(token, { ...session, threadId: 't' } as never)).toBeNull();
+      expect(verify(token, { interactionId: 'interaction', body: session.body } as never)).toBeNull();
+      expect(() => signInteractionProof(secret, { ...session, threadId: 't' } as never, 'human', 'w', at)).toThrow('exactly one');
+    });
+  });
 });

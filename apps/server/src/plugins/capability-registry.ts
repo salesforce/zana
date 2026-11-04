@@ -74,6 +74,20 @@ for (const harness of ['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell']) 
     }
   }
 }
+// PTY interactions: `ui.requestInput` with a PTY session id as `threadId` is
+// answered in the Agents monitor banner through the human-proof path. It needs a
+// presented session (a headless one has no monitor to show it) and a session the
+// server was told is live, which main reports on its created lifecycle event.
+const PTY_INTERACTIONS = 'Shown as a banner on the session in the Agents monitor; a session is addressable once its created lifecycle event has been delivered';
+for (const harness of ['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell']) {
+  for (const headless of [false, true]) {
+    for (const hookBase of [false, true]) {
+      capabilityRegistry.register({ surface: 'pty', harness, headless, hookBase }, 'interactions', headless
+        ? { available: false, reason: 'Headless interaction presentation is unavailable' }
+        : { available: true, reason: PTY_INTERACTIONS });
+    }
+  }
+}
 // OpenCode's veto is a per-session plugin module its config names (its pre-tool
 // hook runs ahead of every tool and is independent of permission rules, so an
 // allow-all permission setting does not bypass it). It exists only on a local

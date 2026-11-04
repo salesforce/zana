@@ -2534,6 +2534,68 @@ export async function handleProductHttp(
       return true;
     }
 
+    const ptyInteractionRespond = routeParams(path, '/api/v1/pty-sessions/:id/interactions/:interactionId/respond');
+    if (ptyInteractionRespond && method === 'POST') {
+      try {
+        const body = (await readJsonBody(request)) as { value?: unknown };
+        const parsed = jsonValueSchema.safeParse(body?.value);
+        if (!parsed.success) {
+          sendJson(response, 400, { error: 'invalid_request', message: 'respond value must be JSON' });
+          return true;
+        }
+        const proof = headerValue(request.headers, INTERACTION_PROOF_HEADER);
+        const verifiedActor = proof ? ctx.verifyInteractionProof?.(proof, {
+          sessionId: ptyInteractionRespond.id,
+          interactionId: ptyInteractionRespond.interactionId,
+          body: JSON.stringify(body)
+        }) : null;
+        if (proof && !verifiedActor) {
+          throw new ThreadCreateError(403, 'invalid-proof', 'Invalid interaction proof');
+        }
+        const actor = verifiedActor ?? (headerValue(request.headers, 'authorization')
+          || headerValue(request.headers, 'x-zcc-session-token')
+          || headerValue(request.headers, 'x-zcc-caller-credential')
+          || headerValue(request.headers, 'x-zcc-caller-session-id') ? 'agent' : 'unknown');
+        sendJson(response, 200, ctx.ptyInteractions.respond({
+          sessionId: ptyInteractionRespond.id,
+          interactionId: ptyInteractionRespond.interactionId,
+          value: parsed.data,
+          actor
+        }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const ptyInteractionCancel = routeParams(path, '/api/v1/pty-sessions/:id/interactions/:interactionId/cancel');
+    if (ptyInteractionCancel && method === 'POST') {
+      try {
+        sendJson(response, 200, ctx.ptyInteractions.cancel({
+          sessionId: ptyInteractionCancel.id,
+          interactionId: ptyInteractionCancel.interactionId,
+          reason: 'user'
+        }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const ptyInteractions = routeParams(path, '/api/v1/pty-sessions/:id/interactions');
+    if (ptyInteractions && method === 'GET') {
+      sendJson(response, 200, ctx.ptyInteractions.list(ptyInteractions.id));
+      return true;
+    }
+
     const threadInteractionCancel = routeParams(path, '/api/v1/threads/:id/interactions/:interactionId/cancel');
     if (threadInteractionCancel && method === 'POST') {
       try {

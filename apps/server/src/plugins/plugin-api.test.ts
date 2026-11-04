@@ -1310,6 +1310,16 @@ describe('sdk.capabilities', () => {
       expect(controlResult.capabilities.find(c => c.id === 'tool-before-native')).toMatchObject({ available: true });
       expect(controlResult.capabilities.find(c => c.id === 'interactions')).toMatchObject({ available: false });
 
+      const wired = createPluginApi('demo', dir, {
+        productContext: { db, hub: { emit: vi.fn() }, terminalSessions: new Map([
+          ['pty-session', { profile: 'shell', capabilitySurface: { surface: 'pty', harness: 'codex', headless: false, hookBase: true } }]
+        ]) } as never,
+        hostCall: vi.fn(),
+        requestPluginInteraction: vi.fn()
+      });
+      expect((await wired.api.sdk.capabilities.forThread({ threadId: 'pty-session' })).capabilities.find(c => c.id === 'interactions')).toMatchObject({ available: true });
+      await wired.dispose();
+
       const cursorResult = await handle.api.sdk.capabilities.forThread({ threadId: cursorThread.id });
       const cursorNativeTool = cursorResult.capabilities.find((c) => c.id === 'tool-before-native');
       expect(cursorNativeTool).toMatchObject({ available: false });

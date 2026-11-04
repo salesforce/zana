@@ -677,7 +677,8 @@ export function createPluginApi(
    */
   function capabilityDescriptors(key: import('@zana-ai/zcc-domain').CapabilitySurfaceKey | null): CapabilityDescriptor[] {
     return [
-      ...capabilityRegistry.describe(key).map(row => row.id === 'interactions' && row.available && !options?.upsertInteraction
+      ...capabilityRegistry.describe(key).map(row => row.id === 'interactions' && row.available
+        && !(key?.surface === 'pty' ? options?.requestPluginInteraction : options?.upsertInteraction)
         ? { id: row.id, available: false, reason: 'Interaction host wiring unavailable' } : row),
       options?.hostCall ? { id: 'project-rpc', available: true } : { id: 'project-rpc', available: false, reason: 'Project RPC host wiring unavailable' }
     ];

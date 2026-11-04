@@ -37,6 +37,7 @@ import type { LocalAppOriginArgs } from './local-app-origins.js';
 import { createProductHub, type ProductHub } from './product-hub.js';
 import { createHostHub, type HostHub } from './host-hub.js';
 import { PendingInteractionLifecycle } from '../services/interactions/pending-interactions.js';
+import { PtyInteractionStore } from '../services/interactions/pty-interactions.js';
 import { prunePendingInteractionInboxCopies } from '../services/interactions/pending-interaction-attention.js';
 import { conversationThreadView } from '../services/threads/conversation-create.js';
 import { emitPluginThreadStatus } from '../plugins/thread-events.js';
@@ -131,6 +132,8 @@ export interface ProductHttpContext {
   saved: ISavedStore;
   hub: ProductHub;
   pendingInteractions: PendingInteractionLifecycle;
+  /** `ui.requestInput` for PTY sessions, which have no thread row. */
+  ptyInteractions: PtyInteractionStore;
   threadTitleNamer: ThreadTitleNamer;
   closeSummary: CloseSummaryService;
   terminalSessions: Map<string, ProductTerminalRecord>;
@@ -376,6 +379,9 @@ export function createProductHttpContext(
     }
   });
   pendingInteractions.start();
+  const ptyInteractions = new PtyInteractionStore({
+    onChanged: (change) => hub.emit('pty-interactions:changed', change)
+  });
   const envToken = process.env.ZCC_HOST_ENROLL_TOKEN;
   const enrollToken = options.enrollToken
     ?? (envToken && envToken.length >= 16 ? envToken : undefined)
@@ -655,6 +661,7 @@ export function createProductHttpContext(
     saved,
     hub,
     pendingInteractions,
+    ptyInteractions,
     threadTitleNamer,
     closeSummary,
     terminalSessions,
@@ -692,6 +699,7 @@ export function createProductHttpContext(
     dispose: () => {
       if (disposed) return remoteProjectReconciler.dispose();
       disposed = true;
+      ptyInteractions.dispose();
       ctx.helpVideos?.dispose();
       stopPeerAuthority();
       ctx.peerInstaller?.dispose();

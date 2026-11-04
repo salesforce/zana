@@ -8,11 +8,15 @@ export function createInteractionResponder(deps: {
   fetch?: typeof fetch;
 }) {
   return async (raw: unknown, actor: InteractionActor, source: string): Promise<unknown> => {
-    const input = raw as { threadId?: unknown; interactionId?: unknown; value?: unknown } | null;
-    if (!input || typeof input.threadId !== 'string' || !input.threadId || input.threadId.length > 256
-      || typeof input.interactionId !== 'string' || !input.interactionId || input.interactionId.length > 256) {
+    const input = raw as { threadId?: unknown; sessionId?: unknown; interactionId?: unknown; value?: unknown } | null;
+    const key = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 256;
+    // Exactly one key names the interaction's owner: a thread record, or a PTY session without one.
+    if (!input || key(input.threadId) === key(input.sessionId)
+      || (input.threadId !== undefined && !key(input.threadId)) || (input.sessionId !== undefined && !key(input.sessionId))
+      || !key(input.interactionId)) {
       throw new Error('Invalid interaction response');
     }
+    const owner = typeof input.sessionId === 'string' ? { sessionId: input.sessionId } : { threadId: input.threadId as string };
     const value = jsonValueSchema.parse(input.value);
     const body = JSON.stringify({ value });
     if (Buffer.byteLength(body) > PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES) throw new Error('Interaction response exceeds 64 KiB');
@@ -21,10 +25,10 @@ export function createInteractionResponder(deps: {
       throw new Error('Interaction proof requires loopback product server');
     }
     const proof = signInteractionProof(deps.secret(), {
-      threadId: input.threadId, interactionId: input.interactionId, body
+      ...owner, interactionId: input.interactionId, body
     }, actor, source);
     const response = await (deps.fetch ?? fetch)(new URL(
-      `api/v1/threads/${encodeURIComponent(input.threadId)}/interactions/${encodeURIComponent(input.interactionId)}/respond`, base
+      `api/v1/${'sessionId' in owner ? 'pty-sessions' : 'threads'}/${encodeURIComponent(owner.sessionId ?? owner.threadId)}/interactions/${encodeURIComponent(input.interactionId)}/respond`, base
     ), { method: 'POST', headers: { 'content-type': 'application/json', [INTERACTION_PROOF_HEADER]: proof }, body,
       redirect: 'error', signal: AbortSignal.timeout(5000) });
     const result = await response.json() as { message?: string; error?: string };

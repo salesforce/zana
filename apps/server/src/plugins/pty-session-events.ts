@@ -22,9 +22,12 @@ const EVENT_NAMES: Record<PtyLifecycleEventMainRequest['kind'], PluginThreadEven
  * reaches the session.
  */
 export function emitMainOwnedPtyLifecycle(
-  ctx: Pick<ProductHttpContext, 'plugins'> | undefined,
+  ctx: Pick<ProductHttpContext, 'plugins'> & Partial<Pick<ProductHttpContext, 'ptyInteractions'>> | undefined,
   request: PtyLifecycleEventMainRequest
 ): { delivered: boolean } {
+  // `ui.requestInput` needs to know which sessions are live, whether or not a plugin is listening.
+  if (request.kind === 'failed' || request.kind === 'deleted') ctx?.ptyInteractions?.endSession(request.sessionId);
+  else ctx?.ptyInteractions?.noteSession({ sessionId: request.sessionId, projectId: request.projectId });
   const plugins = ctx?.plugins;
   if (!plugins) return { delivered: false };
   const event = emitHardenedLifecycle({
