@@ -38,7 +38,7 @@ export function MachineProjectsDialog({ group, onClose, onAdd, onNewThread, onOp
         const scratch = isScratchWorkspaceProject(project);
         const count = threads.filter(thread => thread.projectId === project.id && !thread.archivedAt && (!scratch || thread.hostId === group.hostId || (group.primary && !thread.hostId))).length;
         return <tr key={project.id}>
-          <td><button type="button" className="machine-project-open" onClick={() => scratch && !group.primary ? onNewThread(group, project) : onOpenProject(project)}>
+          <td><button type="button" className="machine-project-open" onClick={() => onOpenProject(project)}>
             {scratch ? <Home size={14} /> : <Folder size={14} />}{composerProjectLabel(project)}
           </button><p>{scratch ? `General tasks on ${group.name}` : project.remote?.remotePath ?? project.path}</p>
           {!scratch && availability[project.id] && availability[project.id] !== 'ready' && <p className="project-folder-status">{projectAvailabilityLabel[availability[project.id]]}</p>}</td>
