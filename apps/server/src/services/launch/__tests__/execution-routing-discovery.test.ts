@@ -92,7 +92,7 @@ function allowed(decision: ExecutionPreflightDecision) {
 /** Spawn exactly as host.ts does: the authorized plan's pin, verbatim. */
 function spawnArgs(decision: ExecutionPreflightDecision, cwd = SHARED_CWD, remote?: ProjectRemote): string {
   new PtyManager().create({
-    projectId: 'p', profile: 'opencode', persona: LOW, cwd, cols: 80, rows: 24, config: CONFIG,
+    nativeToolPolicyRequired: false, projectId: 'p', profile: 'opencode', persona: LOW, cwd, cols: 80, rows: 24, config: CONFIG,
     authorizedModel: allowed(decision).modelPin,
     ...(remote ? { remote } : {})
   });
