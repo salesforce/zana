@@ -61,6 +61,11 @@ test('message content stays behind pinned prompts when scrolling between turns',
   }, threadId);
   const timeline = window.getByTestId('thread-timeline');
   await expect(timeline.getByTestId('thread-user-text')).toHaveCount(3);
+  // Release initial follow-to-bottom before positioning individual turns.
+  // Native captures must compare the same prompt on fast headless renderers.
+  await timeline.hover();
+  await window.mouse.wheel(0, -10000);
+  await expect(window.getByTestId('thread-scroll-bottom')).toBeVisible();
   // Plugin markdown renderers may create their own stacking layers. Their
   // prose must stay inside the message's layer even when it is not hovered.
   await timeline.locator('.is-assistant .inbox-md').evaluateAll(nodes => {
