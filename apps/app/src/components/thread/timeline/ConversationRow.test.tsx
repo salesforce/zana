@@ -513,6 +513,11 @@ describe('ConversationRow preview buttons', () => {
     expect(buttons()).toHaveLength(1);
   });
 
+  it('renders a row without text and without roots without offering Preview', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('', { text: undefined })} />);
+    expect(buttons()).toHaveLength(0);
+  });
+
   it('does not accept a sibling directory sharing the root prefix', () => {
     render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('/Users/x/project-evil/notes.md', { previewRoots: ['/Users/x/project'] })} />);
     expect(buttons()).toHaveLength(0);

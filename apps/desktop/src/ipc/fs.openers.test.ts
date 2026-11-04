@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { bindIpcCtx } from './ctx.js';
-const h = vi.hoisted(() => ({ openIn: vi.fn(), trusted: vi.fn(), locate: vi.fn() }));
+const h = vi.hoisted(() => ({ openIn: vi.fn(), trusted: vi.fn(), locate: vi.fn(), folders: ['/trusted'] as string[] | undefined }));
 vi.mock('electron', () => ({ ipcMain: { handle() {} }, BrowserWindow: {}, dialog: {}, shell: {}, clipboard: {} }));
 vi.mock('./shared.js', () => ({ trustedProjectRoot: h.trusted, rejectRoot: () => ({ ok: false }) }));
 vi.mock('../native/openers.js', () => ({ openIn: h.openIn }));
@@ -9,7 +9,7 @@ vi.mock('../native/preview-file-location.js', () => ({ previewFileLocation: h.lo
 vi.mock('@zana-ai/zcc-server/electron-data-dir', () => ({ electronZccDataDir: () => '/data' }));
 vi.mock('@zana-ai/zcc-host-daemon/identity', () => ({ readPersistedHostId: () => 'local' }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
-  store: { listProjects: () => [], getConfig: () => ({ editorCodeBinary: 'my-code', terminalApp: 'pwsh', trustedPreviewFolders: ['/trusted'] }) },
+  store: { listProjects: () => [], getConfig: () => ({ editorCodeBinary: 'my-code', terminalApp: 'pwsh', trustedPreviewFolders: h.folders }) },
   worktreeRoot: () => '/unused'
 }));
 import { registerFsIpc } from './fs.js';
@@ -34,6 +34,9 @@ it('hands the trusted preview folders from main config to the location resolver'
   h.locate.mockResolvedValue({ ok: false });
   await handlers.get(IPC.openers.fileLocation)!({ path: 'a.md', source: 'workspace' });
   expect(h.locate.mock.calls[0][1].trustedPreviewFolders()).toEqual(['/trusted']);
+  h.folders = undefined;
+  expect(h.locate.mock.calls[0][1].trustedPreviewFolders()).toEqual([]);
+  h.folders = ['/trusted'];
 });
 
 it('reads authoritative thread scope from the server and refuses server failures', async () => {
