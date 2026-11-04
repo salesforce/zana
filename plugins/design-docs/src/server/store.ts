@@ -88,6 +88,10 @@ export function repairLegacyPeerSyncMigrationIndexes(db: PluginDatabase): void {
 }
 
 /** An agent whose thread has no title yet. Never stored over a real title. */
+/** Built-ins shipped before offered ids were recorded. Frozen: never add to it; new built-ins need only a templates.ts entry. */
+const LEGACY_OFFERED_BUILTINS: readonly string[] = ['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank'];
+const OFFERED_KEY = 'templates.offered';
+
 export const AGENT_FALLBACK_LABEL = 'Agent';
 /** A terminal session (CLI Agent) calling the CLI: there is no thread to link. */
 export const CLI_AGENT_LABEL = 'CLI agent';
@@ -464,21 +468,31 @@ export class DesignDocStore {
     return row ? this.toTemplate(row) : null;
   }
 
+  /**
+   * Offers each built-in once per install: any id in DESIGN_DOC_TEMPLATES not yet recorded as offered is inserted
+   * (if absent) and then recorded. Later releases add a built-in by adding a templates.ts entry; a template the
+   * user deleted stays deleted because its id is already recorded.
+   */
   async seedBuiltinTemplates(kv: Pick<PluginKvStorage, 'get' | 'set'>): Promise<void> {
-    const marked = await kv.get<boolean>('templates.seed.v1');
-    if (!marked || this.countTemplates() === 0) this.insertMissingBuiltinTemplates();
-    await kv.set('templates.seed.v1', true);
+    let offered = await kv.get<string[]>(OFFERED_KEY);
+    if (!Array.isArray(offered)) offered = (await kv.get<boolean>('templates.seed.v1')) ? [...LEGACY_OFFERED_BUILTINS] : [];
+    if (this.countTemplates() === 0) offered = [];
+    const seen = new Set(offered);
+    const fresh = new Set(DESIGN_DOC_TEMPLATES.map((template) => template.id).filter((id) => !seen.has(id)));
+    if (fresh.size > 0) this.insertMissingBuiltinTemplates(fresh);
+    await kv.set(OFFERED_KEY, [...new Set([...offered, ...DESIGN_DOC_TEMPLATES.map((template) => template.id)])]);
   }
 
   private countTemplates(): number {
     return (this.db.prepare(`SELECT COUNT(*) AS count FROM docs WHERE ${TEMPLATE_ONLY}`).get() as { count: number }).count;
   }
 
-  private insertMissingBuiltinTemplates(): void {
+  private insertMissingBuiltinTemplates(only?: ReadonlySet<string>): void {
     const actor = JSON.stringify({ kind: 'user', label: 'Zana', threadId: null } satisfies DocActor);
     const at = this.now();
     this.db.transaction(() => {
       for (const [order, template] of DESIGN_DOC_TEMPLATES.entries()) {
+        if (only && !only.has(template.id)) continue;
         const origin = `builtin:${template.id}`;
         // docs-kind: allow Template registry insert is template-only by literal kind value.
         const exists = this.db.prepare(`SELECT 1 FROM docs WHERE ${TEMPLATE_ONLY} AND template_origin = ?`).get(origin);

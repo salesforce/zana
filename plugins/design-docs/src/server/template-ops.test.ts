@@ -9,7 +9,7 @@ import { DesignDocStore } from './store.js';
 import { createTestDatabase } from './test-db.js';
 
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
-const COMMENT = '<!-- AI Instructions: keep   this\n  exact -->';
+const COMMENT = '<!-- keep   this\n  exact -->';
 const PNG = 'iVBORw0KGgo=';
 
 function setup() {
@@ -45,6 +45,36 @@ describe('readTemplate', () => {
     const { ctx } = setup();
     expect(() => readTemplate(ctx, { key: 'nope' })).toThrow(/unknown template/);
     expect(() => readTemplate(ctx, {})).toThrow(/key is required/);
+  });
+});
+
+describe('addFromTemplate AGENTS.md', () => {
+  function rulesTemplate(store: DesignDocStore, label: string, rules: string) {
+    const tpl = store.templateNew({ label, entryPath: `${label}.md`, files: [{ path: `${label}.md`, content: `# {{title}}\n` }, { path: 'AGENTS.md', content: rules }] }, agent);
+    return store.listTemplateRecords().find((t) => t.docId === tpl.id)!.id;
+  }
+
+  it('adds AGENTS.md when the doc has none, then merges later ones instead of clashing or renaming', () => {
+    const { store, ctx, doc } = setup();
+    const a = rulesTemplate(store, 'alpha', '# Alpha rules\n');
+    const b = rulesTemplate(store, 'beta', '# Beta rules\n');
+    expect(addFromTemplate(ctx, { docId: doc.id, templateKey: a }, agent).added.sort()).toEqual(['AGENTS.md', 'alpha.md']);
+    const second = addFromTemplate(ctx, { docId: doc.id, templateKey: b }, agent);
+    expect(second.added.sort()).toEqual(['AGENTS.md', 'beta.md']);
+    expect(second.renamed).toEqual([]);
+    const content = store.readFile(doc.id, 'AGENTS.md').content;
+    expect(content).toContain('# Alpha rules');
+    expect(content).toContain('# Beta rules');
+    expect(store.get(doc.id).files.map((f) => f.path)).not.toContain('AGENTS-2.md');
+  });
+
+  it('does not repeat instructions already present', () => {
+    const { store, ctx, doc } = setup();
+    const a = rulesTemplate(store, 'alpha', '# Alpha rules\n');
+    addFromTemplate(ctx, { docId: doc.id, templateKey: a }, agent);
+    const again = addFromTemplate(ctx, { docId: doc.id, templateKey: a, renameOnConflict: true }, agent);
+    expect(again.added).toEqual(['alpha-2.md']);
+    expect(store.readFile(doc.id, 'AGENTS.md').content.match(/Alpha rules/g)).toHaveLength(1);
   });
 });
 

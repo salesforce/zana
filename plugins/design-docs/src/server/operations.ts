@@ -5,7 +5,7 @@
  */
 import { DOC_STATUSES, isDocStatus, type DesignDocDetail, type DocActor, type DocStatus, type TextEdit } from '../shared/contract.js';
 import { pageText } from '../shared/html-scan.js';
-import { fileKindOf, imageMediaTypeOf, relativeDocPath, renameClashingPaths, resolveDocLink } from '../shared/paths.js';
+import { AGENT_INSTRUCTIONS_PATH, fileKindOf, imageMediaTypeOf, relativeDocPath, renameClashingPaths, resolveDocLink } from '../shared/paths.js';
 import { renderTemplateFiles } from '../shared/templates.js';
 import {
   commentLine,
@@ -189,9 +189,12 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
   }
   const hasEntry = detail.files.some((file) => file.path === detail.entryPath);
   const entry = hasEntry ? formatFile(ctx.store.readFile(detail.id, detail.entryPath)) : '';
+  const hasInstructions = detail.files.some((file) => file.path === AGENT_INSTRUCTIONS_PATH);
+  const instructions = hasInstructions ? formatFile(ctx.store.readFile(detail.id, AGENT_INSTRUCTIONS_PATH)) : '';
   return [
     formatManifest(detail, manifestOptions(ctx, detail)),
     `Metadata CAS: expectedHead=${JSON.stringify(detail.head)} (required when paired; re-read before updating).`,
+    instructions ? `## Agent instructions (follow these)\n${instructions}` : '',
     entry ? `## Entry file\n${entry}` : '',
     ...(hasEntry ? pageNotes(ctx, detail, detail.entryPath) : []),
     reportedPages(ctx, detail) ?? '',
@@ -435,7 +438,12 @@ export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocA
   const doc = ctx.store.get(ref);
   const title = optionalString(input, 'title') ?? doc.title;
   const summary = optionalString(input, 'summary') ?? doc.summary;
-  const rendered = renderTemplateFiles(template, { title, summary });
+  const renderedAll = renderTemplateFiles(template, { title, summary });
+  // A doc has one AGENTS.md: a template's instructions join it instead of clashing or becoming a stray AGENTS-2.md.
+  const incomingRules = doc.files.some((file) => file.path === AGENT_INSTRUCTIONS_PATH)
+    ? renderedAll.find((file) => file.path === AGENT_INSTRUCTIONS_PATH && file.encoding !== 'base64')
+    : undefined;
+  const rendered = incomingRules ? renderedAll.filter((file) => file !== incomingRules) : renderedAll;
   const existing = new Set(doc.files.map((file) => file.path.toLowerCase()));
   const clashes = rendered.filter((file) => existing.has(file.path.toLowerCase()));
   if (clashes.length && !renameOnConflict) {
@@ -464,6 +472,18 @@ export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocA
     files.map((file) => ({ ...file, baseRevision: 0, baseFileId: null, note: `Added from template ${template.id}` })),
     actor
   );
+  const merged: string[] = [];
+  if (incomingRules && typeof incomingRules.content === 'string') {
+    const current = ctx.store.readFile(doc.id, AGENT_INSTRUCTIONS_PATH);
+    if (current.encoding === 'utf8' && !current.content.includes(incomingRules.content.trim())) {
+      ctx.store.writeFile(
+        doc.id,
+        { path: AGENT_INSTRUCTIONS_PATH, content: `${current.content.trimEnd()}\n\n---\n\n${incomingRules.content}`, baseRevision: current.revision, baseFileId: current.fileId, note: `Added instructions from template ${template.id}` },
+        actor
+      );
+      merged.push(AGENT_INSTRUCTIONS_PATH);
+    }
+  }
   ctx.changed(doc.id);
-  return { added: results.map((result) => result.path), renamed: [...renames].map(([from, to]) => ({ from, to })) };
+  return { added: [...results.map((result) => result.path), ...merged], renamed: [...renames].map(([from, to]) => ({ from, to })) };
 }

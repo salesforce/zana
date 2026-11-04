@@ -5,6 +5,7 @@
  */
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { STATUS_LABELS, designDocDirective } from '../shared/contract.js';
+import { AGENT_INSTRUCTIONS_PATH } from '../shared/paths.js';
 import { formatFile, formatManifest, truncate } from './format.js';
 import type { ProjectNames } from './project-names.js';
 import type { DesignDocStore } from './store.js';
@@ -19,6 +20,7 @@ const USAGE = [
   '## Design docs',
   'The user keeps design documents (specs, RFCs, ADRs, product docs) in the Design Docs plugin. Each doc is a small set of files — markdown, mermaid `.mmd` diagrams, self-contained `.html` mockups, code samples — rendered as formatted pages the user reviews.',
   '- Use the `design_doc_*` tools (or `zcc design-docs …` from a shell) to list, read, create and edit them. Read a doc before changing it; prefer `edits` over rewriting whole files and pass `baseRevision`.',
+  '- If a doc has an `AGENTS.md` file, it holds instructions for working on that doc: read it before editing and follow it. It is never published.',
   '- Treat open comments as review feedback: address them, then resolve each with a short `body` saying what changed. Answer a question in its thread with `replyTo` instead of opening a new comment.',
   '- Create a design doc only when the user explicitly asks for one (a design doc, spec, RFC or ADR). Brainstorming, exploring an idea, planning a change or small fixes stay in chat; do not create a doc or offer one for them.',
   '- Design docs are not the Library: save notes, findings, runbooks and postmortems with the `library_*` tools, and keep design docs for specs, RFCs, ADRs and designs the user reviews.',
@@ -82,10 +84,17 @@ export function registerAgentContext(
           ? `${formatFile({ ...entry, content: entry.content.slice(0, MENTION_ENTRY_MAX_CHARS) })}\n(truncated — read the rest with design_doc_read)`
           : formatFile(entry)
         : '';
+      const instructionFile = doc.files.some((file) => file.path === AGENT_INSTRUCTIONS_PATH)
+        ? store.readFile(doc.id, AGENT_INSTRUCTIONS_PATH)
+        : null;
+      const instructions = instructionFile && instructionFile.encoding === 'utf8'
+        ? formatFile({ ...instructionFile, content: instructionFile.content.slice(0, MENTION_ENTRY_MAX_CHARS) })
+        : '';
       return {
         context: [
           `The user referenced design doc ${doc.id}. Its current state:`,
           formatManifest(doc, { projectName: projects?.name(doc.projectId) ?? null }),
+          instructions ? `Agent instructions for this doc (follow them):\n${instructions}` : '',
           body,
           `Read other files with design_doc_read doc="${doc.id}" path="…"; edit with design_doc_write.`
         ]

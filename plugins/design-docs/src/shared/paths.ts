@@ -7,6 +7,12 @@
  * hidden or empty segments, and a bounded length/depth.
  */
 
+/**
+ * Optional file at a doc's root with instructions for agents working on that doc.
+ * Agents are pointed at it; it is never published, rendered into pages or exported as site content.
+ */
+export const AGENT_INSTRUCTIONS_PATH = 'AGENTS.md';
+
 export const MAX_PATH_LENGTH = 160;
 export const MAX_PATH_DEPTH = 10;
 

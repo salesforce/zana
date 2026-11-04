@@ -1,9 +1,9 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, LayoutTemplate, Link2, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2, Upload } from 'lucide-react';
+import { Bot, ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, LayoutTemplate, Link2, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2, Upload } from 'lucide-react';
 import type { DesignDocDetail, DesignDocFileMeta } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
-import { crossDocMarkdownLink, extensionOf, fileKindOf, isBinaryKind, renameClashingPaths } from '../shared/paths.js';
+import { AGENT_INSTRUCTIONS_PATH, crossDocMarkdownLink, extensionOf, fileKindOf, isBinaryKind, renameClashingPaths } from '../shared/paths.js';
 import { errorMessage, toast, useApi, type DocKind } from './api.js';
 import { buildTree, type TreeNode } from './content.js';
 import { copyText } from './clipboard.js';
@@ -206,6 +206,7 @@ function FileRow({
         <FileIcon kind={file.kind} />
         <span className="dd-tree-name">{name}</span>
         {isEntry ? <Home size={11} className="dd-tree-entry" aria-label="Entry file" /> : null}
+        {file.path === AGENT_INSTRUCTIONS_PATH ? <Bot size={11} className="dd-tree-entry" aria-label="Agent instructions, not published" /> : null}
         {commentCount ? <span className="dd-tree-badge" title={`${commentCount} open comment${commentCount === 1 ? '' : 's'}`}>{commentCount}</span> : null}
       </button>
       <Popover

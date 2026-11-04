@@ -17,7 +17,7 @@ import { PAGE_CONFIG_ID, PAGE_FILES_ID, type PageConfig, type PageFile } from '.
 import { prependToHead } from '../shared/html-scan.js';
 import { MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
 import { KIT_DIR, PAGE_ORIGIN, scriptJson, type RenderedPage } from '../shared/page.js';
-import { comparePaths, fileKindOf, imageMediaTypeOf, isBinaryKind, mediaTypeOf, normalizeDocPath } from '../shared/paths.js';
+import { AGENT_INSTRUCTIONS_PATH, comparePaths, fileKindOf, imageMediaTypeOf, isBinaryKind, mediaTypeOf, normalizeDocPath } from '../shared/paths.js';
 import { bundlePage, escapeScriptText, type PageSource } from './page-bundle.js';
 import { DesignDocError, type DesignDocStore } from './store.js';
 
@@ -131,7 +131,7 @@ export interface StandaloneOptions {
 export function packFiles(files: readonly PageSource[], page: RenderedPage, budget = STANDALONE_PACK_BUDGET): Record<string, PageFile> {
   const inlined = new Set([page.path, ...page.deps.map((dep) => dep.path)]);
   const candidates = files
-    .filter((file) => !inlined.has(file.path))
+    .filter((file) => !inlined.has(file.path) && file.path !== AGENT_INSTRUCTIONS_PATH)
     .sort((a, b) => Number(a.encoding === 'base64') - Number(b.encoding === 'base64') || comparePaths(a.path, b.path));
   const pack: Record<string, PageFile> = {};
   let used = 0;

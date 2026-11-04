@@ -40,7 +40,7 @@ describe('template kind isolation', () => {
     const db = createTestDatabase(), store = new DesignDocStore(db);
     const custom = store.templateNew({ label: 'Mine' }, user);
     const records = store.listTemplateRecords();
-    expect(records.filter((record) => record.origin === 'builtin')).toHaveLength(7);
+    expect(records.filter((record) => record.origin === 'builtin')).toHaveLength(9);
     expect(records.find((record) => record.docId === custom.id)).toMatchObject({ origin: 'user', label: 'Mine' });
     expect(records.every((record) => record.files.length > 0)).toBe(true);
     const registry = store as unknown as { listTemplates(): unknown[] };
@@ -609,16 +609,65 @@ describe('DesignDocStore — docs', () => {
 
   it('seeds and reads the builtin registry from template rows', async () => {
     const store = makeStore();
-    expect(store.listTemplates().map((template) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank']);
+    expect(store.listTemplates().map((template) => template.id)).toEqual(['technical', 'product', 'adr', 'research', 'issue', 'api', 'report', 'html-design', 'blank']);
     expect(store.templateByKey('technical')?.files.map((file) => file.path)).toEqual(['README.md', 'diagrams/architecture.mmd']);
     const set = vi.fn();
-    const kv = { get: async () => undefined as boolean | undefined, set };
+    await store.seedBuiltinTemplates({ get: async () => undefined as never, set });
+    expect(store.listTemplates()).toHaveLength(9);
+    expect(set).toHaveBeenCalledWith('templates.offered', expect.arrayContaining(['technical', 'research', 'issue', 'blank']));
+  });
+
+  function memoryKv(initial: Record<string, unknown> = {}) {
+    const values = new Map<string, unknown>(Object.entries(initial));
+    return { values, get: async (key: string) => values.get(key) as never, set: async (key: string, value: unknown) => void values.set(key, value) };
+  }
+
+  it('offers each built-in once: upgrades get new ones, deleted ones stay deleted', async () => {
+    const store = makeStore();
+    const db = (store as any).db;
+    db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key IN ('research', 'issue', 'technical')").run();
+    // An install from before offered ids were recorded.
+    const kv = memoryKv({ 'templates.seed.v1': true });
     await store.seedBuiltinTemplates(kv);
-    expect(store.listTemplates()).toHaveLength(7);
-    expect(set).toHaveBeenCalledWith('templates.seed.v1', true);
-    (store as any).db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key = 'technical'").run();
-    await store.seedBuiltinTemplates({ get: async () => true, set });
+    expect(store.templateByKey('research')?.files.map((file) => file.path).sort()).toEqual(['AGENTS.md', 'plan.md', 'research.md']);
+    expect(store.templateByKey('issue')?.files.map((file) => file.path).sort()).toEqual(['AGENTS.md', 'issue.md', 'plan.md', 'research.md']);
     expect(store.templateByKey('technical')).toBeNull();
+    db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key = 'research'").run();
+    await store.seedBuiltinTemplates(kv);
+    expect(store.templateByKey('research')).toBeNull();
+  });
+
+  it('delivers a built-in added in a later release with no per-release code', async () => {
+    const store = makeStore();
+    const all = store.listTemplates().map((template) => template.id);
+    (store as any).db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key = 'blank'").run();
+    // Every id recorded as offered: the deleted template stays deleted.
+    const kv = memoryKv({ 'templates.offered': all });
+    await store.seedBuiltinTemplates(kv);
+    expect(store.templateByKey('blank')).toBeNull();
+    // 'blank' not yet recorded, as if it shipped in a later release: it is delivered once and recorded.
+    kv.values.set('templates.offered', all.filter((id) => id !== 'blank'));
+    await store.seedBuiltinTemplates(kv);
+    expect(store.templateByKey('blank')).not.toBeNull();
+    expect(kv.values.get('templates.offered')).toContain('blank');
+  });
+
+  it('restores every built-in when the registry is empty', async () => {
+    const store = makeStore();
+    (store as any).db.prepare("DELETE FROM docs WHERE kind = 'template'").run();
+    await store.seedBuiltinTemplates(memoryKv({ 'templates.offered': ['technical'] }));
+    expect(store.listTemplates()).toHaveLength(9);
+  });
+
+  it('ships a plan and agent instructions with the product spec, and no workflow markers in any built-in', () => {
+    const store = makeStore();
+    expect(store.templateByKey('product')?.files.map((file) => file.path).sort()).toEqual(['AGENTS.md', 'README.md', 'mockups/overview.html', 'plan.md']);
+    for (const template of store.listTemplates()) {
+      for (const file of template.files) {
+        if (file.encoding === 'base64') continue;
+        expect(file.content, `${template.id}/${file.path}`).not.toMatch(/AI Instructions|doc-manager|executable-step/);
+      }
+    }
   });
 
   it('creates from explicit files, picks a markdown entry, and rejects bad input', () => {

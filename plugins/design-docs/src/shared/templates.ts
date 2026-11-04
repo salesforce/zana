@@ -3,6 +3,7 @@
  * substituted at creation time (escaped in HTML pages). A template opens on
  * its `entryPath`, else on `README.md`.
  */
+import { ISSUE_AGENTS, ISSUE_MD, ISSUE_PLAN_MD, ISSUE_RESEARCH_MD, PRODUCT_AGENTS, PRODUCT_PLAN_MD, RESEARCH_AGENTS, RESEARCH_MD, RESEARCH_PLAN_MD } from './template-docs.js';
 import { HTML_DESIGN_INDEX, REPORT_INDEX, REPORT_WEEKLY_CSV } from './site-templates.js';
 
 export interface DesignDocTemplate {
@@ -221,10 +222,12 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
   {
     id: 'product',
     label: 'Product spec',
-    description: 'Problem, users, metrics, scope, requirements and an HTML mockup.',
+    description: 'Problem, users, metrics, scope, requirements, an HTML mockup and an implementation plan.',
     files: [
       { path: 'README.md', content: PRODUCT_README },
-      { path: 'mockups/overview.html', content: PRODUCT_MOCKUP }
+      { path: 'mockups/overview.html', content: PRODUCT_MOCKUP },
+      { path: 'plan.md', content: PRODUCT_PLAN_MD },
+      { path: 'AGENTS.md', content: PRODUCT_AGENTS }
     ]
   },
   {
@@ -232,6 +235,29 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
     label: 'Decision record',
     description: 'A single architectural decision with options and consequences.',
     files: [{ path: 'README.md', content: ADR_README }]
+  },
+  {
+    id: 'research',
+    label: 'Research',
+    description: 'Evidence-led investigation with a recommendation, and a plan for what follows.',
+    entryPath: 'research.md',
+    files: [
+      { path: 'research.md', content: RESEARCH_MD },
+      { path: 'plan.md', content: RESEARCH_PLAN_MD },
+      { path: 'AGENTS.md', content: RESEARCH_AGENTS }
+    ]
+  },
+  {
+    id: 'issue',
+    label: 'Issue',
+    description: 'Problem, impact, evidence, root cause and resolution, with optional research and a fix plan.',
+    entryPath: 'issue.md',
+    files: [
+      { path: 'issue.md', content: ISSUE_MD },
+      { path: 'research.md', content: ISSUE_RESEARCH_MD },
+      { path: 'plan.md', content: ISSUE_PLAN_MD },
+      { path: 'AGENTS.md', content: ISSUE_AGENTS }
+    ]
   },
   {
     id: 'api',

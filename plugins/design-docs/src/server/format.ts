@@ -16,6 +16,7 @@ import {
 import { actorLabel, formatBytes, relativeTime } from '../shared/display.js';
 import type { PageProblem } from '../shared/frame-protocol.js';
 import type { PageBundle } from '../shared/page.js';
+import { AGENT_INSTRUCTIONS_PATH } from '../shared/paths.js';
 import type { RenderReport } from './render-reports.js';
 
 export { actorLabel, relativeTime };
@@ -75,6 +76,9 @@ export function formatManifest(doc: DesignDocDetail, options: ManifestOptions = 
   if (doc.summary) lines.push(`summary: ${doc.summary}`);
   if (doc.tags.length) lines.push(`tags: ${doc.tags.join(', ')}`);
   if (doc.alternativeTo) lines.push(`alternative to: ${doc.alternativeTo}`);
+  if (doc.files.some((file) => file.path === AGENT_INSTRUCTIONS_PATH)) {
+    lines.push('', `agent instructions: ${AGENT_INSTRUCTIONS_PATH} — read it before editing this doc and follow it; it is not part of the published doc`);
+  }
   lines.push('', `## Files (${doc.files.length})`, ...doc.files.map((file) => fileLine(file, doc.entryPath, now)));
   const open = doc.comments.filter((comment) => comment.status === 'open');
   if (open.length) {
@@ -101,9 +105,10 @@ export function formatBundle(
   options: ManifestOptions & { maxChars?: number } = {}
 ): string {
   const maxChars = options.maxChars ?? MAX_BUNDLE_CHARS;
+  const first = [AGENT_INSTRUCTIONS_PATH, doc.entryPath];
   const ordered = [
-    ...files.filter((file) => file.path === doc.entryPath),
-    ...files.filter((file) => file.path !== doc.entryPath)
+    ...first.flatMap((path) => files.filter((file) => file.path === path)),
+    ...files.filter((file) => !first.includes(file.path))
   ];
   const parts = [formatManifest(doc, options)];
   let used = parts[0]!.length;
