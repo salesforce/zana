@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 let failGateWrite = false;
@@ -8,7 +10,7 @@ vi.mock('node:fs', async (importOriginal) => {
   return {
     ...actual,
     writeFileSync: ((path: unknown, ...rest: unknown[]) => {
-      if (failGateWrite && String(path).endsWith('.native-tool-gate.mjs')) throw new Error('disk full');
+      if (failGateWrite && (String(path).endsWith('.native-tool-gate.mjs') || String(path).endsWith('hooks.json'))) throw new Error('disk full');
       return (actual.writeFileSync as (...a: unknown[]) => void)(path, ...rest);
     }) as typeof actual.writeFileSync
   };
@@ -191,5 +193,64 @@ describe('PTY native tool gate (OpenCode)', () => {
     } finally {
       failGateWrite = false;
     }
+  });
+});
+
+describe('PTY native tool gate (directory on argv)', () => {
+  beforeEach(() => { spawns.length = 0; });
+  const create = (extra: Record<string, unknown> = {}) => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    const session = mgr.create({ projectId: 'proj1', profile: 'cursor' as never, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG, ...extra });
+    return { session, call: spawns[spawns.length - 1]! };
+  };
+
+  it('names a private gate directory with --plugin-dir, advertises the veto, and removes it on exit', () => {
+    const { session, call } = create();
+    const at = call.args.indexOf('--plugin-dir');
+    expect(at).toBeGreaterThanOrEqual(0);
+    const dir = call.args[at + 1]!;
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    const hooksFile = join(dir, 'hooks', 'hooks.json');
+    expect(statSync(hooksFile).mode & 0o777).toBe(0o600);
+    const hooks = JSON.parse(readFileSync(hooksFile, 'utf8'));
+    expect(hooks.hooks.preToolUse[0]).toMatchObject({ failClosed: true });
+    expect(hooks.hooks.preToolUse[0].command).toContain(`${MCP_BASE}/hook/nativetool/proj1/${session.id}`);
+    expect(session.capabilitySurface).toMatchObject({ harness: 'cursor', hookBase: true });
+    call.fireExit();
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('adds no gate directory when no policy is required', () => {
+    const { session, call } = create({ nativeToolPolicyRequired: false });
+    expect(call.args).not.toContain('--plugin-dir');
+    expect(session.capabilitySurface).toMatchObject({ hookBase: false });
+  });
+
+  it('refuses the spawn, leaving no directory, when a policy is required and the gate cannot be written', () => {
+    failGateWrite = true;
+    try {
+      expect(() => create()).toThrow(/native tool gate/);
+      expect(spawns).toHaveLength(0);
+    } finally {
+      failGateWrite = false;
+    }
+  });
+
+  it('sweeps a crash-orphaned gate directory on the next launch', async () => {
+    const root = join(tmpdir(), 'zcc-session-mcp');
+    const orphan = join(root, 'orphan-session.native-tool-gate.d');
+    mkdirSync(join(orphan, 'hooks'), { recursive: true });
+    writeFileSync(join(orphan, 'hooks', 'hooks.json'), '{}');
+    const old = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    utimesSync(orphan, old, old);
+    // The sweep is throttled per minute; move the clock past any earlier run.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 10 * 60_000 });
+    try {
+      create();
+    } finally {
+      vi.useRealTimers();
+    }
+    await vi.waitFor(() => expect(existsSync(orphan)).toBe(false), { timeout: 2000 });
   });
 });

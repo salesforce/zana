@@ -2661,7 +2661,10 @@ exports[`golden argv — local create() matrix > codex-yolo · projectSettings �
 
 exports[`golden argv — local create() matrix > cursor · persona · interactive 1`] = `
 {
-  "args": [],
+  "args": [
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
+  ],
   "command": "cursor-agent",
   "sessionEnv": {
     "ZCC_PROJECT_ID": "proj1",
@@ -2675,6 +2678,8 @@ exports[`golden argv — local create() matrix > cursor · persona · scheduled 
   "args": [
     "cursor-agent",
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2686,7 +2691,10 @@ exports[`golden argv — local create() matrix > cursor · persona · scheduled 
 
 exports[`golden argv — local create() matrix > cursor · persona+projectSettings · interactive 1`] = `
 {
-  "args": [],
+  "args": [
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
+  ],
   "command": "cursor-agent",
   "sessionEnv": {
     "ZCC_PROJECT_ID": "proj1",
@@ -2700,6 +2708,8 @@ exports[`golden argv — local create() matrix > cursor · persona+projectSettin
   "args": [
     "cursor-agent",
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2711,7 +2721,10 @@ exports[`golden argv — local create() matrix > cursor · persona+projectSettin
 
 exports[`golden argv — local create() matrix > cursor · plain · interactive 1`] = `
 {
-  "args": [],
+  "args": [
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
+  ],
   "command": "cursor-agent",
   "sessionEnv": {
     "ZCC_PROJECT_ID": "proj1",
@@ -2725,6 +2738,8 @@ exports[`golden argv — local create() matrix > cursor · plain · scheduled 1`
   "args": [
     "cursor-agent",
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2736,7 +2751,10 @@ exports[`golden argv — local create() matrix > cursor · plain · scheduled 1`
 
 exports[`golden argv — local create() matrix > cursor · projectSettings · interactive 1`] = `
 {
-  "args": [],
+  "args": [
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
+  ],
   "command": "cursor-agent",
   "sessionEnv": {
     "ZCC_PROJECT_ID": "proj1",
@@ -2750,6 +2768,8 @@ exports[`golden argv — local create() matrix > cursor · projectSettings · sc
   "args": [
     "cursor-agent",
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2763,6 +2783,8 @@ exports[`golden argv — local create() matrix > cursor-resume · persona · int
 {
   "args": [
     "--resume",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "cursor-agent",
   "sessionEnv": {
@@ -2777,6 +2799,8 @@ exports[`golden argv — local create() matrix > cursor-resume · persona · sch
   "args": [
     "cursor-agent",
     "--resume",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
     "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
@@ -2791,6 +2815,8 @@ exports[`golden argv — local create() matrix > cursor-resume · persona+projec
 {
   "args": [
     "--resume",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "cursor-agent",
   "sessionEnv": {
@@ -2805,6 +2831,8 @@ exports[`golden argv — local create() matrix > cursor-resume · persona+projec
   "args": [
     "cursor-agent",
     "--resume",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
     "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
@@ -2819,6 +2847,8 @@ exports[`golden argv — local create() matrix > cursor-resume · plain · inter
 {
   "args": [
     "--resume",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "cursor-agent",
   "sessionEnv": {
@@ -2833,6 +2863,8 @@ exports[`golden argv — local create() matrix > cursor-resume · plain · sched
   "args": [
     "cursor-agent",
     "--resume",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
     "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
@@ -2847,6 +2879,8 @@ exports[`golden argv — local create() matrix > cursor-resume · projectSetting
 {
   "args": [
     "--resume",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "cursor-agent",
   "sessionEnv": {
@@ -2861,6 +2895,8 @@ exports[`golden argv — local create() matrix > cursor-resume · projectSetting
   "args": [
     "cursor-agent",
     "--resume",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
     "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
@@ -2875,6 +2911,8 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona · inter
 {
   "args": [
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "cursor-agent",
   "sessionEnv": {
@@ -2889,6 +2927,8 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona · sched
   "args": [
     "cursor-agent",
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2902,6 +2942,8 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona+projectS
 {
   "args": [
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "cursor-agent",
   "sessionEnv": {
@@ -2916,6 +2958,8 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona+projectS
   "args": [
     "cursor-agent",
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2929,6 +2973,8 @@ exports[`golden argv — local create() matrix > cursor-yolo · plain · interac
 {
   "args": [
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "cursor-agent",
   "sessionEnv": {
@@ -2943,6 +2989,8 @@ exports[`golden argv — local create() matrix > cursor-yolo · plain · schedul
   "args": [
     "cursor-agent",
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2956,6 +3004,8 @@ exports[`golden argv — local create() matrix > cursor-yolo · projectSettings 
 {
   "args": [
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "cursor-agent",
   "sessionEnv": {
@@ -2970,6 +3020,8 @@ exports[`golden argv — local create() matrix > cursor-yolo · projectSettings 
   "args": [
     "cursor-agent",
     "--force",
+    "--plugin-dir",
+    "<SESSION_MCP_DIR>/<UUID>.native-tool-gate.d",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {

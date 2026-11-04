@@ -500,6 +500,22 @@ export interface LaunchProvider {
   mergeNativeToolGateConfig(profile: LaunchProfileId, configJson: string, gatePath: string): string;
 
   /**
+   * True when this provider vetoes native tool calls through a per-session
+   * directory its argv names (see {@link nativeToolGateDirectory}). Local-only:
+   * a remote launch has no host-local directory to name, so it carries no veto.
+   */
+  readonly nativeToolGateViaDirectory?: boolean;
+
+  /**
+   * Files of a per-session gate directory whose pre-tool hook asks
+   * `nativeToolUrl` and blocks anything but an exact allow, plus the argv that
+   * makes the CLI load it from `dir`. `PtyManager` creates `dir` (`0700`),
+   * writes the files (`0600`), and removes the directory on exit.
+   */
+  nativeToolGateDirectory(profile: LaunchProfileId, nativeToolUrl: string, dir: string):
+    { files: ReadonlyArray<{ path: string; contents: string }>; args: string[] } | null;
+
+  /**
    * Argv fragment that wires the launcher's lifecycle hooks into a provider whose
    * CLI carries hook config as command-line ARGS, given the fully-resolved,
    * identity-bearing callback URLs in {@link ProviderHookUrls} — the SAME `/hook/*`

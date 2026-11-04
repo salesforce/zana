@@ -134,6 +134,7 @@ const SCHEDULED_SUPERVISOR_RE = /(?:[A-Za-z]:)?[^"\\]+\/resources\/scheduled-sup
 /** Replace every UUID + the derived remote port with stable tokens so snapshots don't churn per run. */
 function normalize<T>(value: T): T {
   const masked = JSON.stringify(value)
+    .replace(/[^"]*\/zcc-session-mcp\//g, '<SESSION_MCP_DIR>/')
     .replace(UUID_RE, '<UUID>')
     .replace(SESSION_CREDENTIAL_RE, '<SESSION_CREDENTIAL>')
     .replace(REVERSE_FORWARD_RE, '<PORT>$1')

@@ -74,10 +74,16 @@ for (const harness of ['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell']) 
 // launch that wrote the module (hookBase), covers tools the agent runs, and
 // does not gate a command the user types into the TUI.
 const OPENCODE_PTY_VETO = 'Vetoes tools the agent runs through OpenCode\'s plugin pre-tool hook; a command the user types into the TUI is not gated, and a remote launch carries no veto';
-for (const harness of ['claude', 'codex', 'opencode']) {
+// Cursor's veto is the blocking preToolUse hook of a per-session plugin directory
+// (--plugin-dir), marked failClosed so a crash or timeout also denies. It runs
+// ahead of every tool the agent calls (shell, MCP, file reads and writes). Not
+// gated: a command the user types into the TUI, Tab completion edits, and a
+// remote launch (no host-local directory to name).
+const CURSOR_PTY_VETO = 'Vetoes tools the agent runs through Cursor\'s blocking preToolUse hook; a command the user types into the TUI and Tab completion edits are not gated, and a remote launch carries no veto';
+for (const harness of ['claude', 'codex', 'opencode', 'cursor']) {
   for (const headless of [false, true]) {
     const key: CapabilitySurfaceKey = { surface: 'pty', harness, headless, hookBase: true };
-    capabilityRegistry.register(key, 'tool-before-native', harness === 'opencode' ? { available: true, reason: OPENCODE_PTY_VETO } : { available: true });
+    capabilityRegistry.register(key, 'tool-before-native', harness === 'opencode' ? { available: true, reason: OPENCODE_PTY_VETO } : harness === 'cursor' ? { available: true, reason: CURSOR_PTY_VETO } : { available: true });
     capabilityRegistry.register(key, 'tool-after-native', { available: false, reason: 'Native tool completion is not delivered to plugins' });
   }
 }

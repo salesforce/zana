@@ -21,12 +21,22 @@ export const NATIVE_TOOL_RELAY_UNREACHABLE =
   '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"native tool policy unreachable"}}';
 
 /**
+ * Shell fragment that classifies the route's reply into `KIND` (`allow`, `deny`
+ * or `bad`). Expects `OUT` (curl's body) and `STATUS` (curl's exit code) and
+ * trusts either reply shape only after a clean curl exit, so a truncated allow
+ * can never be read as an allow.
+ */
+export function nativeToolReplyClassifier(): string {
+  return 'KIND=bad; ' +
+    `if [ "$STATUS" -eq 0 ]; then case "$OUT" in ${replyPattern('allow')}) KIND=allow;; ${replyPattern('deny')}) KIND=deny;; esac; fi; `;
+}
+
+/**
  * Shell tail of a PreToolUse relay. Expects `OUT` (curl's body) and `STATUS`
  * (curl's exit code); trusts either reply shape only after a clean curl exit,
  * so a truncated allow can never turn into silence. Always exits 0.
  */
 export function nativeToolRelayTail(): string {
-  return 'KIND=bad; ' +
-    `if [ "$STATUS" -eq 0 ]; then case "$OUT" in ${replyPattern('allow')}) KIND=allow;; ${replyPattern('deny')}) KIND=deny;; esac; fi; ` +
+  return nativeToolReplyClassifier() +
     `case "$KIND" in allow) ;; deny) printf '%s' "$OUT";; *) echo '${NATIVE_TOOL_RELAY_UNREACHABLE}';; esac; exit 0`;
 }

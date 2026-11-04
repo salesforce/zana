@@ -4,8 +4,8 @@ import { createRequire } from 'node:module';
 import { controlCredentialForSession } from './control-credential.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { readdir as readdirAsync, stat as statAsync, unlink as unlinkAsync } from 'node:fs/promises';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readdir as readdirAsync, rm as rmAsync, stat as statAsync, unlink as unlinkAsync } from 'node:fs/promises';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isWithin } from '@zana-ai/zcc-path-confine';
@@ -131,6 +131,9 @@ let lastSessionMcpSweepAt = 0;
  * removes it (age gate); unlink-on-exit ({@link PtyManager.finalizeExit}) is the
  * primary reclaim, this only mops crash orphans.
  */
+/** Suffix of a per-session native tool gate directory (a provider that names one on argv). */
+const NATIVE_TOOL_GATE_DIR_SUFFIX = '.native-tool-gate.d';
+
 function sweepStaleSessionMcpConfigs(dir: string): void {
   const now = Date.now();
   if (now - lastSessionMcpSweepAt < SESSION_MCP_SWEEP_MIN_INTERVAL_MS) return;
@@ -138,10 +141,11 @@ function sweepStaleSessionMcpConfigs(dir: string): void {
   void (async () => {
     try {
       for (const name of await readdirAsync(dir)) {
-        if (!name.endsWith('.json') && !name.endsWith('.instructions.md') && !name.endsWith('.native-tool-gate.mjs')) continue;
+        const isGateDir = name.endsWith(NATIVE_TOOL_GATE_DIR_SUFFIX);
+        if (!isGateDir && !name.endsWith('.json') && !name.endsWith('.instructions.md') && !name.endsWith('.native-tool-gate.mjs')) continue;
         const path = join(dir, name);
         try {
-          if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await unlinkAsync(path);
+          if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await (isGateDir ? rmAsync(path, { recursive: true, force: true }) : unlinkAsync(path));
         } catch {
           /* best-effort per-file */
         }
@@ -537,6 +541,8 @@ export class PtyManager extends EventEmitter {
   private sessionInstructionFiles = new Map<string, string>();
   /** Per-session native tool gate modules (OpenCode); unlinked in {@link finalizeExit}. */
   private sessionNativeToolGateFiles = new Map<string, string>();
+  /** Per-session native tool gate directories (named on argv); removed in {@link finalizeExit}. */
+  private sessionNativeToolGateDirs = new Map<string, string>();
   /** Tmux identity env files not yet consumed by the pane; unlinked on exit (the pane normally deletes it first). */
   private sessionEnvFiles = new Map<string, string>();
   /** Per-run isolated CLAUDE_CONFIG_DIR of unattended Claude sessions, by session id; removed in {@link finalizeExit}. */
@@ -888,6 +894,43 @@ export class PtyManager extends EventEmitter {
       if (!path) continue;
       files.delete(sessionId);
       try { unlinkSync(path); } catch { /* best-effort */ }
+    }
+    const gateDir = this.sessionNativeToolGateDirs.get(sessionId);
+    if (gateDir) {
+      this.sessionNativeToolGateDirs.delete(sessionId);
+      try { rmSync(gateDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  }
+
+  /**
+   * Create a session's native tool gate directory (`0700`) with its files
+   * (`0600`) and return its path (null on failure; a partial directory is removed).
+   * Removed on session exit ({@link finalizeExit}).
+   */
+  private writeSessionNativeToolGateDir(
+    sessionId: string,
+    build: (dir: string) => { files: ReadonlyArray<{ path: string; contents: string }>; args: string[] } | null
+  ): { dir: string; args: string[] } | null {
+    const dir = join(SESSION_MCP_CONFIG_DIR, `${sessionId}${NATIVE_TOOL_GATE_DIR_SUFFIX}`);
+    try {
+      const bundle = build(dir);
+      if (!bundle) return null;
+      mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
+      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      this.sessionNativeToolGateDirs.set(sessionId, dir);
+      for (const file of bundle.files) {
+        const target = join(dir, file.path);
+        mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+        writeFileSync(target, file.contents, { mode: 0o600 });
+      }
+      return { dir, args: bundle.args };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] writeSessionNativeToolGateDir(${sessionId}) failed:`, err);
+      this.sessionNativeToolGateDirs.delete(sessionId);
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      return null;
     }
   }
 
@@ -1536,6 +1579,21 @@ export class PtyManager extends EventEmitter {
         'tool policy plugin enabled but the native tool gate config could not be written for this launch'
       );
     }
+    // A provider whose CLI loads its veto from a directory named on argv gets a
+    // per-session one. It is only added when a policy is required, so a launch
+    // without a tool-policy plugin stays byte-identical. When it cannot be put
+    // in place the spawn is refused rather than started without its veto.
+    const nativeToolGateDir = provider.nativeToolGateViaDirectory && providerHookUrls.nativeTool && nativeToolPolicyRequired
+      ? this.writeSessionNativeToolGateDir(sessionId, (dir) =>
+          provider.nativeToolGateDirectory(effectiveProfile, providerHookUrls.nativeTool!, dir))
+      : null;
+    if (provider.nativeToolGateViaDirectory && nativeToolPolicyRequired && !nativeToolGateDir) {
+      this.releaseSessionLaunchFiles(sessionId);
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but the native tool gate directory could not be installed for this launch'
+      );
+    }
     // Persona flags: inserted AFTER claudeMcpArgs so the persona's
     // append-system-prompt layers on TOP of the inbox guidance (personas can
     // build on the baseline inbox behavior), and BEFORE projectSettings so
@@ -1856,6 +1914,7 @@ export class PtyManager extends EventEmitter {
           ...mcpApprovalArgs,
            ...(providerIntegration.guidanceArgs ?? []),
            ...(providerIntegration.hookArgs ?? []),
+          ...(nativeToolGateDir?.args ?? []),
            ...(providerIntegration.authArgs ?? []),
           ...psArgs,
           ...personaArgs,
@@ -2106,7 +2165,7 @@ export class PtyManager extends EventEmitter {
         // tracks NATIVE-TOOL reachability (headless-independent), not just lifecycle:
         // codex rides nativeToolUrl, claude rides lifecycleBase's nativeTool hook.
         surface: 'pty', harness: registrationFor(effectiveProfile)?.id ?? effectiveProfile,
-        headless: !!opts.headless, hookBase: provider.nativeToolGateViaConfigFile ? nativeToolGateWired : Boolean(nativeToolUrl || lifecycleBase)
+        headless: !!opts.headless, hookBase: provider.nativeToolGateViaConfigFile ? nativeToolGateWired : provider.nativeToolGateViaDirectory ? Boolean(nativeToolGateDir) : Boolean(nativeToolUrl || lifecycleBase)
       },
       projectId: opts.projectId,
       ...(opts.threadId ? { threadId: opts.threadId } : {}),
@@ -2477,6 +2536,15 @@ export class PtyManager extends EventEmitter {
       this.sessionNativeToolGateFiles.delete(sessionId);
       try {
         unlinkSync(gateFile);
+      } catch {
+        /* best-effort — already gone or swept */
+      }
+    }
+    const gateDir = this.sessionNativeToolGateDirs.get(sessionId);
+    if (gateDir) {
+      this.sessionNativeToolGateDirs.delete(sessionId);
+      try {
+        rmSync(gateDir, { recursive: true, force: true });
       } catch {
         /* best-effort — already gone or swept */
       }
@@ -2974,7 +3042,7 @@ export class PtyManager extends EventEmitter {
       capabilitySurface: {
         surface: 'pty', harness: remoteRegistration.id,
         headless: !!opts.headless, // A config-file gate names a host-local module, so a remote launch carries no veto.
-        hookBase: Boolean(remoteHookUrls?.nativeTool) && !remoteProvider.nativeToolGateViaConfigFile
+        hookBase: Boolean(remoteHookUrls?.nativeTool) && !remoteProvider.nativeToolGateViaConfigFile && !remoteProvider.nativeToolGateViaDirectory
       },
       projectId: opts.projectId,
       ...(opts.threadId ? { threadId: opts.threadId } : {}),

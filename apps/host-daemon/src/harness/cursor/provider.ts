@@ -36,6 +36,7 @@ import type {
 import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
 import { BaseLaunchProvider } from '../base-provider.js';
 import type { HarnessModelTarget, ModelLevel } from "@zana-ai/zcc-domain/harness-adapter";
+import { cursorNativeToolGateArgs, cursorNativeToolGateFiles } from './native-tool-gate.js';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 
@@ -129,6 +130,8 @@ export class CursorProvider extends BaseLaunchProvider {
   readonly id = 'cursor-agent';
   /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`default`, `grok-4.6`). */
   readonly acceptsUnlistedModelTargets = true;
+  // The native tool veto is a plugin directory named on argv (`--plugin-dir`); local launches only.
+  readonly nativeToolGateViaDirectory = true;
   private discoveredModels: readonly HarnessModelTarget[] = [];
 
   get adapter(): TrustedHarnessAdapter {
@@ -239,6 +242,10 @@ export class CursorProvider extends BaseLaunchProvider {
   // mode is Claude Code's classifier-backed --permission-mode, not a cursor
   // concept. All of these are v1 follow-ups if cursor-agent grows a config-path
   // flag. See findings/multi-provider/A5-*.
+
+  nativeToolGateDirectory(_profile: LaunchProfileId, nativeToolUrl: string, dir: string) {
+    return { files: cursorNativeToolGateFiles(nativeToolUrl), args: cursorNativeToolGateArgs(dir) };
+  }
 
   buildRemoteCommand(input: RemoteCommandInput): RemoteCommandResult {
     // Relies on `cursor-agent` being on the remote PATH (mirrors the claude

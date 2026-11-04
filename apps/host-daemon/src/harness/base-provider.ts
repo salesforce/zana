@@ -194,6 +194,13 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     return configJson;
   }
 
+  readonly nativeToolGateViaDirectory: boolean = false;
+
+  nativeToolGateDirectory(_profile: LaunchProfileId, _nativeToolUrl: string, _dir: string):
+    { files: ReadonlyArray<{ path: string; contents: string }>; args: string[] } | null {
+    return null;
+  }
+
   hookArgs(_profile: LaunchProfileId, _urls: ProviderHookUrls): string[] {
     return [];
   }

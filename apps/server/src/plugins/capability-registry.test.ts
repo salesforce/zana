@@ -6,7 +6,7 @@ describe('surface wiring registry', () => {
   it.each(['claude', 'codex', 'opencode', 'cursor', 'pi', 'unknown'])('uses recorded PTY evidence for %s', harness => {
     for (const headless of [false, true]) for (const hookBase of [false, true]) {
       const capabilities = capabilityRegistry.describe({ surface: 'pty', harness, headless, hookBase });
-      expect(capabilities.find(row => row.id === 'tool-before-native')?.available).toBe(['claude', 'codex', 'opencode'].includes(harness) && hookBase);
+      expect(capabilities.find(row => row.id === 'tool-before-native')?.available).toBe(['claude', 'codex', 'opencode', 'cursor'].includes(harness) && hookBase);
       expect(capabilities.find(row => row.id === 'tool-after-native')?.available).toBe(false);
     }
   });
@@ -17,6 +17,18 @@ describe('surface wiring registry', () => {
       expect(wired).toMatchObject({ available: true, reason: expect.stringContaining('user types') });
       expect(wired?.reason).toContain('remote');
       const unwired = capabilityRegistry.describe({ surface: 'pty', harness: 'opencode', headless, hookBase: false })
+        .find(row => row.id === 'tool-before-native');
+      expect(unwired).toMatchObject({ available: false, reason: expect.stringContaining('not wired') });
+    }
+  });
+  it('says what the Cursor PTY veto leaves ungated, and nothing is advertised without the gate', () => {
+    for (const headless of [false, true]) {
+      const wired = capabilityRegistry.describe({ surface: 'pty', harness: 'cursor', headless, hookBase: true })
+        .find(row => row.id === 'tool-before-native');
+      expect(wired).toMatchObject({ available: true, reason: expect.stringContaining('preToolUse') });
+      expect(wired?.reason).toContain('user types');
+      expect(wired?.reason).toContain('remote');
+      const unwired = capabilityRegistry.describe({ surface: 'pty', harness: 'cursor', headless, hookBase: false })
         .find(row => row.id === 'tool-before-native');
       expect(unwired).toMatchObject({ available: false, reason: expect.stringContaining('not wired') });
     }
