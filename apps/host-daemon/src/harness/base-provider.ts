@@ -298,7 +298,9 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
 
     // A native role pins its own model — drop any injected `--model` (see nativeRolePinsModel).
     const suppressModelForRole = Boolean(roleTarget.targetId && this.nativeRolePinsModel);
-    const argv = [remoteBinary, ...baseArgs, ...injectedArgs, ...(suppressModelForRole ? [] : (modelTarget.contribution.args || [])), ...(roleTarget.contribution.args || []), ...(execution.contribution.args || []), ...remoteExtra];
+    // Persona flags the provider owns (e.g. a reasoning effort), same layer as the local spawn.
+    const personaArgs = input.persona ? this.personaArgs(input.persona, effectiveProfile) : [];
+    const argv = [remoteBinary, ...baseArgs, ...injectedArgs, ...personaArgs, ...(suppressModelForRole ? [] : (modelTarget.contribution.args || [])), ...(roleTarget.contribution.args || []), ...(execution.contribution.args || []), ...remoteExtra];
     // cursor/codex don't take a launcher-injected `--session-id` in v1
     // (acceptsSessionId is false), so there's no resumable id to surface here.
     return { cmd: `${cdPrefix}exec ${shellQuoteArgv(argv)}` };

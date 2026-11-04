@@ -2,7 +2,7 @@ import { test, expect } from './fixtures/app.js';
 import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import type { Page } from '@playwright/test';
 
-// #584: a persona can carry a Claude reasoning effort. Drives the real editor
+// #584: a persona can carry a reasoning effort (each harness maps it). Drives the real editor
 // in the built app: set it, save, reopen, see it, then reset it to the default.
 
 test.use({
@@ -33,7 +33,7 @@ test('persona editor sets, shows and clears Reasoning effort', async ({ app }, t
   const picker = window.getByRole('button', { name: 'Reasoning effort' });
   await expect(picker).toBeVisible();
   await expect(picker).toContainText('Use harness default (unset)');
-  await expect(window.getByText('Sets how hard Claude thinks for this persona. Other agents ignore it.')).toBeVisible();
+  await expect(window.getByText('Sets how hard the agent thinks. Claude, Codex, PI and Grok take it at launch; in a Squad, OpenCode and Cursor use their closest level. Agents with no reasoning setting ignore it.')).toBeVisible();
 
   await picker.click();
   await window.getByRole('listbox', { name: 'Reasoning effort' }).getByRole('option', { name: /^High/ }).click();

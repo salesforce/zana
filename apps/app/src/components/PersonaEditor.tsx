@@ -5,7 +5,6 @@ import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult, HarnessRole
 import { PERSONA_REASONING_LEVELS, type HarnessFamily, type LaunchProfileId, type Persona, type PersonaInput, type PersonaReasoningLevel } from '@zana-ai/zcc-domain/product';
 import {
   harnessFamilyOf,
-  isClaudeProfile,
   profileLabel,
   providerCapabilities,
   providerUiSchema,
@@ -541,7 +540,7 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
   const [baseProfile, setBaseProfile] = useState<LaunchProfileId | ''>(persona?.baseProfile ?? '');
   const [modelLevel, setModelLevel] = useState<string>(persona?.modelLevel ?? 'default');
   const [reasoningLevel, setReasoningLevel] = useState<string>(persona?.reasoningLevel ?? 'default');
-  const showReasoning = baseProfile === '' || isClaudeProfile(baseProfile);
+  const showReasoning = baseProfile === '' || harnessFamilyOf(baseProfile) !== null;
   const [executionState, setExecutionState] = useState<string>(persona?.executionState ?? 'default');
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [harnessRouting, setHarnessRouting] = useState<PersonaRouting>(
@@ -611,8 +610,9 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
       description: description.trim() || undefined,
       baseProfile: baseProfile || undefined,
       modelLevel: !baseProfile && modelLevel !== 'default' ? modelLevel as any : undefined,
-      // Reasoning effort only has an effect on Claude, so it is saved only for
-      // a neutral or Claude persona. 'default' clears it.
+      // Reasoning effort is saved for a neutral persona or one pinned to an agent
+      // harness (each maps it to its own setting); a shell persona drops it.
+      // 'default' clears it.
       reasoningLevel: showReasoning && reasoningLevel !== 'default' ? (reasoningLevel as PersonaReasoningLevel) : undefined,
       executionState: !baseProfile && executionState !== 'default' ? executionState as any : undefined,
       // Structured controls replace legacy routing fields. Keeping old values
@@ -808,7 +808,7 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
                 ...PERSONA_REASONING_LEVELS.map((level) => ({ value: level, label: REASONING_LEVEL_LABELS[level] }))
               ]}
             />
-            <p className="settings-help persona-form-hint">Sets how hard Claude thinks for this persona. Other agents ignore it.</p>
+            <p className="settings-help persona-form-hint">Sets how hard the agent thinks. Claude, Codex, PI and Grok take it at launch; in a Squad, OpenCode and Cursor use their closest level. Agents with no reasoning setting ignore it.</p>
           </div>
         )}
 

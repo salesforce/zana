@@ -65,17 +65,35 @@ describe('personaEffortForProvider', () => {
     expect(personaEffortForProvider('claude', 'max')).toBe('max');
   });
 
-  it('drops an absent level and a level the Claude provider does not declare', () => {
+  it('drops an absent level and an unknown level', () => {
     registerProvider('claude-code', ['low', 'medium']);
     expect(personaEffortForProvider('claude-code', undefined)).toBeUndefined();
-    expect(personaEffortForProvider('claude-code', 'max')).toBeUndefined();
+    expect(personaEffortForProvider('claude-code', 'turbo')).toBeUndefined();
+    expect(personaEffortForProvider('claude-code', 'max')).toBe('medium');
   });
 
-  it('gives a Claude provider with no declared levels, a non-Claude provider and an unknown provider none', () => {
+  it('keeps a declared level on any provider, not only Claude', () => {
+    registerProvider('acp-opencode', ['low', 'medium', 'high', 'xhigh', 'max']);
+    registerProvider('codex', ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+    expect(personaEffortForProvider('acp-opencode', 'high')).toBe('high');
+    expect(personaEffortForProvider('codex', 'max')).toBe('max');
+  });
+
+  it('steps an undeclared level down to the highest declared level below it', () => {
+    registerProvider('acp-grok', ['low', 'medium', 'high']);
+    expect(personaEffortForProvider('acp-grok', 'max')).toBe('high');
+    expect(personaEffortForProvider('acp-grok', 'xhigh')).toBe('high');
+    registerProvider('sparse', ['low', 'high']);
+    expect(personaEffortForProvider('sparse', 'medium')).toBe('low');
+  });
+
+  it('gives none when nothing is declared at or below the level, or the provider is unknown', () => {
     registerProvider('claude-code');
     expect(personaEffortForProvider('claude-code', 'high')).toBeUndefined();
-    registerProvider('acp-opencode', ['low', 'medium', 'high', 'xhigh', 'max']);
-    expect(personaEffortForProvider('acp-opencode', 'high')).toBeUndefined();
+    registerProvider('acp-mastracode', []);
+    expect(personaEffortForProvider('acp-mastracode', 'high')).toBeUndefined();
+    registerProvider('high-only', ['high']);
+    expect(personaEffortForProvider('high-only', 'low')).toBeUndefined();
     expect(personaEffortForProvider('nope', 'high')).toBeUndefined();
   });
 });

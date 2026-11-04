@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Save payload for the Reasoning effort picker (#584): a chosen level is sent,
-// 'default' and a non-Claude persona send undefined.
+// 'default' and a shell persona send undefined.
 const mocks = vi.hoisted(() => ({ save: vi.fn() }));
 vi.mock('../../lib/product-client.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/product-client.js')>();
@@ -66,8 +66,13 @@ describe('PersonaEditor reasoning effort save payload (#584)', () => {
     expect((await clickSave()).reasoningLevel).toBe('low');
   });
 
-  it('drops a stale level for a persona pinned to a non-Claude harness', async () => {
+  it('keeps the level for a persona pinned to another agent harness', async () => {
     open({ id: 'o', name: 'Codex', source: 'user', baseProfile: 'codex', reasoningLevel: 'high' });
+    expect((await clickSave()).reasoningLevel).toBe('high');
+  });
+
+  it('drops a stale level for a shell persona', async () => {
+    open({ id: 's', name: 'Shell', source: 'user', baseProfile: 'shell', reasoningLevel: 'high' });
     expect((await clickSave()).reasoningLevel).toBeUndefined();
   });
 });

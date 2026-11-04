@@ -689,7 +689,7 @@ describe('personaArgs_build — persona reasoning effort (#584)', () => {
       .toEqual(['--effort', 'max']);
   });
 
-  it('REQ-7: non-Claude harnesses ignore reasoningLevel', () => {
+  it('REQ-7: the Claude builder adds no --effort for a non-Claude profile (each harness maps it itself)', () => {
     for (const profile of ['codex', 'codex-yolo', 'opencode', 'cursor', 'pi'] as const) {
       const without = personaArgs_build({ id: 'p', name: 'P' }, profile);
       const withLevel = personaArgs_build({ id: 'p', name: 'P', reasoningLevel: 'max' }, profile);
@@ -745,12 +745,16 @@ describe('PtyManager.create — persona reasoning effort (#584)', () => {
     expect(argv[positions[1] + 1]).toBe('max');
   });
 
-  it('REQ-7: a Codex launch is identical with and without reasoningLevel', () => {
+  it('REQ-7: a Codex launch maps the level to -c model_reasoning_effort and adds nothing else', () => {
     const base: Persona = { id: 'p', name: 'P', codexSandbox: 'workspace-write', codexApproval: 'never' };
     const withLevel = create('codex', { ...base, reasoningLevel: 'max' });
     const without = create('codex', base);
-    expect(withLevel).toEqual(without);
     expect(withLevel).not.toContain('--effort');
+    const at = withLevel.indexOf('model_reasoning_effort="max"');
+    expect(at).toBeGreaterThan(0);
+    expect(withLevel[at - 1]).toBe('-c');
+    expect(without.some((a) => a.startsWith('model_reasoning_effort'))).toBe(false);
+    expect(withLevel.filter((_, i) => i !== at && i !== at - 1)).toEqual(without);
   });
 });
 

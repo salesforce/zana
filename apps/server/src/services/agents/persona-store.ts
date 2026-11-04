@@ -434,7 +434,7 @@ function ensureReadme(dir: string) {
         '`baseProfile` must be one of `shell`, `claude`, `claude-resume`, `claude-yolo`.',
         '`model` can be `opus`, `sonnet`, `haiku`, or `default` (let Claude decide).',
         '`permissionMode` can be `default`, `acceptEdits`, `plan`, or `bypassPermissions`.',
-        '`reasoningLevel` (optional, Claude only) can be `low`, `medium`, `high`, `xhigh`, or `max`; other agents ignore it. Any other value skips the persona.',
+        '`reasoningLevel` (optional) can be `low`, `medium`, `high`, `xhigh`, or `max`. Claude, Codex, PI and Grok map it to their own effort setting; agents without one ignore it. Any other value skips the persona.',
         'Files with invalid JSON or missing required fields are silently skipped.',
         'A built-in persona is shadowed when you drop a file with the same `id` here.',
         ''

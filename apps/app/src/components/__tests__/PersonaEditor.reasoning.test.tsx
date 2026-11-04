@@ -22,14 +22,19 @@ describe('PersonaEditor reasoning effort (REQ-8)', () => {
     expect(edit({ id: 'y', name: 'Y', source: 'user', baseProfile: 'claude-yolo' })).toContain('id="persona-reasoning-effort"');
   });
 
-  it('hides the picker when the persona is pinned to a non-Claude harness', () => {
-    expect(edit({ id: 'o', name: 'O', source: 'user', baseProfile: 'opencode' })).not.toContain('Reasoning effort');
-    expect(edit({ id: 'x', name: 'X', source: 'user', baseProfile: 'codex' })).not.toContain('Reasoning effort');
+  it('shows the picker for a persona pinned to another agent harness (each maps it itself)', () => {
+    for (const baseProfile of ['codex', 'opencode', 'cursor', 'pi', 'grok'] as const) {
+      expect(edit({ id: baseProfile, name: 'H', source: 'user', baseProfile }), baseProfile).toContain('id="persona-reasoning-effort"');
+    }
+  });
+
+  it('hides the picker for a shell persona', () => {
+    expect(edit({ id: 's', name: 'S', source: 'user', baseProfile: 'shell' })).not.toContain('Reasoning effort');
   });
 
   it('explains what the setting does in plain words', () => {
     const html = edit({ id: 'n', name: 'N', source: 'user' });
-    expect(html).toContain('Sets how hard Claude thinks for this persona. Other agents ignore it.');
+    expect(html).toContain('Sets how hard the agent thinks. Claude, Codex, PI and Grok take it at launch; in a Squad, OpenCode and Cursor use their closest level. Agents with no reasoning setting ignore it.');
   });
 
   it('preselects the saved level', () => {

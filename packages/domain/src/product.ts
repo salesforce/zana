@@ -4408,7 +4408,7 @@ export interface PluginHarnessOverrideV1 extends HarnessModelRoutingV1 {
   defaultHarness?: HarnessFamily;
 }
 
-/** Reasoning-effort levels a persona can request (Claude `--effort` vocabulary). */
+/** Reasoning-effort levels a persona can request, lowest first (each harness maps them to its own setting). */
 export const PERSONA_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type PersonaReasoningLevel = (typeof PERSONA_REASONING_LEVELS)[number];
 
@@ -4495,12 +4495,14 @@ export interface Persona {
   microVmImage?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
   /**
-   * Reasoning effort → claude `--effort`. Applies to Claude personas launched as
-   * terminal / CLI Agent and CLI Squad seats. Modern Squad seats carry it too
-   * (as the thread `reasoningLevel`) but only on the Claude provider, and only for
-   * a level that provider declares; other harnesses and plain thread
-   * (Modern conversation) launches ignore it. Absent means the harness default
-   * (no flag emitted).
+   * Reasoning effort, harness neutral. Terminal / CLI Agent and CLI Squad
+   * launches map it in each harness's provider: Claude `--effort`, Codex
+   * `-c model_reasoning_effort`, PI `--thinking`, Grok `--reasoning-effort`
+   * (xhigh/max → high). OpenCode's TUI and cursor-agent have no launch flag,
+   * so they ignore it there. Modern Squad seats carry it as the thread
+   * `reasoningLevel` on any provider that declares levels, stepped down to the
+   * nearest declared level (the provider bridge maps it, e.g. to an OpenCode
+   * model variant). Plain thread launches ignore it. Absent = harness default.
    */
   reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
@@ -4535,7 +4537,7 @@ export interface PersonaSummary {
   baseProfile?: LaunchProfileId;
   model?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
-  /** Claude-only reasoning effort; ignored by other harnesses. */
+  /** Reasoning effort; each harness maps it to its own setting (see `Persona.reasoningLevel`). */
   reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
   /** Provenance (builtin / user / project / extension). Non-sensitive; lets a
