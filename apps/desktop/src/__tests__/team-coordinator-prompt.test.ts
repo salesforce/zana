@@ -93,6 +93,11 @@ describe('jobCoordinatorPrompt — Flow B/C file handoff (sandbox-immune)', () =
     expect(prompt).not.toContain('bounded `execution.source.read`');
   });
 
+  it('names the only valid Execution class values so an inferred plan is not rejected for "research"', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false, planFilePath: '.zana/execution-plan-exec-1.md' });
+    expect(prompt).toContain('Execution class (exactly Routine, Standard, or Expert; no other value)');
+  });
+
   it('without a plan file path: falls back to the legacy MCP-register instruction', () => {
     const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: withSources, roster, planReady: false });
     expect(prompt).toContain('`execution.plan.register` EXACTLY ONCE');
