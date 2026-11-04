@@ -107,9 +107,20 @@ describe('validateVideoConfig', () => {
     bad.opener = { headline: '', chips: ['a', ''], lines: [{ at: 4, text: 'x' }, { at: 2, text: 'y' }, { at: 20, text: 'z' }], duration: 9, revealAt: 12 };
     bad.closer = { headline: 'x', chips: [], duration: 0, line: 5 };
     const errors = validateVideoConfig(bad).join('\n');
-    for (const part of ['id must', 'title is required', 'even integers', 'fps must', 'opener.headline', 'opener.chips', 'time order', 'after opener.duration', 'revealAt', 'closer.duration', 'closer.line']) {
+    for (const part of ['id must', 'title is required', 'positive even integers', 'fps must', 'opener.headline', 'opener.chips', 'time order', 'after opener.duration', 'revealAt', 'closer.duration', 'closer.line']) {
       expect(errors).toContain(part);
     }
+  });
+  it('requires positive even dimensions within the supported bounds', () => {
+    const check = (width: number, height: number) => validateVideoConfig({ ...valid(), width, height }).some((e) => e.includes('positive even integers'));
+    expect(check(0, 0)).toBe(true);
+    expect(check(-1920, -1080)).toBe(true);
+    expect(check(1920, 0)).toBe(true);
+    expect(check(7682, 1080)).toBe(true);
+    expect(check(1920, 4322)).toBe(true);
+    expect(check(1921, 1080)).toBe(true);
+    expect(check(7680, 4320)).toBe(false);
+    expect(check(2, 2)).toBe(false);
   });
   it('requires an opener and well-formed line list', () => {
     const noOpener: any = valid();

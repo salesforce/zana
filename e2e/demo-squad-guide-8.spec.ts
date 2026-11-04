@@ -76,12 +76,24 @@ test('demo: run a Goal as a Squad', async ({ app }) => {
     await page.evaluate((id) => window.cc.goals.setStatus(id, 'active'), seededId);
     await expect.poll(() => page.evaluate(async (id) => (await window.cc.goals.list()).find((g) => g.id === id)?.status, seededId), { timeout: 240_000, intervals: [2_000] }).toMatch(/achieved|exhausted|escalated/);
 
+    // Goals are off by default: switch them off here so the video can show turning them on.
+    await page.evaluate(() => window.cc.config.set({ goalsEnabled: false }));
+    await page.addStyleTag({ content: '.settings-panel { zoom: 1.3; }' });
+
     const demo = await createDemoVideo(page);
     await demo.flash();
 
     // --- 01 A Goal keeps going ---
     await demo.section({ number: 1, title: 'Use a Squad to accomplish a Goal', subtitle: 'Goals → New goal', hint: 'Keeps going until the aim is met' });
     await demo.say('goal');
+    await tap(page, page.getByRole('link', { name: 'Settings', exact: true }));
+    await tap(page, page.getByTestId('settings-nav-experimental'));
+    const goalsSetting = page.getByRole('switch', { name: 'Goals', exact: true });
+    await goalsSetting.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+    await page.waitForTimeout(900);
+    await tap(page, goalsSetting);
+    await expect(goalsSetting).toHaveAttribute('aria-checked', 'true');
+    await page.waitForTimeout(1200);
     await go('/goals');
     await tap(page, page.getByRole('button', { name: 'New goal' }).first());
     const form = page.getByRole('dialog', { name: 'New goal' });

@@ -104,7 +104,7 @@ export function validateVideoConfig(raw: unknown): string[] {
   const c = raw as Record<string, any>;
   if (!isText(c.id) || !/^[a-z0-9][a-z0-9-]*$/.test(c.id)) errors.push('id must be a lowercase slug');
   if (!isText(c.title)) errors.push('title is required');
-  if (!Number.isInteger(c.width) || !Number.isInteger(c.height) || c.width % 2 || c.height % 2) errors.push('width/height must be even integers');
+  if (![c.width, c.height].every((n) => Number.isInteger(n) && n > 0 && n % 2 === 0) || c.width > 7680 || c.height > 4320) errors.push('width/height must be positive even integers within 7680x4320');
   if (![30, 60].includes(c.fps)) errors.push('fps must be 30 or 60');
   const card = (name: string, v: any, required: boolean) => {
     if (!v) { if (required) errors.push(`${name} is required`); return false; }

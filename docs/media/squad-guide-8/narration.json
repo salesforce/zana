@@ -2,7 +2,7 @@
   {
     "id": "goal",
     "caption": "Use a Squad to accomplish a Goal",
-    "line": "A Goal is an aim the app keeps working toward, one iteration at a time, until it is met or the app gives up. Open Goals and press New goal."
+    "line": "A Goal is an aim the app keeps working toward, one iteration at a time, until it is met or the app gives up. Goals are off by default. Turn them on in Settings, Experimental, Goals. Then open a Project's Goals tab and press New goal."
   },
   {
     "id": "runas",

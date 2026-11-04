@@ -35,7 +35,8 @@ const PLAN_MD = [
 
 // The agent's scripted reply; each prompt gets its own, written just before it is sent. A match is a phrase
 // only that request contains, so the Squad's later reports to the thread never replay it.
-const scriptDir = mkdtempSync(join(tmpdir(), 'zcc-demo-guide5-script-'));
+// Created only when recording: the spec module is also loaded (and skipped) during collection and in workers.
+const scriptDir = process.env.ZCC_E2E_RECORD_VIDEO ? mkdtempSync(join(tmpdir(), 'zcc-demo-guide5-script-')) : join(tmpdir(), 'zcc-demo-guide5-unused');
 const script = join(scriptDir, 'script.json');
 const reply = (match: string, steps: unknown[]) => writeFileSync(script, JSON.stringify({ match, steps }));
 
@@ -108,7 +109,8 @@ test('demo: start a Squad from a conversation', async ({ app }) => {
     await expect(page.getByTestId('model-reasoning-provider-acp-opencode')).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('Escape');
     // Escape closes the popover; clicking the backdrop closes the launcher.
-    await page.mouse.click(1700, 900);
+    const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+    await page.mouse.click(viewport.width - 20, viewport.height - 20);
     await expect(setup).toBeHidden({ timeout: 10_000 });
     await page.evaluate((to) => { history.pushState({}, '', to); dispatchEvent(new PopStateEvent('popstate')); }, home);
     await page.getByTestId('nav-agents').click();

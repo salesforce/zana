@@ -9,10 +9,6 @@ You do not need to write code or use Git to run the Research Squad. It reads
 your Project and reports back. You do need a Project open in Zana and an AI
 agent tool signed in.
 
-Prefer to watch first? The Squad guide videos are on the
-[Getting started page](https://zana-ide.com/docs/getting-started/#how-to-heading)
-and inside Zana's Help menu.
-
 ---
 
 ## The words you need

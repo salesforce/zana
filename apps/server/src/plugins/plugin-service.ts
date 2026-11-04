@@ -1667,12 +1667,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
               const degraded = withToolPolicy({ ...row, status: 'degraded' as const, statusDetail: error.message }, declared);
               live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
               await store.upsert(degraded);
+              // Schedule the retry before publishing, so the row is never advertised as terminal while a retry is pending.
+              if (error.message === WATCHDOG_FAILURE_MESSAGE && isCurrent(row.id, epoch)) scheduleWatchdogRecovery(row.id);
               refreshToolPolicyInventory();
               if (!isCurrent(row.id, epoch)) return;
-              if (error.message === WATCHDOG_FAILURE_MESSAGE) {
-                scheduleWatchdogRecovery(row.id);
-                refreshToolPolicyInventory();
-              }
               await emitCapabilities();
               if (!isCurrent(row.id, epoch)) return;
               await emitAppsChanged();

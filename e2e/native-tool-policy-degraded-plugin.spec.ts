@@ -22,6 +22,11 @@ createInterface({input:process.stdin}).on('line', () => {
   n += 1;
   const input = {hook_event_name:'PreToolUse', prompt_id:'prompt-probe', tool_use_id:'call-' + n, tool_name:'Write', tool_input:{path:'marker.txt'}};
   const result = spawnSync('/bin/sh', ['-c', commands[0]], { input:JSON.stringify(input), timeout:6000, stdio:['pipe','pipe','pipe'] });
+  if (result.error || result.signal || result.status !== 0) {
+    writeFileSync('write-result.json', JSON.stringify({decision: 'hook-failed', reason: String(result.error || result.signal || ('exit ' + result.status)) + ' ' + result.stderr.toString().slice(0, 500)}));
+    console.log('POLICY_RESULT');
+    return;
+  }
   const output = result.stdout.toString().trim();
   const parsed = output ? JSON.parse(output).hookSpecificOutput : {};
   writeFileSync('write-result.json', JSON.stringify({decision: parsed.permissionDecision ?? 'no-decision', reason: parsed.permissionDecisionReason ?? ''}));

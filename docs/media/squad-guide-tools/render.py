@@ -25,15 +25,15 @@ TAIL = 0.6  # silence after the last spoken section line before the closer
 
 
 def validate(cfg, lines):
-    """Return a list of problems with video.json and narration.json (mirrors e2e/sdk/demo-video-core.ts)."""
+    """Return a list of problems with video.json and narration.json (the structural checks of e2e/sdk/demo-video-core.ts; the narration entries are checked only here, and chips only there)."""
     errors = []
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', str(cfg.get('id', ''))):
         errors.append('id must be a lowercase slug')
     if not str(cfg.get('title', '')).strip():
         errors.append('title is required')
     w, h = cfg.get('width'), cfg.get('height')
-    if not (isinstance(w, int) and isinstance(h, int) and w % 2 == 0 and h % 2 == 0):
-        errors.append('width/height must be even integers')
+    if not (isinstance(w, int) and isinstance(h, int) and 0 < w <= 7680 and 0 < h <= 4320 and w % 2 == 0 and h % 2 == 0):
+        errors.append('width/height must be positive even integers within 7680x4320')
     if cfg.get('fps') not in (30, 60):
         errors.append('fps must be 30 or 60')
     opener = cfg.get('opener')
@@ -44,14 +44,18 @@ def validate(cfg, lines):
             errors.append('opener.headline is required')
         if not opener.get('duration', 0) > 0:
             errors.append('opener.duration must be positive')
-        ats = [l.get('at', -1) for l in opener.get('lines', [])]
-        if ats != sorted(set(ats)) or any(a < 0 for a in ats):
-            errors.append('opener.lines must be in strict time order')
+        op_lines = opener.get('lines')
+        if not isinstance(op_lines, list) or not op_lines or not all(isinstance(l, dict) and str(l.get('text', '')).strip() and isinstance(l.get('at'), (int, float)) for l in op_lines):
+            errors.append('opener.lines must be a non-empty list of {at, text}')
+        else:
+            ats = [l['at'] for l in op_lines]
+            if ats != sorted(set(ats)) or any(a < 0 for a in ats) or any(a >= opener.get('duration', 0) for a in ats):
+                errors.append('opener.lines must be in strict time order, inside opener.duration')
         if not 0 <= opener.get('revealAt', -1) < opener.get('duration', 0):
             errors.append('opener.revealAt must be inside opener.duration')
     closer = cfg.get('closer')
-    if closer is not None and not closer.get('duration', 0) > 0:
-        errors.append('closer.duration must be positive')
+    if closer is not None and not (isinstance(closer, dict) and closer.get('duration', 0) > 0):
+        errors.append('closer must be an object with a positive duration')
     if not lines:
         errors.append('narration.json is empty')
     for i, entry in enumerate(lines):
@@ -102,7 +106,7 @@ def clip(audio_dir, line):
 def audio(folder, cfg, lines):
     audio_dir = folder / 'audio-neural'
     audio_dir.mkdir(exist_ok=True)
-    extra = [l['text'] for l in cfg['opener']['lines']] + ([cfg['closer']['line']] if cfg.get('closer', {}).get('line') else [])
+    extra = [l['text'] for l in cfg['opener']['lines']] + ([cfg['closer']['line']] if (cfg.get('closer') or {}).get('line') else [])
     for line in extra:
         print(f' card  {duration(clip(audio_dir, line)):5.2f}s  {line}')
     durations = []
@@ -153,9 +157,13 @@ def music(folder, cfg, total, lead):
 def mix(folder, cfg, lines, rec_dir, fps):
     audio_dir, w, h = folder / 'audio-neural', cfg['width'], cfg['height']
     rec_dir = Path(rec_dir)
-    video = next(rec_dir.glob('*.webm'))
+    webms = sorted(rec_dir.glob('*.webm'))
+    if len(webms) != 1:
+        raise SystemExit(f'{rec_dir}: expected exactly one .webm recording, found {len(webms)}; clear the directory and record again')
+    video = webms[0]
     timeline = json.loads((rec_dir / 'timeline.json').read_text())
-    assert [t['text'] for t in timeline] == [e['caption'] for e in lines], 'timeline captions differ from narration.json'
+    if [t['text'] for t in timeline] != [e['caption'] for e in lines]:
+        raise SystemExit('timeline captions differ from narration.json; record again')
     durations = json.loads((audio_dir / 'durations.json').read_text())
     start = flash_end(video)
     opener_cfg, closer_cfg = cfg['opener'], cfg.get('closer')
@@ -202,7 +210,7 @@ def mix(folder, cfg, lines, rec_dir, fps):
         '[0:a]aformat=channel_layouts=stereo,asplit[v][key];[1:a]volume=0.55[m];[m][key]sidechaincompress=threshold=0.03:ratio=6:attack=20:release=400[duck];'
         '[v][duck]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=9[a]', '-map', '[a]', '-ar', str(RATE), str(audio_dir / 'mix.wav'))
 
-    end = min(total, cues[-1][1] + 0.9)
+    end = total if closer_cfg and not closer_cfg.get('line') else min(total, cues[-1][1] + 0.9)  # a silent closer keeps its configured duration
     fade = f'fade=t=out:st={end - 0.6:.3f}:d=0.6'
     scale = f'scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS'
     graph = f'[1:v]{scale}[rec];[0:v]settb=AVTB[card];[card][rec]xfade=transition=fade:duration={XFADE}:offset={lead}[v1];'
@@ -210,13 +218,11 @@ def mix(folder, cfg, lines, rec_dir, fps):
     if closer:
         graph += f'[3:v]settb=AVTB[end];[v1][end]xfade=transition=fade:duration={XFADE}:offset={closer_at:.3f},{fade}[v]'
         inputs_tail = ['-i', str(audio_dir / 'mix.wav'), '-i', str(closer)]
-        audio_idx = '2:a'
     else:
         graph += f'[v1]{fade}[v]'
         inputs_tail = ['-i', str(audio_dir / 'mix.wav')]
-        audio_idx = '2:a'
     out = folder / f'{cfg["id"]}.mp4'
-    run('ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', *inputs, *inputs_tail, '-filter_complex', graph, '-map', '[v]', '-map', audio_idx,
+    run('ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', *inputs, *inputs_tail, '-filter_complex', graph, '-map', '[v]', '-map', '2:a',
         '-t', f'{end:.3f}', '-af', f'a{fade}', '-r', str(fps), '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-c:a', 'aac', '-b:a', '160k',
         '-movflags', '+faststart', str(out))
     run('ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-ss', str(cfg.get('posterAt', max(opener_cfg['duration'] - 1.0, 0))), '-i', str(out), '-frames:v', '1', '-q:v', '3', str(folder / 'poster.jpg'))

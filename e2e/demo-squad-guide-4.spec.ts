@@ -37,7 +37,6 @@ test('demo: pick the right Squad', async ({ app }) => {
     document.body.appendChild(dot);
     addEventListener('mousemove', (e) => { dot.style.left = `${e.clientX}px`; dot.style.top = `${e.clientY}px`; }, true);
   });
-  const beat = (ms: number) => page.waitForTimeout(ms);
 
   await page.getByRole('link', { name: 'Settings', exact: true }).click();
   await page.getByTestId('settings-nav-squads').click();

@@ -75,7 +75,7 @@ const VO = MODE === 'closer'
   : (CARD.lines || []).map((l) => [l.at, 3, l.text]);
 (params.get('vo') || '').split(',').filter(Boolean).forEach((d, i) => { if (VO[i]) VO[i][1] = Number(d); });
 const DURATION = CARD.duration || 8;
-const REVEAL = MODE === 'closer' ? 0 : (CARD.revealAt || DURATION - 3);
+const REVEAL = MODE === 'closer' ? 0 : (CARD.revealAt ?? DURATION - 3);
 window.TIMING = { VO, DURATION, MODE };
 
 // Headline: last word gradient-highlighted.

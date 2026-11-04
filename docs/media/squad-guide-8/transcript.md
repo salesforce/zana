@@ -1,6 +1,6 @@
 # Squad guide video 8: transcript
 
-A Goal is an aim the app keeps working toward, one iteration at a time, until it is met or the app gives up. Open Goals and press New goal.
+A Goal is an aim the app keeps working toward, one iteration at a time, until it is met or the app gives up. Goals are off by default. Turn them on in Settings, Experimental, Goals. Then open a Project's Goals tab and press New goal.
 
 Set Run as to Squad, and write the plan or prompt. Then choose the Squad, the Project, and Squad planning.
 

@@ -43,12 +43,24 @@ function parse(argv) {
     }
     const ffmpeg = spawn('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'image2pipe', '-c:v', 'png', '-r', String(opts.fps), '-i', '-',
       '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p', out], { stdio: ['pipe', 'inherit', 'inherit'] });
-    const done = new Promise((resolve, reject) => ffmpeg.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`)))));
-    for (let i = 0; i < Math.round(duration * opts.fps); i++) {
-      if (!ffmpeg.stdin.write(await shot(i / opts.fps))) await new Promise((resolve) => ffmpeg.stdin.once('drain', resolve));
+    // One promise settles on ffmpeg's exit or a spawn/stdin error; every wait below races it, so an early exit cannot hang the loop.
+    const done = new Promise((resolve, reject) => {
+      ffmpeg.on('error', reject);
+      ffmpeg.stdin.on('error', reject);
+      ffmpeg.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`))));
+    });
+    done.catch(() => {});
+    try {
+      for (let i = 0; i < Math.round(duration * opts.fps); i++) {
+        const frame = await Promise.race([shot(i / opts.fps), done.then(() => { throw new Error('ffmpeg ended before the last frame'); })]);
+        if (!ffmpeg.stdin.write(frame)) await Promise.race([new Promise((resolve) => ffmpeg.stdin.once('drain', resolve)), done]);
+      }
+      ffmpeg.stdin.end();
+      await done;
+    } catch (error) {
+      ffmpeg.kill('SIGKILL');
+      throw error;
     }
-    ffmpeg.stdin.end();
-    await done;
   } finally {
     await browser.close();
   }

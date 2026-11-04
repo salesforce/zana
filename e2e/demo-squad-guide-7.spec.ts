@@ -54,7 +54,6 @@ test('demo: schedule a Squad', async ({ app }) => {
       document.body.appendChild(dot);
       addEventListener('mousemove', (e) => { dot.style.left = `${e.clientX}px`; dot.style.top = `${e.clientY}px`; }, true);
     });
-    const go = (to: string) => page.evaluate((path) => { history.pushState({}, '', path); dispatchEvent(new PopStateEvent('popstate')); }, to);
 
     // Seed (trimmed away): register the project via the shared owner launch, close the owner, name the Squad.
     await launchJobTeamCliOwner(ctx, { workerQuantity: 2, prompt: 'E2E hello', orchestratorExtra: { deniedTools: ['Write', 'Edit'] } });

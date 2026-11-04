@@ -3,7 +3,7 @@
  * See docs/media/squad-guide-README.md for the record command.
  *
  * No model is called: the Squad's agents are the deterministic fake coordinator
- * (e2e/sdk/harness.ts). The recording shows the launch only; the run itself is video 3.
+ * (e2e/sdk/harness.ts). The recording opens on a run that is waiting on a question, answers it from the Inbox, and reads the result in Squad details.
  */
 import { test, expect } from './fixtures/app.js';
 import { createJobTeamContext, launchJobTeamCliOwner, teardownJobTeam } from './sdk/job-team-scenario.js';
