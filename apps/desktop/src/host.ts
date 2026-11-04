@@ -90,7 +90,7 @@ import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-hos
 import { IPC, resolveDeepLinkChannel, type PluginViewTarget, type ThreadViewTarget } from '@zana-ai/zcc-desktop-contract';
 import { createDeepLinkHost, registerDeepLinkIpc, registerDeepLinkScheme, wantsSingleInstanceLock } from './deep-link-host.js';
 import { signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
-import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema, type SquadMemberStatus } from '@zana-ai/zcc-contracts/runtime';
+import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema, SQUAD_START_REFUSED_PREFIX, type SquadMemberStatus } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
 import { registerDesktopBrowserIpc } from './desktop-browser-main-ipc.js';
 import {
@@ -6207,6 +6207,19 @@ export async function launchTeam(
         await squadRuntime().activateSquadMember(runtimeRequest);
         return { ok: true, value: { id: created.threadId } };
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (reservation && message.startsWith(SQUAD_START_REFUSED_PREFIX)) {
+          // Admission refused before the runtime created anything: there is no member to stop or
+          // verify, so release the reserved slot now rather than holding it as uncertain.
+          try {
+            await teamLifecycleIntegration.reconcileModernWorkers([{ recordId: claim.record.id, slotId,
+              generation: reservation.generation, threadId: reservation.threadId, state: 'terminal' }]);
+          } catch (releaseError) {
+            logMainError(`squad start refusal release failed (thread ${reservation.threadId})`, releaseError);
+            await teamLifecycle.markModernWorkerUncertain(claim.record.id, slotId, reservation.generation, reservation.threadId);
+          }
+          return { ok: false, code: 'DENIED', message };
+        }
         if (reservation) await teamLifecycle.markModernWorkerUncertain(claim.record.id, slotId, reservation.generation, reservation.threadId);
         else if (authorizationId) launchAuthorization.complete(authorizationId);
         return { ok: false, code: reservation ? 'UNCERTAIN' : 'DENIED', message: error instanceof Error ? error.message : String(error) };

@@ -10,7 +10,7 @@ import {
   SquadMemberDeliveryCompletionSchema, type SquadMemberDeliveryCompletion,
   SquadRuntimePreflightRequestSchema, SquadMemberResumeRequestSchema,
   type SquadMemberResumeRequest, type SquadMemberResumeResult,
-  SquadRuntimeOperationSchema, SQUAD_RUNTIME_OPERATION_PATH,
+  SquadRuntimeOperationSchema, SQUAD_RUNTIME_OPERATION_PATH, SQUAD_START_REFUSED_PREFIX,
   type SquadMemberControlRequest, type SquadMemberDeliveryRequest, type SquadMemberDeliveryResult,
   type SquadMemberRuntimeRequest, type SquadMemberStatus,
   type SquadRuntimePreflightRequest, type SquadRuntimePreflightResult
@@ -25,6 +25,7 @@ import type { JsonObject } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { activatePreparedConversation, createConversationFromRequest } from './conversation-create.js';
 import { stopConversation, sendConversationTurn } from './conversation-lifecycle.js';
+import { admissionRefusal, admitDispatch } from './dispatch-service.js';
 import { resumeConversationQueue } from './conversation-deferred-messages.js';
 import { resumeConversationStrict, StrictResumeError } from './conversation-host-rpc.js';
 import { bridgeLaunchForProvider, canonicalThreadProviderId, getThreadProvider, waitForThreadProvider } from './thread-provider-catalog.js';
@@ -228,6 +229,13 @@ export async function createSquadMemberConversation(
       hostId: request.hostId, providerIds: [request.providerId], nativeToolPolicyRequired: request.nativeToolPolicyRequired,
       selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] });
     if (!preflight.ready) throw new Error(preflight.reason);
+    // The member's first turn is dispatched by activation, which does not admit. Admit the
+    // start here, once, before any thread or environment exists. A prepared member cannot
+    // be held for later, so a wait is a refusal; an admission failure also refuses.
+    const refusal = admissionRefusal(await admitDispatch(ctx, {
+      projectId: request.projectId, surface: 'modern', entry: 'squad-member-start', origin: 'system'
+    }));
+    if (refusal) throw new Error(`${SQUAD_START_REFUSED_PREFIX} (${refusal.code}): ${refusal.message}`.slice(0, 1024));
     const thread = await createConversationFromRequest(ctx, {
       id: request.bindingId, projectId: request.projectId, hostId: preflight.hostId, providerId: request.providerId,
       input: [request.prompt], promptInput: [{ type: 'text', text: request.prompt, mentions: [] }], title: request.title,

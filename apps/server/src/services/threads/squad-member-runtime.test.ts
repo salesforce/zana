@@ -22,7 +22,7 @@ import {
   isSquadMemberThread, resolveSquadMember
 } from './squad-member-runtime.js';
 import { createNativeToolPolicyVerifier, signNativeToolPolicyRequest } from '../../http/native-tool-policy-proof.js';
-import { SQUAD_RUNTIME_OPERATION_PATH } from '@zana-ai/zcc-contracts/runtime';
+import { SQUAD_RUNTIME_OPERATION_PATH, SQUAD_START_REFUSED_PREFIX } from '@zana-ai/zcc-contracts/runtime';
 import { startProductServer } from '../../http/product-server.js';
 import { enrollDaemonHost } from '../../../../host-daemon/src/enroll.js';
 import { startEnrolledHostConnection } from '../../../../host-daemon/src/server-connection.js';
@@ -75,6 +75,9 @@ beforeEach(() => {
 });
 afterEach(() => { unregister(); db.close(); rmSync(dir, { recursive: true, force: true }); });
 
+/** Admissions other than the member start itself: agent-to-agent delivery is never one of them. */
+const sendAdmissions = () => vi.mocked(ctx.plugins!.admitDispatch).mock.calls.filter(([request]) => request.entry !== 'squad-member-start');
+
 describe('trusted Modern member runtime', () => {
   it.each(['worker', 'orchestrator'] as const)('prepares idle %s using reserved UUID and attached worktree without provider start', async role => {
     mkdirSync(join(dir, 'worktree')); const worktreePath = realpathSync(join(dir, 'worktree'));
@@ -93,6 +96,37 @@ describe('trusted Modern member runtime', () => {
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({
       squadBinding: bindingId, squadGeneration: 2, squadRole: role, squadHost: hostId, squadEnvironmentPath: worktreePath
     });
+  });
+
+  it('admits the member start once with the squad-member-start entry before creating anything', async () => {
+    mkdirSync(join(dir, 'worktree')); const worktreePath = realpathSync(join(dir, 'worktree'));
+    await createSquadMemberConversation(ctx, { ...member, worktreePath });
+    const admit = vi.mocked(ctx.plugins!.admitDispatch);
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(admit.mock.calls[0]![0]).toMatchObject({ projectId: member.projectId, surface: 'modern', entry: 'squad-member-start', origin: 'system' });
+    await expect(createSquadMemberConversation(ctx, { ...member, worktreePath })).resolves.toEqual({ threadId: bindingId });
+    await activateSquadMemberConversation(ctx, { ...member, worktreePath });
+    expect(admit).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['reject', { action: 'reject', message: 'No squads today' }, 'dispatch_rejected', 'No squads today'],
+    ['wait', { action: 'wait', reason: 'Hold on', overrideable: true }, 'dispatch_waiting', 'Hold on']
+  ] as const)('refuses a member start on %s and leaves nothing created', async (_name, decision, code, text) => {
+    vi.mocked(ctx.plugins!.admitDispatch).mockResolvedValueOnce(decision as never);
+    const error = await createSquadMemberConversation(ctx, member).catch(e => e as Error);
+    expect(error.message.startsWith(SQUAD_START_REFUSED_PREFIX)).toBe(true);
+    expect(error.message).toContain(code);
+    expect(error.message).toContain(text);
+    expect(getConversationThread(db, bindingId)).toBeFalsy();
+    expect(commands.filter(command => command.type === 'environment.provision' || command.type === 'thread.start')).toHaveLength(0);
+  });
+
+  it('fails closed when start admission throws', async () => {
+    vi.mocked(ctx.plugins!.admitDispatch).mockRejectedValueOnce(new Error('plugin crashed'));
+    await expect(createSquadMemberConversation(ctx, member)).rejects.toThrow(/start refused \(dispatch_rejected\): Plugin dispatch admission unavailable/);
+    expect(getConversationThread(db, bindingId)).toBeFalsy();
+    expect(commands.filter(command => command.type === 'environment.provision')).toHaveLength(0);
   });
 
   it.each([false, true])('dedupes concurrent and persisted prepare retries without starting (reuse=%s)', async reuse => {
@@ -453,7 +487,7 @@ describe('trusted Modern member runtime', () => {
       expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadStopped).toBeUndefined();
       expect(squadMemberStatus(ctx, control)).toMatchObject({ live: false, status: 'stopping' });
       expect(await deliverSquadMemberConversation(ctx, delivery)).toMatchObject({ state: 'rejected' });
-      expect(ctx.plugins!.admitDispatch).not.toHaveBeenCalled();
+      expect(sendAdmissions()).toHaveLength(0);
       expect(listDeferredThreadMessages(db, bindingId)).toHaveLength(0);
       db.close(); db = openDatabase(join(dir, 'db.sqlite')); ctx.db = db;
       expect(squadMemberStatus(ctx, control)).toMatchObject({ live: false, status: 'stopping' });
@@ -478,7 +512,7 @@ describe('trusted Modern member runtime', () => {
     expect(squadMemberStatus(ctx, control)).toMatchObject({ live: false, status: 'stopping' });
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadStopped).toBeUndefined();
     expect(await deliverSquadMemberConversation(ctx, delivery)).toMatchObject({ state: 'rejected' });
-    expect(ctx.plugins!.admitDispatch).not.toHaveBeenCalled();
+    expect(sendAdmissions()).toHaveLength(0);
     confirm({ threadId: bindingId, stopped: true });
     await expect(stopping).resolves.toBe(true);
     expect(squadMemberStatus(ctx, control)).toMatchObject({ live: false, status: 'stopped' });
@@ -607,7 +641,7 @@ describe('trusted Modern member runtime', () => {
     expect(await deliverSquadMemberConversation(ctx, delivery)).toMatchObject({ state: 'uncertain' });
     ctx.plugins!.admitDispatch = vi.fn(async () => ({ action: 'proceed' }));
     expect(await deliverSquadMemberConversation(ctx, delivery)).toMatchObject({ state: 'uncertain' });
-    expect(ctx.plugins!.admitDispatch).not.toHaveBeenCalled();
+    expect(sendAdmissions()).toHaveLength(0);
   });
 
   it('renderer metadata edits cannot change generation, stop fence or delivery dedupe', async () => {
@@ -711,7 +745,7 @@ describe('trusted Modern member runtime', () => {
     patchThreadPluginMetadata(db, { threadId: bindingId, pluginId: privateNamespace, set: { [receiptKey]: 'broken' }, remove: [] });
     expect(await deliverSquadMemberConversation(ctx, delivery)).toMatchObject({ state: 'rejected', reason: 'invalid delivery receipt' });
     expect(completeSquadMemberDelivery(ctx, completion)).toMatchObject({ state: 'rejected' });
-    expect(ctx.plugins!.admitDispatch).not.toHaveBeenCalled();
+    expect(sendAdmissions()).toHaveLength(0);
     db.sqlite.prepare('UPDATE thread_plugin_metadata SET metadata_json = ? WHERE thread_id = ? AND plugin_id = ?').run('broken', bindingId, privateNamespace);
     expect(() => squadMemberStatus(ctx, control)).toThrow('unknown squad member binding');
     db.sqlite.prepare('DELETE FROM thread_plugin_metadata WHERE thread_id = ? AND plugin_id = ?').run(bindingId, privateNamespace);

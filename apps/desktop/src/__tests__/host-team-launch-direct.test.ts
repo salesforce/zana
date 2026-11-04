@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SQUAD_START_REFUSED_PREFIX } from '@zana-ai/zcc-contracts/runtime';
 import type {
   SquadMemberControlRequest, SquadMemberDeliveryCompletion, SquadMemberDeliveryRequest, SquadMemberDeliveryResult, SquadMemberRuntimeRequest, SquadMemberStatus, SquadRuntimePreflightRequest,
   SquadRuntimePreflightResult
@@ -793,6 +794,21 @@ describe('launchTeam Modern structured path', () => {
     const replay = lifecycle(req.launchRequestId);
     expect(replay.capacity).toEqual(record.capacity);
     expect(replay.workers.find((candidate) => candidate.slotId === worker!.slotId)).toEqual(worker);
+    expect(h.creates).toEqual([]);
+  });
+
+  it('releases the reserved slot and surfaces the refusal when dispatch admission refuses the member start', async () => {
+    const req = structuredReq();
+    h.runtime.createSquadMember.mockRejectedValue(new Error(`${SQUAD_START_REFUSED_PREFIX} (dispatch_rejected): squads paused`));
+    const result = await launchTeam('team1', 'p1', req);
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).toContain('squads paused');
+    const refused = h.runtime.createSquadMember.mock.calls[0]![0];
+    const worker = lifecycle(req.launchRequestId).workers.find((candidate) => candidate.threadId === refused.bindingId);
+    expect(worker?.bindingState).not.toBe('UNCERTAIN');
+    expect(worker?.capacityReleased).toBe(true);
+    expect(h.runtime.activateSquadMember).not.toHaveBeenCalled();
+    expect(h.runtime.stopSquadMember).not.toHaveBeenCalled();
     expect(h.creates).toEqual([]);
   });
 

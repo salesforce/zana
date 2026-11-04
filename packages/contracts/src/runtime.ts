@@ -219,6 +219,13 @@ export const DispatchAdmissionMainDecisionSchema = z.discriminatedUnion('action'
 ]);
 export type DispatchAdmissionMainDecision = z.infer<typeof DispatchAdmissionMainDecisionSchema>;
 
+/**
+ * Leading text of the error a Modern squad member create returns when dispatch
+ * admission refused the start. Nothing was created, so main may release the
+ * reserved slot instead of holding it as an uncertain worker.
+ */
+export const SQUAD_START_REFUSED_PREFIX = 'squad member start refused';
+
 /** Main-attested request for one Modern squad participant. Never renderer input. */
 export const SquadMemberRuntimeRequestSchema = z.object({
   bindingId: z.string().uuid(),
