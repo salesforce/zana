@@ -1681,6 +1681,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     let activationFailure: Error | null = null;
     let runtime: ReturnType<typeof createIsolatedPluginRuntime> | undefined;
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
+      isWorkerAlive: () => runtime?.isAlive() ?? true,
       toolPolicyRegistrationAllowed: () => {
         const active = live.get(row.id)?.handle;
         return !toolPolicySealed.has(row.id) || !active || active !== handle;

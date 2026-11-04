@@ -123,6 +123,7 @@ import {
   type PluginServicesRegistry
 } from '@zana-ai/zcc-plugin-sdk/server';
 import { appendPluginLogLine } from './plugin-log.js';
+import { withDeadline } from './plugin-mentions.js';
 import {
   listLibraryDocs,
   readLibraryDoc,
@@ -267,6 +268,9 @@ async function invokeMentionSearch(
   return Array.isArray(result) ? result : [];
 }
 
+const DISPOSE_HOOK_BUDGET_MS = 2_000;
+const DISPOSE_TOTAL_BUDGET_MS = 5_000;
+
 export function createPluginApi(
   pluginId: string,
   kvDir: string,
@@ -282,6 +286,8 @@ export function createPluginApi(
       signal?: AbortSignal;
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
+    /** False once the plugin's worker has stopped; plugin-registered dispose hooks cannot run then. */
+    isWorkerAlive?: () => boolean;
     /** Consumes a host-signed approval for this plugin; absent means every token is refused. */
     consumePluginApproval?: (args: { pluginId: string; token: string; binding: unknown }) => boolean;
     requestPluginToolApproval?: (input: PluginToolApprovalScope) => Promise<PluginApprovalResult>;
@@ -2151,7 +2157,13 @@ export function createPluginApi(
     },
     services,
     onDispose: (hook) => {
-      disposeHooks.push(hook);
+      disposeHooks.push(async () => {
+        if (options?.isWorkerAlive?.() === false) {
+          emitLog('warn', 'dispose skipped: worker dead');
+          return;
+        }
+        await hook();
+      });
     }
   };
   return {
@@ -2221,6 +2233,15 @@ export function createPluginApi(
           peerLifecycle.abort(new Error(`plugin context is stale: ${pluginId}`));
           hostWorkerExitHandlers.length = 0; hostSignalHandlers.clear();
           options?.interruptPluginInteractions?.(pluginId);
+          // Hooks run while the database and worker are still usable; each is bounded so a hung hook cannot stall teardown.
+          const deadline = Date.now() + DISPOSE_TOTAL_BUDGET_MS;
+          for (const hook of [...disposeHooks].reverse()) {
+            const budget = Math.min(DISPOSE_HOOK_BUDGET_MS, deadline - Date.now());
+            if (budget <= 0) { emitLog('warn', 'dispose budget exhausted'); break; }
+            try { await withDeadline(Promise.resolve().then(hook), budget, 'onDispose'); }
+            catch (error) { emitLog('error', `onDispose failed: ${error instanceof Error ? error.message : String(error)}`); }
+          }
+          disposeHooks.length = 0;
           for (const handle of sqliteHandles) {
             try { handle.close(); } catch (error) { disposalErrors.push(error); }
           }
@@ -2228,10 +2249,6 @@ export function createPluginApi(
           sqliteHandles.length = 0;
           sharedDatabase = null;
           sharedSqlite = null;
-          for (const hook of [...disposeHooks].reverse()) {
-            try { await hook(); } catch { /* Plugin cleanup is best effort; host teardown below proves quiescence. */ }
-          }
-          disposeHooks.length = 0;
           for (const hook of [...quiesceHooks].reverse()) {
             try { await hook(); } catch (error) { disposalErrors.push(error); }
           }

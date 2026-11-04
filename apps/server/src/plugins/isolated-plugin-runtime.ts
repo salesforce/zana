@@ -127,5 +127,5 @@ export function createIsolatedPluginRuntime(options: {
     }),
     entry: options.entry, generation: options.generation, databasePath: options.databasePath, sqlite: sqliteWorkerConfiguration()
   }}); } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
-  return { started, dispose, isBusy: () => bridge.isBusy(), get retainedFunctions() { return bridge.retainedFunctions; } };
+  return { started, dispose, isAlive: () => !stopped, isBusy: () => bridge.isBusy(), get retainedFunctions() { return bridge.retainedFunctions; } };
 }
