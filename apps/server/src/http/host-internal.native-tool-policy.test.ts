@@ -1,3 +1,4 @@
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -91,7 +92,7 @@ describe('authenticated native tool policy route', () => {
     vi.useFakeTimers(); let finish!: (decision: { action: 'allow' }) => void;
     decideToolPolicy.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const test = call(); const running = test.run();
-    await vi.advanceTimersByTimeAsync(0); await vi.advanceTimersByTimeAsync(10_000); await running;
+    await vi.advanceTimersByTimeAsync(0); await vi.advanceTimersByTimeAsync(MAX_MAIN_CEILING_MS); await running;
     expect(test.out.body).toEqual({ action: 'deny', reason: 'native policy timed out' });
     finish({ action: 'allow' }); await vi.advanceTimersByTimeAsync(0); expect(test.out.body.action).toBe('deny'); expect(vi.getTimerCount()).toBe(0);
   });
@@ -102,7 +103,7 @@ describe('authenticated native tool policy route', () => {
     await vi.advanceTimersByTimeAsync(0);
     const overflow = call(); await overflow.run();
     expect(overflow.out.body).toEqual({ action: 'deny', reason: 'native policy capacity reached' });
-    await vi.advanceTimersByTimeAsync(10_000); await Promise.all(running);
+    await vi.advanceTimersByTimeAsync(MAX_MAIN_CEILING_MS); await Promise.all(running);
     decideToolPolicy.mockResolvedValue({ action: 'allow' });
     const next = call(); await next.run(); expect(next.out.body).toEqual({ action: 'allow' });
     expect(vi.getTimerCount()).toBe(0);

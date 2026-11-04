@@ -1,3 +1,4 @@
+import { RELAY_BACKSTOP_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNativeToolPolicyHttpClient } from './native-tool-policy-client.js';
 
@@ -44,7 +45,7 @@ describe('native tool policy HTTP client', () => {
     }));
     const client = createNativeToolPolicyHttpClient({ ...options, fetchFn });
     const result = client(input, controller.signal);
-    if (mode === 'timeout') await vi.advanceTimersByTimeAsync(10_000);
+    if (mode === 'timeout') await vi.advanceTimersByTimeAsync(RELAY_BACKSTOP_MS);
     else controller.abort();
     expect((await result).action).toBe('deny');
     expect(vi.getTimerCount()).toBe(0);

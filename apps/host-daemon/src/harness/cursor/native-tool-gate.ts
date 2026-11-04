@@ -15,13 +15,14 @@
  * applies), a deny prints Cursor's deny shape, and every other outcome - a
  * refused connection, timeout, non-2xx, malformed body - denies.
  */
+import { HOOK_TIMEOUT_SEC, RELAY_BACKSTOP_SEC } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { nativeToolReplyClassifier } from '../native-tool-relay.js';
 import { shellQuote } from '../shell-quote.js';
 
 /** Seconds Cursor lets the hook run; longer than the relay's own curl bound. */
-export const CURSOR_HOOK_TIMEOUT_SEC = 10;
-/** Seconds the relay waits on main's route. */
-export const CURSOR_RELAY_CURL_MAX_SEC = 5;
+export const CURSOR_HOOK_TIMEOUT_SEC = HOOK_TIMEOUT_SEC;
+/** Seconds the relay waits on main's route: above every per-call ceiling, so an `ask` can finish. */
+export const CURSOR_RELAY_CURL_MAX_SEC = RELAY_BACKSTOP_SEC;
 /** The reason shown when the route cannot be reached or answers anything unexpected. */
 export const CURSOR_GATE_UNREACHABLE = 'native tool policy unreachable';
 

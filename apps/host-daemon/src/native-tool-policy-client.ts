@@ -1,4 +1,5 @@
 import { nativeToolDecisionSchema, type NativeToolDecision } from '@zana-ai/zcc-provider-bridge-protocol';
+import { RELAY_BACKSTOP_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import type { AgentRuntimeOptions } from '@zana-ai/zcc-agent-runtime';
 import { joinServerUrl } from './server-url.js';
 
@@ -12,7 +13,7 @@ export function createNativeToolPolicyHttpClient(options: {
 }): NonNullable<AgentRuntimeOptions['onNativeToolDecision']> {
   return async (request, signal): Promise<NativeToolDecision> => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
+    const timer = setTimeout(() => controller.abort(), RELAY_BACKSTOP_MS);
     const abort = () => controller.abort();
     signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) controller.abort();

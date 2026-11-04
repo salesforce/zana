@@ -1,3 +1,4 @@
+import { RELAY_BACKSTOP_MS } from "@zana-ai/zcc-domain/native-tool-policy-budget";
 import { nativeToolDecisionSchema, type NativeToolDecision, type NativeToolDecisionRequest } from '../bridge-requests.js';
 import type { BridgeJsonRpcResponse } from './bridge-tool-calls.js';
 
@@ -6,7 +7,7 @@ export interface BridgeNativeToolDecisionRequest {
 }
 
 /** Separate ids and bounded waits keep late decisions from settling another call. */
-export function createNativeToolDecisionTracker(send: (request: BridgeNativeToolDecisionRequest) => void, timeoutMs = 10_000) {
+export function createNativeToolDecisionTracker(send: (request: BridgeNativeToolDecisionRequest) => void, timeoutMs = RELAY_BACKSTOP_MS) {
   const pending = new Map<string, { scope: object; finish: (decision: NativeToolDecision) => void }>();
   let serial = 0;
   const deny = (reason: string): NativeToolDecision => ({ action: 'deny', reason });

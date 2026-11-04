@@ -313,10 +313,19 @@ export interface PluginToolPolicyRequest {
  * `deny` blocks the call before it runs and its `reason` is shown to the
  * agent; a blank or ill-formed reason is replaced and reasons are capped at
  * 1024 characters.
+ *
+ * `ask` holds the call while the host shows `prompt` to the user and a human
+ * decides. Only an explicit human allow lets the call continue (the provider's
+ * own permission flow still decides after it); a deny, cancel, timeout, session
+ * end, missing UI or any answer that is not from a human blocks it. The plugin
+ * cannot answer its own ask. `timeoutMs` is clamped to 10000-120000 ms and
+ * defaults to 60000 ms; `prompt` is plain text, capped at 2000 characters. An
+ * agent may be held for that long, so use `ask` sparingly.
  */
 export type PluginToolPolicyDecision =
   | { action: 'allow' }
-  | { action: 'deny'; reason: string };
+  | { action: 'deny'; reason: string }
+  | { action: 'ask'; prompt: string; timeoutMs?: number };
 
 export interface PluginSdkThreadSummary {
   id: string;

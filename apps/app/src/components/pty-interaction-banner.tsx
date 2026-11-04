@@ -3,7 +3,9 @@ import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { apiJson } from '../lib/fetch-with-app-surface.js';
 import { subscribeProductEvent, subscribeProductReconnect } from '../lib/product-ws.js';
 import { listPendingInteractionSlots, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { TOOL_POLICY_ASK_RENDERER_ID } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { PendingInteractionShell } from './thread/pending-interactions/PendingInteractionShell.js';
+import { ToolPolicyAskCard } from './thread/pending-interactions/ToolPolicyAskCard.js';
 import { QuestionInteractionBanner } from './thread/pending-interactions/QuestionInteractionBanner.js';
 
 /** A plugin's open request on a PTY session, as the product server lists it. */
@@ -111,6 +113,19 @@ function PtyInteractionCard({ interaction }: { interaction: PtySessionInteractio
     createdAt: interaction.createdAt,
     expiresAt: interaction.expiresAt
   };
+  if (interaction.origin.rendererId === TOOL_POLICY_ASK_RENDERER_ID) {
+    return (
+      <div data-testid="pty-interaction-banner">
+        <ToolPolicyAskCard
+          key={interaction.id}
+          data={interaction.payload.data}
+          pluginId={interaction.origin.pluginId}
+          submit={(value) => resolve(value)}
+          cancel={cancelRequest}
+        />
+      </div>
+    );
+  }
   if (slot?.questionForm) {
     const form = slot.questionForm(view);
     return (

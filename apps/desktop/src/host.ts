@@ -1,4 +1,5 @@
 import { launchFailure } from './launch-pre-spawn.js';
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -1926,8 +1927,10 @@ const CONTENT_SCREEN_DECISION_TIMEOUT_MS = 8_000;
 
 // OBL-004: fail-CLOSED ceiling on the whole native-tool-policy exchange — the
 // inverse of Overseer/ContentScreen's fail-OPEN guards above, since a denied
-// tool call degrades safely but a silently-allowed one does not.
-const NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS = 8_000;
+// tool call degrades safely but a silently-allowed one does not. It covers the
+// decision phase plus the largest human approval wait for an `ask`, and sits
+// below every relay's own timeout so main's deny always arrives first.
+const NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS = MAX_MAIN_CEILING_MS;
 
 const contentScreen = new ContentScreen({
   getConfig: () => ({ mode: store.getConfig().contentScreenMode ?? 'off' }),

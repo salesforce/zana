@@ -1,3 +1,4 @@
+import { RELAY_BACKSTOP_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import type { ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -72,7 +73,7 @@ describe('native tool decision dispatch', () => {
     const test = dispatch({ onNativeToolDecision: (_identity, received) => {
       signal = received; return new Promise(resolve => { allow = resolve; });
     } });
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(RELAY_BACKSTOP_MS);
     expect(test.result()).toEqual({ action: 'deny', reason: 'native policy timed out' });
     expect(signal.aborted).toBe(true); allow({ action: 'allow' });
     await vi.advanceTimersByTimeAsync(0); expect(test.write).toHaveBeenCalledOnce();

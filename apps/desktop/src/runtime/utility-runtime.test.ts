@@ -1,3 +1,4 @@
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createUtilityRuntime } from './runtime-supervisor.js';
@@ -99,7 +100,7 @@ describe('plugins-tool-policy requests', () => {
     child.emit('message', { type: 'error', protocolVersion, id: child.postMessage.mock.calls[0]![0].id, message: 'invalid server runtime message' });
     await failed;
     const silent = expect(runtime.request('plugins-tool-policy', call)).rejects.toThrow('server plugins-tool-policy request timed out');
-    await vi.advanceTimersByTimeAsync(20_000); await silent; expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(MAX_MAIN_CEILING_MS); await silent; expect(vi.getTimerCount()).toBe(0);
     const orphaned = expect(runtime.request('plugins-tool-policy', call)).rejects.toThrow('server utility process exited');
     child.emit('exit', 1); await orphaned; expect(vi.getTimerCount()).toBe(0);
   });

@@ -1,4 +1,5 @@
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { HOOK_TIMEOUT_SEC, RELAY_BACKSTOP_SEC } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { ProviderCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import { randomUUID } from 'node:crypto';
@@ -269,9 +270,11 @@ export function buildClaudeHookSettings(opts: ClaudeHookSettings): string {
     const nativeToolCmd =
       'ZCC_IN=$(cat); OUT=""; STATUS=1; ' +
       'if [ -n "$ZCC_NATIVETOOL_URL" ]; then ' +
-      'OUT=$(printf "%s" "$ZCC_IN" | curl --fail -s -m 5 -X POST --data-binary @- "$ZCC_NATIVETOOL_URL" 2>/dev/null); STATUS=$?; ' +
+      `OUT=$(printf "%s" "$ZCC_IN" | curl --fail -s -m ${RELAY_BACKSTOP_SEC} -X POST --data-binary @- "$ZCC_NATIVETOOL_URL" 2>/dev/null); STATUS=$?; ` +
       'fi; ' + nativeToolRelayTail();
-    const nativeToolHook = { matcher: '', hooks: [{ type: 'command', command: nativeToolCmd }] };
+    // An `ask` holds the call while a human decides, so the hook must outlive curl's bound:
+    // a hook that times out first would be a non-blocking error and let the call run.
+    const nativeToolHook = { matcher: '', hooks: [{ type: 'command', command: nativeToolCmd, timeout: HOOK_TIMEOUT_SEC }] };
     if (Array.isArray(hooks.PreToolUse)) hooks.PreToolUse.push(nativeToolHook);
     else hooks.PreToolUse = [nativeToolHook];
   }

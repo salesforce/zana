@@ -7,6 +7,7 @@
 
 import type { ProviderHookUrls } from '../launch-provider.js';
 import { shellQuote } from '../shell-quote.js';
+import { RELAY_BACKSTOP_SEC } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { nativeToolRelayTail } from '../native-tool-relay.js';
 
 /** One matcher group: its matcher and one `command` handler per entry. */
@@ -105,7 +106,7 @@ export function buildCodexHookSpecs(urls: ProviderHookUrls): CodexHookEventSpec[
     preToolUse.push({
       matcher: '*',
       commands: [
-        `OUT=$(curl --fail -s -m 5 -X POST --data-binary @- ${shellQuote(urls.nativeTool)}); STATUS=$?; ` +
+        `OUT=$(curl --fail -s -m ${RELAY_BACKSTOP_SEC} -X POST --data-binary @- ${shellQuote(urls.nativeTool)}); STATUS=$?; ` +
           nativeToolRelayTail()
       ]
     });

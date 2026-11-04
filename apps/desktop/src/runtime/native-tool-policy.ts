@@ -1,3 +1,4 @@
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import type { NativeToolPolicyRequest } from '@zana-ai/zcc-contracts/runtime';
 import {
   NATIVE_TOOL_POLICY_PATH,
@@ -36,7 +37,11 @@ export interface ProductRouteToolPolicyDeps {
   /** The product-server credential main shares with the server; PTY children never hold it. */
   credential(): string;
   fetch?: typeof fetch;
-  /** Below the relays' `curl -m 5`, so a hung server still reaches the agent as this route's deny. */
+  /**
+   * Bound on one exchange. The decider keeps this at the largest per-call
+   * ceiling (a human may be deciding an `ask`), still below every relay's own
+   * timeout, so a hung server reaches the agent as main's deny.
+   */
   timeoutMs?: number;
 }
 
@@ -56,7 +61,7 @@ export function productRouteToolPolicyDecider(deps: ProductRouteToolPolicyDeps):
         [NATIVE_TOOL_POLICY_PROOF_HEADER]: signNativeToolPolicyRequest(deps.credential(), body)
       },
       body,
-      signal: AbortSignal.timeout(deps.timeoutMs ?? 4_000)
+      signal: AbortSignal.timeout(deps.timeoutMs ?? MAX_MAIN_CEILING_MS)
     });
     if (!response.ok) throw new Error(`product server answered HTTP ${response.status}`);
     return await response.json();

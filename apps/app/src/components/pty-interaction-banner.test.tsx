@@ -104,4 +104,14 @@ describe('PtyInteractionBanner', () => {
     fireEvent.click(screen.getByText('Submit'));
     await waitFor(() => expect(respondSession).toHaveBeenCalledWith('s1', 'i1', { answers: [{ question: 'Pick one', selected: ['Yes'], freeText: '' }] }));
   });
+
+  it('renders the host approval card for a tool-policy ask and answers through main', async () => {
+    const respondSession = vi.fn(async () => undefined);
+    (window as any).cc = { threads: { interactions: { respondSession } } };
+    apiJson.mockResolvedValue([request({ origin: { kind: 'plugin', pluginId: 'form-plugin', rendererId: 'zcc:tool-policy-ask' }, payload: { kind: 'plugin', title: 'Approve tool call', requireHuman: true, data: { kind: 'tool-policy-ask', toolName: 'Bash', prompt: 'Run it?', inputPreview: 'ls' } } })]);
+    render(<PtyInteractionBanner sessionId="s1" />);
+    await screen.findByTestId('tool-policy-ask-prompt');
+    fireEvent.click(screen.getByTestId('tool-policy-ask-allow'));
+    await waitFor(() => expect(respondSession).toHaveBeenCalledWith('s1', 'i1', { decision: 'allow' }));
+  });
 });

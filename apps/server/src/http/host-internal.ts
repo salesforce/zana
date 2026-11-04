@@ -1,4 +1,5 @@
 import { remoteInteractionSurface } from '../services/threads/interaction-surface.js';
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { NativeToolPolicyRequestFieldsSchema } from '@zana-ai/zcc-contracts/runtime';
@@ -362,7 +363,7 @@ async function handleHostNativeToolPolicy(request: IncomingMessage, response: Se
       decideMainOwnedToolPolicy(ctx.plugins, { invocationId, threadId: thread.id,
         projectId: thread.projectId, profile: thread.providerId, toolName: input.toolName, input: input.input }, thread.providerId),
       new Promise<{ action: 'deny'; reason: string }>(resolve => {
-        timer = setTimeout(() => resolve({ action: 'deny', reason: 'native policy timed out' }), 10_000);
+        timer = setTimeout(() => resolve({ action: 'deny', reason: 'native policy timed out' }), MAX_MAIN_CEILING_MS);
       })
     ]);
     // Recheck after plugin work: a late allow cannot authorize a replaced session.

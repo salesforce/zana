@@ -4,6 +4,7 @@ import { rpcErrorFrom } from '@zana-ai/zcc-contracts/rpc-error';
 import type { ProjectFeedRequest, ProjectFeedResult } from '@zana-ai/zcc-contracts/project-feed';
 import type { LibraryAgentRequest } from '@zana-ai/zcc-contracts/library-agent';
 import type { ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import type { LibraryDocumentRequest } from '@zana-ai/zcc-contracts/library-documents';
 import { enrollHostUtility } from './enroll-host-utility.js';
 import { createProductEventForwarder } from './product-event-forwarder.js';
@@ -1029,7 +1030,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
       // Plugin CLI runs and RPCs may wrap slow external CLIs (e.g. `sf agent preview start`, up to 120s), so they get the long budget.
-      const timeoutMs = operation === 'plugins-repair' || operation === 'plugin-packs-install' || operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' || operation === 'plugins-install' || operation === 'plugins-update' || operation === 'plugins-update-all' || operation === 'plugins-outdated' ? 300_000 : 20_000;
+      const timeoutMs = operation === 'plugins-repair' || operation === 'plugin-packs-install' || operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' || operation === 'plugins-install' || operation === 'plugins-update' || operation === 'plugins-update-all' || operation === 'plugins-outdated' ? 300_000 : operation === 'plugins-tool-policy' ? MAX_MAIN_CEILING_MS : 20_000;
       return new Promise<unknown>((resolveResult, rejectResult) => {
         const timer = setTimeout(() => {
           pending.delete(id);

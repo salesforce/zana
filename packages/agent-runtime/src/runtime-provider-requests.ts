@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { RELAY_BACKSTOP_MS } from "@zana-ai/zcc-domain/native-tool-policy-budget";
 import type {
   AgentRuntimeExecutionOptions,
   AgentRuntimeNativeToolDecisionRequest,
@@ -435,7 +436,7 @@ async function handleNativeToolDecision(args: HandleRuntimeProviderRequestArgs):
           timer = setTimeout(() => {
             controller.abort();
             resolve(deny("native policy timed out"));
-          }, 10_000);
+          }, RELAY_BACKSTOP_MS);
         }),
       ]);
       const result = nativeToolDecisionSchema.safeParse(response);

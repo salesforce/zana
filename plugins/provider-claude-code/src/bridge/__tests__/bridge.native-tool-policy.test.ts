@@ -1,3 +1,4 @@
+import { RELAY_BACKSTOP_MS } from "@zana-ai/zcc-domain/native-tool-policy-budget";
 import type { HookCallback, Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { experimental_createBridgeJsonRpcTestHarness as createHarness } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
@@ -285,7 +286,7 @@ describe("Claude native tool veto", () => {
   it("times out closed and ignores late allow", async () => {
     await start();
     const pending = invoke();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(RELAY_BACKSTOP_MS);
     await expect(pending.output).resolves.toEqual(deny("native policy timed out"));
     reply(pending.request.id!, { action: "allow" });
     const next = invoke();

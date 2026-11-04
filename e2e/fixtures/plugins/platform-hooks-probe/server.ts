@@ -16,7 +16,7 @@ type DispatchSelection =
   | { kind: 'wait'; overrideable: boolean; reason: string }
   | { kind: 'reject'; message: string };
 
-type ToolPolicySelection = 'allow' | 'deny';
+type ToolPolicySelection = 'allow' | 'deny' | 'ask';
 
 type ToolPolicyEventRow = {
   invocationId: string;
@@ -26,7 +26,7 @@ type ToolPolicyEventRow = {
   projectId: string;
   providerId: string;
   toolName: string;
-  state: 'allowed' | 'denied';
+  state: 'allowed' | 'denied' | 'asked';
   at: number;
 };
 const TOOL_POLICY_EVENTS_MAX = 50;
@@ -83,6 +83,7 @@ export default function plugin(zcc: ZccPluginApi) {
   }> = [];
   let toolPolicySelection: ToolPolicySelection = 'allow';
   let toolPolicyDenyReason = DEFAULT_TOOL_POLICY_DENY_REASON;
+  let toolPolicyAskTimeoutMs: number | undefined;
   let toolPolicyEvents: ToolPolicyEventRow[] = [];
 
   function markerSource(projectId: string) {
@@ -245,12 +246,16 @@ export default function plugin(zcc: ZccPluginApi) {
   });
 
   zcc.rpc.method('setToolPolicySelection', (args) => {
-    const record = args as { selection?: unknown; reason?: unknown } | undefined;
-    const selection = record?.selection === 'deny' ? 'deny' : record?.selection === 'allow' ? 'allow' : undefined;
+    const record = args as { selection?: unknown; reason?: unknown; timeoutMs?: unknown } | undefined;
+    const selection = record?.selection === 'deny' ? 'deny'
+      : record?.selection === 'allow' ? 'allow'
+        : record?.selection === 'ask' ? 'ask' : undefined;
     if (!selection || (record?.reason !== undefined && typeof record.reason !== 'string')) {
       throw new Error('invalid tool policy selection');
     }
     toolPolicySelection = selection;
+    // `ask` mode: the approval window the plugin requests (the host clamps it).
+    toolPolicyAskTimeoutMs = selection === 'ask' && typeof record?.timeoutMs === 'number' ? record.timeoutMs : undefined;
     // Returned exactly as given, so a spec observes the host's own normalisation.
     toolPolicyDenyReason = selection === 'deny' && typeof record?.reason === 'string'
       ? record.reason
@@ -266,10 +271,12 @@ export default function plugin(zcc: ZccPluginApi) {
 
   zcc.hooks.onToolPolicy((request: PluginToolPolicyRequest) => {
     const selection = toolPolicySelection;
-    const state: ToolPolicyEventRow['state'] = selection === 'allow' ? 'allowed' : 'denied';
+    const state: ToolPolicyEventRow['state'] = selection === 'allow' ? 'allowed' : selection === 'ask' ? 'asked' : 'denied';
     const decision: PluginToolPolicyDecision = selection === 'allow'
       ? { action: 'allow' }
-      : { action: 'deny', reason: toolPolicyDenyReason };
+      : selection === 'ask'
+        ? { action: 'ask', prompt: `Allow ${request.toolName}?`, ...(toolPolicyAskTimeoutMs === undefined ? {} : { timeoutMs: toolPolicyAskTimeoutMs }) }
+        : { action: 'deny', reason: toolPolicyDenyReason };
     toolPolicyEvents = [
       ...toolPolicyEvents,
       {
@@ -505,6 +512,7 @@ export default function plugin(zcc: ZccPluginApi) {
     dispatchSelection = { kind: 'proceed' };
     dispatchEvents = [];
     toolPolicySelection = 'allow';
+    toolPolicyAskTimeoutMs = undefined;
     toolPolicyDenyReason = DEFAULT_TOOL_POLICY_DENY_REASON;
     toolPolicyEvents = [];
     return { ok: true };

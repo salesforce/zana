@@ -13,9 +13,10 @@
  * body, or a deny — blocks the call, so the gate is fail-closed.
  */
 import { pathToFileURL } from 'node:url';
+import { RELAY_BACKSTOP_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 
-/** Bound on one policy exchange; the route's own bound is shorter. */
-export const OPENCODE_GATE_TIMEOUT_MS = 8000;
+/** Bound on one policy exchange; above every per-call ceiling so an `ask` can finish, and the route's own bound is shorter. */
+export const OPENCODE_GATE_TIMEOUT_MS = RELAY_BACKSTOP_MS;
 /** The reason shown when the route cannot be reached or answers anything unexpected. */
 export const OPENCODE_GATE_UNREACHABLE = 'native tool policy unreachable';
 

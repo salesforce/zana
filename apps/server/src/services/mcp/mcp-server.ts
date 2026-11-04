@@ -20,6 +20,7 @@ import { protectPreviewServer } from '../../../../../services/mobile-relay/prote
  * dependency tree into the Electron main bundle.
  */
 
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -1732,7 +1733,7 @@ async function handleRequest(
     const decisionTimeoutMs =
       typeof opts.nativeToolPolicyDecisionTimeoutMs === 'function'
         ? opts.nativeToolPolicyDecisionTimeoutMs()
-        : opts.nativeToolPolicyDecisionTimeoutMs ?? 8_000;
+        : opts.nativeToolPolicyDecisionTimeoutMs ?? MAX_MAIN_CEILING_MS;
     timeout = setTimeout(() => answerDenied('native tool policy decision timed out'), decisionTimeoutMs);
     const finish = async (body: string) => {
       if (done) return;

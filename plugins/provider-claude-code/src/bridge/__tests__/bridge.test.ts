@@ -1,3 +1,4 @@
+import { RELAY_BACKSTOP_MS } from "@zana-ai/zcc-domain/native-tool-policy-budget";
 import {
   chmodSync,
   existsSync,
@@ -4271,7 +4272,7 @@ describe("bridge", () => {
 
       vi.useFakeTimers();
       const timedOut = await invoke();
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(RELAY_BACKSTOP_MS);
       await expect(timedOut.output).resolves.toMatchObject({
         hookSpecificOutput: {
           permissionDecision: "deny",

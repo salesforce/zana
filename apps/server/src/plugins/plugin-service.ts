@@ -120,6 +120,16 @@ import type {
 } from '@zana-ai/zcc-plugin-sdk/server';
 import type { ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
 import {
+  ASK_APPROVAL_MS,
+  DECISION_PHASE_MAX_MS,
+  TOOL_POLICY_ASK_INPUT_PREVIEW_MAX_CHARS,
+  TOOL_POLICY_ASK_PROMPT_MAX_CHARS,
+  TOOL_POLICY_ASK_RENDERER_ID,
+  clampAskApprovalMs,
+  isToolPolicyAskAllow,
+  sanitizeToolPolicyAskText
+} from '@zana-ai/zcc-domain/native-tool-policy-budget';
+import {
   deepFreezePluginMetadata,
   parsePersistedPluginMetadata
 } from '@zana-ai/zcc-domain/thread-runtime';
@@ -170,6 +180,12 @@ export interface PluginSessionInstructionsArgs {
   /** The harness family id the session runs, as plugins see it on lifecycle events. */
   harness: string;
 }
+
+/**
+ * What a call finally gets. A plugin's `ask` is resolved inside the service by a
+ * human decision, so callers only ever see allow or deny.
+ */
+export type ResolvedToolPolicyDecision = Exclude<PluginToolPolicyDecision, { action: 'ask' }>;
 
 export interface PluginService {
   readonly pluginPacks: PluginPackService;
@@ -246,7 +262,7 @@ export interface PluginService {
    */
   sessionInstructions(args: PluginSessionInstructionsArgs): Promise<string>;
   admitDispatch(request: PluginDispatchAdmissionRequest): Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>;
-  decideToolPolicy(request: PluginToolPolicyRequest): Promise<PluginToolPolicyDecision>;
+  decideToolPolicy(request: PluginToolPolicyRequest): Promise<ResolvedToolPolicyDecision>;
   /**
    * One consistent view of the native tool-policy inventory once startup has
    * settled: a single strict registry read joined with this service's sealed
@@ -650,9 +666,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   // than re-invoking plugin handlers. Map insertion order supplies bounded FIFO eviction.
   const toolPolicyDecisions = new Map<string, {
     stamp: ToolPolicyDecisionStamp;
-    decision: Promise<PluginToolPolicyDecision>;
+    decision: Promise<ResolvedToolPolicyDecision>;
   }>();
   const TOOL_POLICY_DECISIONS_MAX = 500;
+  /** An ask with less than this left in its budget is denied instead of shown for an instant. */
+  const ASK_QUEUE_MIN_REMAINING_MS = 1_000;
   const toolPolicyInventory = createToolPolicyInventoryState();
   const toolPolicySealed = new Set<string>();
   const toolPolicyPendingTrue = new Map<string, Promise<void>>();
@@ -725,7 +743,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     return captureToolPolicyStamp(toolPolicyInventory.snapshot(), currentGenerationIds());
   }
 
-  function inventoryBlocksAllow(): PluginToolPolicyDecision | null {
+  function inventoryBlocksAllow(): ResolvedToolPolicyDecision | null {
     if (toolPolicyReadFailure) {
       return { action: 'deny', reason: TOOL_POLICY_INVENTORY_UNAVAILABLE_REASON };
     }
@@ -773,7 +791,75 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         };
   }
 
-  function denyCachedAllow(reason: string): PluginToolPolicyDecision {
+  // One human question at a time per thread or PTY session: both stores hold a
+  // single open interaction per key, so concurrent asks queue behind each other.
+  const toolPolicyAskTails = new Map<string, Promise<unknown>>();
+
+  /**
+   * Hold the call while a human decides. Only an explicit allow from a human
+   * proves approval: a plugin cannot answer its own ask (`requireHuman`), and a
+   * cancel, timeout, missing UI, session end or error all deny. Time spent
+   * queued behind an earlier ask comes out of this ask's own budget, so the
+   * card never outlives the approval phase the deciding side budgeted.
+   */
+  async function askForToolPolicyApproval(
+    request: PluginToolPolicyRequest,
+    pluginId: string,
+    ask: Record<string, unknown>
+  ): Promise<ResolvedToolPolicyDecision> {
+    if (typeof ask.prompt !== 'string') throw new Error('invalid tool policy decision');
+    const prompt = sanitizeToolPolicyAskText(ask.prompt, TOOL_POLICY_ASK_PROMPT_MAX_CHARS);
+    if (!prompt) throw new Error('invalid tool policy decision');
+    const budgetMs = clampAskApprovalMs(ask.timeoutMs);
+    const deadline = Date.now() + budgetMs;
+    if (!opts.requestPluginInteraction) {
+      return { action: 'deny', reason: 'Tool call needs approval but no approval UI is available' };
+    }
+    const requestInteraction = opts.requestPluginInteraction;
+    const key = request.threadId;
+    const previous = toolPolicyAskTails.get(key) ?? Promise.resolve();
+    const run = previous.then(async (): Promise<ResolvedToolPolicyDecision> => {
+      const timeoutMs = deadline - Date.now();
+      if (timeoutMs < ASK_QUEUE_MIN_REMAINING_MS) {
+        return { action: 'deny', reason: 'Tool call approval timed out waiting for an earlier approval' };
+      }
+      let preview = '';
+      try {
+        preview = sanitizeToolPolicyAskText(JSON.stringify(request.input) ?? '', TOOL_POLICY_ASK_INPUT_PREVIEW_MAX_CHARS);
+      } catch {
+        preview = '';
+      }
+      try {
+        const result = await requestInteraction({
+          pluginId,
+          threadId: request.threadId,
+          rendererId: TOOL_POLICY_ASK_RENDERER_ID,
+          title: 'Approve tool call',
+          payload: { kind: 'tool-policy-ask', toolName: request.toolName, prompt, inputPreview: preview },
+          timeoutMs,
+          requireHuman: true
+        });
+        if (result.outcome === 'submitted') {
+          return result.actor === 'human' && isToolPolicyAskAllow(result.value)
+            ? { action: 'allow' }
+            : { action: 'deny', reason: 'Tool call was not approved' };
+        }
+        return { action: 'deny', reason: result.reason === 'timeout' ? 'Tool call approval timed out' : 'Tool call approval was cancelled' };
+      } catch (error) {
+        console.warn(`[plugins] tool policy approval for ${pluginId} failed`, error);
+        return { action: 'deny', reason: 'Tool call approval is unavailable' };
+      }
+    });
+    const tail = run.catch(() => undefined);
+    toolPolicyAskTails.set(key, tail);
+    try {
+      return await run;
+    } finally {
+      if (toolPolicyAskTails.get(key) === tail) toolPolicyAskTails.delete(key);
+    }
+  }
+
+  function denyCachedAllow(reason: string): ResolvedToolPolicyDecision {
     return { action: 'deny', reason };
   }
 
@@ -3123,18 +3209,30 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         const before = currentToolPolicyStamp();
         const unready = inventoryBlocksAllow();
         if (unready) return unready;
+        // The decision phase has one budget for every handler together; time a
+        // human spends on an `ask` is the separate approval phase and never counts.
+        let decisionSpentMs = 0;
         for (const current of live.values()) {
           for (const handler of current.handle?.toolPolicyHandlers ?? []) {
             try {
+              const remainingMs = DECISION_PHASE_MAX_MS - decisionSpentMs;
+              if (remainingMs <= 0) throw new Error('tool policy decision phase exhausted');
+              const startedAt = Date.now();
               const decision: unknown = await withDeadline(
                 Promise.resolve().then(() => handler(request)),
-                PLUGIN_MENTION_RESOLVE_TIMEOUT_MS,
+                Math.min(PLUGIN_MENTION_RESOLVE_TIMEOUT_MS, remainingMs),
                 `tool policy ${current.row.id}`
               );
+              decisionSpentMs += Date.now() - startedAt;
               if (!decision || typeof decision !== 'object') throw new Error('invalid tool policy decision');
               const result = decision as Record<string, unknown>;
               if (result.action === 'deny' && typeof result.reason === 'string') {
                 return { action: 'deny', reason: result.reason } as const;
+              }
+              if (result.action === 'ask') {
+                const asked = await askForToolPolicyApproval(request, current.row.id, result);
+                if (asked.action === 'deny') return asked;
+                continue;
               }
               if (result.action !== 'allow') throw new Error('invalid tool policy decision');
             } catch (error) {
