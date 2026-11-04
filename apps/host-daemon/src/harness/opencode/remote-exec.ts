@@ -85,7 +85,7 @@ function runSsh(args: string[]): Promise<string | null> {
     execFile(
       'ssh',
       args,
-      { timeout: REMOTE_TIMEOUT_MS, maxBuffer: REMOTE_MAX_BUFFER },
+      { timeout: REMOTE_TIMEOUT_MS, maxBuffer: REMOTE_MAX_BUFFER, windowsHide: true },
       (error, stdout) => resolve(error ? null : stdout)
     );
   });

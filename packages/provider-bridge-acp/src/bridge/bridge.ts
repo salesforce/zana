@@ -759,6 +759,7 @@ async function loadAgentModelCatalog(
           ...(listCommand.envVars ?? {}),
         },
         timeout: MODEL_LIST_TIMEOUT_MS,
+        windowsHide: true,
       },
       (error, out, stderr) => {
         if (!error) {

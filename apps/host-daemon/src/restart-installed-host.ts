@@ -46,7 +46,7 @@ export async function restartInstalledHost(dataDir: string, entry: string): Prom
   await new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, [entry, 'join', '--host-id', auth.hostId,
       '--server-url', url.toString(), '--host-daemon-port', String(port), '--auto-update'], {
-      detached: true, stdio: 'ignore', cwd: dataDir,
+      detached: true, stdio: 'ignore', cwd: dataDir, windowsHide: true,
       env: { ...process.env, ZCC_DATA_DIR: dataDir, ZCC_HOST_SERVICE_MANAGED: '0', PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ''}` }
     });
     child.once('error', reject);

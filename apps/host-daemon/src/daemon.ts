@@ -81,7 +81,8 @@ function startCommand(command: SignedExecutionCommand['command']): ChildProcessB
   return spawn(file, args, {
     cwd: command.launch.cwd,
     env: command.launch.env,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
   });
 }
 

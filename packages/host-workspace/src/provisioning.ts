@@ -55,7 +55,8 @@ async function runSetupScript(
     const child = spawn('env', ['bash', ENV_SETUP_SCRIPT_NAME], {
       cwd: workspacePath,
       env: gitChildEnv(),
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
     });
     const onAbort = () => child.kill('SIGTERM');
     signal?.addEventListener('abort', onAbort);

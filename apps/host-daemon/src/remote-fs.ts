@@ -102,7 +102,7 @@ function runRemote(
     execFile(
       'ssh',
       args,
-      { timeout: SSH_TIMEOUT_MS, maxBuffer: MAX_STDOUT_BYTES, encoding: 'buffer' },
+      { timeout: SSH_TIMEOUT_MS, maxBuffer: MAX_STDOUT_BYTES, encoding: 'buffer', windowsHide: true },
       (err, stdout) => {
         if (err) {
           const e = err as NodeJS.ErrnoException & { killed?: boolean };
@@ -141,7 +141,7 @@ function runRemoteInput(
       clearTimeout(timer);
       resolve(r);
     };
-    const proc = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     const out: Buffer[] = [];
     const errOut: Buffer[] = [];
     let outLen = 0;
