@@ -60,7 +60,7 @@
 }
 .fairy-hero {
   position: relative;
-  padding: 84px 0 0;
+  padding: 62px 0 54px;
   background: radial-gradient(
     ellipse at 80% 25%,
     color-mix(in srgb, var(--accent-lavender) 8%, transparent),
@@ -69,14 +69,14 @@
 }
 .fairy-hero-grid {
   display: grid;
-  grid-template-columns: 1.12fr 1fr;
+  grid-template-columns: 0.9fr 1.25fr;
   align-items: center;
-  gap: 12px;
+  gap: 48px;
 }
 .fairy-hero-copy {
   position: relative;
   z-index: 1;
-  padding-bottom: 48px;
+  padding-bottom: 12px;
 }
 .fairy-hero h1 {
   margin: 0 0 28px;
@@ -990,3 +990,34 @@
 .mobile-menu .zcc-btn-primary {
   color: var(--accent-ink);
 }
+
+.fairy-demo-section .tour-video {
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  background: var(--bg-panel);
+  box-shadow: 0 22px 75px -30px #0008;
+}
+.fairy-demo-section .tour-video video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1440 / 900;
+  border-radius: 12px;
+  background: #eef2fb;
+}
+
+/* The homepage keeps its proof and supporting benefits together. */
+.architecture-reference .wrap { max-width:780px; }
+.fairy-benefits { list-style:none; padding:0; margin:30px 0 22px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:36px; }
+.fairy-benefits h3 { font-size:16px; font-weight:550; margin:0 0 8px; letter-spacing:-.02em; }
+.fairy-benefits p { font-size:13px; line-height:1.7; color:var(--muted); margin:0; }
+.fairy-plugin-teaser { padding:36px 0; border-block:1px solid var(--border); }
+.fairy-plugin-teaser>.wrap { display:flex; align-items:center; justify-content:space-between; gap:30px; }
+.fairy-plugin-teaser .fairy-kicker { margin-bottom:10px; }
+.fairy-plugin-teaser h2 { font-size:28px; margin:0 0 12px; letter-spacing:-.035em; }
+.fairy-plugin-teaser p:not(.fairy-kicker) { font-size:14px; color:var(--muted); max-width:460px; line-height:1.7; margin:0; }
+.fairy-plugin-teaser .zcc-actions { flex-shrink:0; align-items:center; }
+@media(max-width:1050px) { .fairy-hero-grid { gap:28px; } .fairy-hero h1 { font-size:58px; } }
+@media(max-width:760px) { .fairy-hero { padding:40px 0; } .fairy-hero-grid { grid-template-columns:1fr; gap:28px; } .fairy-hero h1 { font-size:clamp(42px,9vw,64px); } .fairy-plugin-teaser>.wrap { display:block; } .fairy-plugin-teaser .zcc-actions { margin-top:24px; } .fairy-benefits { gap:20px; } }
+@media(max-width:600px) { .fairy-benefits { grid-template-columns:1fr; gap:20px; } }

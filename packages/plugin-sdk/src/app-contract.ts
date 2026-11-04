@@ -62,6 +62,8 @@ export interface PluginProjectTabRegistration extends PluginSlotBase {
   global?: boolean;
   /** Own the toolbar instead of adding a host title row. Render the supplied headerActions in it. */
   header?: 'custom';
+  /** Omit the host project-path/Git footer for this tab. Other project views keep it. */
+  statusbar?: 'hidden';
   /**
    * Let the user open this tab in its own OS window (desktop only). While it is
    * open there, the tab is not mounted in other windows; they show
@@ -85,6 +87,8 @@ export interface PluginDetachedTabProps {
 export interface ZccNavigateToProjectOptions {
   /** Open this plugin's `projectTab` with the given slot id. */
   tabId?: string;
+  /** Route to the main window tab even when that tab has a detached window. */
+  inMainWindow?: boolean;
 }
 
 export interface PluginProjectMenuActionContext {
@@ -395,6 +399,8 @@ export interface PluginMessageDirectiveProps {
 }
 
 export interface PluginMessageDirectiveRegistration extends PluginSlotBase {
+  /** Hide this navigation card in the assistant beside its own plugin page. */
+  hideInAssistant?: boolean;
   component: ComponentType<PluginMessageDirectiveProps>;
 }
 
@@ -581,7 +587,7 @@ export interface PluginProviderIconRegistration {
   pluginId: string;
   generation: number;
   providerId: string;
-  icon: ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string; size?: number }>;
 }
 
 export const PLUGIN_COMPOSER_SCOPE_KINDS = [
@@ -696,6 +702,8 @@ export interface PluginComposerApi {
   setInputLock(locked: boolean): void;
   addQuote(text: string): void;
   insertMention(mention: PluginComposerMention): void;
+  /** Insert an immutable snapshot at this composer's caret; false when unavailable or over limits. */
+  insertContextReference?(reference: import('./context-reference.js').ContextReference): boolean;
   focus(): void;
   /**
    * Overlay spawn options for this plugin. Pass `null` to clear. The host
@@ -740,7 +748,25 @@ export interface PluginAppContentScripts {
   ): void;
 }
 
+export interface PluginBrowserPage {
+ evaluate(expression:string, options?:{world?:'main'|'isolated'}):Promise<unknown>;
+ onMessage(listener:(data:unknown)=>void):()=>void;
+}
+export interface PluginBrowserComposer {
+ insert(reference:import('./context-reference.js').ContextReference):boolean;
+ update(resourceId:string, reference:import('./context-reference.js').ContextReference | null):boolean;
+ onSubmitted(listener:()=>void):()=>void;
+ focus():void;
+}
+export interface PluginBrowserToolbarActionProps {
+ pluginId:string; threadId:string; tabId:string; url:string;
+ page:PluginBrowserPage|null; composer:PluginBrowserComposer;
+}
+export interface PluginBrowserToolbarActionRegistration extends PluginSlotBase {
+ title:string; component:ComponentType<PluginBrowserToolbarActionProps>;
+}
 export interface PluginAppSlots {
+  experimental_browserToolbarAction(registration:Omit<PluginBrowserToolbarActionRegistration,'generation'|'pluginId'>):void;
   navPanel(registration: Omit<PluginNavPanelRegistration, 'generation' | 'pluginId'>): void;
   settingsSection(registration: Omit<PluginSettingsSectionRegistration, 'generation' | 'pluginId'>): void;
   homepageSection(registration: Omit<PluginHomepageSectionRegistration, 'generation' | 'pluginId'>): void;
@@ -815,6 +841,7 @@ export interface PluginRegistrationSet {
   newThreadPanelActions: PluginNewThreadPanelActionRegistration[];
   threadLists: PluginThreadListRegistration[];
   threadHeaderActions: PluginThreadHeaderActionRegistration[];
+  browserToolbarActions: PluginBrowserToolbarActionRegistration[];
   fileOpeners: PluginFileOpenerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   messageActions: PluginMessageActionRegistration[];
@@ -843,6 +870,10 @@ export type PluginRealtimeConnectionState = 'connecting' | 'connected' | 'reconn
 export type ZccSurface = 'main' | 'project-window' | 'plugin-view';
 
 export interface ZccContext {
+  /** Opaque resource selection for this plugin page or detached window; not a filesystem grant. */
+  resourceId?: string;
+  /** Changes for each main-window resource navigation, including repeated requests for the same resource. */
+  resourceRequestId?: string;
   projectId: string | null;
   threadId: string | null;
   /** Absent on hosts that predate detachable tabs. */
@@ -879,6 +910,13 @@ export interface ZccWindowTitle {
   tone?: ZccWindowTitleTone;
 }
 
+export interface ZccPanelScope {
+  /** Stable page resource identity. Does not grant access to that resource. */
+  id: string;
+  /** Optional view identity, e.g. a tool group within the resource. */
+  view?: string;
+}
+
 export interface ZccNavigate {
   toThread(threadId: string): void;
   toProject(projectId: string, options?: ZccNavigateToProjectOptions): void;
@@ -904,6 +942,9 @@ export interface ZccNavigate {
    * tools or older hosts; hosts before drafts also return false for a
    * draft); fall back to `openThreadPanel`, `toThread` or `toCompose`.
    */
+  supportsContextReferences?: true;
+  /** Adds a copied snapshot to the owning thread's draft, without sending. */
+  addThreadContext?(reference: import('./context-reference.js').ContextReference): boolean;
   openPanelAgent(options: ZccPanelAgentOptions): boolean;
   /**
    * Open one of this plugin's `threadPanelAction` tabs in this page's side
@@ -914,12 +955,61 @@ export interface ZccNavigate {
    * match. Absent on older hosts.
    */
   openPanelTool?(options: ZccPanelToolOptions): boolean;
+  /** Select the resource whose independent host side panel this page displays. Null restores the page default. */
+  setPanelScope?(scope: ZccPanelScope | null): void;
   /**
    * Open one of this plugin's `detachable` project tabs in its own window, or
    * focus that window when it is already open. Resolves `false` outside the
    * desktop app or when the tab is not detachable. Absent on older hosts.
    */
-  openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions): Promise<boolean>;
+  openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions & { resourceId?: string }): Promise<boolean>;
+}
+
+/** Why a pasted deep link was not routed. `unavailable` outside the desktop app and on older hosts. */
+export type ZccDeepLinkRejectReason =
+  | 'unavailable'
+  | 'not-a-string'
+  | 'too-long'
+  | 'control-characters'
+  | 'malformed'
+  | 'wrong-scheme'
+  | 'bad-plugin-id'
+  | 'bad-route'
+  | 'bad-query'
+  | 'bad-encoding'
+  | 'payload-too-long';
+
+export type ZccDeepLinkOpenResult =
+  | { ok: true; pluginId: string; route: string }
+  | { ok: false; reason: ZccDeepLinkRejectReason };
+
+/**
+ * Links of the form `<base>plugin/<pluginId>/<route>?d=<payload>`. A link never
+ * performs an action: the host routes `(route, payload)` to the plugin's handler
+ * and the plugin must show its own confirmation before acting. `payload` is an
+ * opaque, untrusted string (at most 4096 characters, no whitespace or control
+ * characters); treat it like any user-pasted input.
+ */
+export interface ZccDeepLinks {
+  /**
+   * The link prefix for this build: `zana://` when packaged, `zana-dev://` in
+   * `pnpm run dev`, null where links are not supported (E2E, web, older hosts).
+   * Build a link as `${base}plugin/${pluginId}/${route}?d=${encodeURIComponent(payload)}`.
+   */
+  base(): string | null;
+  /**
+   * Receive links for `route` (lowercase `[a-z0-9-]` segments joined by `/`,
+   * without leading or trailing slash). Links that arrived before a handler for
+   * the route was registered (for example the plugin view was not mounted yet)
+   * are queued by the host for a short time and delivered on registration, in
+   * order. Returns an unsubscribe function; call it on unmount.
+   */
+  on(route: string, handler: (payload: string | null) => void): () => void;
+  /**
+   * Validate and route a pasted link (any known scheme, for example from an
+   * "Open link" field). The host re-validates; the link may name any plugin.
+   */
+  open(rawLink: string): Promise<ZccDeepLinkOpenResult>;
 }
 
 /** A `'plugin-page'` thread-panel action to show in the page's side panel. */
@@ -940,7 +1030,7 @@ export type ZccPanelAgentOptions =
        * doc id); it is recorded as the agent's starting view in place of the page's
        * current route, so a page without routes (a project tab) can still name it.
        */
-      draft: { prompt: string; projectId?: string; view?: string };
+      draft: { prompt: string; projectId?: string; view?: string; selection?: import('./editor-selection.js').EditorSelection; references?: readonly import('./context-reference.js').ContextReference[] };
       title?: string;
     };
 
@@ -982,6 +1072,44 @@ export interface NewThreadComposerProps {
   onSubmit: (request: { projectId: string; providerId: string; input: unknown[] }) => void | Promise<void>;
 }
 
+export type HarnessRoutingEditorPatch = {
+  providerTargetId?: string;
+  modelTargetId?: string;
+  executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
+};
+
+/** Props for the host-rendered harness routing editor (same editor Core Project settings uses). */
+export interface HarnessRoutingEditorProps {
+  descriptors: readonly import('@zana-ai/zcc-domain/harness-adapter').HarnessAdapterDescriptor[];
+  value: import('@zana-ai/zcc-domain/product').HarnessModelRoutingV1 | undefined;
+  onChange(adapterId: import('@zana-ai/zcc-domain/product').HarnessFamily, patch: HarnessRoutingEditorPatch): void;
+  /** Label of the inherit option. Defaults to "Use global default". */
+  inheritLabel?: string;
+  /** Shows skeletons instead of rows while descriptors or the value load. */
+  loading?: boolean;
+  /** Optional harness picker above the rows; `''` is the inherit option. */
+  defaultHarness?: {
+    value: string;
+    onChange(adapterId: string): void;
+  };
+  /** Rendered above the rows, e.g. an error banner. */
+  notice?: ReactNode;
+  /** Row copy for what these settings apply to. Defaults to Zana's project-settings wording. */
+  rowCopy?: HarnessRoutingEditorRowCopy;
+}
+
+export interface HarnessRoutingEditorRowCopy {
+  /** Accessible name of a row's expand button, given the harness label. */
+  expandLabel(harnessLabel: string): string;
+  /** Line under the harness name. */
+  blurb: string;
+  /** Shown when a harness has no launch fields to set. */
+  empty: string;
+}
+
+/** A plugin's stored AI-harness override at one scope (see `zcc.sdk.harnessRouting`). */
+export type PluginHarnessOverride = import('@zana-ai/zcc-domain/product').PluginHarnessOverrideV1;
+
 export interface PluginRpcClient {
   call(method: string, args?: unknown): Promise<unknown>;
 }
@@ -1021,7 +1149,11 @@ export interface PluginSdkApp {
   useSettings(): PluginSettingsState;
   useZccContext(): ZccContext;
   useZccNavigate(): ZccNavigate;
+  /** Deep links for the calling plugin. Absent on hosts that predate them. */
+  useZccDeepLinks?(): ZccDeepLinks;
   useWindowTitle(title: ZccWindowTitle | null | undefined): void;
+  /** Await durable document/run handoff before a detached window closes. Rejection keeps it open. */
+  useWindowCloseHandler?(handler: ((signal: AbortSignal) => void | Promise<void>) | null): void;
   useComposer(): PluginComposerApi;
   useComposerView(): ComposerView;
   experimental_useSidebarThreads(): { status: 'loading' | 'ready' | 'error'; threads: PluginSidebarThread[]; projects: { id: string; name: string }[] };
@@ -1040,6 +1172,7 @@ export interface PluginSdkApp {
   ThreadChat: ComponentType<ThreadChatProps>;
   Markdown: ComponentType<MarkdownProps>;
   experimental_NewThreadComposer: ComponentType<NewThreadComposerProps>;
+  experimental_HarnessRoutingEditor: ComponentType<HarnessRoutingEditorProps>;
   /** Host-only toast helper; not a public SDK export. */
   toast?(message: string, kind?: 'info' | 'error'): void;
 }
@@ -1061,6 +1194,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     newThreadPanelActions: [],
     threadLists: [],
     threadHeaderActions: [],
+    browserToolbarActions: [],
     fileOpeners: [],
     messageDirectives: [],
     messageActions: [],
@@ -1180,6 +1314,7 @@ export function collectPluginApp(
     projectStatusbarItem: new Set<string>(),
     threadList: new Set<string>(),
     threadHeaderAction: new Set<string>(),
+    browserToolbarAction: new Set<string>(),
     fileOpener: new Set<string>(),
     messageDirective: new Set<string>(),
     messageAction: new Set<string>(),
@@ -1466,6 +1601,12 @@ export function collectPluginApp(
           })
         );
       },
+      experimental_browserToolbarAction: (registration) => {
+        const kind='slots.experimental_browserToolbarAction';
+        const id=requireSlotId(kind,registration.id);
+        requireUniqueId(kind,seen.browserToolbarAction,id);
+        set.browserToolbarActions.push(stamp({id,title:requireNonEmptyString(kind,'title',registration.title),component:requireComponent(kind,'component',registration.component)}));
+      },
       experimental_threadHeaderAction: (registration) => {
         const kind = 'slots.experimental_threadHeaderAction';
         const id = requireSlotId(kind, registration.id);
@@ -1519,6 +1660,7 @@ export function collectPluginApp(
         set.messageDirectives.push(
           stamp({
             id: registration.id,
+            ...(registration.hideInAssistant === true ? { hideInAssistant: true } : {}),
             component: requireComponent(kind, 'component', registration.component)
           })
         );

@@ -82,7 +82,8 @@ export class ClaudeCliProvider implements LlmProvider {
           cwd: tmpdir(),
           env: { ...(process.env as Record<string, string>) },
           // No shell — argv is passed verbatim, so prompt text needs no escaping.
-          shell: false
+          shell: false,
+          windowsHide: true
         });
       } catch (err) {
         fail(err instanceof Error ? err.message : String(err));

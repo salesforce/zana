@@ -17,6 +17,10 @@ vi.mock('../../lib/split-layout/openThreadInSplit.js', () => ({ openRoutedPaneIn
 vi.mock('../../hooks/useIsCompactViewport.js', () => ({ useIsCompactViewport: () => h.compact }));
 import { usePaneContentSplitDrag, useThreadRowSplitDrag } from './useThreadRowSplitDrag.js';
 
+import { useData, useUi } from '../../store.js';
+import { useThreads, type ThreadListItem } from '../../thread-store.js';
+import { useSessionMove } from '../../lib/session-move.js';
+
 function wrapper({ children }: { children: React.ReactNode }) { return <MemoryRouter>{children}</MemoryRouter>; }
 function event(target?: HTMLElement) {
   const row = document.createElement('a');
@@ -30,6 +34,7 @@ function start() {
 }
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(document, 'elementsFromPoint');
   h.config = null; h.compact = false;
   vi.clearAllMocks(); vi.useRealTimers();
   useSplitWorkspace.setState({ layout: null, scopeKey: 'global', maximizedPaneId: null, scopes: {} });
@@ -90,6 +95,40 @@ describe('sidebar split drag', () => {
     expect(h.config).toBeNull();
     unmount();
     expect(h.cancel).toHaveBeenCalled();
+  });
+
+  it('resolves project targets, expands a hovered destination, and opens the move dialog on drop', () => {
+    vi.useFakeTimers();
+    useData.setState({ projects: [
+      { id: 'source', path: '/source' }, { id: 'destination', path: '/destination' },
+      { id: 'remote', path: '/remote', hostId: 'h2' }
+    ] as ReturnType<typeof useData.getState>['projects'] });
+    useThreads.setState({ threads: [{ id: 't1', projectId: 'source', hostId: 'h1' } as ThreadListItem] });
+    useSessionMove.setState({ request: null, primaryHostId: 'h1' });
+    useUi.setState({ projectExpanded: {} });
+    const { result } = renderHook(() => useThreadRowSplitDrag({ threadId: 't1', projectId: null, title: 'Thread' }), { wrapper });
+    act(() => result.current.onPointerDown?.(event()));
+    const config = h.config!;
+    expect(config.shouldEngage(0, 110)).toBe(false);
+    expect(config.shouldEngage(0, 113)).toBe(true);
+    const header = document.createElement('div');header.dataset.sessionMoveProject = 'destination';
+    const hitTest = vi.fn((): Element[] => [header]);
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: hitTest });
+    expect(config.externalDrop?.resolve(0, 0)).toMatchObject({ id: 'destination', allowed: true });
+    header.dataset.sessionMoveProject = 'source';
+    expect(config.externalDrop?.resolve(0, 0)?.allowed).toBe(false);
+    header.dataset.sessionMoveProject = 'remote';
+    expect(config.externalDrop?.resolve(0, 0)).toMatchObject({ allowed: false, label: 'Other machine' });
+    hitTest.mockReturnValue([]);expect(config.externalDrop?.resolve(0, 0)).toBeNull();
+    act(() => config.externalDrop?.onHover?.('destination'));
+    vi.advanceTimersByTime(649);expect(useUi.getState().projectExpanded.destination).toBeUndefined();
+    act(() => vi.advanceTimersByTime(1));expect(useUi.getState().projectExpanded.destination).toBe(true);
+    act(() => config.externalDrop?.onHover?.('remote'));
+    config.externalDrop?.onHover?.(null);vi.advanceTimersByTime(650);
+    expect(useUi.getState().projectExpanded.remote).toBeUndefined();
+    act(() => config.externalDrop?.onDrop('destination'));
+    expect(useSessionMove.getState().request).toEqual({ threadId: 't1', destinationId: 'destination' });
+    useSessionMove.getState().close();
   });
 
   it('provides the same open-in-split action for threads and disables dragging on compact screens', () => {

@@ -28,6 +28,7 @@ vi.mock('@zana-ai/zcc-db', () => ({
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
   getHost: vi.fn(() => ({ permissionMode: 'auto' })),
   getThreadExecutionState: vi.fn(() => null),
+  getThreadPluginMetadata: vi.fn(() => ({ metadata: {}, corrupt: false })),
   getLatestConversationCheckpoint: vi.fn(() => null),
   listConversationThreadEventsWindow: vi.fn(() => []),
   setConversationProviderThreadId: vi.fn(),
@@ -43,9 +44,11 @@ import {
   deleteConversationThreadEventsAfter,
   getConversationThread,
   getEnvironment,
+  getThreadPluginMetadata,
   getLatestConversationCheckpoint
 } from '@zana-ai/zcc-db';
 import { sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
+import * as conversationHostRpc from './conversation-host-rpc.js';
 
 function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHttpContext {
   const pluginHostArtifacts = new PluginHostArtifactRegistry();
@@ -85,6 +88,7 @@ beforeEach(() => {
   );
   vi.mocked(getConversationThread).mockReturnValue(thread);
   vi.mocked(getLatestConversationCheckpoint).mockReturnValue({ sequence: 4, checkpoint: 'cp-4' });
+  vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: {}, corrupt: false } as never);
   vi.mocked(sendConversationTurn).mockClear();
   vi.mocked(stopConversation).mockClear();
   vi.mocked(deleteConversationThreadEventsAfter).mockClear();
@@ -152,6 +156,54 @@ describe('editConversationMessage', () => {
       input: [{ type: 'text', text: 'replacement' }]
     });
     expect(stopConversation).toHaveBeenCalled();
+  });
+
+  it('reloads main-authorized skill selection for rewind', async () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { automatedSkillIds }, corrupt: false } as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, prepared: true, providerThreadId: 'prov-rewound' }));
+    await editConversationMessage(ctx(callHostOnlineRpc), thread.id, {
+      operationId: 'op-1', input: [{ type: 'text', text: 'replacement' }]
+    });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'thread.rewind.prepare', automatedSkillIds
+    }) }));
+  });
+
+  it('keeps an empty automated skill selection for rewind', async () => {
+    const automatedSkillIds: string[] = [];
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { automatedSkillIds }, corrupt: false } as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, prepared: true, providerThreadId: 'prov-rewound' }));
+    await editConversationMessage(ctx(callHostOnlineRpc), thread.id, {
+      operationId: 'op-1', input: [{ type: 'text', text: 'replacement' }]
+    });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'thread.rewind.prepare', automatedSkillIds
+    }) }));
+  });
+
+  it('omits automated skill selection for rewind when metadata has none', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, prepared: true, providerThreadId: 'prov-rewound' }));
+    await editConversationMessage(ctx(callHostOnlineRpc), thread.id, {
+      operationId: 'op-1', input: [{ type: 'text', text: 'replacement' }]
+    });
+    const [{ command }] = callHostOnlineRpc.mock.calls[0]!;
+    expect(command).toMatchObject({ type: 'thread.rewind.prepare' });
+    expect(command).not.toHaveProperty('automatedSkillIds');
+  });
+
+  it('rejects rewind when resume fields disappear before preparation', async () => {
+    vi.spyOn(conversationHostRpc, 'threadResumeFields').mockResolvedValueOnce(undefined);
+    const callHostOnlineRpc = vi.fn();
+    await expect(editConversationMessage(ctx(callHostOnlineRpc), thread.id, {
+      operationId: 'op-1', input: [{ type: 'text', text: 'replacement' }]
+    })).rejects.toMatchObject({ status: 409, code: 'not_resumable' });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: {
+      type: 'thread.rewind.discard',
+      threadId: thread.id,
+      environmentId: thread.environmentId,
+      leaseId: expect.any(String)
+    } }));
   });
 
   it('discards a staged rewind when submit fails', async () => {

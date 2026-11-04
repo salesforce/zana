@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
-import { PLAN_CORRECTION_MAX_RETRIES, PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction } from './service.js';
+import { COORDINATOR_WAKE_MESSAGE_MAX, PLAN_CORRECTION_HELD_MESSAGE, PLAN_CORRECTION_MAX_RETRIES, PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction } from './service.js';
 
 const ctx = { sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'e-1', slotId: 'lead' };
 const source = { status: 'ok' as const, units: [{ id: 'source', title: 'Source', task: 'source', dependencies: [] }], realPath: '/root/.zana/source.md' };
@@ -331,7 +331,7 @@ describe('PlanCorrectionService', () => {
     await service.review(ctx, source);
     await expect(service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction))).resolves.toBe('wait');
     expect(nudge).not.toHaveBeenCalled();
-    expect(wakeCoordinator).toHaveBeenCalledWith(ctx.executionId, expect.stringContaining('Keep the supplied plan unchanged'));
+    expect(wakeCoordinator).toHaveBeenCalledWith(ctx.executionId, expect.stringContaining('a copy of the supplied plan is rejected again'), expect.objectContaining({ isCurrent: expect.any(Function), onUnconsumed: expect.any(Function) }));
   });
 
   it('gives a held coordinator the rejection reason, source plan, grammar and permission to fill gaps', async () => {
@@ -346,6 +346,69 @@ describe('PlanCorrectionService', () => {
     expect(text).toContain('execution-plan-corrected-');
     expect(text).toContain('Write scope');
     expect(text).toContain('Do not stop to ask the operator');
+  });
+
+  // squad-bugs B2a live repro: coordinators edited the authored plan, re-copied the
+  // invalid plan, and went looking for the execution over curl/env.
+  it('names the corrected file as the only plan to write and forbids shell or execution.* discovery', async () => {
+    const { service, bindInboxAction, wakeCoordinator } = create();
+    await service.begin(ctx.executionId, 'mutating work unit requires file scope', false);
+    await service.review(ctx, source);
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+
+    const text = wakeCoordinator.mock.calls[0]![1] as string;
+    expect(text).toMatch(/was rejected: /);
+    expect(text).toMatch(/corrected portable plan to `\.zana\/execution-plan-corrected-[^`]+`/);
+    expect(text).toContain('is the only plan file the host reads');
+    expect(text).toContain(`Do not edit the supplied plan, \`.zana/execution-plan-${ctx.executionId}.md\``);
+    expect(text).toContain('a copy of the supplied plan is rejected again');
+    expect(text).toContain('run shell or network commands');
+    expect(text).toContain('The host rereads');
+    expect(text).not.toContain('Keep the supplied plan unchanged');
+  });
+
+  it('tells the coordinator why its corrected plan is invalid, then escalates with that reason', async () => {
+    const { service, appendInbox, bindInboxAction, readCorrectedPlan, wakeCoordinator } = create();
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
+    await service.begin(ctx.executionId, 'mutating work unit requires file scope', false);
+    await service.review(ctx, { status: 'invalid', reason: 'bad' });
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+    expect(wakeCoordinator).toHaveBeenCalledOnce();
+    readCorrectedPlan.mockResolvedValue({ status: 'invalid', reason: 'step w1:\n mutating work unit requires file scope' });
+
+    // First idle edge: precise feedback to the coordinator, no new operator card.
+    await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
+    expect(appendInbox).toHaveBeenCalledOnce();
+    expect(wakeCoordinator).toHaveBeenCalledTimes(2);
+    const feedback = wakeCoordinator.mock.calls[1]![1] as string;
+    expect(feedback).toContain('is still invalid: step w1: mutating work unit requires file scope');
+    expect(feedback).toContain(`.zana/execution-plan-corrected-${ctx.executionId}.md`);
+    expect(feedback).toContain('Do not call execution.* tools');
+
+    // Stall bound: the operator card names the parser reason, not "no plan written".
+    await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
+    expect(wakeCoordinator).toHaveBeenCalledTimes(2);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    const comments = appendInbox.mock.calls[1]![0].comments as string;
+    expect(comments).toContain("The coordinator's corrected plan is still invalid: step w1: mutating work unit requires file scope.");
+    expect(comments).not.toContain('without writing a corrected plan');
+    expect(latestOffer(bindInboxAction).digest).toBe('');
+  });
+
+  it('falls back to a session nudge for invalid-correction feedback without a wake queue', async () => {
+    const base = create();
+    const service = new PlanCorrectionService({
+      appendInbox: base.appendInbox, bindInboxAction: base.bindInboxAction, nudge: base.nudge,
+      readSourcePlan: base.readSourcePlan, readCorrectedPlan: base.readCorrectedPlan, store: base.store,
+      resume: base.resume, stopExecution: base.stopExecution
+    });
+    base.readCorrectedPlan.mockResolvedValue({ status: 'missing' });
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, { status: 'invalid', reason: 'bad' });
+    await service.respond(ctx.executionId, 'changes', latestOffer(base.bindInboxAction));
+    base.readCorrectedPlan.mockResolvedValue({ status: 'invalid', reason: 'no steps' });
+    await service.reviewInvalid(ctx);
+    expect(base.nudge).toHaveBeenLastCalledWith(ctx.sessionId, expect.stringContaining('is still invalid: no steps'));
   });
 
   it('still instructs the coordinator when the source plan cannot be read', async () => {
@@ -369,7 +432,31 @@ describe('PlanCorrectionService', () => {
 
     const text = wakeCoordinator.mock.calls[0]![1] as string;
     expect(text).toContain('[truncated]');
-    expect(text.length).toBeLessThan(10_000);
+    expect(text.length).toBeLessThanOrEqual(COORDINATOR_WAKE_MESSAGE_MAX);
+  });
+
+  // The durable wake queue rejects any message over its string cap; an over-long
+  // correction request was dropped and the coordinator never heard about it.
+  it('fits every correction request within the durable wake cap for a real execution id and long reason', async () => {
+    const { service, bindInboxAction, wakeCoordinator, readSourcePlan } = create();
+    const realCtx = { ...ctx, executionId: '38b87318-0000-4000-8000-000000000000' };
+    readSourcePlan.mockResolvedValue('### a: A <!-- executable-step -->\n'.repeat(400));
+    await service.begin(realCtx.executionId, `reason ${'r'.repeat(3_000)}`, false);
+    await service.review(realCtx, source);
+    await service.respond(realCtx.executionId, 'changes', latestOffer(bindInboxAction));
+    const text = wakeCoordinator.mock.calls[0]![1] as string;
+    expect(text.length).toBeLessThanOrEqual(COORDINATOR_WAKE_MESSAGE_MAX);
+    expect(text).toContain('Supplied plan:');
+    expect(text).toMatch(/corrected portable plan to `\.zana\/execution-plan-corrected-38b87318-[^`]+`/);
+    expect(text).toContain('Then end your turn.');
+    // Canonical-mode terminals drop input lines over 1024 bytes.
+    for (const line of text.split('\n')) expect(Buffer.byteLength(line)).toBeLessThan(1024);
+  });
+
+  it('keeps the store cap in sync with the wake queue validation', async () => {
+    const { readFileSync } = await import('node:fs');
+    const storeSource = readFileSync(new URL('../../../server/src/services/execution/store.ts', import.meta.url), 'utf8');
+    expect(storeSource).toMatch(new RegExp(`const MAX_STRING = ${COORDINATOR_WAKE_MESSAGE_MAX.toLocaleString('en-US').replace(',', '_')};`));
   });
 
   // Reproduces the live MT-6 failure: wake delivered, coordinator idles repeatedly
@@ -819,3 +906,368 @@ function recordFor(base: typeof ctx, executionId: string) {
     status: 'pending' as const
   };
 }
+
+/**
+ * squad-bugs: correction identity and digest races. An offer is bound to one
+ * execution and one normalized-unit digest; neither another execution's offer nor
+ * a file that changed between offer and approve may resume the coordinator.
+ */
+describe('PlanCorrectionService identity and digest races (squad-bugs)', () => {
+  it('rejects an offer from another execution and resumes nothing', async () => {
+    const { service, bindInboxAction, resume } = create();
+    await service.begin('e-a', 'bad plan', false);
+    await service.review({ ...ctx, executionId: 'e-a' }, source);
+    const offerA = latestOffer(bindInboxAction);
+    await service.begin('e-b', 'bad plan', false);
+    await service.review({ ...ctx, executionId: 'e-b' }, source);
+
+    await expect(service.respond('e-b', 'approve', offerA)).resolves.toBe('reject');
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it('a file edited between offer and approve is not resumed and requires a new offer digest', async () => {
+    const { service, bindInboxAction, readCorrectedPlan, resume, records } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    const offer = latestOffer(bindInboxAction);
+    const offeredDigest = records.get(ctx.executionId).offeredDigest;
+    readCorrectedPlan.mockResolvedValue({ ...source, units: [{ ...source.units[0], task: 'edited after offer' }] });
+
+    await expect(service.respond(ctx.executionId, 'approve', offer)).resolves.toBe('wait');
+    expect(resume).not.toHaveBeenCalled();
+    expect(records.get(ctx.executionId).status).not.toBe('approved');
+    expect(records.get(ctx.executionId).approvedDigest).toBeUndefined();
+    expect(offeredDigest).toBe(launchDigest(source.units));
+  });
+
+  it('two concurrent approvals of one offer resume exactly once', async () => {
+    const { service, bindInboxAction, resume } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    const offer = latestOffer(bindInboxAction);
+
+    await Promise.all([service.respond(ctx.executionId, 'approve', offer), service.respond(ctx.executionId, 'approve', offer)]);
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('registration of a digest different from the approved one is denied', async () => {
+    const { service, bindInboxAction } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    await service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction));
+    const other = [{ ...source.units[0], task: 'not the approved task' }];
+
+    await expect(service.authorizeRegistration(ctx.executionId, other)).resolves.toMatchObject({ ok: false });
+  });
+});
+
+describe('approve-time reread trace', () => {
+  function traced(trace: (event: unknown) => void) {
+    const base = create();
+    const service = new PlanCorrectionService({
+      appendInbox: base.appendInbox, bindInboxAction: base.bindInboxAction, nudge: base.nudge, wakeCoordinator: base.wakeCoordinator,
+      readSourcePlan: base.readSourcePlan, readCorrectedPlan: base.readCorrectedPlan, store: base.store,
+      updateScheduledPrompt: base.updateScheduledPrompt, resume: base.resume, stopExecution: base.stopExecution, trace
+    });
+    return { ...base, service };
+  }
+
+  it('records a matching reread with digests and no plan body', async () => {
+    const trace = vi.fn();
+    const { service, bindInboxAction, readCorrectedPlan } = traced(trace);
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    readCorrectedPlan.mockResolvedValue({ ...source, bodyDigest: 'sha256:abc' });
+    await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('approve');
+    const digest = launchDigest(source.units);
+    const rereads = trace.mock.calls.filter(([event]) => (event as { stage: string }).stage === 'reread');
+    expect(rereads).toHaveLength(1);
+    expect(trace).toHaveBeenCalledWith({
+      executionId: ctx.executionId, sessionId: ctx.sessionId, slotId: ctx.slotId, stage: 'reread',
+      status: 'ok', bodyDigest: 'sha256:abc', offeredDigest: digest, rereadDigest: digest, match: true
+    });
+    expect(JSON.stringify(trace.mock.calls)).not.toContain('"task"');
+  });
+
+  it('records a changed or missing reread as a mismatch and still requires correction', async () => {
+    const trace = vi.fn();
+    const { service, bindInboxAction, readCorrectedPlan, nudge, wakeCoordinator } = traced(trace);
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    const changed = { ...source, units: [{ ...source.units[0], task: 'changed' }] };
+    readCorrectedPlan.mockResolvedValue(changed);
+    await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('wait');
+    const rereadOf = () => trace.mock.calls.map(([event]) => event).filter((event) => (event as { stage: string }).stage === 'reread');
+    expect(rereadOf()[0]).toMatchObject({ status: 'ok', match: false, rereadDigest: launchDigest(changed.units), offeredDigest: launchDigest(source.units) });
+    expect(nudge.mock.calls.length + wakeCoordinator.mock.calls.length).toBeGreaterThan(0);
+
+    trace.mockClear();
+    readCorrectedPlan.mockResolvedValue(source);
+    await service.review(ctx, source);
+    readCorrectedPlan.mockResolvedValue({ status: 'missing' });
+    await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('wait');
+    expect(rereadOf()[0]).toEqual({
+      executionId: ctx.executionId, sessionId: ctx.sessionId, slotId: ctx.slotId, stage: 'reread',
+      status: 'missing', offeredDigest: launchDigest(source.units), match: false
+    });
+  });
+
+  it('records every idle-edge review of the corrected file, with a bounded invalid reason', async () => {
+    const trace = vi.fn();
+    const { service, bindInboxAction, readCorrectedPlan } = traced(trace);
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    expect(trace).toHaveBeenLastCalledWith(expect.objectContaining({ stage: 'review', status: 'ok', match: false }));
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+    readCorrectedPlan.mockResolvedValue({ status: 'invalid', reason: `bad ${'x'.repeat(2_000)}`, bodyDigest: 'sha256:def' } as never);
+    await service.reviewInvalid(ctx);
+    const last = trace.mock.calls.at(-1)![0] as { stage: string; status: string; reason: string; bodyDigest: string };
+    expect(last).toMatchObject({ stage: 'review', status: 'invalid', bodyDigest: 'sha256:def' });
+    expect(last.reason.startsWith('bad x')).toBe(true);
+    expect(last.reason.length).toBeLessThan(2_000);
+  });
+
+  it('a throwing trace sink does not change the approval decision', async () => {
+    const { service, bindInboxAction, resume } = traced(() => { throw new Error('sink down'); });
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('approve');
+    expect(resume).toHaveBeenCalled();
+  });
+});
+
+describe('register-channel correction offers (Modern coordinator submissions)', () => {
+  const submitted = [{ id: 'fixed', title: 'Fixed', task: 'fixed', dependencies: [], files: ['out.txt'], verification: ['check'] }];
+  const revised = [{ ...submitted[0]!, task: 'revised' }];
+  const held = { ok: false, message: PLAN_CORRECTION_HELD_MESSAGE };
+
+  it('turns the first refused submission into one approvable offer and approves its snapshot without a file reread', async () => {
+    const { service, appendInbox, bindInboxAction, readCorrectedPlan, resume, records } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+
+    await expect(service.authorizeRegistration(ctx.executionId, submitted, ctx)).resolves.toEqual(held);
+    expect(appendInbox).toHaveBeenCalledOnce();
+    const card = appendInbox.mock.calls[0]![0];
+    expect(card.questions[0].options.map((option: { id: string }) => option.id)).toEqual(['approve', 'changes', 'cancel']);
+    expect(card.decisionGuidance).toEqual({ kind: 'plan-correction', diagnostic: 'bad plan' });
+    expect(card.sessionId).toBe(ctx.sessionId);
+    expect(records.get(ctx.executionId)).toMatchObject({ status: 'pending', channel: 'register', retries: 1, ctx, offeredDigest: launchDigest(submitted) });
+
+    await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('approve');
+    expect(readCorrectedPlan).not.toHaveBeenCalled();
+    expect(resume).toHaveBeenCalledWith(ctx);
+    // The host handoff re-entry returns the approved snapshot even though no corrected file exists.
+    readCorrectedPlan.mockResolvedValueOnce({ status: 'missing' } as never);
+    await expect(service.review(ctx, source)).resolves.toMatchObject({ status: 'ok', units: submitted });
+    await expect(service.authorizeRegistration(ctx.executionId, submitted, ctx)).resolves.toEqual({ ok: true });
+    await expect(service.authorizeRegistration(ctx.executionId, revised, ctx)).resolves.toEqual({
+      ok: false, message: 'corrected plan changed after approval; renewed approval is required'
+    });
+  });
+
+  it('never adds a second card or replaces the open offer on duplicate or concurrent submissions', async () => {
+    const { service, appendInbox, records } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    const results = await Promise.all([
+      service.authorizeRegistration(ctx.executionId, submitted, ctx),
+      service.authorizeRegistration(ctx.executionId, revised, ctx)
+    ]);
+    expect(results).toEqual([held, held]);
+    await service.authorizeRegistration(ctx.executionId, revised, ctx);
+    expect(appendInbox).toHaveBeenCalledOnce();
+    expect(records.get(ctx.executionId)).toMatchObject({ retries: 1, offeredDigest: launchDigest(submitted) });
+  });
+
+  it('re-publishes the same durable offer after a lost bind, without minting a new offer', async () => {
+    const { service, appendInbox, bindInboxAction, records } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    bindInboxAction.mockReturnValueOnce(false);
+    await service.authorizeRegistration(ctx.executionId, submitted, ctx);
+    const offerId = records.get(ctx.executionId).offeredActionId;
+    await service.authorizeRegistration(ctx.executionId, revised, ctx);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    expect(appendInbox.mock.calls[1]![0].dedupeKey).toBe(appendInbox.mock.calls[0]![0].dedupeKey);
+    expect(records.get(ctx.executionId)).toMatchObject({ offeredActionId: offerId, retries: 1, offeredDigest: launchDigest(submitted) });
+    // Now bound: a further submission publishes nothing.
+    await service.authorizeRegistration(ctx.executionId, revised, ctx);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+  });
+
+  it('request changes wakes with the register instruction; the next submission is a new offer and the stale one is rejected', async () => {
+    const { service, appendInbox, bindInboxAction, wakeCoordinator } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.authorizeRegistration(ctx.executionId, submitted, ctx);
+    const first = latestOffer(bindInboxAction);
+    await expect(service.respond(ctx.executionId, 'changes', first)).resolves.toBe('wait');
+    const wake = wakeCoordinator.mock.calls.at(-1)![1] as string;
+    expect(wake).toContain('execution.plan.register');
+    expect(wake).toContain('bad plan');
+    expect(wake).not.toContain('.zana/');
+    expect(wake.length).toBeLessThanOrEqual(COORDINATOR_WAKE_MESSAGE_MAX);
+
+    await service.authorizeRegistration(ctx.executionId, revised, ctx);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    const second = latestOffer(bindInboxAction);
+    expect(second.offerId).not.toBe(first.offerId);
+    expect(second.digest).toBe(launchDigest(revised));
+    await expect(service.respond(ctx.executionId, 'approve', first)).resolves.toBe('reject');
+    await expect(service.respond(ctx.executionId, 'approve', second)).resolves.toBe('approve');
+  });
+
+  it('refuses without a card once correction attempts are exhausted (unattended)', async () => {
+    const { service, appendInbox } = create();
+    await service.begin(ctx.executionId, 'bad plan', true);
+    await expect(service.authorizeRegistration(ctx.executionId, submitted, ctx)).resolves.toEqual({
+      ok: false, message: 'plan correction approval is pending'
+    });
+    expect(appendInbox).not.toHaveBeenCalled();
+  });
+
+  it('ignores a submitter bound to another execution and a missing submitter', async () => {
+    const { service, appendInbox } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await expect(service.authorizeRegistration(ctx.executionId, submitted, { ...ctx, executionId: 'other' })).resolves.toEqual({
+      ok: false, message: 'plan correction approval is pending'
+    });
+    await expect(service.authorizeRegistration(ctx.executionId, submitted)).resolves.toEqual({
+      ok: false, message: 'plan correction approval is pending'
+    });
+    expect(appendInbox).not.toHaveBeenCalled();
+  });
+
+  it('a cancellation that wins the offer write publishes nothing and reports cancellation', async () => {
+    const { service, appendInbox, store, records, stopExecution } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    const put = store.put.getMockImplementation()!;
+    store.put.mockImplementationOnce(async (record) => {
+      records.set(record.executionId, { ...structuredClone(record), status: 'cancelled' });
+      return put(record);
+    });
+    await expect(service.authorizeRegistration(ctx.executionId, submitted, ctx)).resolves.toEqual({
+      ok: false, message: 'plan correction was cancelled'
+    });
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(stopExecution).toHaveBeenCalledWith(ctx.executionId);
+  });
+
+  it('a cancellation or approval that lands while the submission waits is honoured', async () => {
+    const { service, store, records, stopExecution } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    // First read sees an open correction; the serialized reread sees the race outcome.
+    const get = store.get.getMockImplementation()!;
+    store.get.mockImplementationOnce(get).mockImplementationOnce(async (id: string) => ({ ...(await get(id)), status: 'cancelled' }));
+    await expect(service.authorizeRegistration(ctx.executionId, submitted, ctx)).resolves.toEqual({
+      ok: false, message: 'plan correction was cancelled'
+    });
+    expect(stopExecution).toHaveBeenCalledWith(ctx.executionId);
+    store.get.mockImplementationOnce(get).mockImplementationOnce(async () => undefined);
+    await expect(service.authorizeRegistration(ctx.executionId, submitted, ctx)).resolves.toEqual({
+      ok: false, message: 'plan correction was cancelled'
+    });
+    store.get.mockImplementationOnce(get).mockImplementationOnce(async (id: string) => ({ ...(await get(id)), status: 'approved' }));
+    await expect(service.authorizeRegistration(ctx.executionId, submitted, ctx)).resolves.toEqual({
+      ok: false, message: 'corrected plan changed after approval; renewed approval is required'
+    });
+    expect(records.get(ctx.executionId).status).toBe('correction-required');
+  });
+
+  it('an approve whose captured snapshot vanished asks the coordinator to resubmit instead of approving', async () => {
+    const { service, bindInboxAction, records, wakeCoordinator, resume } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.authorizeRegistration(ctx.executionId, submitted, ctx);
+    const record = records.get(ctx.executionId);
+    delete record.offeredUnits;
+    await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('wait');
+    expect(resume).not.toHaveBeenCalled();
+    expect(records.get(ctx.executionId)).toMatchObject({ status: 'correction-required' });
+    expect(wakeCoordinator.mock.calls.at(-1)![1]).toContain('execution.plan.register');
+  });
+});
+
+describe('lost correction wake escalation', () => {
+  type Confirmation = { isCurrent(): Promise<boolean>; onUnconsumed(): Promise<void> | void };
+  const lastConfirmation = (wakeCoordinator: ReturnType<typeof vi.fn>) =>
+    (wakeCoordinator.mock.calls.at(-1) as unknown as [string, string, Confirmation])[2];
+
+  async function requested() {
+    const created = create();
+    // No corrected plan yet: the first card is the bare "request changes" offer.
+    created.readCorrectedPlan.mockResolvedValue({ status: 'missing' } as never);
+    await created.service.begin(ctx.executionId, 'bad plan', false);
+    await created.service.reviewInvalid(ctx);
+    await created.service.respond(ctx.executionId, 'changes', latestOffer(created.bindInboxAction));
+    return { ...created, confirmation: lastConfirmation(created.wakeCoordinator) };
+  }
+
+  it('fences the wake to the request that sent it', async () => {
+    const { service, bindInboxAction, confirmation } = await requested();
+    await expect(confirmation.isCurrent()).resolves.toBe(true);
+    // A newer offer (here: the coordinator stalled and a new card was published) supersedes it.
+    await service.reviewInvalid(ctx);
+    await service.reviewInvalid(ctx);
+    expect(latestOffer(bindInboxAction).offerId).toBeDefined();
+    await expect(confirmation.isCurrent()).resolves.toBe(false);
+  });
+
+  it('is no longer current after cancel', async () => {
+    const { service, bindInboxAction, confirmation, records } = await requested();
+    const record = records.get(ctx.executionId);
+    records.set(ctx.executionId, { ...record, status: 'pending' });
+    await service.respond(ctx.executionId, 'cancel', latestOffer(bindInboxAction));
+    await expect(confirmation.isCurrent()).resolves.toBe(false);
+    await confirmation.onUnconsumed();
+    expect(records.get(ctx.executionId)).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('raises a stall card naming the lost request once the redelivery also went unconsumed', async () => {
+    const { appendInbox, confirmation, records } = await requested();
+    const cards = appendInbox.mock.calls.length;
+    await confirmation.onUnconsumed();
+    expect(appendInbox).toHaveBeenCalledTimes(cards + 1);
+    expect(appendInbox.mock.calls.at(-1)![0].comments).toMatch(/^The coordinator did not pick up the correction request: it stayed idle after the request was delivered twice\. Plan requires revisions/);
+    expect(records.get(ctx.executionId)).toMatchObject({ status: 'pending', retries: 2 });
+    // The escalation consumed the request: a duplicate signal adds nothing.
+    await confirmation.onUnconsumed();
+    expect(appendInbox).toHaveBeenCalledTimes(cards + 1);
+  });
+
+  it('names the lost request above a still-reviewable register-channel proposal', async () => {
+    const { service, appendInbox, bindInboxAction, wakeCoordinator } = create();
+    const submitted = [{ id: 'fixed', title: 'Fixed', task: 'fixed', dependencies: [], files: ['out.txt'], verification: ['check'] }];
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.authorizeRegistration(ctx.executionId, submitted, ctx);
+    await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
+    await lastConfirmation(wakeCoordinator).onUnconsumed();
+    const card = appendInbox.mock.calls.at(-1)![0];
+    expect(card.comments).toMatch(/^The coordinator did not pick up the correction request.*Problem with the supplied plan: bad plan/s);
+    expect(card.questions[0].options.map((option: { id: string }) => option.id)).toEqual(['approve', 'changes', 'cancel']);
+  });
+
+  it('logs instead of carding when the review budget is spent', async () => {
+    const { service, appendInbox, confirmation, records } = await requested();
+    const logWarning = vi.fn();
+    (service as unknown as { deps: { logWarning: typeof logWarning } }).deps.logWarning = logWarning;
+    records.set(ctx.executionId, { ...records.get(ctx.executionId), retries: PLAN_CORRECTION_MAX_RETRIES });
+    const cards = appendInbox.mock.calls.length;
+    await confirmation.onUnconsumed();
+    expect(appendInbox).toHaveBeenCalledTimes(cards);
+    expect(logWarning).toHaveBeenCalledWith(ctx.executionId, expect.stringContaining('did not pick up the correction request'), undefined);
+  });
+
+  it('fences invalid-plan feedback wakes the same way', async () => {
+    const { service, readCorrectedPlan, wakeCoordinator } = await requested();
+    readCorrectedPlan.mockResolvedValue({ status: 'invalid', reason: 'no steps' } as never);
+    await service.reviewInvalid(ctx);
+    expect(wakeCoordinator.mock.calls.at(-1)![1]).toContain('is still invalid');
+    await expect(lastConfirmation(wakeCoordinator).isCurrent()).resolves.toBe(true);
+  });
+
+  it('marks an approved register-channel snapshot as not file-backed', async () => {
+    const { service, bindInboxAction } = create();
+    const submitted = [{ id: 'fixed', title: 'Fixed', task: 'fixed', dependencies: [], files: ['out.txt'], verification: ['check'] }];
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.authorizeRegistration(ctx.executionId, submitted, ctx);
+    await service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction));
+    await expect(service.approvedPlan(ctx.executionId)).resolves.toMatchObject({ origin: 'register' });
+  });
+});

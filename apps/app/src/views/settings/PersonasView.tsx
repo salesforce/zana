@@ -7,6 +7,7 @@ import { usePersonas, useUi } from '@/store';
 import { personaIcon } from '@/lib/profileIcon';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { personaRoutingSummary } from '@/lib/personaRouting';
+import { sortCatalogueByName } from '@/lib/catalogue-sort';
 import { personaSearchId } from '@/lib/settings-search/providers/catalogues';
 import { PersonaEditor, RevealPersonasButton } from '@/components/PersonaEditor';
 
@@ -118,6 +119,8 @@ export function PersonasView() {
     });
   }, [personas, filter, query]);
 
+  const ordered = useMemo(() => sortCatalogueByName(filtered), [filtered]);
+
   const counts = useMemo(() => {
     const c = { all: personas.length, builtin: 0, user: 0, project: 0, extension: 0 };
     for (const p of personas) c[sourceKind(p.source)] += 1;
@@ -169,7 +172,7 @@ export function PersonasView() {
 
             {loading ? (
               <DelayedStencilList label="Loading personas" className="scheduler-empty" />
-            ) : filtered.length === 0 ? (
+            ) : ordered.length === 0 ? (
               <div className="scheduler-empty">
                 <Bot size={28} className="scheduler-empty-icon" />
                 <div className="scheduler-empty-title">
@@ -183,7 +186,7 @@ export function PersonasView() {
               </div>
             ) : (
               <ul className="skills-list">
-                {filtered.map((p) => (
+                {ordered.map((p) => (
                   <PersonaRow
                     key={p.id}
                     persona={p}

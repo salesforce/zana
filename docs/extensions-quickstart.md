@@ -17,7 +17,10 @@ Edit `app.tsx` (panel, project tab, project menu) while the app is running —
 Plugins for annotated wireframes of every surface, then the plugin’s **Plugins hub**
 Configure page for settings and live Includes.
 
-In-repo first-party plugins under `plugins/` watch sources only when
+To work on bundled plugins under `plugins/`, enable **Settings → Development → Bundled plugin development**. The saved switch applies immediately:
+it enables source watching and allows local path overrides of bundled plugin IDs.
+Turning it off stops watching and blocks further overrides; currently loaded
+plugins keep running. A saved choice overrides the startup default supplied by
 `ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1`.
 
 Official first-party plugins:

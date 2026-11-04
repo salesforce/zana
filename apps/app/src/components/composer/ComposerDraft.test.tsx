@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, render, renderHook, waitFor, fireEvent, screen } from '@testing-library/react';
 import { EditorContent, type JSONContent } from '@tiptap/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComposerDraftProvider, useComposerSession, useComposerSetting, useRetainedText } from './ComposerDraft.js';
 import { ComposerSession, composerSession, resetComposerSessions, MAX_COMPOSER_SESSIONS } from './composer-session.js';
 import { useComposerPromptField } from './use-composer-prompt-field.js';
+import { CONTEXT_REFERENCE_MIME, type ContextReference, EDITOR_SELECTION_MIME, type EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
 import { mentionAttrsForSuggestion } from './mention-attrs.js';
 
 vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: async () => ({}) }));
@@ -23,15 +24,15 @@ vi.mock('./use-composer-suggestions.js', () => ({
 }));
 
 let field: ReturnType<typeof useComposerPromptField>;
-function Probe({ initialText }: { initialText?: string }) {
+function Probe({ initialText, initialReferences, initialSelection }: { initialText?: string; initialReferences?: ContextReference[]; initialSelection?: EditorSelection }) {
   field = useComposerPromptField({
     placeholder: 'Prompt', testId: 'prompt', projectId: 'project', projects: [],
-    initialText, slashCatalog: { kind: 'cli' }, onSubmit: () => {}
+    initialText, initialReferences, initialSelection, slashCatalog: { kind: 'cli' }, onSubmit: () => {}
   });
   return <EditorContent editor={field.editor} />;
 }
-function Surface({ mode, initialText, sessionKey }: { mode: string; initialText?: string; sessionKey?: string }) {
-  return <ComposerDraftProvider sessionKey={sessionKey}><Probe key={mode} initialText={initialText} /></ComposerDraftProvider>;
+function Surface({ mode, initialText, initialSelection, sessionKey }: { mode: string; initialText?: string; initialSelection?: EditorSelection; sessionKey?: string }) {
+  return <ComposerDraftProvider sessionKey={sessionKey}><Probe key={mode} initialText={initialText} initialSelection={initialSelection} /></ComposerDraftProvider>;
 }
 const ready = () => waitFor(() => expect(field.editor).not.toBeNull());
 beforeEach(() => { localStorage.clear(); resetComposerSessions(); });
@@ -280,4 +281,218 @@ describe('retained reply text', () => {
     view.unmount();
     expect(renderHook(() => useRetainedText('overflow')).result.current[0]).toBe('');
   });
+});
+
+
+const copiedSelection = { version: 1, path: 'force-app/Review.agent', startLine: 12, endLine: 14, text: 'reasoning:\n    instructions: |\n        Unsaved instruction' };
+function pasteSelection(metadata = JSON.stringify(copiedSelection), text = copiedSelection.text) {
+  const clipboardData = { getData: (type: string) => type === EDITOR_SELECTION_MIME ? metadata : type === 'text/plain' ? text : '', types: ['text/plain', EDITOR_SELECTION_MIME], files: [], items: [] };
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: clipboardData });
+  act(() => field.editor!.view.dom.dispatchEvent(event));
+  return event;
+}
+
+describe('pasted editor selection references', () => {
+  it('seeds a passage chip, sends its snapshot and preserves removal across remounts', async () => {
+    const selection = { version: 1 as const, path: 'README.md', text: 'Tokens expire after one hour.' };
+    const view = render(<Surface mode="modern" sessionKey="doc-selection" initialText="Explain this" initialSelection={selection} />);
+    await ready();
+    const chip = await screen.findByRole('button', { name: 'Inspect README.md (selection)' });
+    expect(screen.getByTestId('prompt').textContent).not.toContain(selection.text);
+    expect(field.serialize().text).toContain(selection.text);
+    fireEvent.click(chip);
+    expect(screen.getByRole('dialog').textContent).toContain(selection.text);
+    fireEvent.click(screen.getByRole('button', { name: 'Close selection preview' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove README.md (selection)' }));
+    expect(field.serialize().text).not.toContain(selection.text);
+    view.unmount();
+    render(<Surface mode="modern" sessionKey="doc-selection" initialText="Explain this" initialSelection={selection} />);
+    await ready();
+    expect(screen.queryByRole('button', { name: 'Inspect README.md (selection)' })).toBeNull();
+    expect(field.text).toBe('Explain this ');
+  });
+  it('pastes an inline chip with its exact snapshot, inspects, dismisses, removes and undoes', async () => {
+    render(<Surface mode="modern" sessionKey="code-selection" />);
+    await ready();
+    act(() => field.editor!.commands.insertContent('Explain '));
+    expect(pasteSelection().defaultPrevented).toBe(true);
+    const chip = await screen.findByRole('button', { name: 'Inspect Review.agent (12–14)' });
+    expect(screen.getByTestId('prompt').textContent).not.toContain('Unsaved instruction');
+    expect(field.text).toContain(copiedSelection.text);
+    expect(field.serialize().mentions).toEqual([]);
+    expect(field.editor!.getHTML()).toContain('Review.agent (12–14)');
+    expect(field.editor!.getText()).toContain(copiedSelection.text);
+    fireEvent.click(chip);
+    expect(screen.getByRole('dialog').textContent).toContain(copiedSelection.text);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(chip); fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    vi.spyOn(chip, 'getBoundingClientRect').mockReturnValue({ top: 500, left: 30, bottom: 520 } as DOMRect);
+    fireEvent.click(chip);
+    expect(screen.getByRole('dialog').style.bottom).not.toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Close selection preview' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Review.agent (12–14)' }));
+    expect(screen.queryByRole('button', { name: 'Inspect Review.agent (12–14)' })).toBeNull();
+    expect(field.text).toBe('Explain ');
+    act(() => field.editor!.commands.undo());
+    expect(await screen.findByRole('button', { name: 'Inspect Review.agent (12–14)' })).toBeTruthy();
+  });
+
+  it('retains multiple references through navigation and clears them after submission', async () => {
+    const view = render(<Surface mode="modern" sessionKey="retained-code" />);
+    await ready(); pasteSelection(); pasteSelection();
+    const json = field.editor!.getJSON();
+    view.unmount();
+    render(<Surface mode="modern" sessionKey="retained-code" />);
+    await ready();
+    expect(field.editor!.getJSON()).toEqual(json);
+    expect(await screen.findAllByRole('button', { name: 'Inspect Review.agent (12–14)' })).toHaveLength(2);
+    act(() => field.clear());
+    expect(field.text).toBe('');
+    expect(screen.queryByRole('button', { name: 'Inspect Review.agent (12–14)' })).toBeNull();
+  });
+
+  it('leaves ordinary, stale and paste-as-plain-text content as editable text', async () => {
+    render(<Surface mode="modern" />); await ready();
+    pasteSelection('{broken', 'ordinary paste');
+    expect(screen.queryByRole('button', { name: /Inspect/ })).toBeNull();
+    expect(field.text).toBe('ordinary paste');
+    act(() => field.clear());
+    pasteSelection(JSON.stringify(copiedSelection), 'unrelated clipboard');
+    expect(field.text).toBe('unrelated clipboard');
+    act(() => field.clear());
+    // Native menu accelerators can consume V after delivering the Shift key.
+    fireEvent.keyDown(field.editor!.view.dom, { key: 'Shift', ctrlKey: true, shiftKey: true });
+    pasteSelection();
+    expect(screen.queryByRole('button', { name: /Inspect/ })).toBeNull();
+    expect(field.text).toBe(copiedSelection.text);
+    act(() => field.clear());
+    fireEvent.keyDown(field.editor!.view.dom, { key: 'v', ctrlKey: true, shiftKey: true });
+    fireEvent.keyUp(field.editor!.view.dom, { key: 'v' });
+    pasteSelection();
+    expect(await screen.findByRole('button', { name: /Inspect/ })).toBeTruthy();
+  });
+});
+
+
+it('ignores invalid retained selection nodes when displaying or serializing a draft', async () => {
+  render(<Surface mode="modern" />); await ready();
+  act(() => field.editor!.commands.insertContent({ type: 'editorSelection', attrs: { selection: null } }));
+  expect(screen.queryByRole('button', { name: /Inspect/ })).toBeNull();
+  expect(field.editor!.getText()).toBe('');
+  expect(field.editor!.getHTML()).not.toContain('Review.agent');
+});
+
+it('inserts a generic reference at the caret, restores it, converts it, and undoes conversion', async () => {
+ render(<Surface mode="modern" sessionKey="generic" />);await ready();
+ const reference:ContextReference={version:1,label:'Build log',text:'  exact\nlog',source:{kind:'plugin',pluginId:'builds',resourceId:'job'}};
+ act(()=>{field.editor!.commands.insertContent('Before after');field.editor!.commands.setTextSelection(8);field.insertContextReference(reference);});
+ expect(field.serialize().text.startsWith('Before ')).toBe(true);
+ expect(field.serialize().text.endsWith('after')).toBe(true);
+ expect(field.serialize().references).toHaveLength(1);
+ const saved=field.serialize();act(()=>field.replacePrompt([{type:'text',...saved}]));
+ fireEvent.click(await screen.findByRole('button',{name:'Inspect Build log'}));
+ expect(screen.getByRole('dialog').textContent).toContain(reference.text);
+ fireEvent.click(screen.getByRole('button',{name:'Convert to text'}));
+ expect(screen.queryByRole('button',{name:'Inspect Build log'})).toBeNull();
+ expect(field.text).toBe('Before '+reference.text+'after');
+ act(()=>field.editor!.commands.undo());
+ expect(await screen.findByRole('button',{name:'Inspect Build log'})).toBeTruthy();
+ act(()=>{expect(field.insertContextReference({...reference,version:2} as never)).toBe(false);});
+});
+it('accepts generic clipboard packets and bounds aggregate insertion',async()=>{
+ render(<Surface mode="modern" />);await ready();
+ const reference:ContextReference={version:1,label:'Record',text:'record snapshot'};
+ const event=new Event('paste',{bubbles:true,cancelable:true});
+ Object.defineProperty(event,'clipboardData',{value:{getData:(type:string)=>type===CONTEXT_REFERENCE_MIME?JSON.stringify(reference):type==='text/plain'?reference.text:'',types:['text/plain',CONTEXT_REFERENCE_MIME],files:[],items:[]}});
+ act(()=>field.editor!.view.dom.dispatchEvent(event));expect(await screen.findByRole('button',{name:'Inspect Record'})).toBeTruthy();
+ act(()=>field.editor!.commands.insertContent('plain tail'));
+ act(()=>field.editor!.commands.undo());
+ expect(screen.getAllByRole('button',{name:'Inspect Record'})).toHaveLength(1);
+ expect(field.text).not.toContain('plain tail');
+ act(()=>{for(let i=1;i<24;i++)expect(field.insertContextReference(reference)).toBe(true);expect(field.insertContextReference(reference)).toBe(false);});
+ const overflow=new Event('paste',{bubbles:true,cancelable:true});
+ Object.defineProperty(overflow,'clipboardData',{value:{getData:(type:string)=>type===CONTEXT_REFERENCE_MIME?JSON.stringify(reference):type==='text/plain'?reference.text:'',types:['text/plain',CONTEXT_REFERENCE_MIME],files:[],items:[]}});
+ act(()=>field.editor!.view.dom.dispatchEvent(overflow));
+ expect(overflow.defaultPrevented).toBe(true);
+ expect(field.serialize().references).toHaveLength(24);
+});
+it('seeds a panel draft with compact references once',async()=>{
+ const reference:ContextReference={version:1,label:'Passage',text:'exact paragraph'};
+ const view=render(<Probe initialText="Explain " initialReferences={[reference]} />);await ready();
+ expect(await screen.findByRole('button',{name:'Inspect Passage'})).toBeTruthy();
+ expect(field.text).toContain('exact paragraph');
+ view.rerender(<Probe initialText="Explain " initialReferences={[reference]} />);
+ expect(screen.getAllByRole('button',{name:'Inspect Passage'})).toHaveLength(1);
+});
+
+it('restores history text without clearing the current attachments',async()=>{
+ render(<Surface mode="modern" />);await ready();
+ act(()=>field.replacePrompt([{type:'text',text:'draft',mentions:[]},{type:'localImage',path:'kept.png'}]));
+ act(()=>field.restoreText([{type:'text',text:'older prompt',mentions:[]}]));
+ expect(field.text).toBe('older prompt');expect(field.restoredAttachments).toEqual([{type:'localImage',path:'kept.png'}]);
+});
+
+it('seeds a reference-only draft and rejects malformed reference seeds',async()=>{
+ const reference:ContextReference={version:1,label:'Passage',text:'exact paragraph'};
+ const view=render(<Probe initialReferences={[reference]} />);await ready();
+ expect(await screen.findByRole('button',{name:'Inspect Passage'})).toBeTruthy();
+ view.unmount();
+ render(<Probe initialReferences={[{...reference,version:2} as never]} />);await ready();
+ expect(field.text).toBe('');expect(screen.queryByRole('button',{name:'Inspect Passage'})).toBeNull();
+});
+
+it('undoes a programmatic reference insertion separately from surrounding typing',async()=>{
+ render(<Surface mode="modern" />);await ready();
+ act(()=>{field.editor!.commands.insertContent('Before ');field.insertContextReference({version:1,label:'Log',text:'snapshot'});field.editor!.commands.insertContent('after');});
+ act(()=>field.editor!.commands.undo());
+ expect(await screen.findByRole('button',{name:'Inspect Log'})).toBeTruthy();expect(field.text).not.toContain('after');
+ act(()=>field.editor!.commands.undo());
+ expect(screen.queryByRole('button',{name:'Inspect Log'})).toBeNull();expect(field.text).toBe('Before ');
+ act(()=>field.editor!.commands.redo());expect(await screen.findByRole('button',{name:'Inspect Log'})).toBeTruthy();
+});
+
+it('adds context after a selected badge without replacing the inspected snapshot', async () => {
+  render(<Surface mode="modern" />); await ready();
+  const first: ContextReference = { version: 1, label: 'First', text: 'first snapshot' };
+  const second: ContextReference = { version: 1, label: 'Second', text: 'second snapshot' };
+  act(() => {
+    field.insertContextReference(first);
+    field.editor!.commands.setNodeSelection(1);
+    field.insertContextReference(second);
+  });
+  expect(field.serialize().references?.map(row => row.reference)).toEqual([first, second]);
+  act(() => field.editor!.commands.undo());
+  expect(field.serialize().references?.map(row => row.reference)).toEqual([first]);
+});
+
+it('edits thread annotation comments, links to the source, undoes edits and preserves comments on conversion', async () => {
+ render(<Surface mode="modern" sessionKey="annotations" />); await ready();
+ const reference: ContextReference = {version:1,label:'Introduction',text:'Original introduction',comment:'Shorten this.',source:{kind:'thread',threadId:'source',messageId:'msg',sourceSeqEnd:9}};
+ act(()=>{field.insertContextReference(reference);});
+ fireEvent.click(await screen.findByRole('button',{name:'Inspect Introduction'}));
+ expect(screen.getByRole('link',{name:'Show in thread'}).getAttribute('href')).toBe('/threads/source?message=9');
+ fireEvent.change(screen.getByRole('textbox',{name:'Edit annotation comment'}),{target:{value:'Use a chat opening.'}});
+ fireEvent.click(screen.getByRole('button',{name:'Save change'}));
+ expect(field.serialize().references?.[0]?.reference.comment).toBe('Use a chat opening.');
+ act(()=>{field.editor!.commands.undo();});
+ expect(field.serialize().references?.[0]?.reference.comment).toBe('Shorten this.');
+ fireEvent.click(await screen.findByRole('button',{name:'Inspect Introduction'}));
+ fireEvent.click(screen.getByRole('button',{name:'Convert to text'}));
+ expect(field.text).toContain('User comment:\nShorten this.');
+ expect(field.serialize().references ?? []).toEqual([]);
+});
+
+it('updates and removes only matching plugin references while preserving unrelated text and history',async()=>{
+ render(<Surface mode="modern"/>);await ready();
+ const reference:ContextReference={version:1,label:'Pin',text:'old comment',source:{kind:'plugin',pluginId:'tools',resourceId:'pin'}};
+ act(()=>{field.editor!.commands.insertContent('Keep this ');field.insertContextReference(reference);field.insertContextReference({...reference,source:{kind:'plugin',pluginId:'other',resourceId:'pin'}});});
+ act(()=>{expect(field.updateContextReference('tools','pin',{...reference,text:'new comment'})).toBe(true);});
+ expect(field.serialize().references?.map(row=>row.reference.text)).toEqual(['new comment','old comment']);
+ act(()=>{expect(field.updateContextReference('missing','pin',null)).toBe(false);expect(field.updateContextReference('tools','pin',{...reference,version:2} as never)).toBe(false);expect(field.updateContextReference('tools','pin',null)).toBe(true);});
+ expect(field.serialize().references).toHaveLength(1);expect(field.text).toContain('Keep this ');
+ act(()=>{field.editor!.commands.undo();});expect(field.serialize().references).toHaveLength(2);
 });

@@ -4,7 +4,7 @@ import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import type { DesignDocDetail } from '../shared/contract.js';
 import { MAX_BRANCH_LENGTH, MAX_REPO_URL_LENGTH, pagesUrl, parsePublishTarget, type PublishFolder } from '../shared/publish.js';
 import { showDocAgent } from './Agents.js';
-import { errorMessage, toast, useApi } from './api.js';
+import { defaultAgentProject, errorMessage, toast, useApi } from './api.js';
 import { useProjects } from './hooks.js';
 import { Dialog, Spinner } from './ui.js';
 
@@ -60,7 +60,7 @@ function PublishDialog({ doc, onClose }: { doc: DesignDocDetail; onClose(): void
   const [busy, setBusy] = useState(false);
   const needsProject = !doc.projectId;
   const projectOptions = projects.data ?? [];
-  const chosenProject = needsProject ? projectId || projectOptions[0]?.id || '' : doc.projectId!;
+  const chosenProject = needsProject ? projectId || defaultAgentProject(projectOptions) || '' : doc.projectId!;
   const hasPages = doc.files.some((file) => file.kind === 'html');
   const problem = !hasPages
     ? 'This doc has no HTML pages to publish. Add an index.html first.'

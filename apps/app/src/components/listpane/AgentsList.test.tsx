@@ -27,14 +27,14 @@ vi.mock('@/hooks/useEnsureThreads', () => ({ useEnsureThreads: () => undefined }
 vi.mock('@/lib/windowScope', () => ({ getScopedProjectId: () => null }));
 vi.mock('@/lib/profileIcon', () => ({ profileIcon: () => null }));
 vi.mock('@/lib/sessionBuckets', () => ({ isRecentlyFinished: () => false }));
-vi.mock('@/components/AgentBoard', () => ({ idleSurfacesToNeedsYou: () => false, partitionSquadMembers: (rows: unknown[]) => ({ top: rows, workersByHost: new Map() }), modernMemberCards: () => ({ cards: [], folded: new Set() }) }));
+vi.mock('@/components/AgentBoard', () => ({ idleSurfacesToNeedsYou: () => false, executionNeedsAttention: () => false, partitionSquadMembers: (rows: unknown[]) => ({ top: rows, workersByHost: new Map() }), modernMemberCards: () => ({ cards: [], folded: new Set() }) }));
 vi.mock('@/components/AgentLauncher', () => ({ AgentLauncher: () => null }));
 vi.mock('@/components/agentCardActions', () => ({ useAgentCardActions: () => ({ menu: null, setMenu: vi.fn(), actions: {}, rename: null, closeRename: vi.fn(), submitRename: vi.fn() }), AgentCardMenu: () => null, clampMenuAnchor: vi.fn() }));
 vi.mock('@/components/PromptModal', () => ({ PromptModal: () => null }));
 vi.mock('@/components/ListPaneResizer', () => ({ ListPaneResizer: () => null }));
 
 import type { ExecutionBoardProjection } from '@zana-ai/zcc-domain/product';
-import { AgentsListPane, openFullAgentsList, applyExecutionRefreshResults } from './AgentsList.js';
+import { AgentsListPane, openFullAgentsList, applyExecutionRefreshResults, executionRowHost } from './AgentsList.js';
 
 function fakeExecution(id: string, projectId: string): ExecutionBoardProjection {
   return {
@@ -158,5 +158,36 @@ describe('applyExecutionRefreshResults', () => {
 
     expect(merged).toEqual([]);
     expect(onError).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('executionRowHost', () => {
+  const memberRow = (status: string) => ({
+    projectId: 'p1', projectName: 'P', state: 'working',
+    session: { id: 's1', title: 'orch', status, profile: 'claude' }
+  }) as never;
+  const finished = (state: ExecutionBoardProjection['state']) => ({ ...fakeExecution('e1', 'p1'), state });
+
+  it('keeps a live orchestrator of a finished run Idle and running', () => {
+    const row = executionRowHost(memberRow('running'), finished('COMPLETED'));
+    expect(row.state).toBe('idle');
+    expect(row.session.status).toBe('running');
+  });
+
+  it('marks a finished run Done when the orchestrator already exited', () => {
+    const row = executionRowHost(memberRow('exited'), finished('COMPLETED'));
+    expect(row.state).toBe('done');
+    expect(row.session.status).toBe('exited');
+  });
+
+  it('marks a synthetic finished host Done', () => {
+    const row = executionRowHost(undefined, finished('FAILED'));
+    expect(row.state).toBe('done');
+    expect(row.session.status).toBe('exited');
+  });
+
+  it('shows running and unfinished hosts as working or idle', () => {
+    expect(executionRowHost(memberRow('running'), fakeExecution('e1', 'p1')).state).toBe('working');
+    expect(executionRowHost(undefined, { ...fakeExecution('e1', 'p1'), state: 'PLANNED' as never }).state).toBe('idle');
   });
 });

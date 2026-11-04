@@ -212,6 +212,106 @@ machine transport carries enrollment, host WebSocket, authorized tool callbacks
 and installation artifacts through a closed route inventory. See
 [implementation contracts](./shared-instance-contracts.md) for the boundary.
 
+## Peer links between separate Zana installs
+
+Some plugins, such as Design Docs, can link two **independent** Zana installs
+over your local network for example to sync a database. A peer link is not an
+execution machine. It never runs threads, terminals or tools, and it does not
+share projects or files.
+
+**Both computers must be on the same network and reachable via `.local` hostname.**
+On macOS, you enable this in **System Settings → General → Sharing →** turn on
+**Remote Login**. See **Check your setup** below if you encounter errors during
+pairing.
+
+- **How to pair.** One computer creates an invitation, for example Design Docs →
+  Settings → Peers → **Add peer**. Copy the generated invitation code. On the other
+  computer, go to Design Docs → Settings → Peers → **Join peer** and paste it.
+  The remote side connects directly to the first computer's SSH server using
+  a restricted per-link key that is generated for just this pair. Only the
+  owner of the computer that clicked **Add peer** approves: that computer shows an
+  approval prompt with the other computer's name and fingerprint. Compare the
+  fingerprints; if they match, click **Approve**. The computer that pastes the
+  invitation shows no approval prompt, because pasting it is that owner's consent
+  (it can still **Cancel**). The invitation code is a bearer token, so treat it like
+  a password; the approval is the check on who actually redeemed it, and a pairing
+  never grants execution authority. An invitation works once and expires after **10 minutes**.
+- **Invitation formats.** An invitation is handed over either as a **code** (paste)
+  or as a **link** (clickable), and both carry the same content. After **Add peer**
+  the panel shows **Copy link** (`zana://plugin/design-docs/join?d=<code>`; `zana-dev://`
+  in `pnpm dev`) and **Copy code** (the raw code). There is no setting: **Add peer**
+  copies the link when this build supports links and the code fits in one, otherwise
+  the code, and the field under the buttons shows what was copied. Links are hidden when this build has no link
+  scheme (E2E, older hosts) or the code is too long for a link (4096 characters).
+  Opening a link, or pasting one into **Join peer**, never joins by itself: it opens
+  Settings → Peers with the field filled in and asks **Join &lt;computer&gt;?** with the
+  computer name and fingerprint; you still click **Join peer**, and the owner who
+  created the invitation still approves. A malformed or expired link shows an error and changes nothing.
+  The field accepts a raw code or a full link ("Paste an invitation code or link.").
+  Dev testing: macOS cannot register a scheme for an unpackaged dev Electron, so
+  run `pnpm dev:open-link "zana-dev://plugin/design-docs/join?d=<code>"` to deliver
+  a link to the running dev app, or run `pnpm dev:register-link` once so clicking
+  `zana-dev://` links works (see `docs/plugin-deep-links.md`, "macOS dev setup").
+- **Connection method.** Only the computer that created the invitation needs an SSH
+  server (macOS Remote Login, or OpenSSH elsewhere). The other computer connects out
+  to it and opens a reverse tunnel, so the first computer never needs SSH access to
+  the second. The invitation contains the first computer's hostname, port, SSH host
+  key (pinned, so there is no trust prompt) and a temporary key valid for 10 minutes.
+  Those keys only allow port forwarding to Zana's peer port; no shell. After the
+  inviting owner approves, the temporary key is replaced by a key generated for just this
+  link. Your own SSH keys and `~/.ssh/config` are never used or changed. Removing
+  the peer removes its key line.
+- **Security limits.** The key line restricts TCP forwarding and runs no shell, but
+  OpenSSH cannot restrict Unix-socket forwarding per key (verified on OpenSSH 10.3).
+  A holder of a peer key could create a Unix socket in a location the first computer's
+  user can write. Only the sshd-wide `AllowStreamLocalForwarding no` setting blocks
+  this. Pair only with computers you trust. Removing a peer deletes its key line but
+  does not end an SSH session that is already open; it ends when the connection
+  drops. On a shared computer, another local user could occupy the loopback ports the
+  tunnel uses, so avoid pairing on shared machines.
+- **Reconnecting.** If a peer was offline, the connecting computer retries on its
+  own. If it stays disconnected, use **Reconnect** on the link.
+- **Disconnect, Reconnect and Remove link.** Each machine in **Settings → Peers**
+  has **Disconnect** (or **Reconnect** when paused or down) and **Remove link** in its
+  header. **Disconnect** keeps the link and its keys but closes the connection on this
+  computer and stops automatic reconnecting, even after a restart; the badge reads
+  **Paused** (Design Docs' Peers list shows **Paused** too and points back here) and the other computer just sees this one offline. **Reconnect** resumes
+  it. **Remove link** deletes the link for all plugins and removes this machine's
+  access. When a machine is used by more than one plugin, **Stop syncing** on a plugin
+  row ends only that plugin's use.
+- **Design Docs Peers list.** Each paired computer is one card in **Settings → Peers**
+  with its name, one status line (Connected, Reconnecting, Paused or Disconnected with
+  the reason), **Reconnect** when it is down, and **Remove**. A finished invitation
+  disappears once the computer is linked. Group-wide **Remove Member** and **Leave
+  Group** appear only when the group has three or more computers.
+  A card reads **Linked, sync not set up** when the connection works but the
+  computer is not in the sync group. It shows the real cause when sync cannot start
+  (for example the system keychain denied access: allow Zana access or unlock it, then
+  restart Zana) and has a **Repair** button. **Repair** retries database sync setup for
+  that one computer and, if that fails, re-links only that connection; it never touches
+  other computers and grants no execution access. Cancelled, denied, expired or failed
+  invitations for a computer that is linked are hidden. The **Sync** button
+  in the doc list shows how many computers are syncing, including this one.
+- **Where links appear.** **Settings → Machines** lists execution machines only.
+  **Settings → Peers** lists every peer link and its state (Connected, Connecting,
+  or a specific reason why it cannot connect). See **Check your setup** for
+  troubleshooting.
+- **Check your setup.** If pairing fails or a link stays disconnected:
+  - **Remote Login off on macOS?** Go to **System Settings → General → Sharing**
+    and turn on **Remote Login**. SSH is required; this is the most common cause
+    of `ssh_remote_login_off`.
+  - **Host unreachable?** Confirm both computers are on the same Wi-Fi or
+    network. Try `ping <hostname>.local` from Terminal on the connecting machine,
+    where `<hostname>` is the name shown in the Add peer screen on the first computer. If it fails,
+    the `.local` address is not reachable; connect both to the same network.
+  - **Permission denied or key mismatch?** A host-key mismatch card (`ssh_host_key_mismatch`) appears if the
+    remote machine replaced its SSH host key (for example after reinstalling its
+    OS). Generate a new invitation on the first machine; the old link cannot recover
+    from this change.
+  - **Timeout or other SSH errors?** Check that no firewall is blocking SSH port
+    22 between the machines. Some networks restrict machine-to-machine connections
+    on the local network.
+
 ---
 
 ## Machine reachability without Zana Connect

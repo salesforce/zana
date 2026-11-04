@@ -39,6 +39,7 @@ export default definePluginApp((app) => {
   });
   app.slots.messageDirective({
     id: 'design-doc',
+    hideInAssistant: true,
     component: DirectiveCard
   });
   app.slots.threadPanelAction({

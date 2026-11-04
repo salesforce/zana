@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { discoverProjectCli } from './cli-discovery.js';
 
-const db = vi.hoisted(() => ({ getPrimaryHost: vi.fn(), getEnvironment: vi.fn(), listHosts: vi.fn(() => []) }));
+const db = vi.hoisted(() => ({ getPrimaryHost: vi.fn(), getEnvironment: vi.fn(), listExecutionHosts: vi.fn(() => []) }));
 vi.mock('@zana-ai/zcc-db', () => db);
 const primary = '958f6398-7da4-4bf7-a061-3bed9eae981a', remote = 'be0f67f4-fbba-4f32-bf32-d33f54f445f5';
 const environmentId = '24e7c7d0-4c65-42ac-9e39-346c8f5b69ce';

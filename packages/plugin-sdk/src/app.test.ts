@@ -9,6 +9,14 @@ import { collectPluginAppRegistrations } from './internal/plugin-app-collector.j
 import { shimLegacyExtensionManifest } from './legacy-shim.js';
 
 describe('definePluginApp', () => {
+  it('preserves per-tab footer ownership without changing the default', () => {
+    const slots = collectPluginApp('example', 1, definePluginApp(app => {
+      app.slots.projectTab({ id: 'workbench', label: 'Workbench', statusbar: 'hidden', component: () => null });
+      app.slots.projectTab({ id: 'other', label: 'Other', component: () => null });
+    }));
+    expect(slots.projectTabs[0]?.statusbar).toBe('hidden');
+    expect(slots.projectTabs[1]?.statusbar).toBeUndefined();
+  });
   it('does not recurse when the host runtime points definePluginApp at this function', () => {
     const g = globalThis as { __ZCC_PLUGIN_RUNTIME__?: { definePluginApp: typeof definePluginApp } };
     const previous = g.__ZCC_PLUGIN_RUNTIME__;
@@ -60,6 +68,21 @@ describe('definePluginApp', () => {
     await expect(callPluginRpc('notes', 'ping')).rejects.toThrow(/plugin host is not available/);
   });
 
+  it('keeps the bare message and code of a host RPC rejection', async () => {
+    const { callPluginRpc } = await import('./app.js');
+    const g = globalThis as { __ZCC_PLUGIN_HOST__?: unknown };
+    const previous = g.__ZCC_PLUGIN_HOST__;
+    try {
+      const failure = Object.assign(new Error('a design doc must keep at least one file'), { code: 'invalid' });
+      g.__ZCC_PLUGIN_HOST__ = { callRpc: async () => { throw failure; } };
+      const caught = await callPluginRpc('docs', 'rm').catch((e: unknown) => e);
+      expect(caught).toBe(failure);
+      expect(caught).toMatchObject({ message: 'a design doc must keep at least one file', code: 'invalid' });
+    } finally {
+      g.__ZCC_PLUGIN_HOST__ = previous;
+    }
+  });
+
   it('asks the host for a Zana-drawn approval and fails closed without one', async () => {
     const { experimental_requestApproval } = await import('./app.js');
     const request = { binding: { action: 'agent.publish', target: 'org', targetLabel: 'dev', subject: 'Help' }, title: 'Publish' };
@@ -92,6 +115,7 @@ describe('definePluginApp', () => {
       });
       app.slots.messageDirective({
         id: 'task',
+        hideInAssistant: true,
         component: () => null
       });
       app.composer.customize({
@@ -136,7 +160,7 @@ describe('definePluginApp', () => {
         })
       )
     ).toThrow(/"scopes" must be a non-empty array/);
-    expect(set.messageDirectives[0]?.id).toBe('task');
+    expect(set.messageDirectives[0]).toMatchObject({ id: 'task', hideInAssistant: true });
     expect(set.composerCustomizations[0]?.id).toBe('retry');
     expect(set.contentScripts[0]?.id).toBe('boot');
   });

@@ -64,7 +64,7 @@ export function LibraryPanel({ deepLink = null }: { deepLink?: LibraryDeepLink |
   const loading = useLibrary((s) => s.loading);
   const projects = useData((s) => s.projects);
 
-  const { compact, selectedDoc, setSelectedDoc, readerOpen, backToDocuments, rootRef, backRef } = useLibraryNavigation();
+  const { compact, selectedDoc, setSelectedDoc, readerOpen, backToDocuments, rootRef, backRef, fragment, openDocumentLink } = useLibraryNavigation(docs);
   const [searchQuery, setSearchQuery] = useState('');
   const { hits: bodyHits, searching: bodySearching, warning: searchWarning } = useLibraryBodySearch(searchQuery);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['global']));
@@ -567,6 +567,10 @@ export function LibraryPanel({ deepLink = null }: { deepLink?: LibraryDeepLink |
             <DocPreview
               key={selectedDoc.id || selectedDoc.relPath}
               doc={selectedDoc}
+              fragment={fragment}
+              onOpenDocument={link => {
+                if (openDocumentLink(link)) setSearchQuery('');
+              }}
               autoEdit={startEditing}
               onAutoEditConsumed={() => setStartEditing(false)}
             />

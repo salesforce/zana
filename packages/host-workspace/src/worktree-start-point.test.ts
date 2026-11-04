@@ -18,9 +18,21 @@ async function tempDir(prefix: string): Promise<string> {
   return dir;
 }
 
+/**
+ * Git 2.5x runs detached `maintenance run --auto` after push/commit/fetch. Its
+ * geometric repack fires whenever objects/17/ holds two loose objects — the
+ * fixed README tree is 1772…, so one in 256 seed commits trips it — and then
+ * rewrites objects/info/packs while the next local `git clone` hardlinks that
+ * directory ("hardlink different from source"). Keep fixtures quiescent.
+ */
+async function disableAutoMaintenance(repo: string): Promise<void> {
+  await runGit(repo, ['config', 'maintenance.auto', 'false']);
+}
+
 async function configure(repo: string): Promise<void> {
   await runGit(repo, ['config', 'user.name', 'Test']);
   await runGit(repo, ['config', 'user.email', 'test@example.com']);
+  await disableAutoMaintenance(repo);
 }
 
 async function commitFile(repo: string, name: string): Promise<string> {
@@ -43,6 +55,7 @@ async function initClonePair(): Promise<{ remote: string; work: string; other: s
   const seed = await initRepo();
   const remote = await tempDir('zcc-sp-remote-');
   await runGit(remote, ['init', '--bare', '-b', 'main']);
+  await disableAutoMaintenance(remote);
   await runGit(seed, ['push', remote, 'main']);
   const parent = await tempDir('zcc-sp-clones-');
   await runGit(parent, ['clone', '--quiet', remote, 'work']);

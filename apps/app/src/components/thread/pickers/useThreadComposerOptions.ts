@@ -166,11 +166,12 @@ export function useThreadComposerOptions(input: {
     void hostCatalog.ensure();
   }, [hostCatalog, input.hostPending]);
 
-  const providers = composerProvidersFromCatalog(
+  const providerLocked = Boolean(input.threadId || input.lockedProviderId);
+  const providers = useMemo(() => composerProvidersFromCatalog(
     catalog.providers,
-    Boolean(input.threadId || input.lockedProviderId),
+    providerLocked,
     providerId
-  );
+  ), [catalog.providers, providerLocked, providerId]);
   const rosterReady = catalog.providers.length > 0 || Boolean(input.threadId || input.lockedProviderId);
   const registeredProviderIds = catalog.providers.map((row) => row.id);
   const cached = catalog.byProvider[providerId];
@@ -280,9 +281,14 @@ export function useThreadComposerOptions(input: {
       activeModel.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
     );
     if (supported.length === 0) return;
-    const next = reconcileReasoningLevel(reasoningLevel, supported);
+    // Discovery may temporarily show a default model with fewer levels. Keep
+    // the thread's inherited preference until the user picks a model or level.
+    const preferred = !hasModel && input.initialReasoningLevel
+      ? asReasoningLevel(input.initialReasoningLevel, reasoningLevel)
+      : reasoningLevel;
+    const next = reconcileReasoningLevel(preferred, supported);
     if (next !== reasoningLevel) setReasoningLevelState(next);
-  }, [hasReasoning, activeModel, reasoningLevel]);
+  }, [hasReasoning, hasModel, input.initialReasoningLevel, activeModel, reasoningLevel]);
 
   const providerOptions: PickerOption<string>[] = providers.map((row) => ({
     value: row.id,

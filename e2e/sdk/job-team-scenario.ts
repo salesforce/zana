@@ -95,6 +95,8 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
   // disabled stub. Check status is the explicit re-probe against the fake binary.
   await window.getByRole('link', { name: 'Settings' }).click();
   await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
+  // AI Harness reuses the boot-time probe; re-probe explicitly after replacing the CLI.
+  await window.getByRole('button', { name: 'Check status' }).click();
   const claudeSettings = window.locator('#settings-anchor-harness-claude');
   const check = window.getByRole('button', { name: /^(Check status|Checking…)$/ });
   await expect(check).toBeEnabled({ timeout: 20_000 });
@@ -124,7 +126,7 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
   await instruction.click();
   await instruction.fill(prompt);
   await expect(instruction).toContainText(prompt);
-  await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
+  await expect(modal.getByRole('button', { name: 'Machine and project', exact: true })).toContainText(projectName);
   const send = modal.getByTestId('legacy-agent-command-send');
   await expect(send).toBeEnabled({ timeout: 15_000 });
   await send.click();

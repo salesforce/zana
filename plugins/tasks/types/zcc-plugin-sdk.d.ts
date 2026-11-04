@@ -299,6 +299,21 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     transaction<T>(fn: () => T): T;
   }
 
+  export interface PluginDatabaseBackupOptions {
+    name: string;
+    maxBytes?: number;
+    signal?: AbortSignal;
+  }
+
+  export interface PluginDatabaseBackup {
+    backupId: string;
+    name: string;
+    path: string;
+    bytes: number;
+    sha256: string;
+    createdAt: number;
+  }
+
   export interface ZccPluginApi {
     readonly pluginId: string;
     readonly log: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void };
@@ -345,6 +360,8 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         list(prefix?: string): Promise<string[]>;
       };
       database(): PluginDatabase;
+      /** Consistent online 0600 copy of this plugin's database under its own data folder. */
+      backupDatabase(options: PluginDatabaseBackupOptions): Promise<PluginDatabaseBackup>;
     };
     readonly rpc: { method(name: string, handler: (args: unknown) => unknown | Promise<unknown>): void };
     readonly realtime: { publish(event: string, payload: unknown): void };
@@ -457,7 +474,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         resolve(itemId: string): { context: string } | Promise<{ context: string }>;
       }): void;
     };
-    readonly status: { needsConfiguration(message: string): void };
+    readonly status: { needsConfiguration(message: string): void; configured(): void };
     readonly sdk: {
       system: { defaultHost(): Promise<{ id: string } | null> };
       threads: {
@@ -465,7 +482,13 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         spawn(args: {
           projectId: string;
           prompt: string;
+          /** Exact thread provider id; wins over `harness`. With neither, the host's first provider is used (legacy). */
           providerId?: string;
+          /**
+           * `'project-default'`: the project's effective AI harness and its AI-harness overrides (Settings → AI Harness).
+           * Rejects when none is usable or an override cannot apply to a thread.
+           */
+          harness?: 'project-default';
           parentThreadId?: string;
           title?: string;
           model?: string;
@@ -575,6 +598,68 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export function useRpc(): { call<T = unknown>(method: string, input?: unknown): Promise<T> };
+  export interface ContextReference {
+  version: 1;
+  comment?: string;
+  label: string;
+  text: string;
+  source?:
+    | { kind: 'thread'; threadId: string; messageId: string; sourceSeqEnd: number }
+    | { kind: 'file'; path: string; startLine?: number; endLine?: number; projectId?: string; hostId?: string }
+    | { kind: 'plugin'; pluginId: string; resourceId: string; path?: string; revision?: string; heading?: string };
+}
+
+  export interface PluginBrowserPage {
+    evaluate(expression: string, options?: { world?: 'main' | 'isolated' }): Promise<unknown>;
+    onMessage(listener: (data: unknown) => void): () => void;
+  }
+  export interface PluginBrowserComposer {
+    insert(reference: ContextReference): boolean;
+    update(resourceId: string, reference: ContextReference | null): boolean;
+    onSubmitted(listener: () => void): () => void;
+    focus(): void;
+  }
+  export interface PluginBrowserToolbarActionProps {
+    pluginId: string; threadId: string; tabId: string; url: string;
+    page: PluginBrowserPage | null; composer: PluginBrowserComposer;
+  }
+  export const CONTEXT_REFERENCE_MIME: 'application/x-zcc-context-reference';
+  export const MAX_CONTEXT_REFERENCE_TEXT: 100000;
+  export const MAX_CONTEXT_REFERENCES: 24;
+  export const MAX_CONTEXT_REFERENCES_TEXT: 400000;
+  export function parseContextReference(value: unknown): ContextReference | null;
+  export function parseContextReferences(value: unknown): ContextReference[] | null;
+  export function contextReferenceLocation(reference: ContextReference): string;
+  export function contextReferencePrompt(reference: ContextReference): string;
+  export function contextReferenceFromClipboard(data: Pick<DataTransfer, 'getData'> | null): ContextReference | null;
+  export function writeContextReference(event: Pick<ClipboardEvent, 'clipboardData' | 'preventDefault'>, reference: ContextReference): boolean;
+  export function copyContextSelection(event: Pick<ClipboardEvent, 'clipboardData' | 'preventDefault'>, root: HTMLElement, metadata: Omit<ContextReference, 'text'>): boolean;
+
+  export function contextReferenceFromEditorSelection(selection: { version: 1; path: string; text: string; startLine?: number; endLine?: number }): ContextReference;
+  export interface PluginComposerApi {
+    readonly text: string;
+    setText(next: string): void;
+    updateText(updater: (current: string) => string): void;
+    clear(): void;
+    focus(): void;
+    insertContextReference?(reference: ContextReference): boolean;
+  }
+  export type ZccPanelAgentOptions =
+    | { threadId: string; title?: string }
+    | { draft: { prompt: string; projectId?: string; view?: string; references?: readonly ContextReference[]; selection?: { version: 1; path: string; text: string; startLine?: number; endLine?: number } }; title?: string };
+  export interface ZccNavigate {
+    toThread(threadId: string): void;
+    toProject(projectId: string, options?: { tabId?: string; inMainWindow?: boolean }): void;
+    toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): void;
+    toCompose(options?: { initialPrompt?: string; focusPrompt?: boolean }): void;
+    supportsContextReferences?: true;
+    addThreadContext?(reference: ContextReference): boolean;
+    openPanelAgent(options: ZccPanelAgentOptions): boolean;
+  }
+  export function useComposer(): PluginComposerApi;
+  export function useZccNavigate(): ZccNavigate;
+
   /** Read-only fleet projection shared with the built-in Agents views. */
   export interface PluginFleetMember {
     /** Opaque, kind-qualified key. Pass this to onInspect. */
@@ -672,6 +757,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
     generation: number;
     providerIcons: Array<{ pluginId: string; generation: number; providerId: string; icon: unknown }>;
     navPanels: Array<{ id: string; title: string; component: unknown }>;
+    browserToolbarActions: Array<{ id: string; title: string; component: unknown }>;
     settingsSections: Array<{ id: string; title?: string }>;
     pendingInteractions: Array<{ id: string }>;
   };
@@ -689,6 +775,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
   ): Promise<{
     pluginId: string;
     navPanels: Array<{ id: string; title: string; component: unknown }>;
+    browserToolbarActions: Array<{ id: string; title: string; component: unknown }>;
   }>;
   export function renderSlot(
     registration: { component: unknown },
@@ -696,7 +783,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
     options?: {
       rpc?: Record<string, (input: unknown) => unknown | Promise<unknown>>;
     }
-  ): {
+  ): import('@testing-library/react').RenderResult & {
     findByText: (text: string | RegExp) => Promise<unknown>;
     inspection: {
       rpcCalls: Array<{ method: string; input: unknown }>;

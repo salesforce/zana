@@ -33,6 +33,8 @@ test('scheduler overview: triage, filters, pagination and responsive layout', as
     if (i === 2) task.projectId = 'missing-fixture-project';
     task.status = { runCount: 1, lastRunAt: at, runs: [{ at, result: i === 0 ? 'error' : i === 1 ? 'incomplete' : 'success',
       ...(i < 2 ? { message: i === 0 ? 'Dependency audit could not read the package manifest. Check the project path and file permissions before retrying.' : 'The run ended without a completion report. Open the schedule to inspect the previous run.' } : {}) }] };
+    // An overlap skip is not a problem, so the attention counts below still hold.
+    if (i === 4) task.status.runs = [{ at, result: 'skipped', reasonCode: 'overlap', message: 'previous run still active' }];
     writeFileSync(path, JSON.stringify(task));
   }
 
@@ -57,6 +59,12 @@ test('scheduler overview: triage, filters, pagination and responsive layout', as
   await expect(inventory.getByText('No schedules match these filters.')).toBeVisible();
   await inventory.getByRole('button', { name: 'Clear filters' }).click();
   await expect(inventory.getByRole('checkbox')).toHaveCount(8);
+  await inventory.getByRole('combobox').selectOption('skipped');
+  await expect(inventory.getByRole('checkbox'), 'Skipped last run keeps only the schedule whose last run was skipped').toHaveCount(1);
+  await expect(inventory.getByText('Repo health check', { exact: true }), 'the skipped schedule is listed').toBeVisible();
+  await expect(inventory.locator('.schedule-issue-label--skipped'), 'the Overview row says why it was skipped').toContainText('Previous run still active');
+  await inventory.getByRole('combobox').selectOption('all');
+  await expect(inventory.getByRole('checkbox'), 'All schedules shows every enabled and off schedule again').toHaveCount(8);
 
   await win.setViewportSize({ width: 1440, height: 1100 });
   await win.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
@@ -78,6 +86,20 @@ test('scheduler overview: triage, filters, pagination and responsive layout', as
   await page.locator('.settings-inner').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: testInfo.outputPath('scheduler-dark.png') });
   await page.getByRole('button', { name: 'View schedules', exact: true }).click();
+  await page.getByRole('combobox').selectOption('skipped');
+  await expect(page.locator('.scheduler-card'), 'the Schedules list keeps only the skipped schedule').toHaveCount(1);
+  await expect(page.getByTestId('schedule-skipped-last'), 'the row pill gives the time').toContainText('skipped');
+  await expect(page.getByTestId('schedule-skipped-last'), 'the row pill gives the reason').toContainText('Previous run still active');
+  await page.screenshot({ path: testInfo.outputPath('scheduler-skipped-last-run.png') });
+  // The pill must not squeeze the schedule name out of a narrow row.
+  await win.setViewportSize({ width: 430, height: 932 });
+  const skippedCard = page.locator('.scheduler-card').first();
+  await expect.poll(() => skippedCard.evaluate(el => el.scrollWidth <= el.clientWidth + 1), { message: 'the skipped row fits a narrow window' }).toBe(true);
+  await expect.poll(() => skippedCard.locator('.scheduler-card-title').evaluate(el => Math.round(el.getBoundingClientRect().width)),
+    { message: 'the schedule name keeps room beside the pill' }).toBeGreaterThan(90);
+  await page.screenshot({ path: testInfo.outputPath('scheduler-skipped-last-run-430.png') });
+  await win.setViewportSize({ width: 1440, height: 1100 });
+  await page.getByRole('combobox').selectOption('all');
   await page.getByRole('searchbox').fill('dependency');
   await page.getByRole('combobox').selectOption('attention');
   await expect(page.locator('.scheduler-card')).toHaveCount(1);

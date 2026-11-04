@@ -24,6 +24,7 @@ async function load() {
   return store;
 }
 async function run({ op, key, value }) {
+  if (op === 'flush') return;
   if (op === 'clear') { await fs.rm(workerData.file, { force: true }); store = Object.create(null); return; }
   const current = await load();
   if (op === 'get') return current[key];
@@ -89,6 +90,7 @@ export class AsyncJsonStore {
   async delete(key: string): Promise<void> { await this.call('delete', key); }
   list(prefix?: string): Promise<string[]> { return this.call('list', prefix) as Promise<string[]>; }
   async clear(): Promise<void> { await this.call('clear'); }
+  async flush(): Promise<void> { await this.call('flush'); }
 
   private async call(op: string, key?: string, value?: unknown): Promise<unknown> {
     if (this.disposed) throw new Error('Storage is disposed');
@@ -176,9 +178,12 @@ export function openAsyncJsonStore(file: string) {
     delete: (key: string) => { assertLive(); return core.store.delete(key); },
     list: (prefix?: string) => { assertLive(); return core.store.list(prefix); },
     clear: () => { assertLive(); return core.store.clear(); },
-    dispose: async () => {
+    dispose: async (options: { drain?: boolean } = {}) => {
       if (!live) return; live = false;
-      if (--core.refs === 0) { core.closing = core.store.dispose(); await core.closing; if (stores.get(file) === core) stores.delete(file); }
+      if (--core.refs === 0) {
+        core.closing = (async () => { try { if (options.drain) await core.store.flush(); } finally { await core.store.dispose(); } })();
+        try { await core.closing; } finally { if (stores.get(file) === core) stores.delete(file); }
+      }
     }
   };
 }

@@ -10,7 +10,7 @@ const test = base.extend({
     writeFileSync(join(source, 'package.json'), JSON.stringify({
       name: '@zcc-ext/delayed-mention', version: '0.1.0', type: 'module',
       engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
-      zcc: { name: 'Delayed mention', description: 'Thread admission fixture', server: './server.mjs' }
+      zcc: { name: 'Delayed mention', description: 'Thread admission fixture', branding: { icon: 'Puzzle' }, server: './server.mjs' }
     }));
     writeFileSync(join(source, 'server.mjs'), `export default function(zcc) {
       let pending = [];
@@ -60,7 +60,11 @@ test('thread options survive public create, follow-up, stop and resume', async (
   }, id);
   await expect.poll(settings).toEqual([expect.objectContaining({ model: 'chosen-model', reasoningLevel: 'high', serviceTier: 'fast' })]);
   await win.evaluate(async id => { await fetch(`/api/v1/threads/${id}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); await fetch(`/api/v1/threads/${id}/resume`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); }, id);
+  await expect.poll(() => win.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread, id))
+    .toMatchObject({ model: 'chosen-model', reasoningLevel: 'high', serviceTier: 'fast' });
   await win.evaluate(id => { history.pushState({}, '', `/threads/${id}`); dispatchEvent(new PopStateEvent('popstate')); }, id);
+  // The composer mounts before the persisted thread options finish loading.
+  await expect(win.getByRole('button', { name: 'Thinking: High', exact: true })).toBeVisible();
   await win.getByTestId('thread-command-input').fill('report_execution_snapshot resumed');
   await expect(win.getByTestId('thread-command-send')).toBeEnabled();
   await expect(win.getByRole('combobox', { name: 'Service tier', exact: true })).toHaveCount(0);
@@ -88,7 +92,7 @@ test('Stop and Archive cancel pending mention sends; a competing active turn que
     return { status: response.status, body: await response.json() };
   }, { route, method, body });
   const rpc = (method: string) => win.evaluate(method => window.cc.pluginApps.callRpc('delayed-mention', method, null), method);
-  await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).find(plugin => plugin.id === 'delayed-mention')?.status)).toBe('running');
+  await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).find(plugin => plugin.id === 'delayed-mention'))).toMatchObject({ status: 'running' });
   for (const action of ['stop', 'archive', 'competing-turn']) {
     const created = await request('threads', 'POST', { projectId, providerId: 'fake', input: 'initial response' });
     const id = created.body.thread.id as string;
@@ -126,7 +130,7 @@ test('Stop during initial session preparation prevents the first turn from launc
     return result.value.id;
   }, path);
   const rpc = (method: string) => win.evaluate(method => window.cc.pluginApps.callRpc('delayed-mention', method, null), method);
-  await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).find(plugin => plugin.id === 'delayed-mention')?.status)).toBe('running');
+  await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).find(plugin => plugin.id === 'delayed-mention'))).toMatchObject({ status: 'running' });
   await rpc('holdTools');
   const id = randomUUID();
   const creating = win.evaluate(async ({ id, projectId }) => {
@@ -144,4 +148,43 @@ test('Stop during initial session preparation prevents the first turn from launc
   }), id);
   expect(snapshot.thread.status).toBe('idle');
   expect(snapshot.events.some((event: { type: string }) => event.type === 'client/turn/requested')).toBe(false);
+});
+
+test('Stop during follow-up preparation shows cancellation without a command failure', async ({ app, home }) => {
+  const win = app.window;
+  const path = join(home, 'cancel-follow-up-project'); mkdirSync(path);
+  const id = await win.evaluate(async path => {
+    const project = await window.cc.projects.add(path); if (!project.ok) throw new Error(project.message);
+    const response = await fetch('/api/v1/threads', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.value.id, providerId: 'fake', input: 'initial reply' }) });
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()).thread.id as string;
+  }, path);
+  const read = () => win.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread, id);
+  await expect.poll(async () => (await read()).status).toBe('idle');
+  await win.evaluate(id => { history.pushState({}, '', `/threads/${id}`); dispatchEvent(new PopStateEvent('popstate')); }, id);
+  const rpc = (method: string) => win.evaluate(method => window.cc.pluginApps.callRpc('delayed-mention', method, null), method);
+  await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).find(plugin => plugin.id === 'delayed-mention'))).toMatchObject({ status: 'running' });
+  await rpc('holdTools');
+  const sending = win.evaluate(async id => {
+    const response = await fetch(`/api/v1/threads/${id}/send`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'Cancel this follow-up', mode: 'start' }) });
+    return { status: response.status, body: await response.json() };
+  }, id);
+  await expect.poll(() => rpc('pendingTools')).toBe(1);
+  await win.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect.poll(async () => (await read()).status).toBe('idle');
+  await rpc('releaseTools');
+  expect(await sending).toMatchObject({ status: 409, body: { code: 'send_cancelled' } });
+  const timeline = win.getByTestId('thread-timeline');
+  await expect(timeline.getByTestId('thread-message-request-label')).toHaveText('Cancelled');
+  await expect(timeline).toContainText('Stopped manually');
+  await expect(timeline).toContainText('Cancel this follow-up');
+  await expect(timeline).not.toContainText('Operation interrupted');
+  await expect(timeline).not.toContainText('Command turn.submit failed');
+  await expect(timeline).not.toContainText('Rejected');
+  await win.reload();
+  await expect(timeline.getByTestId('thread-message-request-label')).toHaveText('Cancelled');
+  await expect(timeline).not.toContainText('Operation interrupted');
+  await expect(win.locator('.thread-status-badge.is-error')).toHaveCount(0);
 });

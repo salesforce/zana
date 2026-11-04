@@ -125,7 +125,7 @@ describe('jobWorkerPrompt — delivery instructions', () => {
     expect(withExecution).toContain('execution.work.block');
     expect(withExecution).toContain('execution.work.release');
     expect(withExecution).toContain('zcc-inbox_execution_work_complete');
-    expect(withExecution).toContain('not an AI Suite Python bridge or a colon-form tool name');
+    expect(withExecution).toContain('not a separate Python bridge or a colon-form tool name');
     expect(withExecution).toContain('Do not use `agent_send` for routine progress or results');
   });
 
@@ -148,5 +148,30 @@ describe('jobWorkerPrompt — delivery instructions', () => {
     expect(withExecution).toContain('call `execution.delivery.ack` with the deliveryId and leaseId');
     expect(withExecution).toContain('never call `execution.resume` or `execution.respond`');
     expect(withExecution).toContain('that authorization denial is NOT an application failure');
+  });
+});
+
+describe('jobWorkerPrompt — recovery resume', () => {
+  const base = { executionId: 'exec-1', slotId: 'slot-1', label: 'Worker 1', personaName: 'Builder' };
+  const resumed = jobWorkerPrompt({ ...base, recoveryResume: true });
+
+  it('leaves non-resume output byte-identical', () => {
+    expect(jobWorkerPrompt({ ...base, recoveryResume: false })).toBe(withExecution);
+    expect(withExecution).not.toContain('Recovery resume');
+  });
+
+  it('appends resume-aware text naming slot and execution', () => {
+    expect(resumed).toContain('Recovery resume: this worker reopened its own native session for slot `slot-1` in execution `exec-1`.');
+    expect(resumed).toContain('prior context, not current authority');
+    expect(resumed).toContain('prior claim ids are invalid');
+    expect(resumed).toContain('Do not redo work the snapshot shows COMPLETED');
+    expect(resumed.endsWith('not claimed for this slot.')).toBe(true);
+  });
+
+  it('does not defer the snapshot until after standby for resumed workers', () => {
+    expect(resumed).not.toContain('After your standby prompt settles');
+    expect(resumed).toContain('Call `execution.snapshot` once for this execution now');
+    expect(jobWorkerPrompt({ slotId: 'slot-1', label: 'W', personaName: 'B', recoveryResume: true }))
+      .toContain('for slot `slot-1`. Your earlier');
   });
 });

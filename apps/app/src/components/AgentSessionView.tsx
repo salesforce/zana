@@ -393,6 +393,7 @@ function DesktopAgentSessionView({
           onSelectPlan={() => panel.selectPin('plan')}
           onNewTab={panel.openNewTab}
           onCloseTab={panel.closeTab}
+          onCloseTabs={panel.closeTabs}
           onActivateTab={panel.activateTab}
           onToggleMaximized={panel.toggleMaximized}
           onHide={panel.close}

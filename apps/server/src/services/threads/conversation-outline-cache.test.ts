@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { openDatabase, type ZccDatabase } from '@zana-ai/zcc-db';
-import { cachedConversationOutline, OUTLINE_CACHE_BYTES, OUTLINE_CACHE_ENTRIES } from './conversation-outline-cache.js';
+import { cachedConversationOutline, OUTLINE_CACHE_BYTES, OUTLINE_CACHE_ENTRIES, SEARCH_TEXT_CACHE_BYTES, SEARCH_TEXT_CACHE_ENTRIES } from './conversation-outline-cache.js';
 
 const homes: string[] = [];
 const databases: ZccDatabase[] = [];
@@ -78,4 +78,27 @@ it('bounds aggregate bytes and does not retain oversized replacements', () => {
   expect(huge).toHaveBeenCalledTimes(2);
   cachedConversationOutline(db, 'small', 'context', () => result());
   expect(cachedConversationOutline(db, 'small', 'context', () => { throw Error('should reuse'); })).toEqual(result());
+});
+
+it('keeps search texts in their own bucket, shared rather than cloned, never evicting outlines', () => {
+  const { db } = database(); const outline = vi.fn(() => result());
+  cachedConversationOutline(db, 'thread', 'context', outline);
+  // Texts above the outline byte cap are still cached, and filling the
+  // search-text bucket past its entry cap leaves the outline cached.
+  const texts = vi.fn(() => [{ id: 'message', seq: 1, text: 'x'.repeat(OUTLINE_CACHE_BYTES) }]);
+  for (let index = 0; index <= SEARCH_TEXT_CACHE_ENTRIES; index++) cachedConversationOutline(db, String(index), 'context', texts, 'search-text');
+  expect(texts).toHaveBeenCalledTimes(SEARCH_TEXT_CACHE_ENTRIES + 1);
+  expect(cachedConversationOutline(db, 'thread', 'context', outline)).toEqual(result());
+  expect(outline).toHaveBeenCalledTimes(1);
+  // Hits return the stored value itself; the oldest entry was evicted.
+  const last = String(SEARCH_TEXT_CACHE_ENTRIES);
+  expect(cachedConversationOutline(db, last, 'context', texts, 'search-text')).toBe(texts.mock.results.at(-1)!.value);
+  cachedConversationOutline(db, '0', 'context', texts, 'search-text');
+  expect(texts).toHaveBeenCalledTimes(SEARCH_TEXT_CACHE_ENTRIES + 2);
+  // The same key in the other bucket does not collide, and the byte cap still applies.
+  const huge = vi.fn(() => [{ id: 'message', seq: 1, text: 'x'.repeat(SEARCH_TEXT_CACHE_BYTES) }]);
+  cachedConversationOutline(db, 'thread', 'context', huge, 'search-text');
+  cachedConversationOutline(db, 'thread', 'context', huge, 'search-text');
+  expect(huge).toHaveBeenCalledTimes(2);
+  expect(outline).toHaveBeenCalledTimes(1);
 });

@@ -3,7 +3,7 @@ import { loopbackProductServerUrl } from '../ipc/plugin-apps-loopback.js';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
-/** Keep dev CLI execution in the same SDK-equipped runtime as plugin UI/RPC. */
+/** Keep dev CLI execution and lifecycle in the runtime that owns live plugin policy. */
 export function createLoopbackPluginCommands(
   baseUrl: string,
   fetchImpl: typeof fetch = fetch
@@ -40,8 +40,23 @@ export function createLoopbackPluginCommands(
     return result;
   }
 
+  async function mutatePlugin(id: string, action: 'enable' | 'disable' | 'reload' | 'update'): Promise<unknown> {
+    await request(`api/v1/plugin-apps/${encodeURIComponent(id)}/${action}`, {});
+    // Lifecycle CLI responses retain the installed row shape used by the local host.
+    const result = await request('api/v1/plugins') as { plugins?: Array<{ id: string }> };
+    const row = result.plugins?.find(plugin => plugin.id === id);
+    if (!row) throw new Error(`Plugin host did not return updated plugin: ${id}`);
+    return row;
+  }
+
   return {
     cliContributions: () => request('api/v1/plugins/contributions'),
-    runCliCommand: (id, argv, context) => request(`api/v1/plugins/${encodeURIComponent(id)}/cli`, { argv, ...context })
+    runCliCommand: (id, argv, context) => request(`api/v1/plugins/${encodeURIComponent(id)}/cli`, { argv, ...context }),
+    enable: id => mutatePlugin(id, 'enable'),
+    disable: id => mutatePlugin(id, 'disable'),
+    reload: id => mutatePlugin(id, 'reload'),
+    update: id => mutatePlugin(id, 'update'),
+    remove: id => request(`api/v1/plugin-apps/${encodeURIComponent(id)}/remove`, {}),
+    updateAll: async () => (await request('api/v1/plugin-apps/update-all', {}) as { value: unknown }).value
   };
 }

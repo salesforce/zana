@@ -17,6 +17,7 @@ export const RUNTIME_EXPORT_MANIFEST: Record<string, readonly string[]> = {
     "definePluginApp",
     "experimental_Diff",
     "experimental_FileLink",
+    "experimental_HarnessRoutingEditor",
     "experimental_NewThreadComposer",
     "experimental_PermissionModePicker",
     "experimental_ProviderModelPicker",

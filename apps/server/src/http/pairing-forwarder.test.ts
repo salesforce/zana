@@ -445,3 +445,57 @@ function rawExchange(port: number, payload: string): Promise<string> {
     socket.on('error', reject);
   });
 }
+
+describe("startPairingForwarder allow: 'peer'", () => {
+  it('forwards only enrollment and the host websocket', async () => {
+    forwarder = await startPairingForwarder(productPort, { allow: 'peer' });
+    const enroll = await send(forwarder.port, { method: 'POST', path: '/internal/hosts/enroll', body: '{}' });
+    expect(enroll.status).toBe(200);
+    expect(seen.at(-1)?.url).toBe('/internal/hosts/enroll');
+    const before = seen.length;
+    for (const [method, path] of [
+      ['GET', '/install.sh'],
+      ['GET', '/install/zcc-host.tgz'],
+      ['POST', '/internal/hosts/tool-call'],
+      ['POST', '/internal/hosts/cli-callback'],
+      ['POST', '/internal/hosts/interactive-request'],
+      ['GET', '/internal/hosts/enroll'],
+      ['GET', '/api/v1/config'],
+      ['HEAD', '/']
+    ] as const) {
+      const reply = await send(forwarder.port, { method, path });
+      expect(reply.status, `${method} ${path}`).toBe(403);
+      if (method !== 'HEAD') expect(JSON.parse(reply.body.toString())).toEqual({ error: 'path is not allowed' });
+    }
+    expect(seen.length).toBe(before);
+  });
+
+  it('upgrades the host websocket and refuses other websocket paths', async () => {
+    forwarder = await startPairingForwarder(productPort, { allow: 'peer' });
+    const ok = new WebSocket(`ws://127.0.0.1:${forwarder.port}/internal/hosts/ws`);
+    const echoed = await new Promise<string>((resolve, reject) => {
+      ok.on('open', () => ok.send('ping'));
+      ok.on('message', (data) => resolve(data.toString()));
+      ok.on('error', reject);
+    });
+    expect(echoed).toBe('ping');
+    ok.close();
+    const bad = new WebSocket(`ws://127.0.0.1:${forwarder.port}/ws`);
+    const error = await new Promise<Error>((resolve) => bad.on('error', resolve));
+    expect(error.message).toContain('403');
+  });
+
+  it('listens on the requested port', async () => {
+    const probe = await startPairingForwarder(productPort);
+    const free = probe.port;
+    await probe.close();
+    forwarder = await startPairingForwarder(productPort, { allow: 'peer', port: free });
+    expect(forwarder.port).toBe(free);
+  });
+
+  it('keeps the default pairing surface unchanged', async () => {
+    forwarder = await startPairingForwarder(productPort, { allow: 'pairing' });
+    const reply = await send(forwarder.port, { path: '/install.sh' });
+    expect(reply.status).toBe(200);
+  });
+});

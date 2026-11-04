@@ -1,5 +1,6 @@
 import { Download, Loader2, Wrench } from 'lucide-react';
 import { composerHostActionChipLabel, type ComposerHostAction } from './composer-host-status.js';
+import { ComposerDaemonRestart } from './ComposerDaemonRestart.js';
 
 export function ComposerHostActionChip({
   action,
@@ -14,6 +15,7 @@ export function ComposerHostActionChip({
   onAction: () => void;
   onCopyPairing?: () => void;
 }) {
+  if (action.kind === 'restart') return <ComposerDaemonRestart reason={action.reason} />;
   const label = busyLabel ?? composerHostActionChipLabel(action);
   if (!label) return null;
   const clickable = action.kind === 'install' || action.kind === 'fix';

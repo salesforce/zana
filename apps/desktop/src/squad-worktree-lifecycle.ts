@@ -61,7 +61,7 @@ export function squadWorktreeFollowUpExecution(sessionId: string): string | unde
 }
 
 /** What a terminal Squad worktree handler did once its effects were durably applied. */
-export type SquadWorktreeTerminalOutcome = 'merged' | 'kept' | 'missing';
+export type SquadWorktreeTerminalOutcome = 'merged' | 'deleted' | 'kept' | 'missing';
 
 /** Terminal effects replay once per durable execution generation after a crash. */
 export function shouldReplaySquadWorktreeTerminalEffects(record: {

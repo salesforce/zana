@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ConnectAccount } from './ConnectAccount';
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); });
 function stubFetch(fetcher: any) { vi.stubGlobal('fetch', (path: string, ...args: any[]) => path.startsWith('/api/connect/slack/') ? Promise.resolve(Response.json({ links: [] })) : fetcher(path, ...args)); }
 const account = { user: { name: 'Alice' }, servers: [{ id: 'mac', name: 'MacBook', live: true, revoked: false }], devices: [{ id: 'phone', label: 'iPhone', revoked: false }] };
 it('uses the top Refresh action to reload every expanded machine list and retry failures', async () => {
@@ -49,24 +49,64 @@ it('sends signed-out users through GitHub with the approval return path', async 
   const link = await screen.findByRole('link', { name: 'Sign in with GitHub' });
   expect(link.getAttribute('href')).toContain(encodeURIComponent(`/connect/?code=${'x'.repeat(22)}`));
 });
-it('requires an explicit approval, then manages owned computers and devices', async () => {
+it('requires explicit approval and keeps the continuation focused on this computer', async () => {
   const code = 'x'.repeat(22); window.history.replaceState({}, '', `/connect/?code=${code}`);
   let approved = false;
   const fetcher = vi.fn(async (path: string, init: RequestInit) => {
     if (path.startsWith('/api/connect/device/approve/')) { approved = true; return Response.json({}); }
-    if (path.startsWith('/api/connect/device/info/')) return Response.json({ name: 'MacBook', approved });
+    if (path.startsWith('/api/connect/device/info/')) return Response.json({ name: 'MacBook', approved, serverId: approved ? 'mac' : undefined });
     return Response.json(account);
   }); stubFetch( fetcher);
   render(<ConnectAccount />);
   const approve = await screen.findByRole('button', { name: 'Approve computer' });
   expect(fetcher).not.toHaveBeenCalledWith('/api/connect/device/approve/', expect.anything());
-  fireEvent.click(approve); await screen.findByRole('heading', { name: 'Computer approved' });
+  fireEvent.click(approve); await screen.findByRole('heading', { name: 'Account connected' });
   expect(fetcher).toHaveBeenCalledWith('/api/connect/device/approve/', expect.objectContaining({ method: 'POST', body: JSON.stringify({ code, approved: true }), credentials: 'same-origin' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Revoke phone iPhone' }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/api/connect/revoke/', expect.objectContaining({ body: JSON.stringify({ kind: 'device', id: 'phone' }) })));
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Disconnect computer MacBook' }) as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(screen.getByRole('button', { name: 'Disconnect computer MacBook' }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/api/connect/revoke/', expect.objectContaining({ body: JSON.stringify({ kind: 'server', id: 'mac' }) })));
+  expect(screen.queryByRole('region', { name: 'Zana instances' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Revoke phone iPhone' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Approve computer' })).toBeNull();
+  expect(screen.getByRole('list', { name: 'Remote access setup progress' }).querySelector('[aria-current="step"]')?.textContent).toContain('Choose address');
+});
+it('continues address setup for the requested computer and refreshes until it is ready', async () => {
+  vi.useFakeTimers();
+  window.history.replaceState({}, '', '/connect/?server=mac#address');
+  let live = false;
+  const fetcher = vi.fn(async () => Response.json({ ...account, servers: [{ ...account.servers[0], browserUrl: 'https://work.example.com', live }] }));
+  stubFetch(fetcher);
+  await act(async () => { render(<ConnectAccount />); });
+  expect(screen.getByText(/Waiting for this computer to come online/)).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Zana instances' })).toBeNull();
+  live = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+  expect(screen.getByRole('heading', { name: 'MacBook is ready' })).toBeTruthy();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('stops automatic setup refresh after an error and cancels it on unmount', async () => {
+  vi.useFakeTimers();
+  window.history.replaceState({}, '', '/connect/?server=mac');
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ ...account, servers: [{ ...account.servers[0], browserUrl: 'https://work.example.com', live: false }] })).mockRejectedValue(new Error('Connection lost'));
+  stubFetch(fetcher);
+  let view!: ReturnType<typeof render>;
+  await act(async () => { view = render(<ConnectAccount />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+  expect(screen.getByRole('alert').textContent).toContain('Connection lost');
+  await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  view.unmount();
+  fetcher.mockResolvedValue(Response.json({ ...account, servers: [{ ...account.servers[0], browserUrl: 'https://work.example.com', live: false }] }));
+  await act(async () => { view = render(<ConnectAccount />); });
+  view.unmount();
+  await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+  expect(fetcher).toHaveBeenCalledTimes(3);
+});
+it('does not expose other computers when a scoped setup target is missing or revoked', async () => {
+  window.history.replaceState({}, '', '/connect/?server=missing');
+  stubFetch(vi.fn(async () => Response.json(account)));
+  render(<ConnectAccount />);
+  await screen.findByRole('heading', { name: 'This computer is no longer available' });
+  expect(screen.queryByRole('region', { name: 'Zana instances' })).toBeNull();
 });
 it('shows setup guidance and useful service/expired-approval errors', async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ user: { name: 'Alice' }, servers: [], devices: [] })).mockResolvedValueOnce(new Response('', { status: 503 })).mockResolvedValueOnce(new Response('', { status: 410 }));

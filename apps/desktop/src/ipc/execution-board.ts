@@ -31,7 +31,7 @@ type ExecutionCaller = { kind: 'window'; window: BrowserWindow } | { kind: 'shar
 export function registerExecutionBoardIpc(): void {
   const { safeHandle, safeHandleFromWindow, ptys, teams, personas, windows,
     executionStore, executionResumeTokens, executionSources, squadProposals, squadExecutionService, teamLifecycle,
-    startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability, squadWorktreeAction } = ctx;
+    startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability, squadWorktreeAction, retirePlanHandoff } = ctx;
 
   // The product-server credential identifies the authenticated instance owner.
   // A remote caller never supplies a window or receives a fabricated local one.
@@ -52,14 +52,14 @@ export function registerExecutionBoardIpc(): void {
 
   const withDesktopExactNativeAvailability = (record: ExecutionRecord, projection: ExecutionBoardProjection): ExecutionBoardProjection => {
     if (projection.recovery?.actions.exactNative.reason !== 'NATIVE_RESTORE_UNAVAILABLE') return projection;
-    const exactNative = exactNativeRecoveryAvailability(record) as { available: boolean; restorableSlots: number };
+    const exactNative = exactNativeRecoveryAvailability(record) as { available: boolean; restorableSlots: number; totalSlots?: number; reason?: 'PARTIAL_RESTORE' };
     return {
       ...projection,
       recovery: {
         ...projection.recovery,
         actions: {
           ...projection.recovery.actions,
-          exactNative: exactNative.available ? exactNative : { ...exactNative, reason: 'NATIVE_RESTORE_UNAVAILABLE' }
+          exactNative: exactNative.available ? exactNative : { ...exactNative, reason: exactNative.reason ?? 'NATIVE_RESTORE_UNAVAILABLE' }
         }
       }
     };
@@ -158,6 +158,8 @@ export function registerExecutionBoardIpc(): void {
       const owner = await executionBoardOwner(projectId, executionId);
       if (!owner) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
       const result = await squadExecutionService.dismiss(owner, projectId, executionId);
+      // A dismissed run is never relaunched, so a kept inferred plan file goes too.
+      if (result.ok) await retirePlanHandoff(projectId, executionId);
       return result.ok ? { ok: true, value: result.value } : { ok: false, code: result.code, message: result.message };
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution dismissal unavailable' })
@@ -289,6 +291,8 @@ export function registerExecutionBoardIpc(): void {
       // Interactive product routes identify the authenticated instance owner;
       // never derive authority from the requested execution record.
       const result = await squadExecutionService.recoverTimedOut('interactive:local', projectId, executionId, expectedStateVersion, clientRequestId);
+      // The successor runs under its own id; the timed-out run's kept plan file is no longer read.
+      if (result.ok) await retirePlanHandoff(projectId, executionId);
       return result.ok
         ? { ok: true, value: executionProjection(result.value) }
         : { ok: false, code: result.code, message: result.message };
@@ -309,15 +313,16 @@ export function registerExecutionBoardIpc(): void {
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'retained recovery unavailable' })
   );
 
-  handleFromCaller<[string, string, number, 'leave' | 'instruct' | 'delete' | 'force-delete', string | undefined], Result<true>>(
+  handleFromCaller<[string, string, number, 'leave' | 'instruct' | 'delete' | 'force-delete', string | undefined, string | undefined], Result<true>>(
     IPC.executionBoard.worktreeAction,
-    async (win, projectId, executionId, expectedStateVersion, action, instruction) => {
+    async (win, projectId, executionId, expectedStateVersion, action, instruction, personaId) => {
       if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
       if (!Number.isInteger(expectedStateVersion) || !['leave', 'instruct', 'delete', 'force-delete'].includes(action)
-        || instruction !== undefined && typeof instruction !== 'string') {
+        || instruction !== undefined && typeof instruction !== 'string'
+        || personaId !== undefined && (typeof personaId !== 'string' || !personaId.trim() || personaId.length > 200)) {
         return { ok: false, code: 'INVALID', message: 'invalid squad worktree action' };
       }
-      return squadWorktreeAction(projectId, executionId, expectedStateVersion, action, instruction);
+      return squadWorktreeAction(projectId, executionId, expectedStateVersion, action, instruction, personaId);
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'squad worktree action unavailable' })
   );

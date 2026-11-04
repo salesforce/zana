@@ -345,23 +345,21 @@ const BUILTIN: LlmPromptEntry[] = [
     id: 'builtin:session-summary',
     label: 'Session summary',
     description:
-      'Summarizes a single agent’s whole session — what it set out to do, what it did, and what’s left — for the terminal modal’s "Summarize to inbox" button. Reads the full conversation (not just the last line) and runs on a stronger model than the terse close-digest.',
+      'Summarizes a single agent’s whole session — what it set out to do, what it did, and what’s left — for the terminal modal’s "Summarize to inbox" button, and for Close with follow-up when Wrap up before closing is on. Reads the full conversation (not just the last line) and runs on a stronger model than the terse close-digest.',
     provider: 'claude-cli',
     model: 'sonnet',
     systemPrompt: [
-      'You summarize one coding agent’s work session for a human teammate who was not watching.',
-      'You are given a role-tagged transcript digest: "User:" lines are the human’s instructions,',
-      '"Assistant:" lines are what the agent said, and "Assistant ran:" lines list tools it used.',
+      "You summarize one coding agent's work session for a human teammate who was not watching.",
+      `You are given a role-tagged transcript digest: "User:" lines are the human's instructions, "Assistant:" lines are what the agent said, and "Assistant ran:" lines list tools it used. The digest keeps the most recent part of the session; when the agent's final message is its own wrap-up summary, treat it as the most reliable account of where the session ended.`,
       'Write a concise, faithful summary in Markdown with these sections, omitting any that do not apply:',
       '- **Goal** — one sentence: what the user asked for.',
-      '- **What it did** — 2 to 5 terse bullets of concrete work (files changed, decisions, findings). Reference specifics from the transcript, not generic filler.',
-      '- **Left / next** — bullets for anything unfinished, an open question it asked, or the obvious next step. Omit this section entirely if the work is clearly complete.',
-      'Rules: summarize only what the transcript shows — never invent steps, files, or outcomes.',
-      'No preamble, no sign-off, no code fences around the whole reply, no tool use. Plain Markdown only.',
-      'If the digest is too thin to tell what happened, say so in one honest sentence instead of padding.'
-    ].join(' '),
+      '- **What it did** — 2 to 6 terse bullets of concrete work (files changed, decisions, findings, messages sent). Reference specifics from the transcript, not generic filler.',
+      '- **Left / next** — bullets for anything unfinished, an open question it asked, something waiting on a person, or the obvious next step. Omit this section entirely if the work is clearly complete.',
+      'Rules: summarize only what the transcript shows — never invent steps, files, or outcomes. Keep the whole reply under 1,600 characters; shorten bullets rather than stopping mid-sentence. No preamble, no sign-off, no code fences around the whole reply, no tool use. Plain Markdown only. If the digest is too thin to tell what happened, say so in one honest sentence instead of padding.',
+      "After the summary, write two final lines. Line 1: exactly `Unfinished: yes` when the Left / next section is present, otherwise `Unfinished: no`. Line 2: exactly `Asks the user: yes` when the agent's final message asks the user a question or waits for their decision before it can finish, otherwise `Asks the user: no`."
+    ].join('\n'),
     userTemplate: 'Session transcript digest:\n\n{{digest}}\n\nSummary:',
-    maxOutputChars: 2_000,
+    maxOutputChars: 3_000,
     timeoutMs: 60_000
   },
   {

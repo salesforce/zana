@@ -4,7 +4,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { sqliteWorkerConfiguration } from '@zana-ai/zcc-db';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk';
-import { createPluginWorkerBridge } from './plugin-worker-bridge.js';
+import { createPluginWorkerBridge, PEER_WORKER_COMMIT_TIMEOUT_MS } from './plugin-worker-bridge.js';
+
+/**
+ * Silence tolerated from a ready plugin worker before it is declared hung. The worker runs off the server thread, so
+ * synchronous plugin work never stalls the app; this only has to separate a wedged worker from a busy one. Plugins
+ * legitimately do synchronous SQLite work (Design Docs journals a supported 24MiB paired document in ~0.75s on fast
+ * hardware), so the budget keeps several-fold headroom for slower machines and
+ * concurrent test runners.
+ */
+export const PLUGIN_HEARTBEAT_TIMEOUT_MS = 20_000;
+// Electron startup can launch several isolated workers while loading plugin manifests. Keep activation below the
+// product's 45s readiness probe, but allow one bounded contention window on shared CI runners.
+export const PLUGIN_STARTUP_TIMEOUT_MS = 40_000;
+// A 24MiB paired document needs multiple transient closure/hash copies during a rewrite.
+export const PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB = 384;
 
 let active = 0;
 function workerEntry(): string {
@@ -22,6 +36,7 @@ export function resolvePluginWorkerExecArgv(entry: string, requireFn = createReq
 export function createIsolatedPluginRuntime(options: {
   api: ZccPluginApi; entry: string; generation: number; databasePath: string;
   onFailure(error: Error): void; startupTimeoutMs?: number; heartbeatTimeoutMs?: number;
+  admitCall?: () => void;
 }) {
   if (active >= 64) throw new Error('Plugin worker capacity exceeded');
   const entry = workerEntry();
@@ -29,9 +44,12 @@ export function createIsolatedPluginRuntime(options: {
   // Encode without exposing filesystem access or authority from a caller's free text.
   // The proxy binds each function to this already authenticated API instance.
   let bridge!: ReturnType<typeof createPluginWorkerBridge>;
-  const worker = new Worker(entry, { execArgv, workerData: {}, resourceLimits: { maxOldGenerationSizeMb: 256, stackSizeMb: 4 } });
+  const worker = new Worker(entry, { execArgv, workerData: {}, resourceLimits: { maxOldGenerationSizeMb: PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB, stackSizeMb: 4 } });
   active++;
-  bridge = createPluginWorkerBridge(worker, 'server');
+  // One worker termination is shared by the bridge's commit fence and runtime disposal.
+  let workerTermination: Promise<number> | undefined;
+  const terminate = () => workerTermination ??= worker.terminate();
+  bridge = createPluginWorkerBridge(worker, 'server', { terminate, admitCall: options.admitCall });
   let stopped = false;
   let ready = false;
   let apiWaitStarted: number | undefined;
@@ -41,16 +59,31 @@ export function createIsolatedPluginRuntime(options: {
   const started = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
   // Disposal can race the installer attaching its await during application shutdown.
   void started.catch(() => {});
-  const startup = setTimeout(() => fail(new Error('Plugin factory timed out')), options.startupTimeoutMs ?? 10_000);
+  // Source installs also pay for uncached TypeScript graph loading before their factory runs. Compiled workers can
+  // contend with startup's other plugin workers, so both get one bounded allowance before activation degrades.
+  const startupTimeoutMs = options.startupTimeoutMs ?? PLUGIN_STARTUP_TIMEOUT_MS;
+  const startup = setTimeout(() => fail(new Error('Plugin factory timed out')), startupTimeoutMs);
+  // A synchronous peer commit blocks worker heartbeats, so it is exempt — but only for a bounded grace. The bridge
+  // terminates a commit at PEER_WORKER_COMMIT_TIMEOUT_MS; a count that stops moving past that (e.g. a failed
+  // termination) must not disable the watchdog forever. Any change in the count is progress and restarts the grace.
+  let commitCount = 0, commitProgressAt = 0;
+  const commitGraceActive = (now: number) => {
+    const count = bridge.activeCommits;
+    if (count !== commitCount) { commitCount = count; commitProgressAt = now; }
+    return count > 0 && now - commitProgressAt < PEER_WORKER_COMMIT_TIMEOUT_MS + 5_000;
+  };
   const watchdog = setInterval(() => {
-    if (ready && !(apiWaitStarted !== undefined && Date.now() - apiWaitStarted < 10_000) && Date.now() - lastHeartbeat > (options.heartbeatTimeoutMs ?? 1500)) fail(new Error('Plugin event loop stopped responding'));
+    if (ready && !commitGraceActive(Date.now()) && !(apiWaitStarted !== undefined && Date.now() - apiWaitStarted < 10_000) && Date.now() - lastHeartbeat > (options.heartbeatTimeoutMs ?? PLUGIN_HEARTBEAT_TIMEOUT_MS)) fail(new Error('Plugin event loop stopped responding'));
   }, 250);
   watchdog.unref();
-  function dispose(error = new Error('Plugin runtime stopped')) {
-    if (stopped) return;
+  let termination: Promise<void> | undefined;
+  function dispose(error = new Error('Plugin runtime stopped')): Promise<void> {
+    if (termination) return termination;
     stopped = true; clearTimeout(startup); clearInterval(watchdog);
     bridge.dispose(error); if (!ready) rejectReady(error);
-    void worker.terminate();
+    termination = terminate().then(() => undefined);
+    void termination.catch(() => {}); // Observe failure immediately; strict teardown still awaits the original promise.
+    return termination;
   }
   function fail(error: Error) { if (stopped) return; dispose(error); options.onFailure(error); }
   worker.on('message', message => {
@@ -94,5 +127,5 @@ export function createIsolatedPluginRuntime(options: {
     }),
     entry: options.entry, generation: options.generation, databasePath: options.databasePath, sqlite: sqliteWorkerConfiguration()
   }}); } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
-  return { started, dispose };
+  return { started, dispose, isBusy: () => bridge.isBusy(), get retainedFunctions() { return bridge.retainedFunctions; } };
 }

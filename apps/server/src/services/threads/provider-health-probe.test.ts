@@ -81,23 +81,45 @@ describe('probeInstalledProviderHealth', () => {
     handles.length = 0;
   });
 
-  it('coalesces concurrent health probes without caching later authentication/config changes', async () => {
+  it('lets a new host-effective command probe finish while the previous native command is still pending', async () => {
     handles.push(registerThreadProvider('provider-acp', { id: FIXTURE_ID, displayName: 'Fixture', visibility: 'installed', capabilities }));
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const call = vi.fn(async () => { await gate; return healthResult('ready'); });
+    let nativeCommand = '/host/old-wrapper';
+    const seen: string[] = [];
+    const call = vi.fn(async () => {
+      // The target host resolves its own native settings after the coordinator
+      // forwards the same static provider declaration on each request.
+      const effectiveCommand = nativeCommand;
+      seen.push(effectiveCommand);
+      if (effectiveCommand === '/host/old-wrapper') await gate;
+      return healthResult(effectiveCommand === '/host/old-wrapper' ? 'not_installed' : 'ready');
+    });
     const input = { hub: hub(call), artifacts };
     const first = probeInstalledProviderHealth(input);
-    const count = call.mock.calls.length;
-    const duplicate = probeInstalledProviderHealth(input);
-    expect(call.mock.calls.length).toBe(count);
+    nativeCommand = '/host/repaired-wrapper';
+    const current = probeInstalledProviderHealth(input);
+    expect(seen).toEqual(['/host/old-wrapper', '/host/repaired-wrapper']);
+    expect(call.mock.calls[0]).toEqual(call.mock.calls[1]);
+    expect(await current).toEqual({ [FIXTURE_ID]: true });
     release();
-    expect(await first).toEqual(await duplicate);
+    expect(await first).toEqual({ [FIXTURE_ID]: false });
     await probeInstalledProviderHealth(input);
-    expect(call.mock.calls.length).toBe(count * 2);
+    expect(call).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not resolve or contact a host when no installed providers are registered', async () => {
+    const call = vi.fn();
+    const resolve = vi.fn();
+    expect(await probeInstalledProviderHealth({ hub: hub(call, resolve), artifacts })).toEqual({});
+    expect(resolve).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
   });
 
   it('returns an empty map when the host cannot be resolved', async () => {
+    handles.push(registerThreadProvider('provider-acp', {
+      id: FIXTURE_ID, displayName: 'Fixture', visibility: 'installed', capabilities
+    }));
     const result = await probeInstalledProviderHealth({
       hub: hub(async () => {
         throw new Error('should not call');
@@ -107,6 +129,26 @@ describe('probeInstalledProviderHealth', () => {
       artifacts
     });
     expect(result).toEqual({});
+  });
+
+  it('keeps healthy provider results when another probe fails and retries the failed provider later', async () => {
+    const otherId = 'other-health-fixture';
+    for (const id of [FIXTURE_ID, otherId]) {
+      handles.push(registerThreadProvider('provider-acp', {
+        id, displayName: id, visibility: 'installed', capabilities
+      }));
+    }
+    let fail = true;
+    const call = vi.fn(async (input: Parameters<HostHub['callHostOnlineRpc']>[0]) => {
+      const command = input.command as { providerId: string };
+      if (fail && command.providerId === FIXTURE_ID) throw new Error('host probe timed out');
+      return healthResult('ready');
+    });
+    const input = { hub: hub(call), artifacts };
+    expect(await probeInstalledProviderHealth(input)).toEqual({ [otherId]: true });
+    fail = false;
+    expect(await probeInstalledProviderHealth(input)).toEqual({ [FIXTURE_ID]: true, [otherId]: true });
+    expect(call).toHaveBeenCalledTimes(4);
   });
 
   it('skips broken plugins so their unavailable bridges cannot fail healthy installation probes', async () => {

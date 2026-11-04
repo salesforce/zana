@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import { MessageSquareReply, Search } from 'lucide-react';
 import { product } from '../../lib/product-client.js';
 import { useData, useUi } from '../../store.js';
 import type { Project, ScheduledTask, ScheduleRunOutcome, ScheduleRunRef, ScheduleRunRow } from '@zana-ai/zcc-domain/product';
 import { canManualRetry, collectRunRows, isRecoveryMode, openRetryRefs } from '@zana-ai/zcc-domain/schedule-health';
 import { RunOutcomeBadge } from './RunOutcomeBadge.js';
+import { canResumeRun } from './resumeScheduledRun.js';
+import { isSessionAlive } from './schedulerUtils.js';
 // The filter bar reuses the overview's styled controls (`schedule-filters`, `schedule-search`).
 import './scheduler-overview.css';
 import './scheduler-problems.css';
@@ -30,6 +32,8 @@ export interface ProblemsPanelProps {
   onOpenSchedule: (taskId: string) => void;
   onOpenSession: (sessionId: string, projectId: string) => void;
   onTurnOnRecovery: () => void;
+  /** Reopen a closed run's conversation in a new tab. */
+  onResumeRun?: (task: ScheduledTask, runId: string) => void;
 }
 
 const rowKey = (row: ScheduleRunRow) => `${row.scheduleId}\u0000${row.run.id ?? ''}`;
@@ -42,7 +46,7 @@ function batches<T>(items: T[]): T[][] {
 }
 
 /** Workbench of run problems, computed from the live schedule list (never over IPC). */
-export function ProblemsPanel({ tasks, projects, onOpenSchedule, onOpenSession, onTurnOnRecovery }: ProblemsPanelProps) {
+export function ProblemsPanel({ tasks, projects, onOpenSchedule, onOpenSession, onTurnOnRecovery, onResumeRun }: ProblemsPanelProps) {
   const terminals = useData((s) => s.terminals);
   const pushToast = useUi((s) => s.pushToast);
   const [state, setState] = useState<StateFilter>('open');
@@ -279,6 +283,16 @@ export function ProblemsPanel({ tasks, projects, onOpenSchedule, onOpenSession, 
                           onClick={() => void doRetry([refOf(row)])}
                         >
                           {row.outcome === 'missed' ? 'Run now' : 'Retry'}
+                        </button>
+                      )}
+                      {onResumeRun && task && hasId && !isSessionAlive(terminals[row.projectId], row.run.sessionId) && canResumeRun(task, row.run) && (
+                        <button
+                          type="button"
+                          className="settings-btn"
+                          aria-label={`Resume ${runName}`}
+                          onClick={() => onResumeRun(task, row.run.id!)}
+                        >
+                          <MessageSquareReply size={13} /> Resume
                         </button>
                       )}
                       {isLive(row) && (

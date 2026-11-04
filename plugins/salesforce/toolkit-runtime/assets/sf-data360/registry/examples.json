@@ -1,0 +1,2897 @@
+{
+  "d360_query_sql": {
+    "params": {
+      "dataspaceName": "default",
+      "sql": "SELECT COUNT(*) AS n FROM \"ssot__TelemetryTraceSpan__dlm\""
+    },
+    "capability": "d360_query_sql"
+  },
+  "d360_dlo_describe": {
+    "params": { "dloName": "ObservabilitySpans__dll" },
+    "capability": "d360_dlo_describe"
+  },
+  "d360_data_streams_list": { "params": { "limit": 10 }, "capability": "d360_data_streams_list" },
+  "d360_semantic_models_list": {
+    "params": { "limit": 10 },
+    "capability": "d360_semantic_models_list"
+  },
+  "agent_observability.platform_trace_tree": {
+    "params": { "trace_id": "d18ba385fe932069deeb078f48d158d1" },
+    "capability": "agent_observability.platform_trace_tree"
+  },
+  "agent_observability.join_interaction_trace": {
+    "params": { "interaction_id": "64a3c2001eb45a35aebc575b743506c1" },
+    "capability": "agent_observability.join_interaction_trace"
+  },
+  "agent_observability.stdm_session_timeline": {
+    "params": { "session_id": "019e2218-ca4c-7ba4-b9ed-b3419bb1b34b", "limit": 100 },
+    "capability": "agent_observability.stdm_session_timeline"
+  },
+  "d360_metadata_search": {
+    "params": {
+      "body": {
+        "query": "AI Agent Interaction",
+        "pagination": { "limit": 5 },
+        "filters": [{ "field": "metadataType", "values": ["DataModelObject"] }]
+      }
+    },
+    "capability": "d360_metadata_search"
+  },
+  "d360_semantic_query": {
+    "params": { "body": { "semanticQuery": { "fields": [] } } },
+    "capability": "d360_semantic_query"
+  },
+  "d360_ci_create": {
+    "params": {
+      "body": {
+        "apiName": "Example_Score__cio",
+        "displayName": "Example Score",
+        "definitionType": "CALCULATED_METRIC",
+        "dataSpaceName": "default",
+        "publishScheduleInterval": "SYSTEM_MANAGED",
+        "expression": "SELECT SomeDmo__dlm.Id__c AS id__c, COUNT(*) AS count__c FROM SomeDmo__dlm GROUP BY SomeDmo__dlm.Id__c"
+      }
+    },
+    "capability": "d360_ci_create"
+  },
+  "d360_ci_run": { "params": { "ciName": "Example_Score__cio" }, "capability": "d360_ci_run" },
+  "d360_segment_create": {
+    "params": {
+      "body": {
+        "displayName": "Example Segment",
+        "segmentOnApiName": "ssot__Individual__dlm",
+        "dataSpaceName": "default",
+        "description": "Example segment payload placeholder. Replace criteria with verified DMO/CI fields before execution.",
+        "criteria": {
+          "type": "DirectAttributes",
+          "expression": "/* replace with verified segment criteria */"
+        }
+      }
+    },
+    "capability": "d360_segment_create"
+  },
+  "d360_segment_publish": {
+    "params": { "segmentId": "ExampleSegmentId" },
+    "capability": "d360_segment_publish"
+  },
+  "d360_activation_create": {
+    "params": {
+      "body": {
+        "displayName": "Example Activation",
+        "segmentApiName": "Example_Segment",
+        "activationTargetId": "ExampleTargetId",
+        "dataSpaceName": "default",
+        "description": "Example activation payload placeholder. Replace ids and target config with verified values before execution."
+      }
+    },
+    "capability": "d360_activation_create"
+  },
+  "d360_activation_target_create": {
+    "params": {
+      "body": {
+        "displayName": "Example Activation Target",
+        "targetType": "ExampleTargetType",
+        "connectionId": "ExampleConnectionId",
+        "dataSpaceName": "default",
+        "description": "Example activation target payload placeholder. Replace destination fields with values from the selected connector."
+      }
+    },
+    "capability": "d360_activation_target_create"
+  },
+  "d360_transform_create": {
+    "params": {
+      "body": {
+        "label": "Example Transform",
+        "name": "Example_Transform",
+        "type": "BATCH",
+        "creationType": "Custom",
+        "dataSpaceName": "default",
+        "description": "Example transform payload placeholder. Validate source and target object names before execution.",
+        "primarySource": "ExampleSource__dll",
+        "definition": {
+          "type": "SQL",
+          "version": "1.0",
+          "expression": "SELECT Id__c FROM ExampleSource__dll",
+          "targetDlo": "ExampleTarget__dll"
+        }
+      }
+    },
+    "capability": "d360_transform_create",
+    "variants": {
+      "dcsql_batch": {
+        "params": {
+          "body": {
+            "name": "customer_360_enrichment",
+            "label": "Customer 360 Enrichment",
+            "type": "batch",
+            "definition": {
+              "type": "DCSQL",
+              "version": "1.0",
+              "manifest": {
+                "nodes": {
+                  "account_base": {
+                    "name": "account_base",
+                    "compiled_code": "SELECT \"Id__c\", \"Name__c\", \"Industry__c\", \"AnnualRevenue__c\", \"CreatedDate__c\" FROM \"Account__dlm\"",
+                    "config": { "materialized": "ephemeral" }
+                  },
+                  "opportunity_metrics": {
+                    "name": "opportunity_metrics",
+                    "compiled_code": "SELECT \"AccountId__c\", COUNT(*) as \"OpportunityCount__c\", SUM(\"Amount__c\") as \"TotalPipeline__c\", AVG(\"Amount__c\") as \"AvgDealSize__c\", MAX(\"CloseDate__c\") as \"LastOpportunityDate__c\" FROM \"Opportunity__dlm\" WHERE \"IsClosed__c\" = false GROUP BY \"AccountId__c\"",
+                    "config": { "materialized": "ephemeral" }
+                  },
+                  "case_metrics": {
+                    "name": "case_metrics",
+                    "compiled_code": "SELECT \"AccountId__c\", COUNT(*) as \"OpenCaseCount__c\", COUNT(CASE WHEN \"Priority__c\" = 'High' THEN 1 END) as \"HighPriorityCases__c\", AVG(DATEDIFF(day, \"CreatedDate__c\", COALESCE(\"ClosedDate__c\", CURRENT_DATE))) as \"AvgCaseResolutionDays__c\" FROM \"Case__dlm\" GROUP BY \"AccountId__c\"",
+                    "config": { "materialized": "ephemeral" }
+                  },
+                  "activity_summary": {
+                    "name": "activity_summary",
+                    "compiled_code": "SELECT \"AccountId__c\", COUNT(*) as \"ActivityCount__c\", MAX(\"ActivityDate__c\") as \"LastActivityDate__c\", COUNT(CASE WHEN \"ActivityType__c\" = 'Email' THEN 1 END) as \"EmailCount__c\", COUNT(CASE WHEN \"ActivityType__c\" = 'Meeting' THEN 1 END) as \"MeetingCount__c\" FROM \"Activity__dlm\" WHERE \"ActivityDate__c\" >= DATEADD(month, -6, CURRENT_DATE) GROUP BY \"AccountId__c\"",
+                    "config": { "materialized": "ephemeral" }
+                  },
+                  "customer_360_enriched": {
+                    "name": "customer_360_enriched",
+                    "relation_name": "Customer_360_Enriched__dll",
+                    "config": { "materialized": "table", "writeMode": "OVERWRITE" },
+                    "compiled_code": "SELECT a.\"Id__c\", a.\"Name__c\", a.\"Industry__c\", a.\"AnnualRevenue__c\", COALESCE(o.\"OpportunityCount__c\", 0) as \"OpportunityCount__c\", COALESCE(o.\"TotalPipeline__c\", 0) as \"TotalPipeline__c\", COALESCE(o.\"AvgDealSize__c\", 0) as \"AvgDealSize__c\", o.\"LastOpportunityDate__c\", COALESCE(c.\"OpenCaseCount__c\", 0) as \"OpenCaseCount__c\", COALESCE(c.\"HighPriorityCases__c\", 0) as \"HighPriorityCases__c\", c.\"AvgCaseResolutionDays__c\", COALESCE(act.\"ActivityCount__c\", 0) as \"RecentActivityCount__c\", act.\"LastActivityDate__c\", COALESCE(act.\"EmailCount__c\", 0) as \"EmailCount__c\", COALESCE(act.\"MeetingCount__c\", 0) as \"MeetingCount__c\", CASE WHEN COALESCE(act.\"ActivityCount__c\", 0) >= 10 AND COALESCE(o.\"TotalPipeline__c\", 0) > 100000 THEN 'High' WHEN COALESCE(act.\"ActivityCount__c\", 0) >= 5 OR COALESCE(o.\"TotalPipeline__c\", 0) > 50000 THEN 'Medium' ELSE 'Low' END as \"EngagementScore__c\", CURRENT_TIMESTAMP as \"EnrichmentTimestamp__c\" FROM account_base a LEFT JOIN opportunity_metrics o ON a.\"Id__c\" = o.\"AccountId__c\" LEFT JOIN case_metrics c ON a.\"Id__c\" = c.\"AccountId__c\" LEFT JOIN activity_summary act ON a.\"Id__c\" = act.\"AccountId__c\"",
+                    "depends_on": {
+                      "nodes": [
+                        "account_base",
+                        "opportunity_metrics",
+                        "case_metrics",
+                        "activity_summary"
+                      ]
+                    }
+                  }
+                }
+              },
+              "outputDataObjects": [
+                {
+                  "name": "Customer_360_Enriched__dll",
+                  "label": "Customer 360 Enriched",
+                  "category": "Profile",
+                  "type": "dataLakeObject",
+                  "fields": [
+                    {
+                      "name": "Id__c",
+                      "label": "Account ID",
+                      "type": "Text",
+                      "isPrimaryKey": true
+                    },
+                    {
+                      "name": "Name__c",
+                      "label": "Account Name",
+                      "type": "Text",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "Industry__c",
+                      "label": "Industry",
+                      "type": "Text",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "AnnualRevenue__c",
+                      "label": "Annual Revenue",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "OpportunityCount__c",
+                      "label": "Opportunity Count",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "TotalPipeline__c",
+                      "label": "Total Pipeline",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "AvgDealSize__c",
+                      "label": "Average Deal Size",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "LastOpportunityDate__c",
+                      "label": "Last Opportunity Date",
+                      "type": "DateTime",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "OpenCaseCount__c",
+                      "label": "Open Case Count",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "HighPriorityCases__c",
+                      "label": "High Priority Cases",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "AvgCaseResolutionDays__c",
+                      "label": "Avg Case Resolution Days",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "RecentActivityCount__c",
+                      "label": "Recent Activity Count",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "LastActivityDate__c",
+                      "label": "Last Activity Date",
+                      "type": "DateTime",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "EmailCount__c",
+                      "label": "Email Count",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "MeetingCount__c",
+                      "label": "Meeting Count",
+                      "type": "Number",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "EngagementScore__c",
+                      "label": "Engagement Score",
+                      "type": "Text",
+                      "isPrimaryKey": false
+                    },
+                    {
+                      "name": "EnrichmentTimestamp__c",
+                      "label": "Enrichment Timestamp",
+                      "type": "DateTime",
+                      "isPrimaryKey": false
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "capability": "d360_transform_create",
+        "variant": "dcsql_batch",
+        "sourceExample": "d360_transform_create_dcsql_batch"
+      },
+      "sql_streaming": {
+        "params": {
+          "body": {
+            "name": "streaming_transform",
+            "label": "streaming transform",
+            "type": "streaming",
+            "definition": {
+              "type": "SQL",
+              "version": "63.0",
+              "expression": "SELECT Account_Home__dll.Id__c as Id__c FROM Account_Home__dll",
+              "targetDlo": "Account_Home_Target__dll",
+              "outputDataObjects": [
+                {
+                  "category": "Profile",
+                  "fields": [
+                    { "isPrimaryKey": true, "label": "ID", "name": "Id__c", "type": "Text" }
+                  ],
+                  "label": "Account Home Target",
+                  "name": "Account_Home_Target__dll",
+                  "type": "dataLakeObject"
+                }
+              ]
+            }
+          }
+        },
+        "capability": "d360_transform_create",
+        "variant": "sql_streaming",
+        "sourceExample": "d360_transform_create_sql_streaming"
+      }
+    }
+  },
+  "d360_transform_schedule_set": {
+    "params": {
+      "transformId": "ExampleTransformId",
+      "body": {
+        "frequency": "Daily",
+        "time": { "hour": 2, "minute": 0, "timeZone": "America/Los_Angeles" }
+      }
+    },
+    "capability": "d360_transform_schedule_set"
+  },
+  "d360_dataaction_target_create": {
+    "params": {
+      "body": {
+        "apiName": "Example_Data_Action_Target",
+        "label": "Example Data Action Target",
+        "type": "WebHook",
+        "subType": "Rest",
+        "externalRecordIdentifier": "example-target-external-id",
+        "config": {
+          "targetEndpoint": "https://example.invalid/data-action",
+          "apiContract": "ExampleContract"
+        }
+      }
+    },
+    "capability": "d360_dataaction_target_create"
+  },
+  "d360_dataaction_create": {
+    "params": {
+      "body": {
+        "dataActionName": "Example Data Action",
+        "developerName": "Example_Data_Action",
+        "dataspace": "default",
+        "masterLabel": "Example Data Action",
+        "description": "Example data action payload placeholder. Verify source, condition, projected fields, and target names before execution.",
+        "actionConditionExpression": "1 = 1",
+        "eventTriggerCondition": "ON_CREATE",
+        "externalRecordIdentifier": "example-action-external-id",
+        "subscriberKey": "ExampleSubscriberKey",
+        "isRealTimeAction": true,
+        "shouldProcessDayZero": false,
+        "shouldTriggerEventOnlyFirstTime": true,
+        "dataActionSources": [{ "sourceName": "ExampleSource__dlm" }],
+        "actionConditions": [],
+        "dataActionTargetNames": ["Example_Data_Action_Target"],
+        "dataActionProjectedFields": [],
+        "dataActionEnrichmentProperties": []
+      }
+    },
+    "capability": "d360_dataaction_create"
+  },
+  "d360_search_index_create": {
+    "params": {
+      "body": {
+        "label": "Example Search Index",
+        "developerName": "Example_Search_Index",
+        "description": "Example search index payload placeholder. Replace DMO and configuration ids with values from d360_search_index_config.",
+        "sourceDmoDeveloperName": "ExampleSource__dlm",
+        "chunkDmoName": "Example Chunk DMO",
+        "chunkDmoDeveloperName": "Example_Chunk",
+        "vectorDmoName": "Example Vector DMO",
+        "vectorDmoDeveloperName": "Example_Vector",
+        "searchType": "HYBRID",
+        "chunkingConfiguration": {
+          "fieldLevelConfigurations": [
+            {
+              "sourceDmoDeveloperName": "ExampleSource__dlm",
+              "sourceDmoFieldDeveloperName": "ExampleText__c",
+              "decorators": [],
+              "config": { "id": "passage_extraction", "userValues": [] }
+            }
+          ]
+        },
+        "vectorEmbedding": { "vectorEmbeddingRelatedFields": [] },
+        "vectorEmbeddingConfiguration": {
+          "embeddingModel": { "id": "example_embedding_model", "userValues": [] },
+          "index": { "id": "HNSW", "userValues": [] },
+          "similarityMetric": "COSINE"
+        },
+        "transformConfigurations": []
+      }
+    },
+    "capability": "d360_search_index_create"
+  },
+  "d360_retriever_create": {
+    "params": {
+      "body": {
+        "label": "Example Retriever",
+        "description": "Example retriever payload placeholder. Replace the search index and output field references before execution.",
+        "dataSourceType": "SearchIndex",
+        "dataSpaces": ["default"],
+        "configuration": {
+          "queryType": "NoCode",
+          "input": { "id": "ExampleSearchIndexId" },
+          "numberOfResults": 5,
+          "isActive": true,
+          "isCitationEnabled": false,
+          "outputFields": [
+            {
+              "relatedDmoName": "ExampleSource__dlm",
+              "relatedDmoFieldName": "ExampleText__c",
+              "label": "Example Text",
+              "relationships": []
+            }
+          ]
+        }
+      }
+    },
+    "capability": "d360_retriever_create"
+  },
+  "d360_retriever_config_create": {
+    "params": {
+      "retrieverIdOrName": "ExampleRetriever",
+      "body": {
+        "queryType": "NoCode",
+        "input": { "id": "ExampleSearchIndexId" },
+        "numberOfResults": 5,
+        "isActive": true,
+        "isCitationEnabled": false,
+        "outputFields": [
+          {
+            "relatedDmoName": "ExampleSource__dlm",
+            "relatedDmoFieldName": "ExampleText__c",
+            "label": "Example Text",
+            "relationships": []
+          }
+        ]
+      }
+    },
+    "capability": "d360_retriever_config_create"
+  },
+  "d360_datastream_create": {
+    "params": {
+      "body": {
+        "name": "Example_Data_Stream",
+        "label": "Example Data Stream",
+        "datastreamType": "EXTERNAL",
+        "connectorInfo": {
+          "connectorType": "DataConnector",
+          "connectorDetails": { "name": "ExampleConnection" }
+        },
+        "dataLakeObjectInfo": {
+          "name": "Example_Data_Stream__dll",
+          "label": "Example Data Stream",
+          "category": "Profile",
+          "dataspaceInfo": [{ "name": "default" }],
+          "dataLakeFieldInputRepresentations": [
+            { "name": "Id__c", "label": "Id", "dataType": "Text", "isPrimaryKey": true },
+            { "name": "Name__c", "label": "Name", "dataType": "Text", "isPrimaryKey": false }
+          ]
+        },
+        "sourceFields": [
+          { "name": "Id", "dataType": "Text" },
+          { "name": "Name", "dataType": "Text" }
+        ],
+        "mappings": [
+          { "sourceFieldLabel": "Id", "targetFieldName": "Id__c" },
+          { "sourceFieldLabel": "Name", "targetFieldName": "Name__c" }
+        ],
+        "refreshConfig": { "refreshMode": "TOTAL_REPLACE" }
+      }
+    },
+    "variants": {
+      "csv": {
+        "sourceExample": "d360_datastream_create_csv",
+        "capability": "d360_datastream_create",
+        "variant": "csv",
+        "params": {
+          "body": {
+            "advancedAttributes": {
+              "fileType": "CSV",
+              "delimiter": ",",
+              "fileName": "customers-100.csv"
+            },
+            "connectorInfo": {
+              "connectorType": "UploadedFiles",
+              "connectorDetails": { "name": "UploadedFiles" }
+            },
+            "dataAccessMode": "INGEST",
+            "dataLakeObjectInfo": {
+              "category": "Profile",
+              "dataLakeFieldInfoRepresentation": [
+                {
+                  "name": "Customer_Id",
+                  "dataType": "Text",
+                  "label": "Customer Id",
+                  "isPrimaryKey": true
+                },
+                {
+                  "name": "First_Name",
+                  "dataType": "Text",
+                  "label": "First Name",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "Last_Name",
+                  "dataType": "Text",
+                  "label": "Last Name",
+                  "isPrimaryKey": false
+                },
+                { "name": "Email", "dataType": "Text", "label": "Email", "isPrimaryKey": false },
+                { "name": "City", "dataType": "Text", "label": "City", "isPrimaryKey": false },
+                {
+                  "name": "Country",
+                  "dataType": "Text",
+                  "label": "Country",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "Subscription_Date",
+                  "dataType": "Date",
+                  "label": "Subscription Date",
+                  "isPrimaryKey": false
+                }
+              ]
+            },
+            "label": "Customer CSV Upload",
+            "refreshConfig": {
+              "frequency": { "hours": [], "refreshDayOfMonth": [] },
+              "hasHeaders": false,
+              "isAccelerationEnabled": false,
+              "refreshMode": "TOTAL_REPLACE",
+              "shouldFetchImmediately": false,
+              "shouldTreatMissingFilesAsFailures": false
+            },
+            "_note": "CSV uploads use UploadedFiles connector. refreshMode TOTAL_REPLACE replaces all data on each refresh. Field names come from CSV headers."
+          }
+        }
+      }
+    },
+    "capability": "d360_datastream_create"
+  },
+  "d360_datastream_create_sfdc": {
+    "params": {
+      "body": {
+        "name": "Account_Home",
+        "label": "Account Home",
+        "datastreamType": "SFDC",
+        "connectorInfo": {
+          "connectorType": "SalesforceDotCom",
+          "connectorDetails": { "name": "SalesforceDotCom_Home", "sourceObject": "Account" }
+        },
+        "dataLakeObjectInfo": {
+          "name": "Account_Home",
+          "label": "Account Home",
+          "category": "Profile",
+          "dataspaceInfo": [{ "name": "default" }]
+        }
+      }
+    },
+    "variants": {
+      "other": {
+        "sourceExample": "d360_datastream_create_other",
+        "capability": "d360_datastream_create_sfdc",
+        "variant": "other",
+        "params": {
+          "body": {
+            "connectorInfo": {
+              "connectorType": "SalesforceDotCom",
+              "connectorDetails": {
+                "sourceObject": "Product2",
+                "name": "SalesforceDotCom_00D000000000000"
+              }
+            },
+            "dataAccessMode": "INGEST",
+            "dataLakeObjectInfo": {
+              "category": "Other",
+              "dataLakeFieldInfoRepresentation": [
+                { "name": "Id", "dataType": "Text", "label": "Product ID", "isPrimaryKey": true },
+                {
+                  "name": "Name",
+                  "dataType": "Text",
+                  "label": "Product Name",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "ProductCode",
+                  "dataType": "Text",
+                  "label": "Product Code",
+                  "isPrimaryKey": false
+                },
+                { "name": "Family", "dataType": "Text", "label": "Family", "isPrimaryKey": false },
+                {
+                  "name": "IsActive",
+                  "dataType": "Text",
+                  "label": "Is Active",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "CreatedDate",
+                  "dataType": "DateTime",
+                  "label": "Created Date",
+                  "isPrimaryKey": false
+                }
+              ]
+            },
+            "label": "Product Catalog Stream",
+            "refreshConfig": {
+              "frequency": { "hours": [], "refreshDayOfMonth": [], "frequencyType": "BATCH" },
+              "hasHeaders": false,
+              "isAccelerationEnabled": false,
+              "refreshMode": "UPSERT",
+              "shouldFetchImmediately": false,
+              "shouldTreatMissingFilesAsFailures": false
+            },
+            "_note": "Other category is for reference/lookup data that doesn't fit Profile or Engagement. No eventDateColumn needed."
+          }
+        }
+      },
+      "engagement": {
+        "sourceExample": "d360_datastream_create_sfdc_engagement",
+        "capability": "d360_datastream_create_sfdc",
+        "variant": "engagement",
+        "params": {
+          "body": {
+            "connectorInfo": {
+              "connectorType": "SalesforceDotCom",
+              "connectorDetails": {
+                "sourceObject": "Task",
+                "name": "SalesforceDotCom_00D000000000000"
+              }
+            },
+            "dataAccessMode": "INGEST",
+            "dataLakeObjectInfo": {
+              "category": "Engagement",
+              "eventDateColumn": "CreatedDate",
+              "dataLakeFieldInfoRepresentation": [
+                { "name": "Id", "dataType": "Text", "label": "Task ID", "isPrimaryKey": true },
+                { "name": "WhoId", "dataType": "Text", "label": "Who ID", "isPrimaryKey": false },
+                {
+                  "name": "Subject",
+                  "dataType": "Text",
+                  "label": "Subject",
+                  "isPrimaryKey": false
+                },
+                { "name": "Status", "dataType": "Text", "label": "Status", "isPrimaryKey": false },
+                {
+                  "name": "CreatedDate",
+                  "dataType": "DateTime",
+                  "label": "Created Date",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "ActivityDate",
+                  "dataType": "DateTime",
+                  "label": "Activity Date",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "LastModifiedDate",
+                  "dataType": "DateTime",
+                  "label": "Last Modified Date",
+                  "isPrimaryKey": false
+                }
+              ]
+            },
+            "label": "Task Engagement Stream",
+            "refreshConfig": {
+              "frequency": { "hours": [], "refreshDayOfMonth": [], "frequencyType": "BATCH" },
+              "hasHeaders": false,
+              "isAccelerationEnabled": false,
+              "refreshMode": "UPSERT",
+              "shouldFetchImmediately": false,
+              "shouldTreatMissingFilesAsFailures": false
+            },
+            "_note": "CRITICAL: Engagement streams MUST set eventDateColumn to an immutable date field (like CreatedDate). Do NOT use LastModifiedDate — it changes on updates and breaks time-series partitioning. Use d360_smart_datastream to auto-select the best field."
+          }
+        }
+      },
+      "profile": {
+        "sourceExample": "d360_datastream_create_sfdc_profile",
+        "capability": "d360_datastream_create_sfdc",
+        "variant": "profile",
+        "params": {
+          "body": {
+            "connectorInfo": {
+              "connectorType": "SalesforceDotCom",
+              "connectorDetails": {
+                "sourceObject": "Account",
+                "name": "SalesforceDotCom_00D000000000000"
+              }
+            },
+            "dataAccessMode": "INGEST",
+            "dataLakeObjectInfo": {
+              "category": "Profile",
+              "dataLakeFieldInfoRepresentation": [
+                { "name": "Id", "dataType": "Text", "label": "Account ID", "isPrimaryKey": true },
+                {
+                  "name": "Name",
+                  "dataType": "Text",
+                  "label": "Account Name",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "Industry",
+                  "dataType": "Text",
+                  "label": "Industry",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "AnnualRevenue",
+                  "dataType": "Number",
+                  "label": "Annual Revenue",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "BillingCountry",
+                  "dataType": "Text",
+                  "label": "Billing Country",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "CreatedDate",
+                  "dataType": "DateTime",
+                  "label": "Created Date",
+                  "isPrimaryKey": false
+                },
+                {
+                  "name": "LastModifiedDate",
+                  "dataType": "DateTime",
+                  "label": "Last Modified Date",
+                  "isPrimaryKey": false
+                }
+              ]
+            },
+            "label": "Account Data Stream",
+            "refreshConfig": {
+              "frequency": { "hours": [], "refreshDayOfMonth": [], "frequencyType": "BATCH" },
+              "hasHeaders": false,
+              "isAccelerationEnabled": false,
+              "refreshMode": "UPSERT",
+              "shouldFetchImmediately": false,
+              "shouldTreatMissingFilesAsFailures": false
+            },
+            "_note": "Profile category streams do NOT need an eventDateColumn. The refreshMode UPSERT means new records are inserted and existing records are updated based on the primary key."
+          }
+        }
+      }
+    },
+    "capability": "d360_datastream_create_sfdc"
+  },
+  "d360_datastream_create_snowflake": {
+    "params": {
+      "body": {
+        "name": "Example_Snowflake_Stream",
+        "label": "Example Snowflake Stream",
+        "datastreamType": "EXTERNAL",
+        "connectorInfo": {
+          "connectorType": "DataConnector",
+          "connectorDetails": { "name": "ExampleSnowflakeConnection" }
+        },
+        "dataLakeObjectInfo": {
+          "name": "Example_Snowflake_Stream__dll",
+          "label": "Example Snowflake Stream",
+          "category": "Profile",
+          "dataspaceInfo": [{ "name": "default" }],
+          "dataLakeFieldInputRepresentations": [
+            { "name": "Id__c", "label": "Id", "dataType": "Text", "isPrimaryKey": true },
+            { "name": "Name__c", "label": "Name", "dataType": "Text", "isPrimaryKey": false }
+          ]
+        },
+        "mappings": [
+          { "sourceFieldLabel": "ID", "targetFieldName": "Id__c" },
+          { "sourceFieldLabel": "NAME", "targetFieldName": "Name__c" }
+        ],
+        "sourceFields": [
+          { "name": "ID", "dataType": "Text" },
+          { "name": "NAME", "dataType": "Text" }
+        ],
+        "refreshConfig": { "refreshMode": "TOTAL_REPLACE" },
+        "advancedAttributes": {
+          "database": "EXAMPLE_DB",
+          "schema": "PUBLIC",
+          "object": "EXAMPLE_TABLE"
+        },
+        "dataAccessMode": "Direct_Access"
+      }
+    },
+    "capability": "d360_datastream_create_snowflake"
+  },
+  "d360_datastream_run": {
+    "params": { "dataStreamId": "ExampleDataStreamId" },
+    "capability": "d360_datastream_run"
+  },
+  "d360_datastream_create_aws_s3": {
+    "params": {
+      "body": {
+        "name": "Example_Aws_S3_Stream",
+        "label": "Example AWS S3 Stream",
+        "datastreamType": "CONNECTORSFRAMEWORK",
+        "connectorInfo": {
+          "connectorType": "DataConnector",
+          "connectorDetails": { "name": "ExampleAwsS3Connection" }
+        },
+        "dataLakeObjectInfo": {
+          "name": "Example_Aws_S3_Stream__dll",
+          "label": "Example AWS S3 Stream",
+          "category": "Profile",
+          "dataspaceInfo": [{ "name": "default" }],
+          "dataLakeFieldInputRepresentations": [
+            { "name": "Id__c", "label": "Id", "dataType": "Text", "isPrimaryKey": true },
+            { "name": "Name__c", "label": "Name", "dataType": "Text", "isPrimaryKey": false }
+          ]
+        },
+        "sourceFields": [
+          { "name": "Id", "dataType": "Text" },
+          { "name": "Name", "dataType": "Text" }
+        ],
+        "mappings": [
+          { "sourceFieldLabel": "Id", "targetFieldName": "Id__c" },
+          { "sourceFieldLabel": "Name", "targetFieldName": "Name__c" }
+        ],
+        "refreshConfig": { "refreshMode": "TOTAL_REPLACE" },
+        "advancedAttributes": {
+          "fileType": "CSV",
+          "importDirectory": "/example/",
+          "fileName": "example.csv",
+          "delimiter": ",",
+          "headerlessRetrievalEnabled": false
+        }
+      }
+    },
+    "capability": "d360_datastream_create_aws_s3"
+  },
+  "d360_dmo_create": {
+    "params": {
+      "body": {
+        "name": "Example_Profile",
+        "label": "Example Profile",
+        "category": "Profile",
+        "dataSpaceName": "default",
+        "description": "Example DMO payload placeholder. Do not include __dlm in the name; verify field names and types before execution.",
+        "fields": [
+          {
+            "name": "Id__c",
+            "label": "Id",
+            "dataType": "Text",
+            "isPrimaryKey": true,
+            "creationType": "Custom"
+          },
+          {
+            "name": "Name__c",
+            "label": "Name",
+            "dataType": "Text",
+            "isPrimaryKey": false,
+            "creationType": "Custom"
+          }
+        ]
+      }
+    },
+    "variants": {
+      "engagement": {
+        "sourceExample": "d360_dmo_create_engagement",
+        "capability": "d360_dmo_create",
+        "variant": "engagement",
+        "params": {
+          "body": {
+            "name": "WebActivity__dlm",
+            "label": "Web Activity Events",
+            "objectType": "Custom",
+            "objectCategory": "Engagement",
+            "fields": [
+              {
+                "name": "Id__c",
+                "label": "Activity ID",
+                "dataType": "Text",
+                "isPrimaryKey": true,
+                "isRequired": true
+              },
+              {
+                "name": "ContactId__c",
+                "label": "Contact ID",
+                "dataType": "Text",
+                "isRequired": true
+              },
+              { "label": "Page URL", "name": "PageUrl__c", "dataType": "Text" },
+              { "label": "Event Type", "name": "EventType__c", "dataType": "Text" },
+              { "label": "Created Date", "name": "CreatedDate__c", "dataType": "DateTime" },
+              {
+                "precision": 10,
+                "name": "Duration__c",
+                "scale": 0,
+                "label": "Duration (seconds)",
+                "dataType": "Number"
+              }
+            ],
+            "_note": "For Engagement DMOs, set eventDateColumn to an immutable DateTime field like CreatedDate__c when creating the data stream"
+          }
+        }
+      },
+      "other": {
+        "sourceExample": "d360_dmo_create_other",
+        "capability": "d360_dmo_create",
+        "variant": "other",
+        "params": {
+          "body": {
+            "name": "ProductCatalog__dlm",
+            "label": "Product Catalog",
+            "objectType": "Custom",
+            "objectCategory": "Other",
+            "fields": [
+              {
+                "name": "Id__c",
+                "label": "Product ID",
+                "dataType": "Text",
+                "isPrimaryKey": true,
+                "isRequired": true
+              },
+              {
+                "name": "ProductName__c",
+                "label": "Product Name",
+                "dataType": "Text",
+                "isRequired": true
+              },
+              { "label": "Category", "name": "Category__c", "dataType": "Text" },
+              {
+                "precision": 18,
+                "name": "Price__c",
+                "scale": 2,
+                "label": "Price",
+                "dataType": "Number"
+              },
+              { "label": "Is Active", "name": "IsActive__c", "dataType": "Text" }
+            ]
+          }
+        }
+      },
+      "profile": {
+        "sourceExample": "d360_dmo_create_profile",
+        "capability": "d360_dmo_create",
+        "variant": "profile",
+        "params": {
+          "body": {
+            "name": "CustomMetric__dlm",
+            "label": "Custom Metrics Object",
+            "objectType": "Custom",
+            "objectCategory": "Calculated",
+            "fields": [
+              {
+                "name": "Id__c",
+                "isPrimaryKey": true,
+                "isRequired": true,
+                "label": "ID",
+                "dataType": "Text"
+              },
+              {
+                "name": "MetricName__c",
+                "label": "Metric Name",
+                "dataType": "Text",
+                "isRequired": true
+              },
+              {
+                "precision": 18,
+                "name": "MetricValue__c",
+                "scale": 2,
+                "label": "Metric Value",
+                "dataType": "Number"
+              },
+              { "label": "Calculation Date", "name": "CalculationDate__c", "dataType": "DateTime" }
+            ]
+          }
+        }
+      }
+    },
+    "capability": "d360_dmo_create"
+  },
+  "d360_dmo_update": {
+    "params": {
+      "dmoName": "Example_Profile__dlm",
+      "body": { "label": "Example Profile Updated", "description": "Dry-run placeholder only" }
+    },
+    "capability": "d360_dmo_update"
+  },
+  "d360_dlo_create": {
+    "params": {
+      "body": {
+        "name": "Example_Profile__dll",
+        "label": "Example Profile",
+        "category": "Profile",
+        "dataSpaceName": "default",
+        "description": "Example DLO payload placeholder. Verify fields, category, and dataspace before execution.",
+        "dataspaceInfo": [{ "name": "default" }],
+        "dataLakeFieldInputRepresentations": [
+          { "name": "Id__c", "label": "Id", "dataType": "Text", "isPrimaryKey": true },
+          { "name": "Name__c", "label": "Name", "dataType": "Text", "isPrimaryKey": false }
+        ]
+      }
+    },
+    "capability": "d360_dlo_create"
+  },
+  "d360_dlo_update": {
+    "params": {
+      "dloName": "Example_Profile__dll",
+      "body": {
+        "label": "Example Profile Updated",
+        "dataLakeFieldInputRepresentations": [
+          { "name": "Id__c", "label": "Id", "dataType": "Text", "isPrimaryKey": true },
+          { "name": "Name__c", "label": "Name", "dataType": "Text", "isPrimaryKey": false }
+        ]
+      }
+    },
+    "capability": "d360_dlo_update"
+  },
+  "d360_dmo_mapping_create": {
+    "params": {
+      "body": {
+        "sourceEntityDeveloperName": "Example_Profile__dll",
+        "targetEntityDeveloperName": "Example_Profile__dlm",
+        "fieldMapping": [
+          { "sourceFieldDeveloperName": "Id__c", "targetFieldDeveloperName": "Id__c" },
+          { "sourceFieldDeveloperName": "Name__c", "targetFieldDeveloperName": "Name__c" }
+        ]
+      }
+    },
+    "variants": {
+      "contact": {
+        "sourceExample": "d360_dmo_mapping_create_contact",
+        "capability": "d360_dmo_mapping_create",
+        "variant": "contact",
+        "params": {
+          "body": {
+            "sourceEntityDeveloperName": "Contact_Home__dll",
+            "targetEntityDeveloperName": "ssot__Individual__dlm",
+            "fieldMapping": [
+              { "sourceFieldDeveloperName": "Id__c", "targetFieldDeveloperName": "ssot__Id__c" },
+              {
+                "sourceFieldDeveloperName": "FirstName__c",
+                "targetFieldDeveloperName": "ssot__FirstName__c"
+              },
+              {
+                "sourceFieldDeveloperName": "LastName__c",
+                "targetFieldDeveloperName": "ssot__LastName__c"
+              },
+              {
+                "sourceFieldDeveloperName": "Salutation__c",
+                "targetFieldDeveloperName": "ssot__Salutation__c"
+              },
+              {
+                "sourceFieldDeveloperName": "Birthdate__c",
+                "targetFieldDeveloperName": "ssot__BirthDate__c"
+              },
+              {
+                "sourceFieldDeveloperName": "Title__c",
+                "targetFieldDeveloperName": "ssot__TitleName__c"
+              }
+            ]
+          }
+        }
+      },
+      "contact_point_email": {
+        "sourceExample": "d360_dmo_mapping_create_contact_point_email",
+        "capability": "d360_dmo_mapping_create",
+        "variant": "contact_point_email",
+        "params": {
+          "body": {
+            "sourceEntityDeveloperName": "Contact_Home__dll",
+            "targetEntityDeveloperName": "ssot__ContactPointEmail__dlm",
+            "fieldMapping": [
+              { "sourceFieldDeveloperName": "Id__c", "targetFieldDeveloperName": "ssot__Id__c" },
+              {
+                "sourceFieldDeveloperName": "Email__c",
+                "targetFieldDeveloperName": "ssot__EmailAddress__c"
+              },
+              {
+                "sourceFieldDeveloperName": "Id__c",
+                "targetFieldDeveloperName": "ssot__PartyId__c"
+              }
+            ],
+            "_note": "For ContactPointEmail, map the source person ID to both ssot__Id__c and ssot__PartyId__c. The PartyId links the email to the Individual for identity resolution. KQ_PartyId__c is auto-added."
+          }
+        }
+      }
+    },
+    "capability": "d360_dmo_mapping_create"
+  },
+  "d360_dmo_mapping_update": {
+    "params": {
+      "mappingName": "Example_Profile_mapping",
+      "body": {
+        "label": "Example Profile Mapping Updated",
+        "fieldMapping": [
+          { "sourceFieldDeveloperName": "Id__c", "targetFieldDeveloperName": "Id__c" },
+          { "sourceFieldDeveloperName": "Name__c", "targetFieldDeveloperName": "Name__c" }
+        ]
+      }
+    },
+    "capability": "d360_dmo_mapping_update"
+  },
+  "d360_dmo_field_mapping_add": {
+    "params": {
+      "mappingName": "Example_Profile_mapping",
+      "body": {
+        "fieldMappings": [
+          { "sourceFieldDeveloperName": "Name__c", "targetFieldDeveloperName": "Name__c" }
+        ]
+      }
+    },
+    "capability": "d360_dmo_field_mapping_add"
+  },
+  "d360_connection_create": {
+    "params": {
+      "connectorType": "ExampleConnector",
+      "body": {
+        "connectorType": "ExampleConnector",
+        "label": "Example Connection",
+        "name": "Example_Connection",
+        "method": "Ingress",
+        "parameters": [{ "paramName": "exampleHost", "value": "example.invalid" }],
+        "credentials": [{ "paramName": "exampleUser", "value": "example-user" }]
+      }
+    },
+    "capability": "d360_connection_create"
+  },
+  "d360_connection_update": {
+    "params": {
+      "connectionId": "ExampleConnectionId",
+      "connectorType": "ExampleConnector",
+      "body": {
+        "label": "Example Connection Updated",
+        "parameters": [{ "paramName": "exampleHost", "value": "example.invalid" }]
+      }
+    },
+    "capability": "d360_connection_update"
+  },
+  "d360_connection_create_snowflake": {
+    "params": {
+      "body": {
+        "connectorType": "SNOWFLAKE",
+        "label": "Example Snowflake Connection",
+        "name": "example_snowflake_connection",
+        "method": "Ingress",
+        "credentials": [
+          { "paramName": "authenticationOption", "value": "KeyPair" },
+          { "paramName": "user", "value": "EXAMPLE_USER" },
+          { "paramName": "privateKey", "value": "PLACEHOLDER_PRIVATE_KEY_CONTENT" }
+        ],
+        "parameters": [
+          { "paramName": "hasPrivateNetworkRoute", "value": "false" },
+          { "paramName": "accountUrl", "value": "https://example.snowflakecomputing.com" },
+          { "paramName": "region", "value": "us-west-2" },
+          { "paramName": "warehouse", "value": "EXAMPLE_WAREHOUSE" }
+        ]
+      }
+    },
+    "capability": "d360_connection_create_snowflake"
+  },
+  "d360_snowflake_connection_list": {
+    "params": { "connectorType": "SNOWFLAKE", "limit": 10 },
+    "capability": "d360_snowflake_connection_list"
+  },
+  "d360_ci_update": {
+    "params": {
+      "ciName": "Example_Score__cio",
+      "body": {
+        "displayName": "Example Score Updated",
+        "description": "Dry-run placeholder only. Reuse validated SQL before execution.",
+        "expression": "SELECT SomeDmo__dlm.Id__c AS id__c, COUNT(*) AS count__c FROM SomeDmo__dlm GROUP BY SomeDmo__dlm.Id__c"
+      }
+    },
+    "capability": "d360_ci_update"
+  },
+  "d360_ci_enable": {
+    "params": { "ciName": "Example_Score__cio" },
+    "capability": "d360_ci_enable"
+  },
+  "d360_ci_disable": {
+    "params": { "ciName": "Example_Score__cio" },
+    "capability": "d360_ci_disable"
+  },
+  "d360_segment_update": {
+    "params": {
+      "segmentId": "ExampleSegmentId",
+      "body": {
+        "displayName": "Example Segment Updated",
+        "description": "Dry-run placeholder only."
+      }
+    },
+    "capability": "d360_segment_update"
+  },
+  "d360_segment_deactivate": {
+    "params": { "segmentApiName": "Example_Segment" },
+    "capability": "d360_segment_deactivate"
+  },
+  "d360_activation_update": {
+    "params": {
+      "activationId": "ExampleActivationId",
+      "body": {
+        "displayName": "Example Activation Updated",
+        "description": "Dry-run placeholder only."
+      }
+    },
+    "capability": "d360_activation_update"
+  },
+  "d360_activation_target_update": {
+    "params": {
+      "activationTargetId": "ExampleActivationTargetId",
+      "body": {
+        "displayName": "Example Activation Target Updated",
+        "description": "Dry-run placeholder only."
+      }
+    },
+    "capability": "d360_activation_target_update"
+  },
+  "d360_transform_update": {
+    "params": {
+      "transformId": "ExampleTransformId",
+      "body": { "label": "Example Transform Updated", "description": "Dry-run placeholder only." }
+    },
+    "capability": "d360_transform_update"
+  },
+  "d360_transform_run": {
+    "params": { "transformId": "ExampleTransformId" },
+    "capability": "d360_transform_run"
+  },
+  "d360_dataaction_target_update": {
+    "params": {
+      "dataActionTargetId": "ExampleDataActionTargetId",
+      "body": {
+        "label": "Example Data Action Target Updated",
+        "config": {
+          "targetEndpoint": "https://example.invalid/data-action-updated",
+          "apiContract": "ExampleContract"
+        }
+      }
+    },
+    "capability": "d360_dataaction_target_update"
+  },
+  "d360_retriever_update": {
+    "params": {
+      "retrieverIdOrName": "ExampleRetriever",
+      "body": { "label": "Example Retriever Updated", "description": "Dry-run placeholder only." }
+    },
+    "capability": "d360_retriever_update"
+  },
+  "d360_retriever_config_update": {
+    "params": {
+      "retrieverIdOrName": "ExampleRetriever",
+      "configurationIdOrName": "ExampleConfiguration",
+      "body": { "isActive": true }
+    },
+    "capability": "d360_retriever_config_update"
+  },
+  "d360_search_index_update": {
+    "params": {
+      "searchIndexApiNameOrId": "Example_Search_Index",
+      "body": {
+        "label": "Example Search Index Updated",
+        "developerName": "Example_Search_Index",
+        "description": "Dry-run placeholder only. Populate required config fields from d360_search_index_config before execution.",
+        "sourceDmoDeveloperName": "ExampleSource__dlm",
+        "chunkDmoName": "Example Chunk DMO",
+        "chunkDmoDeveloperName": "Example_Chunk",
+        "vectorDmoName": "Example Vector DMO",
+        "vectorDmoDeveloperName": "Example_Vector",
+        "searchType": "HYBRID",
+        "chunkingConfiguration": { "fieldLevelConfigurations": [] },
+        "vectorEmbedding": { "vectorEmbeddingRelatedFields": [] },
+        "vectorEmbeddingConfiguration": {
+          "embeddingModel": { "id": "example_embedding_model", "userValues": [] },
+          "index": { "id": "HNSW", "userValues": [] },
+          "similarityMetric": "COSINE"
+        },
+        "transformConfigurations": []
+      }
+    },
+    "capability": "d360_search_index_update"
+  },
+  "d360_datastream_update": {
+    "params": {
+      "dataStreamId": "ExampleDataStreamId",
+      "body": {
+        "label": "Example Data Stream Updated",
+        "refreshConfig": { "refreshMode": "TOTAL_REPLACE" }
+      }
+    },
+    "capability": "d360_datastream_update"
+  },
+  "d360_ir_create": {
+    "params": {
+      "body": {
+        "label": "Example Identity Resolution",
+        "configurationType": "Individual",
+        "description": "Example identity resolution payload placeholder. Verify entity and field names before execution.",
+        "doesRunAutomatically": false,
+        "matchRules": [
+          {
+            "label": "Example Email Match",
+            "criteria": [
+              {
+                "entityName": "ExampleIndividual__dlm",
+                "fieldName": "Email__c",
+                "matchMethodType": "Exact",
+                "shouldMatchOnBlank": false
+              }
+            ]
+          }
+        ],
+        "reconciliationRules": [
+          {
+            "entityName": "ExampleIndividual__dlm",
+            "ruleType": "MostRecent",
+            "shouldIgnoreEmptyValue": true,
+            "fields": [
+              {
+                "fieldName": "Email__c",
+                "ruleType": "MostRecent",
+                "shouldIgnoreEmptyValue": true,
+                "sources": [{ "name": "ExampleSource" }]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "capability": "d360_ir_create"
+  },
+  "d360_ir_update": {
+    "params": {
+      "identityResolutionId": "ExampleIdentityResolutionId",
+      "body": {
+        "label": "Example Identity Resolution Updated",
+        "description": "Dry-run placeholder only.",
+        "doesRunAutomatically": false
+      }
+    },
+    "capability": "d360_ir_update"
+  },
+  "d360_ir_full_update": {
+    "params": {
+      "identityResolutionId": "ExampleIdentityResolutionId",
+      "body": {
+        "label": "Example Identity Resolution",
+        "configurationType": "Individual",
+        "description": "Example identity resolution payload placeholder. Verify entity and field names before execution.",
+        "doesRunAutomatically": false,
+        "matchRules": [
+          {
+            "label": "Example Email Match",
+            "criteria": [
+              {
+                "entityName": "ExampleIndividual__dlm",
+                "fieldName": "Email__c",
+                "matchMethodType": "Exact",
+                "shouldMatchOnBlank": false
+              }
+            ]
+          }
+        ],
+        "reconciliationRules": [
+          {
+            "entityName": "ExampleIndividual__dlm",
+            "ruleType": "MostRecent",
+            "shouldIgnoreEmptyValue": true,
+            "fields": [
+              {
+                "fieldName": "Email__c",
+                "ruleType": "MostRecent",
+                "shouldIgnoreEmptyValue": true,
+                "sources": [{ "name": "ExampleSource" }]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "capability": "d360_ir_full_update"
+  },
+  "d360_ir_publish": {
+    "params": { "identityResolutionId": "ExampleIdentityResolutionId" },
+    "capability": "d360_ir_publish"
+  },
+  "d360_ir_run": {
+    "params": {
+      "identityResolutionId": "ExampleIdentityResolutionId",
+      "body": { "callingApp": "sf-pi", "callingAppInfo": "Dry-run placeholder only." }
+    },
+    "capability": "d360_ir_run"
+  },
+  "d360_dataspace_create": {
+    "params": {
+      "body": {
+        "name": "Example_Data_Space",
+        "label": "Example Data Space",
+        "description": "Example data space payload placeholder. Verify naming and membership plan before execution."
+      }
+    },
+    "capability": "d360_dataspace_create"
+  },
+  "d360_dataspace_update": {
+    "params": {
+      "dataSpaceName": "Example_Data_Space",
+      "body": { "label": "Example Data Space Updated", "description": "Dry-run placeholder only." }
+    },
+    "capability": "d360_dataspace_update"
+  },
+  "d360_dataspace_member_add": {
+    "params": {
+      "dataSpaceName": "Example_Data_Space",
+      "body": { "members": [{ "memberName": "ExampleMember", "filter": [] }] }
+    },
+    "capability": "d360_dataspace_member_add"
+  },
+  "d360_sdm_create": {
+    "params": {
+      "body": {
+        "apiName": "ExampleSemanticModel",
+        "label": "Example Semantic Model",
+        "description": "Example SDM shell placeholder. Add data objects and relationships after creation.",
+        "dataspace": "default"
+      }
+    },
+    "capability": "d360_sdm_create"
+  },
+  "d360_sdm_update": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "body": {
+        "label": "Example Semantic Model Updated",
+        "description": "Dry-run placeholder only."
+      }
+    },
+    "capability": "d360_sdm_update"
+  },
+  "d360_sdm_clone": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "body": { "apiName": "ExampleSemanticModelClone" }
+    },
+    "capability": "d360_sdm_clone"
+  },
+  "d360_sdm_data_object_create": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "body": {
+        "dataObjectName": "ExampleIndividual__dlm",
+        "label": "Example Individual",
+        "dataObjectType": "Dmo",
+        "shouldIncludeAllFields": true
+      }
+    },
+    "variants": {
+      "ci": {
+        "sourceExample": "d360_sdm_data_object_create_ci",
+        "capability": "d360_sdm_data_object_create",
+        "variant": "ci",
+        "params": {
+          "modelApiNameOrId": "ExampleSemanticModel",
+          "body": {
+            "dataObjectType": "Cio",
+            "dataObjectName": "Revenue_By_Region__cio",
+            "label": "Revenue Metrics",
+            "shouldIncludeAllFields": true
+          }
+        }
+      }
+    },
+    "capability": "d360_sdm_data_object_create"
+  },
+  "d360_sdm_data_object_update": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "dataObjectNameOrId": "ExampleIndividual",
+      "body": { "label": "Example Individual Updated", "shouldIncludeAllFields": true }
+    },
+    "capability": "d360_sdm_data_object_update"
+  },
+  "d360_sdm_calc_dim_create": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "body": {
+        "label": "Example Tier",
+        "expression": "IF [ExampleIndividual].[Score] > 10 THEN 'High' ELSE 'Low' END",
+        "dataType": "Text"
+      }
+    },
+    "capability": "d360_sdm_calc_dim_create"
+  },
+  "d360_sdm_calc_dim_update": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "calculatedDimensionId": "ExampleCalculatedDimensionId",
+      "body": {
+        "label": "Example Tier Updated",
+        "expression": "IF [ExampleIndividual].[Score] > 20 THEN 'High' ELSE 'Low' END",
+        "dataType": "Text"
+      }
+    },
+    "capability": "d360_sdm_calc_dim_update"
+  },
+  "d360_sdm_calc_measure_create": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "body": {
+        "label": "Example Total Amount",
+        "expression": "SUM([ExampleIndividual].[Amount])",
+        "dataType": "Number",
+        "aggregationType": "UserAgg"
+      }
+    },
+    "capability": "d360_sdm_calc_measure_create"
+  },
+  "d360_sdm_calc_measure_update": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "calculatedMeasureId": "ExampleCalculatedMeasureId",
+      "body": {
+        "label": "Example Total Amount Updated",
+        "expression": "SUM([ExampleIndividual].[Amount])",
+        "dataType": "Number",
+        "aggregationType": "UserAgg"
+      }
+    },
+    "capability": "d360_sdm_calc_measure_update"
+  },
+  "d360_sdm_metric_create": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "body": {
+        "name": "ExampleMetric",
+        "label": "Example Metric",
+        "definition": { "expression": { "semanticField": { "name": "Example_Total_Amount" } } }
+      }
+    },
+    "capability": "d360_sdm_metric_create"
+  },
+  "d360_sdm_metric_update": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "metricNameOrId": "ExampleMetric",
+      "body": {
+        "label": "Example Metric Updated",
+        "definition": { "expression": { "semanticField": { "name": "Example_Total_Amount" } } }
+      }
+    },
+    "capability": "d360_sdm_metric_update"
+  },
+  "d360_sdm_relationship_create": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "body": {
+        "label": "Example Relationship",
+        "leftSemanticDefinitionApiName": "ExampleIndividual",
+        "rightSemanticDefinitionApiName": "ExampleAccount",
+        "cardinality": "ManyToOne",
+        "joinType": "Auto",
+        "criteria": {
+          "criteria": [
+            {
+              "joinOperator": "Equals",
+              "leftFieldType": "TableField",
+              "leftSemanticFieldApiName": "ExampleIndividual_Id",
+              "rightFieldType": "TableField",
+              "rightSemanticFieldApiName": "ExampleAccount_Id"
+            }
+          ]
+        }
+      }
+    },
+    "capability": "d360_sdm_relationship_create"
+  },
+  "d360_sdm_relationship_update": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "relationshipId": "ExampleRelationshipId",
+      "body": {
+        "label": "Example Relationship Updated",
+        "cardinality": "ManyToOne",
+        "joinType": "Auto",
+        "criteria": {
+          "criteria": [
+            {
+              "joinOperator": "Equals",
+              "leftFieldType": "TableField",
+              "leftSemanticFieldApiName": "ExampleIndividual_Id",
+              "rightFieldType": "TableField",
+              "rightSemanticFieldApiName": "ExampleAccount_Id"
+            }
+          ]
+        }
+      }
+    },
+    "capability": "d360_sdm_relationship_update"
+  },
+  "d360_sdm_query": {
+    "params": {
+      "body": {
+        "semanticModelId": "ExampleSemanticModel",
+        "structuredSemanticQuery": {
+          "fields": [
+            {
+              "expression": { "semanticField": { "name": "ExampleMetric" } },
+              "alias": "exampleMetric"
+            }
+          ],
+          "options": { "limitOptions": { "limit": 10 } }
+        }
+      }
+    },
+    "capability": "d360_sdm_query"
+  },
+  "d360_datakit_deploy": {
+    "params": {
+      "body": {
+        "components": [
+          {
+            "type": "SemanticModel",
+            "info": {
+              "name": "ExampleSemanticModel",
+              "dataSpaceName": "default",
+              "description": "Example component placeholder. Replace with reviewed manifest component info before execution."
+            }
+          }
+        ]
+      }
+    },
+    "capability": "d360_datakit_deploy"
+  },
+  "d360_datakit_list": { "params": { "limit": 10 }, "capability": "d360_datakit_list" },
+  "d360_metadata": {
+    "params": { "entityName": "ssot__Individual__dlm", "entityType": "DataModelObject" },
+    "capability": "d360_metadata"
+  },
+  "d360_model_artifact_list": {
+    "params": { "limit": 20 },
+    "capability": "d360_model_artifact_list"
+  },
+  "d360_datagraph_lookup": {
+    "params": { "entity": "ExampleDataGraph", "lookupKeys": "ExampleLookupKey", "limit": 10 },
+    "capability": "d360_datagraph_lookup"
+  },
+  "d360_standard_mapping_create": {
+    "params": {
+      "body": {
+        "sourceEntityDeveloperName": "Example_Profile__dll",
+        "targetEntityDeveloperName": "Example_Profile__dlm",
+        "fieldMapping": [
+          { "sourceFieldDeveloperName": "Id__c", "targetFieldDeveloperName": "Id__c" },
+          { "sourceFieldDeveloperName": "Name__c", "targetFieldDeveloperName": "Name__c" }
+        ]
+      }
+    },
+    "capability": "d360_standard_mapping_create"
+  },
+  "d360_query_sql_cancel": {
+    "params": { "queryId": "ExampleQueryId" },
+    "capability": "d360_query_sql_cancel"
+  },
+  "d360_dmo_delete": {
+    "params": { "dmoName": "Example_Profile__dlm" },
+    "capability": "d360_dmo_delete"
+  },
+  "d360_dlo_delete": {
+    "params": { "dloName": "Example_Profile__dll" },
+    "capability": "d360_dlo_delete"
+  },
+  "d360_dmo_mapping_delete": {
+    "params": { "mappingName": "Example_Profile_mapping" },
+    "capability": "d360_dmo_mapping_delete"
+  },
+  "d360_dmo_field_mapping_delete": {
+    "params": {
+      "mappingName": "Example_Profile_mapping",
+      "fieldMappingName": "Name__c_fieldmap_Name__c"
+    },
+    "capability": "d360_dmo_field_mapping_delete"
+  },
+  "d360_datastream_delete": {
+    "params": { "dataStreamId": "ExampleDataStreamId", "shouldDeleteDataLakeObject": false },
+    "capability": "d360_datastream_delete"
+  },
+  "d360_connection_delete": {
+    "params": { "connectionId": "ExampleConnectionId", "connectorType": "ExampleConnector" },
+    "capability": "d360_connection_delete"
+  },
+  "d360_segment_delete": {
+    "params": { "segmentApiName": "Example_Segment" },
+    "capability": "d360_segment_delete"
+  },
+  "d360_ci_delete": {
+    "params": { "ciName": "Example_Score__cio" },
+    "capability": "d360_ci_delete"
+  },
+  "d360_ir_delete": {
+    "params": { "identityResolutionId": "ExampleIdentityResolutionId" },
+    "capability": "d360_ir_delete"
+  },
+  "d360_activation_delete": {
+    "params": { "activationId": "ExampleActivationId" },
+    "capability": "d360_activation_delete"
+  },
+  "d360_activation_target_delete": {
+    "params": { "activationTargetId": "ExampleActivationTargetId" },
+    "capability": "d360_activation_target_delete"
+  },
+  "d360_dataspace_delete": {
+    "params": { "dataSpaceName": "Example_Data_Space" },
+    "capability": "d360_dataspace_delete"
+  },
+  "d360_dataspace_member_remove": {
+    "params": { "dataSpaceName": "Example_Data_Space", "memberNames": "ExampleMember" },
+    "capability": "d360_dataspace_member_remove"
+  },
+  "d360_transform_delete": {
+    "params": { "transformId": "ExampleTransformId" },
+    "capability": "d360_transform_delete"
+  },
+  "d360_datakit_undeploy": {
+    "params": {
+      "dataKitId": "ExampleDataKitId",
+      "body": {
+        "components": [{ "type": "SemanticModel", "details": { "name": "ExampleSemanticModel" } }]
+      }
+    },
+    "capability": "d360_datakit_undeploy"
+  },
+  "d360_dataaction_delete": {
+    "params": { "dataActionId": "ExampleDataActionId" },
+    "capability": "d360_dataaction_delete"
+  },
+  "d360_dataaction_target_delete": {
+    "params": { "dataActionTargetId": "ExampleDataActionTargetId" },
+    "capability": "d360_dataaction_target_delete"
+  },
+  "d360_sdm_delete": {
+    "params": { "modelApiNameOrId": "ExampleSemanticModel" },
+    "capability": "d360_sdm_delete"
+  },
+  "d360_sdm_data_object_delete": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "dataObjectNameOrId": "ExampleIndividual"
+    },
+    "capability": "d360_sdm_data_object_delete"
+  },
+  "d360_sdm_calc_dim_delete": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "calculatedDimensionId": "ExampleCalculatedDimensionId"
+    },
+    "capability": "d360_sdm_calc_dim_delete"
+  },
+  "d360_sdm_calc_measure_delete": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "calculatedMeasureId": "ExampleCalculatedMeasureId"
+    },
+    "capability": "d360_sdm_calc_measure_delete"
+  },
+  "d360_sdm_metric_delete": {
+    "params": { "modelApiNameOrId": "ExampleSemanticModel", "metricNameOrId": "ExampleMetric" },
+    "capability": "d360_sdm_metric_delete"
+  },
+  "d360_sdm_relationship_delete": {
+    "params": {
+      "modelApiNameOrId": "ExampleSemanticModel",
+      "relationshipId": "ExampleRelationshipId"
+    },
+    "capability": "d360_sdm_relationship_delete"
+  },
+  "d360_search_index_delete": {
+    "params": { "searchIndexApiNameOrId": "Example_Search_Index" },
+    "capability": "d360_search_index_delete"
+  },
+  "d360_retriever_delete": {
+    "params": { "retrieverIdOrName": "ExampleRetriever" },
+    "capability": "d360_retriever_delete"
+  },
+  "d360_retriever_config_delete": {
+    "params": {
+      "retrieverIdOrName": "ExampleRetriever",
+      "configurationIdOrName": "ExampleConfiguration"
+    },
+    "capability": "d360_retriever_config_delete"
+  },
+  "d360_standard_mapping_preview": {
+    "params": { "sourceObjectName": "Account", "targetDmoName": "AccountDmo" },
+    "capability": "d360_standard_mapping_preview"
+  },
+  "d360_preview_field_matches": {
+    "params": {
+      "sourceFields": [
+        { "name": "Id__c", "label": "Id", "dataType": "Text" },
+        { "name": "Name__c", "label": "Name", "dataType": "Text" },
+        { "name": "CreatedDate__c", "label": "Created Date", "dataType": "DateTime" }
+      ],
+      "targetFields": [
+        { "name": "Id__c", "label": "Id", "dataType": "Text" },
+        { "name": "Name__c", "label": "Name", "dataType": "Text" },
+        { "name": "CreatedDate__c", "label": "Created Date", "dataType": "DateTime" }
+      ],
+      "sourceDloName": "Example_Profile__dll",
+      "targetDmoName": "Example_Profile__dlm",
+      "threshold": 0.45
+    },
+    "capability": "d360_preview_field_matches"
+  },
+  "d360_smart_mapping_suggest": {
+    "params": {
+      "sourceFields": [
+        { "name": "Id__c", "label": "Id", "dataType": "Text" },
+        { "name": "Name__c", "label": "Name", "dataType": "Text" },
+        { "name": "CreatedDate__c", "label": "Created Date", "dataType": "DateTime" }
+      ],
+      "targetFields": [
+        { "name": "Id__c", "label": "Id", "dataType": "Text" },
+        { "name": "Name__c", "label": "Name", "dataType": "Text" },
+        { "name": "CreatedDate__c", "label": "Created Date", "dataType": "DateTime" }
+      ],
+      "sourceDloName": "Example_Profile__dll",
+      "targetDmoName": "Example_Profile__dlm",
+      "threshold": 0.45
+    },
+    "capability": "d360_smart_mapping_suggest"
+  },
+  "d360_event_date_recommend": {
+    "params": {
+      "category": "Engagement",
+      "fields": [
+        { "name": "Id__c", "label": "Id", "dataType": "Text" },
+        { "name": "Name__c", "label": "Name", "dataType": "Text" },
+        { "name": "CreatedDate__c", "label": "Created Date", "dataType": "DateTime" }
+      ]
+    },
+    "capability": "d360_event_date_recommend"
+  },
+  "d360_smart_datastream_create": {
+    "params": {
+      "body": {
+        "name": "Example_Engagement_Stream",
+        "label": "Example Engagement Stream",
+        "datastreamType": "EXTERNAL",
+        "dataLakeObjectInfo": {
+          "name": "Example_Engagement_Stream__dll",
+          "label": "Example Engagement Stream",
+          "category": "Engagement"
+        },
+        "sourceFields": [
+          { "name": "Id__c", "label": "Id", "dataType": "Text" },
+          { "name": "Name__c", "label": "Name", "dataType": "Text" },
+          { "name": "CreatedDate__c", "label": "Created Date", "dataType": "DateTime" }
+        ]
+      },
+      "autoSelectEventDate": true
+    },
+    "variants": {
+      "engagement_event_date": {
+        "sourceExample": "d360_smart_datastream",
+        "capability": "d360_smart_datastream_create",
+        "variant": "engagement_event_date",
+        "params": {
+          "body": {
+            "connectorInfo": {
+              "connectorType": "SalesforceDotCom",
+              "connectorDetails": {
+                "sourceObject": "Task",
+                "name": "SalesforceDotCom_00D000000000000"
+              }
+            },
+            "label": "Task Stream",
+            "dataLakeObjectInfo": {
+              "category": "Engagement",
+              "dataLakeFieldInfoRepresentation": [
+                { "dataType": "Text", "name": "Id", "isPrimaryKey": true },
+                { "dataType": "DateTime", "name": "CreatedDate", "isPrimaryKey": false },
+                { "dataType": "DateTime", "name": "ActivityDate", "isPrimaryKey": false },
+                { "dataType": "DateTime", "name": "LastModifiedDate", "isPrimaryKey": false }
+              ]
+            },
+            "dataAccessMode": "INGEST"
+          },
+          "autoSelectEventDate": true,
+          "_note": "Pass an Engagement data stream body and the tool will analyze date fields, rank them, and inject the best eventDateColumn (e.g., CreatedDate over LastModifiedDate)."
+        }
+      }
+    },
+    "capability": "d360_smart_datastream_create"
+  },
+  "d360_ingest_api_schema_put": {
+    "capability": "d360_ingest_api_schema_put",
+    "params": {
+      "connectionId": "1WM000000000000AAA",
+      "body": {
+        "schemas": [
+          {
+            "name": "DemoObject",
+            "label": "DemoObject",
+            "schemaType": "IngestApi",
+            "fields": [
+              { "name": "Id", "label": "Id", "dataType": "Text" },
+              { "name": "CreatedDate", "label": "CreatedDate", "dataType": "DateTime" },
+              { "name": "Name", "label": "Name", "dataType": "Text" }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "d360_datastream_create_ingest_api": {
+    "capability": "d360_datastream_create_ingest_api",
+    "params": {
+      "body": {
+        "name": "DemoIngestStream",
+        "label": "DemoIngestStream",
+        "datastreamType": "INGESTAPI",
+        "connectorInfo": {
+          "connectorType": "IngestApi",
+          "connectorDetails": { "name": "DemoIngestSource", "events": ["DemoObject"] }
+        },
+        "dataLakeObjectInfo": {
+          "name": "DemoIngestStream__dll",
+          "label": "DemoIngestStream",
+          "category": "Other",
+          "dataspaceInfo": [{ "name": "default" }],
+          "dataLakeFieldInputRepresentations": [
+            { "label": "Id", "name": "Id", "dataType": "Text", "isPrimaryKey": true }
+          ],
+          "recordModifiedFieldName": "CreatedDate"
+        }
+      }
+    }
+  },
+  "d360_transform_prepare": {
+    "params": {
+      "body": {
+        "name": "account_summary",
+        "label": "Account Summary",
+        "type": "batch",
+        "definition": {
+          "type": "DCSQL",
+          "version": "1.0",
+          "manifest": {
+            "nodes": {
+              "account_summary_output": {
+                "name": "account_summary_output",
+                "relation_name": "Account_Summary__dll",
+                "config": { "materialized": "table", "writeMode": "OVERWRITE" },
+                "compiled_code": "SELECT \"Id__c\", \"Name__c\", \"Industry__c\", \"AnnualRevenue__c\", \"NumberOfEmployees__c\", \"Type__c\", \"Rating__c\", \"CreatedDate__c\" FROM \"Account__dlm\" WHERE \"AnnualRevenue__c\" > 1000000"
+              }
+            }
+          }
+        }
+      }
+    },
+    "capability": "d360_transform_prepare",
+    "variants": {
+      "dcsql_batch": {
+        "params": {
+          "body": {
+            "name": "top_sales_performers",
+            "label": "Top Sales Performers by Region",
+            "type": "batch",
+            "definition": {
+              "type": "DCSQL",
+              "version": "1.0",
+              "manifest": {
+                "nodes": {
+                  "sales_with_metrics": {
+                    "name": "sales_with_metrics",
+                    "compiled_code": "SELECT \"OwnerId__c\", \"Owner_Region__c\", COUNT(*) as \"DealCount__c\", SUM(\"Amount__c\") as \"TotalRevenue__c\", AVG(\"Amount__c\") as \"AvgDealSize__c\", MAX(\"CloseDate__c\") as \"LastWinDate__c\" FROM \"Opportunity__dlm\" WHERE \"IsWon__c\" = true AND \"CloseDate__c\" >= DATEADD(quarter, -1, CURRENT_DATE) GROUP BY \"OwnerId__c\", \"Owner_Region__c\"",
+                    "config": { "materialized": "ephemeral" }
+                  },
+                  "ranked_performers": {
+                    "name": "ranked_performers",
+                    "relation_name": "Top_Sales_Performers__dll",
+                    "config": { "materialized": "table", "writeMode": "OVERWRITE" },
+                    "compiled_code": "SELECT \"OwnerId__c\", \"Owner_Region__c\", \"DealCount__c\", \"TotalRevenue__c\", \"AvgDealSize__c\", \"LastWinDate__c\", ROW_NUMBER() OVER (PARTITION BY \"Owner_Region__c\" ORDER BY \"TotalRevenue__c\" DESC) as \"RegionRank__c\", PERCENT_RANK() OVER (PARTITION BY \"Owner_Region__c\" ORDER BY \"TotalRevenue__c\") as \"RegionPercentile__c\", ROW_NUMBER() OVER (ORDER BY \"TotalRevenue__c\" DESC) as \"GlobalRank__c\", CASE WHEN PERCENT_RANK() OVER (PARTITION BY \"Owner_Region__c\" ORDER BY \"TotalRevenue__c\") >= 0.9 THEN 'Top 10%' WHEN PERCENT_RANK() OVER (PARTITION BY \"Owner_Region__c\" ORDER BY \"TotalRevenue__c\") >= 0.75 THEN 'Top 25%' WHEN PERCENT_RANK() OVER (PARTITION BY \"Owner_Region__c\" ORDER BY \"TotalRevenue__c\") >= 0.50 THEN 'Top 50%' ELSE 'Below Average' END as \"PerformanceTier__c\" FROM sales_with_metrics WHERE \"DealCount__c\" >= 3",
+                    "depends_on": { "nodes": ["sales_with_metrics"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "capability": "d360_transform_prepare",
+        "variant": "dcsql_batch",
+        "sourceExample": "d360_transform_prepare_dcsql_batch"
+      },
+      "sql_streaming": {
+        "params": {
+          "body": {
+            "name": "realtime_lead_account_enrichment",
+            "label": "Real-Time Lead with Account Enrichment",
+            "type": "streaming",
+            "definition": {
+              "type": "SQL",
+              "version": "63.0",
+              "expression": "SELECT l.\"Id__c\", l.\"Email__c\", l.\"FirstName__c\", l.\"LastName__c\", l.\"Company__c\", l.\"Title__c\", l.\"LeadSource__c\", l.\"Phone__c\", l.\"CreatedDate__c\", a.\"Id__c\" as \"AccountId__c\", a.\"Name__c\" as \"AccountName__c\", a.\"Industry__c\" as \"AccountIndustry__c\", a.\"AnnualRevenue__c\" as \"AccountRevenue__c\", a.\"NumberOfEmployees__c\" as \"AccountEmployees__c\", a.\"Type__c\" as \"AccountType__c\", a.\"Rating__c\" as \"AccountRating__c\", CASE WHEN l.\"Title__c\" ILIKE '%VP%' OR l.\"Title__c\" ILIKE '%Vice President%' THEN 'VP' WHEN l.\"Title__c\" ILIKE '%Director%' THEN 'Director' WHEN l.\"Title__c\" ILIKE '%Manager%' THEN 'Manager' WHEN l.\"Title__c\" ILIKE '%CEO%' OR l.\"Title__c\" ILIKE '%Chief%' OR l.\"Title__c\" ILIKE '%President%' THEN 'C-Level' ELSE 'Individual Contributor' END as \"Seniority__c\", CASE WHEN l.\"Title__c\" ILIKE '%VP%' OR l.\"Title__c\" ILIKE '%Chief%' OR l.\"Title__c\" ILIKE '%President%' OR l.\"Title__c\" ILIKE '%Director%' THEN 30 WHEN l.\"Title__c\" ILIKE '%Manager%' THEN 20 ELSE 10 END + CASE WHEN a.\"AnnualRevenue__c\" > 50000000 THEN 25 WHEN a.\"AnnualRevenue__c\" > 10000000 THEN 20 WHEN a.\"AnnualRevenue__c\" > 1000000 THEN 10 ELSE 5 END + CASE WHEN a.\"NumberOfEmployees__c\" > 1000 THEN 20 WHEN a.\"NumberOfEmployees__c\" > 500 THEN 15 WHEN a.\"NumberOfEmployees__c\" > 100 THEN 10 ELSE 5 END + CASE WHEN l.\"LeadSource__c\" = 'Referral' THEN 20 WHEN l.\"LeadSource__c\" = 'Partner' THEN 15 WHEN l.\"LeadSource__c\" = 'Event' THEN 10 WHEN l.\"LeadSource__c\" = 'Web' THEN 5 ELSE 0 END + CASE WHEN a.\"Rating__c\" = 'Hot' THEN 15 WHEN a.\"Rating__c\" = 'Warm' THEN 10 ELSE 5 END as \"CompositeScore__c\", CASE WHEN (CASE WHEN l.\"Title__c\" ILIKE '%VP%' OR l.\"Title__c\" ILIKE '%Chief%' OR l.\"Title__c\" ILIKE '%President%' OR l.\"Title__c\" ILIKE '%Director%' THEN 30 WHEN l.\"Title__c\" ILIKE '%Manager%' THEN 20 ELSE 10 END + CASE WHEN a.\"AnnualRevenue__c\" > 50000000 THEN 25 WHEN a.\"AnnualRevenue__c\" > 10000000 THEN 20 WHEN a.\"AnnualRevenue__c\" > 1000000 THEN 10 ELSE 5 END + CASE WHEN a.\"NumberOfEmployees__c\" > 1000 THEN 20 WHEN a.\"NumberOfEmployees__c\" > 500 THEN 15 WHEN a.\"NumberOfEmployees__c\" > 100 THEN 10 ELSE 5 END + CASE WHEN l.\"LeadSource__c\" = 'Referral' THEN 20 WHEN l.\"LeadSource__c\" = 'Partner' THEN 15 WHEN l.\"LeadSource__c\" = 'Event' THEN 10 WHEN l.\"LeadSource__c\" = 'Web' THEN 5 ELSE 0 END + CASE WHEN a.\"Rating__c\" = 'Hot' THEN 15 WHEN a.\"Rating__c\" = 'Warm' THEN 10 ELSE 5 END) >= 80 THEN 'Hot' WHEN (CASE WHEN l.\"Title__c\" ILIKE '%VP%' OR l.\"Title__c\" ILIKE '%Chief%' OR l.\"Title__c\" ILIKE '%President%' OR l.\"Title__c\" ILIKE '%Director%' THEN 30 WHEN l.\"Title__c\" ILIKE '%Manager%' THEN 20 ELSE 10 END + CASE WHEN a.\"AnnualRevenue__c\" > 50000000 THEN 25 WHEN a.\"AnnualRevenue__c\" > 10000000 THEN 20 WHEN a.\"AnnualRevenue__c\" > 1000000 THEN 10 ELSE 5 END + CASE WHEN a.\"NumberOfEmployees__c\" > 1000 THEN 20 WHEN a.\"NumberOfEmployees__c\" > 500 THEN 15 WHEN a.\"NumberOfEmployees__c\" > 100 THEN 10 ELSE 5 END + CASE WHEN l.\"LeadSource__c\" = 'Referral' THEN 20 WHEN l.\"LeadSource__c\" = 'Partner' THEN 15 WHEN l.\"LeadSource__c\" = 'Event' THEN 10 WHEN l.\"LeadSource__c\" = 'Web' THEN 5 ELSE 0 END + CASE WHEN a.\"Rating__c\" = 'Hot' THEN 15 WHEN a.\"Rating__c\" = 'Warm' THEN 10 ELSE 5 END) >= 60 THEN 'Warm' ELSE 'Cold' END as \"Priority__c\", CASE WHEN a.\"AnnualRevenue__c\" > 100000000 AND (l.\"Title__c\" ILIKE '%VP%' OR l.\"Title__c\" ILIKE '%Chief%' OR l.\"Title__c\" ILIKE '%President%') THEN 'Strategic_Accounts' WHEN a.\"AnnualRevenue__c\" > 50000000 OR a.\"NumberOfEmployees__c\" > 1000 THEN 'Enterprise_Sales' WHEN a.\"AnnualRevenue__c\" > 10000000 OR a.\"NumberOfEmployees__c\" > 500 THEN 'Commercial_Sales' WHEN a.\"AnnualRevenue__c\" > 1000000 OR a.\"NumberOfEmployees__c\" > 50 THEN 'Mid_Market_Sales' ELSE 'SMB_Sales' END as \"OwnerQueue__c\", CASE WHEN a.\"Type__c\" = 'Customer' THEN 'Existing_Customer_Expansion' WHEN a.\"Type__c\" = 'Partner' THEN 'Partner_Led_Opportunity' WHEN a.\"Type__c\" = 'Competitor' THEN 'Competitive_Displacement' ELSE 'New_Business' END as \"OpportunityType__c\", CASE WHEN l.\"Email__c\" IS NOT NULL AND l.\"Phone__c\" IS NOT NULL AND a.\"Industry__c\" IS NOT NULL THEN 'Complete' WHEN l.\"Email__c\" IS NULL OR l.\"Phone__c\" IS NULL THEN 'Missing_Contact_Info' WHEN a.\"Industry__c\" IS NULL THEN 'Missing_Firmographic' ELSE 'Partial' END as \"DataQuality__c\", COALESCE(a.\"Name__c\", l.\"Company__c\", 'Unknown') as \"CompanyNormalized__c\", UPPER(CONCAT(LEFT(l.\"FirstName__c\", 1), LEFT(l.\"LastName__c\", 1))) as \"Initials__c\", CURRENT_TIMESTAMP as \"EnrichedTimestamp__c\" FROM \"Lead__dll\" l INNER JOIN \"Account__dlm\" a ON LOWER(TRIM(l.\"Company__c\")) = LOWER(TRIM(a.\"Name__c\"))",
+              "targetDlo": "Lead_Account_Enriched__dll"
+            }
+          }
+        },
+        "capability": "d360_transform_prepare",
+        "variant": "sql_streaming",
+        "sourceExample": "d360_transform_prepare_sql_streaming"
+      }
+    }
+  },
+  "d360_datastream_create_third_party_connectors": {
+    "params": {
+      "body": {
+        "connectionName": "airtable_dev_account_conn",
+        "datasource": "Airtable_airtable_dev_account_conn",
+        "objectName": "Tasks",
+        "fields": [
+          { "name": "Internal_Id", "dataType": "Text", "isPrimaryKey": true },
+          {
+            "name": "CreatedTime",
+            "dataType": "DateTime",
+            "isPrimaryKey": false,
+            "format": "MM/dd/yyyy HH:mm:ss.SSS"
+          },
+          { "name": "Task", "dataType": "Text", "isPrimaryKey": false },
+          { "name": "Status", "dataType": "Text", "isPrimaryKey": false },
+          { "name": "Duration", "dataType": "Number", "isPrimaryKey": false }
+        ],
+        "category": "Profile"
+      }
+    },
+    "capability": "d360_datastream_create_third_party_connectors"
+  },
+  "d360_connection_db_schemas_list": {
+    "params": {
+      "connectionId": "example-id",
+      "body": { "advancedAttributes": "{\"database\":\"SNOWFLAKE_SAMPLE_DATA\"}" }
+    },
+    "capability": "d360_connection_db_schemas_list"
+  },
+  "d360_connection_objects_list": {
+    "params": {
+      "connectionId": "example-id",
+      "body": {
+        "advancedAttributes": "{\"database\":\"SNOWFLAKE_SAMPLE_DATA\",\"schema\":\"TPCH_SF1\"}"
+      }
+    },
+    "capability": "d360_connection_objects_list"
+  },
+  "d360_connection_object_fields_describe": {
+    "params": {
+      "connectionId": "example-id",
+      "resourceName": "CUSTOMER",
+      "body": {
+        "advancedAttributes": "{\"database\":\"SNOWFLAKE_SAMPLE_DATA\",\"schema\":\"TPCH_SF1\"}"
+      }
+    },
+    "capability": "d360_connection_object_fields_describe"
+  },
+  "d360_prediction_job_def_create": {
+    "params": {
+      "body": {
+        "type": "Regression",
+        "apiName": "pred_job_test",
+        "label": "pred_job_test",
+        "model": { "name": "ChurnRiskRegressionModel" },
+        "inputConfig": {
+          "dataObject": { "name": "Customer__dlm" },
+          "fields": [
+            {
+              "modelField": { "name": "AnnualRevenue" },
+              "mappedField": {
+                "name": "AnnualRevenue__c",
+                "dataObject": { "name": "Customer__dlm" },
+                "relationshipPath": []
+              },
+              "updateScore": false
+            }
+          ]
+        },
+        "outputConfig": { "objectName": "regression_job", "objectLabel": "Regression Job" },
+        "regressionSettings": {
+          "maxPrescriptions": 1,
+          "maxTopContributors": 1,
+          "prescriptionThreshold": 0
+        },
+        "scoringMode": "Batch"
+      }
+    },
+    "capability": "d360_prediction_job_def_create"
+  },
+  "d360_prediction_job_def_create_regression": {
+    "params": {
+      "body": {
+        "apiName": "pred_job_test",
+        "model": { "name": "ChurnRiskRegressionModel" },
+        "inputDataObject": { "name": "Customer__dlm" },
+        "fields": [
+          {
+            "modelField": { "name": "AnnualRevenue" },
+            "mappedField": {
+              "name": "AnnualRevenue__c",
+              "dataObject": { "name": "Customer__dlm" },
+              "relationshipPath": []
+            },
+            "updateScore": false
+          }
+        ],
+        "outputObjectName": "regression_job",
+        "outputObjectLabel": "Regression Job",
+        "outputDescription": "My Regression Job",
+        "regressionSettings": {
+          "maxPrescriptions": 1,
+          "maxTopContributors": 1,
+          "prescriptionThreshold": 0
+        }
+      }
+    },
+    "capability": "d360_prediction_job_def_create_regression"
+  },
+  "d360_prediction_job_def_create_binary_classification": {
+    "params": {
+      "body": {
+        "apiName": "churn_risk_pred",
+        "model": { "name": "ChurnRiskBinaryModel" },
+        "inputDataObject": { "name": "Customer__dlm" },
+        "fields": [
+          {
+            "modelField": { "name": "ChurnFeature" },
+            "mappedField": {
+              "name": "AnnualRevenue__c",
+              "dataObject": { "name": "Customer__dlm" },
+              "relationshipPath": []
+            },
+            "updateScore": false
+          }
+        ],
+        "outputObjectName": "churn_risk_predictions",
+        "outputObjectLabel": "Churn Risk Predictions",
+        "binaryClassificationSettings": {
+          "maxTopContributors": 2,
+          "maxPrescriptions": 1,
+          "prescriptionThreshold": 50,
+          "showClassProbabilities": true
+        }
+      }
+    },
+    "capability": "d360_prediction_job_def_create_binary_classification"
+  },
+  "d360_prediction_job_def_create_multiclass_classification": {
+    "params": {
+      "body": {
+        "apiName": "tier_pred",
+        "model": { "name": "TierClassifierModel" },
+        "inputDataObject": { "name": "Customer__dlm" },
+        "fields": [
+          {
+            "modelField": { "name": "TierFeature" },
+            "mappedField": {
+              "name": "AnnualRevenue__c",
+              "dataObject": { "name": "Customer__dlm" },
+              "relationshipPath": []
+            },
+            "updateScore": false
+          }
+        ],
+        "outputObjectName": "tier_predictions",
+        "multiclassClassificationSettings": { "maxTopContributors": 2, "numberOfClasses": 3 }
+      }
+    },
+    "capability": "d360_prediction_job_def_create_multiclass_classification"
+  },
+  "d360_prediction_job_def_create_sentiment_detection": {
+    "params": {
+      "body": {
+        "apiName": "review_sentiment",
+        "inputDataObject": { "name": "Review__dlm" },
+        "textFields": [
+          {
+            "mappedField": {
+              "name": "ReviewText__c",
+              "dataObject": { "name": "Review__dlm" },
+              "relationshipPath": []
+            },
+            "updateScore": false
+          }
+        ],
+        "outputObjectName": "sentiment_detection_job",
+        "outputObjectLabel": "Sentiment Detection Job",
+        "outputDescription": "My Sentiment Detection Job"
+      }
+    },
+    "capability": "d360_prediction_job_def_create_sentiment_detection"
+  },
+  "d360_prediction_job_def_create_topic_classification": {
+    "params": {
+      "body": {
+        "apiName": "case_topic_classifier",
+        "inputDataObject": { "name": "Case__dlm" },
+        "textFields": [
+          {
+            "mappedField": {
+              "name": "Description__c",
+              "dataObject": { "name": "Case__dlm" },
+              "relationshipPath": []
+            },
+            "updateScore": false
+          }
+        ],
+        "topicLabels": ["billing", "tech_support", "sales"],
+        "outputObjectName": "topic_classification_job",
+        "outputObjectLabel": "Topic Classification Job",
+        "outputDescription": "My Topic Classification Job"
+      }
+    },
+    "capability": "d360_prediction_job_def_create_topic_classification"
+  },
+  "d360_prediction_job_def_create_clustering": {
+    "params": {
+      "body": {
+        "apiName": "customer_segments",
+        "model": { "name": "example-id" },
+        "inputDataObject": { "name": "Customer__dlm" },
+        "fields": [
+          {
+            "modelField": { "name": "SegmentFeature" },
+            "mappedField": {
+              "name": "AnnualRevenue__c",
+              "dataObject": { "name": "Customer__dlm" },
+              "relationshipPath": []
+            },
+            "updateScore": false
+          }
+        ],
+        "outputObjectName": "customer_clusters",
+        "clusteringSettings": {
+          "clusterIdFieldLabel": "Cluster Id",
+          "clusterLabelFieldLabel": "Cluster Label",
+          "maxTopContributors": 2
+        }
+      }
+    },
+    "capability": "d360_prediction_job_def_create_clustering"
+  },
+  "d360_prediction_job_def_update": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": {
+        "predictionJobDefIdOrName": "pred_job_test",
+        "request": { "activationStatus": "Active" }
+      }
+    },
+    "capability": "d360_prediction_job_def_update"
+  },
+  "d360_prediction_job_def_activate": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": { "predictionJobDefIdOrName": "pred_job_test" }
+    },
+    "capability": "d360_prediction_job_def_activate"
+  },
+  "d360_prediction_job_def_deactivate": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": { "predictionJobDefIdOrName": "pred_job_test" }
+    },
+    "capability": "d360_prediction_job_def_deactivate"
+  },
+  "d360_prediction_job_run": {
+    "params": { "body": { "predictionJobDef": { "name": "pred_job_test" } } },
+    "capability": "d360_prediction_job_run"
+  },
+  "d360_ml_predict": {
+    "params": {
+      "body": {
+        "model": { "name": "Attrition_Predictor_Catboost" },
+        "fieldNames": ["age", "income", "tenure_months"],
+        "rows": [
+          ["25", "50000", "12"],
+          ["54", "120000", "240"]
+        ],
+        "settings": { "maxTopFactors": 3, "maxPrescriptions": 5 }
+      }
+    },
+    "capability": "d360_ml_predict"
+  },
+  "d360_ml_setup_version_inspector_metrics_get": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "versionId": "example-id",
+      "modelSetupIdOrName": "Attrition_Risk_Predictor",
+      "gauges": "All"
+    },
+    "capability": "d360_ml_setup_version_inspector_metrics_get"
+  },
+  "d360_ml_alerts_query": {
+    "params": {
+      "body": {
+        "asset": "Attrition_Risk_Predictor_v1__mla",
+        "assetType": "ModelArtifact",
+        "sourceTypes": ["ModelTraining"]
+      }
+    },
+    "capability": "d360_ml_alerts_query"
+  },
+  "d360_ml_alert_update": {
+    "params": { "alertId": "example-id", "body": { "accepted": true } },
+    "capability": "d360_ml_alert_update"
+  },
+  "d360_ml_model_artifact_update": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": {
+        "modelArtifactIdOrName": "Attrition_Risk_Predictor_v1__mla",
+        "request": {
+          "label": "Attrition Risk Predictor (v1)",
+          "outputFields": [
+            {
+              "id": "0jrSB00000ABC123YAA",
+              "featureOverrideValues": [
+                { "sourceValue": "Cluster 0", "overrideValue": "High-Risk Segment" },
+                { "sourceValue": "Cluster 1", "overrideValue": "Stable Segment" }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "capability": "d360_ml_model_artifact_update"
+  },
+  "d360_ml_configured_model_create": {
+    "params": {
+      "body": {
+        "label": "Attrition Predictor (Catboost)",
+        "artifact": { "name": "Attrition_Risk_Predictor_v1__mla" },
+        "capability": "BinaryClassification",
+        "visibility": "Shown",
+        "parameterOverrides": [{ "parameterName": "example-id", "continuousValue": 0.5 }],
+        "actionableFields": [
+          { "name": "Over_Time__c", "type": "example-id" },
+          { "name": "Monthly_Income__c", "type": "TopFactor" }
+        ]
+      }
+    },
+    "capability": "d360_ml_configured_model_create"
+  },
+  "d360_ml_configured_model_update": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": {
+        "configuredModelIdOrName": "Attrition_Predictor_Catboost",
+        "request": { "status": "Disabled" }
+      }
+    },
+    "capability": "d360_ml_configured_model_update"
+  },
+  "d360_ml_configured_model_activate": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": { "configuredModelIdOrName": "Attrition_Predictor_Catboost" }
+    },
+    "capability": "d360_ml_configured_model_activate"
+  },
+  "d360_ml_configured_model_history_list": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "configuredModelIdOrName": "Attrition_Predictor_Catboost",
+      "limit": 10
+    },
+    "capability": "d360_ml_configured_model_history_list"
+  },
+  "d360_ml_query_setup_fields": {
+    "params": {
+      "body": {
+        "input": {
+          "type": "example-id",
+          "source": { "name": "Sales__dlm" },
+          "dataSpace": { "name": "default" }
+        },
+        "filterFields": false
+      }
+    },
+    "capability": "d360_ml_query_setup_fields"
+  },
+  "d360_ml_query_data_profile": {
+    "params": {
+      "body": {
+        "input": {
+          "type": "example-id",
+          "source": { "name": "Sales__dlm" },
+          "dataSpace": { "name": "default" }
+        },
+        "profileFieldNames": [
+          { "name": "Amount__c", "source": "Sales__dlm", "type": "example-id" },
+          { "name": "CloseDate__c", "source": "Sales__dlm", "type": "example-id" }
+        ]
+      }
+    },
+    "capability": "d360_ml_query_data_profile"
+  },
+  "d360_ml_query_outcome": {
+    "params": {
+      "body": {
+        "input": {
+          "type": "example-id",
+          "source": { "name": "Sales__dlm" },
+          "dataSpace": { "name": "default" }
+        },
+        "predictionType": "BinaryClassification"
+      }
+    },
+    "capability": "d360_ml_query_outcome"
+  },
+  "d360_ml_query_row_count": {
+    "params": {
+      "body": {
+        "input": {
+          "type": "example-id",
+          "source": { "name": "Sales__dlm" },
+          "dataSpace": { "name": "default" }
+        },
+        "filter": {
+          "criteria": [
+            {
+              "filterField": { "name": "Amount__c", "source": "Sales__dlm", "type": "example-id" },
+              "operator": "GreaterThan",
+              "values": [{ "value": "1000", "type": "Constant" }]
+            }
+          ],
+          "conjunctiveOperator": "And"
+        }
+      }
+    },
+    "capability": "d360_ml_query_row_count"
+  },
+  "d360_ml_model_setup_create": {
+    "params": {
+      "body": {
+        "label": "Attrition Risk Predictor",
+        "modelType": "Predictive",
+        "modelCapability": "BinaryClassification",
+        "setupType": "EdcNoCode",
+        "outcomeDefinition": { "goal": "Minimize", "fieldNames": ["Attrition__c"] }
+      }
+    },
+    "capability": "d360_ml_model_setup_create"
+  },
+  "d360_ml_model_setup_update": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": { "modelSetupIdOrName": "Attrition_Risk_Predictor", "request": {} }
+    },
+    "capability": "d360_ml_model_setup_update"
+  },
+  "d360_ml_setup_version_create": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": {
+        "modelSetupIdOrName": "Attrition_Risk_Predictor",
+        "request": {
+          "input": {
+            "type": "example-id",
+            "source": { "name": "Attrition__dlm" },
+            "dataSpace": { "name": "default" }
+          },
+          "outcomes": [
+            {
+              "type": "Binary",
+              "name": "Attrition__c",
+              "label": "Attrition",
+              "goal": "Minimize",
+              "successValue": "Yes",
+              "failureValue": "No"
+            }
+          ],
+          "fields": [
+            {
+              "type": "Number",
+              "name": "Age__c",
+              "label": "Age",
+              "min": 18,
+              "max": 60,
+              "bucketingStrategy": { "type": "Percentile", "numberOfBuckets": 10 }
+            },
+            {
+              "type": "Number",
+              "name": "Monthly_Income__c",
+              "label": "Monthly Income",
+              "min": 1009,
+              "max": 19999,
+              "bucketingStrategy": { "type": "Percentile", "numberOfBuckets": 10 }
+            },
+            {
+              "type": "Number",
+              "name": "Years_At_Company__c",
+              "label": "Years At Company",
+              "min": 0,
+              "max": 40,
+              "bucketingStrategy": { "type": "Percentile", "numberOfBuckets": 10 }
+            },
+            {
+              "type": "Text",
+              "name": "Department__c",
+              "label": "Department",
+              "dataType": "Categorical",
+              "ordering": "Occurrence",
+              "includeOther": true,
+              "balanced": false,
+              "values": [
+                {
+                  "name": "Research &amp; Development",
+                  "label": "Research &amp; Development",
+                  "count": 961,
+                  "ignored": false
+                },
+                { "name": "Sales", "label": "Sales", "count": 446, "ignored": false },
+                {
+                  "name": "Human Resources",
+                  "label": "Human Resources",
+                  "count": 63,
+                  "ignored": false
+                }
+              ]
+            },
+            {
+              "type": "Text",
+              "name": "Over_Time__c",
+              "label": "Over Time",
+              "dataType": "Categorical",
+              "ordering": "Occurrence",
+              "includeOther": true,
+              "balanced": false,
+              "values": [
+                { "name": "No", "label": "No", "count": 1054, "ignored": false },
+                { "name": "Yes", "label": "Yes", "count": 416, "ignored": false }
+              ]
+            }
+          ],
+          "fieldSelection": "Manual",
+          "sourceSetupVersionNumber": 0
+        }
+      }
+    },
+    "capability": "d360_ml_setup_version_create"
+  },
+  "d360_ml_setup_version_update": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "versionId": "example-id",
+      "body": { "modelSetupIdOrName": "Attrition_Risk_Predictor", "status": "Training" }
+    },
+    "capability": "d360_ml_setup_version_update"
+  },
+  "d360_p13n_transformer_create": {
+    "params": {
+      "body": {
+        "name": "promo_banner_transformer",
+        "label": "Promotional Banner Transformer",
+        "channel": "WebApp",
+        "transformerType": "Handlebars",
+        "isEnabled": true,
+        "dataConnectors": ["my_website_connector"],
+        "dataSpace": "default",
+        "substitutionDefinitions": {
+          "bannerTitle": {
+            "label": "Banner Title",
+            "configType": "SchemaPath",
+            "defaultValue": "{{recommendation.title}}",
+            "overridable": true,
+            "required": true
+          },
+          "bannerImage": {
+            "label": "Banner Image URL",
+            "configType": "SchemaPath",
+            "defaultValue": "{{recommendation.imageUrl}}",
+            "overridable": true,
+            "required": false
+          },
+          "ctaText": {
+            "label": "Call to Action Text",
+            "configType": "Static",
+            "defaultValue": "Shop Now",
+            "overridable": true,
+            "required": true
+          }
+        },
+        "transformerTypeDetails": {
+          "html": "<div class=\"promo-banner\" style=\"background-image: url('{{bannerImage}}');\"><h2>{{bannerTitle}}</h2><button class=\"cta-button\">{{ctaText}}</button></div>",
+          "disableAutoInjectionOfEngagementAttributes": false
+        }
+      }
+    },
+    "capability": "d360_p13n_transformer_create"
+  },
+  "d360_p13n_experience_config_create": {
+    "params": {
+      "idOrAppSourceIdOrName": "ExampleConnector",
+      "body": {
+        "name": "homepage_hero_banner",
+        "label": "Homepage Hero Banner Personalization",
+        "isEnabled": true,
+        "dataProvider": {
+          "type": "PersonalizationPoint",
+          "referenceType": "ApiName",
+          "value": "hero_banner_recommendations",
+          "dataSpaceReferenceType": "ApiName",
+          "dataSpaceValue": "default",
+          "groupByType": "DataGraph",
+          "groupByReferenceType": "ApiName",
+          "groupByValue": "user_profile_graph"
+        },
+        "sourceMatchers": [
+          { "type": "PageUrlMatcher", "value": "/home" },
+          { "type": "ContentZone", "value": "hero_section" }
+        ],
+        "transformationConfig": {
+          "renderIfEmpty": false,
+          "when": "Immediately",
+          "method": "ReplaceContentZoneContent",
+          "engagementDestination": "banner_click_destination",
+          "transformations": [
+            {
+              "transformerName": "promo_banner_transformer",
+              "substitutions": {
+                "bannerTitle": "{{data.title}}",
+                "bannerImage": "{{data.image}}",
+                "ctaText": "Learn More"
+              }
+            }
+          ]
+        },
+        "displayUrl": "/home"
+      }
+    },
+    "capability": "d360_p13n_experience_config_create"
+  },
+  "d360_p13n_mobile_preview_create": {
+    "params": {
+      "body": {
+        "dataConnectorId": "mobile_app_connector_123",
+        "experienceConfig": {
+          "name": "test_experience",
+          "label": "Test Experience",
+          "dataProvider": {
+            "type": "PersonalizationPoint",
+            "referenceType": "ApiName",
+            "value": "product_recs"
+          },
+          "sourceMatchers": [{ "type": "ContentZone", "value": "product_list" }],
+          "transformationConfig": {
+            "when": "Immediately",
+            "method": "ReplaceContentZoneContent",
+            "transformations": [{ "transformerName": "product_card_transformer" }]
+          }
+        },
+        "decisionRequestBody": {
+          "p": {
+            "decisionId": "rec_decision_001",
+            "cohortId": "cohort_A",
+            "experimentId": "exp_123"
+          },
+          "c": { "individualId": "ind_456", "anchorId": "anchor_789" }
+        }
+      }
+    },
+    "capability": "d360_p13n_mobile_preview_create"
+  },
+  "d360_p13n_experience_config_update": {
+    "params": {
+      "idOrAppSourceIdOrName": "ExampleConnector",
+      "nameParam": "ExampleExperienceConfig",
+      "body": { "isEnabled": false }
+    },
+    "capability": "d360_p13n_experience_config_update"
+  },
+  "d360_p13n_transformer_update": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": {
+        "isEnabled": true,
+        "label": "Updated Banner Transformer",
+        "transformerTypeDetails": { "html": "<div class=\"updated-banner\">{{bannerTitle}}</div>" }
+      }
+    },
+    "capability": "d360_p13n_transformer_update"
+  },
+  "d360_p13n_schema_create": {
+    "params": {
+      "body": {
+        "name": "product_recommendations_schema",
+        "label": "Product Recommendations Schema",
+        "dataSpaceName": "default",
+        "personalizationType": "example-id",
+        "attributes": [
+          {
+            "name": "recommendation_type",
+            "label": "Recommendation Type",
+            "defaultValue": "similar_items"
+          },
+          { "name": "priority_score", "label": "Priority Score" }
+        ],
+        "contentObject": {
+          "name": "Product__dll",
+          "fieldNames": ["name", "description", "price", "image_url", "category"]
+        },
+        "relatedContentObjects": [
+          {
+            "contentObjectName": "ProductReviews__dll",
+            "fieldNames": ["rating", "review_count"],
+            "relatedContentObjects": [
+              {
+                "contentObjectName": "ReviewDetails__dll",
+                "fieldNames": ["reviewer_name", "comment"]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "capability": "d360_p13n_schema_create"
+  },
+  "d360_p13n_schema_update": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": {
+        "label": "Updated Product Recommendations",
+        "attributes": [
+          { "name": "new_attribute", "label": "New Attribute", "defaultValue": "default_value" }
+        ]
+      }
+    },
+    "capability": "d360_p13n_schema_update"
+  },
+  "d360_p13n_point_create": {
+    "params": {
+      "body": {
+        "name": "home_page_experience",
+        "label": "Home Page Experience Point",
+        "dataSpaceName": "default",
+        "profileDataGraphName": "individual_profile",
+        "source": "example-id",
+        "isAuthenticationRequired": true,
+        "schemaName": "product_recommendations_schema",
+        "maxItemsCount": 10,
+        "decisions": [
+          {
+            "name": "premium_decision",
+            "label": "Premium User Decision",
+            "criteria": "{\"type\":\"Criteria\",\"operator\":\"AND\",\"filters\":[{\"type\":\"Filter\",\"operator\":\"EQUALS\",\"subject\":{\"fieldApiName\":\"Segment__c\",\"objectApiName\":\"Individual__dll\"},\"values\":[\"Premium\"]}]}",
+            "attributeValues": [
+              { "attributeName": "recommendation_type", "value": "premium_products" }
+            ],
+            "personalizerName": "premium_recommender",
+            "state": "Live"
+          },
+          {
+            "name": "default_decision",
+            "label": "Default Decision",
+            "criteria": "{\"type\":\"Criteria\",\"operator\":\"AND\",\"filters\":[]}",
+            "attributeValues": [
+              { "attributeName": "recommendation_type", "value": "popular_items" }
+            ],
+            "personalizerName": "default_recommender",
+            "state": "Live"
+          }
+        ]
+      }
+    },
+    "capability": "d360_p13n_point_create"
+  },
+  "d360_p13n_point_update": {
+    "params": {
+      "idOrName": "example-idOrName",
+      "body": {
+        "name": "home_page_experience",
+        "label": "Updated Home Page Experience",
+        "dataSpaceName": "default",
+        "profileDataGraphName": "individual_profile",
+        "source": "example-id",
+        "isAuthenticationRequired": false,
+        "schemaName": "product_recommendations_schema",
+        "maxItemsCount": 15,
+        "decisions": [
+          {
+            "name": "vip_decision",
+            "label": "VIP User Decision",
+            "criteria": "{\"type\":\"Criteria\",\"operator\":\"AND\",\"filters\":[{\"type\":\"Filter\",\"operator\":\"EQUALS\",\"subject\":{\"fieldApiName\":\"VIPStatus__c\",\"objectApiName\":\"Individual__dll\"},\"values\":[\"Gold\"]}]}",
+            "attributeValues": [
+              { "attributeName": "recommendation_type", "value": "vip_exclusive" }
+            ],
+            "personalizerName": "vip_recommender",
+            "state": "Live"
+          },
+          {
+            "name": "default_decision",
+            "label": "Default Decision",
+            "criteria": "{\"type\":\"Criteria\",\"operator\":\"AND\",\"filters\":[]}",
+            "attributeValues": [],
+            "personalizerName": "default_recommender",
+            "state": "Live"
+          }
+        ]
+      }
+    },
+    "capability": "d360_p13n_point_update"
+  },
+  "d360_p13n_engagement_signals_list": {
+    "params": { "dataSpaceId": "default", "dataGraphId": "user_profile_graph" },
+    "capability": "d360_p13n_engagement_signals_list"
+  },
+  "d360_p13n_org_info_get": { "params": {}, "capability": "d360_p13n_org_info_get" },
+  "d360_p13n_experience_config_list": {
+    "params": {
+      "idOrAppSourceIdOrName": "my_website_connector",
+      "limit": 50,
+      "offset": 0,
+      "personalizationPointNameOrId": "hero_banner_point",
+      "transformerNameOrId": "promo_banner_transformer",
+      "dataSpaceIdOrName": "default",
+      "isWpmUrlRequired": false
+    },
+    "capability": "d360_p13n_experience_config_list"
+  },
+  "d360_p13n_experience_config_get": {
+    "params": {
+      "idOrAppSourceIdOrName": "my_website_connector",
+      "nameParam": "homepage_hero_banner",
+      "isWpmUrlRequired": false
+    },
+    "capability": "d360_p13n_experience_config_get"
+  },
+  "d360_p13n_experience_config_delete": {
+    "params": {
+      "idOrAppSourceIdOrName": "my_website_connector",
+      "nameParam": "homepage_hero_banner"
+    },
+    "capability": "d360_p13n_experience_config_delete"
+  },
+  "d360_p13n_transformer_list": {
+    "params": {
+      "limit": 50,
+      "offset": 0,
+      "source": "Organization",
+      "transformerCategory": "example-id",
+      "channelType": "WebApp",
+      "transformerType": "Handlebars",
+      "isEnabled": true,
+      "connectorNameOrId": "my_website_connector",
+      "dataSpaceIdOrName": "default",
+      "isDataConnectorAttached": true
+    },
+    "capability": "d360_p13n_transformer_list"
+  },
+  "d360_p13n_transformer_get": {
+    "params": { "idOrName": "promo_banner_transformer" },
+    "capability": "d360_p13n_transformer_get"
+  },
+  "d360_p13n_transformer_delete": {
+    "params": { "idOrName": "promo_banner_transformer" },
+    "capability": "d360_p13n_transformer_delete"
+  },
+  "d360_p13n_schema_get": {
+    "params": { "idOrName": "product_recommendation_schema" },
+    "capability": "d360_p13n_schema_get"
+  },
+  "d360_p13n_schema_delete": {
+    "params": { "idOrName": "product_recommendation_schema" },
+    "capability": "d360_p13n_schema_delete"
+  },
+  "d360_p13n_point_get": {
+    "params": { "idOrName": "hero_banner_point" },
+    "capability": "d360_p13n_point_get"
+  },
+  "d360_p13n_point_delete": {
+    "params": { "idOrName": "hero_banner_point" },
+    "capability": "d360_p13n_point_delete"
+  },
+  "d360_prediction_job_def_delete": {
+    "params": { "idOrName": "example-idOrName" },
+    "capability": "d360_prediction_job_def_delete"
+  },
+  "d360_ml_model_artifact_delete": {
+    "params": { "idOrName": "example-idOrName" },
+    "capability": "d360_ml_model_artifact_delete"
+  },
+  "d360_ml_configured_model_delete": {
+    "params": { "idOrName": "example-idOrName" },
+    "capability": "d360_ml_configured_model_delete"
+  },
+  "d360_ml_model_setup_delete": {
+    "params": { "idOrName": "example-idOrName" },
+    "capability": "d360_ml_model_setup_delete"
+  }
+}

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentRuntimeSkillRoot } from '@zana-ai/zcc-agent-runtime';
 import { discoverNativeSkillRoots } from './native-skill-discovery.js';
@@ -18,6 +18,12 @@ export function readBuiltinSkillTargets(dataDir: string): ReadonlySet<string> {
 }
 
 export type InjectedSkillPolicyState = 'manual' | 'off';
+const BUILTIN_SKILL_OWNER = 'built-in';
+
+/** Main-authorized ids for one unattended session. Never accept paths here. */
+export interface AutomatedSkillSelection {
+  skillIds: readonly string[];
+}
 
 const POLICY_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -62,7 +68,16 @@ function skillDescriptionFromFrontmatter(body: string, fallback: string): string
 
 type DiscoveredSkill = { name: string; description: string; manual: boolean };
 
-function discoverSkills(root: string): DiscoveredSkill[] {
+function isAuthorizedBuiltinSymlink(path: string, builtinTargets?: ReadonlySet<string>): boolean {
+  if (!builtinTargets) return false;
+  try {
+    return builtinTargets.has(realpathSync(path));
+  } catch {
+    return false;
+  }
+}
+
+function discoverSkills(root: string, builtinTargets?: ReadonlySet<string>): DiscoveredSkill[] {
   if (!existsSync(root)) return [];
   let entries;
   try {
@@ -72,7 +87,8 @@ function discoverSkills(root: string): DiscoveredSkill[] {
   }
   const skills: DiscoveredSkill[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    const skillPath = join(root, entry.name);
+    if (!entry.isDirectory() && (!entry.isSymbolicLink() || !isAuthorizedBuiltinSymlink(skillPath, builtinTargets))) continue;
     const skillFile = join(root, entry.name, 'SKILL.md');
     if (!existsSync(skillFile)) continue;
     let description = entry.name;
@@ -107,6 +123,56 @@ export function readInjectedSkillDirectoryRoots(dataDir: string): string[] {
     /* well-known dirs are enough when the manifest is absent */
   }
   return [...roots];
+}
+
+/**
+ * Resolve main-authorized skill ids against the daemon's current confined
+ * manifest. An automated session gets no implicit fallback to the full catalog.
+ */
+export function resolveAutomatedSkillSelection(
+  dataDir: string,
+  selection: AutomatedSkillSelection
+): ReadonlyMap<string, ReadonlySet<string>> {
+  if (selection.skillIds.length > 64) throw new Error('Too many automated skill ids');
+  const skillIds = [...selection.skillIds].sort();
+  const requested = new Set(skillIds);
+  if (requested.size !== skillIds.length) throw new Error('Automated skill ids must be unique');
+  const roots = readInjectedSkillDirectoryRoots(dataDir);
+  const builtinTargets = readBuiltinSkillTargets(dataDir);
+  const owners = new Map<string, string>();
+  try {
+    const parsed = JSON.parse(readFileSync(injectedSkillRootsFile(dataDir), 'utf8')) as { rootOwners?: unknown };
+    if (parsed.rootOwners && typeof parsed.rootOwners === 'object' && !Array.isArray(parsed.rootOwners)) {
+      for (const [root, owner] of Object.entries(parsed.rootOwners)) {
+        if (typeof owner === 'string') owners.set(root, owner);
+      }
+    }
+  } catch { /* manifest absence means no selected ids can resolve */ }
+  const candidates = new Map<string, Array<{ root: string; name: string }>>();
+  const policy = readInjectedSkillPolicy(dataDir);
+  for (const root of roots) {
+    const owner = owners.get(root) ?? BUILTIN_SKILL_OWNER;
+    for (const skill of discoverSkills(root, builtinTargets)) {
+      const id = `zcc:${owner}/${skill.name}`;
+      if (requested.has(id)) {
+        const matches = candidates.get(id) ?? [];
+        matches.push({ root, name: skill.name });
+        candidates.set(id, matches);
+      }
+    }
+  }
+  const resolved = new Map<string, Set<string>>();
+  for (const id of skillIds) {
+    const matches = candidates.get(id) ?? [];
+    if (matches.length === 0) throw new Error(`Unknown automated skill id: ${id}`);
+    if (matches.length !== 1) throw new Error(`Ambiguous automated skill id: ${id}`);
+    const match = matches[0]!;
+    if (policy.get(match.name) === 'off') throw new Error(`Automated skill is disabled: ${id}`);
+    const selected = resolved.get(match.root) ?? new Set<string>();
+    selected.add(match.name);
+    resolved.set(match.root, selected);
+  }
+  return resolved;
 }
 
 /**

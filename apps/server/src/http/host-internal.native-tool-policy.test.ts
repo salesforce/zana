@@ -30,7 +30,7 @@ beforeEach(() => {
   origin.allowed = true;
   session = { instanceId: 'instance', socket: { readyState: 1, OPEN: 1 } };
   decideToolPolicy = vi.fn(async () => ({ action: 'allow' }));
-  vi.mocked(getHost).mockReturnValue({ id: 'host', hostKeyHash: 'hash' } as never);
+  vi.mocked(getHost).mockReturnValue({ id: 'host', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
   vi.mocked(getConversationThread).mockReturnValue(thread as never);
 });
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });

@@ -29,12 +29,13 @@ export function hrefForPluginNavPanel(
 }
 
 /** Project workspace URL for a plugin `projectTab`, or the project home when none is registered. */
-export function hrefForPluginProjectTab(pluginId: string, projectId: string, tabId?: string): string {
+export function hrefForPluginProjectTab(pluginId: string, projectId: string, tabId?: string, resourceId?: string): string {
   const tabs = listProjectTabs();
   const forPlugin = tabs.filter((row) => row.pluginId === pluginId);
   const tab = (tabId ? forPlugin.find((row) => row.id === tabId) : undefined) ?? forPlugin[0];
   if (!tab) return getProjectRoutePath(projectId);
-  return getProjectModeRoutePath(projectId, projectTabView(tab, tabs));
+  const path = getProjectModeRoutePath(projectId, projectTabView(tab, tabs));
+  return resourceId === undefined ? path : `${path}?${new URLSearchParams({ pluginResourceId: resourceId })}`;
 }
 
 export function projectMenuNavigateContext(
@@ -113,3 +114,12 @@ export function extensionsHubRedirectForPath(pathname: string): string | null {
   return hrefForPluginNavPanel(content.pluginId, content.panelPath, content.subPath || undefined);
 }
 
+/** Display-only resource selection in the current plugin project tab; never authorizes access. */
+export function pluginProjectResourceFromSearch(pluginId: string, projectId: string | null, pathname: string, search: string): string | undefined {
+  if (!projectId) return undefined;
+  const ownTab = listProjectTabs().find((tab) => tab.pluginId === pluginId && hrefForPluginProjectTab(pluginId, projectId, tab.id) === pathname);
+  if (!ownTab) return undefined;
+  const resourceId = new URLSearchParams(search).get('pluginResourceId');
+  if (!resourceId || !resourceId.trim() || resourceId.length > 2048 || /[\x00-\x1f\x7f]/.test(resourceId)) return undefined;
+  return resourceId;
+}

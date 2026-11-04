@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./computer-label": "./src/computer-label.ts",
     "./cli-host-guard": "./src/cli-host-guard.ts",
     ".": {
       "types": "./src/index.ts",
@@ -74,6 +75,11 @@
       "types": "./src/schedule-health.ts",
       "source": "./src/schedule-health.ts",
       "default": "./src/schedule-health.ts"
+    },
+    "./schedule-skipped": {
+      "types": "./src/schedule-skipped.ts",
+      "source": "./src/schedule-skipped.ts",
+      "default": "./src/schedule-skipped.ts"
     },
     "./squad-origin": {
       "types": "./src/squad-origin.ts",
@@ -155,6 +161,11 @@
       "source": "./src/workspace-diff.ts",
       "default": "./src/workspace-diff.ts"
     },
+    "./context-reference": {
+      "types": "./src/context-reference.ts",
+      "source": "./src/context-reference.ts",
+      "default": "./src/context-reference.ts"
+    },
     "./thread-runtime": {
       "types": "./src/thread-runtime.ts",
       "source": "./src/thread-runtime.ts",
@@ -173,7 +184,7 @@
   },
   "dependencies": {
     "croner": "^10.0.1",
-    "zod": "^4.0.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@zana-ai/zcc-tsconfig": "workspace:*",

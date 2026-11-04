@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron';
+import type { WrapUpCloseService } from '@zana-ai/zcc-server/services/followups/wrap-up-close';
 
 type SafeHandle = <TArgs extends unknown[], TResult>(
   channel: string,
@@ -32,6 +33,7 @@ export interface IpcCtx {
   catchUpSummary: any;
   cloneAndRegisterProject: any;
   closeSummary: any;
+  wrapUpClose: WrapUpCloseService;
   conversationHistory: any;
   createInteractiveTerminal: any;
   createLocalExtension: any;
@@ -70,6 +72,8 @@ export interface IpcCtx {
   inboxActionRegistry: any;
   planCorrection: any;
   inboxSummary: any;
+  memoCounters: () => Record<string, import('@zana-ai/zcc-llm').WorkloadMemoCounters>;
+  invalidateLlmReuse: () => void;
   isTeamWorkerRestore: any;
   keepAwake: any;
   launchAuthorizedTerminal: any;
@@ -89,6 +93,7 @@ export interface IpcCtx {
   offLoudInboxAppended: any;
   openProjectWindow: any;
   overseerAudit: any;
+  apiErrorResume: any;
   packAndInstallLocal: any;
   pendingWhatsNew: any;
   permissionBroker: any;
@@ -99,6 +104,8 @@ export interface IpcCtx {
   ptys: any;
   quickPrompts: any;
   readLiveSessionStats: any;
+  /** Re-colour every window's Windows caption buttons for the current theme. */
+  refreshTitleBarOverlays: () => void;
   registerExtensionProject: any;
   reportTeamTask: any;
   resolveTheme: any;
@@ -122,6 +129,7 @@ export interface IpcCtx {
   skillBundles: any;
   squadExecutionService: any;
   squadWorktreeAction: any;
+  retirePlanHandoff: (projectId: string, executionId: string) => Promise<void>;
   sshHostProviderRegistry: any;
   stampFeedEvent: any;
   startTeamJobFromUi: any;

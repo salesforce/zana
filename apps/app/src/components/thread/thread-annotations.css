@@ -1,0 +1,110 @@
+.thread-annotation-menu {
+  position: fixed;
+  z-index: 10000;
+  display: flex;
+  gap: 4px;
+  border: 1px solid var(--border);
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-panel));
+  box-shadow: 0 6px 24px #0003;
+}
+.thread-annotation-menu button,
+.thread-annotation-dialog button {
+  border: 0;
+  border-radius: 5px;
+  padding: 6px 10px;
+  background: var(--bg-hover, var(--bg-panel));
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.thread-annotation-menu button:focus-visible,
+.thread-annotation-dialog button:focus-visible {
+  outline: 2px solid var(--accent-blue);
+}
+.thread-annotation-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: grid;
+  place-items: center;
+  background: #0005;
+  padding: 16px;
+}
+.thread-annotation-dialog {
+  width: min(480px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: 0 12px 48px #0004;
+}
+.thread-annotation-dialog h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+}
+.thread-annotation-dialog blockquote {
+  margin: 0 0 16px;
+  padding: 10px;
+  border-left: 2px solid var(--accent-blue);
+  background: var(--bg-base);
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.thread-annotation-dialog label {
+  display: block;
+  font-size: 12px;
+}
+.thread-annotation-dialog textarea {
+  display: block;
+  box-sizing: border-box;
+  margin-top: 8px;
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  padding: 10px;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-base);
+  font: inherit;
+}
+.thread-annotation-quick,
+.thread-annotation-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.thread-annotation-actions {
+  justify-content: flex-end;
+}
+.thread-annotation-dialog button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.editor-selection-preview textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 75px;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  font: inherit;
+}
+.editor-selection-annotation-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}

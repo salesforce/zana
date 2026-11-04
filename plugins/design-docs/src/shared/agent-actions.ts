@@ -3,6 +3,9 @@
  * turns the chosen one into the opening prompt of a new agent thread.
  */
 
+export const TEMPLATE_COMMENTS_RULE =
+  'Follow every <!-- AI Instructions --> and <!-- AI Post Template Instructions --> comment in the template files you use.';
+
 export interface AgentAction {
   id: string;
   label: string;
@@ -80,6 +83,7 @@ export function buildAgentPrompt(args: {
   const request = [args.action?.instruction, args.prompt?.trim()].filter(Boolean).join('\n\n');
   return [
     `You are working on the design doc "${args.doc.title}" (id ${args.doc.id}) in the Design Docs plugin.${focus}`,
+    TEMPLATE_COMMENTS_RULE,
     request,
     `Start with design_doc_read doc="${args.doc.id}" to see its files and open comments. Make changes in the doc itself with design_doc_write (prefer small edits with baseRevision) and design_doc_comment, rather than pasting long content into chat. The user is watching the doc update live. When you finish, summarise what you changed and end with ::design-doc{id="${args.doc.id}"} on its own line.`
   ]

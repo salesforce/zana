@@ -31,6 +31,9 @@ export const SERIAL_SOURCE_PATTERN = new RegExp([
 
 /** Spawn through an imported helper; the source pattern cannot see these. */
 export const SERIAL_TEST_FILES: readonly string[] = [
+  // Native Codex credential fixtures launch real helpers through a portable wrapper.
+  'apps/host-daemon/src/codex-auth-native.test.ts',
+  'apps/host-daemon/src/codex-auth-storage.test.ts',
   // createGhRunner spawns real node children under a 150ms timeout.
   'plugins/github/src/credentials.test.ts',
   // History-query workers share a module-level capacity queue across test files.

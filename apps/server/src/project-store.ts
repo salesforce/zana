@@ -1,8 +1,8 @@
 import { isProjectIcon, type ProjectIcon } from '@zana-ai/zcc-domain';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join } from 'node:path';
-import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-store.js';
+import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
+import { atomicDurableWrite, createSerializedTransactionQueue, DurableWriteConflictError } from './durable-store.js';
 
 /**
  * Server-owned project mutation service (Runtime Migration Backlog, Durable
@@ -168,7 +168,7 @@ function canonicalProjectPath(path: string): string {
 }
 
 function canonicalStoredLocalPath(project: ProjectRecord): string | null {
-  if ('remote' in project) return null;
+  if ('remote' in project || project.hostId) return null;
   try {
     return canonicalProjectPath(project.path);
   } catch {
@@ -281,7 +281,7 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
       return queue.run(async () => {
         const remoteHost = Boolean(options?.hostId);
         const canonicalPath = remoteHost
-          ? (isAbsolute(path) ? path : (() => { throw new Error('project path must be absolute'); })())
+          ? (isAbsolute(path) || win32.isAbsolute(path) ? path : (() => { throw new Error('project path must be absolute'); })())
           : canonicalProjectPath(path);
 
         const { file, hash } = readSnapshot();
@@ -303,7 +303,7 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
           return existing;
         }
 
-        const displayName = ext ? `Ext: ${ext.title}`.slice(0, 256) : (basename(canonicalPath) || canonicalPath);
+        const displayName = ext ? `Ext: ${ext.title}`.slice(0, 256) : ((remoteHost && win32.isAbsolute(canonicalPath) ? win32.basename(canonicalPath) : basename(canonicalPath)) || canonicalPath);
         const taken = new Set(projects.map((p) => p.tag).filter((t): t is string => !!t));
         const tag = pickTag(ext ? (basename(canonicalPath) || canonicalPath) : displayName, taken);
         const color = pickProjectColor(projects.map((p) => p.color));
@@ -440,14 +440,23 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
 
     touch(id: string): Promise<ProjectRecord | null> {
       return queue.run(async () => {
-        const { file, hash } = readSnapshot();
-        const projects = backfillProjectMetadata(file.projects);
-        const index = projects.findIndex((project) => project.id === id);
-        if (index === -1) return null;
-        const project = { ...projects[index], lastActiveAt: Date.now() };
-        projects[index] = project;
-        writeProjects(projects, hash);
-        return project;
+        // Touch is activity-only. A concurrent legacy/project mutation must win;
+        // reread its result and retry rather than failing a project switch.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const { file, hash } = readSnapshot();
+          const projects = backfillProjectMetadata(file.projects);
+          const index = projects.findIndex((project) => project.id === id);
+          if (index === -1) return null;
+          const project = { ...projects[index], lastActiveAt: Date.now() };
+          projects[index] = project;
+          try {
+            writeProjects(projects, hash);
+            return project;
+          } catch (error) {
+            if (!(error instanceof DurableWriteConflictError) || attempt === 2) throw error;
+          }
+        }
+        return null;
       });
     },
 

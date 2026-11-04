@@ -1,5 +1,5 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
-import { useState, type ComponentPropsWithRef } from 'react';
+import { useRef, useState, type ComponentPropsWithRef } from 'react';
 import { EditorContent, type Editor } from '@tiptap/react';
 import { ComposerIconButton } from '../ui/CommandComposer.js';
 import { ComposerImageThumbs } from './ComposerImageThumbs.js';
@@ -37,6 +37,7 @@ export function ComposerPromptField({
   onApply: (item: TypeaheadSuggestion) => void;
 }) {
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   return (
     <>
       <input {...imageInputProps} aria-label="Attach images" />
@@ -49,7 +50,7 @@ export function ComposerPromptField({
         onRemove={onRemoveImage}
         onOpen={(image) => setLightbox({ src: image.src, name: image.name })}
       />
-      <div className="thread-command-editor-slot">
+      <div className="thread-command-editor-slot" ref={anchorRef}>
         <ComposerIconButton
           className="thread-command-expand"
           aria-label={expanded ? 'Make prompt box smaller' : 'Make prompt box larger'}
@@ -64,6 +65,7 @@ export function ComposerPromptField({
       </div>
       {menuOpen && (
         <ComposerTypeaheadMenu
+          anchorRef={anchorRef}
           suggestions={suggestions}
           selectedIndex={selectedIndex}
           triggerKind={triggerKind}

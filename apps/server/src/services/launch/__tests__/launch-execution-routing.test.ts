@@ -31,22 +31,20 @@ describe('production execution routing preflight', () => {
     expect(provider.discoverRoleTargets).not.toHaveBeenCalled(); expect(provider.discoverModelTargets).not.toHaveBeenCalled();
   });
 
-  it('maps an OpenCode portable level through the live inventory before launch', async () => {
+  it('does not infer an OpenCode portable level from opaque model names', async () => {
     const provider = new OpenCodeProvider();
     const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => [
-      'llmgw/gpt-7-luna', 'llmgw/gpt-7-terra', 'llmgw/gpt-7-sol'
+      'fixture-provider/gpt-7-luna', 'fixture-provider/gpt-7-terra', 'fixture-provider/gpt-7-sol'
     ]) };
     const services = { ...deps(), provider, discovery };
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p', projectPath: '/selected/source', scope: 'local',
       mode: 'interactive', idempotencyKey: 'live-level', persona: { id: 'p', name: 'P', modelLevel: 'low' }
     }, services)).resolves.toEqual({
-      decision: 'allowed', scope: 'local',
-      modelPin: { adapterId: 'opencode', level: 'low', targetId: 'llmgw/gpt-7-luna' }
+      decision: 'blocked', reason: 'OpenCode does not support low model level.'
     });
-    expect(discovery.models).toHaveBeenCalled();
-    // The shared provider keeps its snapshot; the live id rides in the decision.
-    expect(provider.adapter.descriptor.targets?.modelLevelMapping?.low).toBe('llmgw/gpt-6-luna');
+    expect(discovery.models).not.toHaveBeenCalled();
+    expect(provider.adapter.descriptor.targets?.modelLevelMapping?.low).toBeUndefined();
   });
   const deps = () => ({
     consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },
@@ -55,7 +53,7 @@ describe('production execution routing preflight', () => {
 
   it.each(['local', 'remote'] as const)('allows ACP Agent default without probing a synthetic model on %s launches', async (scope) => {
     const provider = new OpenCodeProvider();
-    const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => ['llmgw/real-model']) };
+    const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => ['fixture-provider/real-model']) };
     const services = { ...deps(), provider, discovery };
     await expect(preflightTerminalExecution({
       config: { ...config(), harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'obsolete/model' } } } },
@@ -92,7 +90,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: unset, profile: 'opencode', projectId: 'p1', scope: 'local', mode: 'interactive',
       idempotencyKey: 'auto-on', harnessRouting: {
-        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } }
+        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.1-sol' } }
       }
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
@@ -102,7 +100,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: { ...config(), harnessOpenCodeEnabled: false }, profile: 'opencode', projectId: 'p1',
       scope: 'local', mode: 'interactive', idempotencyKey: 'hidden',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.1-sol' } } }
     }, services)).resolves.toEqual({ decision: 'blocked', reason: 'selected harness is disabled' });
   });
   it('uses remote enablement and version without borrowing the coordinator installation', async () => {
@@ -132,7 +130,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', scope: 'local', mode: 'interactive',
       idempotencyKey: 'model', harnessRouting: {
-        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } }
+        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.1-sol' } }
       }
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
@@ -179,7 +177,7 @@ describe('production execution routing preflight', () => {
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', scope: 'remote',
       mode: 'interactive', idempotencyKey: 'remote-model',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.1-sol' } } }
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'remote' });
   });
 
@@ -211,6 +209,24 @@ describe('production execution routing preflight', () => {
       idempotencyKey: 'yolo-role',
       harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'build' } } }
     }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
+  it.each(['local', 'remote'] as const)('validates the native role while ignoring its unused inherited tier on %s', async scope => {
+    const provider = new OpenCodeProvider();
+    const discovery = {
+      roles: vi.fn(async () => [{ id: 'reviewer', label: 'Reviewer', scope: ['local' as const, 'remote' as const] }]),
+      models: vi.fn(async () => ['fixture/model'])
+    };
+    const input = { config: config(), profile: 'opencode' as const, projectId: 'p', projectPath: '/owned/checkout',
+      persona: { id: 'p', name: 'P', modelLevel: 'low' as const }, scope, mode: 'interactive' as const,
+      idempotencyKey: `native-role-tier-${scope}`,
+      harnessRouting: { schemaVersion: 1 as const, byAdapter: { opencode: { roleTargetId: 'reviewer' } } } };
+    await expect(preflightTerminalExecution(input, { ...deps(), provider, discovery }))
+      .resolves.toEqual({ decision: 'allowed', scope });
+    expect(discovery.roles).toHaveBeenCalledTimes(1); expect(discovery.models).not.toHaveBeenCalled();
+    discovery.roles.mockResolvedValueOnce([]);
+    await expect(preflightTerminalExecution(input, { ...deps(), provider, discovery }))
+      .resolves.toEqual({ decision: 'blocked', reason: 'role target unavailable' });
   });
 
   it('uses fresh authoritative direct-role discovery and rejects a subagent sharing a static id', async () => {
@@ -382,11 +398,7 @@ describe('production execution routing preflight', () => {
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
-  it('blocks a snapshot-absent OpenCode model when no live probe is possible (no project path)', async () => {
-    // OpenCode live-lists models, so a well-formed snapshot-absent id no longer
-    // hard-throws at resolution — but with no projectPath the live probe can't run,
-    // so preflight falls back to the snapshot rule and blocks it (a non-empty
-    // catalog rejects an unknown id) rather than letting it reach argv.
+  it('delegates an explicit OpenCode model to the CLI when no live probe is possible', async () => {
     const services = deps();
     await expect(preflightTerminalExecution({
       config: config(),
@@ -397,59 +409,81 @@ describe('production execution routing preflight', () => {
       idempotencyKey: 'unknown-catalog-model',
       harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'openai/gpt-5.2' } } }
     }, services)).resolves.toEqual({
-      decision: 'blocked',
-      reason: 'model target unavailable'
+      decision: 'allowed', scope: 'local'
     });
   });
 
-  it('allows a snapshot-ABSENT OpenCode model that the LIVE gateway inventory lists (rename-forward drift)', async () => {
-    // The gateway renamed a model to an id not yet in the release snapshot; the
-    // live probe confirms it exists, so preflight accepts it.
+  it('allows an explicit OpenCode model listed in the live inventory', async () => {
     const services = deps();
     const provider = new OpenCodeProvider();
-    provider.discoverModelTargets = vi.fn(async () => ['llmgw/gpt-6.0-nova-1M', 'llmgw/grok-5']);
+    provider.discoverModelTargets = vi.fn(async () => ['fixture-provider/gpt-6.0-nova-1M', 'fixture-provider/grok-5']);
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
       mode: 'interactive', idempotencyKey: 'drift-forward',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.0-nova-1M' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.0-nova-1M' } } }
     }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
     expect(provider.discoverModelTargets).toHaveBeenCalledWith({ cwd: '/tmp/p1', config: expect.any(Object) });
   });
 
-  it('blocks a snapshot-PRESENT OpenCode model the LIVE gateway inventory no longer lists (prevents exit-64)', async () => {
-    // The pinned id is still in the (stale) snapshot but the gateway dropped it;
-    // the live probe is authoritative and blocks the spawn before it dies with
-    // ProviderModelNotFoundError / exit 64 at runtime.
+  it.each(['local', 'remote'] as const)('checks exact live membership for an explicit provider/model pair on %s', async scope => {
+    const provider = new OpenCodeProvider();
+    const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => ['new-install-provider/model-v2']) };
+    const input = { config: config(), profile: 'opencode' as const, projectId: 'p', projectPath: '/owned/project',
+      scope, mode: 'interactive' as const, idempotencyKey: `provider-model-${scope}`,
+      harnessRouting: { schemaVersion: 1 as const, byAdapter: { opencode: {
+        providerTargetId: 'new-install-provider', modelTargetId: 'new-install-provider/model-v2'
+      } } } };
+    await expect(preflightTerminalExecution(input, { ...deps(), provider, discovery }))
+      .resolves.toEqual({ decision: 'allowed', scope });
+    expect(discovery.models).toHaveBeenCalledTimes(1);
+    discovery.models.mockResolvedValueOnce(['new-install-provider/different-model']);
+    await expect(preflightTerminalExecution(input, { ...deps(), provider, discovery }))
+      .resolves.toEqual({ decision: 'blocked', reason: 'model target unavailable' });
+  });
+
+  it.each([
+    { providerTargetId: 'new-install-provider' },
+    { providerTargetId: 'different-provider', modelTargetId: 'new-install-provider/model-v2' },
+    { providerTargetId: 'new-install-provider', modelTargetId: 'bad model' }
+  ])('blocks invalid provider/model intent before probing (%j)', async intent => {
+    const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => ['new-install-provider/model-v2']) };
+    const decision = await preflightTerminalExecution({ config: config(), profile: 'opencode', projectId: 'p',
+      projectPath: '/owned/project', scope: 'local', mode: 'interactive', idempotencyKey: 'invalid-provider-model',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: intent } }
+    }, { ...deps(), provider: new OpenCodeProvider(), discovery });
+    expect(decision.decision).toBe('blocked');
+    expect(discovery.models).not.toHaveBeenCalled();
+  });
+
+  it('blocks an explicit OpenCode model absent from the available live inventory', async () => {
     const services = deps();
     const provider = new OpenCodeProvider();
-    provider.discoverModelTargets = vi.fn(async () => ['llmgw/grok-4.6']);
+    provider.discoverModelTargets = vi.fn(async () => ['fixture-provider/grok-4.6']);
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
       mode: 'interactive', idempotencyKey: 'drift-gone',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.1-sol' } } }
     }, { ...services, provider })).resolves.toEqual({ decision: 'blocked', reason: 'model target unavailable' });
   });
 
-  it('blocks a retired OpenCode model when the live probe is unavailable', async () => {
+  it('does not classify an explicit model as retired when the live probe is unavailable', async () => {
     const provider = new OpenCodeProvider();
     provider.discoverModelTargets = vi.fn(async () => undefined);
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
       mode: 'interactive', idempotencyKey: 'retired-model',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } } }
-    }, { ...deps(), provider })).resolves.toEqual({ decision: 'blocked', reason: 'model target unavailable' });
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-5.6-sol-1M' } } }
+    }, { ...deps(), provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
-  it('falls back to snapshot evidence for a snapshot-present model when the live probe is unavailable', async () => {
-    // A transient probe failure returns undefined — do not block a valid snapshot
-    // id on it; fall back to the reviewed-evidence rule (which allows it).
+  it('preserves an explicit model when the live probe is unavailable', async () => {
     const services = deps();
     const provider = new OpenCodeProvider();
     provider.discoverModelTargets = vi.fn(async () => undefined);
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
       mode: 'interactive', idempotencyKey: 'probe-unavailable',
-      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } } }
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.1-sol' } } }
     }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 

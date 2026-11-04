@@ -26,6 +26,7 @@
  */
 
 import type { InboxEntry, LlmRunResult } from '@zana-ai/zcc-domain/product';
+import { WORKLOAD_MEMO_SKIPPED } from '@zana-ai/zcc-llm';
 import { entryGist } from '../inbox/inbox-summary.js';
 import { isDemotionCandidate } from '@zana-ai/zcc-domain/feed-categories';
 
@@ -55,7 +56,11 @@ export interface FeedNoiseDeps {
   readEntries: (projectId: string | null, limit: number) => Promise<InboxEntry[]>;
   /** Run the feed-noise-classifier prompt over the rendered candidate text; never throws. */
   runClassify: (entries: string, dedupeKey: string) => Promise<LlmRunResult>;
+  requestIdentity?: (entries: string) => string;
+  memo?: { getOrCompute<T>(workload: string, key: string, ttlMs: number, compute: () => Promise<T | undefined>): Promise<T | undefined | typeof WORKLOAD_MEMO_SKIPPED> };
 }
+
+const FEED_NOISE_MEMO_TTL_MS = 5 * 60_000;
 
 /**
  * DETERMINISTIC gate (comment-only free-form reports with no docs/questions).
@@ -86,20 +91,20 @@ export function renderCandidatesForPrompt(entries: InboxEntry[]): string {
  * intersected with `validIds` so a hallucinated / stale id can never demote an
  * entry that wasn't a candidate. Unparsable → empty set. Pure; exported for tests.
  */
-export function parseRoutineIds(text: string, validIds: ReadonlySet<string>): string[] {
-  if (!text.trim()) return [];
+export function parseRoutineIds(text: string, validIds: ReadonlySet<string>): string[] | null {
+  if (!text.trim()) return null;
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  if (start === -1 || end <= start) return [];
+  if (start === -1 || end <= start) return null;
   let obj: unknown;
   try {
     obj = JSON.parse(text.slice(start, end + 1));
   } catch {
-    return [];
+    return null;
   }
-  if (!obj || typeof obj !== 'object') return [];
+  if (!obj || typeof obj !== 'object') return null;
   const raw = (obj as Record<string, unknown>).routine;
-  if (!Array.isArray(raw)) return [];
+  if (!Array.isArray(raw)) return null;
   const out: string[] = [];
   const seen = new Set<string>();
   for (const v of raw) {
@@ -132,11 +137,25 @@ export class FeedNoiseClassifier {
     const text = renderCandidatesForPrompt(candidates);
     if (!text.trim()) return { routineIds: [], candidateCount: candidates.length };
 
-    const result = await this.deps.runClassify(text, `feed-noise:${projectId ?? 'all'}`);
-    if (!result.ok || !result.text.trim()) {
-      return { routineIds: [], candidateCount: candidates.length, failed: true };
-    }
     const validIds = new Set(candidates.map((c) => c.id));
-    return { routineIds: parseRoutineIds(result.text, validIds), candidateCount: candidates.length };
+    const classifyOnce = async (): Promise<string[] | undefined> => {
+      const result = await this.deps.runClassify(text, `feed-noise:${projectId ?? 'all'}`);
+      if (!result.ok || !result.text.trim()) return undefined;
+      return parseRoutineIds(result.text, validIds) ?? undefined;
+    };
+    const resultFor = (ids: string[] | undefined): FeedNoiseResult => ids === undefined
+      ? { routineIds: [], candidateCount: candidates.length, failed: true }
+      : { routineIds: ids, candidateCount: candidates.length };
+    if (!this.deps.memo) return resultFor(await classifyOnce());
+
+    const identity = this.deps.requestIdentity?.(text) ?? text;
+    const routineIds = await this.deps.memo.getOrCompute('feed-noise', `feed-noise:${projectId ?? 'all'}:${identity}`, FEED_NOISE_MEMO_TTL_MS, classifyOnce);
+    if (routineIds === WORKLOAD_MEMO_SKIPPED) return resultFor(await classifyOnce());
+    if (routineIds === undefined) return resultFor(undefined);
+    {
+      // The effective prompt can omit candidate text; preserve the deterministic
+      // output fence even when a cached valid reply is reused.
+      return { routineIds: routineIds.filter((id) => validIds.has(id)), candidateCount: candidates.length };
+    }
   }
 }

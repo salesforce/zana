@@ -459,9 +459,13 @@ function formatTurnTitle(
 function formatConversationRequestLabel(
   row: TimelineConversationViewRow,
 ): string | null {
-  if (row.role !== "user" || row.turnRequest.kind !== "steer") {
+  if (row.role !== "user") {
     return null;
   }
+  if (row.turnRequest.status === "cancelled") {
+    return row.turnRequest.kind === "steer" ? "steer cancelled" : "cancelled";
+  }
+  if (row.turnRequest.kind !== "steer") return null;
   if (row.turnRequest.status === "pending") return "steer pending";
   if (row.turnRequest.status === "rejected") return "steer failed";
   return "steer";

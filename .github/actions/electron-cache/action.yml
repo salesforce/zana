@@ -1,0 +1,13 @@
+name: Cache Electron preparation
+description: Reuse downloads and verified ABI-specific SQLite bindings without replacing installed native addons.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v5
+      with:
+        path: |
+          node_modules/.cache/zcc-native-abi
+          ~/.cache/electron
+          ~/Library/Caches/electron
+          ~/AppData/Local/electron/Cache
+        key: electron-native-v1-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('pnpm-lock.yaml', 'scripts/ensure-better-sqlite3.mjs', 'packages/db/src/native-binding.mjs', '.github/actions/electron-cache/action.yml') }}

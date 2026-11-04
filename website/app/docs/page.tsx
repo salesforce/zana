@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { DocLayout } from './DocLayout';
-import { DOCS, renderDoc } from '@/lib/docs';
+import { DOCS, renderDoc } from '../../lib/docs';
 import { AuroraGrid } from '../components/AuroraGrid';
 
 export const metadata: Metadata = {
@@ -29,6 +29,7 @@ export default async function DocsIndex() {
             <span className="zcc-kicker">Documentation</span>
             <h1>Start with the task. Keep the reference close.</h1>
             <p>Guides for operating Zana, building plugins, and running a marketplace. Each path leads to the same maintained public reference used by the product.</p>
+            <Link className="text-link" href="/docs/architecture/">Explore the architecture <span aria-hidden="true">→</span></Link>
           </div>
           <div className="docs-hub-paths" data-reveal-stagger>
             <Link className="zcc-panel" href="/docs/getting-started/"><span>New to Zana</span><strong>Set up your first project <b aria-hidden="true">→</b></strong></Link>

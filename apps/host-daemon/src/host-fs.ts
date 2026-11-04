@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join, basename, relative, sep } from 'node:path';
 import { isAbsolute } from 'node:path';
 import { Buffer, isUtf8 } from 'node:buffer';
-import { promises as fs, type Stats } from 'node:fs';
+import { promises as fs, type Dirent, type Stats } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isWithin } from '@zana-ai/zcc-path-confine';
@@ -423,56 +423,78 @@ interface ListedPath {
   name: string;
 }
 
+async function matchesExactHostName(root: string, path: string, actualName: string, expectedName: string): Promise<boolean> {
+  if (actualName === expectedName) return true;
+  if (actualName.toLocaleLowerCase('en-US') !== expectedName.toLocaleLowerCase('en-US')) return false;
+  try {
+    const actual = await fs.realpath(join(root, path));
+    const requested = await fs.realpath(join(root, dirname(path), expectedName));
+    return actual === requested;
+  } catch {
+    return false;
+  }
+}
+
+function shouldStopWalk(command: { deadline?: number; stopAfter?: number }, pathCount: number, visits: number): boolean {
+  if (command.deadline !== undefined && Date.now() >= command.deadline) return true;
+  if (command.stopAfter !== undefined && pathCount >= command.stopAfter) return true;
+  return visits >= LIST_PATHS_VISIT_CAP;
+}
+
+async function processListedEntry(
+  entry: Dirent,
+  dir: string,
+  command: { root: string; includeFiles: boolean; includeDirectories: boolean; exactName?: string },
+  stack: string[]
+): Promise<ListedPath | null> {
+  if (entry.name.startsWith('.') || BROWSE_SKIP_NAMES.has(entry.name) || entry.isSymbolicLink()) return null;
+  const fullPath = join(dir, entry.name);
+  const rel = posixRelative(command.root, fullPath);
+  if (!rel || rel.startsWith('..')) return null;
+  if (entry.isDirectory()) {
+    stack.push(fullPath);
+    return command.includeDirectories ? { kind: 'directory', path: rel, name: entry.name } : null;
+  }
+  if (entry.isFile() && command.includeFiles) {
+    if (!command.exactName) return { kind: 'file', path: rel, name: entry.name };
+    if (await matchesExactHostName(command.root, rel, entry.name, command.exactName)) {
+      return { kind: 'file', path: rel, name: entry.name };
+    }
+  }
+  return null;
+}
+
 async function walkListedPaths(command: {
   root: string;
   includeFiles: boolean;
   includeDirectories: boolean;
   stopAfter?: number;
+  exactName?: string;
+  deadline?: number;
 }): Promise<{ paths: ListedPath[]; truncated: boolean }> {
   const paths: ListedPath[] = [];
   const stack = [command.root];
   let visits = 0;
   let truncated = false;
   while (stack.length > 0) {
-    if (command.stopAfter !== undefined && paths.length >= command.stopAfter) {
-      truncated = true;
-      break;
-    }
-    if (visits >= LIST_PATHS_VISIT_CAP) {
-      truncated = true;
-      break;
-    }
+    if (shouldStopWalk(command, paths.length, visits)) { truncated = true; break; }
     const dir = stack.pop()!;
-    let dirents;
+    let directory;
+    try { directory = await fs.opendir(dir); }
+    catch { if (command.exactName) truncated = true; continue; }
     try {
-      dirents = await fs.readdir(dir, { withFileTypes: true });
+      for await (const entry of directory) {
+        visits += 1;
+        if (shouldStopWalk(command, paths.length, visits)) { truncated = true; break; }
+        const listed = await processListedEntry(entry, dir, command, stack);
+        if (listed) paths.push(listed);
+        if (shouldStopWalk(command, paths.length, visits)) { truncated = true; break; }
+      }
     } catch {
-      continue;
+      if (command.exactName) truncated = true;
+    } finally {
+      await directory.close?.().catch(() => {});
     }
-    for (const entry of dirents) {
-      visits += 1;
-      if (visits > LIST_PATHS_VISIT_CAP) {
-        truncated = true;
-        break;
-      }
-      if (entry.name.startsWith('.')) continue;
-      if (BROWSE_SKIP_NAMES.has(entry.name)) continue;
-      if (entry.isSymbolicLink()) continue;
-      const fullPath = join(dir, entry.name);
-      const rel = posixRelative(command.root, fullPath);
-      if (!rel || rel.startsWith('..')) continue;
-      if (entry.isDirectory()) {
-        if (command.includeDirectories) {
-          paths.push({ kind: 'directory', path: rel, name: entry.name });
-        }
-        stack.push(fullPath);
-        continue;
-      }
-      if (entry.isFile() && command.includeFiles) {
-        paths.push({ kind: 'file', path: rel, name: entry.name });
-      }
-    }
-    if (truncated) break;
   }
   return { paths, truncated };
 }
@@ -480,6 +502,8 @@ async function walkListedPaths(command: {
 export async function listHostPaths(command: {
   path: string;
   query?: string;
+  exactName?: string;
+  timeoutMs?: number;
   limit: number;
   includeFiles: boolean;
   includeDirectories: boolean;
@@ -494,15 +518,21 @@ export async function listHostPaths(command: {
   }
   const root = await fs.realpath(command.path);
   const query = command.query?.trim() ?? '';
+  const deadline = command.exactName
+    ? Date.now() + Math.min(command.timeoutMs ?? 5000, 5000)
+    : undefined;
   const walked = await walkListedPaths({
     root,
     includeFiles: command.includeFiles,
     includeDirectories: command.includeDirectories,
-    ...(query ? {} : { stopAfter: command.limit + 1 })
+    ...(!query && !command.exactName ? { stopAfter: command.limit + 1 } : {}),
+    ...(command.exactName ? { exactName: command.exactName, deadline } : {})
   });
   const ranked: HostPathEntry[] = [];
   for (const entry of walked.paths) {
-    const match = rankListedPath(entry.path, query);
+    const match = command.exactName
+      ? { score: 0, positions: [] }
+      : rankListedPath(entry.path, query);
     if (!match) continue;
     ranked.push({
       kind: entry.kind,

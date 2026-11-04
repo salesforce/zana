@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { providerFor } from '../registry.js';
+import { withLiveModelTargets } from '../launch-provider.js';
 import { CursorProvider } from '../cursor/provider.js';
 import { evaluateFacetEvidence, evaluateTargetEvidence } from '../routing-evidence.js';
 
@@ -27,7 +28,7 @@ describe('structured routing evidence', () => {
   });
 
   it('accepts approved model targets for local and remote launches', () => {
-    const provider = providerFor('opencode');
+    const provider = withLiveModelTargets(providerFor('opencode'), ['fixture-provider/fixture-model']);
     const role = provider.adapter.descriptor.targets!.roles[0];
     const model = provider.adapter.descriptor.targets!.models[0];
     expect(evaluateTargetEvidence(provider, role, 'local', '1.2.3')).toEqual({

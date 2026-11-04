@@ -66,6 +66,36 @@ afterEach(async () => {
 });
 
 describe('product HTTP', () => {
+  it('validates project moves and preserves status codes at the HTTP boundary', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-move-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [
+      { id: 'p1', name: 'Source', path: dataDir, createdAt: 1, lastActiveAt: 1 },
+      { id: 'p2', name: 'Destination', path: dataDir, createdAt: 1, lastActiveAt: 1 }
+    ] }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const host = upsertHost(server.ctx.db, { name: 'Move host', hostKeyHash: 'm'.repeat(64), isPrimary: true });
+    const thread = createConversationThread(server.ctx.db, { projectId: 'p1', hostId: host.id, providerId: 'test', status: 'idle' });
+    const move = (body: unknown, id = thread.id) => fetch(`${server!.url}api/v1/threads/${id}/move`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const input = { projectId: 'p2', expectedProjectId: 'p1' };
+    for (const invalid of [{ projectId: 'p2' }, { ...input, stop: 'yes' }, { ...input, cwd: '/arbitrary' }, { ...input, projectId: '' }]) {
+      expect((await move(invalid)).status).toBe(400);
+    }
+    const absent = await move(input, 'missing');
+    expect(absent.status).toBe(404);expect(await absent.json()).toMatchObject({ code: 'unknown-thread' });
+    const stale = await move({ ...input, expectedProjectId: 'old-project' });
+    expect(stale.status).toBe(409);expect(await stale.json()).toMatchObject({ code: 'project-changed' });
+    const unknown = await move({ ...input, projectId: 'unregistered' });
+    expect(unknown.status).toBe(404);expect(await unknown.json()).toMatchObject({ code: 'unknown-project' });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'active');
+    const running = await move(input);
+    expect(running.status).toBe(409);expect(await running.json()).toMatchObject({ code: 'session-running' });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'idle');
+    const noop = await move({ ...input, projectId: 'p1' });
+    expect(noop.status).toBe(200);expect(await noop.json()).toMatchObject({ thread: { id: thread.id, projectId: 'p1' } });
+  });
+
   it('routes GET and HEAD /file-preview/html to the HTML preview sender and reports its failures', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-html-preview-'));
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
@@ -1055,6 +1085,12 @@ describe('product HTTP', () => {
     const outlineResponse = await fetch(`${server.url}api/v1/threads/${thread.id}/conversation-outline`);
     expect(outlineResponse.status).toBe(200);
     await expect(outlineResponse.json()).resolves.toMatchObject({ items: [], maxSeq: 0 });
+    const searchResponse = await fetch(`${server.url}api/v1/threads/${thread.id}/conversation-outline?q=${encodeURIComponent('needle')}`);
+    expect(searchResponse.status).toBe(200);
+    await expect(searchResponse.json()).resolves.toEqual({ items: [], maxSeq: 0, matches: [] });
+    const longSearch = await fetch(`${server.url}api/v1/threads/${thread.id}/conversation-outline?q=${'x'.repeat(1001)}`);
+    expect(longSearch.status).toBe(400);
+    await expect(longSearch.json()).resolves.toEqual({ error: 'invalid-input', message: 'q must be at most 1000 characters' });
     expect(timeline).toMatchObject({
       activeThinking: null,
       pendingTodos: null,
@@ -2205,6 +2241,19 @@ describe('product HTTP plugin side-panel conversations', () => {
     expect((await fetch(`${server.url}api/v1/plugins/ghost/panel-threads`)).status).toBe(404);
     expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?limit=0`)).status).toBe(400);
 
+    const scoped = make('notes');
+    insertThreadPluginMetadata(server.ctx.db, { threadId: scoped.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Support.agent' } } });
+    const otherScript = make('notes');
+    insertThreadPluginMetadata(server.ctx.db, { threadId: otherScript.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Quote.agent' } } });
+    const otherProject = make('notes');
+    server.ctx.db.sqlite.prepare('UPDATE threads SET project_id = ? WHERE id = ?').run('proj-2', otherProject.id);
+    insertThreadPluginMetadata(server.ctx.db, { threadId: otherProject.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Support.agent' } } });
+    const filtered = await fetch(`${server.url}api/v1/plugins/notes/panel-threads?panel=board&projectId=proj-1&view=force-app%2FSupport.agent&limit=1`);
+    expect(filtered.status).toBe(200);
+    expect(((await filtered.json()) as { threads: Array<{ id: string }> }).threads.map(row => row.id)).toEqual([scoped.id]);
+    expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?projectId=`)).status).toBe(400);
+    expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?view=%0A`)).status).toBe(400);
+
     const updated: unknown[] = [];
     const dispose = server.ctx.hub.subscribe('threads:updated', (payload) => updated.push(payload));
     const post = (id: string) => fetch(`${server!.url}api/v1/threads/${id}/open-as-thread`, {
@@ -2221,6 +2270,40 @@ describe('product HTTP plugin side-panel conversations', () => {
 });
 
 describe('product HTTP plugins', () => {
+  it('routes plugin packs through the shared Origin and mutation content-type guards', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-packs-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const identity = { marketplaceSource: 'path:/catalog', packId: 'starter' };
+    const list = vi.fn(() => [{ identity }]);
+    const plan = vi.fn(async () => ({ identity, planId: 'review' }));
+    server.ctx.plugins = { pluginPacks: { list, plan } } as never;
+    const url = `${server.url}api/v1/plugin-packs`;
+    const listed = await fetch(url);
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual([{ identity }]);
+    expect(list).toHaveBeenCalledOnce();
+
+    const hostile = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'https://evil.example', 'content-type': 'application/json' }, body: JSON.stringify(identity)
+    });
+    expect(hostile.status).toBe(403);
+    const nonJson = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'http://127.0.0.1:5173', 'content-type': 'text/plain' }, body: JSON.stringify(identity)
+    });
+    expect(nonJson.status).toBe(415);
+    expect(plan).not.toHaveBeenCalled();
+
+    const reviewed = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'http://127.0.0.1:5173', 'content-type': 'application/json' }, body: JSON.stringify(identity)
+    });
+    expect(reviewed.status).toBe(200);
+    await expect(reviewed.json()).resolves.toEqual({ identity, planId: 'review' });
+    expect(plan).toHaveBeenCalledWith(identity);
+
+    server.ctx.plugins = undefined as never;
+    expect((await fetch(url)).status).toBe(503);
+  });
+
   it('lists contributions and dispatches plugin CLI and HTTP', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugins-'));
     server = await startTestProductServer({
@@ -2506,6 +2589,40 @@ describe('product HTTP plugins', () => {
     await expect(full.json()).resolves.toEqual(settings);
   });
 
+  it('maps expected plugin RPC domain errors to 4xx with a code and leaves other failures legacy', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-rpc-errors-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const domain = (code: string) => Object.assign(new Error(`domain ${code}`), { code });
+    server.ctx.plugins = {
+      snapshot: () => [],
+      callRpc: async (_id: string, method: string) => {
+        if (method === 'statusOnly') throw Object.assign(new Error('too fancy'), { status: 422 });
+        if (method === 'boom') throw new Error('database exploded');
+        if (method === 'unknown') throw new Error('unknown rpc demo.unknown');
+        if (method === 'nonError') throw 'plain string';
+        throw domain(method);
+      }
+    } as never;
+    const call = async (method: string) => {
+      const response = await fetch(`${server.url}api/v1/plugin-apps/demo/rpc`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ method })
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    await expect(call('invalid')).resolves.toEqual({ status: 400, body: { error: 'domain invalid', code: 'invalid' } });
+    await expect(call('forbidden')).resolves.toEqual({ status: 403, body: { error: 'domain forbidden', code: 'forbidden' } });
+    await expect(call('not_found')).resolves.toEqual({ status: 404, body: { error: 'domain not_found', code: 'not_found' } });
+    await expect(call('conflict')).resolves.toEqual({ status: 409, body: { error: 'domain conflict', code: 'conflict' } });
+    await expect(call('limit')).resolves.toEqual({ status: 413, body: { error: 'domain limit', code: 'limit' } });
+    await expect(call('statusOnly')).resolves.toEqual({ status: 422, body: { error: 'too fancy', code: 'invalid' } });
+    // Unexpected failures keep the legacy mapping and expose no code.
+    await expect(call('boom')).resolves.toEqual({ status: 400, body: { error: 'database exploded' } });
+    await expect(call('unknown')).resolves.toEqual({ status: 404, body: { error: 'unknown rpc demo.unknown' } });
+    await expect(call('nonError')).resolves.toEqual({ status: 400, body: { error: 'plain string' } });
+  });
+
   it('calls plugin RPC and reads or writes settings', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-rpc-'));
     server = await startTestProductServer({
@@ -2639,6 +2756,35 @@ describe('product HTTP plugins', () => {
       headers: { 'content-type': 'application/json' }
     });
     expect(missing.status).toBe(404);
+  });
+
+  it('runs update-all through the authoritative plugin service', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-bulk-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const request = () => fetch(`${server.url}api/v1/plugin-apps/update-all`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    server.ctx.plugins = undefined;
+    expect((await request()).status).toBe(503);
+    const value = { updated: ['sample'], failed: [{ id: 'other', message: 'source unavailable' }] };
+    server.ctx.plugins = { applyAllUpdates: async () => value } as never;
+    await expect((await request()).json()).resolves.toEqual({ ok: true, value });
+  });
+
+  it('runs core recovery without plugin RPC and exposes progress', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-recovery-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const start = () => fetch(`${server.url}api/v1/plugin-apps/hard-reload`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const status = () => fetch(`${server.url}api/v1/plugin-apps/recovery`);
+    server.ctx.plugins = undefined;
+    expect((await start()).status).toBe(503);
+    expect((await status()).status).toBe(503);
+    const value = { phase: 'running', total: 1, current: 'provider-codex', restored: [], failed: [], skipped: [] };
+    const hardReload = vi.fn(async () => value);
+    server.ctx.plugins = { hardReload, recoveryStatus: () => value } as never;
+    const response = await start();
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual(value);
+    expect(hardReload).toHaveBeenCalledExactlyOnceWith();
+    await expect((await status()).json()).resolves.toEqual(value);
   });
 
   it('adds, lists, refreshes, and removes marketplace catalogs', async () => {
@@ -2935,6 +3081,89 @@ describe('product HTTP thread file preview', () => {
       expect(denied.status).toBe(status);
     }
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe('product HTTP thread preview path resolution', () => {
+  it('resolves thread preview paths, validates inputs, and maps errors', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-preview-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-preview-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [{ id: 'proj-1', name: 'Alpha', path: projectRoot, createdAt: 1, lastActiveAt: 1 }]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: projectRoot
+    });
+    createConversationThread(server.ctx.db, {
+      id: 'sess-preview',
+      providerId: 'test',
+      projectId: 'proj-1',
+      environmentId: environment.id,
+      hostId: host.id,
+      title: 'Preview test'
+    });
+
+    vi.spyOn(server.ctx.hostHub, 'resolveHostId').mockReturnValue(host.id);
+    const rpc = vi.spyOn(server.ctx.hostHub, 'callHostOnlineRpc').mockImplementation(async (req: any) => {
+      if (req.command.type === 'host.file_metadata') {
+        if (req.command.path.endsWith('guide.md')) {
+          return { sizeBytes: 10, modifiedAtMs: 1 };
+        }
+        throw { code: 'path_not_found' };
+      }
+      return { paths: [], truncated: false };
+    });
+
+    const ok = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'guide.md' })
+    });
+    expect(ok.status).toBe(200);
+    await expect(ok.json()).resolves.toMatchObject({ kind: 'resolved', path: 'guide.md' });
+
+    const withParentHints = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'guide.md', hints: ['../secret/guide.md', 'guide.md'] })
+    });
+    expect(withParentHints.status).toBe(200);
+    await expect(withParentHints.json()).resolves.toMatchObject({ kind: 'resolved', path: 'guide.md' });
+
+    const invalid = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '../escape.txt' })
+    });
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ error: 'invalid-request' });
+
+    const scopeMismatch = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'guide.md', projectId: 'other-proj' })
+    });
+    expect(scopeMismatch.status).toBe(403);
+    await expect(scopeMismatch.json()).resolves.toMatchObject({ error: 'scope-mismatch' });
+
+    rpc.mockRejectedValueOnce(new Error('Connection dropped'));
+    const hostErr = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'missing.md' })
+    });
+    expect(hostErr.status).toBe(500);
   });
 });
 
@@ -3431,19 +3660,21 @@ describe('async history and queue HTTP responsiveness', () => {
     }
   });
 
-  it('refreshes plugin safe mode only when the authoritative config flag changes', async () => {
+  it.each(['pluginSafeMode', 'pluginDevelopmentEnabled'] as const)('refreshes plugin policy only when %s changes', async key => {
     const dataDir = mkdtempSync(join(tmpdir(), 'safe-mode-config-http-'));
     server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
     const refreshSafeMode = vi.fn(async () => undefined);
+    const refreshDevelopmentMode = vi.fn(async () => undefined);
     const original = server.ctx.plugins;
-    server.ctx.plugins = { refreshSafeMode } as never;
+    server.ctx.plugins = { refreshSafeMode, refreshDevelopmentMode } as never;
     try {
       for (const [flag, expectedCalls] of [[true, 1], [true, 1], [false, 2]] as const) {
         const response = await fetch(`${server.url}api/v1/config`, { method: 'PATCH',
-          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pluginSafeMode: flag }) });
+          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [key]: flag }) });
         expect(response.status).toBe(200);
-        expect((await response.json()).config.pluginSafeMode).toBe(flag);
-        expect(refreshSafeMode).toHaveBeenCalledTimes(expectedCalls);
+        expect((await response.json()).config[key]).toBe(flag);
+        expect(key === 'pluginSafeMode' ? refreshSafeMode : refreshDevelopmentMode).toHaveBeenCalledTimes(expectedCalls);
+        expect(key === 'pluginSafeMode' ? refreshDevelopmentMode : refreshSafeMode).not.toHaveBeenCalled();
       }
     } finally { server.ctx.plugins = original; }
   });

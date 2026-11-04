@@ -3,7 +3,7 @@ import type { DesktopBrowserApi } from '@zana-ai/zcc-desktop-contract';
 export interface BrowserViewVisibilityCoordinator {
   owns(tabId: string): boolean;
   show(tabId: string, syncBounds: () => void): void;
-  hide(tabId: string): void;
+  hide(tabId: string, preserveSnapshot?: boolean): void;
   release(tabId: string): void;
 }
 
@@ -28,12 +28,12 @@ export function createBrowserViewVisibilityCoordinator(
     visibleOwners.set(desktopBrowser, owners);
   }
   const ownedTabs = owners;
-  const hide = (tabId: string) => {
+  const hide = (tabId: string, preserveSnapshot = false) => {
     if (visibleTabId === tabId) visibleTabId = null;
     const currentOwner = ownedTabs.get(tabId);
     if (currentOwner !== undefined && currentOwner !== owner) return;
     ownedTabs.delete(tabId);
-    desktopBrowser.setVisible({ tabId, visible: false });
+    desktopBrowser.setVisible({ tabId, visible: false, ...(preserveSnapshot ? { preserveSnapshot: true } : {}) });
   };
   return {
     owns: (tabId) => ownedTabs.get(tabId) === owner,

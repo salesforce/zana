@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
-const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
 
 describe('ProjectView terminal park', () => {
   it('keeps a hidden park anchor and leaves project modes to the split workspace', () => {
-    const source = readFileSync(new URL('./ProjectView.tsx', import.meta.url), 'utf8');
-    const pane = readFileSync(new URL('./ProjectModePane.tsx', import.meta.url), 'utf8');
-    const area = readFileSync(new URL('../thread-detail/SplitThreadArea.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectView.tsx', import.meta.url));
+    const pane = readSourceText(new URL('./ProjectModePane.tsx', import.meta.url));
+    const area = readSourceText(new URL('../thread-detail/SplitThreadArea.tsx', import.meta.url));
     expect(source).toContain('PROJECTS_TERMINAL_ANCHOR_ID');
     expect(source).toContain("style={{ display: 'none' }}");
     expect(source).not.toContain('<AgentLauncher');

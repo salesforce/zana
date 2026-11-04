@@ -1,18 +1,34 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { posix, win32 } from 'node:path';
 
 const MAX_REL_PATH = 1024;
+
+/** Select filesystem path syntax from the authoritative host root, not the server OS. */
+export function threadPathApi(root: string): typeof posix | typeof win32 {
+  return /^(?:[a-z]:[\\/]|\\\\)/iu.test(root) ? win32 : posix;
+}
 
 /**
  * Map a renderer-supplied path onto a relative path inside `root`.
  * Rejects escapes, empty paths, and over-long candidates (Rule 2).
  */
 export function confinePathToRoot(root: string, candidate: string): string | null {
-  if (!root || !candidate || !isAbsolute(root)) return null;
-  const resolvedRoot = resolve(root);
-  const resolved = isAbsolute(candidate) ? resolve(candidate) : resolve(resolvedRoot, candidate);
-  const rel = relative(resolvedRoot, resolved);
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
-  const normalized = rel.split(sep).join('/');
+  if (!root || !candidate || candidate.includes('\0')) return null;
+  const paths = threadPathApi(root);
+  if (!paths.isAbsolute(root)) return null;
+  if (paths === posix && /^(?:[a-z]:[\\/]|\\\\)/iu.test(candidate)) return null;
+  if (paths === win32 && /^[a-z]:(?![\\/])/iu.test(candidate)) return null;
+  if (paths === win32 && paths.isAbsolute(candidate)) {
+    const rootDevice = win32.parse(root).root.replace(/[\\/]+$/u, '').toLowerCase();
+    const candidateDevice = win32.parse(candidate).root.replace(/[\\/]+$/u, '').toLowerCase();
+    if (!candidateDevice || candidateDevice !== rootDevice) return null;
+  }
+  const resolvedRoot = paths.resolve(root);
+  const resolved = paths.isAbsolute(candidate)
+    ? paths.resolve(candidate)
+    : paths.resolve(resolvedRoot, candidate);
+  const rel = paths.relative(resolvedRoot, resolved);
+  if (!rel || rel.startsWith('..') || paths.isAbsolute(rel)) return null;
+  const normalized = rel.split(paths.sep).join('/');
   if (normalized.length > MAX_REL_PATH) return null;
   if (normalized.split('/').some((part) => part === '..')) return null;
   return normalized;

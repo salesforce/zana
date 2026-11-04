@@ -1,4 +1,5 @@
 import type { CodexVoiceStatusResult, CodexVoiceTranscribeResult } from '@zana-ai/zcc-contracts/host-rpc';
+import { getPrimaryHost } from '@zana-ai/zcc-db';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { VOICE_TRANSCRIPTION_MAX_BYTES } from '../../http/multipart-voice.js';
@@ -34,6 +35,12 @@ function hostErrorStatus(code: string): number {
 
 export const VOICE_STATUS_RPC_TIMEOUT_MS = 3_000;
 
+/** Dictation runs on this computer's host when it is connected, so remote machines do not make it ambiguous. */
+function voiceHostId(ctx: ProductHttpContext): string {
+  const primary = getPrimaryHost(ctx.db)?.id;
+  return ctx.hostHub.resolveHostId(primary && ctx.hostHub.connectedHostIds().includes(primary) ? primary : undefined);
+}
+
 export interface VoiceTranscriptionStatus {
   enabled: boolean;
   reason: 'disabled' | 'no_host' | 'ambiguous_host' | 'auth_missing' | null;
@@ -48,7 +55,7 @@ export async function voiceTranscriptionStatus(ctx: ProductHttpContext): Promise
   if (ctx.hostHub.connectedHostIds().length === 0) return { enabled: false, reason: 'no_host' };
   try {
     const result = await ctx.hostHub.callHostOnlineRpc<CodexVoiceStatusResult>({
-      hostId: ctx.hostHub.resolveHostId(),
+      hostId: voiceHostId(ctx),
       timeoutMs: VOICE_STATUS_RPC_TIMEOUT_MS,
       command: { type: 'codex.voice.status' }
     });
@@ -88,7 +95,7 @@ export async function transcribeVoiceOnHost(
   }
   const model = config.voiceModel?.trim() || DEFAULT_VOICE_MODEL;
   try {
-    const hostId = ctx.hostHub.resolveHostId();
+    const hostId = voiceHostId(ctx);
     const result = await ctx.hostHub.callHostOnlineRpc<CodexVoiceTranscribeResult>({
       hostId,
       timeoutMs: VOICE_RPC_TIMEOUT_MS,

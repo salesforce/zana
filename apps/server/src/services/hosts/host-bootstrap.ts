@@ -2,7 +2,7 @@ import {
   findHostBySsh,
   getHost,
   getPrimaryHost,
-  listHosts,
+  listExecutionHosts,
   updateHostSshIdentity,
   type HostRow
 } from '@zana-ai/zcc-db';
@@ -611,7 +611,8 @@ export async function reconcileRemoteProjectBindings(ctx: ProductHttpContext): P
   const projects = ctx.projects.list();
   if (!projects.some((project) => project.remote)) return 0;
   const connectedIds = new Set(ctx.hostHub.connectedHostIds());
-  const peers = listHosts(ctx.db).filter((host) => !host.isPrimary && !host.destroyedAt);
+  // Plugin peer links are never execution machines, so they never take a project binding.
+  const peers = listExecutionHosts(ctx.db).filter((host) => !host.isPrimary && !host.destroyedAt);
   let bound = 0;
   for (const project of projects) {
     const remote = sshRemoteFromProject(project);
@@ -738,7 +739,8 @@ async function installConnectPeer(
   remote: ProjectRemote,
   emit: HostBootstrapListener,
   stages: HostBootstrapStageTracker,
-  hostId?: string
+  hostId?: string,
+  options: { replaceEnrollment?: boolean } = {}
 ): Promise<string> {
   const primary = requirePrimaryHost(ctx);
   let issued: Awaited<ReturnType<typeof issueConnectHostCode>>;
@@ -748,7 +750,7 @@ async function installConnectPeer(
     if (!isConnectAccountUnavailable(error)) throw error;
     emit({ type: 'log', text: `Zana Connect is unavailable (${errorText(error)}); connecting through SSH…` });
     const code = hostId ? ctx.joinCodes.mintForHost(hostId) : ctx.joinCodes.mint();
-    return (await installTunnelPeer(ctx, remote, emit, stages, code)).hostId;
+    return (await installTunnelPeer(ctx, remote, emit, stages, code, options)).hostId;
   }
   emit({ type: 'log', text: 'Installing the machine through Zana Connect…' });
   stages.start('ssh', SSH_TIMEOUT_MS);
@@ -769,7 +771,7 @@ async function installConnectPeer(
     emitLogLines(emit, errorText(error));
     if (isPeerNetworkFailure(error)) {
       emit({ type: 'log', text: 'Public HTTPS is unavailable on this machine; connecting through SSH…' });
-      return (await installTunnelPeer(ctx, remote, emit, stages, ctx.joinCodes.mintForHost(issued.hostId))).hostId;
+      return (await installTunnelPeer(ctx, remote, emit, stages, ctx.joinCodes.mintForHost(issued.hostId), options)).hostId;
     }
     const failure = installRpcFailure(error, { hostId: issued.hostId, stages });
     throw new HostBootstrapError(failure.code, failure.message, connectInstallCommand(issued));
@@ -930,7 +932,7 @@ export async function repairHost(
       );
     }
     if (usesConnect(ctx)) {
-      await installConnectPeer(ctx, remote, emit, stages, hostId);
+      await installConnectPeer(ctx, remote, emit, stages, hostId, { replaceEnrollment: true });
       emit({ type: 'done', hostId });
       return events;
     }

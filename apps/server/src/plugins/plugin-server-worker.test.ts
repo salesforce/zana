@@ -6,10 +6,13 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { sqliteWorkerConfiguration } from '@zana-ai/zcc-db';
 
-const transport = vi.hoisted(() => ({ dispose: vi.fn() }));
+const transport = vi.hoisted(() => ({ dispose: vi.fn(), commitSync: undefined as ((callback: () => any) => any) | undefined }));
 // These tests exercise worker startup/API behavior without blocking this test
 // thread on a real synchronous bridge. Real transport and ABI run in Electron.
-vi.mock('./plugin-worker-bridge.js', () => ({ createPluginWorkerBridge: () => ({ decode: (value: unknown) => value, dispose: transport.dispose }) }));
+vi.mock('./plugin-worker-bridge.js', () => ({ PEER_WORKER_EXECUTION_TIMEOUT_MS: 5000, createPluginWorkerBridge: (_port: unknown, _side: unknown, options: any) => {
+  transport.commitSync = options.commitSync;
+  return { decode: (value: unknown) => value, dispose: transport.dispose };
+} }));
 import { runPluginWorker } from './plugin-server-worker';
 
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -38,7 +41,7 @@ async function fixture(source: string, extension = 'mjs') {
     }
   } });
   await running;
-  return { api, port, handlers };
+  return { dir, api, port, handlers };
 }
 
 it('initializes local SQLite transactions, service returns and RPC contract handlers', async () => {
@@ -81,4 +84,68 @@ it.each([
 
 it('requires a worker parent port', async () => {
   await expect(runPluginWorker(null)).rejects.toThrow('requires a parent port');
+});
+
+it('rolls back failed peer commits and rejects Promise-returning SQLite transactions', async () => {
+  const f = await fixture(`export default api => {
+    const db = api.storage.database(); db.migrate(['CREATE TABLE receipts (value TEXT)']);
+    api.rpc.method('insert', () => db.prepare('INSERT INTO receipts VALUES (?)').run('committed'));
+    api.rpc.method('read', () => db.prepare('SELECT value FROM receipts').all());
+    api.rpc.method('asyncTxn', () => db.transaction(() => { db.prepare('INSERT INTO receipts VALUES (?)').run('rollback'); return Promise.resolve(); }));
+  }`);
+  const execute = transport.commitSync!;
+  expect(execute(() => { f.handlers.get('insert')!({}); return 42; })).toBe(42);
+  expect(() => execute(() => { f.handlers.get('insert')!({}); throw Error('failed'); })).toThrow('failed');
+  expect(() => f.handlers.get('asyncTxn')!({})).toThrow('requires synchronous');
+  expect(f.handlers.get('read')!({})).toEqual([{ value: 'committed' }]);
+});
+
+it('rolls back Promise peer results and retires worker before async continuations', async () => {
+  const f = await fixture(`export default api => {
+    const db = api.storage.database(); db.migrate(['CREATE TABLE receipts (value TEXT)']);
+    api.rpc.method('insert', () => db.prepare('INSERT INTO receipts VALUES (?)').run('rollback'));
+  }`);
+  expect(() => transport.commitSync!(() => { f.handlers.get('insert')!({}); return Promise.resolve(42); })).toThrow('requires synchronous');
+  expect(f.port.postMessage).toHaveBeenCalledWith({ kind: 'failure', message: 'peer commit fence requires synchronous callback' });
+  expect(() => f.handlers.get('insert')!({})).toThrow(/not open/);
+});
+
+it('keeps nested async invalidation sticky when peer callback catches the transaction error', async () => {
+  const f = await fixture(`export default api => {
+    const db = api.storage.database(); db.migrate(['CREATE TABLE receipts (value TEXT)']);
+    api.rpc.method('nested', () => db.transaction(() => {
+      db.prepare('INSERT INTO receipts VALUES (?)').run('rollback');
+      return Promise.resolve().then(() => db.prepare('INSERT INTO receipts VALUES (?)').run('late'));
+    }));
+    api.rpc.method('insert', () => db.prepare('INSERT INTO receipts VALUES (?)').run('caught'));
+  }`);
+  expect(() => transport.commitSync!(() => {
+    try { f.handlers.get('nested')!({}); } catch {}
+    f.handlers.get('insert')!({});
+    return 42;
+  })).toThrow('requires synchronous');
+  expect(f.port.postMessage).toHaveBeenCalledWith({ kind: 'failure', message: 'peer commit fence requires synchronous callback' });
+  await Promise.resolve();
+  const { createSqliteDatabase } = await import('@zana-ai/zcc-db');
+  const db = createSqliteDatabase(join(f.dir, 'plugin.sqlite'));
+  try { expect(db.prepare('SELECT value FROM receipts').all()).toEqual([]); }
+  finally { db.close(); }
+});
+
+it('takes database backups inside the worker from the worker-owned connection', async () => {
+  const f = await fixture(`export default api => {
+    const db = api.storage.database(); db.migrate(['CREATE TABLE receipts (value TEXT)']);
+    db.prepare('INSERT INTO receipts VALUES (?)').run('in-copy');
+    api.rpc.method('backup', () => api.storage.backupDatabase({ name: 'worker' }));
+  }`);
+  const result = await f.handlers.get('backup')!({}) as { path: string; name: string };
+  expect(result).toMatchObject({ name: 'worker', path: expect.stringMatching(/backups\/worker\.db$/) });
+  const { createSqliteDatabase } = await import('@zana-ai/zcc-db');
+  const copy = createSqliteDatabase(result.path, { readonly: true });
+  try {
+    expect(copy.prepare('SELECT value FROM receipts').all()).toEqual([{ value: 'in-copy' }]);
+    expect(copy.prepare('SELECT plugin_id FROM _zcc_backup').get()).toEqual({ plugin_id: 'plugin' });
+  } finally { copy.close(); }
+  f.port.emit('close');
+  await expect(f.handlers.get('backup')!({})).rejects.toMatchObject({ code: 'aborted' });
 });

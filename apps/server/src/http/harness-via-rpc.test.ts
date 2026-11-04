@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { harnessAgentDescriptors } from './harness-via-rpc.js';
+import { harnessAgentDescriptors, harnessDescriptors } from './harness-via-rpc.js';
 
 describe('harnessAgentDescriptors', () => {
   const project = {
@@ -55,5 +55,29 @@ describe('model discovery availability', () => {
     expect(await harnessVerify(hub)).toEqual([]);
     hub.callHostOnlineRpc.mockResolvedValue({ providers: [] });
     expect(await harnessVerifyBundle(hub)).toEqual({ availability: [], extraInstalled: {} });
+  });
+});
+
+
+describe('harnessDescriptors live model inventory', () => {
+  it('uses the selected execution host inventory without a vendor snapshot', async () => {
+    const hub = { resolveHostId: vi.fn().mockReturnValue('remote-host'),
+      callHostOnlineRpc: vi.fn().mockResolvedValue({ providers: [{ family: 'opencode', label: 'OpenCode',
+        binary: '/remote/bin/opencode', enabled: true, installed: true, alwaysEnabled: false, installHint: 'install' }],
+        modelInventories: [{ family: 'opencode', models: ['remote-provider/installed-model'] }] }) } as any;
+    const descriptors = await harnessDescriptors(hub, 'remote-host');
+    expect(hub.callHostOnlineRpc).toHaveBeenCalledWith({ hostId: 'remote-host',
+      command: { type: 'provider.status', includeModelInventory: true } });
+    expect(descriptors.find(row => row.id === 'opencode')?.targets?.models).toMatchObject([
+      { id: 'remote-provider/installed-model', provider: 'remote-provider' }
+    ]);
+  });
+
+  it('returns no descriptors for an unavailable host or empty availability', async () => {
+    const { HostUnavailableError } = await import('./host-hub.js');
+    const hub = { resolveHostId: () => 'missing', callHostOnlineRpc: vi.fn().mockRejectedValue(new HostUnavailableError()) } as any;
+    expect(await harnessDescriptors(hub)).toEqual([]);
+    hub.callHostOnlineRpc.mockResolvedValue({ providers: [] });
+    expect(await harnessDescriptors(hub)).toEqual([]);
   });
 });

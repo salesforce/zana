@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest';
 import { SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
 
 const h = vi.hoisted(() => ({
-  config: { pluginSafeMode: true }, emit: vi.fn(), refresh: vi.fn(async () => undefined),
+  config: { pluginSafeMode: true }, emit: vi.fn(), refresh: vi.fn(async () => undefined), development: vi.fn(async () => undefined),
   context: null as any, close: vi.fn(async () => undefined), databaseClose: vi.fn()
 }));
 vi.mock('./services/threads/thread-reads.js', async original => ({
@@ -18,7 +18,7 @@ vi.mock('./http/product-context.js', async original => ({
 vi.mock('./http/product-plugins.js', async original => ({
   ...await original<typeof import('./http/product-plugins.js')>(),
   createAttachedProductPluginService: (ctx: any) => {
-    ctx.plugins = { refreshSafeMode: h.refresh, stop() {} };
+    ctx.plugins = { refreshSafeMode: h.refresh, refreshDevelopmentMode: h.development, stop() {} };
     return ctx.plugins;
   },
   startAttachedProductPluginService: async () => undefined
@@ -55,6 +55,7 @@ it('refreshes plugin policy and publishes the owner config through utility-proce
     await import('./utility-entry.js');
     await publish('config:onChanged', [{ pluginSafeMode: false }]);
     expect(h.refresh).not.toHaveBeenCalled();
+    expect(h.development).not.toHaveBeenCalled();
     expect(h.emit).not.toHaveBeenCalled();
     parent.emit('message', { data: { type: 'start', dataDir: root, rendererRoot: root,
       hostBinding: { hostId: 'test-host', instanceId: 'test-instance' } } });
@@ -62,18 +63,22 @@ it('refreshes plugin policy and publishes the owner config through utility-proce
 
     await publish('config:onChanged', [{ pluginSafeMode: false }]);
     expect(h.refresh).toHaveBeenCalledTimes(1);
+    expect(h.development).toHaveBeenCalledTimes(1);
     expect(h.emit).toHaveBeenCalledWith('config:changed', { pluginSafeMode: true });
     h.config = { pluginSafeMode: false };
     await publish('product:reset', [{ pluginSafeMode: true }]);
     expect(h.refresh).toHaveBeenCalledTimes(2);
+    expect(h.development).toHaveBeenCalledTimes(2);
     expect(h.emit).toHaveBeenCalledWith('config:changed', { pluginSafeMode: false });
     expect(h.emit).toHaveBeenCalledWith('library:changed', {});
     await publish('goals:onChanged');
     expect(h.refresh).toHaveBeenCalledTimes(2);
+    expect(h.development).toHaveBeenCalledTimes(2);
 
     delete h.context.plugins;
     await publish('config:onChanged');
     expect(h.refresh).toHaveBeenCalledTimes(2);
+    expect(h.development).toHaveBeenCalledTimes(2);
     parent.emit('message', { data: { type: 'stop' } });
     await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
     stopped = true;

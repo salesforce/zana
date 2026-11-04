@@ -27,7 +27,7 @@
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "smol-toml": "^1.7.1",
     "yaml": "^2.9.0",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "zcc": {
     "name": "ACP providers",

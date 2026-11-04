@@ -27,7 +27,7 @@ it('forwards every exact granted callback and strips ambient credentials and bro
   for (const suffix of cliCallbackPaths(grant)) {
     expect(await post(p.baseUrl, suffix, { body: '{}', headers: { authorization: 'Bearer wrong', cookie: 'private', 'x-zcc-host-id': 'spoof', 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' } })).toEqual({ status: 200, body: '{}' });
   }
-  expect(p.forward).toHaveBeenCalledTimes(13);
+  expect(p.forward).toHaveBeenCalledTimes(14);
   const received = p.forward.mock.calls[0]![0];
   expect(received.path).toBe(path); expect(received.body.toString()).toBe('{}');
   expect(received.headers).toEqual({ 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' });

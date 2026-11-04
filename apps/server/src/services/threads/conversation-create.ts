@@ -10,11 +10,12 @@ import {
   getEnvironment,
   getPrimaryHost,
   getLatestConversationCheckpoint,
-  listHosts,
+  listExecutionHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   updateConversationThreadStatus,
   setConversationProviderThreadId,
+  patchThreadPluginMetadata,
   type ConversationThreadRow,
   type ConversationThreadTitleSource,
   type EnvironmentRow
@@ -105,6 +106,7 @@ export interface CreateConversationInput {
   visibility?: 'visible' | 'hidden';
   originPluginId?: string | null;
   pluginMetadata?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
+  automatedSkillIds?: string[];
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -263,6 +265,7 @@ async function startConversationOnHost(
         ...(providerOptions ? { providerOptions } : {}),
         ...(clientRequestId ? { clientRequestId } : {}),
         ...(checkpoint ? { providerCheckpointId: checkpoint } : {}),
+        ...(args.input.automatedSkillIds !== undefined ? { automatedSkillIds: args.input.automatedSkillIds } : {}),
         ...sessionTooling,
         ...(args.remoteToolProxy ? {
           remote: threadLaunchRemote(
@@ -271,7 +274,7 @@ async function startConversationOnHost(
               args.project,
               args.remoteToolProxy,
               ctx.config.getConfig().remoteDefaultPath,
-              listHosts(ctx.db).map(toRemoteStartPathHost)
+              listExecutionHosts(ctx.db).map(toRemoteStartPathHost)
             )
           ),
           remoteToolProxy: true
@@ -282,6 +285,13 @@ async function startConversationOnHost(
           const started = result as ThreadStartResult;
           if (!args.lease.cancelled && started?.providerThreadId) {
             setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
+            // Squad members only: durable start-time restore support, read later by main's native-recovery capture.
+            if (args.thread.originPluginId === MODERN_SQUAD_THREAD_ORIGIN && started.sessionRestorable !== undefined) {
+              patchThreadPluginMetadata(ctx.db, {
+                threadId: args.thread.id, pluginId: MODERN_SQUAD_PRIVATE_NAMESPACE,
+                set: { squadSessionRestorable: started.sessionRestorable }, remove: []
+              });
+            }
             // Steers sent while the session was starting can land now.
             scheduleConversationSteerFlush(ctx, args.thread.id);
           }
@@ -383,7 +393,7 @@ export async function createConversationFromRequest(
       project,
       remoteToolProxy,
       remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
-      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost),
       probeHostHome: async () => {
         const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
           hostId,

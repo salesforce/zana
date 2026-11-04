@@ -1,0 +1,33 @@
+One agent used to do everything, one task at a time.
+
+Meet Squads in Zana.
+
+Squads let a team of agents plan, split, and deliver work together.
+
+There are two ways to build one. The quickest: just ask an agent.
+
+It writes the squad definition straight into your project.
+
+And it shows up in Settings, ready to launch.
+
+Or build one yourself. Click New squad, and give it a name.
+
+Add one slot per role: an orchestrator, two workers, and a reviewer.
+
+Crown the orchestrator. It starts first, plans the work, and delegates.
+
+Optionally, set an opening prompt, a project, worktrees, and launch approval.
+
+Save it, and your squad joins the catalogue.
+
+To launch, open New agent, choose Squad, and describe the goal.
+
+The orchestrator breaks it into tasks, and workers pick them up in parallel.
+
+Flow view shows who is working, and how work hands off.
+
+When the squad needs a decision, it asks you in the Inbox.
+
+Answer once, and the squad finishes the job.
+
+Ask an agent, or build it yourself. Then launch it for any goal.

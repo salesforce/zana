@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { useData, useUi } from '../store.js';
 import type { SplitLayout } from '../store.js';
-import { TerminalView } from './TerminalView.js';
+import { PersistentTerminal } from './PersistentTerminal.js';
+import { useTerminalDockTargets } from '../lib/terminal-dock-targets.js';
 import { terminalScrollbackBudget } from '../lib/terminal-resource-budget.js';
 import { agentSessionAnchorId, pickAgentSessionPortalTarget, pickProjectTerminalsPortalTarget, projectTerminalsAnchorId } from '../lib/split-layout/agentSessionPortal.js';
 import { paneContentForPathname } from '../lib/split-layout/splitThreadNavigation.js';
@@ -72,6 +73,7 @@ export const THREAD_PANEL_TERMINAL_ANCHOR_ID = 'cc-terminal-anchor-thread-panel'
 export { agentSessionAnchorId, projectTerminalsAnchorId };
 
 export function TerminalSurface() {
+  const dockTargets = useTerminalDockTargets();
   const terminals = useData((s) => s.terminals);
   const scrollbackLimit = terminalScrollbackBudget(Object.values(terminals).reduce((count, sessions) => count + sessions.length, 0));
   const nav = useUi((s) => s.nav);
@@ -243,7 +245,8 @@ export function TerminalSurface() {
             : projectId === selectedProjectId
               ? areaByTabId.get(s.id)
               : undefined;
-          return <TerminalView key={s.id} session={s} area={area} scrollbackLimit={scrollbackLimit} />;
+          const target = !modalSessionId && !agentSessionId && !monitorSessionId ? dockTargets.get(s.id) ?? null : null;
+          return <PersistentTerminal key={s.id} session={s} area={area} target={target} scrollbackLimit={scrollbackLimit} />;
         })
       )}
     </div>

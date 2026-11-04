@@ -113,7 +113,7 @@ describe('runCloseIdleAgents', () => {
     expect(order).toEqual(['mark', 'progress', 'followup', 'close', 'dismiss', 'closed', 'clear']);
     expect(d.closeFollowup).toHaveBeenCalledWith('p1', ['s1']);
     expect(d.closeTerminal).toHaveBeenCalledWith('s1', 'p1');
-    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 1, 1, undefined);
+    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 1, 1, undefined, []);
     expect(d.pushProgressToast).toHaveBeenCalledWith(1);
     expect(d.dismissProgressToast).toHaveBeenCalledWith('progress-toast');
     expect(d.markClosing).toHaveBeenCalledWith(['s1']);
@@ -169,7 +169,7 @@ describe('runCloseIdleAgents', () => {
     });
 
     expect(res).toEqual({ closed: 1, summarized: 0, followedUp: 0 });
-    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 0, 0, undefined);
+    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 0, 0, undefined, []);
   });
 
   it('skips the progress toast when summarize is off', async () => {
@@ -273,6 +273,133 @@ describe('runCloseIdleAgents failures', () => {
         pushProgressToast: vi.fn(() => 't'), dismissProgressToast: vi.fn()
       }
     });
-    expect(pushClosedToast).toHaveBeenCalledWith(1, 0, 0, failures);
+    expect(pushClosedToast).toHaveBeenCalledWith(1, 0, 0, failures, []);
+  });
+});
+
+describe('Wrap up before closing', () => {
+  const baseDeps = (over: Partial<Parameters<typeof runCloseIdleAgents>[0]['deps']> = {}) => ({
+    statusById: {} as Record<string, AgentState>,
+    alreadyClosingIds: new Set<string>(),
+    markClosing: vi.fn(),
+    clearClosing: vi.fn(),
+    closeFollowup: vi.fn(async (_p: string, _ids: string[]) => ({ summarized: 1, followedUp: 0 }) as Awaited<ReturnType<Parameters<typeof runCloseIdleAgents>[0]['deps']['closeFollowup']>>),
+    closeTerminal: vi.fn(async () => {}),
+    pushBusyToast: vi.fn(),
+    pushErrorToast: vi.fn(),
+    pushClosedToast: vi.fn(),
+    pushProgressToast: vi.fn(() => 'progress-toast'),
+    dismissProgressToast: vi.fn(),
+    ...over
+  });
+  const run = (d: ReturnType<typeof baseDeps>, ids: string[], wrapUp: boolean) =>
+    runCloseIdleAgents({ projectId: 'p1', sessionIds: ids, summarize: true, force: true, wrapUp, deps: d });
+
+  it('closes every id except the kept-open ones, with or without wrap-up', async () => {
+    const d = baseDeps({ closeFollowup: vi.fn(async () => ({ summarized: 1, followedUp: 0, keptOpen: [{ sessionId: 's2', reason: 'asks-you' as const }] })) });
+    const res = await run(d, ['s1', 's2'], false);
+    expect(d.closeFollowup).toHaveBeenCalledTimes(1);
+    expect(d.closeTerminal).toHaveBeenCalledTimes(1);
+    expect(d.closeTerminal).toHaveBeenCalledWith('s1', 'p1');
+    expect(res).toEqual({ closed: 1, summarized: 1, followedUp: 0, keptOpen: [{ sessionId: 's2', reason: 'asks-you' }] });
+    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 1, 0, undefined, [{ sessionId: 's2', reason: 'asks-you' }]);
+  });
+
+  it('closes all when keptOpen is absent', async () => {
+    const d = baseDeps();
+    expect(await run(d, ['s1', 's2'], false)).toEqual({ closed: 2, summarized: 1, followedUp: 0 });
+  });
+
+  it('calls closeFollowup once per id and closes each agent as soon as its own result arrives', async () => {
+    const gates: Record<string, (v: { summarized: number; followedUp: number }) => void> = {};
+    const d = baseDeps({
+      closeFollowup: vi.fn((_p: string, ids: string[]) => new Promise((resolve) => { gates[ids[0]] = resolve as never; })) as never
+    });
+    const p = run(d, ['slow', 'fast'], true);
+    await Promise.resolve();
+    expect(d.closeFollowup).toHaveBeenCalledTimes(2);
+    expect(d.closeFollowup).toHaveBeenCalledWith('p1', ['slow']);
+    expect(d.closeFollowup).toHaveBeenCalledWith('p1', ['fast']);
+    expect(d.pushProgressToast).toHaveBeenCalledWith(2);
+    gates.fast({ summarized: 1, followedUp: 1 });
+    await vi.waitFor(() => expect(d.closeTerminal).toHaveBeenCalledWith('fast', 'p1'));
+    expect(d.closeTerminal).not.toHaveBeenCalledWith('slow', 'p1');
+    expect(d.dismissProgressToast).not.toHaveBeenCalled();
+    gates.slow({ summarized: 1, followedUp: 0 });
+    expect(await p).toEqual({ closed: 2, summarized: 2, followedUp: 1 });
+    expect(d.dismissProgressToast).toHaveBeenCalledWith('progress-toast');
+    expect(d.pushClosedToast).toHaveBeenCalledWith(2, 2, 1, undefined, []);
+    expect(d.clearClosing).toHaveBeenCalledWith(['slow', 'fast']);
+  });
+
+  it('sends every agent to main at once, so main registers them all at the click', async () => {
+    const gates: Record<string, (v: { summarized: number; followedUp: number }) => void> = {};
+    const d = baseDeps({
+      closeFollowup: vi.fn((_p: string, ids: string[]) => new Promise((resolve) => { gates[ids[0]] = resolve as never; })) as never
+    });
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+    const p = run(d, ids, true);
+    await Promise.resolve();
+    expect(d.closeFollowup).toHaveBeenCalledTimes(ids.length);
+    for (const id of ids) gates[id]({ summarized: 1, followedUp: 0 });
+    expect(await p).toEqual({ closed: 6, summarized: 6, followedUp: 0 });
+  });
+
+  it('keeps a kept-open agent, sums failures and toasts a failing call once, still closing that agent', async () => {
+    const d = baseDeps({
+      closeFollowup: vi.fn(async (_p: string, ids: string[]) => {
+        if (ids[0] === 'a') return { summarized: 0, followedUp: 0, failures: [{ reason: 'empty' as const }], keptOpen: [{ sessionId: 'a', reason: 'typed' as const }, { sessionId: 'other', reason: 'timeout' as const }] };
+        throw new Error('ipc down');
+      })
+    });
+    const res = await run(d, ['a', 'b', 'c'], true);
+    expect(d.pushErrorToast).toHaveBeenCalledTimes(1);
+    expect(d.closeTerminal.mock.calls.map((c) => c[0]).sort()).toEqual(['b', 'c']);
+    expect(res).toEqual({ closed: 2, summarized: 0, followedUp: 0, keptOpen: [{ sessionId: 'a', reason: 'typed' }] });
+    expect(d.pushClosedToast).toHaveBeenCalledWith(2, 0, 0, [{ reason: 'empty' }], [{ sessionId: 'a', reason: 'typed' }]);
+  });
+
+  it('toasts kept-open agents even when none was closed, and swallows closeTerminal failures', async () => {
+    const d = baseDeps({
+      closeFollowup: vi.fn(async (_p: string, ids: string[]) => ({ summarized: 0, followedUp: 0, keptOpen: [{ sessionId: ids[0], reason: 'asks-you' as const }] }))
+    });
+    const res = await run(d, ['s1'], true);
+    expect(res.closed).toBe(0);
+    expect(d.pushClosedToast).toHaveBeenCalledWith(0, 0, 0, undefined, [{ sessionId: 's1', reason: 'asks-you' }]);
+    const failing = baseDeps({ closeTerminal: vi.fn(async () => { throw new Error('x'); }) });
+    expect(await run(failing, ['s1'], true)).toEqual({ closed: 0, summarized: 1, followedUp: 0 });
+    expect(failing.pushClosedToast).not.toHaveBeenCalled();
+  });
+
+  it('makes today\'s single call when wrap-up is off', async () => {
+    const d = baseDeps();
+    await run(d, ['s1', 's2'], false);
+    expect(d.closeFollowup).toHaveBeenCalledTimes(1);
+    expect(d.closeFollowup).toHaveBeenCalledWith('p1', ['s1', 's2']);
+  });
+
+  it('words the progress toast for wrap-up', () => {
+    expect(closeFollowupProgressMessage(1, true)).toBe('Wrapping up… the agent saves what it learnt, then closes.');
+    expect(closeFollowupProgressMessage(3, true)).toBe('Wrapping up 3 agents… each closes when it finishes.');
+    expect(closeFollowupProgressMessage(1, false)).toBe('Closing… filing a follow-up if work is left.');
+  });
+
+  it('words the closed toast with kept-open entries', () => {
+    const asks = [{ sessionId: 'a', reason: 'asks-you' as const }];
+    const typed = [{ sessionId: 'a', reason: 'typed' as const }];
+    const timeout = [{ sessionId: 'a', reason: 'timeout' as const }];
+    expect(closedToastMessage(2, 2, 1, undefined, asks)).toBe('Closed 2 agents · 2 summarized to inbox · 1 follow-up filed · 1 kept open (see your inbox).');
+    expect(closedToastMessage(1, 1, 0, undefined, typed)).toBe('Closed 1 agent · 1 summarized to inbox · no unfinished work found · 1 kept open.');
+    expect(closedToastMessage(0, 0, 0, undefined, asks)).toBe('Kept 1 agent open (see your inbox).');
+    expect(closedToastMessage(0, 0, 0, undefined, [...typed, ...timeout])).toBe('Kept 2 agents open (see your inbox).');
+    expect(closedToastMessage(0, 0, 0, undefined, typed)).toBe('Kept 1 agent open.');
+    // Kept open after its record was written (a key or new work during the write): the summary still counts.
+    expect(closedToastMessage(0, 1, 1, undefined, typed)).toBe('Kept 1 agent open · 1 summarized to inbox (see your inbox).');
+    expect(closedToastMessage(0, 0, 0, undefined, [{ sessionId: 'a', reason: 'turn-error' as const }])).toBe('Kept 1 agent open (see your inbox).');
+  });
+
+  it('keeps today\'s closed toast with default arguments', () => {
+    expect(closedToastMessage(2, 1, 1)).toBe('Closed 2 agents · 1 summarized to inbox · 1 follow-up filed.');
+    expect(closedToastMessage(1, 0, 0)).toBe('Closed 1 agent · no readable transcript found.');
   });
 });

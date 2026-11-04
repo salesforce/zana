@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
-import { CatalogPluginDetail, PluginMoreFromAuthor } from './CatalogPluginDetail.js';
+import { CatalogPluginDetail, PluginMoreFromAuthor, PluginReleaseSection } from './CatalogPluginDetail.js';
 
 function entry(over: Partial<MarketplaceEntry> & Pick<MarketplaceEntry, 'id'>): MarketplaceEntry {
   return {
@@ -18,6 +18,16 @@ function entry(over: Partial<MarketplaceEntry> & Pick<MarketplaceEntry, 'id'>): 
 }
 
 describe('CatalogPluginDetail', () => {
+  it.each(['bundled', 'marketplace'] as const)('explains how %s plugins receive updates', source => {
+    const html = renderToStaticMarkup(h(CatalogPluginDetail, {
+      entry: entry({ id: 'plugin-1', source }), catalog: [], onInstall() {}, onOpenPlugin() {}
+    }));
+    expect(html).toContain(source === 'bundled' ? 'Updates with Zana releases' : 'Automatic checks; manual updates');
+  });
+
+  it('defaults standalone release details to manual updates', () => {
+    expect(renderToStaticMarkup(h(PluginReleaseSection, { version: '1.2.3' }))).toContain('Automatic checks; manual updates');
+  });
   it('shows Install, overview, capabilities, and more from the same author', () => {
     const html = renderToStaticMarkup(
       h(CatalogPluginDetail, {

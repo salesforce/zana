@@ -30,15 +30,18 @@ function parseCustomAgents(raw) {
     const command = typeof entry.command === 'string' ? entry.command.trim() : '';
     const args = entry.args === undefined ? [] : entry.args;
     const env = entry.env === undefined ? {} : entry.env;
-    if (!id || !/^[a-z][a-z0-9-]*$/u.test(id) || !displayName || !command) continue;
-    if (!Array.isArray(args) || args.some((value) => typeof value !== 'string')) continue;
-    if (!env || typeof env !== 'object' || Array.isArray(env) || Object.values(env).some((value) => typeof value !== 'string')) continue;
+    const cwd = entry.cwd;
+    if (!id || !/^[a-z][a-z0-9-]*$/u.test(id) || !displayName || !command || /[\0\r\n]/u.test(command)) continue;
+    if (!Array.isArray(args) || args.some((value) => typeof value !== 'string' || value.includes('\0'))) continue;
+    if (!env || typeof env !== 'object' || Array.isArray(env)
+      || Object.entries(env).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || typeof value !== 'string' || value.includes('\0'))) continue;
+    if (cwd !== undefined && (typeof cwd !== 'string' || !cwd.trim() || cwd.includes('\0'))) continue;
     if (RESERVED.has(id) || seen.has(id)) {
       rejectedIds.push(id);
       continue;
     }
     seen.add(id);
-    agents.push({ id, displayName, command, args, env });
+    agents.push({ id, displayName, command, args, env, ...(cwd === undefined ? {} : { cwd }) });
   }
   return { agents, rejectedIds };
 }
@@ -62,7 +65,7 @@ export default function plugin(zcc) {
       multiline: true,
       label: 'Custom ACP agents',
       description:
-        'JSON array of { id, displayName, command, args?, env? }. Ids must be unique and cannot reuse built-in providers.',
+        'JSON array of { id, displayName, command, args?, env?, cwd? }. Ids must be unique and cannot reuse built-in providers.',
       default: '[]'
     }
   });
@@ -306,25 +309,28 @@ export default function plugin(zcc) {
     for (const id of rejectedIds) {
       zcc.log.warn(`Ignoring reserved or duplicate custom ACP agent id "${id}".`);
     }
-    customHandles = agents.map((agent) =>
-      zcc.agents.experimental_registerProvider({
+    customHandles = agents.map((agent) => {
+      const acpLaunchSpec = {
+        displayName: agent.displayName,
+        command: agent.command,
+        args: agent.args,
+        env: agent.env,
+        ...(agent.cwd === undefined ? {} : { cwd: agent.cwd })
+      };
+      return zcc.agents.experimental_registerProvider({
         id: agent.id,
         displayName: agent.displayName,
         visibility: 'installed',
+        experimental_bridgeOptions: { acpLaunchSpec },
         capabilities: extraCapabilities,
         composerActions: [],
         deriveProviderOptions() {
           return {
-            acpLaunchSpec: {
-              displayName: agent.displayName,
-              command: agent.command,
-              args: agent.args,
-              env: agent.env
-            }
+            acpLaunchSpec
           };
         }
-      })
-    );
+      });
+    });
   };
   void settings.get().then((values) => applyCustom(values.customAgents));
   settings.onChange((values) => applyCustom(values.customAgents));

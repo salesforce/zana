@@ -31,6 +31,11 @@ const HarnessRoutingSchema = z.object({
   byAdapter: z.partialRecord(HarnessFamilySchema, HarnessRoutingIntentSchema)
 }).strict();
 
+/** A plugin's stored AI-harness override: Core's routing rows plus an optional harness choice. */
+export const PluginHarnessOverrideSchema = HarnessRoutingSchema.extend({
+  defaultHarness: HarnessFamilySchema.optional()
+}).strict();
+
 const HarnessCompatibilitySchema = z.object({
   model: TargetIdSchema.optional(),
   permissionMode: TargetIdSchema.optional(),

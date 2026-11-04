@@ -18,6 +18,7 @@ import {
 import { RenderReports } from './render-reports.js';
 import { DesignDocStore } from './store.js';
 import { createTestDatabase } from './test-db.js';
+import { DesignDocSyncStore } from './sync-store.js';
 
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
 const PNG = 'iVBORw0KGgo=';
@@ -30,7 +31,7 @@ function setup(projectId: string | null = 'p1') {
 }
 
 describe('input helpers', () => {
-  it('normalise loosely-typed input', () => {
+  it('normalise loosely-typed input', async () => {
     expect(asInput(null)).toEqual({});
     expect(asInput([1])).toEqual({});
     expect(asInput({ a: 1 })).toEqual({ a: 1 });
@@ -41,29 +42,68 @@ describe('input helpers', () => {
 });
 
 describe('agent operations', () => {
-  it('creates docs in the calling project or globally', () => {
+  it.each(['content', 'edits', 'delete', 'renameTo'])('forwards baseFileId through %s authoring', async (mode) => {
+    const { ctx, store, changes } = setup();
+    const doc = store.create({ title: 'Identity', files: [{ path: 'README.md', content: 'one' }, { path: 'other.md', content: 'two' }] }, agent);
+    const file = store.readFile(doc.id, 'other.md');
+    const args = { doc: doc.id, path: file.path, baseRevision: file.revision, baseFileId: 'stale-id',
+      ...({ content: { content: 'fresh' }, edits: { edits: [{ oldText: 'two', newText: 'fresh' }] }, delete: { delete: true }, renameTo: { renameTo: 'moved.md' } }[mode]!) };
+    expect(readDoc(ctx, { doc: doc.id, path: file.path })).toContain(`baseFileId=${JSON.stringify(file.fileId)}`);
+    expect(() => writeDoc(ctx, args, agent)).toThrow(/identity changed/);
+    expect(changes).toEqual([]);
+    writeDoc(ctx, { ...args, baseFileId: file.fileId }, agent);
+    expect(changes).toEqual([doc.id]);
+  });
+
+  it('reads metadata head and forwards it without auto-refreshing stale consent', async () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, joinedAt: 1, sponsorReplicaId: null })));
+    const changes: string[] = [];
+    const ctx: OperationContext = { store, changed: (id) => changes.push(id) };
+    const doc = store.create({ title: 'Reviewed', template: 'blank' }, agent);
+    const expectedHead = store.summary(doc.id).head;
+    expect(readDoc(ctx, { doc: doc.id })).toContain(`expectedHead=${JSON.stringify(expectedHead)}`);
+    expect(readDoc(ctx, { doc: doc.id, includeAll: true })).toContain(`expectedHead=${JSON.stringify(expectedHead)}`);
+    store.writeFile(doc.id, { path: 'README.md', content: 'replacement' }, agent);
+    await expect(updateDoc(ctx, { doc: doc.id, status: 'approved', expectedHead }, agent)).rejects.toThrow(/head changed/);
+    await expect(updateDoc(ctx, { doc: doc.id, status: 'approved' }, agent)).rejects.toThrow(/expectedHead/);
+    expect(changes).toEqual([]);
+    expect(sync.readyIntents('repo')).toEqual([]);
+    await updateDoc(ctx, { doc: doc.id, status: 'approved', expectedHead: store.summary(doc.id).head }, agent);
+    expect(sync.readyIntents('repo')).toHaveLength(1);
+  });
+
+  it('rejects caller origin spoofing on ordinary authoring', async () => {
+    const { ctx, store } = setup();
+    await expect(createDoc(ctx, { title: 'Spoof', status: 'approved', origin: 'import' }, agent)).rejects.toThrow('origin is not');
+    expect(store.list()).toEqual([]);
+  });
+  it('creates docs in the calling project or globally', async () => {
     const { ctx, changes, store } = setup();
-    const text = createDoc(ctx, { title: 'Sync', tags: 'mobile, offline', status: 'review' }, agent);
+    const text = await createDoc(ctx, { title: 'Sync', tags: 'mobile, offline', status: 'review' }, agent);
     expect(text).toMatch(/^Created design doc dd_/);
     expect(text).toContain('::design-doc{id="dd_');
     const [doc] = store.list();
     expect(doc).toMatchObject({ projectId: 'p1', status: 'review', tags: ['mobile', 'offline'] });
     expect(changes).toEqual([doc!.id]);
 
-    createDoc(ctx, { title: 'Global', global: 'true', files: [{ path: 'a.md', content: '# A' }, { path: 'i.png', content: PNG, encoding: 'base64' }] }, agent);
+    await createDoc(ctx, { title: 'Global', global: 'true', files: [{ path: 'a.md', content: '# A' }, { path: 'i.png', content: PNG, encoding: 'base64' }] }, agent);
     expect(store.list({ projectId: null }).map((entry) => entry.title)).toEqual(['Global']);
     const site = [{ path: 'README.md', content: '# Repo' }, { path: 'index.html', content: '<p>home</p>' }];
-    createDoc(ctx, { title: 'Site', files: site, entryPath: 'index.html' }, agent);
+    await createDoc(ctx, { title: 'Site', files: site, entryPath: 'index.html' }, agent);
     expect(store.summary('site').entryPath).toBe('index.html');
 
-    expect(() => createDoc(ctx, { title: 'x', template: 'nope' }, agent)).toThrow(/template must be one of/);
-    expect(() => createDoc(ctx, { title: 'x', files: 'a' }, agent)).toThrow(/files must be an array/);
-    expect(() => createDoc(ctx, { title: 'x', files: [{ path: 'a.md' }] }, agent)).toThrow(/files\[0\]/);
-    expect(() => createDoc(ctx, { title: 'x', status: 'shipped' }, agent)).toThrow(/status must be one of/);
-    expect(() => createDoc(ctx, { title: 'x', tags: [1] }, agent)).toThrow(/array of strings/);
+    await expect(createDoc(ctx, { title: 'x', template: 'nope' }, agent)).rejects.toThrow(/unknown template/);
+    await expect(createDoc(ctx, { title: 'x', files: 'a' }, agent)).rejects.toThrow(/files must be an array/);
+    await expect(createDoc(ctx, { title: 'x', files: [{ path: 'a.md' }] }, agent)).rejects.toThrow(/files\[0\]/);
+    await expect(createDoc(ctx, { title: 'x', status: 'shipped' }, agent)).rejects.toThrow(/status must be one of/);
+    await expect(createDoc(ctx, { title: 'x', tags: [1] }, agent)).rejects.toThrow(/array of strings/);
   });
 
-  it('lists the project scope by default and every project on request', () => {
+  it('lists the project scope by default and every project on request', async () => {
     const { ctx, store } = setup();
     store.create({ title: 'Mine', projectId: 'p1', template: 'blank' }, agent);
     store.create({ title: 'Theirs', projectId: 'p2', template: 'blank' }, agent);
@@ -77,7 +117,7 @@ describe('agent operations', () => {
     expect(() => listDocs(ctx, { limit: 1.5 })).toThrow(/integer/);
   });
 
-  it('reads the manifest, one file, an image, or the whole bundle', () => {
+  it('reads the manifest, one file, an image, or the whole bundle', async () => {
     const { ctx, store } = setup();
     const doc = store.create({ title: 'Doc', template: 'technical' }, agent);
     store.writeFile(doc.id, { path: 'img/shot.png', content: PNG }, agent);
@@ -101,7 +141,7 @@ describe('agent operations', () => {
     expect(bundle).toContain('(binary image, not shown as text)');
   });
 
-  it('writes content, applies edits, deletes and renames through one verb', () => {
+  it('writes content, applies edits, deletes and renames through one verb', async () => {
     const { ctx, store, changes } = setup();
     const doc = store.create({ title: 'Doc', files: [{ path: 'README.md', content: 'hello world' }] }, agent);
 
@@ -125,26 +165,26 @@ describe('agent operations', () => {
     expect(() => writeDoc(ctx, { doc: 'missing', path: 'README.md', content: 'x' }, agent)).toThrow(/not found/);
   });
 
-  it('updates metadata', () => {
+  it('updates metadata', async () => {
     const { ctx, store } = setup();
     const doc = store.create({ title: 'Doc', template: 'blank' }, agent);
-    expect(updateDoc(ctx, { doc: doc.id, status: 'approved', tags: ['api'] }, agent)).toBe(
+    expect(await updateDoc(ctx, { doc: doc.id, status: 'approved', tags: ['api'] }, agent)).toBe(
       `Updated ${doc.id}: "Doc" · approved · tags: api · entry: README.md`
     );
-    expect(updateDoc(ctx, { doc: doc.id, tags: [] }, agent)).toContain('tags: none');
+    expect(await updateDoc(ctx, { doc: doc.id, tags: [] }, agent)).toContain('tags: none');
   });
 
-  it('marks a doc as an alternative to another by id or slug, and detaches it', () => {
+  it('marks a doc as an alternative to another by id or slug, and detaches it', async () => {
     const { ctx, store } = setup();
     const original = store.create({ title: 'Trace API', template: 'blank' }, agent);
     const doc = store.create({ title: 'Unlocked package', template: 'blank' }, agent);
-    expect(updateDoc(ctx, { doc: doc.id, alternativeTo: original.slug }, agent)).toContain(`· alternative to ${original.id}`);
+    expect(await updateDoc(ctx, { doc: doc.id, alternativeTo: original.slug }, agent)).toContain(`· alternative to ${original.id}`);
     expect(store.summary(doc.id).alternativeTo).toBe(original.id);
-    expect(updateDoc(ctx, { doc: doc.id, alternativeTo: '' }, agent)).not.toContain('alternative to');
+    expect(await updateDoc(ctx, { doc: doc.id, alternativeTo: '' }, agent)).not.toContain('alternative to');
     expect(store.summary(doc.id).alternativeTo).toBeNull();
   });
 
-  it('comments, resolves with a reply in the thread, and reopens', () => {
+  it('comments, resolves with a reply in the thread, and reopens', async () => {
     const { ctx, store, changes } = setup();
     const doc = store.create({ title: 'Doc', template: 'blank' }, agent);
     const added = commentDoc(ctx, { doc: doc.id, body: 'Needs numbers', path: 'README.md', quote: '# Doc' }, agent);
@@ -167,7 +207,7 @@ describe('agent operations', () => {
     expect(() => commentDoc(ctx, { doc: doc.id }, agent)).toThrow(/body is required/);
   });
 
-  it('replies without changing status, and rejects mixed or misdirected targets', () => {
+  it('replies without changing status, and rejects mixed or misdirected targets', async () => {
     const { ctx, store } = setup();
     const doc = store.create({ title: 'Doc', template: 'blank' }, agent);
     const id = store.addComment(doc.id, { body: 'Why?', path: 'README.md' }, agent).id;
@@ -187,7 +227,7 @@ describe('agent operations', () => {
     expect(commentDoc(ctx, { doc: doc.id, resolve: '', body: 'Fresh' }, agent)).toMatch(/^Added comment/);
   });
 
-  it('warns when the panel will not be able to highlight a quote', () => {
+  it('warns when the panel will not be able to highlight a quote', async () => {
     const { ctx, store } = setup();
     const doc = store.create(
       { title: 'Doc', files: [{ path: 'README.md', content: 'Tokens **expire\nhourly** via [the job](job.md).' }, { path: 'i.png', content: PNG, encoding: 'base64' }] },
@@ -204,17 +244,17 @@ describe('agent operations', () => {
     expect(comment({ path: 'README.md' })).not.toContain('Note:');
   });
 
-  it('names the project in manifests when its name is known', () => {
+  it('names the project in manifests when its name is known', async () => {
     const { ctx, store } = setup();
     const doc = store.create({ title: 'Doc', projectId: 'p1', template: 'blank' }, agent);
     expect(readDoc(ctx, { doc: doc.id }) as string).toContain('project: p1 ·');
     const named = { ...ctx, projectName: (id: string | null) => (id === 'p1' ? 'Mobile app' : null) };
     expect(readDoc(named, { doc: doc.id }) as string).toContain('project: Mobile app ·');
     expect(readDoc(named, { doc: doc.id, includeAll: true }) as string).toContain('project: Mobile app ·');
-    expect(createDoc(named, { title: 'Second' }, agent)).toContain('project: Mobile app ·');
+    expect(await createDoc(named, { title: 'Second' }, agent)).toContain('project: Mobile app ·');
   });
 
-  it('reaches another project\'s doc by id only', () => {
+  it('reaches another project\'s doc by id only', async () => {
     const { ctx, store } = setup();
     const own = store.create({ title: 'Plan', projectId: 'p1', template: 'blank' }, agent);
     const other = store.create({ title: 'Roadmap', projectId: 'p2', template: 'blank' }, agent);
@@ -231,7 +271,7 @@ describe('agent operations', () => {
     expect(docRef({ ...ctx, projectId: null }, 'roadmap')).toBe(other.id);
   });
 
-  it('prints history', () => {
+  it('prints history', async () => {
     const { ctx, store } = setup();
     const doc = store.create({ title: 'Doc', template: 'blank' }, agent);
     store.writeFile(doc.id, { path: 'README.md', content: 'v2', note: 'second' }, agent);
@@ -256,7 +296,7 @@ describe('HTML pages', () => {
     return { ctx: { ...ctx, reports }, store, doc, report };
   }
 
-  it('reads a page with what rendering it found and what the panel saw', () => {
+  it('reads a page with what rendering it found and what the panel saw', async () => {
     const { ctx, store, doc, report } = pageSetup();
     const comment = store.addComment(doc.id, { body: 'Source?', path: 'index.html', quote: 'Pass rate' }, agent);
     expect(readDoc(ctx, { doc: doc.id, path: 'index.html' })).toContain(
@@ -278,7 +318,7 @@ describe('HTML pages', () => {
     expect(readDoc(ctx, { doc: doc.id, path: 'site.css' })).not.toContain('Page check');
   });
 
-  it('reads a page without a report store, and survives a page that cannot render', () => {
+  it('reads a page without a report store, and survives a page that cannot render', async () => {
     const { ctx, doc } = pageSetup();
     const bare = { ...ctx, reports: undefined };
     expect(readDoc(bare, { doc: doc.id, path: 'index.html' })).toContain('Page check for index.html:');
@@ -286,7 +326,7 @@ describe('HTML pages', () => {
     expect(() => readDoc(broken, { doc: doc.id, path: 'index.html' })).not.toThrow();
   });
 
-  it('lists the problems of other pages in the manifest', () => {
+  it('lists the problems of other pages in the manifest', async () => {
     const pages = Array.from({ length: 7 }, (_, index) => ({ path: `p${index}.html`, content: '<p>Hi</p>' }));
     const { ctx, doc, report } = pageSetup([{ path: 'index.html', content: PAGE }, ...pages]);
     expect(readDoc(ctx, { doc: doc.id }) as string).not.toContain('## Page problems');
@@ -306,7 +346,7 @@ describe('HTML pages', () => {
     expect(section).toContain('(1 more page(s) had problems; read them by path.)');
   });
 
-  it('checks a page as it is written', () => {
+  it('checks a page as it is written', async () => {
     const { ctx, doc } = pageSetup();
     const written = writeDoc(ctx, { doc: doc.id, path: 'about.html', content: '<script src="https://cdn.example/chart.js"></script><script src="app.js"></script>' }, agent);
     expect(written).toMatch(/^Created about\.html/);
@@ -318,7 +358,7 @@ describe('HTML pages', () => {
     expect(writeDoc(ctx, { doc: doc.id, path: 'plain.html', delete: true }, agent)).not.toContain('Page check');
   });
 
-  it('matches a quote on a page against the text it shows', () => {
+  it('matches a quote on a page against the text it shows', async () => {
     const { ctx, store, doc } = pageSetup([
       { path: 'index.html', content: PAGE },
       { path: 'live.html', content: '<div id="out"></div><script>out.textContent = "Built later"</script>' }

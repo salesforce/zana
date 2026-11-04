@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAllowedHttp, isAllowedWs, resolvePairingTarget } from './pairing-allowlist.js';
+import { PAIRING_ALLOWLIST, PEER_LINK_ALLOWLIST, isAllowedHttp, isAllowedWs, resolvePairingTarget } from './pairing-allowlist.js';
 
 describe('pairing allowlist', () => {
   it('forwards install and the complete authenticated host callback surface', () => {
@@ -64,5 +64,26 @@ describe('resolvePairingTarget', () => {
 
   it('allows a query string that contains slashes', () => {
     expect(resolvePairingTarget('/install.sh?next=//evil.example/x', origin)?.url.host).toBe('127.0.0.1:8781');
+  });
+});
+
+describe('peer link allowlist', () => {
+  it('stays a strict, separate subset of the pairing surface', () => {
+    expect(PEER_LINK_ALLOWLIST.http).toEqual([{ methods: ['POST'], path: '/internal/hosts/enroll' }]);
+    expect(PEER_LINK_ALLOWLIST.ws).toEqual(['/internal/hosts/ws']);
+    expect(PEER_LINK_ALLOWLIST).not.toBe(PAIRING_ALLOWLIST);
+    expect(isAllowedHttp('POST', '/internal/hosts/enroll', PEER_LINK_ALLOWLIST)).toBe(true);
+    expect(isAllowedHttp('GET', '/internal/hosts/enroll', PEER_LINK_ALLOWLIST)).toBe(false);
+    expect(isAllowedHttp('GET', '/install.sh', PEER_LINK_ALLOWLIST)).toBe(false);
+    expect(isAllowedHttp('POST', '/internal/hosts/tool-call', PEER_LINK_ALLOWLIST)).toBe(false);
+    expect(isAllowedWs('/internal/hosts/ws', PEER_LINK_ALLOWLIST)).toBe(true);
+    expect(isAllowedWs('/ws', PEER_LINK_ALLOWLIST)).toBe(false);
+  });
+
+  it('supports pattern rows in a supplied list', () => {
+    const list = { http: [{ methods: ['GET'], pathPattern: '^/x/[a-z]+$' }], ws: [] };
+    expect(isAllowedHttp('GET', '/x/abc', list)).toBe(true);
+    expect(isAllowedHttp('GET', '/x/ABC', list)).toBe(false);
+    expect(isAllowedHttp('GET', '/y', { http: [{ methods: ['GET'] }], ws: [] })).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { chromium, webkit, type Locator, type Page } from '@playwright/test';
+import type { Editor } from '@tiptap/core';
 import { test, expect } from './fixtures/app.js';
 import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 
@@ -19,6 +20,42 @@ async function keyboardViewport(page: Page, height: number, offsetTop = 0) {
     window.visualViewport!.dispatchEvent(new Event('resize'));
     window.visualViewport!.dispatchEvent(new Event('scroll'));
   }, { height, offsetTop });
+}
+
+async function checkTypeaheadViewport(page: Page, composer: Locator) {
+  const editor = composer.getByTestId('thread-command-input');
+  await editor.fill('/');
+  const menu = page.getByTestId('composer-typeahead-menu');
+  await expect(menu.getByRole('option').first()).toBeVisible();
+  const checkBounds = async () => {
+    await expect.poll(() => menu.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      const viewport = window.visualViewport!;
+      return rect.height > 60 && rect.top >= viewport.offsetTop &&
+        rect.bottom <= viewport.offsetTop + viewport.height &&
+        rect.left >= viewport.offsetLeft && rect.right <= viewport.offsetLeft + viewport.width;
+    })).toBe(true);
+  };
+  for (const offset of [0, 160]) {
+    await keyboardViewport(page, 400, offset);
+    await checkBounds();
+    // Real hit testing must still reach the body portal above the composer.
+    const option = menu.getByRole('option').first();
+    await option.tap();
+    await expect(menu).toHaveCount(0);
+    await editor.fill('/');
+  }
+  await composer.getByTestId('thread-command-expand').tap();
+  await expect(composer).toHaveAttribute('data-mobile-expanded', 'true');
+  await editor.fill('/');
+  await checkBounds();
+  await keyboardViewport(page, 300, 220);
+  await checkBounds();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Done', exact: true }).tap();
+  await keyboardViewport(page, 844);
+  await editor.fill('');
+  await editor.evaluate(node => node.blur());
 }
 
 async function checkToolbar(composer: Locator, width: number, compactModel = true) {
@@ -169,13 +206,57 @@ async function checkCompactComposer(page: Page, composer: Locator) {
   await editor.tap();
   await expect(editor).toBeFocused();
   await expect(editor).toHaveText(/First line\s*Second line\s*Third line/);
-  await editor.press('ControlOrMeta+A');
-  await editor.press('Backspace');
+  // Reset fixture state through the editor transaction; mobile WebKit does not
+  // reliably translate desktop selection shortcuts into ProseMirror selections.
+  await editor.evaluate(node => (node as HTMLElement & { editor: Editor }).editor.commands.clearContent());
   await expect(editor).toHaveText('');
   await editor.evaluate((node) => node.blur());
 }
 
 for (const engine of [chromium, webkit]) {
+  test(`mobile typeahead survives keyboard resize, pan and expansion (${engine.name()})`, async ({ app }) => {
+    test.setTimeout(120_000);
+    const threadId = await app.window.evaluate(async () => {
+      const project = (await window.cc.projects.list())[0]!;
+      const response = await fetch('/api/v1/threads', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: project.id, providerId: 'fake', input: 'Typeahead viewport regression' })
+      });
+      if (!response.ok) throw new Error(await response.text());
+      return (await response.json()).thread.id as string;
+    });
+    const reservation = createServer();
+    await new Promise<void>(resolve => reservation.listen(0, '127.0.0.1', resolve));
+    const port = (reservation.address() as { port: number }).port;
+    await new Promise<void>(resolve => reservation.close(() => resolve()));
+    const serverUrl = `http://127.0.0.1:${port}`;
+    const gateway = await startMobileGateway({ upstream: new URL(app.window.url()).origin, publicUrl: serverUrl, port });
+    const browser = await engine.launch().catch(async error => { await gateway.close(); throw error; });
+    try {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+      const paired = await context.request.post(`${serverUrl}/_mobile/pair`, { data: { code: gateway.pair().code, label: 'Typeahead viewport' } });
+      expect(paired.ok()).toBe(true);
+      const credential = await paired.json();
+      expect((await context.request.post(`${serverUrl}/_mobile/session`, { headers: { authorization: `Bearer ${credential.credential}` } })).ok()).toBe(true);
+      await context.addInitScript(() => {
+        Object.defineProperty(window, 'visualViewport', {
+          configurable: true,
+          value: Object.assign(new EventTarget(), { height: 844, offsetTop: 0, width: 390, offsetLeft: 0, scale: 1 })
+        });
+        localStorage.setItem('zcc.defaultLaunchMode', 'thread');
+      });
+      const page = await context.newPage();
+      for (const route of ['/', '/threads/new', `/threads/${threadId}`]) {
+        await page.goto(serverUrl + route);
+        await expect(page.locator('.app-shell')).toHaveAttribute('data-mobile', 'true');
+        await checkTypeaheadViewport(page, page.locator('.thread-command-composer'));
+      }
+    } finally {
+      await browser.close();
+      await gateway.close();
+    }
+  });
+
   test(`mobile composer fits Auto, portalled launch and keyboard pan (${engine.name()})`, async ({ app }, testInfo) => {
     test.setTimeout(180_000);
     const directory = join(app.home, 'composer-layout');
@@ -240,6 +321,11 @@ for (const engine of [chromium, webkit]) {
         for (const width of [320, 390]) {
           await page.setViewportSize({ width, height: 844 });
           await checkCompactComposer(page, composer);
+          if (route === `/threads/${threadId}`) {
+            // Width changes rewrap the transcript even if its pane height stays fixed.
+            await expect.poll(() => page.getByTestId('thread-timeline').evaluate(node =>
+              node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1);
+          }
           await page.screenshot({ path: testInfo.outputPath(`compact-${route === '/' ? 'home' : route.includes('new') ? 'new' : 'reply'}-${width}.png`) });
         }
         await editor.fill('Draft stays visible above the keyboard');

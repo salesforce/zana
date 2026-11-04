@@ -17,10 +17,10 @@ for (const key of Object.keys(process.env)) {
   if (key.startsWith('GIT_')) delete process.env[key];
 }
 
-// Unit tests must not hit the live public feed or clone git.soma.
-// Production leaves both unset so PluginService seeds the defaults.
+// Unit tests opt into fixture catalogs; production seeds all three defaults.
 process.env.ZCC_OFFICIAL_MARKETPLACE_URL = 'off';
 process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = 'off';
+process.env.ZCC_COMMUNITY_MARKETPLACE_SOURCE = 'off';
 
 // Polyfill localStorage for jsdom and happy-dom test environments that don't provide it
 if (!globalThis.localStorage) {

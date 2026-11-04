@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -31,7 +31,7 @@ function fixture(onAppsChanged?: () => void) {
   const service = createPluginService({ dataDir, bundledRoot: root(), onAppsChanged }); services.push(service);
   return { service, plugin, dataDir };
 }
-afterEach(() => { for (const service of services.splice(0)) service.stop(); state.scanError = undefined; state.scanGate = null; state.scanStarted.mockReset(); state.runtimes.length = 0; for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
+afterEach(() => { for (const service of services.splice(0)) service.stop(); state.scanError = undefined; state.scanGate = null; state.scanStarted.mockReset(); state.runtimes.length = 0; for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('plugin service responsiveness failures', () => {
   it.each([Error('scan failed'), 'scan failed'])('degrades an initial installation when its bounded scan fails: %s', async error => {
@@ -87,6 +87,66 @@ describe('plugin service responsiveness failures', () => {
     vi.useRealTimers();
   });
 
+  it('bounds failed watchdog recovery to three attempts with backoff and allows a manual retry', async () => {
+    vi.useFakeTimers();
+    const changed = vi.fn();
+    const { service, plugin } = fixture(changed);
+    const row = await service.install(plugin);
+    state.scanError = Error('recovery scan failed');
+    state.runtimes[0].options.onFailure(Error('Plugin event loop stopped responding'));
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+
+    for (const [index, delay] of [1_000, 2_000, 4_000].entries()) {
+      await vi.advanceTimersByTimeAsync(delay - 100);
+      expect(state.scanStarted).toHaveBeenCalledTimes(index + 1);
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(index + 3));
+      expect(state.scanStarted).toHaveBeenCalledTimes(index + 2);
+    }
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(state.scanStarted).toHaveBeenCalledTimes(4);
+    expect(service.get(row.id)?.status).toBe('degraded');
+
+    state.scanError = undefined;
+    await service.reload(row.id);
+    expect(service.get(row.id)?.status).toBe('running');
+    state.scanError = Error('recovery scan failed again');
+    state.runtimes.at(-1)!.options.onFailure(Error('Plugin event loop stopped responding'));
+    await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('degraded'));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(state.scanStarted).toHaveBeenCalledTimes(6));
+  });
+
+  it.each(['disable', 'remove', 'stop'] as const)('cancels pending watchdog recovery on %s', async operation => {
+    vi.useFakeTimers();
+    const { service, plugin } = fixture();
+    const row = await service.install(plugin);
+    state.runtimes[0].options.onFailure(Error('Plugin event loop stopped responding'));
+    await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('degraded'));
+    if (operation === 'stop') service.stop();
+    else await service[operation](row.id);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(state.runtimes).toHaveLength(1);
+  });
+
+  it('also bounds recovery when materializing the plugin throws before activation', async () => {
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const changed = vi.fn();
+    const { service, plugin } = fixture(changed);
+    const row = await service.install(plugin);
+    renameSync(join(plugin, 'package.json'), join(plugin, 'package.saved'));
+    state.runtimes[0].options.onFailure(Error('Plugin event loop stopped responding'));
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+    for (const [index, delay] of [1_000, 2_000, 4_000].entries()) {
+      await vi.advanceTimersByTimeAsync(delay);
+      await vi.waitFor(() => expect(errors).toHaveBeenCalledTimes(index + 1));
+    }
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(errors).toHaveBeenCalledTimes(3);
+    expect(state.runtimes).toHaveLength(1);
+  });
+
   it('does not activate or notify after stop while startup waits on a scan', async () => {
     const { service: setup, plugin, dataDir } = fixture();
     const row = await setup.install(plugin);
@@ -139,10 +199,15 @@ describe('plugin service responsiveness failures', () => {
     const starting = service.start();
     await vi.waitFor(() => expect(service.get('custom-instructions')?.toolPolicy).toBe('unknown'));
     await vi.waitFor(() => expect(state.scanStarted).toHaveBeenCalled());
-    await service.disable('custom-instructions');
-    expect(service.get('custom-instructions')).toMatchObject({ enabled: false, status: 'disabled' });
-    deferred.resolve();
-    await starting;
+    const disabled = vi.fn();
+    const disabling = service.disable('custom-instructions').then(disabled);
+    try {
+      // Disable invalidates the pending load immediately, then waits behind
+      // the installation's lifecycle lock before persisting the final state.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(disabled).not.toHaveBeenCalled();
+    } finally { deferred.resolve(); }
+    await Promise.all([starting, disabling]);
     expect(service.get('custom-instructions')).toMatchObject({ enabled: false, status: 'disabled' });
     expect(state.runtimes).toHaveLength(0);
   });

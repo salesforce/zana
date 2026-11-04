@@ -1,5 +1,8 @@
+export * from './context-reference.js';
+export { EDITOR_SELECTION_MIME, MAX_EDITOR_SELECTION_TEXT, parseEditorSelection, editorSelectionFromClipboard, editorSelectionLabel, editorSelectionPrompt, type EditorSelection } from './editor-selection.js';
 import type {
   ComposerView,
+  HarnessRoutingEditorProps,
   MarkdownProps,
   NewThreadComposerProps,
   PluginAppDefinition,
@@ -10,6 +13,9 @@ import type {
   PluginSettingsState,
   ThreadChatProps,
   ZccContext,
+  ZccDeepLinkOpenResult,
+  ZccDeepLinkRejectReason,
+  ZccDeepLinks,
   ZccNavigate,
   ZccWindowTitle
 } from './app-contract.js';
@@ -21,8 +27,12 @@ export type {
   ComposerCustomization,
   ComposerPlusMenuItem,
   ComposerView,
+  HarnessRoutingEditorPatch,
+  HarnessRoutingEditorProps,
+  HarnessRoutingEditorRowCopy,
   MarkdownProps,
   NewThreadComposerProps,
+  PluginHarnessOverride,
   PluginAppBuilder,
   PluginAppComposer,
   PluginAppContentScripts,
@@ -76,6 +86,7 @@ export type {
   ZccNavigateToProjectOptions,
   ZccPanelAgentOptions,
   ZccPanelToolOptions,
+  ZccPanelScope,
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSdkApp,
@@ -92,6 +103,10 @@ export type {
   PluginSlotBase,
   PluginThreadHeaderActionProps,
   PluginThreadHeaderActionRegistration,
+  PluginBrowserToolbarActionRegistration,
+  PluginBrowserToolbarActionProps,
+  PluginBrowserPage,
+  PluginBrowserComposer,
   PluginThreadListProps,
   PluginSidebarThread,
   PluginSidebarThreadActions,
@@ -105,6 +120,9 @@ export type {
   ThreadChatMessageReference,
   ThreadChatProps,
   ZccContext,
+  ZccDeepLinkOpenResult,
+  ZccDeepLinkRejectReason,
+  ZccDeepLinks,
   ZccNavigate,
   ZccSurface,
   ZccWindowTitle,
@@ -228,6 +246,21 @@ export function useZccNavigate(): ZccNavigate {
   return pluginRuntime().useZccNavigate?.() ?? missing('useZccNavigate');
 }
 
+const unavailableDeepLinks: ZccDeepLinks = {
+  base: () => null,
+  on: () => () => undefined,
+  open: async () => ({ ok: false, reason: 'unavailable' })
+};
+
+/**
+ * Deep links for this plugin: `base()`, `on(route, handler)` and `open(rawLink)`.
+ * On hosts without deep links `base()` is null, `on` never fires and `open`
+ * resolves `unavailable`, so callers can use it unconditionally.
+ */
+export function useZccDeepLinks(): ZccDeepLinks {
+  return pluginRuntime().useZccDeepLinks?.() ?? unavailableDeepLinks;
+}
+
 /**
  * Titles this plugin's own window (a detachable project tab opened with `openInWindow`) while
  * the calling component is mounted; pass null to keep the tab label. With several callers the
@@ -236,6 +269,10 @@ export function useZccNavigate(): ZccNavigate {
  */
 export function useWindowTitle(title: ZccWindowTitle | null | undefined): void {
   pluginRuntime().useWindowTitle?.(title);
+}
+
+export function useWindowCloseHandler(handler: ((signal: AbortSignal) => void | Promise<void>) | null): void {
+  pluginRuntime().useWindowCloseHandler?.(handler);
 }
 
 export function useComposer(): PluginComposerApi {
@@ -287,7 +324,7 @@ function hostReact(): typeof import('react') | undefined {
 }
 
 function renderHostComponent<P extends object>(
-  name: keyof Pick<PluginSdkApp, 'ThreadChat' | 'Markdown' | 'experimental_NewThreadComposer'>,
+  name: keyof Pick<PluginSdkApp, 'ThreadChat' | 'Markdown' | 'experimental_NewThreadComposer' | 'experimental_HarnessRoutingEditor'>,
   props: P
 ) {
   const React = hostReact();
@@ -306,4 +343,8 @@ export function Markdown(props: MarkdownProps) {
 
 export function experimental_NewThreadComposer(props: NewThreadComposerProps) {
   return renderHostComponent('experimental_NewThreadComposer', props);
+}
+
+export function experimental_HarnessRoutingEditor(props: HarnessRoutingEditorProps) {
+  return renderHostComponent('experimental_HarnessRoutingEditor', props);
 }

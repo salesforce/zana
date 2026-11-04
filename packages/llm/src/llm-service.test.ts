@@ -92,6 +92,32 @@ describe('LlmService.run', () => {
     ]);
     expect(provider.run).toHaveBeenCalledTimes(2);
   });
+
+  it('does not join concurrent calls with the same caller key but different request input', async () => {
+    const provider = fakeProvider();
+    const svc = new LlmService(new Map([['claude-cli', provider]]));
+    await Promise.all([
+      svc.run(entry(), { name: 'first' }, 'scope'),
+      svc.run(entry(), { name: 'second' }, 'scope')
+    ]);
+    expect(provider.run).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not join pre-invalidation in-flight work', async () => {
+    const resolves: Array<(result: LlmRunResult) => void> = [];
+    const provider: LlmProvider = {
+      id: 'claude-cli',
+      run: vi.fn(() => new Promise<LlmRunResult>((done) => { resolves.push(done); }))
+    };
+    const svc = new LlmService(new Map([['claude-cli', provider]]));
+    const oldCall = svc.run(entry(), { name: 'x' }, 'scope');
+    svc.invalidateProviderIdentity();
+    const newCall = svc.run(entry(), { name: 'x' }, 'scope');
+    expect(provider.run).toHaveBeenCalledTimes(2);
+    resolves[0]!({ ok: true, text: 'old', provider: 'claude-cli', ms: 1 });
+    resolves[1]!({ ok: true, text: 'new', provider: 'claude-cli', ms: 1 });
+    await Promise.all([oldCall, newCall]);
+  });
 });
 
 describe('LlmService.availableProviders', () => {

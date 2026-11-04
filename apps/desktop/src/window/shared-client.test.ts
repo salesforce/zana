@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ dir: '', windows: [] as any[], fetch: vi.fn(), clear: vi.fn(), close: vi.fn(), login: vi.fn(), cookie: vi.fn(), external: vi.fn(), permissions: [] as Function[], menus: [] as any[], failLoad: false }));
+const state = vi.hoisted(() => ({ dir: '', windows: [] as any[], fetch: vi.fn(), clear: vi.fn(), close: vi.fn(), login: vi.fn(), cookie: vi.fn(), external: vi.fn(), permissions: [] as Function[], menus: [] as any[], failLoad: false, chrome: [] as any[], dock: vi.fn(), quit: vi.fn() }));
+vi.mock('./shared-instance-chrome.js', () => ({ SharedInstanceChrome: class { unavailable = vi.fn(); constructor(...args: unknown[]) { state.chrome.push({ args, instance: this }); } } }));
 vi.mock('./shared-sign-in.js', () => ({ SHARED_ACCOUNT: 'https://zana-ide.com', signInWithBrowser: state.login }));
 vi.mock('@zana-ai/zcc-server/electron-data-dir', () => ({ electronZccDataDir: () => state.dir }));
 vi.mock('electron', () => {
@@ -14,6 +15,7 @@ vi.mock('electron', () => {
     emit(name: string, ...args: unknown[]) { for (const fn of this.listeners.get(name) ?? []) fn(...args); }
   }
   return {
+    app: { dock: { setMenu: state.dock }, quit: state.quit },
     BrowserWindow: class extends Emitter {
       options: any; destroyed = false; url = ''; visible = true; menu: any;
       webContents = Object.assign(new Emitter(), { id: state.windows.length + 1 });
@@ -35,10 +37,11 @@ import { writeSharedTarget } from './shared-target.js';
 let client: SharedClient;
 let show: ReturnType<typeof vi.fn>, hide: ReturnType<typeof vi.fn>;
 const serverId = randomUUID(), instanceId = randomUUID();
+const navigation = `https://owned.zana-ide.com/_connect/login?intent=1790000000000.${'a'.repeat(43)}`;
 const account = { servers: [{ id: serverId, instanceId, name: 'Shared', browserUrl: 'https://owned.zana-ide.com', live: true }] };
 beforeEach(() => {
-  state.dir = mkdtempSync(join(tmpdir(), 'shared-client-')); state.windows = []; state.menus = []; state.permissions = []; state.failLoad = false;
-  state.fetch.mockReset().mockImplementation(async () => Response.json(account)); state.clear.mockReset(); state.close.mockReset();
+  state.dir = mkdtempSync(join(tmpdir(), 'shared-client-')); state.windows = []; state.menus = []; state.chrome = []; state.permissions = []; state.failLoad = false; state.dock.mockClear(); state.quit.mockClear();
+  state.fetch.mockReset().mockImplementation(async (url: string) => Response.json(url.includes('/browser/open/') ? { location: navigation } : account)); state.clear.mockReset(); state.close.mockReset();
   state.login.mockReset().mockResolvedValue({ cookieValue: 'account-session', expiresAt: Date.now() + 60_000 }); state.cookie.mockReset(); state.external.mockReset();
   show = vi.fn(); hide = vi.fn(); client = new SharedClient(show, hide);
 });
@@ -86,7 +89,7 @@ it('bounds account responses and signs out without exposing credentials to conte
 it('restores the exact saved instance and refuses revoked or rebound selections', async () => {
   await client.restore(); expect(state.windows).toHaveLength(0);
   writeSharedTarget(join(state.dir, 'shared-target.json'), { kind: 'connect', serverId, instanceId });
-  await client.restore(); expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com');
+  await client.restore(); expect(state.windows.at(-1).url).toBe(navigation);
   state.fetch.mockResolvedValueOnce(Response.json({ servers: [{ ...account.servers[0], instanceId: randomUUID() }] }));
   await client.restore(); expect(state.windows.at(-1).url).toContain('data:text/html'); expect(show).not.toHaveBeenCalled();
 });
@@ -97,8 +100,8 @@ it('keeps recovery menu actions in the shared context and denies local OS permis
   expect(state.permissions[0]!()).toBe(false);
   const permission = vi.fn(); state.permissions[1]!(null, 'media', permission); expect(permission).toHaveBeenCalledWith(false);
   menu.template[0].submenu.find((row: any) => row.label === 'Reload shared instance').click();
-  expect(win.url).toBe('https://owned.zana-ide.com');
-  menu.template[0].submenu.find((row: any) => row.label === 'Return to local Zana').click();
+  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe(navigation));
+  menu.template[0].submenu.find((row: any) => row.label === 'Return to this computer').click();
   expect(show).toHaveBeenCalled();
   await client.select(serverId);
   state.windows.at(-1).menu.template[0].submenu.find((row: any) => row.label === 'Sign out of shared access').click();
@@ -106,15 +109,34 @@ it('keeps recovery menu actions in the shared context and denies local OS permis
   await client.signOut();
   writeSharedTarget(join(state.dir, 'shared-target.json'), { kind: 'connect', serverId, instanceId });
   state.fetch.mockResolvedValueOnce(new Response('', { status: 401 })); await client.restore();
-  const notice = state.windows.at(-1), actions = state.menus.at(-1);
+  const notice = state.windows.at(-1), actions = state.menus.findLast(menu => menu.template.some((row: any) => row.label === 'Sign in'));
   notice.webContents.emit('context-menu'); expect(actions.popup).toHaveBeenCalled();
   actions.template.find((row: any) => row.label === 'Sign in').click();
   expect(state.login).toHaveBeenCalledOnce();
-  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com'));
+  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe(navigation));
   actions.template.find((row: any) => row.label === 'Retry shared instance').click();
-  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com'));
-  actions.template.find((row: any) => row.label === 'Return to local Zana').click();
+  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe(navigation));
+  actions.template.find((row: any) => row.label === 'Return to this computer').click();
   expect(client.target()).toEqual({ kind: 'local' });
+});
+it('exposes matching desktop chrome and Dock actions without granting a product preload', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  try {
+    await client.select(serverId);
+    const chrome = state.chrome.at(-1);
+    expect(chrome.args[1]).toMatchObject({ name: 'Shared' });
+    const actions = chrome.args[3];
+    expect(await actions.list()).toHaveLength(1);
+    await actions.signIn(); await actions.select(serverId);
+    actions.quit(); expect(state.quit).toHaveBeenCalledOnce();
+    const dock = state.dock.mock.calls.at(-1)![0];
+    dock.template.find((row: any) => row.label === 'Quit Zana').click();
+    expect(state.quit).toHaveBeenCalledTimes(2);
+    dock.template.find((row: any) => row.label === 'Return to this computer').click();
+    expect(state.dock.mock.calls.at(-1)![0].template).toEqual([]);
+    await client.select(serverId); await state.chrome.at(-1).args[3].retry();
+    state.chrome.at(-1).args[3].local(); expect(client.target()).toEqual({ kind: 'local' });
+  } finally { vi.restoreAllMocks(); }
 });
 it('serializes sign-out, refuses selection during it and closes connections even if storage clearing fails', async () => {
   await client.select(serverId);
@@ -136,7 +158,7 @@ it('does not resurrect an instance after the user returns locally during restore
   expect(state.windows.every(win => win.destroyed)).toBe(true); expect(client.target()).toEqual({ kind: 'local' });
   writeSharedTarget(join(state.dir, 'shared-target.json'), { kind: 'connect', serverId, instanceId });
   expect(client.showSelected()).toBe(true);
-  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com'));
+  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe(navigation));
 });
 
 it('propagates browser failures, allows retry, and delegates external opening through main', async () => {
@@ -169,4 +191,40 @@ it('drains a cookie installation before clearing storage on sign-out', async () 
   const out = client.signOut(); expect(state.clear).not.toHaveBeenCalled();
   finish(); await pending; await out;
   expect(state.clear).toHaveBeenCalledOnce();
+});
+
+it('leaves local work visible when opening fails or the computer is offline', async () => {
+  state.fetch.mockResolvedValueOnce(Response.json(account)).mockResolvedValueOnce(new Response('', { status: 503 }));
+  await expect(client.select(serverId)).rejects.toThrow('Could not connect');
+  expect(hide).not.toHaveBeenCalled(); expect(client.target()).toEqual({ kind: 'local' });
+  state.fetch.mockResolvedValueOnce(Response.json({ servers: [{ ...account.servers[0], live: false }] }));
+  await expect(client.select(serverId)).rejects.toThrow('offline');
+  expect(hide).not.toHaveBeenCalled(); expect(state.windows).toHaveLength(0);
+});
+
+it('fences a late browser handoff after returning locally and serializes its cookie writes', async () => {
+  let finish!: (value: Response) => void;
+  state.fetch.mockImplementationOnce(async () => Response.json(account)).mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  const first = client.select(serverId); const rejection = expect(first).rejects.toThrow('selection changed');
+  await vi.waitFor(() => expect(state.fetch).toHaveBeenCalledTimes(2));
+  const second = client.select(serverId);
+  await vi.waitFor(() => expect(state.fetch).toHaveBeenCalledTimes(3));
+  // A second intent request cannot overtake the first response's cookie write.
+  expect(state.fetch.mock.calls.filter(([url]) => url.includes('/browser/open/'))).toHaveLength(1);
+  client.local(); finish(Response.json({ location: navigation }));
+  await rejection; await expect(second).rejects.toThrow('selection changed');
+  expect(state.windows).toHaveLength(0); expect(client.target()).toEqual({ kind: 'local' });
+});
+
+it('drains a browser handoff during sign-out and ignores a late restore authorization', async () => {
+  await client.select(serverId);
+  let finish!: (value: Response) => void;
+  state.fetch.mockImplementationOnce(async () => Response.json(account)).mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  const restoring = client.restore();
+  await vi.waitFor(() => expect(state.fetch.mock.calls.filter(([url]) => url.includes('/browser/open/'))).toHaveLength(2));
+  const signingOut = client.signOut();
+  expect(state.clear).not.toHaveBeenCalled();
+  finish(Response.json({ location: navigation }));
+  await Promise.all([restoring, signingOut]);
+  expect(state.clear).toHaveBeenCalledOnce(); expect(state.windows.every(win => win.destroyed)).toBe(true);
 });

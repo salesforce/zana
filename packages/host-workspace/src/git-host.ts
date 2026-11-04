@@ -18,7 +18,8 @@ function runGh(cwd: string, args: string[], timeoutMs: number): Promise<{ stdout
     const child = spawn(ghCommand(), args, {
       cwd,
       env: gitChildEnv(),
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];

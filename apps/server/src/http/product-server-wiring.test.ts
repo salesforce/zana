@@ -84,15 +84,14 @@ describe('startProductServer pairing forwarder failure', () => {
     expect(ctx.origins.pairingPort).toBe(1);
   });
 
-  it('passes an IPv6 loopback product host to the forwarder', async () => {
+  it('binds the forwarder to the IPv4 product loopback and refuses an IPv6 product host', async () => {
     mocks.forwarderFailure = new Error('stop here');
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      server = await startProductServer({ dataDir, origins: { serverPort: 0 }, host: '::1' });
-    } catch {
-      return; // host without IPv6 loopback cannot bind
-    }
-    expect(mocks.forwarderOptions[0]).toEqual({ productHost: '::1' });
+    // The local peer app registration is IPv4-loopback only, so ::1 never reaches the forwarder.
+    await expect(startProductServer({ dataDir, origins: { serverPort: 0 }, host: '::1' })).rejects.toThrow('restricted to a loopback host');
+    expect(mocks.forwarderOptions).toEqual([]);
+    server = await startProductServer({ dataDir, origins: { serverPort: 0 } });
+    expect(mocks.forwarderOptions[0]).toEqual({ productHost: '127.0.0.1' });
   });
 });
 

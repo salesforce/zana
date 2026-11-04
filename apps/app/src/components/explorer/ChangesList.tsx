@@ -1,5 +1,6 @@
 import React from 'react';
-import { FileText, Undo2 } from 'lucide-react';
+import { Undo2 } from 'lucide-react';
+import { FileIcon } from '../FileIcon.js';
 import type { GitFileCode } from '@zana-ai/zcc-domain/product';
 import { beginFsEntryDrag, consumeFsEntryDragClick, endFsEntryDrag } from '../../lib/fs-entry-drag.js';
 
@@ -48,7 +49,7 @@ export const ChangesList = React.memo(function ChangesList({ files, activeFile, 
           >
             <span className="tree-chevron empty" />
             <span className="tree-icon">
-              <FileText size={13} />
+              <FileIcon name={name} />
             </span>
             <span className="tree-name" title={f.rel}>
               {name}

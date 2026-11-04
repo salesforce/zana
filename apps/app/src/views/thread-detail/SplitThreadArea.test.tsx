@@ -2,7 +2,8 @@
  * @vitest-environment happy-dom
  */
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { startTransition, Suspense, useLayoutEffect } from 'react';
+import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const viewport = vi.hoisted(() => ({ compact: false }));
@@ -624,5 +625,136 @@ describe('pane slot ownership', () => {
     rerender(<MemoryRouter><SplitThreadArea routeContent={{ kind: 'home' }} /></MemoryRouter>);
     expect(container.querySelectorAll('.split-pane-slot > .split-pane-host')).toHaveLength(1);
     expect(container.querySelectorAll('.split-pane')).toHaveLength(1);
+  });
+});
+
+describe('route renders that never commit', () => {
+  const activateScope = useSplitWorkspace.getState().activateScope;
+  afterEach(() => {
+    cleanup();
+    useSplitWorkspace.setState({ activateScope });
+    resetSplitWorkspace();
+  });
+
+  // #532: Back from a project renders the global route as a transition. A scope
+  // switch during that render flipped the scope under the project tree on
+  // screen, which flipped it back, so the route render restarted until React
+  // forced it (about 5 s) and the visible pane remounted on every flip.
+  it('keeps the active scope and the mounted pane while the global route has not committed', () => {
+    const switches: string[] = [];
+    useSplitWorkspace.setState({
+      activateScope: (key) => {
+        switches.push(key);
+        // Stop a scope ping-pong from spinning forever inside act().
+        if (switches.length > 20) throw new Error(`split scope ping-pong: ${switches.slice(-4).join(' > ')}`);
+        activateScope(key);
+      }
+    });
+    let navigate: NavigateFunction = () => undefined;
+    const neverLoads = new Promise<never>(() => undefined);
+    function Loading(): never {
+      throw neverLoads;
+    }
+    function Shell() {
+      const { pathname } = useLocation();
+      navigate = useNavigate();
+      return (
+        <>
+          <SplitThreadArea routeContent={paneContentForPathname(pathname) ?? { kind: 'home' }} />
+          {pathname.startsWith('/sessions/') ? <Loading /> : null}
+        </>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={[getProjectModeRoutePath('p1', 'explorer')]}>
+        <Suspense fallback={<p>loading</p>}>
+          <Shell />
+        </Suspense>
+      </MemoryRouter>
+    );
+    const projectPane = screen.getByTestId('project-mode-pane');
+    const projectHost = projectPane.closest('.split-pane-host');
+    expect(useSplitWorkspace.getState().scopeKey).toBe(projectSplitScopeKey('p1'));
+    switches.length = 0;
+
+    act(() => startTransition(() => void navigate('/sessions/s1')));
+    expect(switches).toEqual([]);
+    expect(useSplitWorkspace.getState().scopeKey).toBe(projectSplitScopeKey('p1'));
+
+    // An urgent update re-renders the tree on screen while the route waits.
+    act(() => useSplitWorkspace.getState().setDimInactiveSplits(false));
+    expect(switches).toEqual([]);
+    expect(screen.getByTestId('project-mode-pane')).toBe(projectPane);
+    expect(projectPane.closest('.split-pane-host')).toBe(projectHost);
+    expect(screen.queryByText('loading')).toBeNull();
+  });
+
+  it('opens a project with no saved split as that project alone, not the global split', () => {
+    const globalLayout = splitPane(createSinglePaneLayout({ kind: 'home' }), 'pane-1', 'right', { kind: 'agents' });
+    useSplitWorkspace.setState({
+      scopeKey: GLOBAL_SPLIT_SCOPE_KEY,
+      layout: globalLayout,
+      maximizedPaneId: 'pane-2',
+      scopes: {}
+    });
+    let firstCommit: { panes: number; modes: string[]; maximized: boolean } | null = null;
+    function FirstCommit() {
+      useLayoutEffect(() => {
+        firstCommit = {
+          panes: document.querySelectorAll('.split-pane').length,
+          modes: [...document.querySelectorAll('[data-testid="project-mode-pane"]')].map((pane) => pane.getAttribute('data-mode') ?? ''),
+          maximized: document.querySelector('.split-pane.is-maximized') !== null
+        };
+      }, []);
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={[getProjectModeRoutePath('p1', 'explorer')]}>
+        <RoutedArea />
+        <FirstCommit />
+      </MemoryRouter>
+    );
+    expect(firstCommit).toEqual({ panes: 1, modes: ['explorer'], maximized: false });
+    expect(useSplitWorkspace.getState().scopeKey).toBe(projectSplitScopeKey('p1'));
+    expect(useSplitWorkspace.getState().scopes[GLOBAL_SPLIT_SCOPE_KEY]).toEqual({ layout: globalLayout, maximizedPaneId: 'pane-2' });
+  });
+
+  it('shows a saved project split, maximized pane included, when the project opens', () => {
+    const projectLayout = splitPane(
+      createSinglePaneLayout({ kind: 'project-view', projectId: 'p1', mode: 'explorer' }),
+      'pane-1',
+      'right',
+      { kind: 'project-view', projectId: 'p1', mode: 'terminals' }
+    );
+    useSplitWorkspace.setState({
+      scopeKey: GLOBAL_SPLIT_SCOPE_KEY,
+      layout: createSinglePaneLayout({ kind: 'home' }),
+      maximizedPaneId: null,
+      scopes: { [projectSplitScopeKey('p1')]: { layout: projectLayout, maximizedPaneId: 'pane-1' } }
+    });
+    // The scope activates in a layout effect; the first commit must already
+    // show the saved split rather than a one-pane placeholder.
+    let firstCommit: { panes: number; maximized: string | null } | null = null;
+    function FirstCommit() {
+      useLayoutEffect(() => {
+        firstCommit = {
+          panes: document.querySelectorAll('.split-pane').length,
+          maximized: document.querySelector('.split-pane.is-maximized')?.getAttribute('data-split-pane-id') ?? null
+        };
+      }, []);
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={[getProjectModeRoutePath('p1', 'explorer')]}>
+        <RoutedArea />
+        <FirstCommit />
+      </MemoryRouter>
+    );
+    expect(firstCommit).toEqual({ panes: 2, maximized: 'pane-1' });
+    expect(useSplitWorkspace.getState().scopeKey).toBe(projectSplitScopeKey('p1'));
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-1');
+    expect(screen.getAllByTestId('project-mode-pane').map((pane) => pane.getAttribute('data-mode')).sort())
+      .toEqual(['explorer', 'terminals']);
+    expect(screen.queryByTestId('home-view')).toBeNull();
   });
 });

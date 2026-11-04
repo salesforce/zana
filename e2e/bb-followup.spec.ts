@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createSqliteDatabase } from '../packages/db/src/sqlite.js';
 import { test, expect } from './fixtures/app.js';
+import { nativeDialogCalls, stubNativeDialogs } from './sdk/native-dialog.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true } });
 
@@ -67,9 +68,9 @@ setInterval(() => {}, 1000);
     if (!response.ok) throw new Error(await response.text());
   }, threadId);
   await expect(sessions.getByTestId('project-thread-row')).toContainText('Renamed project thread');
-  await sidebar.getByRole('textbox', { name: 'Filter projects' }).fill('does not match');
+  await sidebar.getByRole('textbox', { name: 'Filter machines or projects' }).fill('does not match');
   await expect(sessions).toHaveCount(0);
-  await sidebar.getByRole('textbox', { name: 'Filter projects' }).clear();
+  await sidebar.getByRole('textbox', { name: 'Filter machines or projects' }).clear();
   await expect(sessions.getByTestId('project-thread-row')).toContainText('Renamed project thread');
   await expect(cliRows).toHaveCount(1);
   const otherRoot = join(home, 'other-project'); mkdirSync(otherRoot);
@@ -137,7 +138,9 @@ test('durable retry sweep sends safe failures and leaves ambiguous sends for man
   const queue = window.getByTestId('thread-queued-messages');
   await expect(queue).toContainText('Manual recovery only');
   await expect(timeline).not.toContainText('Response to: Manual recovery only');
+  await stubNativeDialogs(app.electron, [1]);
   await queue.getByRole('button', { name: 'Send now', exact: true }).click();
   await expect(timeline).toContainText('Response to: Manual recovery only');
+  expect(await nativeDialogCalls(app.electron)).toMatchObject([{ title: 'Send queued message now?', detail: expect.stringContaining('Manual recovery only') }]);
   await expect(queue).toHaveCount(0);
 });

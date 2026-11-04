@@ -22,8 +22,10 @@ describe('launch-scoped live model inventory', () => {
   it('withLiveModelTargets is a pure per-call view that never touches the shared provider', () => {
     const shared = new OpenCodeProvider();
     const snapshot = shared.adapter;
-    const view = withLiveModelTargets(shared, ['llmgw/gpt-7-luna']);
-    expect(view.adapter.descriptor.targets?.modelLevelMapping.low).toBe('llmgw/gpt-7-luna');
+    const view = withLiveModelTargets(shared, ['fixture-provider/gpt-7-luna']);
+    expect(view.adapter.descriptor.targets?.models.map(model => model.id)).toEqual(['fixture-provider/gpt-7-luna']);
+    expect(view.adapter.descriptor.targets?.providers).toEqual([{ id: 'fixture-provider', label: 'fixture-provider' }]);
+    expect(view.adapter.descriptor.targets?.modelLevelMapping.low).toBeUndefined();
     expect(shared.adapter).toBe(snapshot);
     const plain = providerFor('claude');
     expect(withLiveModelTargets(plain as LaunchProvider, ['x/one'])).toBe(plain);
@@ -38,19 +40,19 @@ describe('launch-scoped live model inventory', () => {
       extraArgs: [],
       scope: 'local' as const
     };
-    const pin = { adapterId: 'opencode', level: 'low' as const, targetId: 'llmgw/gpt-7-luna' };
+    const pin = { adapterId: 'opencode', level: 'low' as const, targetId: 'fixture-provider/gpt-7-luna' };
     expect(resolveModelTarget(shared, { ...input, authorizedModel: pin })).toMatchObject({
-      targetId: 'llmgw/gpt-7-luna', level: 'low', contribution: { args: ['--model', 'llmgw/gpt-7-luna'] }
+      targetId: 'fixture-provider/gpt-7-luna', level: 'low', contribution: { args: ['--model', 'fixture-provider/gpt-7-luna'] }
     });
     // A pin for another level or adapter never re-routes this launch.
-    expect(resolveModelTarget(shared, { ...input, authorizedModel: { ...pin, level: 'high' } }).targetId).toBe('llmgw/gpt-6-luna');
-    expect(resolveModelTarget(shared, { ...input, authorizedModel: { ...pin, adapterId: 'codex' } }).targetId).toBe('llmgw/gpt-6-luna');
+    expect(() => resolveModelTarget(shared, { ...input, authorizedModel: { ...pin, level: 'high' } })).toThrow('does not support low model level');
+    expect(() => resolveModelTarget(shared, { ...input, authorizedModel: { ...pin, adapterId: 'codex' } })).toThrow('does not support low model level');
     // Explicit ids stay verbatim regardless of a pin.
     expect(resolveModelTarget(shared, {
       ...input,
       persona: undefined,
-      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/grok-4.6' } } },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/grok-4.6' } } },
       authorizedModel: pin
-    }).targetId).toBe('llmgw/grok-4.6');
+    }).targetId).toBe('fixture-provider/grok-4.6');
   });
 });

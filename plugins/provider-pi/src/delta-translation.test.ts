@@ -270,6 +270,70 @@ describe("pi delta translation equivalence", () => {
     expect(harness.openTurnId()).toBe(turnId);
   });
 
+  it("completes each assistant message at its own message_end, once", () => {
+    const harness = createHarness();
+    harness.translate(loadFixture("agent-start.json"));
+    const assistant = (text: string) => {
+      const message = {
+        role: "assistant",
+        content: [{ type: "text", text }],
+        stopReason: "stop",
+      };
+      const events = [
+        ...harness.translate({ type: "message_start", message }),
+        ...harness.translate({
+          type: "message_update",
+          message,
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: text,
+          },
+        }),
+        ...harness.translate({ type: "message_end", message }),
+      ];
+      return { message, events };
+    };
+    const completedMessages = (events: ThreadEvent[]) =>
+      events.flatMap((event) =>
+        event.type === "item/completed" && event.item.type === "agentMessage"
+          ? [event.item]
+          : [],
+      );
+
+    const first = assistant("Checking the workspace.");
+    expect(completedMessages(first.events)).toEqual([
+      expect.objectContaining({
+        id: agentMessageDeltaId(first.events),
+        text: "Checking the workspace.",
+      }),
+    ]);
+
+    harness.translate(
+      createPiBashStartEvent({ command: "pwd", toolCallId: "tool-1" }),
+    );
+    harness.translate(loadFixture("tool-execution-end-bash.json"));
+    const last = assistant("The workspace is ready.");
+    const end = harness.translate({
+      type: "agent_end",
+      messages: [first.message, last.message],
+    });
+
+    expect(completedMessages(last.events)).toEqual([
+      expect.objectContaining({
+        id: agentMessageDeltaId(last.events),
+        text: "The workspace is ready.",
+      }),
+    ]);
+    expect(agentMessageDeltaId(last.events)).not.toBe(
+      agentMessageDeltaId(first.events),
+    );
+    expect(completedMessages(end)).toEqual([]);
+    expect(end).toContainEqual(
+      expect.objectContaining({ type: "turn/completed", status: "completed" }),
+    );
+  });
+
   it("completes extension-triggered turns when agent_end includes string custom content", () => {
     const harness = createHarness();
     harness.translate(loadFixture("agent-start.json"));
@@ -1825,5 +1889,38 @@ describe("pi delta translation equivalence", () => {
         status: "failed",
       }),
     ]);
+  });
+});
+
+
+describe("assistant message boundaries", () => {
+  const message = (text: string, stopReason = "stop") => ({ role: "assistant", content: [{ type: "text", text }], stopReason });
+  const create = () => createPiDeltaTranslator({ resolveModelContextWindow: () => null });
+
+  it.each(["error", "aborted"])("does not complete %s partial text at message_end", (stopReason) => {
+    const translator = create();
+    expect(translator.translate({ type: "message_end", message: message("Partial", stopReason) })).toEqual([]);
+  });
+
+  it("does not emit empty text, and keeps child and root streams separate", () => {
+    const translator = create();
+    const root = { threadId: "thread" };
+    const child = { threadId: "thread", parentToolCallId: "child" };
+    expect(translator.translate({ type: "message_end", message: message(" ") }, root)).toEqual([]);
+    const end = { type: "agent_end", messages: [message("Child reply")] };
+    expect(translator.translate(end, child)).toContainEqual(expect.objectContaining({ kind: "item.textClose", key: { channel: "assistant", parentRef: "child" } }));
+    expect(translator.translate(end, root).some(delta => delta.kind === "item.textClose")).toBe(false);
+  });
+
+  it("resets only the requested thread and accepts the next message start", () => {
+    const translator = create();
+    const end = { type: "agent_end", messages: [message("Reply")] };
+    for (const threadId of ["a", "b"]) translator.translate({ type: "message_end", message: message("Reply") }, { threadId });
+    translator.resetThread("a");
+    expect(translator.translate(end, { threadId: "a" }).some(delta => delta.kind === "item.textClose")).toBe(true);
+    expect(translator.translate(end, { threadId: "b" }).some(delta => delta.kind === "item.textClose")).toBe(false);
+    translator.translate({ type: "message_end", message: message("Previous") });
+    translator.translate({ type: "message_start", message: message("Next") });
+    expect(translator.translate(end).some(delta => delta.kind === "item.textClose")).toBe(true);
   });
 });

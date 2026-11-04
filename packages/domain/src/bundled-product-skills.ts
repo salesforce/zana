@@ -8,6 +8,7 @@ export const BUNDLED_PRODUCT_SKILLS = [
   { id: 'zcc-inbox', label: 'Inbox' },
   { id: 'zcc-center', label: 'Center' },
   { id: 'zcc-plugin-authoring', label: 'Plugin authoring' },
+  { id: 'zana-ui-proposals', label: 'Interactive UI proposals' },
   { id: 'extension-creator', label: 'Extension creator' },
   { id: 'submit-a-plugin', label: 'Submit a plugin' },
   { id: 'brainstorm', label: 'Brainstorm' },

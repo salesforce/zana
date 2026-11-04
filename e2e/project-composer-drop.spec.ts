@@ -10,6 +10,10 @@ test.use({
 test('projects drag into Modern and CLI composers while rail reordering still works', async ({ app }) => {
   const { window, home } = app;
   await dismissConsentOverlays(window);
+  // Bundled navigation registers asynchronously and moves the machine rows.
+  // Complete startup before taking native drag coordinates.
+  await expect(window.getByRole('button', { name: 'Library', exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(window.getByRole('button', { name: 'Design Docs', exact: true })).toBeVisible({ timeout: 30_000 });
   const paths = ['Drop Alpha', 'Drop Beta'].map((name) => join(home, name));
   for (const path of paths) mkdirSync(path);
   await window.evaluate(async (paths) => {
@@ -43,7 +47,7 @@ test('projects drag into Modern and CLI composers while rail reordering still wo
   await expect(modern.locator('.prompt-mention-pill')).toHaveText('Project: Drop Alpha');
 
   // Filtering disables sorting, but must not disable mentioning a project.
-  await rail.getByRole('textbox', { name: 'Filter projects' }).fill('Drop Beta');
+  await rail.getByRole('textbox', { name: 'Filter machines or projects' }).fill('Drop Beta');
   await window.getByRole('group', { name: 'Launch mode' }).getByRole('button', { name: 'CLI Agent', exact: true }).click();
   const cli = window.getByTestId('legacy-agent-command-input');
   await expect(cli.locator('.prompt-mention-pill')).toHaveText('Project: Drop Alpha');
@@ -58,6 +62,10 @@ test('projects drag into Modern and CLI composers while rail reordering still wo
 test('dropping a project into an existing thread inserts a mention without switching threads', async ({ app }) => {
   const { window, home } = app;
   await dismissConsentOverlays(window);
+  // Bundled navigation registers asynchronously and moves the machine rows.
+  // Complete startup before taking native drag coordinates.
+  await expect(window.getByRole('button', { name: 'Library', exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(window.getByRole('button', { name: 'Design Docs', exact: true })).toBeVisible({ timeout: 30_000 });
   const path = join(home, 'Drop Thread Project');
   mkdirSync(path);
   const threadId = await window.evaluate(async (path) => {

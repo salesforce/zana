@@ -91,10 +91,19 @@ zcc projects ls remains as an alias of project list.
     title: 'Machines',
     content: `  zcc machine list
   zcc machine show <id>
+  zcc machine connect --project <project-id> [--json]
+  zcc machine connect --ssh <alias> [--user <user>] [--json]
+  zcc machine repair <host-id> [--json]
   zcc machine join-code
   zcc machine rename <id> <name>
   zcc machine remove <id>
   zcc machine provider-cli status|install <id> [provider]
+
+Connect installs or reconnects over SSH from the primary computer. Install is an
+alias for connect. Repair preserves the registered machine identity and explicitly
+allows replacement of stale enrollment. Main validates the target and handles
+credentials. These commands return stages and redacted logs, and exit nonzero if
+the machine does not connect. Use machine show to verify the resulting status.
 `
   },
   {

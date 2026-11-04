@@ -7,6 +7,26 @@ import { SURFACE_GROUPS, SURFACES, GROUP_BY_SURFACE_ID, copyPluginSurfaceAgentRe
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '../../..');
+const pluginAuthoringSkillPath = join(
+  repoRoot,
+  'apps/server/src/plugins/builtin-skills/zcc-plugin-authoring/SKILL.md'
+);
+const pluginAuthoringReferenceFiles = [
+  'workflow.md',
+  'server-sdk.md',
+  'app-slots.md',
+  'skills-and-approvals.md',
+  'testing.md'
+] as const;
+
+function readPluginAuthoringDocumentation(): string {
+  return [
+    readFileSync(pluginAuthoringSkillPath, 'utf8'),
+    ...pluginAuthoringReferenceFiles.map((file) =>
+      readFileSync(join(dirname(pluginAuthoringSkillPath), 'references', file), 'utf8')
+    )
+  ].join('\n\n');
+}
 
 const SLOT_SURFACE_IDS = [
   'navPanel',
@@ -139,7 +159,7 @@ describe('plugin guide public docs', () => {
   });
 
   it('teaches the view registration and lifecycle in the SDK reference and authoring skill', () => {
-    const skill = readFileSync(join(repoRoot, 'apps/server/src/plugins/builtin-skills/zcc-plugin-authoring/SKILL.md'), 'utf8');
+    const skill = readPluginAuthoringDocumentation();
     for (const text of [sdkReference, skill]) {
       for (const term of ['experimental_agentsView', 'PluginAgentsViewProps', 'onInspect', 'includeScheduled', 'remount', 'older hosts']) {
         expect(text).toContain(term);

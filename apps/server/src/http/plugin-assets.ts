@@ -17,6 +17,11 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.json': 'application/json; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
   '.ttf': 'font/ttf',
   '.wasm': 'application/wasm',
   '.woff': 'font/woff',
@@ -60,7 +65,7 @@ export function isPluginAssetPath(url: string): boolean {
 export async function tryServePluginAsset(
   request: IncomingMessage,
   response: ServerResponse,
-  resolveRoot: (pluginId: string) => string | null
+  resolveRoot: (pluginId: string, assetPath: string) => string | null
 ): Promise<boolean> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return false;
   let pathname: string;
@@ -72,7 +77,14 @@ export async function tryServePluginAsset(
   const match = pathname.match(PLUGIN_ASSET_PATH);
   if (!match) return false;
 
-  const pluginRoot = resolveRoot(match[1]!);
+  let assetPath: string;
+  try {
+    assetPath = decodeURIComponent(match[2]!);
+  } catch {
+    response.writeHead(400).end();
+    return true;
+  }
+  const pluginRoot = resolveRoot(match[1]!, assetPath);
   if (!pluginRoot) {
     response.writeHead(404).end();
     return true;
@@ -94,6 +106,9 @@ export async function tryServePluginAsset(
     response.writeHead(200, {
       'Cache-Control': 'no-cache',
       'Content-Type': contentType(file),
+      ...(extname(file).toLowerCase() === '.svg'
+        ? { 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'" }
+        : {}),
       'X-Content-Type-Options': 'nosniff'
     });
     if (request.method === 'HEAD') {

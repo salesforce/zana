@@ -103,3 +103,46 @@ describe('project settings store', () => {
     await expect(store.set('p1', { appendSystemPrompt: 'x'.repeat(32_769) })).rejects.toThrow();
   });
 });
+
+describe('project settings store plugin harness routing', () => {
+  const routing = { schemaVersion: 1 as const, byAdapter: { codex: { modelTargetId: 'gpt-5.4' } } };
+
+  it('keeps plugin overrides out of get(), across set(), and removes them with the project', async () => {
+    const file = join(makeDir(), 'project-settings.json');
+    const store = createProjectSettingsStore({ projectSettingsFile: file });
+    expect(store.getPluginHarnessRouting('p1', 'a')).toBeNull();
+    await store.setPluginHarnessRouting('p1', 'a', routing);
+    expect(store.get('p1')).toEqual({});
+    await store.set('p1', { worktreeIsolation: true });
+    expect(store.get('p1')).toEqual({ worktreeIsolation: true });
+    expect(store.getPluginHarnessRouting('p1', 'a')).toEqual(routing);
+    expect(store.getPluginHarnessRouting('p2', 'a')).toBeNull();
+    const chosen = { ...routing, defaultHarness: 'codex' as const };
+    await store.setPluginHarnessRouting('p1', 'c', chosen);
+    expect(createProjectSettingsStore({ projectSettingsFile: file }).getPluginHarnessRouting('p1', 'c')).toEqual(chosen);
+    await store.setPluginHarnessRouting('p1', 'c', null);
+    await store.remove('p1');
+    expect(store.getPluginHarnessRouting('p1', 'a')).toBeNull();
+  });
+
+  it('drops a stored override that fails the override schema', () => {
+    const file = join(makeDir(), 'project-settings.json');
+    writeFileSync(file, JSON.stringify({
+      p1: { pluginHarnessRouting: { a: routing, bad: { schemaVersion: 1, byAdapter: {}, defaultHarness: 'not-a-harness' } } }
+    }));
+    const store = createProjectSettingsStore({ projectSettingsFile: file });
+    expect(store.getPluginHarnessRouting('p1', 'a')).toEqual(routing);
+    expect(store.getPluginHarnessRouting('p1', 'bad')).toBeNull();
+  });
+
+  it('clearing the last override drops an otherwise empty entry', async () => {
+    const file = join(makeDir(), 'project-settings.json');
+    const store = createProjectSettingsStore({ projectSettingsFile: file });
+    await store.setPluginHarnessRouting('p1', 'a', routing);
+    await store.setPluginHarnessRouting('p1', 'b', routing);
+    await store.setPluginHarnessRouting('p1', 'a', null);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ p1: { pluginHarnessRouting: { b: routing } } });
+    await store.setPluginHarnessRouting('p1', 'b', null);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({});
+  });
+});

@@ -22,7 +22,7 @@ export const REMOTE_FS_TOOL_NAMES = [
 export interface RegisterRemoteFsToolsOpts {
   /** Authoritative project id from the MCP URL — never an agent-supplied host. */
   projectId: string;
-  readFile: (projectId: string, path: string) => Promise<FsReadResult>;
+  readFile: (projectId: string, path: string, byteOffset?: number) => Promise<FsReadResult>;
   writeFile: (projectId: string, path: string, content: string) => Promise<FsWriteResult>;
   listDir: (
     projectId: string,
@@ -85,18 +85,25 @@ export function registerRemoteFsTools(server: McpServer, opts: RegisterRemoteFsT
       description: [
         'Read a file on THIS remote (SSH) project. Native Read is disabled when',
         'local-agent/remote-tools is on. Paths are under the remote project root;',
-        'you never pass a host or credentials.'
+        'you never pass a host or credentials. A truncated text response includes',
+        'nextByteOffset; pass it as byte_offset to continue.'
       ].join(' '),
       inputSchema: {
-        path: z.string().describe('Path under the remote project root.')
+        path: z.string().describe('Path under the remote project root.'),
+        byte_offset: z.number().int().nonnegative().optional().describe('Byte cursor returned by a truncated prior response.')
       }
     },
-    async ({ path }) => {
+    async ({ path, byte_offset }) => {
       try {
-        const result = await opts.readFile(projectId, path);
+        const result = await opts.readFile(projectId, path, byte_offset);
         if (!result.ok) return errorResult('remote_read failed', result.message ?? 'unknown error');
         if (result.binary) return errorResult('remote_read failed', 'Binary file');
-        return okText(result.content ?? '');
+        return okText(JSON.stringify({
+          content: result.content ?? '',
+          bytes: result.bytes ?? 0,
+          truncated: result.truncated ?? false,
+          ...(result.nextByteOffset === undefined ? {} : { nextByteOffset: result.nextByteOffset })
+        }));
       } catch (err) {
         return errorResult('remote_read failed', err instanceof Error ? err.message : String(err));
       }

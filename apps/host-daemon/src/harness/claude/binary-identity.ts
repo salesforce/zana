@@ -1,7 +1,7 @@
 /**
  * Genuine-Claude-Code preference for the `claude` bare-command PATH lookup.
  *
- * `~/.aisuite/bin` (and other tool-installer dirs `fallbackDirs()` picks up)
+ * tool-installer directories discovered by `fallbackDirs()`
  * can carry a `claude`-named wrapper we don't control that shadows the
  * genuine Claude Code CLI ahead of it on PATH. The launcher's spawn-time
  * resolver (`resolveHarnessCommand`, `harness-verify.ts`) takes the FIRST
@@ -39,7 +39,8 @@ export function probeClaudeIdentity(
     execFileSync(command, [...args], {
       encoding: 'utf8',
       timeout: PROBE_TIMEOUT_MS,
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true
     })
 ): boolean {
   if (identityCache.has(bin)) return identityCache.get(bin)!;

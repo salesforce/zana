@@ -59,6 +59,7 @@ export function onThreadArchived(listener: ThreadArchivedListener): () => void {
 }
 
 let subscribed = false;
+let loadGeneration = 0;
 const pendingSequences = new Map<string, number>();
 let sequenceTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -162,17 +163,38 @@ export function pendingChildThreads(
   return threads.filter((row) => row.parentThreadId === parentThreadId && row.hasPendingInteraction);
 }
 
+/** Keep changes observed while a list request was in flight over its snapshot. */
+function reconcileLoadedRoster(listed: ThreadListItem[], before: ThreadListItem[], current: ThreadListItem[]): ThreadListItem[] {
+  if (current === before) return listed;
+  const initial = new Map(before.map(thread => [thread.id, thread]));
+  const latest = new Map(current.map(thread => [thread.id, thread]));
+  const listedIds = new Set(listed.map(thread => thread.id));
+  const added = current.filter(thread => !initial.has(thread.id) && !listedIds.has(thread.id));
+  return [...added, ...listed.flatMap(thread => {
+    const previous = initial.get(thread.id);
+    const live = latest.get(thread.id);
+    if (previous && !live) return [];
+    if (!live || live === previous) return [thread];
+    const changes = Object.fromEntries(Object.entries(live).filter(([key, value]) =>
+      value !== previous?.[key as keyof ThreadListItem]));
+    return [{ ...thread, ...changes }];
+  })];
+}
+
 export const useThreads = create<ThreadStore>((set, get) => ({
   threads: [],
   loading: false,
   async load() {
     ensureThreadUpdates();
+    const generation = ++loadGeneration;
+    const before = get().threads;
     set({ loading: true });
     try {
-      const threads = withoutArchived(await product.threads.list());
-      set({ threads, loading: false });
+      const listed = withoutArchived(await product.threads.list());
+      if (generation !== loadGeneration) return;
+      set({ threads: reconcileLoadedRoster(listed, before, get().threads), loading: false });
     } catch {
-      set({ loading: false });
+      if (generation === loadGeneration) set({ loading: false });
     }
   },
   upsert(thread) {

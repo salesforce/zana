@@ -3,8 +3,11 @@ import type { InboxEntry, Persona, Team, TeamJobLaunchResponse } from '@zana-ai/
 import {
   LAUNCH_REVIEW_REQUIRED_MESSAGE,
   SQUAD_PROPOSAL_LIMITS,
-  personaCanWriteFiles,
+  canAuthorAndRegisterPlan,
+  planAuthoringTransportOf,
   planningToCoordinationMode,
+  squadGoalTooLongMessage,
+  squadSummaryTooLongMessage,
   type LaunchApproval,
   type SquadLaunchNowErrorCode,
   type SquadLaunchNowResult,
@@ -77,6 +80,7 @@ export interface SquadLaunchNowRequest {
   coordinationMode: 'structured' | 'freeform';
   title?: string;
   summary?: string;
+  completionInboxNotice: boolean;
   /** Realpaths of the confined sources the agent listed. */
   sourcePaths: string[];
 }
@@ -148,10 +152,12 @@ function validateInput(input: SquadProposalInput): string | undefined {
   if (!input || typeof input !== 'object') return 'Proposal input is required.';
   if (typeof input.teamId !== 'string' || !input.teamId.trim()) return 'teamId is required.';
   if (typeof input.goal !== 'string' || !input.goal.trim()) return 'goal is required.';
-  if (input.goal.length > L.goalChars) return `goal must be at most ${L.goalChars} characters.`;
+  if (input.goal.length > L.goalChars) return squadGoalTooLongMessage(input.goal.length);
   if (input.planning !== undefined && input.planning !== 'infer' && input.planning !== 'provided') return "planning must be 'infer' or 'provided'.";
   if (input.title !== undefined && (typeof input.title !== 'string' || input.title.length > L.titleChars)) return `title must be at most ${L.titleChars} characters.`;
-  if (input.summary !== undefined && (typeof input.summary !== 'string' || input.summary.length > L.summaryChars)) return `summary must be at most ${L.summaryChars} characters.`;
+  if (input.summary !== undefined && typeof input.summary !== 'string') return 'summary must be text.';
+  if (input.summary !== undefined && input.summary.length > L.summaryChars) return squadSummaryTooLongMessage(input.summary.length);
+  if (input.completionInboxNotice !== undefined && typeof input.completionInboxNotice !== 'boolean') return 'completionInboxNotice must be a boolean.';
   if (input.sources !== undefined) {
     if (!Array.isArray(input.sources)) return 'sources must be a list of paths.';
     if (input.sources.length <= L.maxSources && input.sources.some((s) => typeof s !== 'string' || !s.trim() || s.length > PATH_MAX_CHARS)) {
@@ -254,10 +260,13 @@ async function prepare(
   if (refusedGoalPath) {
     return fail('SOURCE_NOT_ALLOWED', `The goal names ${refusedGoalPath.path}, which can't be attached. ${sourcePolicyText(scope?.policy)} Remove the path from the goal, or name a file that can be.`);
   }
-  const planning: SquadPlanning = planningInput ?? team.defaultPlanning ?? (personaCanWriteFiles(orchestrator) ? 'infer' : 'provided');
-  if (planning === 'infer' && !personaCanWriteFiles(orchestrator)) {
+  const transport = planAuthoringTransportOf(team.transport);
+  const canInfer = canAuthorAndRegisterPlan(orchestrator, { transport });
+  const planning: SquadPlanning = planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided');
+  if (planning === 'infer' && !canInfer) {
+    const reason = transport === 'modern' ? "can't call execution.plan.register" : "can't write files";
     return fail('ORCHESTRATOR_CANNOT_PLAN',
-      `${orchestrator.name} can't write files, so Infer plan from goal can't finish. Write a portable plan, check it with squad_plan_check, and propose with planning 'provided'.`);
+      `${orchestrator.name} ${reason}, so Infer plan from goal can't finish. Write a portable plan, check it with squad_plan_check, and propose with planning 'provided'.`);
   }
   let planSteps: SquadPlanStep[] | undefined;
   if (planning === 'provided') {
@@ -588,6 +597,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
           team, project, goal: input.goal.trim(), coordinationMode: planningToCoordinationMode(planning),
           ...(input.title?.trim() ? { title: input.title.trim() } : {}),
           ...(input.summary?.trim() ? { summary: input.summary.trim() } : {}),
+          completionInboxNotice: input.completionInboxNotice === true,
           sourcePaths: prepared.value.sources.map((s) => s.path)
         }, {
           sources: { kind: 'session', sessionId: route.sessionId },

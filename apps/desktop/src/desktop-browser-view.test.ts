@@ -201,6 +201,35 @@ describe('hidden browser media', () => {
     for (const frame of frames(view)) expect(frame.executeJavaScript).toHaveBeenCalledTimes(1);
   }));
 
+  it('replaces a temporarily occluded native page with a snapshot and clears it on restore', setup(async ({ manager, host, view }) => {
+    view.webContents.capturePage.mockResolvedValue({ isEmpty: () => false, toJPEG: () => Buffer.from('page') });
+    manager.setVisible({ hostWindow: host, request: { tabId: 'media', visible: true } });
+    view.setVisible.mockClear(); host.webContents.send.mockClear();
+    manager.setVisible({ hostWindow: host, request: { tabId: 'media', visible: false, preserveSnapshot: true } });
+    expect(view.setVisible).not.toHaveBeenCalled();
+    // A repeated observer notification must not discard the pending capture.
+    manager.setVisible({ hostWindow: host, request: { tabId: 'media', visible: false, preserveSnapshot: true } });
+    await Promise.resolve();
+    expect(host.webContents.send).toHaveBeenCalledWith(IPC.browser.snapshot, { tabId: 'media', dataUrl: 'data:image/jpeg;base64,cGFnZQ==' });
+    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    manager.setVisible({ hostWindow: host, request: { tabId: 'media', visible: true } });
+    expect(host.webContents.send).toHaveBeenCalledWith(IPC.browser.snapshot, { tabId: 'media', dataUrl: null });
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
+  }));
+
+  it.each(['restore', 'hide', 'close'] as const)('discards an unfinished overlay capture after %s', (action) => setup(async ({ manager, host, view }) => {
+    let resolve!: (value: unknown) => void;
+    view.webContents.capturePage.mockReturnValue(new Promise(done => { resolve = done; }));
+    manager.setVisible({ hostWindow: host, request: { tabId: 'media', visible: true } });
+    manager.setVisible({ hostWindow: host, request: { tabId: 'media', visible: false, preserveSnapshot: true } });
+    if (action === 'close') manager.detach({ hostWindow: host, tabId: 'media' });
+    else manager.setVisible({ hostWindow: host, request: { tabId: 'media', visible: action === 'restore' } });
+    host.webContents.send.mockClear(); view.setVisible.mockClear();
+    resolve({ isEmpty: () => false, toJPEG: () => Buffer.from('stale') }); await Promise.resolve();
+    expect(host.webContents.send).not.toHaveBeenCalled(); expect(view.setVisible).not.toHaveBeenCalled();
+  })());
+
   it.each(['setVisible', 'setVisibleWithoutFocus'] as const)('%s mutes and pauses every frame on hide, and only unmutes on reveal', (method) => setup(async ({ manager, host, view }) => {
     manager[method]({ hostWindow: host, request: { tabId: 'media', visible: true } });
     expect(view.webContents.audioMuted).toBe(false);

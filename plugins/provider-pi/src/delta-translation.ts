@@ -120,6 +120,13 @@ const piCustomMessageBoundaryEventSchema = z
   })
   .passthrough();
 
+const piAssistantMessageBoundaryEventSchema = z
+  .object({
+    type: z.enum(["message_end", "message_start"]),
+    message: piAssistantMessageSchema,
+  })
+  .passthrough();
+
 const piAgentEndEventSchema = z
   .object({
     type: z.literal("agent_end"),
@@ -366,9 +373,19 @@ export function createPiDeltaTranslator(
     ThreadEventTokenUsageBreakdown
   >();
 
+  const closedAssistantStreams = new Set<string>();
+
   function resetThread(threadId: string): void {
     cumulativeTokensByThreadId.delete(threadId);
+    const prefix = `${threadId} `;
+    for (const key of closedAssistantStreams) {
+      if (key.startsWith(prefix)) closedAssistantStreams.delete(key);
+    }
     clearThreadToolShapes({ threadId });
+  }
+
+  function assistantStreamKey(context: PiDeltaTranslationContext | undefined): string {
+    return `${context?.threadId ?? ""} ${context?.parentToolCallId ?? ""}`;
   }
 
   function toolShapeKey(
@@ -577,6 +594,35 @@ export function createPiDeltaTranslator(
 
       case "message_end":
       case "message_start": {
+        const assistantEvent =
+          piAssistantMessageBoundaryEventSchema.safeParse(event);
+        if (assistantEvent.success) {
+          const streamKey = assistantStreamKey(context);
+          const message = assistantEvent.data.message;
+          if (assistantEvent.data.type === "message_start") {
+            closedAssistantStreams.delete(streamKey);
+            return [];
+          }
+          if (
+            message.stopReason === "error" ||
+            message.stopReason === "aborted"
+          ) {
+            return [];
+          }
+          closedAssistantStreams.add(streamKey);
+          const text = extractAssistantText(message);
+          if (!text) {
+            return [];
+          }
+          return [
+            {
+              kind: "item.textClose",
+              key: { channel: ASSISTANT_STREAM_KEY, ...parentRefField },
+              channel: "agentMessage",
+              text,
+            },
+          ];
+        }
         const piEvent = piCustomMessageBoundaryEventSchema.safeParse(event);
         if (!piEvent.success) {
           return [];
@@ -680,6 +726,7 @@ export function createPiDeltaTranslator(
           return unexpectedSdkEventDeltas(event, context);
         }
         const lastAssistant = findLastAssistantMessage(piEvent.data.messages);
+        const assistantClosed = closedAssistantStreams.delete(assistantStreamKey(context));
         if (piEvent.data.willRetry) {
           if (lastAssistant && isPiAssistantError(lastAssistant)) {
             return [
@@ -706,7 +753,7 @@ export function createPiDeltaTranslator(
         }
         clearThreadToolShapes(context);
         const deltas: ThreadDelta[] = [];
-        if (lastAssistant) {
+        if (lastAssistant && !assistantClosed && lastAssistant.stopReason !== "aborted") {
           const text = extractAssistantText(lastAssistant);
           if (text) {
             deltas.push({

@@ -31,7 +31,7 @@ var useSyncExternalStore = React.useSyncExternalStore;
 var useTransition = React.useTransition;
 var version = React.version;
 
-// ../../packages/plugin-sdk/src/app.ts
+// ../../../../../../Applications/Zana.app/Contents/Resources/zcc-cli/runtime/plugin-sdk-app.js
 function pluginRuntime() {
   return globalThis.__ZCC_PLUGIN_RUNTIME__ ?? {};
 }

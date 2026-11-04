@@ -1,0 +1,67 @@
+1
+00:00:00,500 --> 00:00:03,815
+One agent used to do everything, one task at a time.
+
+2
+00:00:06,600 --> 00:00:08,325
+Meet Squads in Zana.
+
+3
+00:00:10,800 --> 00:00:15,916
+Squads let a team of agents plan, split, and deliver work together.
+
+4
+00:00:16,219 --> 00:00:20,815
+There are two ways to build one. The quickest: just ask an agent.
+
+5
+00:00:24,354 --> 00:00:27,558
+It writes the squad definition straight into your project.
+
+6
+00:00:31,362 --> 00:00:34,151
+And it shows up in Settings, ready to launch.
+
+7
+00:00:34,829 --> 00:00:39,105
+Or build one yourself. Click New squad, and give it a name.
+
+8
+00:00:39,409 --> 00:00:44,273
+Add one slot per role: an orchestrator, two workers, and a reviewer.
+
+9
+00:00:44,576 --> 00:00:49,512
+Crown the orchestrator. It starts first, plans the work, and delegates.
+
+10
+00:00:49,816 --> 00:00:55,551
+Optionally, set an opening prompt, a project, worktrees, and launch approval.
+
+11
+00:00:55,852 --> 00:00:58,617
+Save it, and your squad joins the catalogue.
+
+12
+00:00:58,919 --> 00:01:03,905
+To launch, open New agent, choose Squad, and describe the goal.
+
+13
+00:01:05,681 --> 00:01:10,176
+The orchestrator breaks it into tasks, and workers pick them up in parallel.
+
+14
+00:01:10,477 --> 00:01:14,170
+Flow view shows who is working, and how work hands off.
+
+15
+00:01:14,471 --> 00:01:18,127
+When the squad needs a decision, it asks you in the Inbox.
+
+16
+00:01:18,429 --> 00:01:21,328
+Answer once, and the squad finishes the job.
+
+17
+00:01:24,177 --> 00:01:29,408
+Ask an agent, or build it yourself. Then launch it for any goal.

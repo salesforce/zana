@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
 }));
 
 // Thread data and live updates.
+vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../lib/product-client.js', () => ({
   product: {
     threads: {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
-import { extensionsHubRedirectForPath, hrefForPluginNavPanel, hrefForPluginProjectTab, projectMenuNavigateContext, createProjectActionContext, projectStatusbarItemContext } from './plugin-nav-href.js';
+import { pluginProjectResourceFromSearch, extensionsHubRedirectForPath, hrefForPluginNavPanel, hrefForPluginProjectTab, projectMenuNavigateContext, createProjectActionContext, projectStatusbarItemContext } from './plugin-nav-href.js';
 import { clearPluginSlots, interpretPluginApp, listProjectTabs } from './plugin-slots.js';
 
 afterEach(() => {
@@ -180,3 +180,21 @@ describe('projectStatusbarItemContext', () => {
   });
 });
 
+
+describe('project resource navigation', () => {
+  it('returns a bounded resource selection only to its own registered plugin tab', () => {
+    interpretPluginApp('tasks', definePluginApp((app) => {
+      app.slots.projectTab({ id: 'board', label: 'Board', component: () => null });
+    }));
+    const base = hrefForPluginProjectTab('tasks', 'p-1', 'board');
+    const href = hrefForPluginProjectTab('tasks', 'p-1', 'board', 'Help #1.agent');
+    expect(href).toBe(`${base}?pluginResourceId=Help+%231.agent`);
+    expect(pluginProjectResourceFromSearch('tasks', 'p-1', base, '?pluginResourceId=Help.agent')).toBe('Help.agent');
+    expect(pluginProjectResourceFromSearch('other', 'p-1', base, '?pluginResourceId=Help.agent')).toBeUndefined();
+    expect(pluginProjectResourceFromSearch('tasks', null, base, '?pluginResourceId=Help.agent')).toBeUndefined();
+    expect(pluginProjectResourceFromSearch('tasks', 'p-1', '/threads/t-1', '?pluginResourceId=Help.agent')).toBeUndefined();
+    for (const value of ['', '  ', 'bad\n', 'a'.repeat(2049)]) {
+      expect(pluginProjectResourceFromSearch('tasks', 'p-1', base, `?pluginResourceId=${encodeURIComponent(value)}`)).toBeUndefined();
+    }
+  });
+});

@@ -8,6 +8,7 @@
  * Native node-pty's portable prebuilds travel inside the bundle, independent
  * of this laptop's rebuilt addon. CJS deps that call require() are wired
  * through createRequire so the bundle can load Node builtins.
+ * Also bundle the minimal peer-only test helper from join-standalone.ts.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -63,6 +64,11 @@ await build({
 });
 await build({
   ...shared,
+  entryPoints: [join(packageRoot, 'src/join-standalone.ts')],
+  outfile: join(outDir, 'join-standalone.mjs')
+});
+await build({
+  ...shared,
   entryPoints: [join(repoRoot, 'packages/provider-bridge-protocol/src/bridge-worker-entry.ts')],
   outfile: join(outDir, BRIDGE_WORKER_FILE)
 });
@@ -101,6 +107,7 @@ const require = createRequire(import.meta.url);
 }
 
 finalizeNodeEsmBundle(outfile);
+finalizeNodeEsmBundle(join(outDir, 'join-standalone.mjs'));
 finalizeNodeEsmBundle(join(outDir, BRIDGE_WORKER_FILE));
 finalizeNodeEsmBundle(join(outDir, PI_BRIDGE_FILE));
 

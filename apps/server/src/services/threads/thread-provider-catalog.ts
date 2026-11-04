@@ -15,6 +15,7 @@ export interface ThreadProviderRecord extends PluginProviderDeclaration {
 const providers = new Map<string, ThreadProviderRecord[]>();
 const registrationListeners = new Set<() => void>();
 let providerStartup: Promise<unknown> | null = null;
+const pluginStartupDeadlines = new WeakMap<Promise<unknown>, number>();
 
 export const THREAD_PROVIDER_STARTUP_WAIT_MS = 30_000;
 
@@ -138,6 +139,34 @@ export function waitForThreadProvider(
   });
 }
 
+/**
+ * Plugin agent tools register as each plugin activates, in load order, so a
+ * thread created as soon as its provider registers would otherwise miss the
+ * tools of plugins that load after the provider. Resolves `true` once plugin
+ * startup settles (or when none is tracked), `false` after `timeoutMs`.
+ * The bound runs once per startup, from its first wait: later waits get only
+ * the time left, so a hung plugin activation delays threads by at most one bound.
+ */
+export function waitForPluginStartup(timeoutMs = THREAD_PROVIDER_STARTUP_WAIT_MS): Promise<boolean> {
+  const startup = providerStartup;
+  if (!startup) return Promise.resolve(true);
+  let deadline = pluginStartupDeadlines.get(startup);
+  if (deadline === undefined) {
+    deadline = Date.now() + timeoutMs;
+    pluginStartupDeadlines.set(startup, deadline);
+  }
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), remainingMs);
+    const finish = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    startup.then(finish, finish);
+  });
+}
+
 export function listThreadProviders(): ThreadProviderRecord[] {
   syncFakeProvider();
   const rows = [...providers.values()].flatMap((stack) => stack.at(-1) ?? []);
@@ -163,13 +192,17 @@ export function canonicalThreadProviderId(providerId: string): string {
 }
 
 export function permissionModeForLaunchProfile(providerId: string): 'accept-edits' | 'auto' | 'full' {
-  return providerId === 'claude-yolo'
+  if (providerId === 'claude-yolo'
     || providerId === 'opencode-yolo'
     || providerId === 'grok-yolo'
     || providerId === 'mastracode-yolo'
-    || providerId === 'afcode-yolo'
-    ? 'full'
-    : 'accept-edits';
+    || providerId === 'afcode-yolo') return 'full';
+
+  const supported = getThreadProvider(providerId)?.capabilities.permissionModes;
+  // Omitted permissions must still be legal for the provider. Prefer the least
+  // privileged supported mode; the host ceiling is applied by the caller.
+  return (['accept-edits', 'auto', 'full'] as const)
+    .find((mode) => supported?.includes(mode)) ?? 'accept-edits';
 }
 
 export const DEFAULT_PLAN_COMMAND = { trigger: '/', name: 'plan' } as const;
@@ -208,6 +241,7 @@ export function bridgeLaunchForProvider(
   if (isDaemonBundledProvider(provider.id)) {
     return {
       pluginId: provider.pluginId,
+      ...(provider.experimental_bridgeOptions ? { providerOptions: { ...provider.experimental_bridgeOptions } } : {}),
       ...(provider.env ? { envPassthrough: [...provider.env.passthrough] } : {}),
       source: { kind: 'daemon-bundled', id: provider.id },
       capabilities: launchCapabilities(provider)
@@ -221,6 +255,7 @@ export function bridgeLaunchForProvider(
   }
   return {
     pluginId: provider.pluginId,
+    ...(provider.experimental_bridgeOptions ? { providerOptions: { ...provider.experimental_bridgeOptions } } : {}),
     ...(provider.env ? { envPassthrough: [...provider.env.passthrough] } : {}),
     source: {
       kind: 'artifact',

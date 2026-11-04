@@ -85,3 +85,13 @@ export function conversationLifecycleEventForHostEvent(event: {
   }
   return null;
 }
+
+/** Provider maintenance can finish after its original turn already settled. */
+export function isRootConversationCompactionCompleted(
+  eventType: string,
+  payload: unknown,
+  findTurnStart: (turnId: string) => { payload?: unknown } | null
+): boolean {
+  return eventType === 'thread/compacted'
+    && !isNestedConversationTurnCompletion(payload, findTurnStart);
+}

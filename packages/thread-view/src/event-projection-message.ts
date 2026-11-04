@@ -9,6 +9,7 @@ import type {
   PendingInteractionUserQuestionQuestion,
   ProviderErrorInfo,
   PromptTextMention,
+  PromptTextReference,
   SystemMessageKind,
   SystemMessageSubject,
   Thread,
@@ -84,6 +85,7 @@ export const eventProjectionTurnRequestStatusValues = [
   "pending",
   "accepted",
   "rejected",
+  "cancelled",
 ] as const;
 export type EventProjectionTurnRequestStatus =
   (typeof eventProjectionTurnRequestStatusValues)[number];
@@ -105,6 +107,7 @@ export interface EventProjectionUserMessage extends EventProjectionMessageBase {
   turnRequest: EventProjectionTurnRequest;
   text: string;
   mentions: PromptTextMention[];
+  references?: PromptTextReference[];
   attachments?: {
     webImages: number;
     localImages: number;

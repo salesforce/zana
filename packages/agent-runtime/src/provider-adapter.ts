@@ -27,6 +27,7 @@ import type { ProviderRecoveryNotification } from "@zana-ai/zcc-provider-bridge-
 import type {
   AgentRuntimeBridgeLaunch,
   AgentRuntimeSkillRoot,
+  AgentSessionKind,
 } from "./types.js";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
 
@@ -100,6 +101,7 @@ export type AdapterCommand =
       dynamicTools?: DynamicTool[];
       disallowedTools?: readonly string[];
       instructionMode: InstructionMode;
+      sessionKind?: AgentSessionKind;
     }
   | {
       type: "thread/resume";
@@ -110,6 +112,9 @@ export type AdapterCommand =
       dynamicTools?: DynamicTool[];
       disallowedTools?: readonly string[];
       instructionMode: InstructionMode;
+      sessionKind?: AgentSessionKind;
+      /** Strict resume: native session load or failure, never a fresh session. */
+      requireNativeLoad?: true;
     }
   | {
       type: "thread/fork";
@@ -121,6 +126,7 @@ export type AdapterCommand =
       dynamicTools?: DynamicTool[];
       disallowedTools?: readonly string[];
       instructionMode: InstructionMode;
+      sessionKind?: AgentSessionKind;
     }
   | {
       type: "turn/start";

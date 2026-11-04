@@ -14,6 +14,7 @@ vi.mock('@/lib/settings-search/reveal', async (orig) => ({
 }));
 vi.mock('../../lib/product-client.js', () => ({ product: {
   config: { get: vi.fn(async () => ({ theme: 'dark' })), set: vi.fn(), onChanged: () => () => {} },
+  pluginApps: { list: vi.fn(async () => []), onChanged: () => () => {} },
   app: { homedir: vi.fn(async () => '/home/u') },
   openers: { openIn: vi.fn(async () => undefined) }
 } }));

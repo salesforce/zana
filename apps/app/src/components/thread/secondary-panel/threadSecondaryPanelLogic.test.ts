@@ -136,7 +136,7 @@ describe('threadSecondaryPanelLogic', () => {
     expect(commitBrowserUrl('zana.ai', (url) => {
       expect(url).toBe('https://zana.ai');
     })).toBe('https://zana.ai');
-    const listeners = new Map<string, Array<(ev: { clientX: number }) => void>>();
+    const listeners = new Map<string, Array<(ev: { clientX: number; buttons?: number }) => void>>();
     const classes = new Set<string>();
     const resized: Array<[number, number]> = [];
     attachColumnResize({
@@ -172,6 +172,32 @@ describe('threadSecondaryPanelLogic', () => {
     expect(resized).toEqual([[400, 1000]]);
     listeners.get('mouseup')?.[0]?.({ clientX: 0 });
     expect(classes.has('resizing-col')).toBe(false);
+    // A release over an embedded frame never reaches mouseup: a buttonless move ends the drag.
+    const lost = new Map<string, Array<(ev: { clientX: number; buttons?: number }) => void>>();
+    const lostClasses = new Set<string>();
+    const lostResized: number[] = [];
+    const track = {
+      on: (type: string, fn: (ev: { clientX: number; buttons?: number }) => void) => { lost.set(type, [...(lost.get(type) ?? []), fn]); },
+      off: (type: string, fn: (ev: { clientX: number; buttons?: number }) => void) => { lost.set(type, (lost.get(type) ?? []).filter((item) => item !== fn)); }
+    };
+    const startLost = () => attachColumnResize({
+      getBox: () => ({ right: 1000, width: 1000 }),
+      onResize: (widthPx) => lostResized.push(widthPx),
+      addBodyClass: (name) => { lostClasses.add(name); },
+      removeBodyClass: (name) => { lostClasses.delete(name); },
+      ...track
+    });
+    startLost();
+    lost.get('mousemove')?.[0]?.({ clientX: 600, buttons: 1 });
+    lost.get('mousemove')?.[0]?.({ clientX: 300, buttons: 0 });
+    expect(lostResized).toEqual([400]);
+    expect(lostClasses.has('resizing-col')).toBe(false);
+    expect(['mousemove', 'mouseup', 'blur'].every((type) => (lost.get(type) ?? []).length === 0)).toBe(true);
+    // Leaving the window mid-drag ends it as well.
+    startLost();
+    lost.get('blur')?.[0]?.({ clientX: 0 });
+    expect(lostClasses.has('resizing-col')).toBe(false);
+    expect(['mousemove', 'mouseup', 'blur'].every((type) => (lost.get(type) ?? []).length === 0)).toBe(true);
     const prevented: string[] = [];
     startColumnResize(
       { preventDefault: () => { prevented.push('yes'); } },

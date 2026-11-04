@@ -93,7 +93,7 @@ export function acceptsUnlistedModelTarget(provider: LaunchProvider, targetId: s
 /**
  * A provider that can probe the LIVE model inventory (`discoverModelTargets`)
  * owns a release-maintained static snapshot that DRIFTS when the gateway renames
- * models (aisuite/* → llmgw/*). A well-formed id absent from that snapshot must
+ * models between provider namespaces. A well-formed id absent from that snapshot must
  * NOT hard-fail resolution — it may be a valid NEW gateway id — so we accept it
  * here and defer the authoritative yes/no to the launch-time live probe in
  * preflightStructuredRouting. (An unavailable id is caught there, or — if the
@@ -170,6 +170,12 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
     provider.adapter.collision.model,
     provider.adapter.collision.terminatesAtDoubleDash
   );
+  // A native role may own its model. Resolve and validate that role before
+  // interpreting an inherited tier or explicit model that cannot reach argv.
+  // All local, remote and preflight callers share this authoritative rule.
+  if (provider.nativeRolePinsModel && resolveRoleTarget(provider, input).targetId) {
+    return { source: 'native-default', structuredSelected: false, rawOverride: hasRawModel, contribution: {} };
+  }
 
   const perTab = input.perTabRouting?.byAdapter?.[adapterId as HarnessFamily];
   const personaRouting = input.persona?.harnessRouting?.byAdapter?.[adapterId as HarnessFamily];
@@ -273,6 +279,12 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
   // the agent. Preserve its precedence over inherited model pins, but never
   // validate it against a CLI inventory or contribute a forced model argument.
   if (targetId === ACP_DEFAULT_MODEL_ID) {
+    if (providerTargetId && provider.adapter.descriptor.targets?.providerModelRelationship === 'combined-provider-model') {
+      throw new Error(`${provider.adapter.descriptor.label} provider selection requires a concrete compatible model target.`);
+    }
+    if (providerTargetId && !provider.adapter.descriptor.targets?.providers?.some(({ id }) => id === providerTargetId)) {
+      throw new Error(`Unknown provider target for ${provider.adapter.descriptor.label}.`);
+    }
     return { source, structuredSelected: false, rawOverride: hasRawModel, contribution: {} };
   }
 
@@ -295,13 +307,27 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
   if (providerTargetId) {
     const catalog = provider.adapter.descriptor.targets;
     const providerTarget = catalog?.providers?.find((candidate) => candidate.id === providerTargetId);
-    if (!providerTarget) throw new Error(`Unknown provider target for ${provider.adapter.descriptor.label}.`);
     if (catalog?.providerModelRelationship === 'combined-provider-model' && !targetId) {
       throw new Error(`${provider.adapter.descriptor.label} provider selection requires a concrete compatible model target.`);
     }
+    // Combined ids already name their provider. Permit an installation's exact
+    // namespace before its inventory is available, without treating that shape
+    // check as proof of membership: preflight still checks the live model list.
+    const separator = targetId?.indexOf('/') ?? -1;
+    const liveProvider = catalog?.providerModelRelationship === 'combined-provider-model'
+      && targetId && separator > 0 && separator < targetId.length - 1
+      && (allowsLiveListedModelTarget(provider, targetId)
+        || acceptsDriftedModelTarget(provider, targetId)
+        || acceptsUnlistedModelTarget(provider, targetId))
+      ? targetId.slice(0, separator) : undefined;
+    if (!providerTarget && !liveProvider) throw new Error(`Unknown provider target for ${provider.adapter.descriptor.label}.`);
     if (targetId && catalog?.providerModelRelationship !== 'fixed-provider') {
       const modelTarget = catalog?.models.find((candidate) => candidate.id === targetId);
-      if (modelTarget?.provider && modelTarget.provider !== providerTargetId) {
+      const modelProvider = modelTarget?.provider ?? liveProvider;
+      if (catalog?.providerModelRelationship === 'combined-provider-model' && !modelProvider) {
+        throw new Error(`${provider.adapter.descriptor.label} provider selection requires a concrete compatible model target.`);
+      }
+      if (modelProvider && modelProvider !== providerTargetId) {
         throw new Error(`${provider.adapter.descriptor.label} model target does not belong to selected provider.`);
       }
     }

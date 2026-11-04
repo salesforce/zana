@@ -46,6 +46,7 @@ import { registerPreviewFileTool } from '../threads/preview-file-mcp-tool.js';
 import { registerRunInTerminalTool } from '../threads/run-in-terminal-mcp-tool.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
 import {
+  REMOTE_FS_TOOL_NAMES,
   registerRemoteFsTools,
   type RegisterRemoteFsToolsOpts
 } from '@zana-ai/zcc-host-daemon/remote-fs-mcp-tools';
@@ -76,7 +77,7 @@ import {
   type RegisterLaunchTeamToolOpts
 } from '../agents/launch-team-mcp-tool.js';
 import { registerSquadProposalTools, type SquadLaunchNowDep, type SquadPlanCheckDep, type SquadProposeDep } from '../squad-proposals/squad-proposal-mcp-tools.js';
-import { registerExecutionTools, type RegisterExecutionToolOptions, type ExecutionMemberFence } from '../execution/execution-mcp-tool.js';
+import { registerExecutionTools, type RegisterExecutionToolOptions, type ExecutionMemberFence, type ExecutionRouteBinding } from '../execution/execution-mcp-tool.js';
 import type { ExecutionService } from '../execution/service.js';
 import type { createExecutionHandoffStore } from '../execution/handoff-store.js';
 import { registerListProjectsTool } from '../projects/list-projects-mcp-tool.js';
@@ -86,6 +87,8 @@ import { registerFollowUpTools, type FollowUpAgentApi } from '../followups/follo
 import { verifySessionControlCredential } from '@zana-ai/zcc-host-daemon/control-credential';
 import { NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, normalizeNativeToolPolicyReason } from '@zana-ai/zcc-contracts/runtime';
 import { readHookBody } from './read-hook-body.js';
+import { trustedAutomatedMcpCatalogue } from './trusted-automated-catalogue-policy.js';
+import type { ExecutionSlotMcpCatalogueProvenanceV1 } from '../execution/store.js';
 
 interface ProjectLookup {
   /** Return the current project meta or null if unknown. Called per-request. */
@@ -440,6 +443,8 @@ export interface McpServerOptions {
    */
   validateLaunchRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
   resolveExecutionCohortBinding?: RegisterExecutionToolOptions['resolveCohortBinding'];
+  /** Main persists/loads immutable catalogue provenance for authenticated members. */
+  resolveAutomatedMcpCatalogue?: (binding: NonNullable<Awaited<ReturnType<NonNullable<RegisterExecutionToolOptions['resolveCohortBinding']>>>>) => Promise<ExecutionSlotMcpCatalogueProvenanceV1>;
   validateExecutionRecoveryBinding?: RegisterExecutionToolOptions['validateRecoveryBinding'];
   /**
    * Launch-approval policy for a Squad in a project, checked by agent
@@ -572,8 +577,9 @@ function resolveInAppAgentTerminalsEnabled(
  * supplies. We tolerate a missing project (renderer will tombstone the
  * entry) — the URL is still authoritative for the inbox key.
  */
-function buildProjectMcpServer(opts: {
+async function buildProjectMcpServer(opts: {
   projectId: string;
+  log?: McpServerOptions['log'];
   projectLabel?: string;
   projectRoot?: string;
   sessionId?: string;
@@ -617,6 +623,7 @@ function buildProjectMcpServer(opts: {
   validateExecutionRouteIdentity?: McpServerOptions['validateExecutionRouteIdentity'];
   validateLaunchRouteIdentity?: McpServerOptions['validateLaunchRouteIdentity'];
   resolveExecutionCohortBinding?: McpServerOptions['resolveExecutionCohortBinding'];
+  resolveAutomatedMcpCatalogue?: McpServerOptions['resolveAutomatedMcpCatalogue'];
   validateExecutionRecoveryBinding?: McpServerOptions['validateExecutionRecoveryBinding'];
   resolveExecutionLaunchApproval?: McpServerOptions['resolveExecutionLaunchApproval'];
   executionService?: McpServerOptions['executionService'];
@@ -635,8 +642,55 @@ function buildProjectMcpServer(opts: {
   previewFile?: McpServerOptions['previewFile'];
   runInTerminal?: McpServerOptions['runInTerminal'];
   inAppAgentTerminalsEnabled?: McpServerOptions['inAppAgentTerminalsEnabled'];
-}): McpServer {
+}): Promise<McpServer> {
   const mcp = new McpServer({ name: 'zcc-inbox', version: '0.1.0' });
+  // Member routes are bound by main before this per-request server exists. The
+  // selected catalogue comes only from that binding, never route query or tool input.
+  const routeAuthenticated = !opts.memberFence || !!opts.sessionCredential
+    && verifySessionControlCredential(opts.sessionId ?? '', opts.sessionCredential);
+  let automatedBinding: ExecutionRouteBinding | undefined;
+  if (routeAuthenticated && opts.sessionId && opts.memberFence) {
+    try {
+      automatedBinding = await opts.resolveExecutionCohortBinding?.(opts.sessionId, opts.projectId, opts.memberFence);
+    } catch (error) {
+      opts.log?.(`Member MCP binding resolution failed for ${opts.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  let automatedCatalogue: ExecutionSlotMcpCatalogueProvenanceV1 | undefined;
+  if (opts.memberFence) {
+    if (!automatedBinding) {
+      opts.log?.(`Member MCP catalogue unavailable: no authenticated binding for ${opts.sessionId ?? 'unknown session'}`);
+    } else {
+      try {
+        if (opts.resolveAutomatedMcpCatalogue) {
+          automatedCatalogue = await opts.resolveAutomatedMcpCatalogue(automatedBinding);
+        } else {
+          const selected = trustedAutomatedMcpCatalogue({ member: { role: automatedBinding.role } });
+          if (selected.tools) {
+            automatedCatalogue = {
+              version: 1,
+              role: automatedBinding.role,
+              capabilities: [],
+              tools: [...selected.tools],
+              digest: selected.digest
+            };
+          }
+        }
+      } catch (error) {
+        opts.log?.(`Member MCP catalogue resolution failed for execution ${automatedBinding.executionId}, slot ${automatedBinding.slotId}, session ${opts.sessionId ?? 'unknown session'}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+  // A fenced member gets only its host-attested catalogue. Apply this at the
+  // MCP registration boundary so discovery and invocation cannot drift.
+  const allowedAutomatedTools = opts.memberFence ? new Set(automatedCatalogue?.tools ?? []) : undefined;
+  if (allowedAutomatedTools) {
+    const registerTool = mcp.registerTool.bind(mcp) as (name: string, config: unknown, handler: unknown) => unknown;
+    mcp.registerTool = ((name: string, config: unknown, handler: unknown) => {
+      if (!allowedAutomatedTools.has(name)) return;
+      return registerTool(name, config, handler);
+    }) as McpServer['registerTool'];
+  }
   // Resolve scheduled-ness + loudness once at build time so inbox_push entries
   // from a background run carry the flag (for grouping) and the level (for
   // badge counting), and so `silent` pushes can be dropped.
@@ -873,6 +927,7 @@ function buildProjectMcpServer(opts: {
       projectName: opts.projectLabel,
       service: opts.executionService,
       memberFence: opts.memberFence,
+      ...(automatedCatalogue?.tools ? { allowedToolNames: new Set(automatedCatalogue.tools) } : {}),
       resolveCohortBinding: opts.resolveExecutionCohortBinding,
       validateRecoveryBinding: opts.validateExecutionRecoveryBinding,
       resolveLaunchApproval: opts.resolveExecutionLaunchApproval,
@@ -927,10 +982,10 @@ function buildProjectMcpServer(opts: {
   // Identity-free at this layer (the target project is an agent-supplied id that
   // the impl re-resolves from the store, never host/creds — rule 1), so it's
   // available on both route shapes. Gated on the dep being wired.
-  if (opts.runRemoteCommand) {
+  if (opts.runRemoteCommand && (!automatedCatalogue || automatedCatalogue.tools.includes('remote_exec'))) {
     registerRemoteExecTool(mcp, { runRemoteCommand: opts.runRemoteCommand });
   }
-  if (opts.remoteFs) {
+  if (opts.remoteFs && (!automatedCatalogue || REMOTE_FS_TOOL_NAMES.some((name) => automatedCatalogue.tools.includes(name)))) {
     registerRemoteFsTools(mcp, { projectId: opts.projectId, ...opts.remoteFs });
   }
   // microvm_exec / microvm_reset: run a shell command inside a project's
@@ -1974,7 +2029,7 @@ async function handleRequest(
     enableJsonResponse: true
   });
 
-  const mcp = buildProjectMcpServer({
+  const mcp = await buildProjectMcpServer({
     projectId,
     projectLabel,
     projectRoot: project?.path,
@@ -1983,6 +2038,7 @@ async function handleRequest(
     memberFence: route.memberFence,
     ...(route.routeKind ? { routeKind: route.routeKind } : {}),
     inboxStore: opts.inboxStore,
+    log: opts.log,
     heldQuestions: opts.heldQuestions,
     suggestionsStore: opts.suggestionsStore,
     onReport: opts.onReport,
@@ -2018,6 +2074,7 @@ async function handleRequest(
     validateExecutionRouteIdentity: opts.validateExecutionRouteIdentity,
     validateLaunchRouteIdentity: opts.validateLaunchRouteIdentity,
     resolveExecutionCohortBinding: opts.resolveExecutionCohortBinding,
+    resolveAutomatedMcpCatalogue: opts.resolveAutomatedMcpCatalogue,
     validateExecutionRecoveryBinding: opts.validateExecutionRecoveryBinding,
     resolveExecutionLaunchApproval: opts.resolveExecutionLaunchApproval,
     executionService: opts.executionService,

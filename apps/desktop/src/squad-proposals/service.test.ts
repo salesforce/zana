@@ -5,6 +5,7 @@ import { join, relative } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Persona, Team } from '@zana-ai/zcc-domain/product';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
+import { squadGoalTooLongMessage, squadSummaryTooLongMessage } from '@zana-ai/zcc-domain/squad-proposal';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { createSquadProposalStore } from './store.js';
 import { confineSource, goalMentionPaths, goalPathNotAllowed, goalPathTokens, sourceScope, type SquadProposalFs, type SquadSourceScope } from './sources.js';
@@ -257,10 +258,14 @@ describe('propose', () => {
     lookup = async () => ({ kind: 'pty', id: 's1', squadMember: false });
 
     for (const bad of [{ teamId: '' }, { goal: ' ' }, { goal: 'x'.repeat(2049) }, { planning: 'wat' }, { title: 'x'.repeat(257) },
-      { summary: 'x'.repeat(2049) }, { sources: 'plan.md' }, { sources: [''] }]) {
+       { summary: 'x'.repeat(2049) }, { completionInboxNotice: 'yes' }, { sources: 'plan.md' }, { sources: [''] }]) {
       expect(code(await run(bad))).toBe('INVALID');
     }
     expect(code(await svc.service.propose(route, null as never))).toBe('INVALID');
+    expect(await run({ goal: 'x'.repeat(2049) })).toEqual({ ok: false, code: 'INVALID', message: squadGoalTooLongMessage(2049) });
+    expect(await run({ summary: 'x'.repeat(2049) })).toEqual({ ok: false, code: 'INVALID', message: squadSummaryTooLongMessage(2049) });
+
+    expect(await run({ summary: 5 as never })).toEqual({ ok: false, code: 'INVALID', message: 'summary must be text.' });
 
     projectOk = false;
     expect(code(await run())).toBe('NOT_FOUND');
@@ -323,6 +328,19 @@ describe('propose', () => {
     expect(r).toEqual({
       ok: false, code: 'ORCHESTRATOR_CANNOT_PLAN',
       message: "Planner can't write files, so Infer plan from goal can't finish. Write a portable plan, check it with squad_plan_check, and propose with planning 'provided'."
+    });
+  });
+
+  it('judges infer on the team transport: Modern needs register, not file write', async () => {
+    teamRecord.orchestratorPersonaId = 'ro';
+    teamRecord.transport = 'MODERN';
+    const r = await svc.service.propose(route, { teamId: 'team1', goal: 'g' } as never);
+    expect(r.ok && r.value.planning).toBe('infer');
+    personaMap.nr = { id: 'nr', name: 'NoReg', deniedTools: ['mcp__zcc-inbox__execution.plan.register'] } as Persona;
+    teamRecord.orchestratorPersonaId = 'nr';
+    expect(await svc.service.propose(route, { ...input, planning: 'infer' })).toEqual({
+      ok: false, code: 'ORCHESTRATOR_CANNOT_PLAN',
+      message: "NoReg can't call execution.plan.register, so Infer plan from goal can't finish. Write a portable plan, check it with squad_plan_check, and propose with planning 'provided'."
     });
   });
 
@@ -525,8 +543,9 @@ describe('launchSquadNow', () => {
     expect(launchNow).toHaveBeenCalledTimes(1);
     const [request, ctx] = launchNow.mock.calls[0]!;
     expect(request).toEqual({
-      team: teamRecord, project: { id: 'p1', name: 'Proj', path: join(root, 'proj') }, goal: 'Build the thing\nwith details',
-      coordinationMode: 'structured', title: 'Mine', summary: 'S', sourcePaths: [join(root, 'proj', 'plan.md')]
+       team: teamRecord, project: { id: 'p1', name: 'Proj', path: join(root, 'proj') }, goal: 'Build the thing\nwith details',
+       coordinationMode: 'structured', title: 'Mine', summary: 'S', completionInboxNotice: false,
+       sourcePaths: [join(root, 'proj', 'plan.md')]
     });
     expect(ctx).toEqual({
       sources: { kind: 'session', sessionId: 's1' },
@@ -537,6 +556,14 @@ describe('launchSquadNow', () => {
     expect(await svc.store.listPending('p1')).toHaveLength(0);
     expect(appendOnce).not.toHaveBeenCalled();
     expect(issueSources).not.toHaveBeenCalled();
+  });
+
+  it('defaults completion inbox notices off and forwards an explicit opt-in', async () => {
+    await now();
+    expect(launchNow.mock.calls[0]![0]).toMatchObject({ completionInboxNotice: false });
+
+    await now({ goal: 'Notify me', completionInboxNotice: true });
+    expect(launchNow.mock.calls[1]![0]).toMatchObject({ completionInboxNotice: true });
   });
 
   it('reports to a Modern thread as a thread, and leaves out an empty title and summary', async () => {

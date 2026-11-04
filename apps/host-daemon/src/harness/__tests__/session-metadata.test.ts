@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { providerFor } from '../registry.js';
+import { withLiveModelTargets } from '../launch-provider.js';
 import { launchMetadataSnapshot } from '../session-metadata.js';
 
 describe('launchMetadataSnapshot', () => {
   it('projects only trusted resolved labels into generic runtime metadata', () => {
     expect(launchMetadataSnapshot({
-      provider: providerFor('opencode'),
+      provider: withLiveModelTargets(providerFor('opencode'), ['fixture-provider/fixture-model']),
       model: {
-        targetId: 'llmgw/gpt-5.6-terra-1M', source: 'per-tab', structuredSelected: true, contribution: {}
+        targetId: 'fixture-provider/fixture-model', source: 'per-tab', structuredSelected: true, contribution: {}
       },
       role: { targetId: 'build', source: 'Agent', contribution: {} },
       execution: {
@@ -22,8 +23,8 @@ describe('launchMetadataSnapshot', () => {
         id: 'runtime',
         label: 'Runtime',
         values: [
-          { label: 'Provider', value: 'OpenAI' },
-          { label: 'Model', value: 'Terra' },
+          { label: 'Provider', value: 'fixture-provider' },
+          { label: 'Model', value: 'fixture-provider/fixture-model' },
           { label: 'Role', value: 'Build' },
           { label: 'Execution', value: 'accept-edits' }
         ]

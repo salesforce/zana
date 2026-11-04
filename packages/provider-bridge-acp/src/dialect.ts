@@ -35,7 +35,7 @@ type AcpCompactionOutcome =
 
 export interface AcpDialect {
   readonly id: string;
-  readonly launchEnv?: Readonly<Record<string, string>>;
+  launchEnv?(permissionMode: "accept-edits" | "full"): Readonly<Record<string, string>>;
   toolIdentity?(event: AcpToolCallUpdateEvent): AcpToolIdentity | undefined;
   classifyToolCall?(
     event: AcpToolCallUpdateEvent,
@@ -374,7 +374,19 @@ function normalizeOpenCodeCommandEvent(
 
 export const OPENCODE_ACP_DIALECT: AcpDialect = {
   id: "opencode",
-  launchEnv: { OPENCODE_CLIENT: "acp", OPENCODE_ENABLE_QUESTION_TOOL: "false" },
+  launchEnv(permissionMode) {
+    const outsideEdits = permissionMode === "full" ? "allow" : "ask";
+    return {
+      OPENCODE_CLIENT: "acp",
+      OPENCODE_ENABLE_QUESTION_TOOL: "false",
+      OPENCODE_PERMISSION: JSON.stringify({
+        edit: "allow",
+        bash: outsideEdits,
+        webfetch: outsideEdits,
+        external_directory: outsideEdits,
+      }),
+    };
+  },
   normalizeCommandEvent: normalizeOpenCodeCommandEvent,
 };
 

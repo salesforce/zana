@@ -3,7 +3,7 @@ import { FilePen, FilePlus2, FileX2, History, MoveRight, RotateCcw, X } from 'lu
 import type { DesignDocDetail, DesignDocRevision, RevisionOp } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { fileKindOf, isBinaryKind } from '../shared/paths.js';
-import { errorMessage, toast, useApi, type RevisionContent } from './api.js';
+import { errorMessage, toast, useApi, type DocKind, type RevisionContent } from './api.js';
 import { diffStats, foldDiff, lineDiff } from './diff.js';
 import { FilePreview } from './FilePreview.js';
 import { usePersistentState, useResource } from './hooks.js';
@@ -28,20 +28,22 @@ export function HistoryPane({
   activePath,
   now,
   selectedId,
-  onSelect
+  onSelect,
+  docKind
 }: {
   doc: DesignDocDetail;
   activePath: string | null;
   now: number;
   selectedId: number | null;
   onSelect(revision: DesignDocRevision): void;
+  docKind?: DocKind;
 }) {
   const api = useApi();
   const [scope, setScope] = usePersistentState<'file' | 'all'>('history-scope', 'file');
   const path = scope === 'file' ? activePath : null;
   // `doc.revision` moves on every write, so the list follows live edits.
   const history = useResource(`${doc.id}\u0000${path ?? '*'}\u0000${doc.revision}`, () =>
-    api.history(doc.id, { ...(path ? { path } : {}), limit: 100 })
+    api.history(doc.id, { ...(path ? { path } : {}), limit: 100 }, docKind)
   );
 
   return (
@@ -111,17 +113,18 @@ interface RevisionPair {
 async function loadRevisionPair(
   api: ReturnType<typeof useApi>,
   docId: string,
-  revision: DesignDocRevision
+  revision: DesignDocRevision,
+  kind?: DocKind
 ): Promise<RevisionPair> {
-  const after = await api.revision(docId, revision.id);
+  const after = await api.revision(docId, revision.id, kind);
   if (revision.op === 'create' || revision.op === 'rename' || after.encoding === 'base64') {
     return { after, before: null, pruned: false };
   }
   if (revision.op === 'delete') return { after, before: after.content, pruned: false };
-  const older = (await api.history(docId, { path: revision.path, limit: 100 })).find((entry) => entry.id < revision.id);
+  const older = (await api.history(docId, { path: revision.path, limit: 100 }, kind)).find((entry) => entry.id < revision.id);
   if (!older) return { after, before: null, pruned: true };
   if (older.op === 'delete') return { after, before: '', pruned: false };
-  const previous = await api.revision(docId, older.id);
+  const previous = await api.revision(docId, older.id, kind);
   return { after, before: previous.content, pruned: false };
 }
 
@@ -130,34 +133,37 @@ export function RevisionView({
   doc,
   revision,
   onClose,
-  onOpenPath
+  onOpenPath,
+  docKind
 }: {
   doc: DesignDocDetail;
   revision: DesignDocRevision;
   onClose(): void;
   onOpenPath(path: string): void;
+  docKind?: DocKind;
 }) {
   const api = useApi();
   const [mode, setMode] = useState<'changes' | 'full'>(revision.op === 'write' || revision.op === 'delete' ? 'changes' : 'full');
   const [restoring, setRestoring] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
-  const pair = useResource(`${doc.id}\u0000${revision.id}`, () => loadRevisionPair(api, doc.id, revision));
-  const kind = fileKindOf(revision.path);
+  const pair = useResource(`${docKind ?? 'doc'}\u0000${doc.id}\u0000${revision.id}`, () => loadRevisionPair(api, doc.id, revision, docKind));
+  const fileKind = fileKindOf(revision.path);
   const current = doc.files.find((file) => file.path === revision.path) ?? null;
+  const [observed] = useState(() => ({ revision: current?.revision ?? 0, fileId: current?.fileId ?? null }));
   const isCurrent = current?.revision === revision.revision && revision.op !== 'delete';
 
   const diff = useMemo(() => {
     const data = pair.data;
-    if (!data || data.before === null || isBinaryKind(kind)) return null;
+    if (!data || data.before === null || isBinaryKind(fileKind)) return null;
     const lines = lineDiff(data.before, revision.op === 'delete' ? '' : data.after.content);
     return lines ? { hunks: foldDiff(lines), stats: diffStats(lines) } : 'too-large';
-  }, [pair.data, revision.op, kind]);
+  }, [pair.data, revision.op, fileKind]);
 
   const restore = async () => {
     setRestoring(true);
     try {
       // Fails instead of overwriting if the file changed after this view opened.
-      const result = await api.restore(doc.id, revision.id, current?.revision ?? 0);
+      const result = await api.restore(doc.id, revision.id, observed.revision, observed.fileId, docKind);
       toast(`Restored ${result.path} to revision ${revision.revision} (now rev ${result.revision})`);
       onOpenPath(result.path);
       onClose();
@@ -228,10 +234,11 @@ export function RevisionView({
             {diff === 'too-large' ? <p className="dd-muted dd-revision-hint">This change is too large to diff; showing the full snapshot.</p> : null}
             <FilePreview
               docId={doc.id}
-              file={{ path: revision.path, kind, content: pair.data.after.content, encoding: pair.data.after.encoding }}
+              file={{ path: revision.path, kind: fileKind, content: pair.data.after.content, encoding: pair.data.after.encoding }}
               files={doc.files}
               onOpenPath={onOpenPath}
               draft
+              kind={docKind}
             />
           </>
         ) : diff && diff !== 'too-large' ? (

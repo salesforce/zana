@@ -90,7 +90,7 @@ test('a CLI Agent owner gets [Squad report]s, answers the question itself and he
     await instruction.click();
     await instruction.fill('E2E own Squad reports');
     await expect(instruction).toContainText('E2E own Squad reports');
-    await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
+    await expect(modal.getByRole('button', { name: 'Machine and project', exact: true })).toContainText(projectName);
     const send = modal.getByTestId('legacy-agent-command-send');
     await expect(send).toBeEnabled({ timeout: 15_000 });
     await send.click();

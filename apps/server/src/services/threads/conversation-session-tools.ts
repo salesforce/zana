@@ -4,7 +4,7 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import { mergeHostSessionTooling, type PackedSessionTooling } from './host-session-tools.js';
 import { getConversationThread, getEnvironment, getHost } from '@zana-ai/zcc-db';
 import type { PluginAgentConfigureContext } from '@zana-ai/zcc-plugin-sdk/server';
-import { listThreadProviders } from './thread-provider-catalog.js';
+import { listThreadProviders, THREAD_PROVIDER_STARTUP_WAIT_MS, waitForPluginStartup } from './thread-provider-catalog.js';
 
 /**
  * Plugin tools plus host SHARE DynamicTools. Conversation threads do not
@@ -16,10 +16,20 @@ export async function packConversationSessionTooling(
   ctx: ProductHttpContext,
   args: { threadId: string; projectId: string }
 ): Promise<PackedSessionTooling> {
+  // The tool list is fixed when the session starts, so wait for every plugin to
+  // activate, not only the provider; otherwise a thread started right after
+  // launch never sees tools like ask_user_question.
+  if (ctx.plugins && !(await waitForPluginStartup())) {
+    console.warn(
+      `[threads] plugin startup still running after ${THREAD_PROVIDER_STARTUP_WAIT_MS}ms; `
+      + `thread ${args.threadId} (project ${args.projectId}) starts with the plugin tools activated so far`
+    );
+  }
   const packed = await safePackPluginSession(
     ctx.plugins
       ? () => ctx.plugins!.sessionTools(conversationConfigureContext(ctx, args))
-      : undefined
+      : undefined,
+    args
   );
   return mergeHostSessionTooling(packed, {
     remoteSurface: ctx.db ? remoteInteractionSurface(ctx.db, args.threadId) : null,

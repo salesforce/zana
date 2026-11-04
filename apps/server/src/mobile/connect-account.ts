@@ -6,9 +6,22 @@ export interface EnrollmentView { verificationUrl: string; expiresAt: number }
 export type ConnectFetch = typeof fetch;
 
 export class ConnectRequestError extends Error {
-  constructor(readonly status: number) {
+  /** `code`: Connect's machine-readable error (e.g. `cross_account`), when the service returned one. */
+  constructor(readonly status: number, readonly code?: string) {
     super(status === 401 || status === 403 ? CONNECT_ACCESS_REVOKED_MESSAGE : `Connect returned ${status}. Check the service and try again.`);
   }
+}
+
+/** Reads Connect's bounded `{ error }` code; anything else is discarded. */
+async function errorCode(response: Response): Promise<string | undefined> {
+  if (!response.headers.get('content-type')?.includes('application/json')) { await response.body?.cancel(); return undefined; }
+  const reader = response.body?.getReader(); if (!reader) return undefined;
+  const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 4096) { await reader.cancel(); return undefined; } chunks.push(value); }
+    const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { error?: unknown };
+    return typeof value?.error === 'string' && /^[a-z_]{1,64}$/.test(value.error) ? value.error : undefined;
+  } catch { return undefined; } finally { reader.releaseLock(); }
 }
 
 /** All credentials remain in main. Responses and redirects are bounded before use. */
@@ -19,7 +32,7 @@ export async function connectRequest(origin: string, path: string, credential?: 
     ...(body !== undefined ? { body: JSON.stringify(body) } : {})
   });
   if (response.url && new URL(response.url).origin !== origin) throw new Error('Connect redirected to another service');
-  if (!response.ok) { await response.body?.cancel(); throw new ConnectRequestError(response.status); }
+  if (!response.ok) throw new ConnectRequestError(response.status, await errorCode(response));
   if (!response.headers.get('content-type')?.includes('application/json')) { await response.body?.cancel(); throw new Error('This address is not a Connect service'); }
   const reader = response.body?.getReader(); if (!reader) throw new Error('Empty Connect response');
   const chunks: Uint8Array[] = []; let size = 0;

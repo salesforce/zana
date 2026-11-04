@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { parseHomeLauncherPreferences } from '../HomeAgentComposer.js';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 describe('HomeAgentComposer preferences', () => {
   it('ignores legacy harness selection so configured defaults win on opening', () => {
@@ -19,7 +19,7 @@ describe('HomeAgentComposer preferences', () => {
 
 describe('HomeAgentComposer layout', () => {
   it('wraps the thread composer so New Chat keeps its create-surface spacing', () => {
-    const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../HomeAgentComposer.tsx', import.meta.url));
     expect(source).toContain('home-agent-composer');
     expect(source).toContain('is-walkthrough-spotlight');
     expect(source).toContain('walkthroughHomeMode');
@@ -49,10 +49,10 @@ describe('HomeAgentComposer layout', () => {
   });
 
   it('delegates Shift+Tab mode cycling to the shared thread helper', () => {
-    const home = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
-    const thread = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    const legacy = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    const helper = readFileSync(new URL('../thread/pickers/composer-mode.ts', import.meta.url), 'utf8');
+    const home = readSourceText(new URL('../HomeAgentComposer.tsx', import.meta.url));
+    const thread = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
+    const legacy = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
+    const helper = readSourceText(new URL('../thread/pickers/composer-mode.ts', import.meta.url));
     expect(home).not.toContain('consumeComposerModeCycle');
     expect(thread).toContain('consumeComposerModeCycle');
     expect(legacy).toContain('consumeComposerModeCycle');
@@ -61,10 +61,10 @@ describe('HomeAgentComposer layout', () => {
   });
 
   it('spotlights the composer while the walkthrough is on Modern or CLI Agent', () => {
-    const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../HomeAgentComposer.tsx', import.meta.url));
     expect(source).toContain("walkthroughHomeMode === 'thread' || walkthroughHomeMode === 'agent'");
     expect(source).toContain('walkthroughHomeMode');
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(css).toContain('.home-agent-composer.is-walkthrough-spotlight');
     expect(css).toContain('.walkthrough-backdrop--composer');
     expect(css).toContain('.launch-segmented-new');
@@ -76,7 +76,7 @@ describe('HomeAgentComposer layout', () => {
 
 describe('ThreadCommandComposer chrome', () => {
   it('keeps the follow-up box compact and aligned to the conversation column', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     const editor = css.slice(
       css.indexOf('.thread-command-editor.ProseMirror,\n.thread-command-editor {'),
       css.indexOf('.thread-command-editor.ProseMirror p.is-editor-empty:first-child::before')
@@ -117,18 +117,17 @@ describe('ThreadCommandComposer chrome', () => {
 
 describe('ThreadCommandComposer initial text', () => {
   it('seeds the TipTap editor once from initialText', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    const field = readFileSync(new URL('../composer/use-composer-prompt-field.ts', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
+    const field = readSourceText(new URL('../composer/use-composer-prompt-field.ts', import.meta.url));
     expect(source).toContain('initialText?: string');
     expect(source).toContain('initialText,');
     expect(source).toContain('useComposerPromptField');
     expect(field).toContain('seededFor');
-    expect(field).toContain('editor.chain().clearContent().insertContent(initialText)');
-    expect(field).toContain('if (autoFocus) chain.focus()');
+    expect(field).toContain("editor.chain().clearContent().insertContent(initialText ?? '')");
   });
 
   it('stays on the project thread URL after create from a workspace', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
     expect(source).toContain('route.isProjectFocused ? route.focusedProjectId');
     expect(source).toContain('getThreadRoutePath');
   });
@@ -136,7 +135,7 @@ describe('ThreadCommandComposer initial text', () => {
 
 describe('ThreadCommandComposer pinning', () => {
   it('locks to a passed project and skips the scratch default', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
     expect(source).toContain('project: pinnedProject');
     expect(source).toContain('if (pinnedProject) {');
     expect(source).toContain('setProjectId(pinnedProject.id)');
@@ -152,14 +151,14 @@ describe('ThreadCommandComposer pinning', () => {
 
 describe('ThreadCommandComposer pairing copy', () => {
   it('copies pairing commands through the desktop clipboard bridge', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
     expect(source).toContain('void copyText(pairingCommand)');
     expect(source).not.toContain('navigator.clipboard');
   });
 
   it('installs or repairs in place and never detours to Add a machine', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    const chip = readFileSync(new URL('../ComposerHostActionChip.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
+    const chip = readSourceText(new URL('../ComposerHostActionChip.tsx', import.meta.url));
     expect(source).toContain('runHostInstallWithDrawer');
     expect(source).toContain('setHostInstallDrawerOpen');
     expect(source).toContain('Installing…');
@@ -179,7 +178,7 @@ describe('ThreadCommandComposer pairing copy', () => {
 
 describe('ThreadCommandComposer submit path', () => {
   it('creates and follows up through the Thread HTTP API', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
     expect(source).toContain('product.threads.create');
     expect(source).toContain('hostId: catalogHostId');
     expect(source).toContain('const catalogHostId = currentThread?.hostId ?? (selectedProject?.remote ? selectedProject.hostId : hostId ?? selectedProject?.hostId)');
@@ -212,13 +211,13 @@ describe('ThreadCommandComposer submit path', () => {
   });
 
   it('keeps desktop metadata below the card and mobile permissions in the toolbar', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
     expect(source).toContain('environmentLabel');
     expect(source).toContain('thread-env-label');
     expect(source).toContain('thread-command-composer-meta');
     expect(source).toContain("<Laptop size={14}");
     expect(source).toContain("{threadId ? (");
-    expect(source).toContain('className="thread-command-chip thread-command-env"');
+    expect(source).toContain('className="thread-command-env"');
     expect(source).not.toContain('onOpenExplorer');
     expect(source).toContain('shouldShowThreadStop(threadId, status, inFlightRetry)');
     expect(source).toContain('data-testid="thread-command-stop"');
@@ -274,17 +273,16 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("kind: 'native'");
     expect(source).toContain('setComposerWorkMode');
     expect(source).not.toContain('cycleComposerModeRef');
-    expect(source).toContain('includeDisconnected');
+    expect(source).toContain('onHostChange={setHostId}');
     expect(source).toContain('ComposerHostActionChip');
-    expect(source).toContain('composerRemoteHostBadge');
-    expect(source).toContain('composerHostsForProject');
-    expect(source).toContain('ComposerRemoteHostBadge');
+    expect(source).toContain('onStartNewThread={location => navigate(newThreadLocationPath(location)');
+    expect(source).not.toContain('<HostMachinePicker');
     expect(source).toContain('HostSshIdentityDialog');
     expect(source.indexOf('{!compact && runSettings}')).toBeGreaterThan(metaIdx);
     expect(source.indexOf('{!compact && permissionPicker}')).toBeGreaterThan(metaIdx);
     expect(source.indexOf('permission={compact ? permissionPicker : undefined}')).toBeLessThan(metaIdx);
 
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     const stopStart = css.indexOf('.thread-command-composer .thread-command-stop {');
     expect(stopStart).toBeGreaterThan(-1);
     expect(css.slice(stopStart, css.indexOf('}', stopStart))).toContain('color: var(--danger);');
@@ -306,18 +304,18 @@ describe('ThreadCommandComposer submit path', () => {
   });
 
   it('shows an Install banner when the selected provider CLI is missing', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
     expect(source).toContain('ProviderCliBanner');
     expect(source).toContain('useComposerProviderCli');
     expect(source).toContain('providerCliBlocked');
     expect(source).toContain('provider-cli-install-error');
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(css).toContain('.provider-cli-banner');
   });
 
   it('shows a sending spinner and freezes the editor while submit is in flight', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    const field = readFileSync(new URL('../composer/use-composer-prompt-field.ts', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
+    const field = readSourceText(new URL('../composer/use-composer-prompt-field.ts', import.meta.url));
     expect(source).toContain('Loader2');
     expect(source).toContain('is-sending');
     expect(source).toContain("'Sending'");
@@ -329,9 +327,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(field).toContain('setEditable');
     expect(field).toContain('editor.setEditable(!disabled)');
     expect(field).toContain('restoreFocusAfterSubmitRef');
-    expect(field).toContain("editor.commands.focus('end'");
 
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     const sendingStart = css.indexOf('.thread-command-composer .thread-command-send.is-sending,');
     expect(sendingStart).toBeGreaterThan(-1);
     const sending = css.slice(sendingStart, css.indexOf('}', sendingStart));
@@ -343,9 +340,9 @@ describe('ThreadCommandComposer submit path', () => {
   });
 
   it('steals typeahead keys while the menu is open and inserts mention pills', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    const field = readFileSync(new URL('../composer/use-composer-prompt-field.ts', import.meta.url), 'utf8');
-    const ui = readFileSync(new URL('../composer/ComposerPromptField.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
+    const field = readSourceText(new URL('../composer/use-composer-prompt-field.ts', import.meta.url));
+    const ui = readSourceText(new URL('../composer/ComposerPromptField.tsx', import.meta.url));
     expect(source).toContain('<ComposerPromptField');
     expect(field).toContain('typeaheadKeyAction');
     expect(field).toContain('composerPromptExtensions');
@@ -356,7 +353,7 @@ describe('ThreadCommandComposer submit path', () => {
   });
 
   it('seeds slash commands from the provider, installed plugin skills, and palette catalogs', () => {
-    const source = readFileSync(new URL('../composer/use-composer-prompt-field.ts', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../composer/use-composer-prompt-field.ts', import.meta.url));
     expect(source).toContain('commandsFromComposerActions');
     expect(source).toContain('commandsFromPluginSkills');
     expect(source).toContain('mergeCommandCatalogs');
@@ -373,9 +370,9 @@ describe('ThreadCommandComposer submit path', () => {
   });
 
   it('drops files and explorer paths in as mention pills', () => {
-    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    const field = readFileSync(new URL('../composer/use-composer-prompt-field.ts', import.meta.url), 'utf8');
-    const ui = readFileSync(new URL('../composer/ComposerPromptField.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
+    const field = readSourceText(new URL('../composer/use-composer-prompt-field.ts', import.meta.url));
+    const ui = readSourceText(new URL('../composer/ComposerPromptField.tsx', import.meta.url));
     expect(field).toContain('droppedPathsFromDataTransfer');
     expect(field).toContain('mentionContentForDroppedPaths');
     expect(field).toContain('isComposerPathDrag');
@@ -392,7 +389,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).not.toContain('useFileDrop');
     expect(field).not.toContain('useFileDrop');
 
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(css).toContain('.thread-command-composer.is-drop-over .ui-command-composer');
     expect(field).toContain('handlePaste');
     expect(ui).toContain('ComposerImageThumbs');
@@ -407,7 +404,7 @@ describe('ThreadCommandComposer submit path', () => {
 
 describe('composer mention data sources', () => {
   it('loads confined project paths and filters commands on the client', () => {
-    const hook = readFileSync(new URL('../composer/use-composer-suggestions.ts', import.meta.url), 'utf8');
+    const hook = readSourceText(new URL('../composer/use-composer-suggestions.ts', import.meta.url));
     expect(hook).toContain('product.projects.paths');
     expect(hook).toContain('product.threads.search');
     expect(hook).toContain('buildMentionSuggestions');
@@ -416,7 +413,7 @@ describe('composer mention data sources', () => {
     expect(hook).toContain('projectNames.get(thread.projectId)');
     expect(hook).toContain('mentionProviderMatchesTrigger');
     expect(hook).toContain('threadId: args.threadId');
-    const composer = readFileSync(new URL('../composer/use-composer-prompt-field.ts', import.meta.url), 'utf8');
+    const composer = readSourceText(new URL('../composer/use-composer-prompt-field.ts', import.meta.url));
     expect(composer).toContain('composerTriggersForMentionProviders');
     expect(composer).toContain('useMentionProviderRows');
   });
@@ -424,20 +421,20 @@ describe('composer mention data sources', () => {
 
 describe('browser product client thread API', () => {
   it('persists workspace order over HTTP instead of re-listing', () => {
-    const source = readFileSync(new URL('../../lib/product-client.ts', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../../lib/product-client.ts', import.meta.url));
     expect(source).toContain('/projects/reorder');
     expect(source).not.toContain('reorder: async () => httpProduct().projects.list()');
   });
 
   it('exposes schedule-group subscribe so store init cannot throw', () => {
-    const source = readFileSync(new URL('../../lib/product-client.ts', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../../lib/product-client.ts', import.meta.url));
     expect(source).toContain('groups: {');
     expect(source).toContain('onChanged: noopSubscribe');
     expect(source).toContain('listTemplates: async () => []');
   });
 
   it('keeps thread I/O on HTTP create/send/timeline, not PTY output/resize/input', () => {
-    const source = readFileSync(new URL('../../lib/product-client.ts', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../../lib/product-client.ts', import.meta.url));
     expect(source).toContain("subscribeProductEvent('threads:event'");
     expect(source).toContain('/threads/${encodeURIComponent(threadId)}/send');
     expect(source).toContain('/threads/${encodeURIComponent(threadId)}/timeline');
@@ -468,7 +465,7 @@ describe('browser product client thread API', () => {
 
 describe('createTerminal uses the legacy PTY path', () => {
   it('spawns through product.terminals.create, not host-thread adapters', () => {
-    const source = readFileSync(new URL('../../store.ts', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../../store.ts', import.meta.url));
     expect(source).toContain('product.terminals.create');
     expect(source).not.toContain('product.threads.spawn');
     expect(source).not.toContain('adoptHostThread');

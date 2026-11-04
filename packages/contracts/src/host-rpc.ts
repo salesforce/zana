@@ -1,3 +1,4 @@
+import { machineProjectPageSchema, machineProjectRegisterSchema, machineProjectSchema } from './machine-projects.js';
 import { CliDiscoveryCommandSchema, CliDiscoveryResultSchema } from './cli-discovery.js';
 import { CliTerminalStartCommandSchema } from './cli-terminal.js';
 import { z } from 'zod';
@@ -91,7 +92,11 @@ import {
 // 44: host.environment.replace pushes plugin-contributed environment to a
 // non-primary machine daemon (held in daemon memory only, never persisted).
 // 45: provider-native capability discovery on the execution host.
-export const HOST_RPC_PROTOCOL_VERSION = 45;
+// 46: canonical v2 peer forwarding and encrypted control, combined with host environment forwarding.
+// 47: bounded directory inspection for remote project registration and availability.
+// 48: durable machine project catalogue publication and bounded registration.
+// 50: exact-name file listing and host-owned listing deadlines.
+export const HOST_RPC_PROTOCOL_VERSION = 50;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -130,6 +135,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'plugin.host.cancel',
   'plugin.host.dispose',
   'host.environment.replace',
+  'peer.forward',
+  'peer.control',
   'terminal.start',
   'terminal.start_cli',
   'terminal.input',
@@ -148,6 +155,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'host.remove_path',
   'host.browse_directory',
   'host.paths_exist',
+  'host.inspect_directories',
   'host.list_paths',
   'host.read_path',
   'host.file_metadata',
@@ -168,6 +176,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'workspace.processes.kill',
   'project.clone',
   'project.clone_default_path',
+  'project.catalogue.list',
+  'project.catalogue.register',
   'codex.voice.transcribe',
   'codex.voice.status',
   'codex.inference.complete',
@@ -203,7 +213,8 @@ export const workspaceContextSchema = z.object({
 export type WorkspaceContext = z.infer<typeof workspaceContextSchema>;
 
 export const ProviderStatusCommandSchema = z.object({
-  type: z.literal('provider.status')
+  type: z.literal('provider.status'),
+  includeModelInventory: z.boolean().optional()
 }).strict();
 
 export const ProviderAgentDescriptorsCommandSchema = z.object({
@@ -299,6 +310,9 @@ const threadLaunchCohortSchema = z.object({
 
 export const HostBridgeLaunchSchema = z.object({
   pluginId: z.string().min(1),
+  providerOptions: z.record(z.string().max(100), jsonValueSchema)
+    .refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 256 * 1024,
+      'Provider bridge options exceed the size limit').optional(),
   envPassthrough: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).max(32).optional(),
   source: z.discriminatedUnion('kind', [
     z.object({
@@ -351,6 +365,10 @@ export const ThreadStartCommandSchema = z.object({
   persona: threadLaunchPersonaSchema.optional(),
   headless: z.boolean().optional(),
   scheduled: z.boolean().optional(),
+  /** Unattended run opts out of per-run config isolation and uses the user's interactive Claude config. */
+  useUserConfig: z.boolean().optional(),
+  /** MCP server names an isolated unattended run needs; the launch is refused when one is not carried over. */
+  requiredMcps: z.array(z.string().min(1).max(128)).max(32).optional(),
   autoCloseOnFinish: z.boolean().optional(),
   inboxLevel: z.enum(['silent', 'quiet', 'loud']).optional(),
   autonomous: z.boolean().optional(),
@@ -385,7 +403,9 @@ export const ThreadStartCommandSchema = z.object({
   /** Plugin-registered ACP tools attached via zcc for this session. */
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
   instructions: z.string().max(100_000).optional(),
-  providerCheckpointId: z.string().min(1).max(200).optional()
+  providerCheckpointId: z.string().min(1).max(200).optional(),
+  /** Main-authorized automated catalog selection. Absence keeps interactive behavior. */
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -433,7 +453,10 @@ export const ThreadResumeFieldsSchema = z.object({
   providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
   instructions: z.string().max(100_000).optional(),
-  providerCheckpointId: z.string().min(1).max(200).optional()
+  /** Carries unattended-session admission to a restored provider session. */
+  sessionKind: z.literal('automated').optional(),
+  providerCheckpointId: z.string().min(1).max(200).optional(),
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
@@ -458,7 +481,12 @@ export const TurnSubmitCommandSchema = z.object({
 export const ThreadResumeCommandSchema = ThreadResumeFieldsSchema.extend({
   type: z.literal('thread.resume'),
   threadId: UuidSchema,
-  environmentId: UuidSchema
+  environmentId: UuidSchema,
+  /**
+   * Strict resume: the provider must natively reload its own session or the
+   * command fails. The result reports `nativeLoaded`; absent means false.
+   */
+  requireNativeLoad: z.literal(true).optional()
 }).strict();
 
 export const ThreadRewindPrepareCommandSchema = z.object({
@@ -474,7 +502,8 @@ export const ThreadRewindPrepareCommandSchema = z.object({
   bridgeLaunch: HostBridgeLaunchSchema.optional(),
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
-  reasoningLevel: reasoningLevelSchema.optional()
+  reasoningLevel: reasoningLevelSchema.optional(),
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 
 export const ThreadRewindDiscardCommandSchema = z.object({
@@ -630,10 +659,17 @@ export const HostPathsExistCommandSchema = z.object({
   paths: z.array(PathSchema).min(1).max(200)
 }).strict();
 
+export const HostInspectDirectoriesCommandSchema = z.object({
+  type: z.literal('host.inspect_directories'),
+  paths: z.array(PathSchema).min(1).max(100)
+}).strict();
+
 export const HostListPathsCommandSchema = z.object({
   type: z.literal('host.list_paths'),
   path: PathSchema,
   query: z.string().max(FILE_LIST_QUERY_MAX_LENGTH).optional(),
+  exactName: z.string().min(1).max(FILE_LIST_QUERY_MAX_LENGTH).optional(),
+  timeoutMs: z.number().int().positive().max(5000).optional(),
   limit: z.number().int().positive().max(FILE_LIST_LIMIT_MAX),
   includeFiles: z.boolean(),
   includeDirectories: z.boolean()
@@ -746,6 +782,14 @@ export const ProjectCloneCommandSchema = z.object({
   remoteUrl: z.string().min(1).max(2048),
   projectSlug: z.string().min(1).max(120),
   targetPath: PathSchema.optional()
+}).strict();
+
+export const ProjectCatalogueListCommandSchema = z.object({
+  type: z.literal('project.catalogue.list'), offset: z.number().int().min(0).max(999).default(0),
+  limit: z.number().int().min(1).max(100).default(100)
+}).strict();
+export const ProjectCatalogueRegisterCommandSchema = z.object({
+  type: z.literal('project.catalogue.register'), projects: z.array(machineProjectRegisterSchema).min(1).max(100)
 }).strict();
 
 export const ProjectCloneDefaultPathCommandSchema = z.object({
@@ -972,6 +1016,45 @@ export const HostEnvironmentReplaceResultSchema = z.object({
 }).strict();
 export type HostEnvironmentReplaceResult = z.infer<typeof HostEnvironmentReplaceResultSchema>;
 
+export const PeerRequestEnvelopeSchema = z.object({
+  protocolVersion: z.literal(2),
+  pairId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  senderId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  recipientId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  pluginId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+  scope: z.string().min(1).max(1024).refine(value => new TextEncoder().encode(value).byteLength <= 1024 && !/[\u0000-\u001f\u007f\ud800-\udfff]/u.test(value)),
+  route: z.string().regex(/^\/api\/v1\/peer\/[a-z][a-z0-9-]{0,63}\/[a-z][a-z0-9-]{0,63}$/),
+  httpMethod: z.literal('POST'),
+  payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+  signature: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/),
+  issuedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  epoch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+}).strict().refine(value => value.senderId !== value.recipientId && value.route.split('/')[4] === value.pluginId);
+
+export const PeerForwardCommandSchema = PeerRequestEnvelopeSchema.safeExtend({
+  type: z.literal('peer.forward'),
+  method: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+  body: z.string().max(8 * 1024 * 1024),
+  timeoutMs: z.number().int().min(1).max(30_000)
+}).strict().refine(value => value.route === `/api/v1/peer/${value.pluginId}/${value.method}`);
+
+export const PEER_CONTROL_ROUTE = '/api/v1/peer-control';
+export const PEER_CONTROL_MAX_BYTES = 64 * 1024;
+const PeerControlIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+export const PeerControlPacketSchema = z.object({
+  version: z.literal(1), senderId: PeerControlIdSchema, recipientId: PeerControlIdSchema,
+  senderHostId: UuidSchema, recipientHostId: UuidSchema,
+  route: z.literal(PEER_CONTROL_ROUTE), nonce: z.string().regex(/^[a-f0-9]{48}$/),
+  issuedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  sealed: z.string().min(43).max(PEER_CONTROL_MAX_BYTES).regex(/^[A-Za-z0-9_-]+$/)
+}).strict().refine(value => value.senderId !== value.recipientId);
+export const PeerControlCommandSchema = z.object({
+  type: z.literal('peer.control'), packet: PeerControlPacketSchema,
+  timeoutMs: z.number().int().min(1).max(15_000)
+}).strict();
+export type PeerControlPacket = z.infer<typeof PeerControlPacketSchema>;
+
 export const PreviewReplaceCommandSchema = z.object({ type: z.literal('preview.replace'), epoch: z.string().uuid(), generation: z.number().int().nonnegative(), targets: z.array(z.object({ port: z.number().int().min(1024).max(65535), expiresAt: z.number().int() }).strict()).max(32) }).strict();
 
 export const HostRpcCommandSchema = z.union([
@@ -980,6 +1063,7 @@ export const HostRpcCommandSchema = z.union([
   z.object({ type: z.literal('host.git_history'), root: PathSchema, limit: z.number().int().min(1).max(100) }).strict(),
   PluginHostCallCommandSchema, PluginHostCancelCommandSchema, PluginHostDisposeCommandSchema,
   HostEnvironmentReplaceCommandSchema,
+  PeerForwardCommandSchema, PeerControlCommandSchema,
   HostGitFileCommandSchema,
   ProviderStatusCommandSchema,
   CliDiscoveryCommandSchema,
@@ -1017,6 +1101,7 @@ export const HostRpcCommandSchema = z.union([
   HostSnapshotPathCommandSchema,
   HostRemovePathCommandSchema,
   HostBrowseDirectoryCommandSchema,
+  HostInspectDirectoriesCommandSchema,
   HostPathsExistCommandSchema,
   HostListPathsCommandSchema,
   HostReadPathCommandSchema,
@@ -1038,6 +1123,8 @@ export const HostRpcCommandSchema = z.union([
   WorkspaceProcessesKillCommandSchema,
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema,
+  ProjectCatalogueListCommandSchema,
+  ProjectCatalogueRegisterCommandSchema,
   CodexVoiceTranscribeCommandSchema,
   CodexVoiceStatusCommandSchema,
   CodexInferenceCompleteCommandSchema,
@@ -1082,6 +1169,10 @@ const ProviderStatusEntrySchema = z.object({
 
 export const ProviderStatusResultSchema = z.object({
   providers: z.array(ProviderStatusEntrySchema),
+  modelInventories: z.array(z.object({
+    family: z.string().min(1).max(128),
+    models: z.array(z.string().min(1).max(512)).max(10_000)
+  }).strict()).max(32).optional(),
   extraInstalledAgents: z.array(z.object({
     providerId: z.string().min(1),
     installed: z.boolean()
@@ -1155,7 +1246,9 @@ export const EnvironmentDestroyResultSchema = z.object({
 export const ThreadStartResultSchema = z.object({
   threadId: UuidSchema,
   started: z.literal(true),
-  providerThreadId: z.string().min(1).optional()
+  providerThreadId: z.string().min(1).optional(),
+  /** Provider-reported per-session restore support; absent means unknown (treat as not restorable). */
+  sessionRestorable: z.boolean().optional()
 }).strict();
 export type ThreadStartResult = z.infer<typeof ThreadStartResultSchema>;
 
@@ -1198,7 +1291,9 @@ export type TurnSubmitResult = z.infer<typeof TurnSubmitResultSchema>;
 export const ThreadResumeResultSchema = z.object({
   threadId: UuidSchema,
   resumed: z.literal(true),
-  providerThreadId: z.string().min(1).optional()
+  providerThreadId: z.string().min(1).optional(),
+  /** Set when the command carried requireNativeLoad; true only on a confirmed native load. */
+  nativeLoaded: z.boolean().optional()
 }).strict();
 export type ThreadResumeResult = z.infer<typeof ThreadResumeResultSchema>;
 
@@ -1332,6 +1427,15 @@ export const HostPathsExistResultSchema = z.object({
   existence: z.record(z.string(), z.boolean())
 }).strict();
 export type HostPathsExistResult = z.infer<typeof HostPathsExistResultSchema>;
+
+export const HostInspectDirectoriesResultSchema = z.object({
+  directories: z.array(z.object({
+    requestedPath: PathSchema,
+    path: PathSchema.nullable(),
+    status: z.enum(['ready', 'missing', 'inaccessible', 'not-directory'])
+  }).strict()).max(100)
+}).strict();
+export type HostInspectDirectoriesResult = z.infer<typeof HostInspectDirectoriesResultSchema>;
 
 export const HostPathEntryKindSchema = z.enum(['file', 'directory']);
 export type HostPathEntryKind = z.infer<typeof HostPathEntryKindSchema>;
@@ -1551,6 +1655,8 @@ export const HostRpcResultSchemaByType = {
   'plugin.host.cancel': z.object({ cancelled: z.boolean() }).strict(),
   'plugin.host.dispose': z.object({ disposed: z.boolean() }).strict(),
   'host.environment.replace': HostEnvironmentReplaceResultSchema,
+  'peer.forward': z.object({ status: z.number().int().min(100).max(599), body: z.string().max(8 * 1024 * 1024) }).strict(),
+  'peer.control': z.object({ status: z.number().int().min(100).max(599), body: z.string().max(PEER_CONTROL_MAX_BYTES) }).strict(),
   'terminal.start': TerminalStartResultSchema,
   'terminal.start_cli': TerminalStartResultSchema,
   'terminal.input': TerminalInputResultSchema,
@@ -1569,6 +1675,7 @@ export const HostRpcResultSchemaByType = {
   'host.remove_path': HostPathMutationResultSchema,
   'host.browse_directory': HostBrowseDirectoryResultSchema,
   'host.paths_exist': HostPathsExistResultSchema,
+  'host.inspect_directories': HostInspectDirectoriesResultSchema,
   'host.list_paths': HostListPathsResultSchema,
   'host.read_path': HostReadPathResultSchema,
   'host.file_metadata': HostFileMetadataResultSchema,
@@ -1589,6 +1696,8 @@ export const HostRpcResultSchemaByType = {
   'workspace.processes.kill': WorkspaceProcessesKillResultSchema,
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
+  'project.catalogue.list': machineProjectPageSchema,
+  'project.catalogue.register': z.object({ projects: z.array(machineProjectSchema).max(100) }).strict(),
   'codex.voice.transcribe': CodexVoiceTranscribeResultSchema,
   'codex.voice.status': CodexVoiceStatusResultSchema,
   'codex.inference.complete': CodexInferenceCompleteResultSchema,
@@ -1650,6 +1759,8 @@ export const HostHelloOkMessageSchema = z.object({
   type: z.literal('host.hello-ok'),
   protocolVersion: ProtocolVersionSchema,
   hostId: UuidSchema,
+  productInstanceId: UuidSchema.optional(),
+  enrollmentCapability: z.enum(['execution', 'peer.forward']).optional(),
   heartbeatIntervalMs: z.number().int().min(1_000).max(30_000).default(HOST_HEARTBEAT_INTERVAL_MS),
   leaseTimeoutMs: z.number().int().min(30_000).max(120_000).default(HOST_LEASE_TIMEOUT_MS),
   pluginHostGenerations: z.array(z.object({ pluginId: z.string().min(1).max(200), generation: z.string().min(1).max(200) }).strict()).max(4096).default([])
@@ -1723,6 +1834,7 @@ export const HostEventKindSchema = z.enum([
   'terminal.exited',
   'environment.provision.progress',
   'project.clone.progress',
+  'project.catalogue.changed',
   'desktop.browser.changed',
   'plugin.host.worker-exited',
   'plugin.host.signal'

@@ -75,11 +75,33 @@ it('keeps following when keyboard layout delivers a shifted scroll before its re
   expect(observer.disconnect).not.toHaveBeenCalled();
 });
 
+it('keeps following when rewrapped content shifts WebKit scroll before ResizeObserver', () => {
+  const { pane, size, observers } = fixture();
+  const observer = observers.at(-1)!;
+  // Narrowing the viewport grows wrapped rows without changing the pane height.
+  size.content = 2500;
+  pane.scrollTop = 1620;
+  fireEvent.scroll(pane);
+  expect(pane.scrollTop).toBe(1900);
+  expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
+  expect(observer.disconnect).not.toHaveBeenCalled();
+  act(() => observer.resize());
+  // Widening can clamp the native position before its notification too.
+  size.content = 1800;
+  pane.scrollTop = 1000;
+  fireEvent.scroll(pane);
+  expect(pane.scrollTop).toBe(1200);
+  expect(observer.disconnect).not.toHaveBeenCalled();
+});
+
 it('preserves intentional scrollback when a keyboard resize also emits a scroll event', () => {
   const { pane, size } = fixture();
   pane.scrollTop = 100;
   fireEvent.scroll(pane);
   size.height = 300;
+  fireEvent.scroll(pane);
+  expect(pane.scrollTop).toBe(100);
+  size.content += 700;
   fireEvent.scroll(pane);
   expect(pane.scrollTop).toBe(100);
   expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeTruthy();

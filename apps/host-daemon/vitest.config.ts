@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   resolve: {
+    conditions: ['source'],
     // host-daemon SOURCE consumes a few leaf modules from @zana-ai/zcc-server
     // (mcp-config.ts → plugins/plugin-skills, execution-consent-store.ts →
     // services/harness-routing/storage). Those aren't a declared workspace dep

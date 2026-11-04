@@ -113,6 +113,7 @@ it.each(['curl: (35) error:0A0000C6:SSL routines::packet length too long', 'fetc
     expect(fallback.command).toMatchObject({ remote: { host: 'devbox', user: 'me', proxyJump: 'bastion' },
       hostId: f.remote.id, joinCode: 'zcde_tunnel', artifactPath: '/private/host.tgz', sshTunnel: { localPort: 43210 } });
     expect(fallback.command.serverUrl).toBe(`http://127.0.0.1:${fallback.command.sshTunnel.remotePort}`);
+    expect(fallback.command.replaceEnrollment).toBe(true);
     expect(f.bind).toHaveBeenCalledOnce();
     expect(events).toContainEqual({ type: 'log', text: 'Public HTTPS is unavailable on this machine; connecting through SSH…' });
   }
@@ -140,10 +141,18 @@ it.each([
   const events = await repairHost(f.ctx, f.remote.id);
   expect(events.at(-1)).toEqual({ type: 'done', hostId: f.remote.id });
   expect(f.rpc).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ hostId: f.primary.id, command: expect.objectContaining({
-    hostId: f.remote.id, joinCode: 'zcde_tunnel', sshTunnel: expect.objectContaining({ localPort: 43210 }) }) }));
+    hostId: f.remote.id, joinCode: 'zcde_tunnel', replaceEnrollment: true, sshTunnel: expect.objectContaining({ localPort: 43210 }) }) }));
   expect(f.rpc.mock.calls[0][0]).not.toHaveProperty('command.connect');
   expect(f.ctx.joinCodes.mintForHost).toHaveBeenCalledWith(f.remote.id);
   expect(events.some(event => event.type === 'log' && /Zana Connect is unavailable.*connecting through SSH/.test(event.text))).toBe(true);
+});
+
+it('preserves explicit repair consent when a remote Connect install falls back to SSH', async () => {
+  const f = fixture();
+  f.rpc.mockRejectedValueOnce(new Error('curl: (35) SSL failed'));
+  const events = await repairHost(f.ctx, f.remote.id);
+  expect(events.at(-1)).toEqual({ type: 'done', hostId: f.remote.id });
+  expect((f.rpc.mock.calls[1][0] as any).command).toMatchObject({ hostId: f.remote.id, replaceEnrollment: true });
 });
 
 it('installs a new SSH machine with a local join code when the account refuses enrollment', async () => {
@@ -154,6 +163,7 @@ it('installs a new SSH machine with a local join code when the account refuses e
   const events = await bootstrapHostForProject(f.ctx, 'project');
   expect(events.at(-1)).toEqual({ type: 'done', hostId: f.remote.id });
   expect((f.rpc.mock.calls[0][0] as any).command).toMatchObject({ joinCode: 'zcde_fresh', hostId: f.remote.id });
+  expect((f.rpc.mock.calls[0][0] as any).command).not.toHaveProperty('replaceEnrollment');
   expect(f.ctx.joinCodes.mintForHost).not.toHaveBeenCalled();
   expect(f.bind).toHaveBeenCalledWith('project', { hostId: f.remote.id, path: '/srv/project' });
 });

@@ -32,6 +32,8 @@ it('enrolls distinct laptops for multiple accounts and idempotently delivers has
   expect((await registry.listServers('alice')).map(x => x.id).sort()).toEqual([a.serverId, a2.serverId].sort());
   expect((await registry.listServers('bob')).map(x => x.id)).toEqual([b.serverId]);
   expect(await registry.pollEnrollment(a.start.deviceCode)).toEqual({ credential: a.credential, serverId: a.serverId, serverUrl: a.serverUrl, accountUrl: 'https://example.com', name: 'MacBook' });
+  expect(await registry.enrollmentInfo(a.start.userCode)).toEqual({ name: 'MacBook', serverId: a.serverId, expiresAt: clock + CODE_TTL, approved: true, denied: false });
+  expect(await registry.enrollmentInfo(a2.start.userCode)).toMatchObject({ serverId: a2.serverId, name: 'Mac mini' });
   const raw = await db.query('SELECT credential_hash FROM connect_servers WHERE id=$1', [a.serverId]);
   expect(raw[0].credential_hash).toBe(digest(a.credential));
   expect(JSON.stringify(raw)).not.toContain(a.credential);

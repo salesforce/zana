@@ -163,14 +163,10 @@ export function ProjectScopedNav({
       icon: <SquarePen size={16} />,
       to: getNewThreadRoutePath(project.id),
       testId: 'project-nav-home',
-      active: false,
+      active: route.isNewThread,
       mobileGroup: 'featured',
       title: `New chat in ${project.name}`,
-      splitContent: { kind: 'new-thread', projectId: project.id },
-      onClick: (event) => {
-        event.preventDefault();
-        useUi.getState().setLauncherOpen(true);
-      }
+      splitContent: { kind: 'new-thread', projectId: project.id }
     },
     { kind: 'row', id: 'conversation-history', label: 'History', icon: <History size={16} />,
       to: '#', testId: 'nav-conversation-history', active: false,
@@ -211,7 +207,7 @@ export function ProjectScopedNav({
       : []),
     ...modeItems.map((item): SidebarRailItem => {
       const Icon = item.icon;
-      const active = onProjects && mode === item.mode;
+      const active = onProjects && !route.isNewThread && mode === item.mode;
       const agentsLive = item.mode === 'agents' && agentCounts.active > 0;
       const goalsActive = item.mode === 'goals' && activeGoals > 0;
       const followupsOpen = item.mode === 'followups' && openFollowUps > 0;

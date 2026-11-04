@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -161,6 +161,47 @@ describe('PluginService', () => {
     await service.reload('evolving');
     expect(service.snapshot()[0].appUrl).toBeNull();
     await expect(service.callRpc('evolving', 'ping', {})).resolves.toMatchObject({ ok: true });
+  });
+
+  it('surfaces the manifest peers capability on the renderer snapshot only when declared', async () => {
+    const dataDir = root();
+    const peerDir = writePlugin(join(root(), 'peerful'), 'peerful', undefined, { peers: true });
+    const plainDir = writePlugin(join(root(), 'plain'), 'plain');
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(peerDir);
+    await service.install(plainDir);
+    const rows = service.snapshot();
+    expect(rows.find((row) => row.id === 'peerful')?.peers).toBe(true);
+    expect(rows.find((row) => row.id === 'plain')?.peers).toBe(false);
+    expect(toPluginAppSnapshot(rows.find((row) => row.id === 'peerful')!)).toMatchObject({ peers: true });
+    expect(toPluginAppSnapshot(rows.find((row) => row.id === 'plain')!)).not.toHaveProperty('peers');
+  });
+
+  it('falls back to peers=false when the installed manifest becomes unreadable', async () => {
+    const peerDir = writePlugin(join(root(), 'peerful-broken'), 'peerful-broken', undefined, { peers: true });
+    const service = createService({ dataDir: root(), bundledRoot: root() });
+    await service.install(peerDir);
+    expect(service.snapshot()[0].peers).toBe(true);
+    writeFileSync(join(peerDir, 'package.json'), '{ not json');
+    const row = service.snapshot()[0];
+    expect(row.peers).toBe(false);
+    expect(row.projectTab).toBeUndefined();
+    expect(toPluginAppSnapshot(row)).not.toHaveProperty('peers');
+  });
+
+  it('dispatches peer requests to the registered handler and rejects unknown plugins or methods', async () => {
+    const peerDir = writePlugin(join(root(), 'peer-echo'), 'peer-echo', `export default function plugin(zcc) {
+      zcc.sdk.peers.handle('echo', (request) => ({ got: request.body, from: request.peerId }));
+    }\n`, { peers: true });
+    const service = createService({ dataDir: root(), bundledRoot: root() });
+    await service.install(peerDir);
+    const request = {
+      peerId: 'app-b', body: { n: 1 }, scope: 'repo', grantEpoch: 1,
+      signal: new AbortController().signal, commitSync: async (commit: () => unknown) => commit()
+    } as never;
+    await expect(service.dispatchPeer('peer-echo', 'echo', request)).resolves.toEqual({ got: { n: 1 }, from: 'app-b' });
+    await expect(service.dispatchPeer('peer-echo', 'missing', request)).rejects.toThrow('unknown peer peer-echo missing');
+    await expect(service.dispatchPeer('no-such-plugin', 'echo', request)).rejects.toThrow('unknown peer no-such-plugin echo');
   });
 
   it('rebuilds a stale frontend on direct reload and keeps the generation on failure', async () => {
@@ -767,7 +808,7 @@ describe('PluginService', () => {
         });
       }\n`
     );
-    const service = createPluginService({ dataDir, bundledRoot: root() });
+    const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: root() });
     try {
       await service.install(pluginDir);
       expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode');
@@ -999,6 +1040,7 @@ describe('PluginService', () => {
           source: { git: { url: 'https://example.test/notes.git', ref: 'HEAD' } }
         }]
       }),
+      updateResolver: { gitRefs: async () => `${'b'.repeat(40)}\tHEAD\n`, gitManifest: async () => ({ id: 'notes', version: '1.0.0', engines: {} }) },
       cloneGit: async (_url, dest) => {
         generation += 1;
         writePlugin(
@@ -1008,7 +1050,7 @@ describe('PluginService', () => {
             ? `export default function plugin(zcc) { zcc.rpc.method('version', () => 1); }\n`
             : `export default function plugin() { throw new Error('candidate-boom'); }\n`
         );
-        return { commit: `commit-${generation}` };
+        return { commit: (generation === 1 ? 'a' : 'b').repeat(40) };
       }
     });
     await service.addMarketplace('https://example.test/marketplace.json');
@@ -1017,7 +1059,9 @@ describe('PluginService', () => {
 
     await expect(service.applyUpdate('notes')).rejects.toThrow(/candidate-boom/);
 
-    expect(service.get('notes')).toEqual(active);
+    expect(service.get('notes')).toEqual({ ...active,
+      lastActivationFailure: { version: active.version, at: expect.any(Number), detail: 'candidate-boom' },
+      statusDetail: `Update to ${active.version} failed: candidate-boom` });
     expect(existsSync(active.rootDir)).toBe(true);
     await expect(service.callRpc('notes', 'version', {})).resolves.toBe(1);
   });
@@ -1072,12 +1116,13 @@ describe('PluginService', () => {
     delete process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
     try {
       const { DEFAULT_OFFICIAL_MARKETPLACE_URL } = await import('./default-marketplaces.js');
-      let fetched: string | undefined;
+      const fetched: string[] = [];
       const service = createPluginService({
         dataDir: root(),
         bundledRoot: root(),
         fetchJson: async (url) => {
-          fetched = url;
+          fetched.push(url);
+          if (url.endsWith('/packs.json')) return { schemaVersion: 1, packs: [] };
           return {
             schemaVersion: 1,
             name: 'official',
@@ -1087,7 +1132,10 @@ describe('PluginService', () => {
         }
       });
       await service.start();
-      expect(fetched).toBe(DEFAULT_OFFICIAL_MARKETPLACE_URL);
+      expect(fetched).toEqual([
+        DEFAULT_OFFICIAL_MARKETPLACE_URL,
+        new URL('packs.json', DEFAULT_OFFICIAL_MARKETPLACE_URL).toString()
+      ]);
       const catalogs = service.listMarketplaces();
       expect(catalogs).toHaveLength(1);
       expect(catalogs[0]?.official).toBe(true);
@@ -1241,6 +1289,7 @@ describe('PluginService', () => {
     );
     const seen: unknown[] = [];
     const service = createPluginService({
+      watchBuiltinPluginSources: true,
       dataDir,
       bundledRoot: root(),
       onAgentCapabilitiesChanged: (contribs) => {
@@ -1337,7 +1386,7 @@ describe('PluginService', () => {
   it('reads name and description from the live manifest, not a stale install snapshot', async () => {
     const dataDir = root();
     const pluginDir = writePlugin(join(root(), 'claude'), 'provider-claude-code');
-    const service = createPluginService({ dataDir, bundledRoot: root() });
+    const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: root() });
     await service.install(pluginDir);
     expect(service.snapshot()[0]?.description).toBe('provider-claude-code plugin');
 
@@ -1377,7 +1426,7 @@ describe('PluginService', () => {
       zcc.rpc.method('save', () => zcc.storage.kv.set('link', { owner: 'fixture-owner', inbox: false }));
       zcc.rpc.method('load', () => zcc.storage.kv.get('link'));
     }`);
-    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: bundled });
     await service.install(devDir);
     await service.callRpc('slack-bridge-2ff2', 'save', {});
     expect(await service.reconcileBuiltins()).toEqual([]);
@@ -1478,24 +1527,24 @@ describe('PluginService', () => {
     const dataDir = root();
     const bundled = root();
     writePlugin(join(bundled, 'docs'), 'docs');
-    writePlugin(join(bundled, 'salesforce'), 'salesforce');
-    const legacyDir = writeLegacyExtension(join(root(), 'zcc-extension-salesforce'), 'salesforce');
-    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    writePlugin(join(bundled, 'memory'), 'memory');
+    const legacyDir = writeLegacyExtension(join(root(), 'zcc-extension-memory'), 'memory');
+    const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: bundled });
     await service.install(legacyDir);
-    expect(service.get('salesforce')?.sourceKind).toBe('path');
-    await expect(service.callRpc('salesforce', 'ping', {})).rejects.toThrow(/unknown rpc/);
+    expect(service.get('memory')?.sourceKind).toBe('path');
+    await expect(service.callRpc('memory', 'ping', {})).rejects.toThrow(/unknown rpc/);
     await service.reconcileBuiltins();
-    expect(service.get('salesforce')).toMatchObject({
-      id: 'salesforce',
+    expect(service.get('memory')).toMatchObject({
+      id: 'memory',
       sourceKind: 'builtin',
-      source: 'builtin:salesforce',
+      source: 'builtin:memory',
       enabled: true,
       status: 'running'
     });
-    expect(service.get('salesforce')?.rootDir).toBe(join(bundled, 'salesforce'));
-    await expect(service.callRpc('salesforce', 'ping', {})).resolves.toEqual({
+    expect(service.get('memory')?.rootDir).toBe(join(bundled, 'memory'));
+    await expect(service.callRpc('memory', 'ping', {})).resolves.toEqual({
       ok: true,
-      id: 'salesforce'
+      id: 'memory'
     });
     expect(existsSync(legacyDir)).toBe(true);
   });
@@ -1504,16 +1553,16 @@ describe('PluginService', () => {
     const dataDir = root();
     const bundled = root();
     writePlugin(join(bundled, 'docs'), 'docs');
-    writePlugin(join(bundled, 'salesforce'), 'salesforce');
-    const devDir = writePlugin(join(root(), 'salesforce-dev'), 'salesforce', `export default function plugin(zcc) {
+    writePlugin(join(bundled, 'memory'), 'memory');
+    const devDir = writePlugin(join(root(), 'memory-dev'), 'memory', `export default function plugin(zcc) {
         zcc.rpc.method('ping', () => ({ ok: true, from: 'path-dev' }));
       }\n`);
-    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: bundled });
     await service.install(devDir);
     await service.reconcileBuiltins();
-    expect(service.get('salesforce')?.sourceKind).toBe('path');
-    expect(service.get('salesforce')?.rootDir).toBe(devDir);
-    await expect(service.callRpc('salesforce', 'ping', {})).resolves.toEqual({
+    expect(service.get('memory')?.sourceKind).toBe('path');
+    expect(service.get('memory')?.rootDir).toBe(devDir);
+    await expect(service.callRpc('memory', 'ping', {})).resolves.toEqual({
       ok: true,
       from: 'path-dev'
     });
@@ -1523,13 +1572,13 @@ describe('PluginService', () => {
     const dataDir = root();
     const bundled = root();
     writePlugin(join(bundled, 'docs'), 'docs');
-    writePlugin(join(bundled, 'salesforce'), 'salesforce');
-    const legacyDir = writeLegacyExtension(join(root(), 'legacy-sf'), 'salesforce');
-    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    writePlugin(join(bundled, 'memory'), 'memory');
+    const legacyDir = writeLegacyExtension(join(root(), 'legacy-memory'), 'memory');
+    const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: bundled });
     await service.install(legacyDir);
-    await service.disable('salesforce');
+    await service.disable('memory');
     await service.reconcileBuiltins();
-    expect(service.get('salesforce')).toMatchObject({
+    expect(service.get('memory')).toMatchObject({
       sourceKind: 'builtin',
       enabled: false,
       status: 'disabled'
@@ -1562,7 +1611,7 @@ describe('PluginService', () => {
     const again = await service.reconcileBuiltins();
     expect(again).toEqual([]);
     expect(service.get('docs')).toBeUndefined();
-    await service.install(join(bundled, 'docs'));
+    await service.install('builtin:docs');
     expect(service.get('docs')?.id).toBe('docs');
   });
 
@@ -1708,18 +1757,24 @@ describe('listBundledPluginCatalog', () => {
     const out = listBundledPluginCatalog(pluginsRoot);
     expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Library')).toBe(true);
     expect(out.find((entry) => entry.id === 'docs')?.overview).toContain('## What you get');
+    expect(out.find(entry => entry.id === 'provider-codex')?.iconUrl).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(out.find(entry => entry.id === 'slack-bridge-2ff2')?.iconUrl).toMatch(/^data:image\/png;base64,/);
     expect(out.find((entry) => entry.id === 'posthog-analytics')?.description).toBe(
       'Anonymous usage analytics. Never sends prompts or replies.'
     );
+    expect(out.map(entry => entry.id)).not.toContain('salesforce');
     expect(out.find((entry) => entry.id === 'tasks')?.category).toBe('Workflow management');
     expect(out.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce', 'pr-monitor', 'plugin-guide'])
+      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'pr-monitor', 'plugin-guide'])
     );
   });
 
   it('auto-installs plugin-guide from the repo plugins tree with a compiled app', async () => {
     const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
-    const service = createPluginService({ dataDir: root(), bundledRoot: pluginsRoot });
+    // Exercise the shipped guide without starting every bundled provider/service.
+    const bundledRoot = root();
+    cpSync(join(pluginsRoot, 'plugin-guide'), join(bundledRoot, 'plugin-guide'), { recursive: true });
+    const service = createPluginService({ dataDir: root(), bundledRoot });
     try {
       await service.start();
       const snap = service.snapshot().find((row) => row.id === 'plugin-guide');
@@ -2108,6 +2163,87 @@ describe('plugin services registry', () => {
     expect(service.get('beta')?.statusDetail).toBe('needs plugin: alpha');
     await expect(service.callRpc('beta', 'hasAlpha', {})).resolves.toBe(false);
     service.stop();
+  });
+});
+
+describe('plugin-reported status', () => {
+  const statusPlugin = (id: string, extra?: Record<string, unknown>) => writePlugin(
+    join(root(), id),
+    id,
+    `export default function plugin(zcc) {
+      zcc.status.needsConfiguration('Sign in first.');
+      zcc.rpc.method('signIn', () => { zcc.status.configured(); return true; });
+      zcc.rpc.method('signOut', (args) => { zcc.status.needsConfiguration(args?.message ?? 'Signed out.'); return true; });
+    }\n`,
+    extra
+  );
+
+  it('marks and clears needs-configuration live without a reload', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(statusPlugin('status-live'));
+    expect(service.get('status-live')).toMatchObject({ status: 'needs-configuration', statusDetail: 'Sign in first.' });
+
+    await service.callRpc('status-live', 'signIn', {});
+    await vi.waitFor(() => expect(service.get('status-live')).toMatchObject({ status: 'running', statusDetail: null }));
+
+    await service.callRpc('status-live', 'signOut', { message: `  ${'x'.repeat(600)}  ` });
+    await vi.waitFor(() => expect(service.status('status-live')).toBe('needs-configuration'));
+    expect(service.get('status-live')?.statusDetail).toHaveLength(500);
+
+    await service.callRpc('status-live', 'signOut', { message: '   ' });
+    await vi.waitFor(() => expect(service.get('status-live')?.statusDetail).toBe('This plugin needs configuration.'));
+
+    // The status resets with the next load.
+    await service.callRpc('status-live', 'signIn', {});
+    await vi.waitFor(() => expect(service.status('status-live')).toBe('running'));
+    await service.reload('status-live');
+    expect(service.get('status-live')).toMatchObject({ status: 'needs-configuration', statusDetail: 'Sign in first.' });
+  });
+
+  it('ignores status calls once the plugin is disabled', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(writePlugin(join(root(), 'status-late'), 'status-late', `export default function plugin(zcc) {
+      zcc.rpc.method('later', () => { setTimeout(() => zcc.status.needsConfiguration('Too late.'), 20); return true; });
+    }\n`));
+    await service.callRpc('status-late', 'later', {});
+    await service.disable('status-late');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(service.get('status-late')).toMatchObject({ status: 'disabled' });
+  });
+
+  it('keeps a missing required plugin ahead of plugin-reported status, then restores it', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const setup = createPluginService({ dataDir, bundledRoot: bundled });
+    await setup.install(writePlugin(join(root(), 'status-needs'), 'status-needs', `export default function plugin(zcc) {
+      zcc.rpc.method('signOut', () => { zcc.status.needsConfiguration('Signed out.'); return true; });
+    }\n`, { requires: ['absent'] }));
+    setup.stop();
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.start();
+    expect(service.get('status-needs')?.statusDetail).toBe('needs plugin: absent');
+    await service.callRpc('status-needs', 'signOut', {});
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(service.get('status-needs')).toMatchObject({ status: 'needs-configuration', statusDetail: 'needs plugin: absent' });
+
+    await service.install(writePlugin(join(root(), 'absent'), 'absent'));
+    await vi.waitFor(() => expect(service.get('status-needs')).toMatchObject({ status: 'needs-configuration', statusDetail: 'Signed out.' }));
+  });
+
+  it('does not let configured() clear a core tool-name conflict', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    const tool = `zcc.agents.registerTool({ name: 'shared_status_tool', description: 'x', parameters: { type: 'object' }, execute: async () => null });`;
+    await service.install(writePlugin(join(root(), 'tool-owner'), 'tool-owner', `export default function plugin(zcc) { ${tool} }\n`));
+    await service.install(writePlugin(join(root(), 'tool-second'), 'tool-second', `export default function plugin(zcc) {
+      ${tool}
+      zcc.rpc.method('signIn', () => { zcc.status.configured(); return true; });
+    }\n`));
+    expect(service.get('tool-second')?.statusDetail).toMatch(/already registered by plugin "tool-owner"/);
+    await service.callRpc('tool-second', 'signIn', {});
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(service.get('tool-second')).toMatchObject({ status: 'needs-configuration' });
+    expect(service.get('tool-second')?.statusDetail).toMatch(/already registered/);
   });
 });
 

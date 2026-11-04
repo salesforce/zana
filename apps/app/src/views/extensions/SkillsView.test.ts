@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
-const view = readFileSync(new URL('./SkillsView.tsx', import.meta.url), 'utf8');
-const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+const view = readSourceText(new URL('./SkillsView.tsx', import.meta.url));
+const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
 
 describe('SkillsView catalogue', () => {
   it('uses host discovery and explains invocation metadata', () => {

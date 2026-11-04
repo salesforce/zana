@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { WALKTHROUGH_STEP_IDS, walkthroughShellFor } from './walkthrough-shell.js';
 
 describe('walkthroughShellFor', () => {
+  it('plays the intro video over New Chat without forcing a composer mode', () => {
+    expect(walkthroughShellFor('intro')).toEqual({ nav: 'home', homeMode: null });
+  });
+
   it('opens New Chat on Thread so the BB-style composer is on screen', () => {
     expect(walkthroughShellFor('thread')).toEqual({ nav: 'home', homeMode: 'thread' });
   });
@@ -15,7 +19,7 @@ describe('walkthroughShellFor', () => {
     expect(walkthroughShellFor('schedule')).toEqual({ nav: 'scheduler', homeMode: null });
   });
 
-  it('tours Modern and CLI Agent before project and schedule', () => {
-    expect(WALKTHROUGH_STEP_IDS).toEqual(['thread', 'legacy', 'project', 'schedule']);
+  it('opens with the intro video, then tours Modern and CLI Agent before project and schedule', () => {
+    expect(WALKTHROUGH_STEP_IDS).toEqual(['intro', 'thread', 'legacy', 'project', 'schedule']);
   });
 });

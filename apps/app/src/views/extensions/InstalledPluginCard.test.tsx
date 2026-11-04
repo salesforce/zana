@@ -24,16 +24,19 @@ afterEach(cleanup);
 
 it('opens details separately from updates and toggles, and falls back when a branding image fails', () => {
   const onOpen = vi.fn();
-  const { container, rerender } = render(<InstalledPluginCard row={row({ icon: './icons/logo.svg' })} onOpen={onOpen} />);
+  const { container, rerender } = render(<InstalledPluginCard row={row({ icon: './icons/logo.svg', skillNames: ['example'] })} onOpen={onOpen} />);
   expect(container.querySelector('img')?.getAttribute('src')).toBe('/plugins/example/assets/icons/logo.svg');
   fireEvent.error(container.querySelector('img')!);
   expect(screen.getByTestId('fallback-icon')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Example plugin details' }));
   expect(onOpen).toHaveBeenCalledOnce();
-  expect(screen.getByText('Official')).toBeTruthy();
+  expect(screen.getByLabelText('Capabilities').textContent).toBe('Skills');
+  fireEvent.click(screen.getByRole('button', { name: 'Open Example', exact: true }));
+  expect(onOpen).toHaveBeenCalledTimes(2);
+  expect(screen.getByText('Bundled')).toBeTruthy();
   rerender(<InstalledPluginCard row={row({ icon: './new.svg', provenance: 'direct' })} onOpen={onOpen} />);
   expect(container.querySelector('img')?.getAttribute('src')).toBe('/plugins/example/assets/new.svg');
-  expect(screen.getByText('User')).toBeTruthy();
+  expect(screen.getByText('Direct install')).toBeTruthy();
 });
 
 it('shows an optimistic pending switch and reconciles the renderer after success', async () => {
@@ -65,7 +68,8 @@ it.each([{ ok: false, message: 'Enable denied' }, new Error('Toggle failed'), 'u
 it('keeps runtime warnings actionable and reports enabled plugins that are not running', () => {
   const onOpen = vi.fn();
   const { rerender } = render(<InstalledPluginCard row={row({ status: 'needs-configuration', statusDetail: 'Connect your account' })} onOpen={onOpen} />);
-  expect(screen.getByText('Connect your account')).toBeTruthy();
+  expect(screen.getByText('A useful tool')).toBeTruthy();
+  expect(screen.queryByText('Connect your account')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /Example: Needs configuration/ }));
   expect(onOpen).toHaveBeenCalledOnce();
   expect(screen.getByRole('switch').getAttribute('aria-label')).toContain('not running');

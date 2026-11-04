@@ -62,4 +62,4 @@ prompts across unrelated pages.
 - `e2e/composer-navigation-drafts.spec.ts`
 
 Run `pnpm verify:fast`, the built-Electron draft spec, and the launch/memory/team
-verification triggers listed in `AGENTS.md` when changing composer configuration.
+verification triggers listed in `docs/live-zana-verification.md` when changing composer configuration.

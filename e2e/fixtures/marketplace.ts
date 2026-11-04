@@ -70,8 +70,8 @@ export class MarketplacePage {
 
   /** Expand Catalog sources and return the visible catalog name chips. */
   async openCatalogSources() {
+    await this.window.getByRole('button', { name: 'Catalog sources', exact: true }).click();
     const panel = this.window.getByTestId('marketplace-catalogs');
-    await panel.locator('summary').click();
     return panel;
   }
 

@@ -6,6 +6,8 @@ export interface WorktreeMenuProps {
   project: Project;
   worktrees: Worktree[];
   branches: GitBranchInfo[];
+  loading?: boolean;
+  error?: string | null;
   viewRoot: string;
   worktreeByBranch: Map<string, Worktree>;
   onSelectWorktree: (path: string) => void;
@@ -18,6 +20,8 @@ export function WorktreeMenu({
   project,
   worktrees,
   branches,
+  loading = false,
+  error,
   viewRoot,
   worktreeByBranch,
   onSelectWorktree,
@@ -31,6 +35,8 @@ export function WorktreeMenu({
       data-testid="explorer-worktree-menu"
       onClick={(e) => e.stopPropagation()}
     >
+      {loading && <div className="tree-loading" role="status">Loading checkouts…</div>}
+      {error && <div className="tree-loading" role="alert">{error}</div>}
       {worktrees.length > 1 && (
         <div className="explorer-worktree-section-label">Worktrees</div>
       )}

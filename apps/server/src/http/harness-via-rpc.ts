@@ -41,12 +41,12 @@ function extraInstalledFromStatus(result: ProviderStatusResult): Record<string, 
   return extra;
 }
 
-async function providerStatus(hub: HostHub, hostId?: string): Promise<ProviderStatusResult | null> {
+async function providerStatus(hub: HostHub, hostId?: string, includeModelInventory = false): Promise<ProviderStatusResult | null> {
   try {
     const resolved = hub.resolveHostId(hostId);
     return await hub.callHostOnlineRpc<ProviderStatusResult>({
       hostId: resolved,
-      command: { type: 'provider.status' }
+      command: { type: 'provider.status', ...(includeModelInventory ? { includeModelInventory: true } : {}) }
     });
   } catch (error) {
     if (error instanceof HostUnavailableError) return null;
@@ -83,9 +83,10 @@ export async function harnessVerifyBundle(hub: HostHub, hostId?: string): Promis
 }
 
 export async function harnessDescriptors(hub: HostHub, hostId?: string): Promise<HarnessAdapterDescriptor[]> {
-  const results = await harnessVerify(hub, hostId);
+  const status = await providerStatus(hub, hostId, true);
+  const results = status ? asVerifyResults(status) : [];
   if (results.length === 0) return [];
-  return harnessAdapterDescriptorsFromVerify(results);
+  return harnessAdapterDescriptorsFromVerify(results, status?.modelInventories);
 }
 
 /** Server validates project ownership before asking its assigned host to inspect native agents. */

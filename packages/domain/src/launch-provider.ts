@@ -190,6 +190,57 @@ export function harnessFamilyOf(p: LaunchProfileId): HarnessFamily | null {
 }
 
 /**
+ * The ONE table between a harness family and the thread provider id that runs
+ * it. Both directions ({@link threadProviderIdForHarnessFamily} and
+ * {@link harnessFamilyForThreadProviderId}) derive from it so they cannot drift.
+ */
+export const THREAD_PROVIDER_ID_BY_HARNESS_FAMILY = Object.freeze({
+  claude: 'claude-code',
+  cursor: 'acp-cursor',
+  codex: 'codex',
+  pi: 'pi',
+  opencode: 'acp-opencode',
+  grok: 'acp-grok',
+  mastracode: 'acp-mastracode',
+  afcode: 'acp-afcode'
+} as const satisfies Record<HarnessFamily, string>);
+
+/**
+ * Harness families whose native conversations the host lists in History (each
+ * has a `createHistoryAdapter` registration in the host daemon). Mastra Code
+ * and Agentforce Code have none. A host-daemon test keeps this in sync.
+ */
+export const HARNESS_FAMILIES_WITH_NATIVE_HISTORY: readonly HarnessFamily[] = Object.freeze([
+  'claude',
+  'cursor',
+  'codex',
+  'pi',
+  'opencode',
+  'grok'
+]);
+
+/** True when History can list this profile's conversations (any posture of a supported harness). */
+export function profileHasNativeHistory(p: LaunchProfileId): boolean {
+  const family = harnessFamilyOf(p);
+  return family !== null && HARNESS_FAMILIES_WITH_NATIVE_HISTORY.includes(family);
+}
+
+/** Thread provider id for a harness family, or `null` for an unknown family. */
+export function threadProviderIdForHarnessFamily(family: string): string | null {
+  return Object.prototype.hasOwnProperty.call(THREAD_PROVIDER_ID_BY_HARNESS_FAMILY, family)
+    ? THREAD_PROVIDER_ID_BY_HARNESS_FAMILY[family as HarnessFamily]
+    : null;
+}
+
+/** Harness family a thread provider id runs, or `null` (e.g. `fake`, `shell`). */
+export function harnessFamilyForThreadProviderId(providerId: string): HarnessFamily | null {
+  for (const [family, id] of Object.entries(THREAD_PROVIDER_ID_BY_HARNESS_FAMILY) as Array<[HarnessFamily, string]>) {
+    if (id === providerId) return family;
+  }
+  return null;
+}
+
+/**
  * Provider capabilities — what a profile can do. Drives conditional UI
  * (showing summarize / resume / auto-close controls) and what command-line
  * flags / hooks we can wire up at spawn. Grounded in CURRENT usage — see the

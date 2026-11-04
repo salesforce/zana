@@ -1,7 +1,7 @@
-// Bundled into the isolated Electron process by mobile-voice.spec.ts. Only OS
-// credential storage and the external transcription service are fixtures; the
+// Bundled into the isolated Electron process by mobile-voice.spec.ts. Only the
+// Codex executable and the external transcription service are fixtures; the
 // credential selection, child capture and transcription code are production.
-import { execFile } from 'node:child_process';
+import { delimiter } from 'node:path';
 import { CodexVoiceTranscribeCommandSchema } from '../../packages/contracts/src/host-rpc.js';
 import { readCodexKeyring } from '../../apps/host-daemon/src/codex-auth-storage.js';
 import { transcribeCodexVoice } from '../../apps/host-daemon/src/codex-voice-transcribe.js';
@@ -9,24 +9,18 @@ import { transcribeVoiceOnHost } from '../../apps/server/src/services/threads/vo
 import type { ProductHttpContext } from '../../apps/server/src/http/product-context.js';
 
 export async function transcribe(args: {
-  codexHome: string; node: string; keychainFixture: string;
+  codexHome: string; cliBin: string;
   audioBase64: string; mimeType: string; filename: string;
 }) {
-  const run = ((file, commandArgs, options, callback) => {
-    if (file !== '/usr/bin/security' || commandArgs[0] !== 'find-generic-password' || commandArgs[2] !== 'Codex Auth' || !/^cli\|[a-f0-9]{16}$/.test(commandArgs[4])) {
-      throw new Error('Unexpected credential lookup');
-    }
-    return execFile(args.node, [args.keychainFixture, ...commandArgs], {
-      ...options, env: { HOME: args.codexHome }
-    }, callback);
-  }) as typeof execFile;
+  const env = { ...process.env, HOME: args.codexHome, CODEX_HOME: args.codexHome,
+    PATH: `${args.cliBin}${delimiter}${process.env.PATH ?? ''}`, ELECTRON_RUN_AS_NODE: '1' };
   const ctx = {
-    config: { getConfig: () => ({}) },
+    config: { getConfig: () => ({ voiceInputEnabled: true }) },
     hostHub: {
       resolveHostId: () => 'voice-fixture',
       callHostOnlineRpc: async ({ command }) => transcribeCodexVoice(CodexVoiceTranscribeCommandSchema.parse(command), {
-        env: { CODEX_HOME: args.codexHome },
-        readKeyring: (home) => readCodexKeyring(home, { platform: 'darwin', execFileImpl: run }),
+        env,
+        readKeyring: (home) => readCodexKeyring(home, { env }),
         fetchImpl: async (url, init) => {
           const form = init!.body as FormData;
           const file = form.get('file') as File;

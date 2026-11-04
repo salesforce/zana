@@ -1,3 +1,4 @@
+import { PluginBrowserToolbarActions } from '../../../plugins/PluginBrowserToolbarActions.js';
 import {
   useCallback,
   useEffect,
@@ -57,12 +58,16 @@ export interface BrowserTabContentProps {
   onStopAutomation?: (targetId: string) => void;
 }
 
+// Round inward: the native view paints above the DOM, so a box that spills
+// even one pixel past its container covers the panel's separator border.
 function roundedBoundsFromRect(rect: DOMRect): DesktopBrowserViewBounds {
+  const x = Math.ceil(rect.left);
+  const y = Math.ceil(rect.top);
   return {
-    x: Math.round(rect.left),
-    y: Math.round(rect.top),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height)
+    x,
+    y,
+    width: Math.max(0, Math.floor(rect.right) - x),
+    height: Math.max(0, Math.floor(rect.bottom) - y)
   };
 }
 
@@ -116,7 +121,8 @@ function BrowserChrome({
   onBack,
   onForward,
   onReloadOrStop,
-  onOpenExternal
+  onOpenExternal,
+  pluginActions
 }: {
   addressDraft: string;
   isEditing: boolean;
@@ -131,6 +137,7 @@ function BrowserChrome({
   onForward: () => void;
   onReloadOrStop: () => void;
   onOpenExternal: () => void;
+  pluginActions?: ReactNode;
 }) {
   const isLoading = state?.isLoading ?? false;
   const security = getBrowserUrlSecurity(currentUrl);
@@ -168,6 +175,7 @@ function BrowserChrome({
           spellCheck={false}
         />
       </form>
+      {pluginActions}
       <NavButton label="Open in external browser" disabled={currentUrl.length === 0} onClick={onOpenExternal}>
         <ExternalLink size={14} />
       </NavButton>
@@ -192,6 +200,7 @@ function BrowserPageLoadError({
 }: {
   errorText: string;
   onOpenExternal: () => void;
+  pluginActions?: ReactNode;
   onRetry: () => void;
   url: string;
 }) {
@@ -361,15 +370,17 @@ export function BrowserTabContent({
     && !isBrowserDimmingModalOpen;
 
   useLayoutEffect(() => {
+    return () => visibilityCoordinator?.hide(tabId);
+  }, [visibilityCoordinator, tabId]);
+
+  useLayoutEffect(() => {
     if (visibilityCoordinator === null) return;
     if (isViewVisible) {
       visibilityCoordinator.show(tabId, syncBounds);
-      return () => {
-        visibilityCoordinator.hide(tabId);
-      };
+    } else {
+      visibilityCoordinator.hide(tabId, canShowNativeBrowserView && hasPage && !hasPageLoadError && isBrowserDimmingModalOpen);
     }
-    visibilityCoordinator.hide(tabId);
-  }, [visibilityCoordinator, tabId, isViewVisible, syncBounds]);
+  }, [visibilityCoordinator, tabId, isViewVisible, syncBounds, canShowNativeBrowserView, hasPage, hasPageLoadError, isBrowserDimmingModalOpen]);
 
   const navigateToInput = useCallback((rawInput: string) => {
     const url = resolveBrowserAddressInput(rawInput);
@@ -540,6 +551,7 @@ export function BrowserTabContent({
         </div>
       ) : null}
       <BrowserChrome
+        pluginActions={threadId ? <PluginBrowserToolbarActions threadId={threadId} tabId={tabId} url={currentUrl} /> : null}
         addressDraft={addressDraft}
         isEditing={isEditing}
         state={state}

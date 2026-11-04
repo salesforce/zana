@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 
@@ -38,6 +38,12 @@ vi.mock('../../lib/product-client.js', () => ({
     },
     terminals: { close: vi.fn() }
   }
+}));
+
+const resume = vi.hoisted(() => vi.fn());
+vi.mock('./resumeScheduledRun.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./resumeScheduledRun.js')>()),
+  resumeScheduledRun: (...args: unknown[]) => resume(...args)
 }));
 
 import { ScheduleRow } from './ScheduleRow.js';
@@ -116,6 +122,32 @@ describe('ScheduleRow', () => {
     expect(onOpenInSplit).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the cadence of cron and interval schedules in the meta line', () => {
+    const meta = (t: ScheduledTask) => {
+      const view = render(<MemoryRouter><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>);
+      const text = view.container.querySelector('.scheduler-card-compact-meta')?.textContent;
+      view.unmount();
+      return text;
+    };
+    expect(meta({ ...task, schedule: { cron: '0 8 * * 1-5', tz: 'Australia/Sydney' } })).toBe('Demo · claude · cron 0 8 * * 1-5');
+    expect(meta(task)).toBe('Demo · claude · every 1h');
+  });
+
+  it('says off in the next column of a disabled schedule', () => {
+    const view = render(<MemoryRouter><ScheduleRow task={{ ...task, enabled: false }} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>);
+    expect(view.container.querySelector('.scheduler-card-compact-next--muted')?.textContent).toBe('off');
+    expect(view.queryByText('paused')).toBeNull();
+  });
+
+  it('shows the countdown for an enabled schedule with a next run, and off without one', () => {
+    const wrap = (t: ScheduledTask) => <MemoryRouter><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>;
+    const soon = render(wrap({ ...task, status: { runCount: 0, runs: [], nextRunAt: new Date(Date.now() + 3_600_000).toISOString() } }));
+    expect(soon.container.querySelector('.scheduler-card-compact-next')?.textContent).toMatch(/^in /);
+    soon.unmount();
+    const none = render(wrap({ ...task, status: { runCount: 0, runs: [] } }));
+    expect(none.getByText('off')).toBeTruthy();
+  });
+
   it('shows neutral queued and retry pending indicators', () => {
     const wrap = (t: ScheduledTask) => <MemoryRouter><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>;
     const queued = render(wrap({ ...task, status: { runCount: 0, runs: [], queuedAt: '2026-01-01T00:00:00Z' } }));
@@ -134,5 +166,109 @@ describe('ScheduleRow', () => {
     } finally {
       terminalState.terminals = {};
     }
+  });
+});
+
+describe('ScheduleRow Resume latest run', () => {
+  afterEach(() => { cleanup(); resume.mockReset(); terminalState.terminals = {}; });
+  const conversation = { profile: 'claude', id: 'conv-1', cwd: '/p', startedAt: '2026-01-01T00:00:00Z' };
+  const ran = (over: Record<string, unknown> = {}, runs?: Array<Record<string, unknown>>) => ({
+    ...task, ...over,
+    status: { runCount: 1, runs: runs ?? [{ id: 'r1', at: '2026-01-01T00:00:00Z', result: 'success', sessionId: 'old', conversation }] }
+  }) as unknown as ScheduledTask;
+  const mount = (t: ScheduledTask) => render(
+    <MemoryRouter><ul><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></ul></MemoryRouter>
+  );
+
+  it('resumes the latest run from the row icon without opening the schedule', () => {
+    const onOpen = vi.fn();
+    render(<MemoryRouter><ul><ScheduleRow task={ran()} projectName="Demo" onOpen={onOpen} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></ul></MemoryRouter>);
+    const button = screen.getByRole('button', { name: 'Resume latest run' });
+    expect(button.getAttribute('title')).toBe('Resume latest run');
+    fireEvent.click(button);
+    expect(resume).toHaveBeenCalledWith(expect.objectContaining({ id: 'sched-1' }), undefined, expect.any(Function));
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('resumes from the context menu entry, placed under Run now', () => {
+    mount(ran());
+    fireEvent.contextMenu(screen.getByTitle('Open schedule'));
+    const items = screen.getAllByRole('menuitem').map((item) => item.textContent?.trim());
+    expect(items.indexOf('Resume latest run')).toBe(items.indexOf('Run now') + 1);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resume latest run/ }));
+    expect(resume).toHaveBeenCalledWith(expect.objectContaining({ id: 'sched-1' }), undefined, expect.any(Function));
+  });
+
+  it('is hidden when no run recorded a conversation, for Squads, /loop rows, and while a run is open', () => {
+    const none = mount(ran({}, [{ id: 'r1', at: '2026-01-01T00:00:00Z', result: 'success', sessionId: 'old' }]));
+    expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    none.unmount();
+    const squad = mount(ran({ kind: 'team' }));
+    expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    squad.unmount();
+    const loop = mount(ran({ external: { kind: 'claude-loop' } }));
+    expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    loop.unmount();
+    terminalState.terminals = { p1: [{ id: 'old', status: 'running' }] };
+    mount(ran());
+    expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open running terminal' })).toBeTruthy();
+    fireEvent.contextMenu(screen.getByTitle('Open schedule'));
+    expect(screen.queryByRole('menuitem', { name: /Resume latest run/ })).toBeNull();
+  });
+});
+
+describe('ScheduleRow skipped last run', () => {
+  // A fixed clock keeps the slot on the same local day, whatever time the suite runs.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 9, 14, 12, 0)); });
+  afterEach(() => { vi.useRealTimers(); cleanup(); terminalState.terminals = {}; });
+  const slot = new Date(2026, 9, 14, 11, 59);
+  const time = slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const overlap = { id: 'o1', at: slot.toISOString(), result: 'skipped' as const, reasonCode: 'overlap' as const };
+  const mount = (t: ScheduledTask) => render(
+    <MemoryRouter><ul><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></ul></MemoryRouter>
+  );
+
+  it('shows the time and reason of an overlap skip', () => {
+    const view = mount({ ...task, status: { runCount: 1, runs: [overlap] } });
+    const pill = view.getByTestId('schedule-skipped-last');
+    expect(pill.textContent).toBe(`skipped ${time} · Previous run still active`);
+    expect(pill.getAttribute('title')).toBe(
+      `Skipped the ${time} run. The previous run's session was still open, so this run didn't start. Close that session or press Run now.`
+    );
+    expect(pill.className).toBe('scheduler-pill scheduler-pill--skipped scheduler-pill--skipped-last');
+  });
+  it('refreshes a memoized row when the parent clock passes a due slot', () => {
+    const previous = new Date(slot.getTime() - 3_600_000).toISOString();
+    const t = { ...task, status: { runCount: 1, lastRunAt: previous, runs: [{ at: previous, result: 'success' as const }], nextRunAt: slot.toISOString() } };
+    const callbacks = { onOpen: vi.fn(), onOpenInSplit: vi.fn(), onDuplicate: vi.fn(), onAskDelete: vi.fn() };
+    const row = (nowMs: number) => <MemoryRouter><ul><ScheduleRow task={t} projectName="Demo" nowMs={nowMs} {...callbacks} /></ul></MemoryRouter>;
+    const view = render(row(slot.getTime() - 1));
+    expect(view.queryByTestId('schedule-skipped-last')).toBeNull();
+    view.rerender(row(slot.getTime() + 180_000));
+    expect(view.getByTestId('schedule-skipped-last').textContent).toBe(`skipped ${time}`);
+  });
+
+  it('words the title for a Squad', () => {
+    const view = mount({ ...task, kind: 'team', status: { runCount: 1, runs: [overlap] } });
+    expect(view.getByTestId('schedule-skipped-last').getAttribute('title'))
+      .toBe(`Skipped the ${time} run. The previous Squad run was still running, so this run didn't start.`);
+  });
+
+  it('still shows beside the running pill while the previous session is open', () => {
+    terminalState.terminals = { p1: [{ id: 'live', status: 'running' }] };
+    const earlier = { id: 'r0', at: new Date(slot.getTime() - 3_600_000).toISOString(), result: 'success' as const, sessionId: 'live' };
+    const view = mount({ ...task, status: { runCount: 2, runs: [overlap, earlier] } });
+    expect(view.getByText('running')).toBeTruthy();
+    expect(view.getByTestId('schedule-skipped-last')).toBeTruthy();
+  });
+
+  it('shows no pill for a success, a disabled schedule or an external row', () => {
+    const ok = { id: 'ok', at: slot.toISOString(), result: 'success' as const };
+    expect(mount({ ...task, status: { runCount: 1, runs: [ok] } }).queryByTestId('schedule-skipped-last')).toBeNull();
+    cleanup();
+    expect(mount({ ...task, enabled: false, status: { runCount: 1, runs: [overlap] } }).queryByTestId('schedule-skipped-last')).toBeNull();
+    cleanup();
+    expect(mount({ ...task, external: { kind: 'claude-loop' }, status: { runCount: 1, runs: [overlap] } } as unknown as ScheduledTask).queryByTestId('schedule-skipped-last')).toBeNull();
   });
 });

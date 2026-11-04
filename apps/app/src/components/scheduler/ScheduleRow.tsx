@@ -10,21 +10,28 @@ import {
   FileText,
   Power,
   PowerOff,
-  Columns2
+  Columns2,
+  MessageSquareReply
 } from 'lucide-react';
 import type { ScheduledTask, ScheduleGroup } from '@zana-ai/zcc-domain/product';
+import { latestResumableRun } from '@zana-ai/zcc-domain/schedule-health';
 import { useData, useUi } from '../../store.js';
 import { useNavigate } from 'react-router-dom';
 import { groupIcon, GROUP_FALLBACK_COLOR } from '../scheduleGroupMeta.js';
 import {
   pickLiveRun,
+  skippedLastRunPill,
+  isSessionAlive as isSessionOpen,
   formatCountdown,
+  cadenceLabel,
   PROFILE_LABEL
 } from './schedulerUtils.js';
 import { openScheduledLive } from './openScheduledLive.js';
+import { resumeScheduledRun } from './resumeScheduledRun.js';
 
 interface ScheduleRowProps {
   task: ScheduledTask;
+  nowMs?: number;
   projectName: string;
   group?: ScheduleGroup | null;
   onOpen: () => void;
@@ -35,6 +42,7 @@ interface ScheduleRowProps {
 
 export const ScheduleRow = React.memo(function ScheduleRow({
   task,
+  nowMs = Date.now(),
   projectName,
   group,
   onOpen,
@@ -44,6 +52,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
 }: ScheduleRowProps) {
   const isExternal = task.external?.kind === 'claude-loop';
   const nextRun = task.status.nextRunAt ? new Date(task.status.nextRunAt) : null;
+  const skippedLabel = skippedLastRunPill(task, nowMs);
   const terminals = useData((s) => s.terminals);
   const pushToast = useUi((s) => s.pushToast);
   const navigate = useNavigate();
@@ -67,10 +76,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   };
 
   const projectTerminals = terminals[task.projectId] ?? [];
-  const isSessionAlive = (sessionId: string) =>
-    projectTerminals.some(
-      (s) => s.id === sessionId && (s.status === 'running' || s.status === 'starting')
-    );
+  const isSessionAlive = (sessionId: string) => isSessionOpen(projectTerminals, sessionId);
 
   const runs = task.status.runs ?? [];
   const lastReportRun = runs.find((r) => !!r.report) ?? null;
@@ -96,6 +102,14 @@ export const ScheduleRow = React.memo(function ScheduleRow({
     e?.stopPropagation();
     if (!liveSessionId) return;
     openScheduledLive(task.projectId, liveSessionId, navigate);
+  };
+
+  // Reopen the newest finished run's conversation. Never for Squads or /loop rows,
+  // and not while a run is still open (Open session shows instead).
+  const resumable = !isExternal && task.kind !== 'team' && !liveSessionId ? latestResumableRun(runs) : undefined;
+  const resumeLatest = (e?: ReactMouseEvent) => {
+    e?.stopPropagation();
+    void resumeScheduledRun(task, undefined, navigate);
   };
 
   const statusKind = isWorking
@@ -173,10 +187,15 @@ export const ScheduleRow = React.memo(function ScheduleRow({
           <span className="scheduler-card-compact-meta">
             {isExternal
               ? `${task.source && task.source !== 'global' ? `${projectName} · ` : ''}Claude /loop · ${task.schedule.every}`
-              : `${projectName} · ${PROFILE_LABEL[task.profile]} · every ${task.schedule.every}`}
+              : `${projectName} · ${PROFILE_LABEL[task.profile]} · ${cadenceLabel(task.schedule)}`}
           </span>
         </div>
         <div className="scheduler-card-compact-when">
+          {skippedLabel && (
+            <span className="scheduler-pill scheduler-pill--skipped scheduler-pill--skipped-last" data-testid="schedule-skipped-last" title={skippedLabel.title}>
+              {skippedLabel.text}
+            </span>
+          )}
           {isExternal ? (
             <span className="scheduler-card-compact-next scheduler-card-compact-next--muted" title="Managed by Claude Code">
               {task.schedule.every}
@@ -204,7 +223,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
               in {formatCountdown(nextRun)}
             </span>
           ) : (
-            <span className="scheduler-card-compact-next scheduler-card-compact-next--muted">paused</span>
+            <span className="scheduler-card-compact-next scheduler-card-compact-next--muted">off</span>
           )}
         </div>
         <div className="scheduler-card-actions" onClick={stop}>
@@ -227,6 +246,11 @@ export const ScheduleRow = React.memo(function ScheduleRow({
                 <Square size={14} />
               </button>
             </>
+          )}
+          {resumable && (
+            <button className="scheduler-icon-btn" onClick={resumeLatest} title="Resume latest run" aria-label="Resume latest run">
+              <MessageSquareReply size={14} />
+            </button>
           )}
           {!isExternal && !liveSessionId && (
             <button className="scheduler-icon-btn" disabled={task.status.runs.some(run => run.launchState === 'pending')} onClick={runNow} title="Run now" aria-label="Run now">
@@ -256,10 +280,12 @@ export const ScheduleRow = React.memo(function ScheduleRow({
           liveSessionId={liveSessionId}
           isFinishedOpen={isFinishedOpen}
           hasReport={!!lastReportRun}
+          canResume={!!resumable}
           onClose={() => setRowMenu(null)}
           onOpen={onOpen}
           onOpenInSplit={onOpenInSplit}
           onRunNow={() => void runNow()}
+          onResume={() => resumeLatest()}
           onOpenLive={() => openLive()}
           onStopLive={() => void stopLive()}
           onShowReport={onOpen}
@@ -279,10 +305,12 @@ function ScheduleRowMenu({
   liveSessionId,
   isFinishedOpen,
   hasReport,
+  canResume,
   onClose,
   onOpen,
   onOpenInSplit,
   onRunNow,
+  onResume,
   onOpenLive,
   onStopLive,
   onShowReport,
@@ -296,10 +324,12 @@ function ScheduleRowMenu({
   liveSessionId: string | null;
   isFinishedOpen: boolean;
   hasReport: boolean;
+  canResume: boolean;
   onClose: () => void;
   onOpen: () => void;
   onOpenInSplit: () => void;
   onRunNow: () => void;
+  onResume: () => void;
   onOpenLive: () => void;
   onStopLive: () => void;
   onShowReport: () => void;
@@ -372,6 +402,11 @@ function ScheduleRowMenu({
       ) : (
         <button role="menuitem" disabled={pending} onClick={() => { onClose(); onRunNow(); }}>
           <Play size={13} /> Run now
+        </button>
+      )}
+      {canResume && (
+        <button role="menuitem" onClick={() => { onClose(); onResume(); }}>
+          <MessageSquareReply size={13} /> Resume latest run
         </button>
       )}
       {hasReport && (

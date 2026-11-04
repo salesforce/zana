@@ -52,6 +52,22 @@ afterEach(() => {
 });
 
 describe('ThreadProviderCatalog', () => {
+  it('renders merged providers alphabetically without duplicates', () => {
+    const merged = mergeBuiltinThreadProviders([
+      { id: 'zz-plugin', displayName: 'Zeta Plugin', pluginId: 'p-zz' },
+      { id: 'aa-plugin', displayName: 'Zeta Plugin', pluginId: 'p-aa' },
+      ...catalog
+    ]);
+    render(<ThreadProviderCatalog providers={merged} />);
+    const names = screen
+      .getAllByRole('button', { name: /^Models for / })
+      .map((b) => b.getAttribute('aria-label')?.replace('Models for ', ''));
+    const sorted = [...names].sort((x, y) => x!.localeCompare(y!, 'en', { sensitivity: 'base', numeric: true }));
+    expect(names).toEqual(sorted);
+    expect(names).toHaveLength(new Set(merged.map((provider) => provider.id)).size);
+    expect(names.slice(-2)).toEqual(['Zeta Plugin', 'Zeta Plugin']);
+  });
+
   it('leads with readable names and keeps plugin details inside the disclosure', () => {
     render(<ThreadProviderCatalog providers={catalog} />);
     expect(screen.getByText('Claude Code')).toBeTruthy();

@@ -5,6 +5,7 @@ import { ReviewComment } from '../components/thread/timeline/ReviewComment.js';
 import { useIncrementalMarkdownPieces } from '../components/markdown-incremental-pieces.js';
 import { collectMarkdownLightboxItems } from '../components/thread/timeline/thread-inline-images.js';
 import { openWorkspaceFileForThread } from '../components/thread/secondary-panel/useThreadOpenFileSignal.js';
+import { usePluginAssistantOwner } from './plugin-assistant-context.js';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { listMessageDirectives, subscribePluginSlots } from './plugin-slots.js';
 import {
@@ -29,6 +30,7 @@ export function PluginMarkdownDirectives({
   openWorkspaceFile?: ((path: string) => boolean) | null;
   filePathHints?: readonly string[];
 }) {
+  const assistantOwner = usePluginAssistantOwner();
   const registrations = useSyncExternalStore(
     subscribePluginSlots,
     listMessageDirectives,
@@ -112,6 +114,9 @@ export function PluginMarkdownDirectives({
         }
         const registration = byName.get(segment.dir.name);
         if (!registration) return <code key={`dir-${index}`}>{segment.dir.source}</code>;
+        if (registration.hideInAssistant && registration.pluginId === assistantOwner) {
+          return <Fragment key={`dir-${index}`} />;
+        }
         const Component = registration.component as ComponentType<{
           pluginId: string;
           attributes: Readonly<Record<string, string>>;

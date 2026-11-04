@@ -6,6 +6,7 @@ import { createSkillSnapshotStore, SKILL_SNAPSHOT_MAX_BYTES } from './skill-snap
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const run of cleanup.splice(0).reverse()) await run(); });
+
 async function setup() {
   const dir = await mkdtemp(join(tmpdir(), 'zcc-skill-snapshot-'));
   cleanup.push(() => rm(dir, { recursive: true, force: true }));
@@ -35,6 +36,17 @@ it('keeps existing catalogs immutable, detects body/resource changes, and reuses
   await store.release(oldOwner);
   await expect(readFile(join(oldPath, 'demo', 'SKILL.md'))).rejects.toThrow();
   expect(await readFile(join(newPath, 'demo', 'SKILL.md'), 'utf8')).toContain('second');
+});
+it('captures skill references without changing the SKILL.md prompt body', async () => {
+  const { source, store } = await setup();
+  await mkdir(join(source, 'references'));
+  const sentinel = 'reference-only-sentinel';
+  await writeFile(join(source, 'references', 'details.md'), sentinel);
+  const path = codexPath(await store.capture({}));
+  const core = await readFile(join(path, 'demo', 'SKILL.md'), 'utf8');
+  const reference = await readFile(join(path, 'demo', 'references', 'details.md'), 'utf8');
+  expect(core).not.toContain(sentinel);
+  expect(reference).toBe(sentinel);
 });
 it('serializes concurrent capture and retains a shared catalog until both owners release it', async () => {
   const { store } = await setup();
@@ -77,7 +89,7 @@ it('retains dropped skills only for old sessions and removes snapshots on dispos
 
 it('bounds retained revisions and makes room when an old owner is released', async () => {
   const { source, store } = await setup();
-  const owners = Array.from({ length: 32 }, () => ({}));
+  const owners = Array.from({ length: 64 }, () => ({}));
   for (const [index, owner] of owners.entries()) {
     await writeFile(join(source, 'SKILL.md'), `revision ${index}`);
     await store.capture(owner);
@@ -113,8 +125,21 @@ it('copies main-authorized builtin symlinks and still confines their descendants
   await writeFile(join(dir, 'injected-skill-roots.json'), JSON.stringify({ directoryRoots: [], builtinSkillTargets: [await realpath(builtin)] }));
   const path = codexPath(await store.capture({}));
   expect(await readFile(join(path, 'linked-builtin', 'SKILL.md'), 'utf8')).toBe('builtin contents');
+  const automated = codexPath(await store.capture({}, { skillIds: ['zcc:built-in/linked-builtin'] }));
+  expect(await readFile(join(automated, 'linked-builtin', 'SKILL.md'), 'utf8')).toBe('builtin contents');
   await symlink(join(source, 'SKILL.md'), join(builtin, 'escape'));
   await expect(store.capture({})).rejects.toThrow('escapes');
+});
+it('skips a dangling builtin symlink while resolving an automated selection', async () => {
+  const { dir, store } = await setup();
+  const dangling = join(dir, 'missing-builtin');
+  await symlink(dangling, join(dir, 'skills-generated', 'dangling-builtin'));
+  await writeFile(join(dir, 'injected-skill-roots.json'), JSON.stringify({
+    directoryRoots: [], builtinSkillTargets: [dangling]
+  }));
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/demo'] })).resolves.toBeTruthy();
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/dangling-builtin'] }))
+    .rejects.toThrow('Unknown automated skill id');
 });
 it('drops off skills and pins manual skills to slash-only for every harness', async () => {
   const { dir, store } = await setup();
@@ -147,4 +172,35 @@ it('keeps an authored Codex policy file for manual skills', async () => {
   const path = codexPath(await store.capture({}));
   expect(await readFile(join(path, 'demo', 'agents', 'openai.yaml'), 'utf8')).toBe('interface:\n  display_name: Demo\n');
   expect(await readFile(join(path, 'demo', 'SKILL.md'), 'utf8')).toContain('disable-model-invocation: true');
+});
+
+it('cuts an automated catalog from only the requested skill ids without mutating interactive roots', async () => {
+  const { dir, store } = await setup();
+  const root = join(dir, 'skills-generated');
+  await mkdir(join(root, 'other'), { recursive: true });
+  await writeFile(join(root, 'other', 'SKILL.md'), 'other');
+  const interactive = codexPath(await store.capture({}));
+  const automated = codexPath(await store.capture({}, { skillIds: ['zcc:built-in/demo'] }));
+  const selected = codexPath(await store.capture({}, { skillIds: ['zcc:built-in/other', 'zcc:built-in/demo'] }));
+  const reordered = codexPath(await store.capture({}, { skillIds: ['zcc:built-in/demo', 'zcc:built-in/other'] }));
+  const empty = await store.capture({}, { skillIds: [] });
+  expect((await readdir(interactive)).sort()).toEqual(['demo', 'other']);
+  expect(await readdir(automated)).toEqual(['demo']);
+  expect((await readdir(selected)).sort()).toEqual(['demo', 'other']);
+  expect(reordered).toBe(selected);
+  expect(empty.filter(root => root.id.startsWith('injected-'))).toEqual([]);
+  expect((await readdir(root)).sort()).toEqual(['demo', 'other']);
+});
+
+it('rejects unknown, ambiguous, and disabled automated skill ids', async () => {
+  const { dir, store } = await setup();
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/missing'] })).rejects.toThrow('Unknown automated skill id');
+  const duplicate = join(dir, 'duplicate', 'demo');
+  await mkdir(duplicate, { recursive: true });
+  await writeFile(join(duplicate, 'SKILL.md'), 'demo');
+  await writeFile(join(dir, 'injected-skill-roots.json'), JSON.stringify({ directoryRoots: [join(dir, 'duplicate')] }));
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/demo'] })).rejects.toThrow('Ambiguous automated skill id');
+  await rm(join(dir, 'injected-skill-roots.json'));
+  await writeFile(join(dir, 'skill-policy.json'), JSON.stringify({ version: 1, skills: { demo: 'off' } }));
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/demo'] })).rejects.toThrow('disabled');
 });

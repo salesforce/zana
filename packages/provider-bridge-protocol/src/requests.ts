@@ -44,7 +44,17 @@ export const bridgeRequestMethodValues = Object.values(
   BRIDGE_REQUEST_METHODS,
 ) as readonly BridgeRequestMethod[];
 
+/**
+ * Whether a session is a human-driven (`interactive`) or non-interactive worker
+ * (`automated`) session. Bridges that cannot prove automated isolation reject
+ * the automated session before starting a provider process. Absent or unknown
+ * values parse as absent (interactive).
+ */
+export const sessionKindSchema = z.enum(["interactive", "automated"]);
+
 const sessionConstructionFields = {
+  sessionKind: sessionKindSchema.optional().catch(undefined),
+  providerId: z.string().min(1).optional(),
   threadId: z.string().min(1),
   cwd: z.string().min(1),
   options: bridgeExecutionOptionsSchema,
@@ -68,6 +78,12 @@ export const threadResumeParamsSchema = z
   .object({
     ...sessionConstructionFields,
     providerThreadId: z.string().min(1),
+    /**
+     * Strict resume. The bridge must restore the provider's own session
+     * history or fail: no fresh-session fallback, no "continuing fresh"
+     * warning. Requires a bridge that natively loads sessions.
+     */
+    requireNativeLoad: z.literal(true).optional(),
   })
   .passthrough();
 
@@ -195,6 +211,11 @@ export const threadIdentityResultSchema = z
     providerThreadId: z.string().min(1),
     /** Refines the handshake's `sessionRestore` for this session. */
     sessionRestorable: z.boolean().optional(),
+    /**
+     * thread/resume with requireNativeLoad: true when the provider session was
+     * natively reloaded. Absent means false.
+     */
+    nativeLoaded: z.boolean().optional(),
   })
   .passthrough();
 

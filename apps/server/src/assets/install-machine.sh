@@ -109,6 +109,9 @@ step=prepare
 trap 'rc=$?; [ "$rc" -eq 0 ] || printf "zcc-install: failed step=%s rc=%s\n" "$step" "$rc" >&2' EXIT
 
 data_dir=${ZCC_DATA_DIR:-"$HOME/.zcc-machines/$server_host"}
+# Installation state is isolated; the local app's registered projects live separately.
+ZCC_PROJECT_CATALOGUE_DATA_DIR=${ZCC_PROJECT_CATALOGUE_DATA_DIR:-"$HOME/.zcc"}
+export ZCC_PROJECT_CATALOGUE_DATA_DIR
 mkdir -p "$data_dir"
 chmod 700 "$data_dir"
 # Never erase another identity to make enrollment succeed.
@@ -329,6 +332,8 @@ if [ "$uname_s" = Darwin ]; then
   <dict>
     <key>ZCC_DATA_DIR</key>
     <string>$data_dir</string>
+    <key>ZCC_PROJECT_CATALOGUE_DATA_DIR</key>
+    <string>$ZCC_PROJECT_CATALOGUE_DATA_DIR</string>
     <key>ZCC_HOST_SERVICE_MANAGED</key>
     <string>1</string>
     <key>ZCC_SERVER_URL</key>
@@ -358,6 +363,7 @@ After=network-online.target
 [Service]
 ExecStart=$NODE_BIN $join_bin join --host-id $host_id --server-url $server_url --host-daemon-port $port --auto-update
 Environment=ZCC_DATA_DIR=$data_dir
+Environment=ZCC_PROJECT_CATALOGUE_DATA_DIR=$ZCC_PROJECT_CATALOGUE_DATA_DIR
 Environment=ZCC_SERVER_URL=$server_url
 Environment=ZCC_HOST_SERVICE_MANAGED=1
 Restart=always

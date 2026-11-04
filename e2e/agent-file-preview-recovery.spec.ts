@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
@@ -91,7 +92,7 @@ for (const scenario of ['background', 'split-pane', 'recover-read-error', 'refre
         await expect(window.getByRole('heading', { name: 'Second report', exact: true })).toBeVisible({ timeout: 5000 });
         await expect(window.getByRole('heading', { name: 'First report', exact: true })).toHaveCount(0);
         // A native window.open event must create a tab only in its source pane.
-        await window.getByTestId('thread-secondary-new-tab').first().click();
+        await openThreadToolLauncher(window);
         await window.getByTestId('thread-new-tab-browser').click();
         await expect(window.getByTestId('thread-browser-address')).toHaveCount(1);
         const nativeWindow = await app.electron.browserWindow(window);

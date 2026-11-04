@@ -23,7 +23,7 @@ test('Import from Git explains access failures, keeps Git diagnostics, and allow
   const win = app.window;
   let git: GitDaemon | undefined;
   try {
-    await win.getByRole('button', { name: 'Add project', exact: true }).click();
+    await win.getByRole('button', { name: 'Add machine or project', exact: true }).click();
     await win.getByRole('button', { name: 'Clone from Git', exact: true }).click();
     const dialog = win.getByRole('dialog', { name: 'Import from Git', exact: true });
     await dialog.getByRole('textbox', { name: 'Repository URL' }).fill(url);
@@ -106,7 +106,7 @@ test('Import from Git clones locally when two machines are connected', async ({ 
 
     git = await startGitDaemon(join(home, 'git-server'), [{ repoName: 'import-regression',
       files: { 'README.md': 'Cloned on the primary machine.\n' } }]);
-    await win.getByRole('button', { name: 'Add project', exact: true }).click();
+    await win.getByRole('button', { name: 'Add machine or project', exact: true }).click();
     await win.getByRole('button', { name: 'Clone from Git', exact: true }).click();
     const dialog = win.getByRole('dialog', { name: 'Import from Git', exact: true });
     await dialog.getByRole('textbox', { name: 'Repository URL' }).fill(git.urlFor('import-regression'));
@@ -122,7 +122,7 @@ test('Import from Git clones locally when two machines are connected', async ({ 
     expect(existsSync(join(remoteHome, 'zcc-workspace', 'import-regression'))).toBe(false);
 
     // The same flow still gives the actionable destination-exists hint.
-    await win.getByRole('button', { name: 'Add project', exact: true }).click();
+    await win.getByRole('button', { name: 'Add machine or project', exact: true }).click();
     await win.getByRole('button', { name: 'Clone from Git', exact: true }).click();
     await dialog.getByRole('textbox', { name: 'Repository URL' }).fill(git.urlFor('import-regression'));
     await dialog.getByRole('button', { name: 'Clone & add', exact: true }).click();

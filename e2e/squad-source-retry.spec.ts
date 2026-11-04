@@ -55,9 +55,9 @@ async function openComposer(window: import('@playwright/test').Page, projectName
   const teamPicker = modal.getByLabel('Squad', { exact: true });
   await teamPicker.click();
   await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'E2E Job Team' }).click();
-  const projectPicker = modal.getByRole('button', { name: 'Project', exact: true });
+  const projectPicker = modal.getByRole('button', { name: 'Machine and project', exact: true });
   await projectPicker.click();
-  await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
+  await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: projectName, exact: false }).click();
   await expect(projectPicker).toContainText(projectName);
   await modal.getByLabel('Squad planning').click();
   await window.getByRole('option', { name: 'Infer plan from goal', exact: true }).click();

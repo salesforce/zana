@@ -2,6 +2,7 @@ import { getAgentSessionRoutePath, getThreadRoutePath } from './route-paths.js';
 import { keepsProjectFocusRail } from './shellLayout.js';
 import { getScopedProjectId } from './windowScope.js';
 import { useData, useUi } from '../store.js';
+import { isCompactViewport } from '../hooks/useIsCompactViewport.js';
 
 export type InspectNavigate = (to: string) => void;
 
@@ -41,15 +42,16 @@ export function inspectAgentSession(
 }
 
 /**
- * Open a conversation thread: first-class thread page when Classic session view
- * is on; inspector overlay otherwise.
+ * Open a conversation thread in the main view for desktop tabs or Classic
+ * session view; use the inspector otherwise.
  */
 export function inspectThread(
   threadId: string,
   projectId: string | null | undefined,
   navigate: InspectNavigate
 ): void {
-  if (useData.getState().classicSessionViewEnabled) {
+  const { classicSessionViewEnabled, threadTabsEnabled } = useData.getState();
+  if (classicSessionViewEnabled || (threadTabsEnabled && !isCompactViewport())) {
     navigate(getThreadRoutePath(threadId, inspectRouteProjectId(projectId)));
     return;
   }

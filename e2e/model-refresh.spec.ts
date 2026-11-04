@@ -50,8 +50,8 @@ test('Automatic retry, Settings, command palette and picker reload recover proje
     else await win.getByTestId('agents-board-new-thread').first().click();
     const modal = win.getByTestId('launch-modal');
     await modal.getByRole('button', { name: 'CLI Agent', exact: true }).click();
-    await modal.getByRole('button', { name: 'Project', exact: true }).click();
-    await win.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: 'model-recovery', exact: true }).click();
+    await modal.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await win.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: 'model-recovery', exact: false }).click();
     return modal;
   };
   try {

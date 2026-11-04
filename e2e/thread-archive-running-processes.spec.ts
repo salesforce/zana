@@ -5,7 +5,8 @@ import { test, expect } from './fixtures/app.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
 
-test('archiving a thread with a running background process warns, then settles it', async ({ app }) => {
+for (const entry of ['overflow', 'tab menu'] as const) {
+test(`archiving from ${entry} with a running background process warns, then settles it`, async ({ app }) => {
   test.setTimeout(120_000);
   const { window, home } = app;
   const id = await window.evaluate(async () => {
@@ -50,7 +51,8 @@ test('archiving a thread with a running background process warns, then settles i
     prompts.push(dialog.message());
     void dialog.accept();
   });
-  await window.getByTestId('thread-overflow-trigger').click();
+  if (entry === 'overflow') await window.getByTestId('thread-overflow-trigger').click();
+  else await window.getByTestId('titlebar-thread-tabs').getByRole('tab').click({ button: 'right' });
   await window.getByRole('menuitem', { name: 'Archive' }).click();
   await expect.poll(() => prompts.length).toBe(1);
   expect(prompts[0]).toContain('This agent still has a background process running, like a dev server. Ending its session stops it.');
@@ -58,4 +60,11 @@ test('archiving a thread with a running background process warns, then settles i
   // Archive ends the session, so the archived thread must stop reporting the shell as running.
   await expect.poll(async () => Boolean((await thread()).archivedAt)).toBe(true);
   await expect.poll(async () => (await thread()).activity?.activeBackgroundCommandCount).toBe(0);
+  if (entry === 'tab menu') {
+    await expect(window.getByTestId('titlebar-thread-tabs').getByRole('tab')).toHaveCount(0);
+    await expect(window).toHaveURL(/\/agents$/);
+    await window.getByTestId('titlebar-thread-tabs').getByLabel('All open threads').click();
+    await expect(window.getByRole('button', { name: 'Reopen closed tab', exact: true })).toHaveCount(0);
+  }
 });
+}

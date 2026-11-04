@@ -139,6 +139,47 @@ describe('CloseSummaryService.summarizeOne', () => {
     expect(arg.comments).not.toContain('Closed');
   });
 
+  it('writes a body without the Unfinished / Asks the user sentinel lines', async () => {
+    const deps = makeDeps({
+      runSessionSummary: vi.fn(async () =>
+        okResult('**Goal** — do it\n\n**Left / next**\n- review\n\nUnfinished: yes\n\nAsks the user: no  \n')
+      )
+    });
+    await new CloseSummaryService(deps).summarizeOne('p1', 's1');
+    const arg = (deps.appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(arg.comments).toContain('- review');
+    expect(arg.comments).not.toMatch(/Unfinished|Asks the user/);
+  });
+
+  it('ends an over-long reply at a line boundary with an ellipsis', async () => {
+    const long = Array.from({ length: 200 }, (_, i) => `- bullet number ${i} of the long list`).join('\n');
+    const deps = makeDeps({ runSessionSummary: vi.fn(async () => okResult(long)) });
+    await new CloseSummaryService(deps).summarizeOne('p1', 's1');
+    const arg = (deps.appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(arg.comments.endsWith('\n…')).toBe(true);
+    const lines = arg.comments.split('\n');
+    expect(lines[lines.length - 2]).toMatch(/^- bullet number \d+ of the long list$/);
+  });
+
+  it('reports summary-failed when the reply is only sentinel lines', async () => {
+    const deps = makeDeps({
+      runSessionSummary: vi.fn(async () => okResult('Unfinished: no\nAsks the user: no'))
+    });
+    expect(await new CloseSummaryService(deps).summarizeOne('p1', 's1')).toEqual({
+      ok: false,
+      reason: 'summary-failed'
+    });
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+  });
+
+  it('cleans a slash-command title in the heading', async () => {
+    const deps = makeDeps({ getSession: () => session({ title: '<command-message>pfd-dq-validate</command-message> <command-name>/pfd-dq-validate</command-name> <command-args>Rules: x</command-args>' }) });
+    await new CloseSummaryService(deps).summarizeOne('p1', 's1');
+    const arg = (deps.appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(arg.comments).toContain('### /pfd-dq-validate Rules: x\n');
+    expect(arg.comments).not.toContain('<command');
+  });
+
   it('rejects a foreign/gone/non-claude session as ineligible (no read, no write)', async () => {
     const foreign = makeDeps({ getSession: () => session({ projectId: 'other' }) });
     expect(await new CloseSummaryService(foreign).summarizeOne('p1', 's1')).toEqual({
@@ -466,6 +507,27 @@ describe('CloseSummaryService.summarizeAndFollowUp', () => {
     expect(arg.sessionId).toBeUndefined();
     // A follow-up per agent that left work (both did, in the default deps).
     expect(deps.createFollowUp).toHaveBeenCalledTimes(2);
+  });
+
+  it('cleans a slash-command title in the bulk digest heading and the follow-up title', async () => {
+    const deps = makeDeps({ getSession: () => session({ title: '<command-message>pfd-dq-validate</command-message> <command-name>/pfd-dq-validate</command-name> <command-args>Rules: x</command-args>' }) });
+    await new CloseSummaryService(deps).summarizeAndFollowUp('p1', ['a']);
+    const arg = (deps.appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(arg.comments).toContain('### /pfd-dq-validate Rules: x');
+    expect(arg.comments).not.toContain('<command');
+    expect(deps.createFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Follow up: /pfd-dq-validate Rules: x' })
+    );
+  });
+
+  it('shows a dash for an empty Did in the digest and the follow-up detail', async () => {
+    const deps = makeDeps({ runSummary: vi.fn(async () => okResult('{"did":"","left":"Tests failing"}')) });
+    await new CloseSummaryService(deps).summarizeAndFollowUp('p1', ['a']);
+    const arg = (deps.appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(arg.comments).toContain('**Did:** —');
+    expect(deps.createFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: expect.stringContaining('**Did:** —') })
+    );
   });
 
   it('writes the digest but NO follow-up when every agent finished (left empty)', async () => {

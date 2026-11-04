@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
+import { repairPluginSource } from './plugin-source-repair.js';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { listMcpServersAll, revealMcpServer, setMcpServerEnabledById } from '@zana-ai/zcc-server/services/mcp/mcp-catalogue';
@@ -7,11 +8,14 @@ import { listMcpServers, setMcpServerEnabled } from '@zana-ai/zcc-server/service
 import { listPlugins, revealPlugin, setPluginEnabled } from '@zana-ai/zcc-server/services/extensions/plugins';
 import { wantsSecretsOmitted, withoutSecretValues } from '@zana-ai/zcc-server/plugins/plugin-settings-redaction';
 import type { Result } from '@zana-ai/zcc-domain/product';
+import { classifyExpectedRpcError, toRpcErrorEnvelope } from '@zana-ai/zcc-contracts/rpc-error';
+import { registerPluginPacksIpc } from './plugin-packs.js';
 import {
   listPluginAppsFromProductServer,
   setPluginAppEnabledOnProductServer,
   checkPluginUpdatesFromProductServer,
   applyPluginUpdateOnProductServer,
+  applyAllPluginUpdatesOnProductServer,
   removePluginAppOnProductServer,
   reloadPluginAppOnProductServer,
   callPluginRpcOnProductServer,
@@ -20,6 +24,11 @@ import {
 } from './plugin-apps-loopback.js';
 
 export function registerPluginsIpc(): void {
+  registerPluginPacksIpc();
+  ctx.safeHandle(IPC.pluginApps.repair,
+    (id: unknown, action: unknown) => repairPluginSource(ctx.runtimeSupervisor, id, action, BrowserWindow.getFocusedWindow() ?? ctx.mainWindow()),
+    (error): Result<true> => ({ ok: false, code: 'REPAIR_FAILED', message: error instanceof Error ? error.message : String(error) })
+  );
   
   ctx.safeHandle(
     IPC.mcp.list,
@@ -129,7 +138,16 @@ export function registerPluginsIpc(): void {
       if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.outdatedPlugins();
       return checkPluginUpdatesFromProductServer();
     },
-    () => []
+    (error) => { throw error; }
+  );
+  ctx.safeHandle(
+    IPC.pluginApps.applyAllUpdates,
+    async () => {
+      if (!ctx.runtimeSupervisor) return applyAllPluginUpdatesOnProductServer();
+      try { return { ok: true, value: await ctx.runtimeSupervisor.updateAllPlugins() }; }
+      catch (error) { return { ok: false, code: 'WRITE_FAILED', message: error instanceof Error ? error.message : String(error) }; }
+    },
+    (error) => ({ ok: false, code: 'WRITE_FAILED', message: error instanceof Error ? error.message : String(error) })
   );
   ctx.safeHandle(
     IPC.pluginApps.applyUpdate,
@@ -213,8 +231,16 @@ export function registerPluginsIpc(): void {
   ctx.safeHandle(
     IPC.pluginApps.callRpc,
     async (pluginId: string, method: string, args?: unknown) => {
-      if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
-      return callPluginRpcOnProductServer(pluginId, method, args);
+      try {
+        if (ctx.runtimeSupervisor) return await ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
+        return await callPluginRpcOnProductServer(pluginId, method, args);
+      } catch (err) {
+        // Expected domain errors (validation guards etc.) resolve as an envelope so ipcMain does not
+        // log them as main-process failures; preload turns the envelope back into a clean rejection.
+        const expected = classifyExpectedRpcError(err);
+        if (expected) return toRpcErrorEnvelope(expected);
+        throw err;
+      }
     },
     (err) => {
       throw err;

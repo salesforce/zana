@@ -257,7 +257,11 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   );
   const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
   const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(team?.worktreeIsolation);
+  const [worktreeOnComplete, setWorktreeOnComplete] = useState<'merge' | 'delete' | undefined>(
+    team?.worktreeOnComplete === 'merge' || team?.worktreeOnComplete === 'delete' ? team.worktreeOnComplete : undefined
+  );
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
+  const [retainOrchestrator, setRetainOrchestrator] = useState(team?.retainOrchestrator === true);
   const [transport, setTransport] = useState<SquadTransport>(team?.transport ?? 'CLI');
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(team?.defaultPlanning ?? '');
   const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(team?.launchApproval ?? '');
@@ -344,10 +348,13 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       initialPrompt: initialPrompt.trim() || undefined,
       defaultProjectId: defaultProjectId || undefined,
       worktreeIsolation,
+      worktreeOnComplete,
       routingEnforced,
+      retainOrchestrator,
       transport,
       ...(defaultPlanning ? { defaultPlanning } : {}),
-      ...(launchApproval ? { launchApproval } : {})
+      ...(launchApproval ? { launchApproval } : {}),
+      ...(keepsId && team?.isDefault ? { isDefault: true } : {})
     };
     if (keepsId && team) input.id = team.id;
 
@@ -620,6 +627,27 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
         </div>
 
         <div className="scheduler-form-field">
+          <label htmlFor="team-worktree-on-complete">When a run finishes</label>
+          <PopoverPicklist
+            id="team-worktree-on-complete"
+            ariaLabel="Squad worktree on completion"
+            searchable={false}
+            value={worktreeOnComplete ?? 'inherit'}
+            onChange={(next) => setWorktreeOnComplete(next === 'merge' || next === 'delete' ? next : undefined)}
+            options={[
+              { value: 'inherit', label: 'Keep worktree (default)' },
+              { value: 'merge', label: 'Merge everything into base branch, then remove' },
+              { value: 'delete', label: 'Delete worktree and branch' }
+            ]}
+          />
+          <p className="settings-help">
+            Only applies when the run used a shared Squad worktree. Delete removes the worktree
+            and its branch even with uncommitted or unmerged work, and cannot be undone. Merge
+            and Delete only apply to completed runs; failed or stopped runs always keep the worktree.
+          </p>
+        </div>
+
+        <div className="scheduler-form-field">
           <label htmlFor="team-routing-enforced">Squad routing</label>
           <PopoverPicklist
             id="team-routing-enforced"
@@ -636,6 +664,20 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
           <p className="settings-help">
             Use default follows the global setting; On tier-routes work when supported; Off falls
             back. Manual assignments are not checked.
+          </p>
+        </div>
+
+        <div className="scheduler-form-field">
+          <label className="scheduler-checkbox-row">
+            <input
+              type="checkbox"
+              checked={retainOrchestrator}
+              onChange={(event) => setRetainOrchestrator(event.target.checked)}
+            />
+            Keep orchestrator running after completion
+          </label>
+          <p className="settings-help">
+            Keeps the orchestrator open after a successful run. Workers still close; stopping or failing the run closes all agents.
           </p>
         </div>
 

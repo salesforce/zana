@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Copy, HardDrive, Loader2, X } from 'lucide-react';
 import { copyText } from '../lib/copy-text.js';
-import { retryLastHostInstall } from '../lib/host-install-run.js';
+import { lastHostInstallRepairTarget, retryLastHostInstall } from '../lib/host-install-run.js';
+import { HostRepairAgentAction } from './HostRepairAgentAction.js';
+import type { ReactNode } from 'react';
 import { HostInstallStages } from './HostInstallStages.js';
 import {
   HOST_INSTALL_SUCCESS_CLOSE_MS,
@@ -28,13 +30,15 @@ export function HostInstallDrawerView({
   onClose,
   onCopyPairing,
   onRetry,
-  onLogOpenChange
+  onLogOpenChange,
+  repairAction
 }: Pick<HostInstallDrawerState, 'busy' | 'kind' | 'target' | 'logs' | 'error' | 'pairingCommand'> & {
   stages?: HostInstallDrawerState['stages'];
   onClose: () => void;
   onCopyPairing?: () => void;
   onRetry?: () => void;
   onLogOpenChange?: (open: boolean) => void;
+  repairAction?: ReactNode;
 }) {
   const hasStages = stages.length > 0;
   const [logOpen, setLogOpen] = useState<boolean | null>(null);
@@ -111,6 +115,7 @@ export function HostInstallDrawerView({
             {logs.join('\n')}
           </pre>
         ) : null}
+        {!busy && error ? repairAction : null}
       </div>
 
       {pairingCommand && onCopyPairing ? (
@@ -131,6 +136,7 @@ export function HostInstallDrawerView({
 export function HostInstallDrawer() {
   const state = useUi((s) => s.hostInstallDrawer);
   const setOpen = useUi((s) => s.setHostInstallDrawerOpen);
+  const repairTarget = lastHostInstallRepairTarget(state.target);
   const closeAfterSuccessRef = useRef(false);
   // A user reading the log keeps the panel; success must not yank it away.
   const logOpenRef = useRef(false);
@@ -163,6 +169,7 @@ export function HostInstallDrawer() {
       logs={state.logs}
       stages={state.stages}
       error={state.error}
+      repairAction={repairTarget ? <HostRepairAgentAction state={state} target={repairTarget} /> : undefined}
       pairingCommand={state.pairingCommand}
       onClose={() => setOpen(false)}
       onRetry={() => void retryLastHostInstall().catch(() => {})}

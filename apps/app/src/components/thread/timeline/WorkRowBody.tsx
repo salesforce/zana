@@ -68,6 +68,7 @@ function TerminalOutput({
       {output ? (
         <pre
           className="thread-timeline-work-body thread-ansi-output"
+          data-thread-search-content=""
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : null}
@@ -111,7 +112,7 @@ function ToolCallDetail({
     >
       <div className="thread-terminal-meta">{toolName}</div>
       {serialized ? <pre className="thread-timeline-work-body">{serialized}</pre> : null}
-      {output ? <pre className="thread-timeline-work-body">{stripAnsi(output)}</pre> : null}
+      {output ? <pre className="thread-timeline-work-body" data-thread-search-content="">{stripAnsi(output)}</pre> : null}
       {previewTotalChars != null ? (
         <div className="thread-output-preview-meta">
           Showing preview of {previewTotalChars.toLocaleString()} characters

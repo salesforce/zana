@@ -165,6 +165,7 @@ export function registerInboxIpc(): void {
       topSessions: []
     })
   );
+  ctx.safeHandle(IPC.usage.getMemoCounters, () => ctx.memoCounters(), () => ({}));
   ctx.inboxStore.onAppended((entry: InboxEntry) => {
     ctx.safeSend(IPC.inbox.onAppended, entry);
   });

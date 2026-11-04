@@ -355,10 +355,11 @@ function parseExecutionClass(value: string | undefined, id: string): { ok: true;
   const raw = stripSentencePeriod((value ?? '').split('\n')[0]);
   const executionClass = raw.toLowerCase();
   if (!executionClass) return { ok: true };
-  if (!Object.hasOwn(EXECUTION_CLASS_LEVEL, executionClass)) {
+  const builtinWorkerLevel = /^builtin:squad-worker-(low|medium|high)$/.exec(executionClass)?.[1] as 'low' | 'medium' | 'high' | undefined;
+  if (!Object.hasOwn(EXECUTION_CLASS_LEVEL, executionClass) && !builtinWorkerLevel) {
     return { ok: false, reason: `step ${id}: could not pin minimumLevel for execution class "${raw}" (expected Routine, Standard, or Expert)` };
   }
-  return { ok: true, minimumLevel: EXECUTION_CLASS_LEVEL[executionClass] };
+  return { ok: true, minimumLevel: builtinWorkerLevel ?? EXECUTION_CLASS_LEVEL[executionClass] };
 }
 
 /** Map one executable-step block onto a work unit, or explain why it is invalid. */

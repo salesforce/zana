@@ -12,15 +12,15 @@ afterEach(() => {
 
 describe("getGenericAcpProviderHealth", () => {
   it("returns a noop when the launch command is missing", async () => {
-    expect(await getGenericAcpProviderHealth(null)).toEqual({ supported: false });
-    expect(await getGenericAcpProviderHealth("   ")).toEqual({ supported: false });
+    expect(await getGenericAcpProviderHealth({ command: null })).toEqual({ supported: false });
+    expect(await getGenericAcpProviderHealth({ command: "   " })).toEqual({ supported: false });
   });
 
   it("reports not_installed when the command is absent from PATH", async () => {
     const previous = process.env.PATH;
     process.env.PATH = "/usr/bin:/bin";
     try {
-      expect(await getGenericAcpProviderHealth("zcc-missing-opencode-cli")).toMatchObject({
+      expect(await getGenericAcpProviderHealth({ command: "zcc-missing-opencode-cli" })).toMatchObject({
         supported: true,
         health: { status: "not_installed" },
       });
@@ -37,7 +37,7 @@ describe("getGenericAcpProviderHealth", () => {
     const previous = process.env.PATH;
     process.env.PATH = `${binDir}:/usr/bin:/bin`;
     try {
-      expect(await getGenericAcpProviderHealth("opencode")).toMatchObject({
+      expect(await getGenericAcpProviderHealth({ command: "opencode" })).toMatchObject({
         supported: true,
         health: { status: "ready", installedVersion: "1.2.3" },
       });
@@ -46,15 +46,14 @@ describe("getGenericAcpProviderHealth", () => {
     }
   });
 
-  it("treats a which miss as installed when --version still runs", async () => {
-    expect(
-      await getGenericAcpProviderHealth("opencode", {
-        resolveExecutablePath: async () => null,
-        readCliVersion: async () => "1.2.3",
-      }),
-    ).toMatchObject({
+  it("rejects a broken wrapper even when the executable exists", async () => {
+    mkdirSync(binDir, { recursive: true });
+    const binary = join(binDir, "broken-wrapper");
+    writeFileSync(binary, "#!/bin/sh\necho 'wrapper target is missing' >&2\nexit 127\n");
+    chmodSync(binary, 0o755);
+    expect(await getGenericAcpProviderHealth({ command: binary })).toMatchObject({
       supported: true,
-      health: { status: "ready", installedVersion: "1.2.3" },
+      health: { status: "unknown", statusMessage: expect.stringContaining("wrapper target is missing") },
     });
   });
 });

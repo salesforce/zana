@@ -1,5 +1,5 @@
 import { assertDesktopPresentation } from './interaction-surface.js';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import {
   threadOpenSignalSchema,
   type PanelFileSource,
@@ -11,6 +11,7 @@ import { isSafeRelPath } from '../../http/library-via-host.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { threadStorageRoot } from './thread-storage.js';
 import { confinePathToRoot } from './thread-path-confine.js';
+import { threadLocalPreviewRoots } from './thread-preview-roots.js';
 
 export class PreviewFileError extends Error {
   constructor(
@@ -83,9 +84,9 @@ function confineCandidate(
 
 /**
  * Confine a workspace or thread-storage path and broadcast `threads:open` so the
- * visible side panel opens a file-preview tab. Conversation threads confine
- * against the environment checkout; unknown ids (PTY session panel owners) fall
- * back to the registered project path when `projectId` is supplied.
+ * visible side panel opens a file-preview tab. Server-owned local previews keep
+ * their absolute path so the reader can select the matching root. Other files
+ * use the environment checkout, or the registered project for PTY panel owners.
  */
 export function openThreadFilePreview(deps: PreviewFileDeps, input: PreviewFileInput): PreviewFileResult {
   deps.assertPresentation?.(input.threadId);
@@ -98,7 +99,19 @@ export function openThreadFilePreview(deps: PreviewFileDeps, input: PreviewFileI
     throw new PreviewFileError(404, 'unknown-project', 'project is not registered');
   }
 
-  const confined = input.source === 'thread-storage'
+  let localPath: string | null = null;
+  if (input.source === 'workspace' && isAbsolute(input.path)) {
+    for (const root of threadLocalPreviewRoots(deps.dataDir, thread?.projectId)) {
+      const relPath = confinePathToRoot(root, input.path);
+      if (relPath && isSafeRelPath(relPath)) {
+        // Actual reads enforce realpath containment and byte caps separately.
+        localPath = join(root, relPath);
+        break;
+      }
+    }
+  }
+
+  const confined = localPath ?? (input.source === 'thread-storage'
     ? confineCandidate(
       threadStorageRoot(deps.dataDir, input.threadId),
       input.path,
@@ -114,7 +127,7 @@ export function openThreadFilePreview(deps: PreviewFileDeps, input: PreviewFileI
       thread ? 'environment_not_ready' : 'cwd-escape',
       thread ? 'environment is not provisioned' : 'project path is not a confined directory',
       'path is not inside the thread workspace'
-    );
+    ));
 
   const lineNumber = typeof input.lineNumber === 'number' && input.lineNumber > 0
     ? input.lineNumber

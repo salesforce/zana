@@ -202,15 +202,26 @@ export function commitBrowserUrl(next: string, apply: (url: string) => void): st
   return url;
 }
 
+type ColumnResizeEvent = 'mousemove' | 'mouseup' | 'blur';
+type ColumnResizeListener = (ev: { clientX: number; buttons?: number }) => void;
+
+/**
+ * A release over an embedded frame (the Studio editor) or outside the window never
+ * reaches `mouseup`, so a move with no button held, or a window blur, also ends the drag.
+ */
 export function attachColumnResize(opts: {
   getBox: () => { right: number; width: number } | undefined;
   onResize: (widthPx: number, containerWidthPx: number) => void;
   addBodyClass: (name: string) => void;
   removeBodyClass: (name: string) => void;
-  on: (type: 'mousemove' | 'mouseup', fn: (ev: { clientX: number }) => void) => void;
-  off: (type: 'mousemove' | 'mouseup', fn: (ev: { clientX: number }) => void) => void;
+  on: (type: ColumnResizeEvent, fn: ColumnResizeListener) => void;
+  off: (type: ColumnResizeEvent, fn: ColumnResizeListener) => void;
 }): void {
-  const onMove = (ev: { clientX: number }) => {
+  const onMove: ColumnResizeListener = (ev) => {
+    if (ev.buttons === 0) {
+      onUp();
+      return;
+    }
     const box = opts.getBox();
     if (!box) return;
     const next = widthFromPointer(ev.clientX, box);
@@ -219,11 +230,13 @@ export function attachColumnResize(opts: {
   const onUp = () => {
     opts.off('mousemove', onMove);
     opts.off('mouseup', onUp);
+    opts.off('blur', onUp);
     opts.removeBodyClass('resizing-col');
   };
   opts.addBodyClass('resizing-col');
   opts.on('mousemove', onMove);
   opts.on('mouseup', onUp);
+  opts.on('blur', onUp);
 }
 
 export function shouldClearThreadPanelTerminal(
@@ -254,8 +267,8 @@ export function startColumnResize(
   onResize: (widthPx: number, containerWidthPx: number) => void,
   addBodyClass: (name: string) => void,
   removeBodyClass: (name: string) => void,
-  on: (type: 'mousemove' | 'mouseup', fn: (ev: { clientX: number }) => void) => void,
-  off: (type: 'mousemove' | 'mouseup', fn: (ev: { clientX: number }) => void) => void
+  on: (type: ColumnResizeEvent, fn: ColumnResizeListener) => void,
+  off: (type: ColumnResizeEvent, fn: ColumnResizeListener) => void
 ): void {
   event.preventDefault();
   const parent = getParent();
@@ -281,7 +294,7 @@ export function createSecondaryPanelCommands(
     addTab: (tab: Omit<ClosableSecondaryTab, 'id'> & { id?: string }) => (
       update((current) => addClosableTab(current, tab))
     ),
-    openAgentDraft: (input: { title: string; draft: string; projectId?: string; view?: string }) => update((current) => openAgentDraft(current, input)),
+    openAgentDraft: (input: Parameters<typeof openAgentDraft>[1]) => update((current) => openAgentDraft(current, input)),
     openPluginTool: (input: Parameters<typeof openPluginTool>[1]) => update((current) => openPluginTool(current, input)),
     closeTab: (tabId: string) => update((current) => closeClosableTab(current, tabId)),
     activateTab: (tabId: string) => update((current) => activateClosableTab(current, tabId)),

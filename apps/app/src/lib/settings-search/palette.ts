@@ -30,6 +30,8 @@ export function settingsPaletteItems(
   snapshot: SettingsValueSnapshot,
   options: {
     limit: number;
+    /** Sections whose pages are hidden right now (Settings gating). */
+    hiddenSections?: ReadonlySet<string>;
     projectId?: string | null;
     navigate: (path: string) => void;
     /** Store setter for the pending reveal target (same contract as the Settings rail). */
@@ -38,7 +40,7 @@ export function settingsPaletteItems(
 ): PaletteItem[] {
   if (!query.trim()) return [];
   ensureSettingsSearchProviders();
-  return searchSettings(query, snapshot, { limit: options.limit }).map((hit) => ({
+  return searchSettings(query, snapshot, { limit: options.limit, hiddenSections: options.hiddenSections }).map((hit) => ({
     key: `settings:${hit.entry.id}`,
     icon: createElement(Settings, { size: 14 }),
     label: hit.entry.label,

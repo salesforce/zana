@@ -1,4 +1,4 @@
-import { getEnvironment, getPrimaryHost, listHosts } from '@zana-ai/zcc-db';
+import { getEnvironment, getPrimaryHost, listExecutionHosts } from '@zana-ai/zcc-db';
 import { projectSources } from '@zana-ai/zcc-domain/project';
 import { CliDiscoveryRequestSchema, CliDiscoveryResultSchema, type CliDiscoveryRequest, type CliDiscoveryResult } from '@zana-ai/zcc-contracts/cli-discovery';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -21,7 +21,7 @@ async function location(ctx: ProductHttpContext, request: CliDiscoveryRequest) {
     const root = await resolveHarnessWorkspacePath({
       project, remoteToolProxy: false,
       remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
-      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost),
       probeHostHome: async () => {
         const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
           hostId, command: { type: 'host.browse_directory' }

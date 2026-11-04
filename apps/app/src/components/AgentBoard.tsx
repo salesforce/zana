@@ -20,6 +20,8 @@ import { boardDropAction, boardItemKey, canSwipeClose } from '../lib/agent-board
 import { agentBoardMoves, closeBoardItem, useAgentBoardMoves } from '../stores/agent-board-moves.js';
 import { SwipeToCloseCard } from './SwipeToCloseCard.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
+import { useHosts } from '../hooks/useHosts.js';
+import { sessionLocation } from '../lib/session-location.js';
 import { MobileAgentBoard } from './MobileAgentBoard.js';
 import { isUnreadThread } from '../lib/unread-threads.js';
 import type { ThreadListItem } from '../thread-store.js';
@@ -409,6 +411,8 @@ export function executionNeedsAttention(execution: ExecutionBoardProjection): bo
 /** Board-only job host for retained execution workers after their real lead exits. */
 function executionHost(member: AgentCard | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentCard {
   const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
+  // A retained orchestrator outlives its finished run: it stays a live Idle card, not Done.
+  const retainedLive = terminal && !synthetic && member !== undefined && member.session.status !== 'exited';
   const displayTitle = execution.jobTitle;
   const session = member?.session ?? {
       id: `execution:${execution.executionId}`,
@@ -424,7 +428,7 @@ function executionHost(member: AgentCard | undefined, execution: ExecutionBoardP
       ...session,
       id: synthetic ? `execution:${execution.executionId}` : session.id,
       title: displayTitle,
-      status: terminal ? 'exited' : 'running',
+      status: terminal && !retainedLive ? 'exited' : 'running',
       // A Modern squad has no PTY, so its Job host is always synthetic; it is
       // foreground work while any member thread is live, not a background run.
       headless: (synthetic && !execution.modernMembers?.some((member) => member.live)) || session.headless,
@@ -437,7 +441,7 @@ function executionHost(member: AgentCard | undefined, execution: ExecutionBoardP
     },
     // A live execution can still report RUNNING while a worker waits for a human
     // answer. The actionable Details prompt wins until delivery is in flight.
-    state: terminal ? 'done' : executionNeedsAttention(execution) ? 'blocked'
+    state: retainedLive ? 'idle' : terminal ? 'done' : executionNeedsAttention(execution) ? 'blocked'
       : execution.state === 'RUNNING' || execution.state === 'STARTING' ? 'working' : 'idle',
     stateSince: execution.updatedAt,
     liveSubagents: 0,
@@ -755,6 +759,7 @@ interface AgentBoardLanesProps {
  */
 export function AgentBoardLanes({ cards, activeId, onInspect, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
   const compact = useCompactLayout();
+  const hosts = useHosts();
   const personas = usePersonas((s) => s.personas);
   const teams = useTeams((s) => s.teams);
   // Idle-attention sensitivity (mirror of AppConfig, hydrated in the data
@@ -952,11 +957,13 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     // on children, or still Working), so the parent never reads as plain at-rest.
     const subagents = !exited ? c.liveSubagents ?? 0 : 0;
     const persona = t.personaId ? personas.find((p) => p.id === t.personaId) : undefined;
+    const location = sessionLocation(c.modernThread?.hostId ?? t.hostId, projects.find(project => project.id === c.projectId), hosts);
     const subtitle = agentCardRuntimeLabel({
       profile: t.profile,
       personaName: persona?.name,
-      remote: Boolean(c.projectRemote),
-      remoteToolProxy: Boolean(t.remoteToolProxy)
+      remote: location.remote || Boolean(c.projectRemote),
+      remoteToolProxy: Boolean(t.remoteToolProxy),
+      machineName: location.machineName
     });
     // Idle-triage badge: only in the idle lane, only when the add-on classified
     // this idle spell to something actionable (awaiting-reply / done / paused).
@@ -1202,10 +1209,12 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     grouped = false
   ) => {
     const project = projects.find((row) => row.id === item.projectId);
+    const location = sessionLocation(item.thread.hostId, project, hosts);
     const runtime = threadCardRuntimeLabel(
       item.thread,
-      Boolean(project?.remote && (!project.hostId || item.thread.hostId !== project.hostId)),
-      Boolean(project?.remote && project.hostId && item.thread.hostId === project.hostId)
+      location.remoteToolProxy,
+      location.remote,
+      location.machineName
     );
     const showProjectChip = threadCardShowsProject(Boolean(showProject), grouped);
     const unread = isUnreadThread(item.thread);
@@ -1297,7 +1306,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           {(!showProject || grouped) && <span className="agent-card-sub">{cadence}</span>}
           <span className="grow" />
           {paused ? (
-            <span className="agent-card-badge">Paused</span>
+            <span className="agent-card-badge">Off</span>
           ) : nextMs != null && !Number.isNaN(nextMs) ? (
             <span
               className="agent-card-badge sched-next"
@@ -1330,8 +1339,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     if (!lane) return null;
     if (lane.cards.length === 0) return <div className="agents-lane-empty" aria-hidden="true" />;
     if (!showProject) return lane.cards.map((item) => renderItem(item, lane.key));
-    return groupFleetByProject(lane.cards, projectOrder).map((group) => (
-      <div key={group.projectId} className="agents-lane-group">
+    return groupFleetByProject(lane.cards, projectOrder, projects, hosts).map((group) => (
+      <div key={group.key} className="agents-lane-group">
         <div className="agents-lane-group-head" title={group.projectName}>
           <span className="agents-lane-group-dot" style={group.projectColor ? { background: group.projectColor } : undefined} aria-hidden="true" />
           <span className="agents-lane-group-name">{group.projectName}</span>

@@ -21,6 +21,7 @@ import { resolveTerminalTheme } from '../lib/terminalThemes.js';
 import { openXtermHttpLink } from '../lib/xterm-http-link.js';
 import { registerOsc52Clipboard } from '../lib/osc52-clipboard.js';
 import { copyText } from '../lib/copy-text.js';
+import { isTerminalPasteKey } from '../lib/terminalPaste.js';
 import { useData, useUi } from '../store.js';
 import { createVisibleTerminalRenderer, TERMINAL_SCROLLBACK_MAX } from '../lib/terminal-resource-budget.js';
 
@@ -406,6 +407,12 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
             return false;
           }
         }
+      }
+      // Ctrl+V / Ctrl+Shift+V on Windows and Linux: returning false (without
+      // preventDefault) skips xterm's `^V` so the browser's native paste runs,
+      // the same path Shift+Insert takes. See lib/terminalPaste.ts.
+      if (isTerminalPasteKey(e, { ctrlVPasteEnabled: useData.getState().terminalCtrlVPasteEnabled })) {
+        return false;
       }
       if (
         isAgentTui &&

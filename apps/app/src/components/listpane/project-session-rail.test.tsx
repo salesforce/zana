@@ -71,6 +71,7 @@ vi.mock('../../thread-store.js', () => ({
     { getState: () => ({ threads: h.threads, remove: vi.fn() }) }
   )
 }));
+vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../hooks/useEnsureThreads.js', () => ({ useEnsureThreads: () => undefined }));
 vi.mock('../../lib/product-client.js', () => ({ product: { openers: { openIn: h.open } } }));
 vi.mock('../../lib/app-surface.js', () => ({ hasDesktopBridge: () => true }));

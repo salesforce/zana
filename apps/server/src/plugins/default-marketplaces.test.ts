@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_INTERNAL_MARKETPLACE_SOURCE,
+  DEFAULT_COMMUNITY_MARKETPLACE_SOURCE,
+  resolveCommunityMarketplaceSource,
   DEFAULT_OFFICIAL_MARKETPLACE_URL,
   resolveInternalMarketplaceSource,
   resolveOfficialMarketplaceUrl
@@ -46,5 +48,25 @@ describe('resolveInternalMarketplaceSource', () => {
   it('uses an explicit override', () => {
     expect(resolveInternalMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: 'path:/tmp/cat' }))
       .toBe('path:/tmp/cat');
+  });
+});
+
+describe('resolveCommunityMarketplaceSource', () => {
+  it('defaults to public GitHub independently of internal deployment overrides', () => {
+    expect(resolveCommunityMarketplaceSource({})).toBe(DEFAULT_COMMUNITY_MARKETPLACE_SOURCE);
+    expect(DEFAULT_COMMUNITY_MARKETPLACE_SOURCE).toBe('git:https://github.com/salesforce/zana-marketplace.git');
+    for (const internal of ['off', '0', 'path:/tmp/internal']) {
+      expect(resolveCommunityMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: internal })).toBe(DEFAULT_COMMUNITY_MARKETPLACE_SOURCE);
+    }
+    expect(resolveCommunityMarketplaceSource({ ZCC_COMMUNITY_MARKETPLACE_SOURCE: ' ' })).toBe(DEFAULT_COMMUNITY_MARKETPLACE_SOURCE);
+  });
+
+  it('honors its own override and disable flags without changing the internal catalog', () => {
+    for (const publicSource of ['off', '0']) {
+      const env = { ZCC_COMMUNITY_MARKETPLACE_SOURCE: publicSource };
+      expect(resolveCommunityMarketplaceSource(env)).toBeNull();
+      expect(resolveInternalMarketplaceSource(env)).toBe(DEFAULT_INTERNAL_MARKETPLACE_SOURCE);
+    }
+    expect(resolveCommunityMarketplaceSource({ ZCC_COMMUNITY_MARKETPLACE_SOURCE: ' path:/tmp/public ' })).toBe('path:/tmp/public');
   });
 });

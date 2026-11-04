@@ -13,7 +13,17 @@ describe('summarizePluginHealthDetail', () => {
     const technical =
       "Cannot find module '/App/plugins/docs/src/library-mentions.js' imported from /App/plugins/docs/server.mjs";
     expect(summarizePluginHealthDetail(technical)).toEqual({
-      summary: 'A required plugin file is missing from this build.',
+      summary: 'A required plugin file is missing. Rebuild or reinstall this plugin.',
+      technical
+    });
+  });
+
+  it.each([
+    "Cannot find module '/checkout/plugins/design-docs/node_modules/@zana-ai/zcc-plugin-sdk/dist/app.js' imported from /checkout/plugins/design-docs/server.mjs",
+    "Cannot find package 'some-dependency' imported from /checkout/plugin/server.mjs"
+  ])('explains a missing dependency without blaming the app build', (technical) => {
+    expect(summarizePluginHealthDetail(technical)).toEqual({
+      summary: 'A plugin dependency is missing. Rebuild or reinstall this plugin.',
       technical
     });
   });

@@ -211,6 +211,16 @@ describe('buildPaletteItems', () => {
     expect(setNav).toHaveBeenCalledWith('home');
   });
 
+  it('shows the ⌘, hint on Open Settings only when not drilled into a project', () => {
+    const hint = (projectId: string | null) =>
+      buildPaletteItems(baseCtx({ projectId })).find((i) => i.key === 'action:settings')?.hint;
+    expect(hint(null)).toBe('⌘,');
+    // Drilled in, ⌘, opens the project's Settings, so the global row drops it.
+    expect(hint('p1')).toBeUndefined();
+    // A focus left on a removed project: ⌘, opens global Settings, so keep the hint.
+    expect(hint('gone')).toBe('⌘,');
+  });
+
   it('opens global Settings with its own navigation after leaving project focus', () => {
     const exitProjectFocus = vi.fn();
     vi.mocked(useUi.getState).mockReturnValue({ exitProjectFocus, enterProjectFocus: () => {} } as never);

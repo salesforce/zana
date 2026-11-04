@@ -631,6 +631,56 @@ rl.on("line", (line) => {
       await runtime.shutdown();
     });
 
+    it.each([
+      ["automated", { sessionKind: "automated" }],
+      ["unset", {}],
+    ] as const)(
+      "carries sessionKind into the reconfigure thread/resume (%s)",
+      async (_label, kindOptions) => {
+        const recordedCommands: AdapterCommand[] = [];
+        const runtime = createAgentRuntimeWithAdapters({
+          workspacePath: tmpDir,
+          onEvent: () => undefined,
+          onToolCall: async () => ({
+            contentItems: [{ type: "inputText", text: "ok" }],
+            success: true,
+          }),
+          adapterFactory: () =>
+            createRecordingAdapter({ recordedCommands, scriptPath }),
+        });
+
+        await runtime.startThread({
+          environmentId: "env-1",
+          threadId: "t1",
+          projectId: "p1",
+          providerId: "fake",
+          instructions: "Initial instructions",
+          ...kindOptions,
+          options: fullRuntimeOptions,
+        });
+
+        await runtime.runTurn({
+          clientRequestId: "creq_222222223k",
+          threadId: "t1",
+          input: [promptTextInput({ text: "follow up" })],
+          instructions: "Initial instructions",
+          options: { ...fullRuntimeOptions, model: "test-model-2" },
+        });
+
+        const resume = findLastRecordedCommand(recordedCommands, "thread/resume");
+        if (!resume || resume.type !== "thread/resume") {
+          throw new Error("Expected thread/resume command");
+        }
+        if ("sessionKind" in kindOptions) {
+          expect(resume.sessionKind).toBe("automated");
+        } else {
+          expect(resume).not.toHaveProperty("sessionKind");
+        }
+
+        await runtime.shutdown();
+      },
+    );
+
     it("skips session reconfigure when the adapter classifies settings as live", async () => {
       const recordedCommands: AdapterCommand[] = [];
       const runtime = createAgentRuntimeWithAdapters({
@@ -710,6 +760,56 @@ rl.on("line", (line) => {
 
       await runtime.shutdown();
     });
+
+    it.each([
+      ["resume", "thread/resume"],
+      ["fork", "thread/fork"],
+    ] as const)(
+      "forwards sessionKind on %s only when set",
+      async (mode, commandType) => {
+        const recordedCommands: AdapterCommand[] = [];
+        const runtime = createAgentRuntimeWithAdapters({
+          workspacePath: tmpDir,
+          onEvent: () => undefined,
+          onToolCall: async () => ({
+            contentItems: [{ type: "inputText", text: "ok" }],
+            success: true,
+          }),
+          adapterFactory: () =>
+            createRecordingAdapter({ recordedCommands, scriptPath }),
+        });
+        const start = async (threadId: string, sessionKind?: "automated") => {
+          const base = {
+            environmentId: "env-1",
+            threadId,
+            projectId: "p1",
+            providerId: "fake",
+            options: fullRuntimeOptions,
+            ...(sessionKind !== undefined ? { sessionKind } : {}),
+          };
+          if (mode === "resume") {
+            await runtime.resumeThread({ ...base, providerThreadId: "prov-1" });
+          } else {
+            await runtime.startThread({
+              ...base,
+              fork: { sourceProviderThreadId: "prov-src" },
+            });
+          }
+        };
+
+        await start("t-auto", "automated");
+        await start("t-plain");
+
+        const commands = recordedCommands.filter(
+          (command) => command.type === commandType,
+        );
+        expect(commands).toHaveLength(2);
+        expect(commands[0]).toMatchObject({ sessionKind: "automated" });
+        expect(commands[1]).not.toHaveProperty("sessionKind");
+
+        await runtime.shutdown();
+      },
+    );
 
     it("passes the workspace cwd when resuming a thread", async () => {
       const recordedCommands: AdapterCommand[] = [];
@@ -1147,6 +1247,64 @@ rl.on("line", (line) => {
         threadId: "t1",
       });
       expect(events.some((e) => e.type === "turn/completed")).toBe(true);
+      await runtime.shutdown();
+    });
+
+    it("reports nativeLoaded only for strict resumes the provider confirms", async () => {
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => undefined,
+        onToolCall: async () => ({ contentItems: [], success: true }),
+        adapterFactory: () => createFakeAdapter(scriptPath),
+      });
+      const base = {
+        environmentId: "env-1",
+        providerThreadId: "old-prov-123",
+        providerId: "fake",
+        options: fullRuntimeOptions,
+      };
+      const strict = await runtime.resumeThread({
+        ...base,
+        threadId: "t-strict",
+        requireNativeLoad: true,
+      });
+      expect(strict).toEqual({
+        providerThreadId: "old-prov-123",
+        nativeLoaded: true,
+      });
+      const plain = await runtime.resumeThread({ ...base, threadId: "t-plain" });
+      expect(plain).toEqual({ providerThreadId: "old-prov-123" });
+      await runtime.shutdown();
+    });
+
+    it("fails closed when a strict resume plan is a noop", async () => {
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => undefined,
+        onToolCall: async () => ({ contentItems: [], success: true }),
+        adapterFactory: () => {
+          const base = createFakeAdapter(scriptPath);
+          return {
+            ...base,
+            buildCommandPlan: (command: AdapterCommand) =>
+              command.type === "thread/resume"
+                ? { kind: "noop" as const, reason: "test" }
+                : base.buildCommandPlan(command),
+          };
+        },
+      });
+      const result = await runtime.resumeThread({
+        environmentId: "env-1",
+        threadId: "t-noop",
+        providerThreadId: "old-prov-123",
+        providerId: "fake",
+        options: fullRuntimeOptions,
+        requireNativeLoad: true,
+      });
+      expect(result).toEqual({
+        providerThreadId: "old-prov-123",
+        nativeLoaded: false,
+      });
       await runtime.shutdown();
     });
 

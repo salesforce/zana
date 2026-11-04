@@ -86,6 +86,21 @@ describe('fleet items', () => {
     expect(groupFleetByProject([], ['p1'])).toEqual([]);
   });
 
+  it('uses machine identity to split Default Project, including missing hosts with the same label', () => {
+    const project = { id: 'p1', name: 'Default Project', quickAgent: true, path: '/scratch', createdAt: 1, lastActiveAt: 1 };
+    const items = ['gone-b', 'gone-a', 'gone-b'].map((hostId, index) => threadFleetItem(
+      thread({ id: `t${index}`, hostId, status: 'idle' }), project
+    ));
+    const groups = groupFleetByProject(items, ['p1'], [project], []);
+    expect(groups).toHaveLength(2);
+    expect(groups.map(group => group.cards.map(item => item.id))).toEqual([['t1'], ['t0', 't2']]);
+    expect(new Set(groups.map(group => group.key)).size).toBe(2);
+    expect(groups.map(group => group.projectName)).toEqual([
+      'Default Project · Unavailable machine', 'Default Project · Unavailable machine'
+    ]);
+    expect(groupFleetByProject(items, ['p1'], [{ ...project, quickAgent: false }], [])).toHaveLength(1);
+  });
+
   it('maps an armed schedule into the Scheduled lane and hides it when the setting is off', () => {
     const task = {
       id: 'job-1',
@@ -258,6 +273,17 @@ describe('fleet items', () => {
       'Claude Code · Local agent · remote tools'
     );
     expect(agentCardRuntimeLabel({ profile: 'claude', personaName: '  ' })).toBe('Claude Code · Local');
+  });
+
+  it('names the execution machine for remote, local, worktree and proxy runtimes', () => {
+    const t = thread({ id: 't', status: 'idle' });
+    expect(threadCardRuntimeLabel(t, false, true, 'Devbox')).toBe('Claude Code · Remote · Devbox');
+    expect(threadCardRuntimeLabel(t, false, false, 'This Mac')).toBe('Claude Code · This Mac');
+    expect(threadCardRuntimeLabel({ ...t, isWorktree: true }, false, false, 'This Mac')).toBe('Claude Code · Worktree · This Mac');
+    expect(threadCardRuntimeLabel(t, true, false, 'This Mac')).toBe('Claude Code · This Mac · remote tools');
+    expect(agentCardRuntimeLabel({ profile: 'codex', remote: true, machineName: 'Devbox' })).toBe('Codex · Remote · Devbox');
+    expect(agentCardRuntimeLabel({ profile: 'codex', machineName: 'This Mac' })).toBe('Codex · This Mac');
+    expect(agentCardRuntimeLabel({ profile: 'codex', remoteToolProxy: true, machineName: 'This Mac' })).toBe('Codex · This Mac · remote tools');
   });
 
   it('never feeds a thread id to the PTY monitor selection store', () => {

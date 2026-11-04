@@ -1,6 +1,6 @@
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { RemoteStartPathHost } from '@zana-ai/zcc-domain/project';
-import { listHosts, type HostRow, type ZccDatabase } from '@zana-ai/zcc-db';
+import { listExecutionHosts, type HostRow, type ZccDatabase } from '@zana-ai/zcc-db';
 import { updateHostRequestSchema } from '@zana-ai/zcc-server-contract';
 import type { HostHub } from '../../http/host-hub.js';
 
@@ -36,7 +36,8 @@ export function toRemoteStartPathHost(row: HostRow): RemoteStartPathHost {
 
 export function listPublicHosts(db: ZccDatabase, hub: HostHub): Host[] {
   const connected = new Set(hub.connectedHostIds());
-  return listHosts(db).map((row) => toPublicHost(row, connected));
+  // Plugin links are not machines: execution-only consumers never see them.
+  return listExecutionHosts(db).map((row) => toPublicHost(row, connected));
 }
 
 export type HostUpdatePatch = {

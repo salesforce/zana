@@ -190,6 +190,129 @@ describe('project-focus navigation contract', () => {
     registerAppNavigate(null);
   });
 
+  describe('toggleSettings (⌘, and the Settings… menu item)', () => {
+    async function setup(projectIds: string[] = ['proj-1']) {
+      const store = await import('../store.js');
+      const nav = await import('../lib/app-navigate.js');
+      nav.registerAppNavigate(vi.fn());
+      store.useData.setState({
+        projects: projectIds.map((id) => ({ id, name: id, path: `/p/${id}` })) as never
+      });
+      return { useUi: store.useUi, lastPath: nav.getLastAppNavigatePath };
+    }
+
+    afterEach(async () => {
+      (await import('../lib/app-navigate.js')).registerAppNavigate(null);
+    });
+
+    it("drilled into a project, opens that project's Settings", async () => {
+      const { useUi, lastPath } = await setup();
+      useUi.getState().enterProjectFocus('proj-1');
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/projects/proj-1/settings');
+      expect(useUi.getState().nav).toBe('settings');
+      expect(useUi.getState().settingsTab).toBe('project');
+      expect(useUi.getState().focusedProjectId).toBe('proj-1');
+    });
+
+    it('not drilled in, opens global Settings', async () => {
+      const { useUi, lastPath } = await setup();
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/settings');
+      expect(useUi.getState().nav).toBe('settings');
+      expect(useUi.getState().focusedProjectId).toBeNull();
+    });
+
+    it('opens global Settings when the focused project has been removed', async () => {
+      const { useUi, lastPath } = await setup([]);
+      useUi.getState().enterProjectFocus('gone');
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/settings');
+    });
+
+    it('closes project Settings back to the project view it came from', async () => {
+      const { useUi, lastPath } = await setup();
+      useUi.getState().enterProjectFocus('proj-1');
+      useUi.getState().setProjectView('proj-1', 'explorer');
+      useUi.getState().toggleSettings();
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/projects/proj-1/explorer');
+      expect(useUi.getState().nav).toBe('projects');
+      expect(useUi.getState().focusedProjectId).toBe('proj-1');
+    });
+
+    async function routeVisitor() {
+      const { createElement } = await import('react');
+      const { renderToStaticMarkup } = await import('react-dom/server');
+      const { MemoryRouter } = await import('react-router-dom');
+      const { useAppSettingsRouteMemory } = await import('../hooks/useAppSettingsRouteMemory.js');
+      const Probe = () => { useAppSettingsRouteMemory(); return null; };
+      return (path: string) =>
+        renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: [path] }, createElement(Probe)));
+    }
+
+    it('closes project Settings back to the project route it was opened from', async () => {
+      const { useUi, lastPath } = await setup();
+      const visit = await routeVisitor();
+      useUi.getState().enterProjectFocus('proj-1');
+      // A route that never writes projectView (a schedule's detail page).
+      visit('/projects/proj-1/schedules/sched-1');
+      useUi.getState().toggleSettings();
+      visit('/projects/proj-1/settings');
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/projects/proj-1/schedules/sched-1');
+      expect(useUi.getState().nav).toBe('projects');
+      expect(useUi.getState().focusedProjectId).toBe('proj-1');
+    });
+
+    it("ignores a remembered route from another project and uses this project's view", async () => {
+      const { useUi, lastPath } = await setup(['proj-1', 'proj-2']);
+      const visit = await routeVisitor();
+      visit('/projects/proj-2/terminals');
+      useUi.getState().enterProjectFocus('proj-1');
+      useUi.getState().setProjectView('proj-1', 'explorer');
+      useUi.getState().openProjectSettings('proj-1');
+      visit('/projects/proj-1/settings');
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/projects/proj-1/explorer');
+    });
+
+    it("closes to the project's Agents board when it has no remembered view", async () => {
+      const { useUi, lastPath } = await setup();
+      useUi.getState().openProjectSettings('proj-1');
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/projects/proj-1');
+      expect(useUi.getState().nav).toBe('projects');
+    });
+
+    it('closes global Settings to the remembered app route, not always Home', async () => {
+      const { useUi, lastPath } = await setup();
+      const visit = await routeVisitor();
+      visit('/inbox');
+      useUi.getState().toggleSettings();
+      visit('/settings');
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/inbox');
+      expect(useUi.getState().nav).toBe('inbox');
+    });
+  });
+
   it('selectProject mirrors lastProjectId into the data store and config immediately', async () => {
     const { useUi, useData } = await import('../store.js');
 

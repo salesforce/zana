@@ -363,4 +363,4 @@ body:has(.app-shell[data-mobile='true']) .thread-command-composer.is-expanded[da
 }
 body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] .thread-command-expand { display: none; }
 body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] :is(.thread-command-toolbar, .ui-command-composer-toolbar, .composer-image-thumbs) { flex-shrink: 0; }
-body:has(.app-shell[data-mobile='true']) [data-mobile-expanded='true'] .mention-popover { top: 72px; bottom: auto; max-height: 45%; }
+/* Portalled suggestions use ComposerTypeaheadMenu's visual viewport placement. */

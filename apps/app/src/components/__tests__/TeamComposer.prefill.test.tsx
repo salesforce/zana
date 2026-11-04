@@ -272,7 +272,38 @@ describe('TeamComposer prefill', () => {
   });
 
   it('applies the auto-selected Squad\'s default planning without a prefill', () => {
-    teamsHolder.current = [{ id: 't2', name: 'Team Two', defaultPlanning: 'provided' }, { id: 't1', name: 'Team One' }];
+    teamsHolder.current = [{ id: 't2', name: 'Team Two', isDefault: true, defaultPlanning: 'provided' }, { id: 't1', name: 'Team One' }];
+    try {
+      render(<TeamComposer />);
+      expect(screen.getByTestId('team-picker').getAttribute('data-value')).toBe('t2');
+      expect(screen.getByTestId('team-coordination-mode').getAttribute('data-value')).toBe('structured');
+    } finally {
+      teamsHolder.current = teamsFixture;
+    }
+  });
+
+  it('sorts displayed Squads and defaults to the first alphabetically', () => {
+    teamsHolder.current = [
+      { id: 't2', name: 'Zulu', defaultPlanning: 'provided' },
+      { id: 't1', name: 'Alpha' }
+    ];
+    try {
+      render(<TeamComposer />);
+      expect(screen.getByTestId('team-picker').getAttribute('data-value')).toBe('t1');
+      expect([...screen.getByTestId('team-picker').querySelectorAll('button')].map((button) => button.textContent))
+        .toEqual(['Alpha', 'Zulu']);
+      fireEvent.click(screen.getByTestId('team-picker:t2'));
+      expect(screen.getByTestId('team-picker').getAttribute('data-value')).toBe('t2');
+    } finally {
+      teamsHolder.current = teamsFixture;
+    }
+  });
+
+  it('defaults to the squad flagged as default over alphabetical order', () => {
+    teamsHolder.current = [
+      { id: 't1', name: 'Alpha' },
+      { id: 't2', name: 'Zulu', isDefault: true, defaultPlanning: 'provided' }
+    ];
     try {
       render(<TeamComposer />);
       expect(screen.getByTestId('team-picker').getAttribute('data-value')).toBe('t2');

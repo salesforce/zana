@@ -563,6 +563,27 @@ describe("buildCommandPlan lifecycle commands", () => {
     );
   });
 
+  it("forwards requireNativeLoad on resume only when set", () => {
+    const adapter = makeAdapter();
+    const command = {
+      type: "thread/resume" as const,
+      threadId: "thr_1",
+      cwd: "/w",
+      providerThreadId: "p_1",
+      options: fullModeOptions,
+      instructionMode: "append" as const,
+    };
+    const strict = adapter.buildCommandPlan({ ...command, requireNativeLoad: true });
+    expect(strict).toMatchObject({
+      kind: "request",
+      params: { requireNativeLoad: true },
+    });
+    const plain = adapter.buildCommandPlan(command);
+    expect(plain.kind === "request" ? plain.params : {}).not.toHaveProperty(
+      "requireNativeLoad",
+    );
+  });
+
   it("forwards dynamic and disallowed tools on resume when provided", () => {
     const adapter = makeAdapter();
     const plan = adapter.buildCommandPlan({
@@ -625,5 +646,26 @@ describe("buildCommandPlan lifecycle commands", () => {
       method: "thread/goal/clear",
       params: { threadId: "thr_1", providerThreadId: "p_1" },
     });
+  });
+});
+
+describe("sessionKind wire forwarding", () => {
+  const base = { threadId: "t1", cwd: "/w", options: fullModeOptions, instructionMode: "append" as const };
+
+  it.each([
+    ["thread/start", {}],
+    ["thread/resume", { providerThreadId: "p1" }],
+    ["thread/fork", { sourceProviderThreadId: "p1" }],
+  ] as const)("%s carries provider identity and sessionKind only when set", (type, extra) => {
+    const adapter = makeAdapter();
+    completeHandshake(adapter, { fork: "checkpoint" });
+    const withKind = adapter.buildCommandPlan({ type, ...base, ...extra, sessionKind: "automated" } as never);
+    expect(withKind).toMatchObject({
+      kind: "request",
+      params: { providerId: "fake-bridge", sessionKind: "automated" },
+    });
+    const without = adapter.buildCommandPlan({ type, ...base, ...extra } as never);
+    expect((without as { params: Record<string, unknown> }).params.providerId).toBe("fake-bridge");
+    expect((without as { params: Record<string, unknown> }).params).not.toHaveProperty("sessionKind");
   });
 });

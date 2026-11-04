@@ -32,6 +32,7 @@ let dir: string;
 let ctx: ProductHttpContext;
 let hostId: string;
 let unregister: () => void;
+let startResult: Record<string, unknown>;
 let commands: Array<{ type: string; path?: string; cwd?: string; environmentId?: string }>;
 const bindingId = '22222222-2222-4222-8222-222222222222';
 const control = { bindingId, projectId: 'p', generation: 2 };
@@ -55,6 +56,7 @@ beforeEach(() => {
   artifacts.set('test', { path: '/tmp/host.js', digest: 'a'.repeat(64), byteLength: 12, generation: 'g1' });
   const project = { id: 'p', name: 'Test', path: dir, hostId };
   commands = [];
+  startResult = { providerThreadId: 'native-thread' };
   ctx = { db, dataDir: dir, toProjects: () => [project], projects: { list: () => [project] },
     config: { getConfig: () => ({}) }, hub: { emit: vi.fn() }, pluginHostArtifacts: artifacts,
     plugins: { get: vi.fn(), toolPolicyReadiness: vi.fn(async () => ({ ready: true, required: [] })), admitDispatch: vi.fn(async () => ({ action: 'proceed' })),
@@ -65,7 +67,7 @@ beforeEach(() => {
         commands.push(command);
         if (command.type === 'provider.status') return { providers: [], extraInstalledAgents: [{ providerId: 'test-provider', installed: true }] };
         if (command.type === 'environment.provision') return { path: command.path, isGitRepo: true, isWorktree: true };
-        if (command.type === 'thread.start') return { providerThreadId: 'native-thread' };
+        if (command.type === 'thread.start') return startResult;
         if (command.type === 'thread.stop') return { threadId: bindingId, stopped: true };
         return { accepted: true };
       }) }
@@ -115,6 +117,19 @@ describe('trusted Modern member runtime', () => {
     expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(0);
   });
 
+  it.each([[true, true], [false, false], [undefined, undefined]])('records start-time sessionRestorable=%s as binding metadata and in status', async (reported, expected) => {
+    mkdirSync(join(dir, 'worktree')); const worktreePath = realpathSync(join(dir, 'worktree'));
+    const request = { ...member, worktreePath, permissionMode: 'full' as const };
+    startResult = { providerThreadId: 'native-thread', ...(reported === undefined ? {} : { sessionRestorable: reported }) };
+    await createSquadMemberConversation(ctx, request);
+    await activateSquadMemberConversation(ctx, request);
+    await vi.waitFor(() => expect(getConversationThread(db, bindingId)?.providerThreadId).toBe('native-thread'));
+    const status = squadMemberStatus(ctx, control);
+    expect(status.providerThreadId).toBe('native-thread');
+    expect(status.sessionRestorable).toBe(expected);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadSessionRestorable).toBe(expected);
+  });
+
   it.each(['worker', 'orchestrator'] as const)('activates prepared %s with identical request and attached worktree', async role => {
     mkdirSync(join(dir, 'worktree')); const worktreePath = realpathSync(join(dir, 'worktree'));
     const request = { ...member, role, worktreePath, permissionMode: 'full' as const };
@@ -137,6 +152,38 @@ describe('trusted Modern member runtime', () => {
     await expect(createSquadMemberConversation(ctx, request)).resolves.toEqual({ threadId: bindingId });
     await expect(activateSquadMemberConversation(ctx, request)).resolves.toEqual({ threadId: bindingId });
     expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(1);
+  });
+
+  it('persists main-authorized skill selection and sends it at activation', async () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    const request = { ...member, automatedSkillIds };
+    await createSquadMemberConversation(ctx, request);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds });
+    await activateSquadMemberConversation(ctx, request);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds }));
+  });
+
+  it('persists the squad execution id for a member', async () => {
+    const executionId = '44444444-4444-4444-8444-444444444444';
+    await createSquadMemberConversation(ctx, { ...member, executionId });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({
+      squadExecution: executionId
+    });
+  });
+
+  it('persists and sends an empty automated skill selection by default', async () => {
+    await createSquadMemberConversation(ctx, member);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds: [] });
+    await activateSquadMemberConversation(ctx, member);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds: [] }));
+  });
+
+  it('persists and sends an explicit empty automated skill selection', async () => {
+    const request = { ...member, automatedSkillIds: [] };
+    await createSquadMemberConversation(ctx, request);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds: [] });
+    await activateSquadMemberConversation(ctx, request);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds: [] }));
   });
 
   it('single-flights concurrent activation before async preflight without duplicate starts', async () => {

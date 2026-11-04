@@ -7,7 +7,7 @@ import { join, basename, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
-import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
+import { normalizeApiErrorResume, SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, EXPLORER_FILE_ICON_THEME_CHOICES, EXPLORER_MINIMAP_WIDTH_CHOICES, EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES, EXPLORER_MINIMAP_SLIDER_CHOICES, EXPLORER_MINIMAP_SIDE_CHOICES, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME, CLOSE_WRAP_UP_INSTRUCTIONS_MAX } from '@zana-ai/zcc-domain/product';
 import { isTerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 import { PROJECT_COLORS, pickProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -335,7 +335,8 @@ function deriveNameFromGitOrigin(dir: string): string | null {
   try {
     const origin = execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], {
       timeout: 5_000,
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true
     })
       .toString('utf8')
       .trim();
@@ -550,6 +551,22 @@ const PLUGIN_VIEW_BOUNDS_LIMIT = 24;
 const PLUGIN_VIEW_BOUNDS_KEY = /^[a-z0-9][a-z0-9-]{0,127}\/[A-Za-z0-9_-]{1,64}@(.{1,256})$/s;
 
 function isPluginViewBoundsKey(key: string): boolean {
+  if (key.startsWith('[')) {
+    // Resource identities are opaque navigation keys, not filesystem grants.
+    if (key.length > 16000) return false;
+    try {
+      const tuple: unknown = JSON.parse(key);
+      if (!Array.isArray(tuple) || tuple.length !== 4) return false;
+      const [pluginId, tabId, projectId, resourceId] = tuple;
+      return typeof pluginId === 'string' && /^[a-z0-9][a-z0-9-]{0,127}$/.test(pluginId)
+        && typeof tabId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(tabId)
+        && typeof projectId === 'string' && !!projectId.trim() && projectId.length <= 256
+        && typeof resourceId === 'string' && !!resourceId.trim() && resourceId.length <= 2048
+        && !/[\x00-\x1f\x7f]/.test(projectId + resourceId);
+    } catch {
+      return false;
+    }
+  }
   const projectId = PLUGIN_VIEW_BOUNDS_KEY.exec(key)?.[1];
   if (!projectId) return false;
   for (let i = 0; i < projectId.length; i++) {
@@ -843,6 +860,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (input.scheduledRunOverflow === 'auto' || input.scheduledRunOverflow === 'queue' || input.scheduledRunOverflow === 'skip') {
     normalized.scheduledRunOverflow = input.scheduledRunOverflow;
   }
+  if (typeof input.automatedUseUserConfig === 'boolean') {
+    normalized.automatedUseUserConfig = input.automatedUseUserConfig;
+  }
   if (input.schedulerRecoveryIntro === 'dismissed' || input.schedulerRecoveryIntro === 'applied') {
     normalized.schedulerRecoveryIntro = input.schedulerRecoveryIntro;
   }
@@ -1048,16 +1068,34 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.catchUpSummaryEnabled === 'boolean') {
     normalized.catchUpSummaryEnabled = input.catchUpSummaryEnabled;
   }
+  if (typeof input.closeWrapUpEnabled === 'boolean') {
+    normalized.closeWrapUpEnabled = input.closeWrapUpEnabled;
+  }
+  if (typeof input.closeWrapUpInstructions === 'string') {
+    // Empty or whitespace-only means "use the default", so it is not stored.
+    const instructions = input.closeWrapUpInstructions.trim().slice(0, CLOSE_WRAP_UP_INSTRUCTIONS_MAX);
+    if (instructions) normalized.closeWrapUpInstructions = instructions;
+  }
+  if (typeof input.threadTabsEnabled === 'boolean') {
+    normalized.threadTabsEnabled = input.threadTabsEnabled;
+  }
+  if (typeof input.dockableThreadToolsEnabled === 'boolean') {
+    normalized.dockableThreadToolsEnabled = input.dockableThreadToolsEnabled;
+  }
   if (typeof input.classicSessionViewEnabled === 'boolean') {
     normalized.classicSessionViewEnabled = input.classicSessionViewEnabled;
   }
   if (typeof input.providerServiceTiersDisabled === 'boolean') normalized.providerServiceTiersDisabled = input.providerServiceTiersDisabled;
   if (typeof input.pluginSafeMode === 'boolean') normalized.pluginSafeMode = input.pluginSafeMode;
+  if (typeof input.pluginDevelopmentEnabled === 'boolean') normalized.pluginDevelopmentEnabled = input.pluginDevelopmentEnabled;
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
   }
   if (typeof input.terminalClipboardWriteEnabled === 'boolean') {
     normalized.terminalClipboardWriteEnabled = input.terminalClipboardWriteEnabled;
+  }
+  if (typeof input.terminalCtrlVPasteEnabled === 'boolean') {
+    normalized.terminalCtrlVPasteEnabled = input.terminalCtrlVPasteEnabled;
   }
   if (typeof input.mobileGatewayEnabled === 'boolean') {
     normalized.mobileGatewayEnabled = input.mobileGatewayEnabled;
@@ -1114,6 +1152,24 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
       Math.min(THREAD_SESSION_RELEASE_DEFAULTS.maxMinutes, minutes)
     );
   }
+  if (typeof input.explorerMinimapEnabled === 'boolean') normalized.explorerMinimapEnabled = input.explorerMinimapEnabled;
+  if (typeof input.explorerMinimapRenderCharacters === 'boolean') {
+    normalized.explorerMinimapRenderCharacters = input.explorerMinimapRenderCharacters;
+  }
+  const oneOf = <T extends string>(choices: readonly T[], v: unknown): T | undefined =>
+    typeof v === 'string' && (choices as readonly string[]).includes(v) ? (v as T) : undefined;
+  const fileIconTheme = oneOf(EXPLORER_FILE_ICON_THEME_CHOICES, input.explorerFileIconTheme);
+  if (fileIconTheme) normalized.explorerFileIconTheme = fileIconTheme;
+  const minimapWidth = oneOf(EXPLORER_MINIMAP_WIDTH_CHOICES, input.explorerMinimapWidth);
+  if (minimapWidth) {
+    normalized.explorerMinimapWidth = minimapWidth;
+  }
+  const minimapVerticalSize = oneOf(EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES, input.explorerMinimapVerticalSize);
+  if (minimapVerticalSize) normalized.explorerMinimapVerticalSize = minimapVerticalSize;
+  const minimapSlider = oneOf(EXPLORER_MINIMAP_SLIDER_CHOICES, input.explorerMinimapSlider);
+  if (minimapSlider) normalized.explorerMinimapSlider = minimapSlider;
+  const minimapSide = oneOf(EXPLORER_MINIMAP_SIDE_CHOICES, input.explorerMinimapSide);
+  if (minimapSide) normalized.explorerMinimapSide = minimapSide;
   if (typeof input.autoCloseIdleNotifyInbox === 'boolean') {
     normalized.autoCloseIdleNotifyInbox = input.autoCloseIdleNotifyInbox;
   }
@@ -1184,6 +1240,8 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     // typed into a live session on every nudge.
     normalized.heartbeatMessage = input.heartbeatMessage.trim().slice(0, 1000);
   }
+  const apiErrorResume = normalizeApiErrorResume(input.apiErrorResume);
+  if (apiErrorResume) normalized.apiErrorResume = apiErrorResume;
   if (typeof input.remoteDefaultPath === 'string') {
     // Global fallback start path for remotes with no per-project remotePath.
     // Same sanitation as the per-project field (trim, control-char reject,

@@ -19,6 +19,7 @@ vi.mock('@zana-ai/zcc-host-daemon/tmux', async (importOriginal) => ({
 }));
 
 import { OpenCodeProvider } from '@zana-ai/zcc-host-daemon/harness/opencode/provider';
+import type { TrustedHarnessAdapter } from '@zana-ai/zcc-host-daemon/harness/adapter-contract';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { preflightTerminalExecution } from '../execution-routing.js';
 import { finalizeLaunchPreflight, preflightLaunch, type ExecutionPreflightDecision } from '../preflight.js';
@@ -26,20 +27,39 @@ import { finalizeLaunchPreflight, preflightLaunch, type ExecutionPreflightDecisi
 /**
  * OC1 regression: the OpenCode provider is a process-wide singleton, and squad
  * slots share ONE worktree cwd (and two enrolled machines can share a checkout
- * path). Each launch's preflight resolves its portable level to a concrete id
- * through its OWN probe; that id rides in the decision (`modelPin`), is bound
+ * path). A synthetic trusted adapter explicitly declares its portable tier
+ * mapping for each fixture inventory; real OpenCode inventories declare none.
+ * Each launch's resolved id rides in the decision (`modelPin`), is bound
  * into the authorized digest, and the spawn uses it verbatim — no keyed record a
  * sibling launch could overwrite, no re-mapping, no re-probe at spawn.
  */
 
 const CONFIG = { version: 1, theme: 'dark', harnessOpenCodeEnabled: true } as AppConfig;
 const LOW: Persona = { id: 'low', name: 'Low', modelLevel: 'low' };
-const SNAPSHOT_LOW = 'llmgw/gpt-6-luna';
-const A_INVENTORY = ['llmgw/gpt-7-luna', 'llmgw/gpt-7-terra', 'llmgw/gpt-7-sol'];
-const B_INVENTORY = ['llmgw/gpt-8-luna', 'llmgw/gpt-8-sol'];
+const SNAPSHOT_LOW = 'fixture-provider/gpt-6-luna';
+const A_INVENTORY = ['fixture-provider/gpt-7-luna', 'fixture-provider/gpt-7-terra', 'fixture-provider/gpt-7-sol'];
+const B_INVENTORY = ['fixture-provider/gpt-8-luna', 'fixture-provider/gpt-8-sol'];
 const SHARED_CWD = '/zcc-worktrees/squad-1';
 
 const pin = (targetId: string) => ({ adapterId: 'opencode', level: 'low', targetId });
+
+/** Exercise generic tier authorization with explicit test-owned capability data. */
+function tieredFixtureProvider() {
+  const provider = new OpenCodeProvider();
+  const withLow = (adapter: TrustedHarnessAdapter, targetId: string | undefined): TrustedHarnessAdapter => ({
+    ...adapter, descriptor: { ...adapter.descriptor, targets: {
+      ...adapter.descriptor.targets!, modelLevelMapping: {
+        low: targetId, medium: undefined, high: undefined, 'extra-high': undefined
+      }
+    } }
+  });
+  const snapshot = withLow(provider.adapter, SNAPSHOT_LOW);
+  Object.defineProperty(provider, 'adapter', { value: snapshot });
+  const liveAdapter = provider.liveModelAdapter.bind(provider);
+  vi.spyOn(provider, 'liveModelAdapter').mockImplementation(ids => withLow(liveAdapter(ids),
+    [A_INVENTORY[0], B_INVENTORY[0]].find(id => ids.includes(id))));
+  return provider;
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -83,7 +103,7 @@ describe('execution routing pins the resolved model id per launch (OC1)', () => 
   beforeEach(() => { spawns.length = 0; });
 
   it('two slots sharing one cwd with different probe results never cross-contaminate', async () => {
-    const shared = new OpenCodeProvider();
+    const shared = tieredFixtureProvider();
     const snapshot = shared.adapter;
     const probes = [deferred<readonly string[] | undefined>(), deferred<readonly string[] | undefined>()];
     let call = 0;
@@ -99,20 +119,20 @@ describe('execution routing pins the resolved model id per launch (OC1)', () => 
     probes[0].resolve(A_INVENTORY);
     const aDecision = await a;
 
-    expect(aDecision).toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('llmgw/gpt-7-luna') });
-    expect(bDecision).toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('llmgw/gpt-8-luna') });
+    expect(aDecision).toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('fixture-provider/gpt-7-luna') });
+    expect(bDecision).toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('fixture-provider/gpt-8-luna') });
     expect(shared.adapter).toBe(snapshot);
 
     // Each spawn's argv carries ITS OWN resolved id, in either spawn order.
-    expect(spawnArgs(bDecision)).toContain('--model llmgw/gpt-8-luna');
-    expect(spawnArgs(aDecision)).toContain('--model llmgw/gpt-7-luna');
+    expect(spawnArgs(bDecision)).toContain('--model fixture-provider/gpt-8-luna');
+    expect(spawnArgs(aDecision)).toContain('--model fixture-provider/gpt-7-luna');
     expect(spawnArgs(aDecision)).not.toContain('gpt-8');
     // Spawns never probe.
     expect(shared.discoverModelTargets).toHaveBeenCalledTimes(2);
   });
 
   it('a sibling slot whose probe fails cannot change the id an earlier slot authorized', async () => {
-    const shared = new OpenCodeProvider();
+    const shared = tieredFixtureProvider();
     shared.discoverModelTargets = vi.fn(async () => A_INVENTORY);
     const aDecision = await launch(shared, 'squad', SHARED_CWD);
     // B: same cwd, probe unavailable ⇒ snapshot mapping for B only.
@@ -121,12 +141,12 @@ describe('execution routing pins the resolved model id per launch (OC1)', () => 
     expect(allowed(bDecision).modelPin).toEqual(pin(SNAPSHOT_LOW));
     // A spawns after B's failed probe: still A's live-resolved id (the old
     // per-cwd record was deleted here and A re-mapped to the snapshot id).
-    expect(spawnArgs(aDecision)).toContain('--model llmgw/gpt-7-luna');
+    expect(spawnArgs(aDecision)).toContain('--model fixture-provider/gpt-7-luna');
     expect(spawnArgs(bDecision)).toContain(`--model ${SNAPSHOT_LOW}`);
   });
 
   it('binds the pin into the authorized launch digest', async () => {
-    const shared = new OpenCodeProvider();
+    const shared = tieredFixtureProvider();
     shared.discoverModelTargets = vi.fn(async () => A_INVENTORY);
     const plan = preflightLaunch({ projectId: 'p' }, {
       principal: () => ({ kind: 'interactive-user', id: 'interactive:local' }),
@@ -137,30 +157,30 @@ describe('execution routing pins the resolved model id per launch (OC1)', () => 
     });
     const decision = allowed(await launch(shared, 'p', SHARED_CWD));
     const authorized = finalizeLaunchPreflight(plan, decision);
-    const swapped = finalizeLaunchPreflight(plan, { ...decision, modelPin: pin('llmgw/gpt-8-luna') });
+    const swapped = finalizeLaunchPreflight(plan, { ...decision, modelPin: pin('fixture-provider/gpt-8-luna') });
     const unpinned = finalizeLaunchPreflight(plan, { decision: 'allowed', scope: 'local' });
     expect(authorized.digest).not.toBe(swapped.digest);
     expect(authorized.digest).not.toBe(unpinned.digest);
-    expect(authorized.executionAuthorization.modelPin).toEqual(pin('llmgw/gpt-7-luna'));
+    expect(authorized.executionAuthorization.modelPin).toEqual(pin('fixture-provider/gpt-7-luna'));
     expect(Object.isFrozen(authorized.executionAuthorization.modelPin)).toBe(true);
   });
 
   it('a project whose inventory lacks the tier is blocked without affecting a concurrent launch', async () => {
-    const shared = new OpenCodeProvider();
+    const shared = tieredFixtureProvider();
     const probeA = deferred<readonly string[] | undefined>();
     shared.discoverModelTargets = vi.fn(({ cwd }: { cwd: string }) => (
-      cwd === '/proj/a' ? probeA.promise : Promise.resolve(['llmgw/grok-4.6'])
+      cwd === '/proj/a' ? probeA.promise : Promise.resolve(['fixture-provider/grok-4.6'])
     ));
     const a = launch(shared, 'a', '/proj/a');
     await expect(launch(shared, 'c', '/proj/c')).resolves.toEqual({
       decision: 'blocked', reason: 'OpenCode does not support low model level.'
     });
     probeA.resolve(A_INVENTORY);
-    expect(spawnArgs(await a, '/proj/a')).toContain('--model llmgw/gpt-7-luna');
+    expect(spawnArgs(await a, '/proj/a')).toContain('--model fixture-provider/gpt-7-luna');
   });
 
   it('a rejected probe blocks only its own launch', async () => {
-    const shared = new OpenCodeProvider();
+    const shared = tieredFixtureProvider();
     const probeA = deferred<readonly string[] | undefined>();
     shared.discoverModelTargets = vi.fn(({ cwd }: { cwd: string }) => (
       cwd === '/proj/a' ? probeA.promise : Promise.reject(new Error('gateway offline'))
@@ -168,11 +188,11 @@ describe('execution routing pins the resolved model id per launch (OC1)', () => 
     const a = launch(shared, 'a', '/proj/a');
     await expect(launch(shared, 'b', '/proj/b')).resolves.toEqual({ decision: 'blocked', reason: 'gateway offline' });
     probeA.resolve(A_INVENTORY);
-    await expect(a).resolves.toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('llmgw/gpt-7-luna') });
+    await expect(a).resolves.toEqual({ decision: 'allowed', scope: 'local', modelPin: pin('fixture-provider/gpt-7-luna') });
   });
 
   it('remote/host-discovery launches pin the id from the machine that owns the checkout', async () => {
-    const shared = new OpenCodeProvider();
+    const shared = tieredFixtureProvider();
     shared.discoverModelTargets = vi.fn(async () => { throw new Error('wrong machine'); });
     const hostA = { roles: vi.fn(async () => []), models: vi.fn(async () => A_INVENTORY) };
     const hostB = { roles: vi.fn(async () => []), models: vi.fn(async () => B_INVENTORY) };
@@ -183,21 +203,21 @@ describe('execution routing pins the resolved model id per launch (OC1)', () => 
     // Two machines, same checkout path: each launch carries its own machine's id.
     const onA = await remoteLaunch(hostA);
     const onB = await remoteLaunch(hostB);
-    expect(onA).toEqual({ decision: 'allowed', scope: 'remote', modelPin: pin('llmgw/gpt-7-luna') });
-    expect(onB).toEqual({ decision: 'allowed', scope: 'remote', modelPin: pin('llmgw/gpt-8-luna') });
+    expect(onA).toEqual({ decision: 'allowed', scope: 'remote', modelPin: pin('fixture-provider/gpt-7-luna') });
+    expect(onB).toEqual({ decision: 'allowed', scope: 'remote', modelPin: pin('fixture-provider/gpt-8-luna') });
     // Level resolution and model validation share one probe per launch.
     expect(hostA.models).toHaveBeenCalledTimes(1);
     expect(shared.discoverModelTargets).not.toHaveBeenCalled();
     // The SSH argv carries the pinned id verbatim.
     const remote = { host: 'box', remotePath: '/same/checkout' } as ProjectRemote;
-    expect(spawnArgs(onA, '/same/checkout', remote)).toContain('llmgw/gpt-7-luna');
-    expect(spawnArgs(onB, '/same/checkout', remote)).toContain('llmgw/gpt-8-luna');
+    expect(spawnArgs(onA, '/same/checkout', remote)).toContain('fixture-provider/gpt-7-luna');
+    expect(spawnArgs(onB, '/same/checkout', remote)).toContain('fixture-provider/gpt-8-luna');
   });
 
   it('an explicit model id needs no pin and validates through the same single probe', async () => {
     const shared = new OpenCodeProvider();
     shared.discoverModelTargets = vi.fn(async () => A_INVENTORY);
-    const explicit = { schemaVersion: 1 as const, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-7-sol' } } };
+    const explicit = { schemaVersion: 1 as const, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-7-sol' } } };
     await expect(preflightTerminalExecution({
       config: CONFIG, profile: 'opencode', projectId: 'a', projectPath: '/proj/a', scope: 'local',
       mode: 'interactive', idempotencyKey: 'explicit', harnessRouting: explicit
@@ -205,8 +225,8 @@ describe('execution routing pins the resolved model id per launch (OC1)', () => 
     expect(shared.discoverModelTargets).toHaveBeenCalledTimes(1);
   });
 
-  it('launches without a project path never probe and pin the snapshot mapping', async () => {
-    const shared = new OpenCodeProvider();
+  it('a synthetic declared tier can resolve without a project probe', async () => {
+    const shared = tieredFixtureProvider();
     shared.discoverModelTargets = vi.fn(async () => A_INVENTORY);
     await expect(preflightTerminalExecution({
       config: CONFIG, profile: 'opencode', persona: LOW, projectId: 'a', scope: 'local',

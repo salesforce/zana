@@ -19,8 +19,8 @@ from the sidebar.
   project you pick. This is the usual path for day-to-day work.
 - **CLI Agent** — a real PTY running the native CLI, with the same tools and
   permissions as a standalone terminal.
-- **Team** — launch a saved team of personas against the project when
-  the work benefits from parallel roles.
+- **Squad** — launch a saved Squad of Personas against the project when
+  the work benefits from parallel roles. See [Start using Squads](/docs/squads-start/).
 
 The composer also picks the environment (Work locally, a new or existing
 worktree, or personal scratch). See [Environments](#environments).
@@ -122,17 +122,22 @@ regenerates on a throttle while that landing is open and the inbox has changed.
 
 ---
 
-## Teams
+## Squads
 
-A **team** is a saved composition of agents — each with its own persona — that
-you can launch together against a project. Instead of spawning and briefing
-several agents by hand, you launch the team and each member starts in its role.
+A **Squad** is a saved group of agents, led by an **Orchestrator**, that works
+on one goal together. Each member is a **Persona**: a reusable role with its
+own model, prompt, and tools. Instead of spawning and briefing several agents
+by hand, you describe the goal, pick a Squad and a Project, and launch it.
 
-Use teams for recurring shapes of work: a *review* team (implementer +
-reviewer + security), a *research* team fanning out across sources, or a
-*council* that deliberates and returns a verdict. Teams and their member
-**personas** are edited from the sidebar, and plugins can contribute their
-own.
+Zana ships five built-in Squads: Research, Design, Debug, Delivery, and Review.
+You can edit them, copy them, or build your own from the **Squads** page in
+Settings.
+
+- [Start using Squads](/docs/squads-start/) — your first Research Squad run.
+- [Choose a Squad](/docs/squads-catalogue/) — what each built-in Squad is for.
+- [Ways to start a Squad](/docs/squads-launch/) — composer, conversations, Goals, Schedules, and the CLI.
+- [Watching a Squad](/docs/squads-watch/) — progress, questions, and recovery.
+- [Personas and custom Squads](/docs/squads-customize/) — edit or build your own.
 
 ---
 

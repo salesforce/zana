@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
+import {
+  holdThreadProviderStartup,
+  THREAD_PROVIDER_STARTUP_WAIT_MS,
+  trackThreadProviderStartup
+} from './thread-provider-catalog.js';
 import { HOST_SHARE_TOOL_NAMES, HOST_SESSION_INSTRUCTION } from './host-session-tools.js';
 import { HOST_PREVIEW_FILE_TOOL_NAME } from './host-preview-file-tool.js';
 
@@ -104,6 +109,66 @@ describe('packConversationSessionTooling', () => {
     );
     expect(packed.dynamicTools?.filter((tool) => tool.name === 'inbox_push')).toHaveLength(1);
     expect(packed.dynamicTools?.find((tool) => tool.name === 'inbox_push')?.description).toContain('inbox');
+  });
+
+  describe('during plugin startup', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      trackThreadProviderStartup(Promise.resolve());
+    });
+
+    it('collects plugin tools only after plugin startup settles', async () => {
+      vi.useFakeTimers();
+      const release = holdThreadProviderStartup();
+      const active = ['provider-pi'];
+      const sessionTools = vi.fn(async () => ({
+        tools: active.map((name) => ({ name: `${name}_tool`, description: name, inputSchema: { type: 'object' } }))
+      }));
+      const packing = packConversationSessionTooling(
+        { plugins: { sessionTools } } as unknown as ProductHttpContext,
+        { threadId: 'thr-1', projectId: 'proj-1' }
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sessionTools).not.toHaveBeenCalled();
+      active.push('ask-user-question');
+      release();
+      const packed = await packing;
+      expect(sessionTools).toHaveBeenCalledTimes(1);
+      expect(packed.dynamicTools?.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+        'provider-pi_tool',
+        'ask-user-question_tool'
+      ]));
+    });
+
+    it('starts with the tools activated so far and warns when startup outlasts the bound', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      trackThreadProviderStartup(new Promise(() => {}));
+      const sessionTools = vi.fn(async () => ({ tools: [] }));
+      const packing = packConversationSessionTooling(
+        { plugins: { sessionTools } } as unknown as ProductHttpContext,
+        { threadId: 'thr-1', projectId: 'proj-1' }
+      );
+      await vi.advanceTimersByTimeAsync(THREAD_PROVIDER_STARTUP_WAIT_MS);
+      await packing;
+      expect(sessionTools).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        `[threads] plugin startup still running after ${THREAD_PROVIDER_STARTUP_WAIT_MS}ms; `
+        + 'thread thr-1 (project proj-1) starts with the plugin tools activated so far'
+      );
+    });
+
+    it('does not wait on plugin startup when plugins are absent', async () => {
+      vi.useFakeTimers();
+      trackThreadProviderStartup(new Promise(() => {}));
+      const packed = await packConversationSessionTooling({} as ProductHttpContext, {
+        threadId: 'thr-1',
+        projectId: 'proj-1'
+      });
+      expect(packed.dynamicTools?.map((tool) => tool.name)).toEqual([...HOST_SHARE_TOOL_NAMES]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it('packs run_in_terminal only when the experiment is on', async () => {

@@ -1,8 +1,11 @@
 import { listNativeCapabilities } from "../services/skills/native-capabilities.js";
+import { handleHelpVideosApi } from './help-videos-api.js';
 import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
 import { withoutSecretValues } from '../plugins/plugin-settings-redaction.js';
 import { handlePreviewsApi } from './previews-api.js';
+import { handlePluginPacksApi } from './product-plugin-packs.js';
 import { libraryDocumentOperation } from '../services/library/library-documents.js';
+import { classifyExpectedRpcError } from '@zana-ai/zcc-contracts/rpc-error';
 import { LibraryDocumentRequestSchema, LIBRARY_DOCUMENT_BODY_LIMIT } from '@zana-ai/zcc-contracts/library-documents';
 import { recoverFailedTerminalStart } from './terminal-start-recovery.js';
 import { registerProductTerminal } from './terminal-retention.js';
@@ -10,10 +13,14 @@ import { readProjectImage, ProjectFsError } from './project-fs-via-host.js';
 import { projectGit } from './project-git.js';
 import { usesConnect } from '../services/hosts/connect-enrollment.js';
 import { handleSharedProductApi } from './shared-product-api.js';
+import { handleScopedLinkApi } from '../services/peers/scoped-link-api.js';
+import { handlePeerControlApi } from '../services/peers/peer-control-api.js';
+import { handlePeerInstallerApi } from '../services/peers/peer-installer-api.js';
 import { projectSources } from '@zana-ai/zcc-domain/project';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { getPrimaryHost, countConversationThreadsForQuit } from '@zana-ai/zcc-db';
 import { handleProjectSourcesApi } from './project-sources-api.js';
+import { handleMachineProjectApi, validatedProjectPath } from './machine-project-api.js';
 import { handleNotificationsApi } from './notifications-api.js';
 import { handleNativeToolPolicyApi, handleNativeToolPolicyInventoryApi } from './native-tool-policy-api.js';
 import { INTERACTION_PROOF_HEADER } from './interaction-proof.js';
@@ -24,9 +31,10 @@ import { productServerHasDesktopCredential } from './cli-agent-ops.js';
 import { setProductConfig } from './product-config.js';
 import { assertPlanRevision, planImplementationMode, planImplementationPrompt } from '../services/threads/conversation-plan-implementation.js';
 import { readPluginHttpBody, PluginHttpBodyTooLarge } from './plugin-http-body.js';
+import { handlePeerApi } from './peer-api.js';
 import { conversationHistoryAsync } from '../services/threads/conversation-history.js';
 import { randomUUID } from 'node:crypto';
-import { isAbsolute, join, relative, sep, posix } from 'node:path';
+import { isAbsolute, join, relative, sep, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -76,8 +84,12 @@ import {
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
 import { compactConversation } from '../services/threads/conversation-compact.js';
+import { moveConversationToProject } from '../services/threads/conversation-move.js';
+import { moveThreadRequestSchema } from '@zana-ai/zcc-server-contract';
 import { stopConversationBackgroundTasks } from '../services/threads/conversation-background-stop.js';
 import { closeConversationWithFollowup } from '../services/threads/thread-close-followup.js';
+import { previewPathRequestSchema } from '@zana-ai/zcc-server-contract';
+import { resolveThreadPreviewPath } from '../services/threads/thread-preview-resolution.js';
 import { conversationPromptHistory, pagedConversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
 import { conversationNextTurnView } from '../services/threads/conversation-next-turn.js';
 import {
@@ -147,15 +159,17 @@ import { provisionProjectEnvironment } from '../services/threads/spawn-environme
 import { isZccManagedWorkspacePath } from '../services/threads/worktree-paths.js';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, validatePluginMetadata, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
-import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema, threadPluginMetadataQuerySchema, updateThreadPluginMetadataRequestSchema, stopBackgroundTasksRequestSchema } from '@zana-ai/zcc-server-contract';
+import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema, threadPluginMetadataQuerySchema, updateThreadPluginMetadataRequestSchema, stopBackgroundTasksRequestSchema, threadConversationOutlineQuerySchema, THREAD_CONVERSATION_SEARCH_QUERY_MAX } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify, harnessVerifyBundle } from './harness-via-rpc.js';
 import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../services/threads/provider-health-probe.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile, parseProjectFileScope } from './project-fs-via-host.js';
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
-import { getConversationThread, getEnvironment, getHost, getConversationThreadEventAfter, listConversationThreadEventsWindow, ConversationHistoryReadLimitError, listConversationThreadsByProject, listHosts, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
+import { getConversationThread, getEnvironment, getHost, getConversationThreadEventAfter, listConversationThreadEventsWindow, ConversationHistoryReadLimitError, listConversationThreadsByProject, listExecutionHosts, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
+import { handlePeerConnectionsApi } from './peer-connections-api.js';
+import { handlePeerUsesApi } from './peer-uses-api.js';
 import { handleDesktopBrowsersApi } from './desktop-browsers-api.js';
 import { handleCliAgentsApi } from './cli-agents-api.js';
 import { isThreadLiveInProject } from '../services/agents/thread-liveness.js';
@@ -275,6 +289,12 @@ async function handlePluginAppRpc(
   try {
     sendJson(response, 200, { value: await ctx.plugins.callRpc(id, body.method, body.args) });
   } catch (error) {
+    // Expected domain errors map to their own 4xx and carry `code`; the rest keep the legacy mapping.
+    const expected = classifyExpectedRpcError(error);
+    if (expected) {
+      sendJson(response, expected.status, { error: expected.message, code: expected.code });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     sendJson(response, pluginAppErrorStatus(message), { error: message });
   }
@@ -389,7 +409,7 @@ async function resolveExecutionOptionsScope(args: {
       project,
       remoteToolProxy: false,
       remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
-      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost),
       probeHostHome: async () => {
         const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
           hostId,
@@ -466,6 +486,7 @@ export async function handleProductHttp(
   response: ServerResponse,
   ctx: ProductHttpContext
 ): Promise<boolean> {
+  if (await handlePeerControlApi(request, response, ctx)) return true;
   const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
   if (!requestUrl.pathname.startsWith('/api/')) return false;
 
@@ -510,7 +531,12 @@ export async function handleProductHttp(
   }
 
   try {
+    if (await handleHelpVideosApi(request, response, ctx.helpVideos, path, method)) return true;
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;
+    if (await handlePluginPacksApi(request, response, ctx.plugins?.pluginPacks, path, method)) return true;
+    if (await handleScopedLinkApi(request, response, ctx, path, method)) return true;
+    if (await handlePeerInstallerApi(request, response, ctx, path, method)) return true;
+    if (await handlePeerApi(request, response, ctx, path, method)) return true;
     if (path === '/api/v1/file-preview/video' && (method === 'GET' || method === 'HEAD')) {
       try {
         await sendVideoPreview(request, response, ctx, requestUrl.searchParams);
@@ -536,6 +562,14 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (await handlePeerConnectionsApi(request, response, ctx, path, method)) {
+      return true;
+    }
+
+    if (await handlePeerUsesApi(request, response, ctx, path, method)) {
+      return true;
+    }
+
     if (await handleHostsApi(request, response, ctx, path, method, requestUrl)) {
       return true;
     }
@@ -550,6 +584,7 @@ export async function handleProductHttp(
 
     if (await handleSharedProductApi(request, response, ctx, path, method)) return true;
     if (await handleProjectSourcesApi(request, response, ctx, path, method)) return true;
+    if (await handleMachineProjectApi(request, response, ctx, path, method)) return true;
     if (await handleNotificationsApi(request, response, ctx, path, method, requestUrl)) return true;
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
     if (await handleNativeToolPolicyInventoryApi(request, response, ctx, path, method)) return true;
@@ -560,13 +595,21 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/projects' && method === 'POST') {
-      const body = (await readJsonBody(request)) as { path?: unknown; hostId?: unknown };
-      if (typeof body.path !== 'string' || body.path.length === 0) {
+      const body = (await readJsonBody(request)) as { path?: unknown; hostId?: unknown } | null;
+      if (!body || typeof body.path !== 'string' || body.path.length === 0 || body.path.length > 4096 || /[\x00-\x1f]/.test(body.path)) {
         sendJson(response, 400, { error: 'path is required' });
         return true;
       }
+      if (body.hostId !== undefined && (typeof body.hostId !== 'string' || !body.hostId)) {
+        sendJson(response, 400, { error: 'Choose a registered machine' }); return true;
+      }
       const hostId = typeof body.hostId === 'string' && body.hostId.length > 0 ? body.hostId : undefined;
-      const project = await ctx.projects.add(body.path, hostId ? { hostId } : undefined);
+      let projectPath = body.path;
+      if (hostId) {
+        try { projectPath = await validatedProjectPath(ctx, body.path, hostId); }
+        catch (error) { sendHostFailure(response, error); return true; }
+      }
+      const project = await ctx.projects.add(projectPath, hostId ? { hostId } : undefined);
       void ctx.remoteProjectReconciler?.request();
       ctx.hub.emit('projects:changed', ctx.projects.list());
       sendJson(response, 200, { project });
@@ -622,8 +665,10 @@ export async function handleProductHttp(
     if (path === '/api/v1/config' && (method === 'PATCH' || method === 'POST')) {
       const patch = (await readJsonBody(request)) as Partial<AppConfig>;
       const previousSafeMode = ctx.config.getConfig().pluginSafeMode === true;
+      const previousDevelopmentMode = ctx.config.getConfig().pluginDevelopmentEnabled;
       const config = presentAppConfig(await setProductConfig(ctx, patch));
       if (previousSafeMode !== (config.pluginSafeMode === true)) await ctx.plugins?.refreshSafeMode();
+      if (previousDevelopmentMode !== config.pluginDevelopmentEnabled) await ctx.plugins?.refreshDevelopmentMode();
       ctx.hub.emit('config:changed', config);
       try {
         await ctx.plugins?.syncInjectedSkillRoots?.();
@@ -1222,7 +1267,12 @@ export async function handleProductHttp(
 
     const panelThreads = routeParams(path, '/api/v1/plugins/:id/panel-threads');
     if (panelThreads && method === 'GET') {
-      const listed = pluginPanelThreads(ctx.db, ctx.plugins, panelThreads.id ?? '', requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('panel'));
+      const projectId = requestUrl.searchParams.get('projectId');
+      const view = requestUrl.searchParams.get('view');
+      const scope = projectId !== null || view !== null
+        ? { ...(projectId !== null ? { projectId } : {}), ...(view !== null ? { view } : {}) }
+        : undefined;
+      const listed = pluginPanelThreads(ctx.db, ctx.plugins, panelThreads.id ?? '', requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('panel'), scope);
       if (!listed.ok) {
         sendJson(response, listed.status, { error: listed.message });
         return true;
@@ -1522,10 +1572,39 @@ export async function handleProductHttp(
 
     const threadOutline = routeParams(path, '/api/v1/threads/:id/conversation-outline');
     if (threadOutline && method === 'GET') {
+      const parsed = threadConversationOutlineQuerySchema.safeParse({
+        q: requestUrl.searchParams.get('q') ?? undefined
+      });
+      if (!parsed.success) {
+        sendJson(response, 400, {
+          error: 'invalid-input',
+          message: `q must be at most ${THREAD_CONVERSATION_SEARCH_QUERY_MAX} characters`
+        });
+        return true;
+      }
       try {
-        sendJson(response, 200, conversationOutline(ctx, threadOutline.id));
+        sendJson(response, 200, conversationOutline(ctx, threadOutline.id, parsed.data.q));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadPreviewPath = routeParams(path, '/api/v1/threads/:id/preview-path/resolve');
+    if (threadPreviewPath && method === 'POST') {
+      try {
+        const parsed = previewPathRequestSchema.safeParse(await readJsonBody(request));
+        if (!parsed.success) {
+          sendJson(response, 400, { error: 'invalid-request', message: 'Invalid preview path request' });
+          return true;
+        }
+        sendJson(response, 200, await resolveThreadPreviewPath(ctx, threadPreviewPath.id, parsed.data));
+      } catch (error) {
+        if (error instanceof ProjectFsError) {
           sendJson(response, error.status, { error: error.code, message: error.message });
           return true;
         }
@@ -1732,6 +1811,22 @@ export async function handleProductHttp(
     const threadInput = routeParams(path, '/api/v1/threads/:id/input');
     if (threadInput && method === 'POST') {
       sendJson(response, 410, { error: 'gone', message: 'PTY input is not a Thread API; use POST /threads/:id/send' });
+      return true;
+    }
+
+    const threadMove = routeParams(path, '/api/v1/threads/:id/move');
+    if (threadMove && method === 'POST') {
+      const parsed = moveThreadRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-request', message: 'A destination and expected source project are required.' });
+        return true;
+      }
+      try {
+        const moved = await moveConversationToProject(ctx, threadMove.id, parsed.data);
+        sendJson(response, 200, { thread: conversationThreadView(ctx, moved) });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
       return true;
     }
 
@@ -2948,7 +3043,15 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/projects/clone-root' && method === 'GET') {
-      sendJson(response, 200, { path: resolveCloneRoot(ctx) });
+      const selectedHostId = requestUrl.searchParams.get('hostId');
+      if (selectedHostId && selectedHostId !== getPrimaryHost(ctx.db)?.id) {
+        try {
+          const hostId = resolveProjectHost(ctx, selectedHostId);
+          const result = await ctx.hostHub.callHostOnlineRpc<{ path: string }>({ hostId,
+            command: { type: 'project.clone_default_path', projectSlug: 'project' } });
+          sendJson(response, 200, { path: (win32.isAbsolute(result.path) ? win32 : posix).dirname(result.path) });
+        } catch (error) { sendHostFailure(response, error); }
+      } else sendJson(response, 200, { path: resolveCloneRoot(ctx) });
       return true;
     }
 
@@ -2972,22 +3075,23 @@ export async function handleProductHttp(
         // another daemon must neither make local imports ambiguous nor move
         // that local destination onto the remaining remote when primary is off.
         const hostId = resolveProjectHost(ctx, typeof body.hostId === 'string' && body.hostId ? body.hostId : undefined);
-        const targetPath = typeof body.targetPath === 'string' && isAbsolute(body.targetPath)
-          ? body.targetPath
-          : join(resolveCloneRoot(ctx), slug);
+        const host = getHost(ctx.db, hostId);
+        // A remote's default is resolved by that daemon, never by joining the
+        // primary machine's clone root onto a remote command.
+        const targetPath = typeof body.targetPath === 'string' && (isAbsolute(body.targetPath) || win32.isAbsolute(body.targetPath))
+          ? body.targetPath : host?.isPrimary ? join(resolveCloneRoot(ctx), slug) : undefined;
         const cloned = await ctx.hostHub.callHostOnlineRpc<{ path: string; gitRemoteUrl: string | null }>({
           hostId,
           command: {
             type: 'project.clone',
             remoteUrl: normalized.cloneUrl,
             projectSlug: slug,
-            targetPath
+            ...(targetPath ? { targetPath } : {})
           },
           timeoutMs: 20 * 60 * 1000
         });
         // Absent hostId means primary (this machine). Match local folder add:
         // only persist hostId for non-primary enrolled hosts.
-        const host = getHost(ctx.db, hostId);
         const persistHostId = host && !host.isPrimary ? hostId : undefined;
         const project = await ctx.projects.add(
           cloned.path,
@@ -3034,6 +3138,23 @@ export async function handleProductHttp(
         return true;
       }
       sendJson(response, 200, { updates: await ctx.plugins.checkUpdates() });
+      return true;
+    }
+
+    if (path === '/api/v1/plugin-apps/update-all' && method === 'POST') {
+      if (!ctx.plugins) { sendJson(response, 503, { error: 'plugin host is unavailable' }); return true; }
+      sendJson(response, 200, { ok: true, value: await ctx.plugins.applyAllUpdates() });
+      return true;
+    }
+
+    if (path === '/api/v1/plugin-apps/recovery' && method === 'GET') {
+      if (!ctx.plugins) { sendJson(response, 503, { error: 'plugin host is unavailable' }); return true; }
+      sendJson(response, 200, ctx.plugins.recoveryStatus());
+      return true;
+    }
+    if (path === '/api/v1/plugin-apps/hard-reload' && method === 'POST') {
+      if (!ctx.plugins) { sendJson(response, 503, { error: 'plugin host is unavailable' }); return true; }
+      sendJson(response, 202, await ctx.plugins.hardReload());
       return true;
     }
 

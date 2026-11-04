@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Squads in Zana</title>
+<style>
+  :root {
+    --bg: #0d1020; --panel: #151a2e; --line: #262d48; --text: #f3f4fb; --muted: #a3a9c4;
+    --blue: #4c8dff; --violet: #a993ff; --gold: #f5b83d; --green: #4fd28a; --red: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #05060c; color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  #viewport { position: fixed; inset: 0; display: grid; place-items: center; }
+  #deck { position: relative; width: 1920px; height: 1080px; transform-origin: center; }
+  .slide {
+    position: absolute; inset: 0; padding: 110px 140px 120px; display: flex; flex-direction: column;
+    background: radial-gradient(1200px 700px at 85% -10%, rgba(76,141,255,.16), transparent 60%),
+                radial-gradient(900px 600px at -10% 110%, rgba(169,147,255,.14), transparent 60%), var(--bg);
+    opacity: 0; pointer-events: none; transition: opacity .45s ease, transform .45s ease; transform: translateX(28px);
+  }
+  .slide.active { opacity: 1; pointer-events: auto; transform: none; }
+  .slide.before { transform: translateX(-28px); }
+  .kicker { font: 700 22px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .18em; text-transform: uppercase; color: var(--violet); margin-bottom: 26px; }
+  h1 { font-size: 112px; line-height: 1.02; margin: 0 0 34px; letter-spacing: -.035em; }
+  h2 { font-size: 68px; line-height: 1.08; margin: 0 0 40px; letter-spacing: -.025em; }
+  h3 { font-size: 32px; margin: 0 0 12px; }
+  p, li { font-size: 32px; line-height: 1.5; color: var(--muted); }
+  p { margin: 0 0 22px; }
+  strong { color: var(--text); font-weight: 650; }
+  .grad { background: linear-gradient(90deg, #8fb6ff, #c3b3ff 55%, #ffd27a); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { font-size: 40px; max-width: 1400px; }
+  .row { display: flex; gap: 70px; flex: 1; min-height: 0; align-items: center; }
+  .col { flex: 1; min-width: 0; }
+  .shot { flex: 1.35; border-radius: 22px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 40px 90px rgba(0,0,0,.55); background: #000; }
+  .shot img { display: block; width: 100%; }
+  ul.clean { list-style: none; padding: 0; margin: 0; }
+  ul.clean li { position: relative; padding-left: 44px; margin-bottom: 20px; }
+  ul.clean li::before { content: ""; position: absolute; left: 6px; top: 19px; width: 14px; height: 14px; border-radius: 4px; background: var(--blue); transform: rotate(45deg); }
+  .grid { display: grid; gap: 30px; }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 38px 40px; }
+  .card p { font-size: 27px; margin: 0; }
+  .card .ico { width: 58px; height: 58px; border-radius: 16px; display: grid; place-items: center; font-size: 30px; margin-bottom: 22px; background: rgba(76,141,255,.15); }
+  .pill { display: inline-block; font: 600 20px/1 ui-monospace, Menlo, monospace; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); margin: 0 10px 10px 0; }
+  .footer { position: absolute; left: 140px; right: 140px; bottom: 56px; display: flex; justify-content: space-between; font-size: 20px; color: #6d7393; }
+  .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; color: #c9cde3; }
+  .brand i { width: 22px; height: 22px; border-radius: 7px; background: linear-gradient(135deg, var(--blue), var(--violet)); display: inline-block; }
+  /* Squad anatomy diagram */
+  .anatomy { position: relative; height: 560px; }
+  .node { position: absolute; width: 360px; padding: 26px 28px; border-radius: 20px; background: var(--panel); border: 1px solid var(--line); }
+  .node b { display: block; font-size: 30px; color: var(--text); margin-bottom: 6px; }
+  .node span { font-size: 22px; color: var(--muted); }
+  .node .tag { position: absolute; top: -15px; left: 24px; font: 700 15px/1 ui-monospace, Menlo, monospace; letter-spacing: .12em; padding: 7px 10px; border-radius: 8px; }
+  .node.orch { border-color: rgba(245,184,61,.7); box-shadow: 0 0 0 6px rgba(245,184,61,.08); }
+  .node.orch .tag { background: var(--gold); color: #241a00; }
+  .node.work .tag { background: var(--blue); color: #fff; }
+  .node.rev .tag { background: var(--violet); color: #1b1240; }
+  .node.you { border-style: dashed; }
+  .node.you .tag { background: var(--green); color: #052611; }
+  svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  svg.wires path { fill: none; stroke: #3b4670; stroke-width: 3; stroke-dasharray: 10 10; animation: flow 1.2s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -20; } }
+  /* Steps */
+  .steps { counter-reset: s; display: grid; grid-template-columns: repeat(3, 1fr); gap: 34px; }
+  .step { counter-increment: s; background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 40px; }
+  .step::before { content: counter(s); display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; font-size: 30px; font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--blue), var(--violet)); margin-bottom: 26px; }
+  .step p { font-size: 27px; margin: 0; }
+  code { font: 500 .85em ui-monospace, Menlo, monospace; color: #cfd7ff; background: rgba(255,255,255,.06); padding: 2px 8px; border-radius: 6px; }
+  /* Video */
+  .video-wrap { flex: 1; min-height: 0; display: flex; justify-content: center; }
+  video { height: 100%; max-width: 100%; border-radius: 22px; border: 1px solid var(--line); box-shadow: 0 40px 90px rgba(0,0,0,.6); background: #000; }
+  /* Chrome */
+  #progress { position: fixed; left: 0; bottom: 0; height: 4px; background: linear-gradient(90deg, var(--blue), var(--violet)); transition: width .4s ease; z-index: 5; }
+  #counter { position: fixed; right: 22px; bottom: 16px; font: 600 14px ui-monospace, Menlo, monospace; color: #6d7393; z-index: 5; }
+  #hint { position: fixed; left: 22px; bottom: 16px; font-size: 13px; color: #4b5170; z-index: 5; }
+</style>
+</head>
+<body>
+<div id="viewport"><div id="deck">
+
+  <section class="slide">
+    <div class="kicker">Zana · Squads</div>
+    <h1>One goal.<br><span class="grad">A whole team of agents.</span></h1>
+    <p class="lead">Squads let a team of agents plan, split and deliver work together, and they check in with you when a decision matters.</p>
+    <div style="flex:1"></div>
+    <div><span class="pill">Orchestrator</span><span class="pill">Parallel workers</span><span class="pill">Reviewer</span><span class="pill">Human in the loop</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Why Squads</div>
+    <h2>A single agent does everything in sequence</h2>
+    <div class="grid g3">
+      <div class="card"><div class="ico">⏱</div><h3>One thing at a time</h3><p>Independent tasks wait in line instead of running side by side.</p></div>
+      <div class="card"><div class="ico">🧠</div><h3>One context for everything</h3><p>Planning, coding and reviewing all compete for the same window.</p></div>
+      <div class="card"><div class="ico">🔍</div><h3>Reviews its own work</h3><p>Nobody independent checks the result before it lands.</p></div>
+    </div>
+    <div style="flex:1"></div>
+    <p class="lead"><strong>A Squad gives each role its own agent:</strong> one plans, several build in parallel, one reviews.</p>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Anatomy of a Squad</div>
+    <h2>Slots, personas and an orchestrator</h2>
+    <div class="row">
+      <div class="col" style="flex:1.3">
+        <div class="anatomy">
+          <svg class="wires" viewBox="0 0 900 560" preserveAspectRatio="none">
+            <path d="M450 120 C450 200 170 190 170 290"/><path d="M450 120 L450 290"/><path d="M450 120 C450 200 730 190 730 290"/>
+            <path d="M560 60 C700 60 760 30 800 30"/>
+          </svg>
+          <div class="node orch" style="left:270px;top:20px"><span class="tag">ORCHESTRATOR</span><b>Orchestrator</b><span>Starts first, plans, delegates</span></div>
+          <div class="node work" style="left:0;top:290px;width:285px"><span class="tag">WORKER · TAB 1</span><b>Squad Worker</b><span>Same slot,</span></div>
+          <div class="node work" style="left:305px;top:290px;width:285px"><span class="tag">WORKER · TAB 2</span><b>Squad Worker</b><span>running in parallel</span></div>
+          <div class="node rev" style="left:600px;top:290px;width:300px"><span class="tag">REVIEWER</span><b>Code Reviewer</b><span>Independent check</span></div>
+          <div class="node you" style="left:700px;top:-30px;width:250px;padding:18px 22px"><span class="tag">YOU</span><b style="font-size:24px">Inbox</b><span>Decisions</span></div>
+        </div>
+      </div>
+      <div class="col">
+        <ul class="clean">
+          <li><strong>Slot</strong>: one role in the Squad, backed by a <strong>persona</strong> (prompt, model level, tools).</li>
+          <li><strong>Tab count</strong>: how many agents of that persona run.</li>
+          <li><strong>Crown</strong>: marks the orchestrator. It launches first and carries the opening prompt.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Define · Step 1</div>
+    <h2>Settings → Squads → New squad</h2>
+    <div class="row">
+      <div class="col">
+        <ul class="clean">
+          <li>Name, icon and a one-line description</li>
+          <li><strong>Add slot</strong> for each role and pick a persona</li>
+          <li>Set the tab count for parallel workers</li>
+          <li>Click the <strong>crown</strong> on the orchestrator</li>
+        </ul>
+      </div>
+      <div class="shot"><img src="crop-crown.jpg" alt="The New squad editor with Orchestrator, two Squad Workers and a Code Reviewer"></div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Define · Step 2</div>
+    <h2>Tune how it runs</h2>
+    <div class="row">
+      <div class="shot"><img src="crop-options.jpg" alt="Squad options: opening prompt, default project, worktree isolation, routing, planning, launch approval"></div>
+      <div class="col">
+        <ul class="clean">
+          <li><strong>Opening prompt</strong>: handed to the orchestrator</li>
+          <li><strong>Default project</strong>, or choose at launch</li>
+          <li><strong>Worktree isolation</strong>: one shared branch for the run</li>
+          <li><strong>Routing</strong>: send work to Low / Medium / High tiers</li>
+          <li><strong>Planning</strong>: infer from the goal, or follow your plan</li>
+          <li><strong>Launch approval</strong>: let agents start it, or review first</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Launch</div>
+    <h2>Describe the goal, pick the Squad</h2>
+    <div class="row">
+      <div class="col">
+        <p><strong>New agent → Squad</strong>: type the goal, then choose the Squad and the Project.</p>
+        <p>You can also start one from:</p>
+        <ul class="clean">
+          <li>the <strong>Launch</strong> button in Settings → Squads</li>
+          <li><strong>Schedules</strong> and <strong>Goals</strong></li>
+          <li><strong>another agent</strong>, which can prepare a launch card for you to approve</li>
+        </ul>
+      </div>
+      <div class="shot"><img src="crop-launch.jpg" alt="The Squad composer with a goal, Web Squad and Infer plan from goal"></div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Run &amp; observe</div>
+    <h2>Watch the work hand off</h2>
+    <div class="grid g2" style="flex:1;min-height:0">
+      <div class="shot" style="flex:none"><img src="preview-board.jpg" alt="Agents board with the Squad's workers"></div>
+      <div class="shot" style="flex:none"><img src="preview-flow.jpg" alt="Flow view with the orchestrator and three workers"></div>
+    </div>
+    <p style="margin-top:34px"><strong>Board</strong>, <strong>List</strong> and <strong>Flow</strong> views show every member's status. <strong>Squad details</strong> shows the plan, work units, blockers and progress.</p>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Human in the loop</div>
+    <h2>It asks. You decide. It finishes.</h2>
+    <div class="row">
+      <div class="shot"><img src="crop-inbox.jpg" alt="An Inbox question from the Squad with two label options"></div>
+      <div class="col">
+        <ul class="clean">
+          <li>Questions arrive in the <strong>Inbox</strong> under <em>Needs your answer</em></li>
+          <li>Answer once and the same run continues</li>
+          <li>If a provided plan is invalid, the run pauses for a correction you approve</li>
+          <li>When an agent launches a Squad, the results report back to that conversation</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-video>
+    <div class="kicker">Demo · 90 seconds</div>
+    <h2 style="margin-bottom:30px">Ask an agent, or build it yourself, then run it</h2>
+    <div class="video-wrap">
+      <video controls playsinline preload="auto" poster="poster.jpg">
+        <source src="squads.mp4" type="video/mp4">
+        <track kind="captions" src="squads.en.vtt" srclang="en" label="English">
+      </video>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Start from a built-in</div>
+    <h2>Five Squads included</h2>
+    <div class="grid g3">
+      <div class="card"><h3>Review Squad</h3><p>A focused code review whenever an implementation needs an independent pass.</p></div>
+      <div class="card"><h3>Research Squad</h3><p>A coordinator and two investigators for code, requirements and prior art.</p></div>
+      <div class="card"><h3>Design Squad</h3><p>A designer and a challenger for technical design.</p></div>
+      <div class="card"><h3>Debug Squad</h3><p>An evidence collector and a root-cause investigator.</p></div>
+      <div class="card"><h3>Delivery Squad</h3><p>Two engineers and a reviewer for bounded delivery.</p></div>
+      <div class="card" style="border-style:dashed"><h3>Your own</h3><p>Override a built-in, duplicate it, or build one from scratch.</p></div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">Get started</div>
+    <h2>Define once. <span class="grad">Launch for any goal.</span></h2>
+    <div class="steps">
+      <div class="step"><h3>Define</h3><p><strong>Ask an agent</strong> to set one up, or Settings → Squads → <strong>New squad</strong>.</p></div>
+      <div class="step"><h3>Launch</h3><p><strong>New agent → Squad</strong>. Describe the goal and pick a Project.</p></div>
+      <div class="step"><h3>Steer</h3><p>Follow it in Flow view and answer questions in the Inbox.</p></div>
+    </div>
+    <div style="flex:1"></div>
+    <p>Share a Squad with its personas as a single <strong>bundle</strong>: Export from a Squad row, then <strong>Import bundle</strong> on another machine.</p>
+  </section>
+
+</div></div>
+<div id="progress"></div><div id="counter"></div><div id="hint">← → or click · F for fullscreen</div>
+<script>
+  const deck = document.getElementById('deck');
+  const slides = [...document.querySelectorAll('.slide')];
+  slides.forEach((slide, i) => {
+    if (slide.hasAttribute('data-video')) return;
+    slide.insertAdjacentHTML('beforeend', `<div class="footer"><span class="brand"><i></i>Zana</span><span>Squads · ${i + 1}</span></div>`);
+  });
+  let current = Math.min(slides.length - 1, Math.max(0, parseInt(location.hash.slice(1), 10) - 1 || 0));
+  function fit() {
+    const scale = Math.min(innerWidth / 1920, innerHeight / 1080);
+    deck.style.transform = `scale(${scale})`;
+  }
+  function show(next) {
+    current = Math.max(0, Math.min(slides.length - 1, next));
+    slides.forEach((slide, i) => {
+      slide.classList.toggle('active', i === current);
+      slide.classList.toggle('before', i < current);
+      const video = slide.querySelector('video');
+      if (video && i !== current) video.pause();
+    });
+    const video = slides[current].querySelector('video');
+    if (video) { video.currentTime = 0; video.play().catch(() => {}); }
+    document.getElementById('progress').style.width = `${((current + 1) / slides.length) * 100}%`;
+    document.getElementById('counter').textContent = `${current + 1} / ${slides.length}`;
+    history.replaceState(null, '', `#${current + 1}`);
+  }
+  addEventListener('resize', fit);
+  addEventListener('keydown', (e) => {
+    if (['ArrowRight', 'PageDown', ' ', 'Enter'].includes(e.key)) { e.preventDefault(); show(current + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(current - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key.toLowerCase() === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  });
+  addEventListener('click', (e) => {
+    if (e.target.closest('video')) return;
+    show(current + (e.clientX < innerWidth / 3 ? -1 : 1));
+  });
+  fit(); show(current);
+</script>
+</body>
+</html>

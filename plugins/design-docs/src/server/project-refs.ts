@@ -1,0 +1,294 @@
+import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
+import { assertRegisteredProject, type ProjectLister } from './project-guard.js';
+import { DesignDocError } from './store.js';
+
+/**
+ * Local-only project bookkeeping, kept out of the append-only migration book and
+ * out of everything that syncs or hashes:
+ *  - `dd_project_refs` remembers the last name/tag of every registered project so a
+ *    doc of a deleted project shows "<name> (project removed)", not "Unknown project";
+ *  - `dd_project_aliases` maps a foreign project id (carried by a doc received from a
+ *    peer, held in `sync_doc_references.project_json`) to a local project. `docs.project_id`
+ *    is never written for a mapping.
+ * Both tables are created lazily; if that fails the feature degrades to "Unknown project".
+ */
+export interface ProjectInfo { id: string; name?: string; tag?: string }
+
+export interface UnassignedForeignProject {
+  foreignProjectId: string;
+  docCount: number;
+  sampleTitles: string[];
+  /** The sender's own name and tag for this project (advisory hint), for display instead of the id. */
+  senderName: string | null;
+  senderTag: string | null;
+  /** A registered project matching the stored tag, then name. Never applied automatically. */
+  suggestion: { projectId: string; name: string; basis: 'tag' | 'name' } | null;
+}
+
+export interface ProjectMapping {
+  foreignProjectId: string;
+  localProjectId: string;
+  docCount: number;
+  sampleTitles: string[];
+  senderName: string | null;
+  senderTag: string | null;
+  /** False when the local project is no longer registered (the mapping is ignored until it reappears). */
+  localRegistered: boolean;
+}
+
+const MAX_MAPPINGS = 200;
+const MAX_ID_LENGTH = 512;
+const MAX_UNASSIGNED = 200;
+const SAMPLE_TITLES = 3;
+const REMOVED_SUFFIX = ' (project removed)';
+
+/** SQL fragments over `docs d`; shared with the store's list scoping. */
+export const FOREIGN_REF_EXISTS = `EXISTS (SELECT 1 FROM sync_doc_references r WHERE r.doc_id = d.id AND r.project_json <> 'null')`;
+/**
+ * An alias counts only while its local project is in the last observed project list (or no list was
+ * observed yet). Aliases to absent projects are ignored at read time, never deleted, so a transient
+ * incomplete project list cannot destroy a user's mapping.
+ */
+export const ALIAS_LIVE = `(NOT EXISTS (SELECT 1 FROM dd_project_live)
+  OR EXISTS (SELECT 1 FROM dd_project_live l WHERE l.project_id = a.local_project_id))`;
+export const MAPPED_TO_ANY = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN dd_project_aliases a
+  ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND ${ALIAS_LIVE})`;
+export const MAPPED_TO_PROJECT = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN dd_project_aliases a
+  ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND a.local_project_id = ? AND ${ALIAS_LIVE})`;
+
+/** Display-safe text: control and bidirectional characters removed, blank as null. */
+export function cleanLabel(value: string | null | undefined): string | null {
+  // eslint-disable-next-line no-control-regex
+  return (value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim() || null;
+}
+
+function cleanId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_ID_LENGTH) {
+    throw new DesignDocError('invalid', `${label} must be a non-empty string of at most ${MAX_ID_LENGTH} characters`);
+  }
+  return value;
+}
+
+export class DesignDocProjectRefs {
+  private tables = false;
+  private lastObserved: string | null = null;
+  private readonly now: () => number;
+
+  constructor(private readonly db: PluginDatabase, options: { now?: () => number; onError?: (error: unknown) => void } = {}) {
+    this.now = options.now ?? Date.now;
+    this.ensure(options.onError);
+  }
+
+  /** Whether the lazy tables exist. Re-tried on demand so a restore that dropped them recovers. */
+  get available(): boolean { return this.tables || this.ensure(); }
+
+  private ensure(onError?: (error: unknown) => void): boolean {
+    try {
+      this.db.runScript(`CREATE TABLE IF NOT EXISTS dd_project_refs (
+          project_id TEXT PRIMARY KEY, name TEXT, tag TEXT, last_seen INTEGER);
+        CREATE TABLE IF NOT EXISTS dd_project_aliases (
+          foreign_project_id TEXT PRIMARY KEY, local_project_id TEXT NOT NULL, updated_at INTEGER);
+        CREATE TABLE IF NOT EXISTS dd_project_live (project_id TEXT PRIMARY KEY);`);
+      this.lastObserved = null;
+      this.tables = true;
+    } catch (error) {
+      this.tables = false;
+      onError?.(error);
+    }
+    return this.tables;
+  }
+
+  /**
+   * Called after every successful project-list fetch: keeps stored names current (renames), records
+   * which projects are registered (aliases to absent projects are ignored at read time, never
+   * deleted) and forgets removed projects no doc refers to. Skips the write transaction when the list is unchanged.
+   * Never throws.
+   */
+  observe(projects: ProjectInfo[]): void {
+    if (!this.available) return;
+    const signature = JSON.stringify(projects.map((p) => [p.id, p.name || null, p.tag || null]).sort());
+    try {
+      if (signature === this.lastObserved) {
+        this.prune(projects.map((project) => project.id)); // read-only unless a name became unreferenced
+        return;
+      }
+      const at = this.now();
+      this.db.transaction(() => {
+        const upsert = this.db.prepare(`INSERT INTO dd_project_refs (project_id, name, tag, last_seen) VALUES (?, ?, ?, ?)
+          ON CONFLICT (project_id) DO UPDATE SET name = excluded.name, tag = excluded.tag, last_seen = excluded.last_seen`);
+        for (const project of projects) upsert.run(project.id, project.name || null, project.tag || null, at);
+        this.db.prepare('DELETE FROM dd_project_live').run();
+        const live = this.db.prepare('INSERT OR IGNORE INTO dd_project_live (project_id) VALUES (?)');
+        for (const project of projects) live.run(project.id);
+        // Marks the list as observed, so a successfully observed EMPTY list is not mistaken for "never observed".
+        live.run('');
+        this.prune(projects.map((project) => project.id));
+      });
+      this.lastObserved = signature;
+    } catch {
+      this.tables = false; // re-probed on next use
+    }
+  }
+
+  /** Deletes unreferenced removed-project name rows. Aliases are never deleted here. */
+  private prune(registered: string[]): void {
+    const live = new Set(registered);
+    const refs = this.db.prepare('SELECT project_id AS id FROM dd_project_refs').all() as Array<{ id: string }>;
+    for (const { id } of refs) {
+      if (live.has(id)) continue;
+      // docs-kind: allow Existence probe over every kind; only decides whether a removed-project name is still needed.
+      const used = this.db.prepare(`SELECT 1 FROM docs WHERE project_id = ? LIMIT 1`).get(id)
+        ?? this.db.prepare('SELECT 1 FROM sync_doc_references WHERE project_json = ? LIMIT 1').get(JSON.stringify(id));
+      if (!used) this.db.prepare('DELETE FROM dd_project_refs WHERE project_id = ?').run(id);
+    }
+  }
+
+  /** "<name> (project removed)" for an id that was once registered, else null (caller shows "Unknown project"). */
+  removedLabel(projectId: string | null): string | null {
+    if (!projectId || !this.available) return null;
+    try {
+      const row = this.db.prepare('SELECT name FROM dd_project_refs WHERE project_id = ?').get(projectId) as { name: string | null } | undefined;
+      return row?.name ? `${row.name}${REMOVED_SUFFIX}` : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Labels for every stored project not in `registered`, for the UI to resolve ids of deleted projects. */
+  removedProjects(registered: string[]): Array<{ id: string; label: string }> {
+    if (!this.available) return [];
+    try {
+      const live = new Set(registered);
+      return (this.db.prepare('SELECT project_id AS id, name FROM dd_project_refs WHERE name IS NOT NULL ORDER BY project_id LIMIT 1000')
+        .all() as Array<{ id: string; name: string }>)
+        .filter((row) => !live.has(row.id))
+        .map((row) => ({ id: row.id, label: `${row.name}${REMOVED_SUFFIX}` }));
+    } catch {
+      return [];
+    }
+  }
+
+  private foreignReferenced(foreignId: string): boolean {
+    // docs-kind: allow Existence probe by project reference; templates carry none.
+    return !!(this.db.prepare(`SELECT 1 FROM docs WHERE kind = 'doc' AND project_id = ? LIMIT 1`).get(foreignId)
+      ?? this.db.prepare(`SELECT 1 FROM sync_doc_references r JOIN docs d ON d.id = r.doc_id
+        WHERE d.kind = 'doc' AND r.project_json = ? LIMIT 1`).get(JSON.stringify(foreignId)));
+  }
+
+  /**
+   * Maps a foreign project id to a registered local project. The renderer is untrusted: the local id
+   * must be registered (fails closed when the host list is unavailable) and the foreign id must be
+   * referenced by at least one doc. Nothing synced changes.
+   */
+  async mapForeignProject(list: ProjectLister | undefined, foreignId: unknown, localProjectId: unknown): Promise<{ foreignProjectId: string; localProjectId: string }> {
+    const foreign = cleanId(foreignId, 'foreignProjectId');
+    const local = cleanId(localProjectId, 'localProjectId');
+    await assertRegisteredProject(list, local);
+    if (!this.available) throw new DesignDocError('invalid', 'project mapping is unavailable');
+    this.db.transaction(() => {
+      if (!this.foreignReferenced(foreign)) throw new DesignDocError('not_found', `no doc references project ${foreign}`);
+      this.db.prepare(`INSERT INTO dd_project_aliases (foreign_project_id, local_project_id, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT (foreign_project_id) DO UPDATE SET local_project_id = excluded.local_project_id, updated_at = excluded.updated_at`)
+        .run(foreign, local, this.now());
+      // Registered just now (asserted above); keeps the mapping effective before the next observe().
+      this.db.prepare('INSERT OR IGNORE INTO dd_project_live (project_id) SELECT ? WHERE EXISTS (SELECT 1 FROM dd_project_live)').run(local);
+    });
+    return { foreignProjectId: foreign, localProjectId: local };
+  }
+
+  /** Returns the docs of this foreign id to the unassigned bucket. Idempotent. */
+  unmapForeignProject(foreignId: unknown): { removed: boolean } {
+    const foreign = cleanId(foreignId, 'foreignProjectId');
+    if (!this.available) throw new DesignDocError('invalid', 'project mapping is unavailable');
+    const result = this.db.prepare('DELETE FROM dd_project_aliases WHERE foreign_project_id = ?').run(foreign) as { changes?: number };
+    return { removed: (result?.changes ?? 0) > 0 };
+  }
+
+  /** Existing aliases with their doc counts and sample titles. `registered` is the current host project list. */
+  listProjectMappings(registered: ProjectInfo[]): ProjectMapping[] {
+    if (!this.available) return [];
+    try {
+      const live = new Set(registered.map((project) => project.id));
+      const rows = this.db.prepare(`SELECT foreign_project_id AS fid, local_project_id AS lid FROM dd_project_aliases
+        ORDER BY updated_at DESC, foreign_project_id LIMIT ${MAX_MAPPINGS}`).all() as Array<{ fid: string; lid: string }>;
+      return rows.map((row) => {
+        const key = JSON.stringify(row.fid);
+        // docs-kind: allow Counts and samples are restricted to kind = 'doc'.
+        const count = this.db.prepare(`SELECT COUNT(*) AS n FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
+          WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ?`).get(key) as { n: number } | undefined;
+        // docs-kind: allow Samples are joined to doc-kind rows only.
+        const titles = this.db.prepare(`SELECT d.title FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
+          WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ? ORDER BY d.updated_at DESC, d.id LIMIT ${SAMPLE_TITLES}`)
+          .all(key) as Array<{ title: string }>;
+        return { foreignProjectId: row.fid, localProjectId: row.lid, docCount: count?.n ?? 0, sampleTitles: titles.map((t) => t.title), ...this.senderLabel(row.fid), localRegistered: live.has(row.lid) };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  /** Foreign project ids with unmapped docs, a few sample titles and a never-applied suggestion. */
+  async listUnassignedForeignProjects(list?: ProjectLister): Promise<UnassignedForeignProject[]> {
+    if (!this.available) return [];
+    let rows: Array<{ fid: string | null; n: number }>;
+    try {
+      // docs-kind: allow Grouped over kind = 'doc' only.
+      rows = this.db.prepare(`SELECT json_extract(r.project_json, '$') AS fid, COUNT(*) AS n
+      FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
+      WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json <> 'null' AND NOT ${MAPPED_TO_ANY}
+      GROUP BY fid ORDER BY n DESC, fid LIMIT ${MAX_UNASSIGNED}`).all() as Array<{ fid: string | null; n: number }>;
+    } catch {
+      this.tables = false; // re-probed on next use
+      return [];
+    }
+    let registered: Array<ProjectInfo> = [];
+    if (list) {
+      try { registered = await list(); } catch { registered = []; }
+    }
+    const out: UnassignedForeignProject[] = [];
+    for (const row of rows) {
+      if (typeof row.fid !== 'string') continue;
+      // docs-kind: allow Samples are joined to doc-kind rows only.
+      const titles = this.db.prepare(`SELECT d.title FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
+        WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ? ORDER BY d.updated_at DESC, d.id LIMIT ${SAMPLE_TITLES}`)
+        .all(JSON.stringify(row.fid)) as Array<{ title: string }>;
+      out.push({ foreignProjectId: row.fid, docCount: row.n, sampleTitles: titles.map((t) => t.title), ...this.senderLabel(row.fid), suggestion: this.suggest(row.fid, registered) });
+    }
+    return out;
+  }
+
+  /**
+   * The sender's name/tag for a foreign project id, safe to render: bidi/control characters removed,
+   * blanks as null. The hint is advisory and unauthenticated, so it is display text only.
+   */
+  private senderLabel(foreignId: string): { senderName: string | null; senderTag: string | null } {
+    try {
+      const stored = this.db.prepare('SELECT name, tag FROM dd_project_refs WHERE project_id = ?').get(foreignId) as { name: string | null; tag: string | null } | undefined;
+      return { senderName: cleanLabel(stored?.name), senderTag: cleanLabel(stored?.tag) };
+    } catch {
+      return { senderName: null, senderTag: null };
+    }
+  }
+
+  /** Tag match first, then name. More than one candidate at the deciding tier means no suggestion. */
+  private suggest(foreignId: string, registered: ProjectInfo[]): UnassignedForeignProject['suggestion'] {
+    let stored: { name: string | null; tag: string | null } | undefined;
+    try {
+      stored = this.db.prepare('SELECT name, tag FROM dd_project_refs WHERE project_id = ?').get(foreignId) as typeof stored;
+    } catch {
+      return null;
+    }
+    if (!stored) return null;
+    const fold = (value: string | null | undefined) => (value ?? '').trim().toLowerCase();
+    for (const [basis, want, pick] of [
+      ['tag', fold(stored.tag), (p: ProjectInfo) => fold(p.tag)],
+      ['name', fold(stored.name), (p: ProjectInfo) => fold(p.name)]
+    ] as const) {
+      if (!want) continue;
+      const matches = registered.filter((project) => pick(project) === want);
+      if (matches.length === 1) return { projectId: matches[0]!.id, name: matches[0]!.name ?? matches[0]!.id, basis };
+      if (matches.length > 1) return null;
+    }
+    return null;
+  }
+}

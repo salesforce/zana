@@ -6,11 +6,16 @@ import {
 } from './components/thread/pickers/thread-model-catalog.js';
 import { ConversationHistoryDialog } from './components/history/ConversationHistoryDialog.js';
 import '@/lib/monaco-loader';
+import './styles/shell-inset.css';
 import { useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Star } from 'lucide-react';
+import { Bell, PlayCircle, Star } from 'lucide-react';
 import { HelpProvider } from './components/help/HelpProvider.js';
 import { HelpToggle } from './components/help/HelpToggle.js';
+import { HelpMenu } from './components/help/HelpMenu.js';
+import { HelpVideoLibrary } from './components/help/HelpVideoLibrary.js';
+import { useHelpVideos } from './components/help/help-videos-store.js';
+import { InstanceMenu } from './components/InstanceMenu.js';
 import { Sidebar } from './components/Sidebar.js';
 import { MobileAgentNavigation } from './components/MobileAgentNavigation.js';
 import {
@@ -40,6 +45,7 @@ import { SearchPanel } from './components/SearchPanel.js';
 import { ShortcutsHelp } from './components/ShortcutsHelp.js';
 import { AgentTerminalModal } from './components/AgentTerminalModal.js';
 import { ThreadModal } from './components/ThreadModal.js';
+import { SessionMoveDialog } from './components/SessionMoveDialog.js';
 import { FavoriteAgentsDrawer } from './components/FavoriteAgentsDrawer.js';
 import { NotificationsDrawer } from './components/NotificationsDrawer.js';
 import { HostInstallDrawer } from './components/HostInstallDrawer.js';
@@ -60,6 +66,7 @@ import { ModuleBackgroundHost } from './modules/ModuleBackgroundHost.js';
 import { useMergedModules } from './modules/index.js';
 import { initExtensionModules, reconcileExtensionModules } from './modules/loader.js';
 import { initPluginApps, reconcilePluginApps } from './plugins/plugin-app-loader.js';
+import { installDeepLinkBridge } from './plugins/plugin-deep-links.js';
 import { listNavPanels } from './plugins/plugin-slots.js';
 import {
   CORE_NAV_IDS,
@@ -83,10 +90,12 @@ import {
 } from './store.js';
 import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { useCompactLayout } from './hooks/useCompactLayout.js';
+import { useIsCompactViewport } from './hooks/useIsCompactViewport.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { ShellTitlebarTitle } from './components/TitlebarProjectButton.js';
+import { TitlebarThreadTabs } from './components/TitlebarThreadTabs.js';
 import { keepsProjectFocusRail, resolveShellLayout, shellTitlebarLabel } from './lib/shellLayout.js';
 import { installShortcuts } from './shortcuts.js';
 import { isLibraryPluginModule } from './lib/libraryPlugin.js';
@@ -222,6 +231,7 @@ export function App() {
 }
 
 function AppShell() {
+  const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
   useRouteSync();
   useEffect(installAgentBoardMoves, []);
   const init = useData((s) => s.init);
@@ -246,6 +256,7 @@ function AppShell() {
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const projects = useData((s) => s.projects);
+  const projectsLoaded = useData((s) => s.configLoaded);
   const terminals = useData((s) => s.terminals);
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   useEffect(() => {
@@ -316,12 +327,13 @@ function AppShell() {
     : null;
 
   // A stale persisted focus must not strand the main workspace after a project
-  // is removed in another window.
+  // is removed in another window. Before the list loads every project looks
+  // removed: a project window's route lock and this exit would bounce forever.
   useEffect(() => {
-    if (focusedProjectId && !projects.some((project) => project.id === focusedProjectId)) {
+    if (projectsLoaded && focusedProjectId && !projects.some((project) => project.id === focusedProjectId)) {
       useUi.getState().exitProjectFocus();
     }
-  }, [focusedProjectId, projects]);
+  }, [focusedProjectId, projects, projectsLoaded]);
 
   // Reflect the current project + active tab into the OS window title so
   // ⌘-Tab / Mission Control disambiguates Zana across projects.
@@ -492,7 +504,7 @@ function AppShell() {
       const projectId = ui.selectedProjectId;
       switch (event) {
         case 'app:openSettings':
-          ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
+          ui.toggleSettings();
           return;
         case 'app:toggleInbox':
           ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
@@ -542,7 +554,8 @@ function AppShell() {
           if (tab?.pinned) return;
           // ⌘W hides the active tab (does NOT kill the process): a live session
           // detaches to the background, an exited tombstone is dismissed.
-          // Terminating is only via the tab's right-click → Delete. ⌘⇧T reopens.
+          // Terminating is only via the tab's right-click → Archive (Delete for
+          // a plain shell). ⌘⇧T reopens.
           if (tab && tab.status !== 'exited') {
             data.hideTerminal(activeId, projectId);
           } else {
@@ -568,6 +581,9 @@ function AppShell() {
     const offModelCatalogChanged = product.threads.onModelCatalogChanged(({ hostId, providerId }) => {
       refreshThreadProviderModelsFromPush(hostId, providerId);
     });
+    // Plugin deep links: main pushes validated (pluginId, route, payload); subscribe
+    // before the readiness ack below so a cold-start link is never sent to nobody.
+    const offDeepLinks = installDeepLinkBridge();
     // Main may be waiting to deliver a cold-start menu-bar Thread open. Ack only
     // after this listener exists and its ProductHub WebSocket can receive it.
     void waitForProductWsOpen()
@@ -614,6 +630,7 @@ function AppShell() {
       offOpenScheduler();
       offOpenAgents();
       offFocusInboxEntry();
+      offDeepLinks();
       offInboxSync();
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -741,7 +758,7 @@ function AppShell() {
     <div
       className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
-      }`}
+      }${!mobileNavigation.isCompact ? ' shell-inset' : ''}`}
       data-mobile={mobileNavigation.isCompact}
       data-platform={shellChrome.platform}
       data-fullscreen={shellChrome.isFullScreen}
@@ -752,12 +769,15 @@ function AppShell() {
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
-        <ShellTitlebarTitle
-          project={titlebarProject}
-          label={titlebarLabel}
-          compact={mobileNavigation.isCompact}
-        />
-        <HelpToggle />
+        {threadTabsEnabled && !mobileNavigation.isCompact ? <TitlebarThreadTabs /> : (
+          <ShellTitlebarTitle
+            project={titlebarProject}
+            label={titlebarLabel}
+            compact={mobileNavigation.isCompact}
+          />
+        )}
+        <InstanceMenu />
+        <HelpMenu />
         <button
           type="button"
           className={`titlebar-fav ${favoriteCount > 0 ? 'has-favs' : ''} ${favoritesOpen ? 'active' : ''}`}
@@ -815,7 +835,13 @@ function AppShell() {
             <Bell size={18} aria-hidden="true" /> Notifications
             {unreadInbox > 0 && <span className="nav-badge" aria-hidden="true">{unreadInbox > 99 ? '99+' : unreadInbox}</span>}
           </button>
-          <HelpToggle variant="mobile" />
+          <HelpToggle />
+          <button type="button" className="mobile-nav-notifications" data-testid="mobile-help-videos" onClick={() => {
+            mobileNavigation.setDrawerOpen(false);
+            useHelpVideos.getState().open();
+          }}>
+            <PlayCircle size={18} aria-hidden="true" /> Videos
+          </button>
         </>}
         headerStart={nav === 'settings' ? <MobileSettingsBack onNavigate={() => mobileNavigation.setDrawerOpen(false)} /> : undefined}
       >
@@ -882,12 +908,14 @@ function AppShell() {
       <ShortcutsHelpHost />
       <AgentModalHost />
       <ThreadModalHost />
+      <SessionMoveDialog />
       <FavoriteAgentsDrawer />
       <NotificationsDrawer />
       <HostInstallDrawer />
       <WalkthroughHost />
       <SetupChecklistHost />
       <WhatsNewModal />
+      <HelpVideoLibrary />
       <PendingLaunches />
       <HostDialogs />
       <Toaster />
@@ -952,9 +980,10 @@ function WalkthroughHost() {
 
 function ShortcutsHelpHost() {
   const open = useUi((s) => s.shortcutsOpen);
+  const ctrlVPasteEnabled = useData((s) => s.terminalCtrlVPasteEnabled);
   const close = () => useUi.getState().setShortcutsOpen(false);
   if (!open) return null;
-  return <ShortcutsHelp onClose={close} />;
+  return <ShortcutsHelp onClose={close} ctrlVPasteEnabled={ctrlVPasteEnabled} />;
 }
 
 function AgentModalHost() {
@@ -999,7 +1028,9 @@ function AgentModalHost() {
 
 function ThreadModalHost() {
   const classicSessionViewEnabled = useData((s) => s.classicSessionViewEnabled);
-  const fullPageView = useCompactLayout() || classicSessionViewEnabled;
+  const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
+  const isCompact = useIsCompactViewport();
+  const fullPageView = useCompactLayout() || classicSessionViewEnabled || (threadTabsEnabled && !isCompact);
   const threadModal = useUi((s) => s.threadModal);
   const navigate = useNavigate();
   const close = () => useUi.getState().closeThreadModal();

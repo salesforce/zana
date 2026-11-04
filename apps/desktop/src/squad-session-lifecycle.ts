@@ -1,5 +1,6 @@
 import type { RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
-import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import type { ExecutionNativeRecoverySnapshotV1, ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { isResumableExecutionState } from '@zana-ai/zcc-server/services/execution/storage/backend-policy';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isTerminalSquadExecution } from './inbox-actions/squad-instruct.js';
 import {
@@ -106,6 +107,71 @@ export function createNativeRecoveryCapture(deps: NativeRecoveryCaptureDeps) {
   };
 }
 
+export interface ModernNativeRecoveryCaptureDeps {
+  executionStore: {
+    getInProject(projectId: string, executionId: string): Promise<ExecutionRecord | undefined>;
+    upsertNativeRecoverySnapshot(executionId: string, stateVersion: number, snapshot: Omit<ExecutionNativeRecoverySnapshotV1, 'version' | 'capturedAt'>): Promise<unknown>;
+  };
+  logError(context: string, error: unknown): void;
+}
+
+export interface ModernNativeRecoveryMember {
+  projectId: string;
+  executionId: string;
+  slotId: string;
+  role: 'worker' | 'orchestrator';
+  personaId: string;
+  profileId: string;
+  threadId: string;
+  generation: number;
+  providerId: string;
+  hostId: string;
+  environmentPath: string;
+}
+
+/** Runtime evidence for one member: only the fields capture reads. */
+export interface ModernNativeRecoveryStatus {
+  generation: number;
+  providerThreadId?: string;
+  sessionRestorable?: boolean;
+}
+
+/**
+ * Persist a Modern (ACP) squad member's provider session so a stopped squad can
+ * later be resumed. Mirrors the CLI capture: written while the execution is
+ * still live and never after it is terminal (the store would reject a stale
+ * attempt anyway). Callers invoke it while the member is live, immediately before
+ * a stop request, and again after a confirmed stop; the first writes the
+ * snapshot, later calls are deduplicated or fall to the terminal guard.
+ * Only members whose start reported `sessionRestorable === true` are captured.
+ */
+export function createModernNativeRecoveryCapture(deps: ModernNativeRecoveryCaptureDeps) {
+  return async function captureModernNativeRecoverySnapshot(
+    member: ModernNativeRecoveryMember, status: ModernNativeRecoveryStatus | undefined
+  ): Promise<boolean> {
+    if (!status || status.sessionRestorable !== true || !status.providerThreadId
+      || status.generation !== member.generation || member.generation < 1) return false;
+    const providerThreadId = status.providerThreadId;
+    try {
+      const record = await deps.executionStore.getInProject(member.projectId, member.executionId);
+      if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return false;
+      const existing = record.nativeRecoverySnapshots?.find((snapshot) => snapshot.slotId === member.slotId);
+      if (existing?.attempt === record.attempt && existing.transport === 'MODERN' && existing.threadId === member.threadId
+        && existing.generation === member.generation && existing.nativeConversationId === providerThreadId) return false;
+      await deps.executionStore.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+        attempt: record.attempt, slotId: member.slotId, role: member.role, personaId: member.personaId,
+        profileId: member.profileId, nativeConversationId: providerThreadId, transport: 'MODERN',
+        threadId: member.threadId, generation: member.generation, providerThreadId, providerId: member.providerId,
+        environmentPath: member.environmentPath, hostId: member.hostId
+      });
+      return true;
+    } catch (error) {
+      deps.logError(`execution modern native recovery snapshot ${member.threadId}`, error);
+      return false;
+    }
+  };
+}
+
 export interface ExitedSquadSession {
   projectId: string;
   cohort?: { executionId?: string; role?: string };
@@ -120,7 +186,7 @@ export interface SessionExitTeardownDeps {
   teamPlanHandoff: { forget(executionId: string): void };
   inferredPlanCorrection: { forget(executionId: string): void };
   projects: { listProjects(): Array<{ id: string; path: string }> };
-  cleanupHandoffFiles(projectRoot: string, executionId: string): Promise<unknown>;
+  cleanupHandoffFiles(projectRoot: string, executionId: string, options?: { keepAuthoredPlan?: boolean }): Promise<unknown>;
   logError(context: string, error: unknown): void;
 }
 
@@ -142,6 +208,9 @@ export async function teardownTerminalExecutionOnExit(
 /**
  * Coordinator exit: release Flow B/C plan-handoff state and remove the transient
  * `.zana/` handoff files from the worktree that actually held them (Rule 3 / Rule 5).
+ * A planless run that a retry or recovery can still relaunch keeps the authored
+ * plan: every attempt reads the same per-execution file, so deleting it here left
+ * the next coordinator with "no plan file found" for a plan it had written.
  */
 export function cleanupOrchestratorOnExit(
   deps: SessionExitTeardownDeps,
@@ -152,7 +221,44 @@ export function cleanupOrchestratorOnExit(
   deps.teamPlanHandoff.forget(executionId);
   deps.inferredPlanCorrection.forget(executionId);
   return deps.executionStore.getInProject(exitedSession.projectId, executionId).then((execution) => {
-    const handoffRoot = execution?.squadWorktree?.path ?? deps.projects.listProjects().find((candidate) => candidate.id === exitedSession.projectId)?.path;
-    if (handoffRoot) return deps.cleanupHandoffFiles(handoffRoot, executionId);
+    const handoffRoot = handoffRootOf(deps, exitedSession.projectId, execution);
+    if (handoffRoot) return deps.cleanupHandoffFiles(handoffRoot, executionId, { keepAuthoredPlan: mayRelaunchPlanless(execution) });
   }).then(() => undefined).catch(() => {});
+}
+
+export type PlanHandoffRetirementDeps = Pick<SessionExitTeardownDeps, 'executionStore' | 'projects' | 'cleanupHandoffFiles' | 'logError'>;
+
+/**
+ * Remove a run's `.zana/` handoff files once it can no longer be relaunched under
+ * its own id. Coordinator exit keeps the authored plan of a still-relaunchable
+ * planless run for a retry. Three things end that: a board dismiss, a timeout
+ * recovery (the successor runs under its own id), and a terminal transition that
+ * no retry accepts (e.g. stopped on an unresolved blocker after the coordinator
+ * already exited). Their callers run this after the change has landed. A FAILED
+ * run that is never dismissed keeps its plan file: the store's history cap prunes
+ * only the record. The record is re-read from main's store for that project.
+ * Best effort: a failure is logged and never changes the caller's result.
+ */
+export function createPlanHandoffRetirement(deps: PlanHandoffRetirementDeps) {
+  return async function retirePlanHandoff(projectId: string, executionId: string): Promise<void> {
+    try {
+      const execution = await deps.executionStore.getInProject(projectId, executionId);
+      if (!execution || mayRelaunchPlanless(execution)) return;
+      const handoffRoot = handoffRootOf(deps, projectId, execution);
+      if (handoffRoot) await deps.cleanupHandoffFiles(handoffRoot, executionId);
+    } catch (error) {
+      deps.logError(`execution plan handoff cleanup ${executionId}`, error);
+    }
+  };
+}
+
+/** The worktree that held the run's handoff files, else its registered project folder. */
+function handoffRootOf(deps: Pick<SessionExitTeardownDeps, 'projects'>, projectId: string, execution: ExecutionRecord | undefined): string | undefined {
+  return execution?.squadWorktree?.path ?? deps.projects.listProjects().find((candidate) => candidate.id === projectId)?.path;
+}
+
+/** Still planless, not dismissed or superseded, and in a state retry or recovery may relaunch. */
+function mayRelaunchPlanless(execution: ExecutionRecord | undefined): boolean {
+  return !!execution && !execution.workUnits?.length && execution.dismissedAt === undefined && !execution.successorExecutionId
+    && isResumableExecutionState(execution);
 }

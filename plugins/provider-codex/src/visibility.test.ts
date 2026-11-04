@@ -81,3 +81,18 @@ describe("codex visibility raw events", () => {
     });
   });
 });
+
+describe("codex hook events", () => {
+  it.each(["hook/started", "hook/completed"])(
+    "classifies %s as noise",
+    (method) => {
+      expect(
+        codexVisibilityMetadata.describeRawEvent({
+          jsonrpc: "2.0",
+          method,
+          params: { threadId: "t", turnId: "u", run: { eventName: "preToolUse" } },
+        }),
+      ).toEqual({ kind: method, coverage: "noise" });
+    },
+  );
+});

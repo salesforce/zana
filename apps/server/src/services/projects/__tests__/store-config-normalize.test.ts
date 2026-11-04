@@ -16,6 +16,14 @@ const { normalizeConfig, normalizeProjectSettings, store } = await import('../st
 const { AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS } = await import('@zana-ai/zcc-domain/product');
 
 describe('normalizeConfig — provider tiers and plugin safe mode', () => {
+  it.each([true, false])('round-trips the bundled plugin development preference (%s)', enabled => {
+    store.setConfig({ pluginDevelopmentEnabled: enabled });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig().pluginDevelopmentEnabled).toBe(enabled);
+  });
+  it.each([undefined, 'true', 1, null])('rejects malformed plugin development preference (%s)', value => {
+    expect(normalizeConfig({ pluginDevelopmentEnabled: value as never })).not.toHaveProperty('pluginDevelopmentEnabled');
+  });
   it.each([true, false])('preserves explicitly configured booleans (%s)', value => {
     expect(normalizeConfig({ providerServiceTiersDisabled: value, pluginSafeMode: value })).toMatchObject({
       providerServiceTiersDisabled: value, pluginSafeMode: value
@@ -25,6 +33,32 @@ describe('normalizeConfig — provider tiers and plugin safe mode', () => {
     const normalized = normalizeConfig({ providerServiceTiersDisabled: 'true' as never, pluginSafeMode: 1 as never });
     expect(normalized).not.toHaveProperty('providerServiceTiersDisabled');
     expect(normalized).not.toHaveProperty('pluginSafeMode');
+  });
+});
+
+describe('normalizeConfig — wrap up before closing', () => {
+  it.each([true, false])('passes the toggle through (%s)', value => {
+    expect(normalizeConfig({ closeWrapUpEnabled: value })).toMatchObject({ closeWrapUpEnabled: value });
+  });
+  it.each(['true', 1, null])('drops a malformed toggle (%s)', value => {
+    expect(normalizeConfig({ closeWrapUpEnabled: value as never })).not.toHaveProperty('closeWrapUpEnabled');
+  });
+  it('trims the instructions', () => {
+    expect(normalizeConfig({ closeWrapUpInstructions: '  Wrap up.\nThen stop.  ' }).closeWrapUpInstructions).toBe('Wrap up.\nThen stop.');
+  });
+  it.each(['', '   \n '])('drops empty instructions (%j)', value => {
+    expect(normalizeConfig({ closeWrapUpInstructions: value })).not.toHaveProperty('closeWrapUpInstructions');
+  });
+  it('caps the instructions at 4,000 characters', () => {
+    expect(normalizeConfig({ closeWrapUpInstructions: 'x'.repeat(5_000) }).closeWrapUpInstructions).toHaveLength(4_000);
+  });
+  it.each([5, null, ['a']])('drops non-string instructions (%j)', value => {
+    expect(normalizeConfig({ closeWrapUpInstructions: value as never })).not.toHaveProperty('closeWrapUpInstructions');
+  });
+  it('leaves both absent when the input has neither', () => {
+    const result = normalizeConfig({ theme: 'dark' });
+    expect(result).not.toHaveProperty('closeWrapUpEnabled');
+    expect(result).not.toHaveProperty('closeWrapUpInstructions');
   });
 });
 
@@ -168,6 +202,26 @@ describe('normalizeConfig — window state', () => {
 });
 
 describe('normalizeConfig — plugin view window state', () => {
+  it('persists bounded resource geometry keys while rejecting malformed tuples', () => {
+    const key = JSON.stringify(['sales', 'studio', 'p-1', 'agents/Help.agent']);
+    const entry = { bounds: { width: 1000, height: 700 }, at: 3 };
+    expect(normalizeConfig({ pluginViewWindowBounds: { [key]: entry } }).pluginViewWindowBounds).toEqual({ [key]: entry });
+    const bad = [
+      '[not json', JSON.stringify(['sales', 'studio', 'p-1']),
+      JSON.stringify(['Sales', 'studio', 'p-1', 'a']),
+      JSON.stringify(['sales', 'bad/tab', 'p-1', 'a']),
+      JSON.stringify(['sales', 'studio', '', 'a']),
+      JSON.stringify(['sales', 'studio', 'p'.repeat(257), 'a']),
+      JSON.stringify(['sales', 'studio', 'p-1', 1]),
+      JSON.stringify(['sales', 'studio', 'p-1', '']),
+      JSON.stringify(['sales', 'studio', 'p-1', 'a'.repeat(2049)]),
+      JSON.stringify(['sales', 'studio', 'p-1', 'a\n']),
+      '[' + ' '.repeat(16000)
+    ];
+    for (const badKey of bad) {
+      expect(normalizeConfig({ pluginViewWindowBounds: { [key]: entry, [badKey]: entry } }).pluginViewWindowBounds).toEqual({ [key]: entry });
+    }
+  });
   const key = 'salesforce/salesforce@p-1';
 
   it('does not add omitted plugin view state', () => {
@@ -338,6 +392,46 @@ describe('normalizeConfig — auto-close-idle flags', () => {
     expect(out.autoCloseIdleMinutes).toBeUndefined();
   });
 
+  it('keeps known explorer minimap options and drops anything else', () => {
+    const out = normalizeConfig({
+      explorerMinimapEnabled: false,
+      explorerMinimapWidth: 'wide',
+      explorerMinimapRenderCharacters: false,
+      explorerMinimapVerticalSize: 'fit',
+      explorerMinimapSlider: 'always',
+      explorerMinimapSide: 'left'
+    });
+    expect(out).toMatchObject({
+      explorerMinimapEnabled: false,
+      explorerMinimapWidth: 'wide',
+      explorerMinimapRenderCharacters: false,
+      explorerMinimapVerticalSize: 'fit',
+      explorerMinimapSlider: 'always',
+      explorerMinimapSide: 'left'
+    });
+    const junk = normalizeConfig({
+      explorerMinimapEnabled: 'yes' as never,
+      explorerMinimapWidth: 'off' as never,
+      explorerMinimapRenderCharacters: 1 as never,
+      explorerMinimapVerticalSize: 'huge' as never,
+      explorerMinimapSlider: 3 as never,
+      explorerMinimapSide: 'top' as never
+    });
+    for (const key of ['explorerMinimapEnabled', 'explorerMinimapWidth', 'explorerMinimapRenderCharacters', 'explorerMinimapVerticalSize', 'explorerMinimapSlider', 'explorerMinimapSide'] as const) {
+      expect(junk[key]).toBeUndefined();
+    }
+    expect(normalizeConfig({}).explorerMinimapWidth).toBeUndefined();
+  });
+
+  it('keeps a known explorer file icon theme and drops anything else', () => {
+    for (const theme of ['seti', 'minimal', 'none'] as const) {
+      expect(normalizeConfig({ explorerFileIconTheme: theme }).explorerFileIconTheme).toBe(theme);
+    }
+    expect(normalizeConfig({ explorerFileIconTheme: 'material' as never }).explorerFileIconTheme).toBeUndefined();
+    expect(normalizeConfig({ explorerFileIconTheme: 3 as never }).explorerFileIconTheme).toBeUndefined();
+    expect(normalizeConfig({}).explorerFileIconTheme).toBeUndefined();
+  });
+
   it('keeps threadSessionReleaseMinutes in range, 0 as never, and drops junk', () => {
     expect(normalizeConfig({ threadSessionReleaseMinutes: 120.4 }).threadSessionReleaseMinutes).toBe(120);
     expect(normalizeConfig({ threadSessionReleaseMinutes: 0 }).threadSessionReleaseMinutes).toBe(0);
@@ -403,11 +497,11 @@ describe('harness settings containers', () => {
     expect(normalizeConfig({
       harnessRouting: {
         schemaVersion: 1,
-        byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
+        byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-5.6-terra-1M' } }
       }
     }).harnessRouting).toEqual({
       schemaVersion: 1,
-      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
+      byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-5.6-terra-1M' } }
     });
   });
 
@@ -508,6 +602,29 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ classicSessionViewEnabled: 1 }).classicSessionViewEnabled).toBeUndefined();
   });
 
+  it('accepts only boolean threadTabsEnabled values', () => {
+    expect(normalizeConfig({ threadTabsEnabled: true }).threadTabsEnabled).toBe(true);
+    expect(normalizeConfig({ threadTabsEnabled: false }).threadTabsEnabled).toBe(false);
+    for (const value of ['false', 0, null, {}, []]) {
+      // @ts-expect-error intentional bad input
+      expect(normalizeConfig({ threadTabsEnabled: value }).threadTabsEnabled).toBeUndefined();
+    }
+    expect(normalizeConfig({}).threadTabsEnabled).toBeUndefined();
+  });
+  it('accepts only boolean dockableThreadToolsEnabled values', () => {
+    expect(normalizeConfig({ dockableThreadToolsEnabled: true }).dockableThreadToolsEnabled).toBe(true);
+    expect(normalizeConfig({ dockableThreadToolsEnabled: false }).dockableThreadToolsEnabled).toBe(false);
+    for (const value of ['false', 0, null, {}, []]) {
+      // @ts-expect-error intentional bad input
+      expect(normalizeConfig({ dockableThreadToolsEnabled: value }).dockableThreadToolsEnabled).toBeUndefined();
+    }
+    expect(normalizeConfig({}).dockableThreadToolsEnabled).toBeUndefined();
+  });
+
+  it.each([true, false, 'true', undefined])('drops the retired inset workspace flag (%s)', value => {
+    expect(normalizeConfig({ insetWorkspaceEnabled: value } as unknown as AppConfig)).not.toHaveProperty('insetWorkspaceEnabled');
+  });
+
   it('passes through a boolean heldQuestionsEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ heldQuestionsEnabled: true }).heldQuestionsEnabled).toBe(true);
     expect(normalizeConfig({ heldQuestionsEnabled: false }).heldQuestionsEnabled).toBe(false);
@@ -537,6 +654,14 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ feedNoiseClassifierEnabled: false }).feedNoiseClassifierEnabled).toBe(false);
     // @ts-expect-error intentional bad input
     expect(normalizeConfig({ feedNoiseClassifierEnabled: 'yes' }).feedNoiseClassifierEnabled).toBeUndefined();
+  });
+
+  it('passes through a boolean terminalCtrlVPasteEnabled, drops non-booleans and leaves it unset by default', () => {
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: true }).terminalCtrlVPasteEnabled).toBe(true);
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: false }).terminalCtrlVPasteEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: 'yes' }).terminalCtrlVPasteEnabled).toBeUndefined();
+    expect(normalizeConfig({}).terminalCtrlVPasteEnabled).toBeUndefined();
   });
 
   it('passes through a boolean terminalClipboardWriteEnabled, drops non-booleans', () => {
@@ -1006,5 +1131,49 @@ describe('normalizeConfig — thread view window state', () => {
     store.setConfig({ threadViewWindowBounds: { bounds: { width: 1000, height: 700 } } });
     store.setConfig({ theme: 'dark' });
     expect(store.getConfig().threadViewWindowBounds).toEqual({ bounds: { width: 1000, height: 700 } });
+  });
+});
+
+describe('normalizeConfig — apiErrorResume (#421)', () => {
+  it('leaves the key absent for a frozen pre-#421 config', () => {
+    const legacy = Object.freeze({ heartbeatEnabled: true, heartbeatDelaySeconds: 30 }) as Partial<AppConfig>;
+    expect(normalizeConfig(legacy)).not.toHaveProperty('apiErrorResume');
+    expect(normalizeConfig({ apiErrorResume: 'bad' as never })).not.toHaveProperty('apiErrorResume');
+  });
+  it('round-trips a configured value through normalize and canonicalConfigForWrite', () => {
+    const apiErrorResume = {
+      enabled: true,
+      rules: [{ id: 'r-a', match: 'Provider anthropic not found', matchMode: 'contains', message: 'continue', delaySeconds: 20, enabled: true }],
+      maxPerWindow: 3,
+      windowMinutes: 15
+    };
+    const once = normalizeConfig({ apiErrorResume: apiErrorResume as never });
+    expect(once.apiErrorResume).toEqual(apiErrorResume);
+    expect(normalizeConfig(once).apiErrorResume).toEqual(apiErrorResume);
+    // store.setConfig persists through canonicalConfigForWrite; the key must survive it.
+    store.setConfig({ apiErrorResume: apiErrorResume as never });
+    store.setConfig({ theme: 'light' });
+    expect(store.getConfig().apiErrorResume).toEqual(apiErrorResume);
+  });
+  it('drops an invalid regex rule from a PATCH', () => {
+    const out = normalizeConfig({
+      apiErrorResume: { enabled: true, maxPerWindow: 3, windowMinutes: 15, rules: [
+        { id: 'bad', match: '(oops', matchMode: 'regex', message: 'continue', delaySeconds: 20, enabled: true },
+        { id: 'ok', match: 'rate limited', matchMode: 'contains', message: 'continue', delaySeconds: 20, enabled: true }
+      ] }
+    });
+    expect(out.apiErrorResume!.rules.map(r => r.id)).toEqual(['ok']);
+  });
+});
+
+describe('normalizeConfig — automatedUseUserConfig', () => {
+  it('keeps booleans', () => {
+    expect(normalizeConfig({ automatedUseUserConfig: true }).automatedUseUserConfig).toBe(true);
+    expect(normalizeConfig({ automatedUseUserConfig: false }).automatedUseUserConfig).toBe(false);
+  });
+
+  it('drops non-boolean values (stays isolated)', () => {
+    expect(normalizeConfig({ automatedUseUserConfig: 'true' as never }).automatedUseUserConfig).toBeUndefined();
+    expect(normalizeConfig({ automatedUseUserConfig: 1 as never }).automatedUseUserConfig).toBeUndefined();
   });
 });

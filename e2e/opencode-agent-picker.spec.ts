@@ -15,11 +15,11 @@ async function selectTargetProject(
   projectName: string
 ) {
   // CLI Agent mode's composer owns project selection via its "Project" picklist.
-  const trigger = modal.getByRole('button', { name: 'Project' });
+  const trigger = modal.getByRole('button', { name: 'Machine and project' });
   await trigger.click();
   await window
-    .getByRole('listbox', { name: 'Project' })
-    .getByRole('option', { name: projectName, exact: true })
+    .getByRole('listbox', { name: 'Machine and project' })
+    .getByRole('option', { name: projectName, exact: false })
     .click();
   await expect(trigger).toContainText(projectName);
 }

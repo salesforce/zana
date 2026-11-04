@@ -3,6 +3,7 @@ import { ConnectEnrollment, connectRequest } from './connect-account.js';
 import { MobileConnectionStore, validateMobileConnection } from './connection.js';
 import { MobileGatewayManager } from './manager.js';
 import { MobileDeviceStore } from './device-store.js';
+import { CONNECT_ACCESS_REVOKED_MESSAGE } from '@zana-ai/zcc-domain/product';
 
 const origin = 'https://example.com';
 const serverUrl = 'https://s-aaaaaaaaaaaaaaaaaaaaaaaa.connect.example.com';
@@ -93,6 +94,9 @@ it('resolves only the enrolled computer browser address without exposing its cre
   expect(await manager.browserAddress()).toBeNull();
   for (const servers of [null, Array(501).fill({}), [], [{ id: enrolled.serverId, revoked: true }], [{ id: enrolled.serverId, serverUrl: 'https://wrong.example.com' }]]) {
     value = { servers }; await expect(manager.browserAddress()).rejects.toThrow();
+  }
+  for (const servers of [[], [{ id: enrolled.serverId, revoked: true }]]) {
+    value = { servers }; await expect(manager.browserAddress()).rejects.toThrow(CONNECT_ACCESS_REVOKED_MESSAGE);
   }
   for (const browserUrl of [42, 'x'.repeat(2049), 'not a URL', 'http://mine.example.com', 'javascript:alert(1)', 'https://user:secret@mine.example.com', 'https://mine.example.com/path', 'https://mine.example.com/?secret=yes', 'https://mine.example.com/#hash']) {
     value = { servers: [{ id: enrolled.serverId, serverUrl, browserUrl }] };

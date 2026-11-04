@@ -119,11 +119,15 @@
   .contextual-help-tip-card { animation: none; }
 }
 
-.titlebar-help {
+.help-menu {
   position: absolute;
   right: 72px;
   top: 50%;
   transform: translateY(-50%);
+  z-index: 90;
+  -webkit-app-region: no-drag;
+}
+.titlebar-help {
   width: 26px;
   height: 26px;
   display: flex;
@@ -137,12 +141,12 @@
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
-.titlebar-help:hover { background: var(--bg-hover); color: var(--text-primary); }
+.titlebar-help:hover, .titlebar-help.is-open { background: var(--bg-hover); color: var(--text-primary); }
 .titlebar-help.is-active, .mobile-nav-help.is-active {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
 }
 .titlebar-help:focus-visible, .mobile-nav-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.app-shell[data-windows-caption='true'] .titlebar-help { right: calc(var(--windows-caption-reserve, 138px) + 72px); }
+.app-shell[data-windows-caption='true'] .help-menu { right: calc(var(--windows-caption-reserve, 138px) + 72px); }
 .mobile-nav-help-status { margin-left: auto; font-size: 12px; }
-.app-shell[data-mobile='true'] .titlebar-help { display: none; }
+.app-shell[data-mobile='true'] .help-menu { display: none; }

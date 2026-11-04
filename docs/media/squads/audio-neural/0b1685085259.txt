@@ -1,0 +1,1 @@
+The orchestrator breaks it into tasks, and workers pick them up in parallel.

@@ -24,8 +24,9 @@
  * rather than whatever a possibly-disabled add-on happened to cache.
  */
 
-import type { CloseFollowupFailure, LlmRunResult } from '@zana-ai/zcc-domain/product';
+import { CLOSE_WRAP_UP_TIMEOUT_MINUTES, type CloseFollowupFailure, type LlmRunResult } from '@zana-ai/zcc-domain/product';
 import type { TranscriptRef } from './idle-triage.js';
+import { cleanSessionTitle, firstLeftItem, parseSessionSummary, trimAtLineBoundary } from './session-summary-text.js';
 
 /** What the summarizer needs to know about a session to summarize it. */
 export interface CloseSummarySessionInfo {
@@ -221,7 +222,7 @@ export function renderCloseSummary(
       ? `Closed ${n} idle ${noun} in **${projectLabel}**.`
       : `Caught up on ${n} ${noun} in **${projectLabel}**.`;
   const sections = notes.map(({ title, note }) => {
-    const lines = [`### ${title}`, `**Did:** ${note.did || '—'}`];
+    const lines = [`### ${cleanSessionTitle(title)}`, `**Did:** ${note.did || '—'}`];
     if (note.left) lines.push(`**Left:** ${note.left}`);
     return lines.join('\n');
   });
@@ -237,13 +238,49 @@ export function renderCloseSummary(
  * outrank it). Pure; exported for tests.
  */
 export function renderSessionSummary(title: string, summary: string): string {
-  const body = summary
+  return `### ${cleanSessionTitle(title)}\n\n${demoteHeadings(summary)}`;
+}
+
+/** Push each Markdown heading in `summary` one level down, so it nests under a `###` title. */
+function demoteHeadings(summary: string): string {
+  return summary
     .trim()
     .split('\n')
     .map((line) => (/^#{1,5}\s/.test(line) ? `#${line}` : line))
     .join('\n');
-  return `### ${title}\n\n${body}`;
 }
+
+/** A whole-session summary split into its Markdown body and the two closing sentinels. */
+export interface SessionCloseNote {
+  body: string;
+  /** True when work is left, or when the model gave no `Unfinished:` line. */
+  unfinished: boolean;
+  /** True when the agent's final message asks the user something. */
+  asksUser: boolean;
+}
+
+/** Outcome of {@link CloseSummaryService.summarizeForClose}. */
+export type SummarizeForCloseResult =
+  | { ok: true; title: string; note: SessionCloseNote }
+  | { ok: false; reason: 'ineligible' | 'empty' | 'summary-failed' };
+
+/** How an agent was closed, which decides the line under its inbox heading. */
+export type CloseRecordHow = 'wrapped' | 'waiting-on-prompt' | 'no-wrap-up';
+
+/** Why an agent was left open after a wrap-up request. */
+export type KeptOpenReason = 'asks-you' | 'timeout' | 'turn-error';
+
+const CLOSE_HOW_LINES: Record<CloseRecordHow, string> = {
+  wrapped: '_Closed after it wrapped up._',
+  'waiting-on-prompt': '_Closed without a wrap-up: it was waiting on a prompt._',
+  'no-wrap-up': '_Closed without a wrap-up._'
+};
+
+const KEPT_OPEN_LINES: Record<KeptOpenReason, string> = {
+  'asks-you': '_Still open: it asked you something while wrapping up. Answer it, then close it again._',
+  timeout: `_Still open: it was still working ${CLOSE_WRAP_UP_TIMEOUT_MINUTES} minutes after you chose Close with follow-up, so it was left running._`,
+  'turn-error': '_Still open: the wrap-up turn ended with an error._'
+};
 
 /**
  * Summarize the given idle agents and push ONE combined inbox entry for the
@@ -428,7 +465,7 @@ export class CloseSummaryService {
           const created = await this.deps.createFollowUp({
             projectId,
             sessionId,
-            title: `Follow up: ${title}`,
+            title: `Follow up: ${cleanSessionTitle(title)}`,
             detail:
               `**Did:** ${note.did || '—'}\n\n**Left:** ${note.left}` +
               `\n\n_Filed when the agent was closed from the Agents view._`
@@ -520,8 +557,9 @@ export class CloseSummaryService {
       });
       if (!digest.trim()) return { ok: false, reason: 'empty' };
       const result = await this.deps.runSessionSummary(digest, `session-summary:${sessionId}`);
-      if (!result.ok || !result.text.trim()) return { ok: false, reason: 'summary-failed' };
-      summary = result.text.trim();
+      if (!result.ok) return { ok: false, reason: 'summary-failed' };
+      summary = trimAtLineBoundary(parseSessionSummary(result.text.trim()).body);
+      if (!summary) return { ok: false, reason: 'summary-failed' };
     } catch {
       return { ok: false, reason: 'summary-failed' };
     }
@@ -538,6 +576,138 @@ export class CloseSummaryService {
     } catch {
       return { ok: false, reason: 'write-failed' };
     }
+  }
+
+  /**
+   * Summarize ONE session for the wrap-up close: the same whole-session digest
+   * and `session-summary` prompt as {@link summarizeOne}, but nothing is written —
+   * it returns the parsed note (body plus the Unfinished / Asks the user
+   * sentinels) for {@link recordClose} or {@link recordKeptOpen}. With
+   * `opts.digest` (conversation threads, which have no PTY transcript) it skips
+   * the session lookup and the digest read and uses `opts.title`.
+   *
+   * Same confinement as {@link summarizeOne} on the session path: the id must
+   * resolve to a live session of `projectId` with a transcript or the call is
+   * `ineligible` (CLAUDE.md #1). Never throws; every failure is a tagged result.
+   */
+  async summarizeForClose(
+    projectId: string,
+    sessionId: string,
+    opts: { digest?: string; title?: string } = {}
+  ): Promise<SummarizeForCloseResult> {
+    try {
+      let digest: string;
+      let title: string;
+      if (opts.digest !== undefined) {
+        digest = opts.digest;
+        title = opts.title ?? sessionId;
+      } else {
+        const session = this.deps.getSession(sessionId);
+        if (!session || session.projectId !== projectId || !this.deps.hasTranscript(session.profile)) {
+          return { ok: false, reason: 'ineligible' };
+        }
+        digest = await this.deps.readDigest({
+          id: sessionId,
+          profile: session.profile,
+          cwd: session.cwd,
+          claudeSessionId: session.claudeSessionId,
+          openCodeSessionId: session.openCodeSessionId,
+          createdAt: session.createdAt
+        });
+        title = session.title;
+      }
+      if (!digest.trim()) return { ok: false, reason: 'empty' };
+      const result = await this.deps.runSessionSummary(digest, `close-session-summary:${sessionId}`);
+      if (!result.ok) {
+        this.deps.log?.('close-summary', `summary-failed project=${projectId} session=${sessionId}: ${failureDetail(result.error) ?? 'no detail'}`);
+        return { ok: false, reason: 'summary-failed' };
+      }
+      const { body, unfinished, asksUser } = parseSessionSummary(result.text.trim());
+      if (!body) return { ok: false, reason: 'summary-failed' };
+      return { ok: true, title, note: { body, unfinished, asksUser } };
+    } catch (err) {
+      this.deps.log?.('close-summary', `summary-failed project=${projectId} session=${sessionId}: ${failureDetail(err) ?? 'no detail'}`);
+      return { ok: false, reason: 'summary-failed' };
+    }
+  }
+
+  /**
+   * Write the inbox record for an agent that is being closed after its summary:
+   * ONE entry linked to the session, then a follow-up when the note says work is
+   * left (titled by the first Left / next item). Both writes are best-effort and
+   * recorded as `write-failed`, so a failed courtesy never blocks the close.
+   * Never throws.
+   */
+  async recordClose(
+    projectId: string,
+    sessionId: string,
+    title: string,
+    note: SessionCloseNote,
+    how: CloseRecordHow
+  ): Promise<{ summarized: 0 | 1; followedUp: 0 | 1; failures?: CloseSummaryFailure[] }> {
+    const failures: CloseSummaryFailure[] = [];
+    const clean = cleanSessionTitle(title);
+    const body = trimAtLineBoundary(note.body);
+    let summarized: 0 | 1 = 0;
+    try {
+      await this.deps.appendInbox({
+        projectId,
+        projectLabel: this.deps.projectLabel(projectId),
+        sessionId,
+        comments: `### ${clean}\n\n${CLOSE_HOW_LINES[how]}\n\n${demoteHeadings(body)}`
+      });
+      summarized = 1;
+    } catch (err) {
+      this.fail(failures, 'write-failed', err);
+    }
+
+    let followedUp: 0 | 1 = 0;
+    if (note.unfinished && this.deps.createFollowUp) {
+      try {
+        const created = await this.deps.createFollowUp({
+          projectId,
+          sessionId,
+          title: firstLeftItem(note.body) ?? `Follow up: ${clean}`,
+          detail: `From **${clean}**\n\n${body}\n\n_Filed when the agent was closed after a wrap-up._`
+        });
+        if (created != null) followedUp = 1;
+        else this.fail(failures, 'write-failed', 'the follow-up was not created', true);
+      } catch (err) {
+        this.fail(failures, 'write-failed', err);
+      }
+    }
+    return withFailures({ summarized, followedUp }, failures);
+  }
+
+  /**
+   * Write the inbox record for an agent that was left open after a wrap-up
+   * request (it asked a question, ran out of time, or its turn errored): one
+   * entry linked to the session, with the summary when there is one. Files no
+   * follow-up. Best-effort and never throws; a failed write is `write-failed`.
+   */
+  async recordKeptOpen(
+    projectId: string,
+    sessionId: string,
+    title: string,
+    reason: KeptOpenReason,
+    note?: SessionCloseNote
+  ): Promise<{ recorded: 0 | 1; failures?: CloseSummaryFailure[] }> {
+    const failures: CloseSummaryFailure[] = [];
+    const parts = [`### ${cleanSessionTitle(title)}`, KEPT_OPEN_LINES[reason]];
+    if (note) parts.push(demoteHeadings(trimAtLineBoundary(note.body)));
+    let recorded: 0 | 1 = 0;
+    try {
+      await this.deps.appendInbox({
+        projectId,
+        projectLabel: this.deps.projectLabel(projectId),
+        sessionId,
+        comments: parts.join('\n\n')
+      });
+      recorded = 1;
+    } catch (err) {
+      this.fail(failures, 'write-failed', err);
+    }
+    return withFailures({ recorded }, failures);
   }
 
   /**

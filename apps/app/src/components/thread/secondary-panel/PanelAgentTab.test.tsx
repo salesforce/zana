@@ -20,7 +20,7 @@ vi.mock('../../ThreadCommandComposer.js', () => ({
 }));
 vi.mock('../../../views/threads/ThreadDetailView.js', () => ({
   ThreadDetail: ({ threadId, embedded }: { threadId: string; embedded?: boolean }) => (
-    <div data-testid="thread-detail">{`${threadId}:${embedded ? 'embedded' : 'full'}`}</div>
+    <div data-testid="thread-detail" data-assistant-owner={usePluginAssistantOwner() ?? 'none'}>{`${threadId}:${embedded ? 'embedded' : 'full'}`}</div>
   )
 }));
 vi.mock('../../../lib/product-client.js', () => ({ product: { threads } }));
@@ -31,6 +31,7 @@ const viewWindow = vi.hoisted(() => ({ target: null as null | { pluginId: string
 vi.mock('../../../lib/pluginViewSurface.js', () => ({ getPluginViewTarget: () => viewWindow.target }));
 vi.mock('../../../plugins/plugin-view-windows.js', () => ({ showInMainWindow: viewWindow.show }));
 
+import { usePluginAssistantOwner } from '../../../plugins/plugin-assistant-context.js';
 import { useComposerDraft } from '../../composer/ComposerDraft.js';
 import { resetComposerSessions } from '../../composer/composer-session.js';
 import { PANEL_AGENT_RECENT_LIMIT, PanelAgentTab } from './PanelAgentTab.js';
@@ -48,6 +49,11 @@ afterEach(() => {
 });
 
 describe('PanelAgentTab', () => {
+  it.each([binding, undefined])('provides the assistant owner only for plugin-bound chats (%j)', async (pluginPanel) => {
+    render(<PanelAgentTab threadId="t1" pluginPanel={pluginPanel} onCreated={vi.fn()} />);
+    expect((await screen.findByTestId('thread-detail')).getAttribute('data-assistant-owner')).toBe(pluginPanel?.pluginId ?? 'none');
+  });
+
   it('starts a bound thread from a composer that never navigates away', () => {
     const onCreated = vi.fn();
     render(<PanelAgentTab pluginPanel={binding} onCreated={onCreated} />);
@@ -58,9 +64,15 @@ describe('PanelAgentTab', () => {
     expect(onCreated).toHaveBeenCalledWith('t-new');
   });
 
+  it('names the resource the assistant belongs to', () => {
+    render(<PanelAgentTab pluginPanel={binding} resourceLabel="Support.agent" onCreated={vi.fn()} />);
+    expect(screen.getByText('Ask about Support.agent.')).toBeTruthy();
+  });
+
   it('seeds the composer with a page draft and leaves the harness to the user', () => {
-    render(<PanelAgentTab pluginPanel={binding} draft="Review this doc" draftProjectId="proj-1" onCreated={vi.fn()} />);
-    expect(composerProps.last).toMatchObject({ initialText: 'Review this doc', composerProjectId: 'proj-1', pluginPanel: binding });
+    const selection = { version: 1 as const, path: 'README.md', text: 'Selected passage' };
+    render(<PanelAgentTab pluginPanel={binding} draft="Review this doc" draftSelection={selection} draftProjectId="proj-1" onCreated={vi.fn()} />);
+    expect(composerProps.last).toMatchObject({ initialText: 'Review this doc', initialSelection: selection, composerProjectId: 'proj-1', pluginPanel: binding });
     expect(composerProps.last).not.toHaveProperty('providerId');
   });
 
@@ -91,7 +103,7 @@ describe('PanelAgentTab', () => {
     const onOpen = vi.fn();
     render(<PanelAgentTab pluginPanel={binding} onCreated={vi.fn()} onOpenConversation={onOpen} />);
     const items = await screen.findAllByTestId('panel-agent-recent');
-    expect(threads.panelConversations).toHaveBeenCalledWith('p1', 'main');
+    expect(threads.panelConversations).toHaveBeenCalledWith('p1', 'main', { projectId: undefined, view: 'items/7' });
     expect(items).toHaveLength(PANEL_AGENT_RECENT_LIMIT);
     expect(items.map((row) => row.textContent)).toEqual([
       'Untitled conversationnow',
@@ -156,8 +168,36 @@ describe('PanelAgentTab', () => {
     expect(sessionFor(<PanelAgentTab pluginPanel={noView} onCreated={vi.fn()} />)).toBe(first);
     expect(sessionFor(<PanelAgentTab pluginPanel={binding} onCreated={vi.fn()} />)).not.toBe(first);
     expect(sessionFor(<PanelAgentTab pluginPanel={{ ...noView, panel: 'other' }} onCreated={vi.fn()} />)).not.toBe(first);
+    expect(sessionFor(<PanelAgentTab pluginPanel={noView} projectId="project-a" onCreated={vi.fn()} />)).not.toBe(first);
+    const projectA = sessionFor(<PanelAgentTab pluginPanel={noView} projectId="project-a" onCreated={vi.fn()} />);
+    expect(sessionFor(<PanelAgentTab pluginPanel={noView} projectId="project-b" onCreated={vi.fn()} />)).not.toBe(projectA);
+    expect(sessionFor(<PanelAgentTab pluginPanel={noView} projectId="project-a" onCreated={vi.fn()} />)).toBe(projectA);
     const unboundA = sessionFor(<PanelAgentTab onCreated={vi.fn()} />);
     const unboundB = sessionFor(<PanelAgentTab onCreated={vi.fn()} />);
     expect(unboundA).not.toBe(unboundB);
   });
+  it('queries recents only for the current project and view, clearing prior results on scope changes', async () => {
+    threads.panelConversations.mockResolvedValueOnce([{ id: 'a', title: 'Agent A', updatedAt: 1 }]);
+    const onOpen = vi.fn();
+    const ui = (projectId: string, view: string) => <PanelAgentTab pluginPanel={{ ...binding, view }} projectId={projectId} onCreated={vi.fn()} onOpenConversation={onOpen} />;
+    const rendered = render(ui('project-a', 'agents/a.agent'));
+    expect(await screen.findByText('Agent A')).toBeTruthy();
+    expect(threads.panelConversations).toHaveBeenLastCalledWith('p1', 'main', { projectId: 'project-a', view: 'agents/a.agent' });
+    threads.panelConversations.mockResolvedValueOnce([]);
+    rendered.rerender(ui('project-b', 'agents/b.agent'));
+    expect(screen.queryByText('Agent A')).toBeNull();
+    await waitFor(() => expect(threads.panelConversations).toHaveBeenLastCalledWith('p1', 'main', { projectId: 'project-b', view: 'agents/b.agent' }));
+  });
+
+  it('ignores a conversation lookup that finishes after its scope has changed', async () => {
+    let finish!: (value: Array<{ id: string; title: string; updatedAt: number }>) => void;
+    threads.panelConversations.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const ui = (view: string) => <PanelAgentTab pluginPanel={{ ...binding, view }} onCreated={vi.fn()} onOpenConversation={vi.fn()} />;
+    const rendered = render(ui('a'));
+    rendered.rerender(ui('b'));
+    finish([{ id: 'stale', title: 'Stale conversation', updatedAt: 1 }]);
+    await waitFor(() => expect(threads.panelConversations).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Stale conversation')).toBeNull();
+  });
+
 });

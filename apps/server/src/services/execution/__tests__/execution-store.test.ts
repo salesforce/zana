@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
+import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, isUserOwnedSquadWorktree, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
 import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
@@ -45,6 +45,66 @@ describe('isTerminalExecutionState', () => {
 });
 
 describe('execution store', () => {
+  const catalogueProvenance = {
+    role: 'worker' as const,
+    capabilities: [],
+    tools: ['execution.work.claim', 'execution.work.complete'],
+    digest: 'a'.repeat(64)
+  };
+
+  it('persists automated MCP catalogue provenance keyed by slot across reload', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance))
+      .resolves.toEqual({ version: 1, ...catalogueProvenance });
+    await expect(createExecutionStore({ filePath }).get(record.id)).resolves.toMatchObject({
+      automatedMcpCatalogueProvenance: { 'worker-1': { version: 1, ...catalogueProvenance } }
+    });
+  }));
+
+  it('returns existing automated MCP catalogue provenance for an exact retry', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    const first = await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    const replay = await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    expect(replay).toEqual(first);
+  }));
+
+  it('compares automated MCP catalogue provenance by explicit fields, not object serialization order', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', {
+      digest: catalogueProvenance.digest,
+      tools: [...catalogueProvenance.tools],
+      capabilities: [...catalogueProvenance.capabilities],
+      role: catalogueProvenance.role
+    })).resolves.toEqual({ version: 1, ...catalogueProvenance });
+  }));
+
+  it('rejects changed automated MCP catalogue provenance for an existing slot', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', {
+      ...catalogueProvenance, digest: 'b'.repeat(64)
+    })).rejects.toThrow('automated MCP catalogue provenance mismatch for slot worker-1');
+  }));
+
+  it('caps automated MCP catalogue provenance slots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    for (let index = 0; index < 100; index++) {
+      await store.recordAutomatedMcpCatalogueProvenance(record.id, `worker-${index}`, catalogueProvenance);
+    }
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-overflow', catalogueProvenance))
+      .rejects.toThrow('automated MCP catalogue provenance slot limit reached');
+  }));
+
   it('grants one fixed blocker deadline grace then stops with a durable reason', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
@@ -101,6 +161,58 @@ describe('execution store', () => {
     await writeFile(filePath, JSON.stringify(durable));
     await expect(createExecutionStore({ filePath }).get(record.id)).rejects.toThrow('corrupt execution store');
   }));
+  describe('Modern native recovery snapshots', () => {
+    const modern = (over: Record<string, unknown> = {}) => ({
+      attempt: 1, slotId: 'worker-1', role: 'worker' as const, personaId: 'builder', nativeConversationId: 'prov-1',
+      transport: 'MODERN' as const, threadId: 'thread-1', generation: 1, providerThreadId: 'prov-1',
+      providerId: 'acp-x', environmentPath: '/work/tree', hostId: 'host-1', ...over
+    });
+    it('persists a valid Modern snapshot with all optional fields across restart', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      let record = (await store.claim(request())).record;
+      record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, modern());
+      expect(record.nativeRecoverySnapshots).toEqual([expect.objectContaining(modern())]);
+      expect((await createExecutionStore({ filePath }).get(record.id))?.nativeRecoverySnapshots?.[0]).toMatchObject(modern());
+    }));
+    it.each([
+      ['missing threadId', { threadId: undefined }],
+      ['empty threadId', { threadId: '' }],
+      ['generation 0', { generation: 0 }],
+      ['fractional generation', { generation: 1.5 }],
+      ['missing generation', { generation: undefined }],
+      ['missing providerThreadId', { providerThreadId: undefined }],
+      ['providerThreadId differs from nativeConversationId', { providerThreadId: 'other' }],
+      ['unknown transport', { transport: 'WEB' }],
+      ['empty hostId', { hostId: '' }]
+    ])('rejects malformed Modern snapshot: %s', async (_name, over) => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const record = (await store.claim(request())).record;
+      await expect(store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, modern(over) as never)).rejects.toThrow('invalid native recovery snapshot');
+    }));
+    it('rejects Modern identity fields on a CLI snapshot and accepts explicit CLI transport', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      let record = (await store.claim(request())).record;
+      await expect(store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+        attempt: 1, slotId: 'w', role: 'worker', personaId: 'b', nativeConversationId: 'n', threadId: 't'
+      })).rejects.toThrow('invalid native recovery snapshot');
+      record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+        attempt: 1, slotId: 'w', role: 'worker', personaId: 'b', nativeConversationId: 'n', transport: 'CLI'
+      });
+      expect(record.nativeRecoverySnapshots).toHaveLength(1);
+    }));
+    it('loads durable legacy CLI snapshots and rejects durable malformed Modern ones', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const record = (await store.claim(request())).record;
+      const legacy = { version: 1, attempt: 1, slotId: 'w', role: 'worker', personaId: 'b', nativeConversationId: 'n', capturedAt: 1 };
+      const durable = JSON.parse(await readFile(filePath, 'utf8'));
+      durable.records[0].nativeRecoverySnapshots = [legacy];
+      await writeFile(filePath, JSON.stringify(durable));
+      await expect(createExecutionStore({ filePath }).get(record.id)).resolves.toMatchObject({ nativeRecoverySnapshots: [legacy] });
+      durable.records[0].nativeRecoverySnapshots = [{ ...legacy, transport: 'MODERN' }];
+      await writeFile(filePath, JSON.stringify(durable));
+      await expect(createExecutionStore({ filePath }).get(record.id)).rejects.toThrow('corrupt execution store');
+    }));
+  });
   it('atomically starts retained recovery without durable BLOCKED state', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let record = (await store.claim(request())).record;
@@ -129,6 +241,71 @@ describe('execution store', () => {
     await expect(store.beginRetainedRecovery(record.id, staleVersion)).rejects.toThrow('stale execution state');
     expect(await store.get(record.id)).toMatchObject({ state: 'FAILED', stateVersion: record.stateVersion, attempt: 1 });
   }));
+  describe('retained recovery slot pins', () => {
+    async function failedWithClaims(store: ReturnType<typeof createExecutionStore>) {
+      let record = (await store.claim(request())).record;
+      record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+      record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+      record = await store.setAuthorizationContext(record.id, record.stateVersion, {
+        version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2,
+        slots: [{ slotId: 'worker-1', personaId: 'w', authorizationIdDigest: 'a' }, { slotId: 'worker-2', personaId: 'w', authorizationIdDigest: 'b' }]
+      }, 'context');
+      record = await store.registerPlan(record.id, record.stateVersion, [
+        { id: 'done', title: 'D', task: 'd', dependencies: [], readOnly: true },
+        { id: 'a', title: 'A', task: 'a', dependencies: [], readOnly: true },
+        { id: 'b', title: 'B', task: 'b', dependencies: [], readOnly: true }
+      ]);
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'a');
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-2' }, 'b');
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-2' }, 'done');
+      const doneUnit = record.workUnits!.find((u) => u.id === 'done')!;
+      record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-2' }, 'done', 'finished', { claimId: doneUnit.claimId!, claimGeneration: doneUnit.claimGeneration! });
+      record = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'a', {
+        claimId: record.workUnits!.find((u) => u.id === 'a')!.claimId!, claimGeneration: record.workUnits!.find((u) => u.id === 'a')!.claimGeneration!, turnCount: 3
+      });
+      return store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'failed');
+    }
+
+    it('keeps the pin only for restorable slots and clears fences, progress and results', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const failed = await failedWithClaims(store);
+      const before = new Map(failed.workUnits!.map((u) => [u.id, u]));
+      const recovered = await store.beginRetainedRecovery(failed.id, failed.stateVersion, { keepSlotIds: new Set(['worker-1']) });
+      const unit = (id: string) => recovered.workUnits!.find((u) => u.id === id)!;
+      expect(unit('a')).toMatchObject({ assignedSlotId: 'worker-1', claimGeneration: before.get('a')!.claimGeneration });
+      expect(unit('a').state).toBe('READY');
+      expect(unit('b').assignedSlotId).toBeUndefined();
+      expect(unit('b').claimGeneration).toBe(before.get('b')!.claimGeneration);
+      for (const id of ['a', 'b']) {
+        for (const field of ['claimId', 'claimedBy', 'claimedAt', 'leaseExpiresAt', 'heartbeatAt', 'progressAt', 'turnCount', 'result'] as const) {
+          expect(unit(id)[field]).toBeUndefined();
+        }
+      }
+      expect(unit('done')).toMatchObject({ state: 'COMPLETED', result: 'finished' });
+      expect(unit('done').assignedSlotId).toBe(before.get('done')!.assignedSlotId);
+    }));
+
+    it('clears every pin without keepSlotIds (fresh-plan behavior)', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const failed = await failedWithClaims(store);
+      const recovered = await store.beginRetainedRecovery(failed.id, failed.stateVersion);
+      expect(recovered.workUnits!.filter((u) => u.state !== 'COMPLETED').map((u) => u.assignedSlotId)).toEqual([undefined, undefined]);
+    }));
+
+    it('dispatchReady hands a pinned unit only to its pinned slot', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const failed = await failedWithClaims(store);
+      const recovered = await store.beginRetainedRecovery(failed.id, failed.stateVersion, { keepSlotIds: new Set(['worker-2']) });
+      let relaunched = await store.setAuthorizationContext(recovered.id, recovered.stateVersion, {
+        version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2,
+        slots: [{ slotId: 'worker-1', personaId: 'w', authorizationIdDigest: 'a' }, { slotId: 'worker-2', personaId: 'w', authorizationIdDigest: 'b' }]
+      }, 'context-2');
+      relaunched = await store.transition(relaunched.id, relaunched.stateVersion, 'RUNNING', 'info', 'run');
+      const { assignments } = await store.dispatchReady(recovered.id);
+      expect(assignments.find((a) => a.workUnitId === 'b')?.slotId).toBe('worker-2');
+      expect(assignments.find((a) => a.workUnitId === 'a')?.slotId).toBe('worker-1');
+    }));
+  });
   it('clears only prior-attempt native recovery snapshots after fresh-plan launch', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let record = (await store.claim(request())).record;
@@ -830,6 +1007,23 @@ describe('execution store', () => {
     await expect(store.claim({
       ...request(), launchRequestId: 'request-3',
       request: { version: 1, slots: [{ initialTask: 'é'.repeat(Math.floor(MAX_TEAM_INITIAL_TASK_BYTES / 2) + 1) }], resolvedModels: [] }
+    })).rejects.toThrow('invalid execution request snapshot');
+  }));
+  it('persists bounded automated skill selections in request and launch intent snapshots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim({
+      ...request(),
+      request: { version: 1, slots: [{ initialTask: 'Run tests', automatedSkillIds: ['zcc:built-in/test'] }], resolvedModels: [] }
+    })).record;
+    expect(record.request.slots[0].automatedSkillIds).toEqual(['zcc:built-in/test']);
+    record = await store.prepareLaunchIntent(record.id, record.stateVersion, {
+      version: 1, authorizationContextDigest: 'sha256:context',
+      slots: [{ slotId: 'slot-1', personaId: 'worker', initialTaskDigest: 'sha256:task', automatedSkillIds: ['zcc:built-in/test'] }]
+    });
+    expect(record.launchIntent?.slots[0].automatedSkillIds).toEqual(['zcc:built-in/test']);
+    await expect(store.claim({
+      ...request(), launchRequestId: 'request-2',
+      request: { version: 1, slots: [{ initialTask: 'Run tests', automatedSkillIds: Array(65).fill('zcc:built-in/test') }], resolvedModels: [] }
     })).rejects.toThrow('invalid execution request snapshot');
   }));
   it('defaults generic launch metadata to Team and rejects unknown durable launch kinds', async () => fixture(async (filePath) => {
@@ -1597,6 +1791,102 @@ describe('execution store', () => {
     });
   }));
 
+  it('persists a user-owned target selector and ownership, and never deletes it (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const base = request();
+    const claimed = await store.claim({ ...base, request: { ...base.request, target: { kind: 'worktree' as const, branch: 'feat' } } });
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    expect(claimed.record.request.target).toEqual({ kind: 'worktree', branch: 'feat' });
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree'
+    });
+    expect(prepared.squadWorktree).toEqual({ path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree' });
+    // Same target reattaches idempotently; a managed claim on the same branch is a conflict.
+    await expect(store.setSquadWorktree(prepared.id, prepared.stateVersion, {
+      path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree'
+    })).resolves.toMatchObject({ stateVersion: prepared.stateVersion });
+    await expect(store.setSquadWorktree(prepared.id, prepared.stateVersion, { path: '/repo/checkouts/feat', branch: 'feat' }))
+      .rejects.toThrow('squad worktree already differs');
+    const starting = await store.transition(prepared.id, prepared.stateVersion, 'STARTING', 'info', 'Starting');
+    const stopped = await store.transition(starting.id, starting.stateVersion, 'STOPPED', 'info', 'Stopped');
+    await expect(store.disposeSquadWorktree(stopped.id, stopped.stateVersion, 'deleted')).rejects.toThrow('never deleted');
+    await expect(store.disposeSquadWorktree(stopped.id, stopped.stateVersion, 'left')).resolves.toMatchObject({ squadWorktreeDisposition: 'left' });
+
+    const restarted = createExecutionStore({ filePath, id: () => 'other' });
+    await expect(restarted.get(stopped.id)).resolves.toMatchObject({
+      request: { target: { kind: 'worktree', branch: 'feat' } },
+      squadWorktree: { ownership: 'user', targetKind: 'worktree' }
+    });
+  }));
+
+  it('rejects invalid ownership fields and keeps legacy records managed (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const id = claimed.record.id;
+    const version = claimed.record.stateVersion;
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', ownership: 'other' as never })).rejects.toThrow('invalid squad worktree ownership');
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', ownership: 'user' })).rejects.toThrow('invalid squad worktree target kind');
+    const legacy = await store.setSquadWorktree(id, version, { path: '/repo/.worktrees/x', branch: 'zcc/x', ownership: 'managed' });
+    expect(legacy.squadWorktree).toEqual({ path: '/repo/.worktrees/x', branch: 'zcc/x' });
+    expect(isUserOwnedSquadWorktree(legacy.squadWorktree)).toBe(false);
+    expect(isUserOwnedSquadWorktree(undefined)).toBe(false);
+    await expect(store.setSquadWorktree(id, legacy.stateVersion, { path: '/repo/.worktrees/x', branch: 'zcc/x', ownership: 'user', targetKind: 'worktree' }))
+      .rejects.toThrow('squad worktree already differs');
+  }));
+
+  it('validates squad worktree strings and ownership shape on writes', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const id = claimed.record.id;
+    const version = claimed.record.stateVersion;
+    const oversized = 'x'.repeat(2_049);
+    for (const value of [
+      { path: '', branch: 'b' },
+      { path: '/r', branch: ' ' },
+      { path: oversized, branch: 'b' },
+      { path: '/r', branch: oversized },
+      { path: '/r', branch: 'b', baseBranch: oversized },
+      { path: '/r', branch: 'b', ownership: 'managed', targetKind: 'worktree' }
+    ] as any[]) {
+      await expect(store.setSquadWorktree(id, version, value)).rejects.toThrow();
+    }
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', baseBranch: ' ' })).rejects.toThrow();
+  }));
+
+  it('rejects malformed persisted squad worktree records on load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/.worktrees/x', branch: 'zcc/x'
+    });
+    const invalidRecords = [
+      { path: '', branch: 'b' },
+      { path: '/r', branch: 'b'.repeat(2_049) },
+      { path: '/r', branch: 'b', baseBranch: ' ' },
+      { path: '/r', branch: 'b', ownership: 'other' },
+      { path: '/r', branch: 'b', ownership: 'user' },
+      { path: '/r', branch: 'b', ownership: 'managed', targetKind: 'worktree' }
+    ];
+    for (const squadWorktree of invalidRecords) {
+      const durable = JSON.parse(await readFile(filePath, 'utf8'));
+      durable.records[0].squadWorktree = squadWorktree;
+      await writeFile(filePath, JSON.stringify(durable));
+      await expect(createExecutionStore({ filePath }).get(prepared.id)).rejects.toThrow('corrupt execution store');
+      // Restore a valid file before the next case.
+      durable.records[0].squadWorktree = { path: '/repo/.worktrees/x', branch: 'zcc/x' };
+      await writeFile(filePath, JSON.stringify(durable));
+    }
+  }));
+
+  it('refuses to persist an invalid target selector snapshot (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const base = request();
+    await expect(store.claim({ ...base, request: { ...base.request, target: { kind: 'path', path: '/tmp' } as never } })).rejects.toThrow();
+  }));
+
   it('refuses to dismiss active executions', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const claimed = await store.claim(request());
@@ -2056,5 +2346,63 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     ]);
     expect((await deliveryStore.dispatchReady(delivery.id, { enforceRouting: true })).assignments)
       .toEqual([expect.objectContaining({ workUnitId: 'review', slotId: '1:builtin:squad-worker-high:0' })]);
+  }));
+});
+
+describe('local Composer durable report mark', () => {
+  const local = (over: Record<string, unknown> = {}) => ({ ...request(), callerPrincipalId: 'interactive:local', ...over });
+  async function terminal(store: ReturnType<typeof createExecutionStore>, input: ReturnType<typeof local>) {
+    let record = (await store.claim(input as never)).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    return store.transition(record.id, record.stateVersion, 'STOPPED', 'info', 'stop');
+  }
+
+  it('flags only target-less local claims', async () => fixture(async (filePath) => {
+    let n = 0;
+    const store = createExecutionStore({ filePath, id: () => `e-${++n}` });
+    expect((await store.claim(local({ launchRequestId: 'a' }) as never)).record.localReport).toBe(true);
+    expect((await store.claim(request() as never)).record.localReport).toBeUndefined();
+    expect((await store.claim(local({ launchRequestId: 'c', reportTo: { kind: 'pty', id: 's', role: 'owner' } }) as never)).record.localReport).toBeUndefined();
+  }));
+
+  it('lists an unmarked terminal local run, marks it atomically, and survives reload without re-listing', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    const stopped = await terminal(store, local());
+    expect((await store.listUnreportedExecutions()).map((r) => r.id)).toEqual(['e-1']);
+    await expect(store.markReported('e-1', stopped.attempt + 1)).rejects.toThrow('stale execution attempt');
+    const marked = await store.markReported('e-1', stopped.attempt);
+    expect(marked.reportNoticeVersion).toBe(stopped.attempt);
+    expect(marked.proposalNoticeVersion).toBeUndefined();
+    expect(marked.stateVersion).toBe(stopped.stateVersion);
+    expect(await store.markReported('e-1', stopped.attempt)).toEqual(marked);
+    const reloaded = createExecutionStore({ filePath });
+    expect(await reloaded.listUnreportedExecutions()).toEqual([]);
+    expect((await reloaded.get('e-1'))?.localReport).toBe(true);
+  }));
+
+  it('does not list non-terminal runs, legacy local runs without the flag, or plan-correction stops', async () => fixture(async (filePath) => {
+    let n = 0;
+    const store = createExecutionStore({ filePath, id: () => `e-${++n}` });
+    await store.claim(local({ launchRequestId: 'live' }) as never);
+    const legacy = await terminal(store, local({ launchRequestId: 'legacy' }));
+    const corrected = await store.claim(local({ launchRequestId: 'pc' }) as never);
+    await store.stopForPlanCorrection(corrected.record.id);
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    delete durable.records.find((r: { id: string }) => r.id === legacy.id).localReport;
+    await writeFile(filePath, JSON.stringify(durable));
+    const reloaded = createExecutionStore({ filePath });
+    expect(await reloaded.listUnreportedExecutions()).toEqual([]);
+    await expect(reloaded.markReported(legacy.id, legacy.attempt)).rejects.toThrow('terminal report target is unavailable');
+    await expect(reloaded.markReported(corrected.record.id, 1)).rejects.toThrow('terminal report target is unavailable');
+  }));
+
+  it('rejects a malformed localReport on load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    await store.claim(local() as never);
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    durable.records[0].localReport = false;
+    await writeFile(filePath, JSON.stringify(durable));
+    await expect(createExecutionStore({ filePath }).get('e-1')).rejects.toThrow('corrupt execution store');
   }));
 });

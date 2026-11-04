@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -261,6 +262,154 @@ describe('host filesystem mutations', () => {
 });
 
 describe('host filesystem discovery', () => {
+  it('finds only exact basenames and reports an unfinished name search', async () => {
+    const root = tmpRoot();
+    mkdirSync(join(root, 'docs'));
+    writeFileSync(join(root, 'docs', 'guide.md'), 'match');
+    writeFileSync(join(root, 'other-guide.md'), 'near match');
+    const listed = await listHostPaths({
+      path: root,
+      exactName: 'guide.md',
+      limit: 10,
+      includeFiles: true,
+      includeDirectories: false
+    });
+    expect(listed.paths.map(({ path }) => path)).toEqual(['docs/guide.md']);
+    expect(listed.truncated).toBe(false);
+  });
+
+  it('preserves case-sensitive filename distinction on case-sensitive filesystems', async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, 'Guide.md'), 'match');
+    const listed = await listHostPaths({ path: root, exactName: 'guide.md', limit: 10, includeFiles: true, includeDirectories: false });
+    if (!existsSync(join(root, 'guide.md'))) { expect(listed.paths).toEqual([]); } else { expect(listed.paths.map((p) => p.name)).toEqual(['Guide.md']); }
+  });
+
+  it('truncates search when deadline is exceeded', async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, 'guide.md'), 'content');
+    const listed = await listHostPaths({
+      path: root,
+      exactName: 'guide.md',
+      timeoutMs: -1,
+      limit: 10,
+      includeFiles: true,
+      includeDirectories: false
+    });
+    expect(listed.truncated).toBe(true);
+  });
+
+  it('marks exactName search truncated when deadline expires during entry processing', async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, 'guide.md'), 'content');
+    let callCount = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      callCount += 1;
+      return callCount <= 3 ? 1000 : 999999;
+    });
+    try {
+      const listed = await listHostPaths({
+        path: root,
+        exactName: 'guide.md',
+        timeoutMs: 1000,
+        limit: 10,
+        includeFiles: true,
+        includeDirectories: false
+      });
+      expect(listed.truncated).toBe(true);
+      expect(listed.paths.map((p) => p.name)).toEqual(['guide.md']);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('matches Windows case differences on exactName lookup', async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, 'Guide.md'), 'match');
+    const listed = await listHostPaths({
+      path: root,
+      exactName: 'guide.md',
+      limit: 10,
+      includeFiles: true,
+      includeDirectories: false
+    });
+    if (existsSync(join(root, 'guide.md'))) {
+      expect(listed.paths.map((p) => p.name)).toEqual(['Guide.md']);
+    } else {
+      expect(listed.paths).toEqual([]);
+    }
+  });
+
+  it('marks exactName search truncated if opening directory throws', async () => {
+    const root = tmpRoot();
+    const spy = vi.spyOn(fs, 'opendir').mockRejectedValueOnce(new Error('EACCES'));
+    try {
+      const listed = await listHostPaths({
+      path: root,
+      exactName: 'guide.md',
+      limit: 10,
+      includeFiles: true,
+      includeDirectories: false
+    });
+      expect(listed.truncated).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('continues scanning remaining directories when one directory throws, returning results with truncated: true', async () => {
+    const root = tmpRoot();
+    const badDir = join(root, 'a_bad');
+    const goodDir = join(root, 'z_good');
+    mkdirSync(badDir);
+    mkdirSync(goodDir);
+    writeFileSync(join(goodDir, 'guide.md'), 'found');
+
+    const originalOpendir = fs.opendir;
+    const spy = vi.spyOn(fs, 'opendir').mockImplementation(async (dirPath: any, opts: any) => {
+      if (typeof dirPath === 'string' && dirPath.includes('a_bad')) {
+        throw new Error('EACCES: permission denied');
+      }
+      return originalOpendir(dirPath, opts);
+    });
+
+    try {
+      const listed = await listHostPaths({
+        path: root,
+        exactName: 'guide.md',
+        limit: 10,
+        includeFiles: true,
+        includeDirectories: false
+      });
+      expect(listed.truncated).toBe(true);
+      expect(listed.paths.map((p) => p.name)).toEqual(['guide.md']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('marks exactName search truncated if reading directory entries throws', async () => {
+    const root = tmpRoot();
+    const fakeDir = {
+      async *[Symbol.asyncIterator]() {
+        throw new Error('read error');
+      }
+    };
+    const spy = vi.spyOn(fs, 'opendir').mockResolvedValueOnce(fakeDir as any);
+    try {
+      const listed = await listHostPaths({
+      path: root,
+      exactName: 'guide.md',
+      limit: 10,
+      includeFiles: true,
+      includeDirectories: false
+    });
+      expect(listed.truncated).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('lists files and directories, skips dots/node_modules/symlinks, and ranks a query', async () => {
     const root = tmpRoot();
     mkdirSync(join(root, 'src'));

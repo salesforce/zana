@@ -84,6 +84,7 @@ const FIELD_HELP = {
   sources: `Exact paths of the files to attach (design, plan); at most ${SQUAD_PROPOSAL_LIMITS.maxSources}. Relative paths are read from the project root; files outside it may be under the home folder or the clone root.`,
   title: `Short card title (at most ${SQUAD_PROPOSAL_LIMITS.titleChars} characters).`,
   summary: `One-paragraph summary for the card (at most ${SQUAD_PROPOSAL_LIMITS.summaryChars} characters).`,
+  completionInboxNotice: 'Post an Inbox notice when this agent-started Squad completes. Defaults to false.',
   mode: "'review': the user reviews and launches it from the Inbox (default choice). 'now': start immediately, only when the user explicitly asked for that.",
   planPath: 'Path of the plan file: relative to the project, or absolute (home folder or clone root).',
   planText: 'The plan text (at most 1 MiB).'
@@ -95,7 +96,8 @@ export const squadProposeInputSchema = {
   planning: z.enum(['infer', 'provided']).optional().describe(FIELD_HELP.planning),
   sources: z.array(z.string().min(1).max(TRANSPORT.pathChars)).max(TRANSPORT.maxSources).optional().describe(FIELD_HELP.sources),
   title: z.string().max(TRANSPORT.titleChars).optional().describe(FIELD_HELP.title),
-  summary: z.string().max(TRANSPORT.summaryChars).optional().describe(FIELD_HELP.summary)
+  summary: z.string().max(TRANSPORT.summaryChars).optional().describe(FIELD_HELP.summary),
+  completionInboxNotice: z.boolean().optional().describe(FIELD_HELP.completionInboxNotice)
 };
 
 export const squadLaunchInputSchema = {
@@ -117,7 +119,8 @@ export const SQUAD_PROPOSE_JSON_SCHEMA = {
     planning: { type: 'string', enum: ['infer', 'provided'], description: FIELD_HELP.planning },
     sources: { type: 'array', maxItems: TRANSPORT.maxSources, items: { type: 'string', minLength: 1, maxLength: TRANSPORT.pathChars }, description: FIELD_HELP.sources },
     title: { type: 'string', maxLength: TRANSPORT.titleChars, description: FIELD_HELP.title },
-    summary: { type: 'string', maxLength: TRANSPORT.summaryChars, description: FIELD_HELP.summary }
+    summary: { type: 'string', maxLength: TRANSPORT.summaryChars, description: FIELD_HELP.summary },
+    completionInboxNotice: { type: 'boolean', description: FIELD_HELP.completionInboxNotice }
   },
   required: ['teamId', 'goal']
 };

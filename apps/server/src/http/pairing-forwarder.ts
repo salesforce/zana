@@ -8,7 +8,13 @@ import {
 } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { isAllowedHttp, isAllowedWs, resolvePairingTarget } from './pairing-allowlist.js';
+import {
+  PAIRING_ALLOWLIST,
+  PEER_LINK_ALLOWLIST,
+  isAllowedHttp,
+  isAllowedWs,
+  resolvePairingTarget
+} from './pairing-allowlist.js';
 import { headerPairsToRecord, isStrippedPairingHeader, loopbackHostHeader } from './pairing-headers.js';
 
 /**
@@ -25,6 +31,10 @@ export interface PairingForwarder {
 export interface PairingForwarderOptions {
   /** Loopback address the product server is bound to. */
   productHost?: string;
+  /** Loopback port to listen on; 0 (default) picks a free one. */
+  port?: number;
+  /** `pairing` (default) is the relay surface; `peer` is enroll + host websocket only. */
+  allow?: 'pairing' | 'peer';
 }
 
 const FORBIDDEN = JSON.stringify({ error: 'path is not allowed' });
@@ -103,6 +113,7 @@ export async function startPairingForwarder(
   options: PairingForwarderOptions = {}
 ): Promise<PairingForwarder> {
   const productHost = options.productHost ?? '127.0.0.1';
+  const allowlist = options.allow === 'peer' ? PEER_LINK_ALLOWLIST : PAIRING_ALLOWLIST;
   const loopbackHost = loopbackHostHeader(productPort, productHost);
   const origin = `http://${loopbackHost}`;
   const sockets = new Set<Socket>();
@@ -128,7 +139,7 @@ export async function startPairingForwarder(
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const method = String(request.method).toUpperCase();
     const url = checkedTarget(request.url, origin);
-    if (!url || !isAllowedHttp(method, url.pathname)) {
+    if (!url || !isAllowedHttp(method, url.pathname, allowlist)) {
       refuseHttp(response, 403, FORBIDDEN);
       return;
     }
@@ -157,7 +168,7 @@ export async function startPairingForwarder(
     socket.on('error', () => socket.destroy());
     const url = checkedTarget(request.url, origin);
     const isWebSocket = String(request.headers.upgrade).toLowerCase() === 'websocket';
-    if (String(request.method).toUpperCase() !== 'GET' || !isWebSocket || !url || !isAllowedWs(url.pathname)) {
+    if (String(request.method).toUpperCase() !== 'GET' || !isWebSocket || !url || !isAllowedWs(url.pathname, allowlist)) {
       refuseUpgrade(socket, 403, 'Forbidden');
       return;
     }
@@ -189,7 +200,7 @@ export async function startPairingForwarder(
 
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', rejectListen);
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(options.port ?? 0, '127.0.0.1', () => {
       server.off('error', rejectListen);
       resolveListen();
     });

@@ -1,0 +1,4 @@
+# Check text files out with LF on every platform, including Windows clones with
+# core.autocrlf=true. Source-assertion tests and generated-file snapshots
+# compare against LF text.
+* text=auto eol=lf

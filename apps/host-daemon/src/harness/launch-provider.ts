@@ -271,7 +271,7 @@ export interface LaunchProvider {
    * Discover the adapter's LIVE model-id inventory from the CLI (`opencode
    * models`), so a persona-pinned model can be validated against what the gateway
    * actually serves — not just the release-baked static snapshot, which DRIFTS
-   * when the gateway renames/drops ids (`aisuite/*` → `llmgw/*`). Returns the live
+   * when an installation renames or removes model IDs. Returns the live
    * ids on a successful probe, or `undefined` when the probe is unavailable/failed
    * (offline, CLI missing, timeout) so the caller degrades to the static snapshot
    * rather than blocking a launch on a transient probe error. Bounded/temp-file

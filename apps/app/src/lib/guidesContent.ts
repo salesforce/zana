@@ -81,10 +81,12 @@ Scheduler tab to know what happened.
 changelog scan). Group related schedules together from the schedule's edit
 dialog — the Scheduler tab lets you filter by group.
 
-## 4. Pausing / editing
+## 4. Turning off, editing and resuming
 
-Toggle a schedule off without deleting it, or edit its prompt/cadence at any
-time — the next run picks up the change.
+Disable a schedule to stop it without deleting it, or edit its prompt/cadence at
+any time — the next run picks up the change. **Resume latest run** reopens the
+agent from a finished run in a new tab, with its whole conversation and nothing
+sent, so you can follow up where it stopped.
 `,
   personas: `
 A persona is a reusable agent identity: role, model, permission mode, system
@@ -106,11 +108,17 @@ Pick the persona when starting a new agent (Quick Agent, a project tab, or a
 Scheduler run) — its model/prompt/tools apply automatically instead of the
 profile defaults.
 
-## 3. Teams
+## 3. Start using Squads
 
-Related personas can be grouped into a **Squad** — a small team that works
-together on a task, each member with its own role. See **Squads** to set one
-up once you have a couple of personas you'd reuse together.
+A **Squad** groups Personas into a team led by an Orchestrator, so several
+agents can work on one goal together. Zana ships five built-in Squads, so you
+can launch one before you create any Persona of your own.
+
+Open **New Chat**, choose **Squad** under Launch mode, pick a Squad and a
+Project, and describe the goal. Follow the run in the Agents board and answer
+its questions in the Inbox.
+
+Read the step-by-step guide: https://zana-ide.com/docs/squads-start/
 `,
   shortcuts: `
 Zana is built to be driven from the keyboard once you know the
@@ -120,7 +128,7 @@ handful of shortcuts that matter most day to day.
 
 - **⌘P** — command palette / project switcher.
 - **⌘⇧1…9** — jump straight to project 1–9; **⌘⇧]/[** to step through them.
-- **⌘I** — toggle the Inbox. **⌘J** — toggle the Scheduler. **⌘,** — Settings.
+- **⌘I** — toggle the Inbox. **⌘J** — toggle the Scheduler. **⌘,** — Settings (inside a project, its Project settings).
 - **⌘O** — show all agents (exits project focus).
 
 ## Tabs & terminals

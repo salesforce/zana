@@ -14,5 +14,11 @@ export const claudeLegacyRouting: HarnessLegacyRoutingAdapter = {
     }
     const targetId = context.config.defaultModel;
     return targetId && targetId !== 'default' ? { targetId } : undefined;
+  },
+  threadUnmappedFields(context, { unrestricted }) {
+    // A launch appends the project's native `--permission-mode` (skipped under
+    // claude-yolo); a thread only has the portable execution states.
+    const mode = context.projectSettings?.permissionMode;
+    return mode && !unrestricted ? [`the project Claude Code permission mode (${mode})`] : [];
   }
 };

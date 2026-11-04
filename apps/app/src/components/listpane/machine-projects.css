@@ -1,0 +1,52 @@
+.machine-project-group { margin-bottom: 6px; }
+.machine-project-heading { display: flex; align-items: center; gap: 3px; min-height: 33px; padding: 3px 4px; border-radius: 6px; }
+.machine-project-heading:hover { background: var(--bg-hover); }
+.machine-project-heading button { border: 0; background: none; color: var(--text-muted); cursor: pointer; }
+.machine-project-disclosure { display: grid; place-items: center; width: 18px; height: 24px; padding: 0; }
+.machine-project-disclosure svg { transition: transform .15s; }
+.machine-project-disclosure svg.open { transform: rotate(90deg); }
+.machine-project-name { display: flex; align-items: center; gap: 7px; padding: 3px 0; flex: 1; min-width: 0; text-align: left; font-size: 12px; font-weight: 550; }
+.machine-project-name > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-project-name > svg { flex-shrink: 0; }
+.machine-project-name small { font-size: 10px; font-weight: 400; color: var(--text-muted); margin-left: auto; }
+.machine-project-status { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--text-muted); }
+.machine-project-status.online { background: var(--success, #28834a); }
+.machine-project-add { display: grid; place-items: center; width: 22px; height: 24px; padding: 0; border-radius: 4px; }
+.machine-project-add:hover { background: var(--bg-elevated); }
+.machine-project-children { margin: 2px 0 5px 14px; border-left: 1px solid var(--border); padding-left: 4px; }
+.machine-project-add-child { display: flex; align-items: center; gap: 7px; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 7px 10px; font-size: 11px; }
+.machine-project-children .project-select { min-width: 0; }
+.composer-location-picker { min-width: 0; max-width: 100%; }
+.composer-location-picker.launch-model-picker-trigger { max-width: min(400px, 100%); }
+.composer-location-picker.launch-model-picker-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-project-overview { width: min(760px, calc(100vw - 32px)); max-width: 760px; }
+.machine-project-overview-summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.machine-project-overview-summary p, .machine-project-empty p { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin: 0; }
+.machine-project-overview-summary button { white-space: nowrap; }
+.machine-project-empty { padding: 16px; margin-bottom: 18px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 7px; }
+.machine-project-empty strong { display: block; font-size: 13px; margin-bottom: 7px; }
+.machine-project-table-wrap { overflow: auto; }
+.machine-project-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.machine-project-table th { font-size: 11px; font-weight: 500; color: var(--text-muted); text-align: left; background: var(--bg-elevated); padding: 10px; }
+.machine-project-table td { border-bottom: 1px solid var(--border); padding: 15px 10px; }
+.machine-project-table td p { font-size: 10px; color: var(--text-muted); margin: 6px 0 0 22px; overflow-wrap: anywhere; }
+.machine-project-table td:nth-child(2) { color: var(--text-muted); white-space: nowrap; }
+.machine-project-table td:last-child { text-align: right; }
+.machine-project-table .btn { white-space: nowrap; font-size: 11px; }
+.machine-project-open { display: flex; align-items: center; gap: 8px; font-size: 12px; border: 0; background: none; padding: 0; color: var(--text-primary); text-align: left; cursor: pointer; }
+.machine-project-add-options { display: grid; gap: 10px; }
+.machine-project-add-options .btn { display: flex; gap: 12px; padding: 14px; text-align: left; justify-content: flex-start; }
+.machine-project-add-options .btn span { display: grid; gap: 5px; }
+.machine-project-add-options small { color: var(--text-muted); font-weight: normal; }
+.project-folder-warning { color: var(--warning, #b58115); font-size: 11px; }
+.machine-project-table td p.project-folder-status { color: var(--warning, #b58115); }
+.machine-project-refresh { margin-top: 14px; }
+@media (max-width: 600px) { .machine-project-overview-summary { align-items: flex-start; } .machine-project-table td { padding: 12px 6px; } .machine-project-table th:nth-child(2), .machine-project-table td:nth-child(2) { display: none; } }
+
+.composer-project-picker-option { display: inline-flex; align-items: center; gap: 6px; }
+
+.thread-command-composer .composer-location-picker.launch-model-picker-trigger { width: auto; max-width: min(440px, 100%); }
+.home-agent-composer .thread-command-composer .composer-location-picker.launch-model-picker-trigger > span,
+.thread-command-composer .composer-location-picker.launch-model-picker-trigger > span { max-width: none; }
+
+.machine-project-sync-status { color: var(--text-muted); font-size: 12px; margin: 0 0 16px; }

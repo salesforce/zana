@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
@@ -22,7 +23,7 @@ test('closing side-panel terminal tabs stops and removes their shells', async ({
   const ids: string[] = [];
   try {
     for (let i = 0; i < 3; i++) {
-      await page.getByTestId('thread-secondary-new-tab').click();
+      await openThreadToolLauncher(page);
       await page.getByTestId('thread-new-tab-terminal').click();
       await expect(page.getByTestId('thread-terminal-tab').locator('.xterm:visible')).toHaveCount(1, { timeout: 15000 });
       const id = await page.evaluate(async ({ projectId, previous }) => {
@@ -116,7 +117,7 @@ test('multiple noisy panel shells keep the renderer responsive and hidden parsin
   await profiler.send('Profiler.start');
   try {
     for (let i = 0; i < 4; i++) {
-      await page.getByTestId('thread-secondary-new-tab').click(); await page.getByTestId('thread-new-tab-terminal').click();
+      await openThreadToolLauncher(page); await page.getByTestId('thread-new-tab-terminal').click();
       await expect(page.getByTestId('thread-terminal-tab').locator('.xterm:visible')).toHaveCount(1);
     }
     const ids = await page.evaluate(async id => (await (await fetch('/api/v1/terminals')).json()).sessions.filter((s: any) => s.projectId === id && s.profile === 'shell').map((s: any) => s.id as string), projectId);

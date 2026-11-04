@@ -170,6 +170,14 @@ describe('list_teams canInferPlan', () => {
     expect(host.canInferPlanForTeam({})).toBe(false);
     expect(host.canInferPlanForTeam({ orchestratorPersonaId: 'ghost' })).toBe(false);
   });
+
+  it('follows the effective transport: Modern registers via MCP, so a Write deny does not block it', () => {
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude', deniedTools: ['Write'] }];
+    expect(host.canInferPlanForTeam({ orchestratorPersonaId: 'orch', transport: 'MODERN' })).toBe(true);
+    expect(host.canInferPlanForTeam({ orchestratorPersonaId: 'orch', transport: 'CLI' })).toBe(false);
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude', deniedTools: ['mcp__zcc-inbox__execution.plan.register'] }];
+    expect(host.canInferPlanForTeam({ orchestratorPersonaId: 'orch', transport: 'MODERN' })).toBe(false);
+  });
 });
 
 describe('findExecutionForProposal', () => {
@@ -389,6 +397,27 @@ describe('report-back wiring', () => {
     } finally {
       lifecycle.mockRestore();
       report.mockRestore();
+    }
+  });
+
+  it('retires the run plan handoff after every terminal transition, even when the lifecycle throws', async () => {
+    const lifecycle = vi.spyOn(host.squadWorktreeRuntime, 'handleSquadWorktreeTerminal')
+      .mockResolvedValueOnce('merged')
+      .mockRejectedValueOnce(new Error('git failed'));
+    const report = vi.spyOn(host.squadProposalNotifier, 'onTerminal').mockResolvedValue(undefined);
+    // The retirement re-reads the run from main's store for its project before deciding.
+    const reads = h.executionStores.map((created) => vi.spyOn(created, 'getInProject').mockResolvedValue(undefined));
+    const retiredFor = () => reads.flatMap((spy) => spy.mock.calls);
+    try {
+      await host.handleSquadTerminalWithReport({ ...record('pty'), state: 'COMPLETED' } as never);
+      await vi.waitFor(() => expect(retiredFor()).toContainEqual(['p1', 'exec-1']));
+      reads.forEach((spy) => spy.mockClear());
+      await expect(host.handleSquadTerminalWithReport({ ...record('pty'), state: 'STOPPED' } as never)).rejects.toThrow('git failed');
+      await vi.waitFor(() => expect(retiredFor()).toContainEqual(['p1', 'exec-1']));
+    } finally {
+      lifecycle.mockRestore();
+      report.mockRestore();
+      reads.forEach((spy) => spy.mockRestore());
     }
   });
 });

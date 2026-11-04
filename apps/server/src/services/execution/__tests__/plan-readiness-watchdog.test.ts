@@ -13,7 +13,11 @@ function record(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
   } as ExecutionRecord;
 }
 
-function fixture(now = 1_000, grace = 5_000) {
+function fixture(now = 1_000, grace = 5_000, suspension?: {
+  isSuspended: (executionId: string) => boolean | Promise<boolean>;
+  suspendPollMs?: number;
+  suspensionCapMs?: number;
+}) {
   let clock = now;
   let graceValue = grace;
   let nextId = 1;
@@ -30,7 +34,8 @@ function fixture(now = 1_000, grace = 5_000) {
     setTimer,
     clearTimer,
     graceMs: () => graceValue,
-    onGraceExpired
+    onGraceExpired,
+    ...(suspension ?? {})
   });
   return {
     watchdog, setTimer, clearTimer, onGraceExpired, pending,
@@ -206,5 +211,168 @@ describe('PlanReadinessWatchdog', () => {
       expect.any(Error)
     );
     errorSpy.mockRestore();
+  });
+});
+
+describe('PlanReadinessWatchdog suspension (pending plan-correction decision)', () => {
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  it('suspends instead of failing while the decision is open, polling at the poll interval', async () => {
+    const isSuspended = vi.fn(async () => true);
+    const f = fixture(1_000, 5_000, { isSuspended, suspendPollMs: 1_000, suspensionCapMs: 100_000 });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    await settle();
+    expect(isSuspended).toHaveBeenCalledWith('execution-1');
+    expect(f.onGraceExpired).not.toHaveBeenCalled();
+    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 1_000);
+    expect(f.pending.size).toBe(1);
+
+    // Still open on the next poll: keeps suspending.
+    f.setNow(7_000);
+    f.fireNext();
+    await settle();
+    expect(f.onGraceExpired).not.toHaveBeenCalled();
+    expect(f.pending.size).toBe(1);
+  });
+
+  it('gives a fresh full grace from resolution time once the decision closes, then fails', async () => {
+    let open = true;
+    const f = fixture(1_000, 5_000, { isSuspended: () => open, suspendPollMs: 1_000, suspensionCapMs: 100_000 });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    await settle();
+    expect(f.pending.size).toBe(1);
+
+    // Human resolved 20s later (well past the original deadline).
+    open = false;
+    f.setNow(26_000);
+    f.fireNext();
+    await settle();
+    expect(f.onGraceExpired).not.toHaveBeenCalled();
+    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 5_000);
+
+    f.setNow(31_000);
+    f.fireNext();
+    await settle();
+    expect(f.onGraceExpired).toHaveBeenCalledTimes(1);
+    expect(f.onGraceExpired).toHaveBeenCalledWith('execution-1');
+  });
+
+  it('stops after resolution when grace was disabled meanwhile', async () => {
+    let open = true;
+    const f = fixture(1_000, 5_000, { isSuspended: () => open, suspendPollMs: 1_000, suspensionCapMs: 100_000 });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    await settle();
+    open = false;
+    f.setGrace(0);
+    f.fireNext();
+    await settle();
+    expect(f.pending.size).toBe(0);
+    expect(f.onGraceExpired).not.toHaveBeenCalled();
+  });
+
+  it('fails with the suspension-cap reason once the absolute cap elapses while still open', async () => {
+    const f = fixture(1_000, 5_000, { isSuspended: async () => true, suspendPollMs: 10_000, suspensionCapMs: 20_000 });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    await settle();
+    // Poll delay is clipped to the remaining cap (cap at 21_000).
+    f.setNow(16_000);
+    f.fireNext();
+    await settle();
+    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 5_000);
+    f.setNow(21_000);
+    f.fireNext();
+    await settle();
+    expect(f.onGraceExpired).toHaveBeenCalledTimes(1);
+    expect(f.onGraceExpired).toHaveBeenCalledWith('execution-1', 'suspension-cap');
+  });
+
+  it('fires the cap immediately at grace expiry when the cap already elapsed (e.g. after restart)', async () => {
+    const f = fixture(1_000, 5_000, { isSuspended: () => true, suspensionCapMs: 3_000 });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    await settle();
+    expect(f.onGraceExpired).toHaveBeenCalledWith('execution-1', 'suspension-cap');
+  });
+
+  it('retries a failed cap cleanup keeping the cap reason', async () => {
+    const f = fixture(1_000, 5_000, { isSuspended: () => true, suspensionCapMs: 3_000 });
+    f.onGraceExpired.mockRejectedValueOnce(new Error('cleanup failed')).mockResolvedValueOnce(undefined);
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    await vi.waitFor(() => expect(f.onGraceExpired).toHaveBeenCalledTimes(1));
+    f.fireNext();
+    await vi.waitFor(() => expect(f.onGraceExpired).toHaveBeenCalledTimes(2));
+    expect(f.onGraceExpired).toHaveBeenLastCalledWith('execution-1', 'suspension-cap');
+  });
+
+  it('treats a throwing or rejecting predicate as not open (original deadline applies)', async () => {
+    for (const isSuspended of [
+      () => { throw new Error('store corrupt'); },
+      async () => { throw new Error('store corrupt'); }
+    ]) {
+      const f = fixture(1_000, 5_000, { isSuspended });
+      f.watchdog.schedule(record());
+      f.setNow(6_000);
+      f.fireNext();
+      await settle();
+      expect(f.onGraceExpired).toHaveBeenCalledWith('execution-1');
+    }
+  });
+
+  it('treats a non-true predicate answer as not open', async () => {
+    const f = fixture(1_000, 5_000, { isSuspended: () => 'yes' as unknown as boolean });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    await settle();
+    expect(f.onGraceExpired).toHaveBeenCalledWith('execution-1');
+  });
+
+  it('fails at the original deadline when no decision is open', async () => {
+    const f = fixture(1_000, 5_000, { isSuspended: () => false });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    await settle();
+    expect(f.onGraceExpired).toHaveBeenCalledWith('execution-1');
+  });
+
+  it('drops a stale suspension check when the run was removed or rescheduled meanwhile', async () => {
+    let release!: (open: boolean) => void;
+    const f = fixture(1_000, 5_000, { isSuspended: () => new Promise<boolean>((resolve) => { release = resolve; }) });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    f.watchdog.remove('execution-1');
+    release(false);
+    await settle();
+    expect(f.onGraceExpired).not.toHaveBeenCalled();
+    expect(f.pending.size).toBe(0);
+  });
+
+  it('drops a pending suspension check after dispose and on a disposed poll', async () => {
+    let release!: (open: boolean) => void;
+    const f = fixture(1_000, 5_000, { isSuspended: () => new Promise<boolean>((resolve) => { release = resolve; }), suspendPollMs: 1_000 });
+    f.watchdog.schedule(record());
+    f.setNow(6_000);
+    f.fireNext();
+    release(true);
+    await settle();
+    expect(f.pending.size).toBe(1);
+    const [, poll] = f.pending.entries().next().value!;
+    f.watchdog.dispose();
+    poll.fn();
+    await settle();
+    expect(f.onGraceExpired).not.toHaveBeenCalled();
   });
 });

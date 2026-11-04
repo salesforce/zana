@@ -55,6 +55,15 @@ describe('schedule filtering and health', () => {
 });
 
 describe('SchedulerOverview', () => {
+  it('says off, Disable and Enable for turning schedules on and off', () => {
+    const { props, inventory } = mount([task('Alpha'), task('Beta', { enabled: false })]);
+    expect(screen.getByText('1 enabled · 1 off')).toBeTruthy();
+    expect(within(inventory()).getByText('off')).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Off' }).getAttribute('value')).toBe('paused');
+    fireEvent.click(screen.getAllByLabelText('Disable Alpha')[0]!);
+    expect(props.onToggle).toHaveBeenCalledOnce();
+    expect(screen.getAllByLabelText('Enable Beta').length).toBeGreaterThan(0);
+  });
   it('reviews attention schedules without changing their enabled state', () => {
     const { props, inventory } = mount([task('Missing', { projectId: 'gone' }), withRun('Failed', 'error'), task('Healthy')]);
     expect(screen.getByText('2 schedules need attention')).toBeTruthy();
@@ -63,6 +72,18 @@ describe('SchedulerOverview', () => {
     expect(within(inventory()).queryByText('Healthy')).toBeNull();
     expect(props.onToggle).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(inventory());
+  });
+  it('labels a schedule that skipped its last run, and filters to it', () => {
+    const skipped = withRun('Overlapped', 'skipped', { reasonCode: 'overlap' });
+    const { inventory } = mount([skipped, withRun('Fine', 'success'), task('External', { external: { kind: 'claude-loop' } } as Partial<ScheduledTask>)]);
+    const labels = inventory().querySelectorAll('.schedule-issue-label--skipped');
+    expect(labels).toHaveLength(1);
+    expect(labels[0]!.textContent).toMatch(/^skipped .+ · Previous run still active$/);
+    expect(labels[0]!.getAttribute('title')).toContain("The previous run's session was still open");
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'skipped' } });
+    expect(within(inventory()).getAllByRole('checkbox')).toHaveLength(1);
+    expect(within(inventory()).getByText('Overlapped')).toBeTruthy();
+    expect(within(inventory()).queryByText('Fine')).toBeNull();
   });
   it('paginates the inventory, resets on filters, and offers recovery from no matches', () => {
     const { inventory } = mount(Array.from({ length: 18 }, (_, i) => task(`Job ${String(i).padStart(2, '0')}`)));
@@ -174,5 +195,30 @@ describe('SchedulerOverview', () => {
     const { props } = mount([task('Classic')], { onTurnOnRecovery: vi.fn() });
     fireEvent.click(await screen.findByRole('button', { name: 'Review' }));
     expect(props.onTurnOnRecovery).toHaveBeenCalledOnce();
+  });
+});
+
+describe('SchedulerOverview Resume this run', () => {
+  const conversation = { profile: 'claude', id: 'conv-1', cwd: '/p', startedAt: '2026-01-01T00:00:00Z' };
+  const resumable = (id: string, extras: Partial<ScheduledTask> = {}) =>
+    ({ ...withRun(id, 'success', { id: `${id}-run`, sessionId: `${id}-pty`, conversation } as Partial<ScheduleRun>), ...extras });
+
+  it('offers the icon on closed resumable runs only and passes the task and run id', () => {
+    const idless = { ...withRun('Idless', 'success', { id: undefined, sessionId: 'idless-pty', conversation } as Partial<ScheduleRun>) };
+    const { props } = mount([resumable('Alpha'), withRun('Plain', 'success'), resumable('Squad', { kind: 'team' }), idless], { onResumeRun: vi.fn() });
+    const buttons = screen.getAllByRole('button', { name: 'Resume this run' });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]!);
+    expect(props.onResumeRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'Alpha' }), 'Alpha-run');
+  });
+
+  it('hides the icon while the run\'s session is still open, or when no handler is wired', () => {
+    state.terminals = { p1: [{ id: 'Alpha-pty', status: 'running' }] };
+    mount([resumable('Alpha')], { onResumeRun: vi.fn() });
+    expect(screen.queryByRole('button', { name: 'Resume this run' })).toBeNull();
+    cleanup();
+    state.terminals = {};
+    mount([resumable('Alpha')]);
+    expect(screen.queryByRole('button', { name: 'Resume this run' })).toBeNull();
   });
 });

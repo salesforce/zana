@@ -5,6 +5,12 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import { transcribeVoiceOnHost, VoiceTranscriptionError, voiceTranscriptionStatus } from './voice-transcription.js';
 import { VOICE_TRANSCRIPTION_MAX_BYTES } from '../../http/multipart-voice.js';
 
+const primaryHost = vi.hoisted(() => ({ id: null as string | null }));
+vi.mock('@zana-ai/zcc-db', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@zana-ai/zcc-db')>(),
+  getPrimaryHost: () => (primaryHost.id ? { id: primaryHost.id } : null)
+}));
+
 function ctx(overrides: {
   connected?: string[];
   voiceModel?: string;
@@ -62,6 +68,31 @@ describe('voice transcription service', () => {
         config: { getConfig: () => ({ voiceInputEnabled: true }) }
       } as unknown as ProductHttpContext;
       await expect(voiceTranscriptionStatus(ambiguous)).resolves.toEqual({ enabled: false, reason: 'ambiguous_host' });
+    });
+
+    it('uses this computer\'s host when remote machines are connected too', async () => {
+      primaryHost.id = 'local';
+      try {
+        const rpc = vi.fn(async (args: { command: { type: string } }) => (
+          args.command.type === 'codex.voice.status' ? { state: 'ready' } : { model: 'gpt-transcribe', text: 'hi' }
+        ));
+        const several = {
+          hostHub: {
+            connectedHostIds: () => ['remote', 'local'],
+            resolveHostId: (explicit?: string) => { if (!explicit) throw new AmbiguousHostError(); return explicit; },
+            callHostOnlineRpc: rpc
+          },
+          config: { getConfig: () => ({ voiceInputEnabled: true }) }
+        } as unknown as ProductHttpContext;
+        await expect(voiceTranscriptionStatus(several)).resolves.toEqual({ enabled: true, reason: null });
+        await expect(transcribeVoiceOnHost(several, { bytes: Buffer.from('audio'), mimeType: 'audio/webm', filename: 'r.webm' })).resolves.toBe('hi');
+        expect(rpc.mock.calls.map(([args]) => (args as { hostId: string }).hostId)).toEqual(['local', 'local']);
+        // A disconnected local host leaves the choice to the hub (ambiguous with several remotes).
+        primaryHost.id = 'offline';
+        await expect(voiceTranscriptionStatus(several)).resolves.toEqual({ enabled: false, reason: 'ambiguous_host' });
+      } finally {
+        primaryHost.id = null;
+      }
     });
 
     it('probes the host with codex.voice.status', async () => {

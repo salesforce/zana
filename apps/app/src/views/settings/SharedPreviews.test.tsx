@@ -54,9 +54,29 @@ it('allows web/mobile management, offers private links and explains missing addr
 it('disables new sharing when remote access is off and reports request and clipboard failures', async () => {
   data = { enabled: false, shares: [share] }; render(<SharedPreviews />);
   await screen.findByText('Laptop:5173'); expect((screen.getByText('Share preview') as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByText('Open preview')).toBeNull();
   vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(new Error('denied'));
   fireEvent.click(screen.getByText('Copy address')); await screen.findByRole('alert');
   h.api.mockRejectedValueOnce(new Error('Cannot stop')); fireEvent.click(screen.getByText('Stop sharing 5173')); await screen.findByText('Cannot stop');
+});
+it('keeps active shares visible while creation is collapsed and hides offline preview actions', async () => {
+  data.shares = [{ ...share, status: 'offline' }]; render(<SharedPreviews />);
+  await screen.findByText('Laptop:5173');
+  const setup = screen.getByText('Share a web preview').closest('details')!;
+  expect(setup.open).toBe(false);
+  expect(setup.contains(screen.getByText('Laptop:5173'))).toBe(false);
+  expect(screen.getByText('Stop sharing 5173')).toBeTruthy();
+  expect(screen.queryByText('Open preview')).toBeNull();
+});
+it('immediately disables sharing and opening when the connection becomes unavailable', async () => {
+  data.shares = [share];
+  const view = render(<SharedPreviews />);
+  await screen.findByText('Open preview');
+  view.rerender(<SharedPreviews available={false} />);
+  expect(screen.queryByText('Open preview')).toBeNull();
+  expect((screen.getByText('Share preview') as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText('Copy address')).toBeTruthy();
+  expect(screen.getByText('Stop sharing 5173')).toBeTruthy();
 });
 it('reports initial load failure without enabling a share', async () => {
   h.api.mockRejectedValue(new Error('Unavailable')); render(<SharedPreviews />); await screen.findByText('Unavailable');

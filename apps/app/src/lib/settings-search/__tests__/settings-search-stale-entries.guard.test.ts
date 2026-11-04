@@ -19,6 +19,7 @@ const ATTR = (name: string) =>
  * Static `searchId` / `anchorId` literals declared in one source text. A literal
  * `data-settings-target` counts as a searchId too, so raw markup can carry the
  * target attribute directly instead of being wrapped just to satisfy this guard.
+ * Raw settings-anchor ids count too, matching findAnchor's DOM lookup.
  */
 export function collectSourceIds(source: string): { searchIds: Set<string>; anchorIds: Set<string> } {
   const grab = (name: string) => {
@@ -28,7 +29,9 @@ export function collectSourceIds(source: string): { searchIds: Set<string>; anch
   };
   return {
     searchIds: new Set([...grab('searchId'), ...grab('data-settings-target')]),
-    anchorIds: grab('anchorId')
+    anchorIds: new Set([...grab('anchorId'), ...[...grab('id')]
+      .filter((id) => id.startsWith('settings-anchor-') && id.length > 'settings-anchor-'.length)
+      .map((id) => id.slice('settings-anchor-'.length))])
   };
 }
 
@@ -102,6 +105,21 @@ describe('settings-search stale-entry guard', () => {
     it('collects static ids in every literal form', () => {
       expect([...ids.searchIds].sort()).toEqual(['agents.auto-close', 'agents.tpl']);
       expect([...ids.anchorIds]).toEqual(['auto-close-idle']);
+    });
+
+    it('accepts raw settings-anchor ids without accepting unrelated or dynamic ids', () => {
+      const raw = collectSourceIds(`
+        <div id="settings-anchor-peers" />
+        <div id={'settings-anchor-machines'} />
+        <div id={\`settings-anchor-harness\`} />
+        <div id="unrelated" />
+        <div id="settings-anchor-" />
+        <div id={anchorId} />
+      `);
+      expect([...raw.anchorIds]).toEqual(['peers', 'machines', 'harness']);
+      expect(findStaleEntries([entry({ anchor: 'peers' })], {
+        searchIds: ids.searchIds, anchorIds: raw.anchorIds
+      })).toEqual([]);
     });
 
     it('passes for a live id and anchor', () => {

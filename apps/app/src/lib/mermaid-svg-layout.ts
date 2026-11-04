@@ -14,17 +14,23 @@ export interface MermaidSvgLayout {
   svg: string;
   /** CSS `aspect-ratio` value (`"1248 / 412"`), or null when viewBox is missing. */
   aspectRatio: string | null;
+  /** Natural SVG width, so thread previews never magnify small diagrams. */
+  intrinsicWidth: number | null;
 }
 
 const SIZING_PROPS = new Set(['width', 'height', 'max-width', 'max-height']);
 
 export function mermaidSvgLayout(svg: string): MermaidSvgLayout {
+  const dimensions = viewBoxDimensions(svg);
+  const sizing = {
+    aspectRatio: dimensions ? `${dimensions.width} / ${dimensions.height}` : null,
+    intrinsicWidth: dimensions?.width ?? null
+  };
   const open = /<svg\b([^>]*?)>/i.exec(svg);
   if (!open || open.index === undefined) {
-    return { svg, aspectRatio: viewBoxAspectRatio(svg) };
+    return { svg, ...sizing };
   }
   const attrs = open[1] ?? '';
-  const aspectRatio = viewBoxAspectRatio(attrs) ?? viewBoxAspectRatio(svg);
   const cleaned = `${attrs
     .replace(/\s(?:width|height)\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\sstyle\s*=\s*["']([^"']*)["']/i, (_all, style: string) => {
@@ -39,15 +45,15 @@ export function mermaidSvgLayout(svg: string): MermaidSvgLayout {
       return kept.length > 0 ? ` style="${kept.join('; ')}"` : '';
     })}`;
   const next = `${svg.slice(0, open.index)}<svg${cleaned}>${svg.slice(open.index + open[0].length)}`;
-  return { svg: next, aspectRatio };
+  return { svg: next, ...sizing };
 }
 
-function viewBoxAspectRatio(source: string): string | null {
+function viewBoxDimensions(source: string): { width: number; height: number } | null {
   const match = /\bviewBox\s*=\s*["']([^"']+)["']/i.exec(source);
   if (!match) return null;
   const parts = match[1]?.trim().split(/[\s,]+/).map(Number) ?? [];
   const width = parts[2];
   const height = parts[3];
-  if (!(width > 0) || !(height > 0)) return null;
-  return `${width} / ${height}`;
+  if (parts.length !== 4 || !parts.every(Number.isFinite) || !(width > 0) || !(height > 0)) return null;
+  return { width, height };
 }

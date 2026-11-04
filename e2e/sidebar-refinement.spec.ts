@@ -30,7 +30,7 @@ test('Projects header refresh reloads out-of-band changes without an overflow me
   await expect(rail.getByRole('button', { name: 'Open refresh-project', exact: true })).toHaveCount(0);
   await expect(refresh).toBeEnabled();
 
-  await rail.getByRole('button', { name: 'Collapse Projects section' }).click();
+  await rail.getByRole('button', { name: 'Collapse Machines section' }).click();
   await expect(refresh).toBeVisible();
   await refresh.focus();
   await refresh.press('Enter');
@@ -48,22 +48,22 @@ test('sidebar project search, keyboard actions, and Settings stay usable in both
   }
   await win.getByTestId('nav-inbox').click();
   const rail = win.locator('.sidebar--global');
-  const filter = rail.getByRole('textbox', { name: 'Filter projects' });
+  const filter = rail.getByRole('textbox', { name: 'Filter machines or projects' });
   await expect(filter).toBeVisible();
   await filter.fill('commerce');
   await expect(rail.getByRole('button', { name: 'Open commerce-app', exact: true })).toBeVisible();
   await expect(rail.getByRole('button', { name: 'Open design-system', exact: true })).toHaveCount(0);
   await filter.press('ArrowDown');
   await expect(filter).toHaveValue('commerce');
-  await rail.getByRole('button', { name: 'Collapse Projects section' }).click();
+  await rail.getByRole('button', { name: 'Collapse Machines section' }).click();
   await expect(filter).toHaveCount(0);
-  await rail.getByRole('button', { name: 'Expand Projects section' }).click();
+  await rail.getByRole('button', { name: 'Expand Machines section' }).click();
   await expect(filter).toHaveValue('commerce');
   await filter.press('Escape');
   await expect(filter).toHaveValue('');
   await expect(rail.getByRole('button', { name: 'Open design-system', exact: true })).toBeVisible();
   await filter.fill('missing-project-xyz');
-  await expect(rail.locator('.list-empty[role="status"]')).toContainText('No projects match');
+  await expect(rail.locator('.list-empty[role="status"]')).toContainText('No machines or projects match');
   await rail.getByRole('button', { name: 'Clear filter', exact: true }).click();
   await expect(rail.locator('.list-empty[role="status"]')).toHaveCount(0);
 

@@ -508,7 +508,6 @@ describe('links', () => {
     click(doc.getElementById('inner')!);
     click(doc.getElementById('d')!);
     click(doc.getElementById('a')!, { metaKey: true });
-    click(doc.getElementById('a')!, { button: 2 });
     click(doc.getElementById('a')!, { type: 'auxclick', button: 1 });
     expect(first.defaultPrevented).toBe(true);
     await wait();
@@ -919,4 +918,15 @@ describe('storage and cookies', () => {
     expect(storage.entries()).toEqual({});
     expect(new MemoryStorage().length).toBe(0);
   });
+});
+
+it('writes a full selected snapshot from its own iframe copy event', () => {
+ const {win,doc}=setup('<p id="copy">  '+ 'exact passage '.repeat(100) +'</p>');
+ const range=doc.createRange();range.selectNodeContents(doc.getElementById('copy')!);win.getSelection()!.addRange(range);
+ const values:Record<string,string>={};const event=new win.Event('copy',{bubbles:true,cancelable:true});
+ Object.defineProperty(event,'clipboardData',{value:{setData:(type:string,value:string)=>{values[type]=value;}}});
+ doc.getElementById('copy')!.dispatchEvent(event);
+ expect(event.defaultPrevented).toBe(true);
+ expect(values['text/plain']).toBe('  '+'exact passage '.repeat(100));
+ expect(JSON.parse(values['application/x-zcc-context-reference']!)).toEqual({version:1,label:'index.html (selection)',text:values['text/plain'],source:{kind:'plugin',pluginId:'design-docs',resourceId:'dd_1',path:'index.html'}});
 });

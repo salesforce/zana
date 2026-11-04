@@ -372,3 +372,19 @@ describe('performance', () => {
     expect(times[Math.floor(times.length / 2)]).toBeLessThan(SEARCH_MEDIAN_BUDGET_MS);
   });
 });
+
+describe('hiddenSections', () => {
+  const entries = [
+    e('peers.links', 'Peer links', { section: 'peers' }),
+    e('terminal.links', 'Terminal links')
+  ];
+  it('drops entries of hidden sections from results', () => {
+    expect(ids(searchSettings('links', snap(), { entries, providers: [] }))).toEqual(
+      expect.arrayContaining(['peers.links', 'terminal.links'])
+    );
+    expect(ids(searchSettings('links', snap(), { entries, providers: [], hiddenSections: new Set(['peers']) }))).toEqual(['terminal.links']);
+  });
+  it('ignores an empty hidden set', () => {
+    expect(ids(searchSettings('links', snap(), { entries, providers: [], hiddenSections: new Set() }))).toHaveLength(2);
+  });
+});

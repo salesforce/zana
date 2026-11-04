@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const mainSource = readFileSync(new URL('../ipc/execution.ts', import.meta.url), 'utf8');
-const preloadSource = readFileSync(new URL('../preload.ts', import.meta.url), 'utf8');
+const mainSource = readFileSync(new URL('../ipc/execution.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const preloadSource = readFileSync(new URL('../preload.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 describe('project-authorized harness agent descriptor IPC', () => {
   it('passes project id, selected profile, and a bounded refresh boolean through preload', () => {
@@ -34,8 +34,8 @@ describe('project-authorized harness agent descriptor IPC', () => {
   });
 
   it('keeps browser product discovery behind server project authorization and host RPC', () => {
-    const serverSource = readFileSync(new URL('../../../server/src/http/product-api.ts', import.meta.url), 'utf8');
-    const bridgeSource = readFileSync(new URL('../../../server/src/http/harness-via-rpc.ts', import.meta.url), 'utf8');
+    const serverSource = readFileSync(new URL('../../../server/src/http/product-api.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    const bridgeSource = readFileSync(new URL('../../../server/src/http/harness-via-rpc.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     expect(serverSource).toContain("'/api/v1/harness/agent-descriptors'");
     expect(serverSource).toContain("ctx.toProjects().find((row) => row.id === projectId)");
     expect(bridgeSource).toContain("type: 'provider.agent_descriptors'");

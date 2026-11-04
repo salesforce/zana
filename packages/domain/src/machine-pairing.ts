@@ -1,5 +1,16 @@
 export const PAIRING_TUNNEL_PORT = 18782;
 
+/** Safe diagnostic text for a local repair conversation or CLI output. */
+export function redactMachineDiagnostic(text: string): string {
+  return text
+    .replace(/-----BEGIN [\w ]*PRIVATE KEY-----[\s\S]*?(?:-----END [\w ]*PRIVATE KEY-----|$)/g, '[redacted private key]')
+    .replace(/\b(?:zcde|zcrs)_[A-Za-z0-9_-]+\b/g, '[redacted]')
+    .replace(/(--(?:join-code|host-key|token|password|api-key|connect-credential)(?:\s+|=))(?:"[^"]*"|'[^']*'|\S+)/gi, '$1[redacted]')
+    .replace(/(Bearer\s+)[^\s"',;]+/gi, '$1[redacted]')
+    .replace(/((?:host[_-]?key|api[_-]?key|join[_-]?code|token|password|secret|credential)["']?\s*[:=]\s*["']?)[^\s"'&,}]+/gi, '$1[redacted]')
+    .replace(/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, '$1[redacted]@');
+}
+
 const SSH_HOST_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const JOIN_CODE_RE = /^zcde_[A-Za-z0-9_-]{1,128}$/;
 const HOST_ID_TOKEN_RE = /^[A-Za-z0-9._-]{1,64}$/;

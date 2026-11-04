@@ -1,6 +1,6 @@
 import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { BarChart3, RefreshCw } from 'lucide-react';
 import type { UsageRollupEvent, UsageSessionEvent } from '@zana-ai/zcc-domain/telemetry-events';
 import { useUsage } from '@/store';
@@ -32,11 +32,19 @@ export function UsageView() {
   const loading = useUsage((s) => s.loading);
   const loaded = useUsage((s) => s.loaded);
   const refresh = useUsage((s) => s.refresh);
+  const [memoCounters, setMemoCounters] = useState<Awaited<ReturnType<typeof product.usage.getMemoCounters>>>({});
+
+  const refreshAll = async () => {
+    await Promise.all([
+      refresh(),
+      product.usage.getMemoCounters().then(setMemoCounters).catch(() => setMemoCounters({}))
+    ]);
+  };
 
   // Fetch once on mount; the summary is a point-in-time rollup, refreshed on
   // demand via the header button (no polling — a transcript read is not cheap).
   useEffect(() => {
-    void refresh();
+    void refreshAll();
   }, [refresh]);
 
   const empty = loaded && (!summary || summary.sessionCount === 0);
@@ -47,7 +55,7 @@ export function UsageView() {
             <button
               type="button"
               className="settings-btn"
-              onClick={() => void refresh()}
+              onClick={() => void refreshAll()}
               disabled={loading}
               aria-label="Refresh usage"
             >
@@ -59,14 +67,17 @@ export function UsageView() {
         {!loaded && !summary ? (
           <DelayedStencilList label="Loading usage" className="scheduler-empty" />
         ) : empty ? (
-          <div className="scheduler-empty">
-            <BarChart3 size={28} className="scheduler-empty-icon" />
-            <div className="scheduler-empty-title">No usage yet</div>
-            <div className="scheduler-empty-hint">
-              Run a Claude session in one of your projects and its activity will show
-              up here.
+          <>
+            <div className="scheduler-empty">
+              <BarChart3 size={28} className="scheduler-empty-icon" />
+              <div className="scheduler-empty-title">No usage yet</div>
+              <div className="scheduler-empty-hint">
+                Run a Claude session in one of your projects and its activity will show
+                up here.
+              </div>
             </div>
-          </div>
+            <MemoCounters counters={memoCounters} />
+          </>
         ) : summary ? (
           <div className="usage-body">
             <section className="usage-kpis" aria-label="Totals">
@@ -82,6 +93,8 @@ export function UsageView() {
               <RollupCard title="By model" rows={summary.byModel} formatLabel={shortModel} />
             </div>
 
+            <MemoCounters counters={memoCounters} />
+
             <TopSessions sessions={summary.topSessions} />
 
             {summary.generatedAt > 0 && (
@@ -91,6 +104,22 @@ export function UsageView() {
             )}
           </div>
         ) : null}
+    </section>
+  );
+}
+
+function MemoCounters({ counters }: { counters: Awaited<ReturnType<typeof product.usage.getMemoCounters>> }) {
+  const rows = Object.entries(counters);
+  if (rows.length === 0) return null;
+  return (
+    <section className="usage-top" aria-label="Inference memo">
+      <h3 className="usage-rollup-title">Inference memo</h3>
+      <table className="usage-table">
+        <thead><tr><th scope="col">Workload</th><th scope="col" className="usage-num">Hits</th><th scope="col" className="usage-num">Misses</th><th scope="col" className="usage-num">Joins</th><th scope="col" className="usage-num">Provider calls</th><th scope="col" className="usage-num">Failures</th></tr></thead>
+        <tbody>{rows.map(([workload, counters]) => (
+          <tr key={workload}><td>{workload}</td><td className="usage-num">{formatCount(counters.hits)}</td><td className="usage-num">{formatCount(counters.misses)}</td><td className="usage-num">{formatCount(counters.inFlightJoins)}</td><td className="usage-num">{formatCount(counters.providerCalls)}</td><td className="usage-num">{formatCount(counters.failures)}</td></tr>
+        ))}</tbody>
+      </table>
     </section>
   );
 }

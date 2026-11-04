@@ -2,7 +2,7 @@ import { ArrowLeft, FolderCog, Search, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState, useId, useSyncExternalStore } from 'react';
 import { useData, useUi } from '../../store.js';
-import { SETTINGS_SECTIONS, SETTINGS_GROUPS } from '@/views/settings/settings-navigation';
+import { SETTINGS_SECTIONS, SETTINGS_GROUPS, visibleSettingsSections } from '@/views/settings/settings-navigation';
 import { SidebarResizer } from '../SidebarResizer.js';
 import { useAppSettingsRouteMemory } from '../../hooks/useAppSettingsRouteMemory.js';
 import { getSettingsTabRoutePath } from '../../lib/route-paths.js';
@@ -203,7 +203,7 @@ export function SettingsPane() {
     openSettingsHit(hit, { projectId, navigate: (path) => void navigate(path), setAnchor: setSettingsAnchor });
     dismissMobileNav?.();
   };
-  const groups = useMemo(() => settingsNavGroups(SETTINGS_GROUPS, SETTINGS_SECTIONS), []);
+  const groups = useMemo(() => settingsNavGroups(SETTINGS_GROUPS, visibleSettingsSections(new Set())), []);
 
   const renderRow = (section: { id: string; label: string }) => {
     const meta = SETTINGS_SECTIONS.find((row) => row.id === section.id);

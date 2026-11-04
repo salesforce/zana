@@ -7,7 +7,8 @@ import {
   X,
   ArrowRight,
   ArrowLeft,
-  MessageSquare
+  MessageSquare,
+  PlayCircle
 } from 'lucide-react';
 import { useUi } from '../store.js';
 import {
@@ -15,9 +16,13 @@ import {
   walkthroughShellFor,
   type WalkthroughStepId
 } from './walkthrough-shell.js';
+import { WalkthroughIntroVideo } from './WalkthroughIntroVideo.js';
 
 /**
- * First-run walkthrough — a four-step tour of the core loop:
+ * First-run walkthrough — a short intro video, then a four-step tour of the
+ * core loop:
+ *   0. Watch "Your first project in 30 seconds" (project → harness → design
+ *      doc → preview → Inbox report),
  *   1. Start a Modern conversation (the BB-inspired composer on New Chat),
  *   2. Flip to CLI Agent on the same page (the original PTY launcher),
  *   3. Add a project (a folder to work in),
@@ -37,9 +42,23 @@ interface Step {
   icon: typeof Bot;
   title: string;
   body: ReactNode;
+  /** Media shown above the copy instead of the step icon (widens the card). */
+  media?: ReactNode;
 }
 
 const STEPS: Step[] = [
+  {
+    id: 'intro',
+    icon: PlayCircle,
+    title: 'Your first project in 30 seconds',
+    media: <WalkthroughIntroVideo />,
+    body: (
+      <p>
+        A <strong>project</strong> is just a folder. Zana keeps its conversations, design docs and
+        the files agents write right there — pick a folder, ask an agent, and watch it work.
+      </p>
+    )
+  },
   {
     id: 'thread',
     icon: MessageSquare,
@@ -132,7 +151,7 @@ export function Walkthrough({ onClose }: Props) {
       onMouseDown={onClose}
     >
       <div
-        className="walkthrough-card"
+        className={`walkthrough-card${step.media ? ' walkthrough-card--media' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="walkthrough-title"
@@ -144,9 +163,11 @@ export function Walkthrough({ onClose }: Props) {
           <X size={13} /> Skip
         </button>
 
-        <div className="walkthrough-icon">
-          <Icon size={26} strokeWidth={1.75} />
-        </div>
+        {step.media ?? (
+          <div className="walkthrough-icon">
+            <Icon size={26} strokeWidth={1.75} />
+          </div>
+        )}
 
         <div className="walkthrough-step-label">
           Step {index + 1} of {STEPS.length}

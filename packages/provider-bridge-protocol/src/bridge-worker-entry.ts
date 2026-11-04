@@ -18,10 +18,13 @@
  * exactly this process: a caller that made it per launch resolution would leak
  * one per command.
  */
-import { rmSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createPluginProcessTempDir } from "@zana-ai/zcc-agent-process-utils";
+import {
+  BRIDGE_TEMP_DIR_PREFIX,
+  createPluginProcessTempDir,
+  removeTreeWithoutFollowingLinks,
+} from "@zana-ai/zcc-agent-process-utils";
 import { readBoundedLines } from "./bridge-kit/bounded-line-reader.js";
 import {
   createRecordingLineSplitter,
@@ -55,7 +58,10 @@ if (
 
 const tempDir = await createPluginProcessTempDir({
   pluginId,
-  prefix: "bb-provider-bridge",
+  prefix: BRIDGE_TEMP_DIR_PREFIX,
+  // The parent removes `bb-provider-bridge-<child pid>@*` after this process
+  // exits, and a later sweep finds orphans by the same pid.
+  ownerPid: process.pid,
 });
 
 let removedTempDir = false;
@@ -63,7 +69,9 @@ function removeTempDir(): void {
   if (removedTempDir) return;
   removedTempDir = true;
   try {
-    rmSync(tempDir, { recursive: true, force: true });
+    // Bridges link real user folders in here (the Claude bridge links
+    // `~/.claude/skills`); a recursive `rmSync` follows Windows junctions.
+    removeTreeWithoutFollowingLinks(tempDir);
   } catch {
     // A leftover temp dir is not worth failing a shutdown over.
   }

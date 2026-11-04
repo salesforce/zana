@@ -650,6 +650,7 @@ function convertMessage(
           role: "user",
           text: message.text,
           mentions: message.mentions,
+          ...(message.references ? { references: message.references } : {}),
           attachments: toConversationAttachments(message.attachments),
           initiator: message.initiator,
           senderThreadId: message.senderThreadId,
@@ -1038,6 +1039,7 @@ function convertSteerMessage(
     role: "user",
     text: message.text,
     mentions: message.mentions,
+    ...(message.references ? { references: message.references } : {}),
     attachments: toConversationAttachments(message.attachments),
     initiator: message.initiator,
     senderThreadId: message.senderThreadId,
@@ -1140,7 +1142,8 @@ function buildPendingSteerRowsFromEvents(
       pendingSteerRows.push(
         ...parseRejectedUsersFromClientRequest({
           decoded: event,
-          meta: rejectedMeta,
+          meta: rejectedMeta.meta,
+          reason: rejectedMeta.reason,
           options,
         }).map((rejectedSteer) =>
           convertSteerMessage(rejectedSteer, ROOT_TIMELINE_ROW_ID_PREFIX),

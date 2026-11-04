@@ -75,6 +75,7 @@ import type {
   AgentRuntimeProviderRecoveryHint,
   ReapedIdleProviderSession,
   AgentRuntimeSkillRoot,
+  AgentSessionKind,
 } from "./types.js";
 import { buildThreadShellEnvironment } from "./thread-shell-environment.js";
 import {
@@ -249,6 +250,7 @@ interface ThreadRuntimeConfig {
   disallowedTools?: readonly string[];
   environmentId: string;
   instructionMode: InstructionMode;
+  sessionKind?: AgentSessionKind;
   /**
    * The instructions the live provider session was constructed with. Frozen
    * until the next session construction (start, resume, fork).
@@ -1163,6 +1165,9 @@ function createAgentRuntimeInternal(
         ? { disallowedTools: currentConfig.disallowedTools }
         : {}),
       instructionMode: currentConfig.instructionMode,
+      ...(currentConfig.sessionKind !== undefined
+        ? { sessionKind: currentConfig.sessionKind }
+        : {}),
     });
   }
 
@@ -1313,6 +1318,9 @@ function createAgentRuntimeInternal(
       dynamicTools: currentConfig.dynamicTools,
       disallowedTools: currentConfig.disallowedTools,
       instructionMode: currentConfig.instructionMode,
+      ...(currentConfig.sessionKind !== undefined
+        ? { sessionKind: currentConfig.sessionKind }
+        : {}),
     };
     const plan = proc.adapter.buildCommandPlan(adapterCommand);
     // The replacement session reports its own restore support. An updated
@@ -1715,6 +1723,7 @@ function createAgentRuntimeInternal(
       dynamicTools,
       disallowedTools,
       instructionMode = "append",
+      sessionKind,
       outputSchema,
       fork,
     }) {
@@ -1759,6 +1768,7 @@ function createAgentRuntimeInternal(
             disallowedTools,
             environmentId,
             instructionMode,
+            ...(sessionKind !== undefined ? { sessionKind } : {}),
             instructions,
             options: effectiveExecOpts,
             processKey,
@@ -1799,6 +1809,7 @@ function createAgentRuntimeInternal(
                 dynamicTools,
                 disallowedTools,
                 instructionMode,
+                ...(sessionKind !== undefined ? { sessionKind } : {}),
               }
             : {
                 type: "thread/start",
@@ -1808,9 +1819,11 @@ function createAgentRuntimeInternal(
                 dynamicTools,
                 disallowedTools,
                 instructionMode,
+                ...(sessionKind !== undefined ? { sessionKind } : {}),
                 ...(outputSchema !== undefined ? { outputSchema } : {}),
               };
           let resolved: string;
+          let reportedSessionRestorable: boolean | undefined;
           try {
             // Inside the try: building the plan can itself reject the command
             // (a fork the bridge's handshake says it cannot perform), and that
@@ -1843,6 +1856,7 @@ function createAgentRuntimeInternal(
               threadId,
             });
             updateSessionRestoreCapability(threadId, result.sessionRestorable);
+            reportedSessionRestorable = result.sessionRestorable;
             if (providerThreadId) {
               recordProviderThreadIdentity(proc, threadId, providerThreadId);
             }
@@ -1898,7 +1912,12 @@ function createAgentRuntimeInternal(
           }
 
           markHostedProviderSessionIdle(threadId);
-          return { providerThreadId: resolved };
+          return {
+            providerThreadId: resolved,
+            ...(reportedSessionRestorable !== undefined
+              ? { sessionRestorable: reportedSessionRestorable }
+              : {}),
+          };
         },
       });
     },
@@ -2107,6 +2126,8 @@ function createAgentRuntimeInternal(
       dynamicTools,
       disallowedTools,
       instructionMode = "append",
+      sessionKind,
+      requireNativeLoad,
     }) {
       return runThreadOperation({
         threadId,
@@ -2149,6 +2170,7 @@ function createAgentRuntimeInternal(
             disallowedTools,
             environmentId,
             instructionMode,
+            ...(sessionKind !== undefined ? { sessionKind } : {}),
             instructions,
             options: effectiveExecOpts,
             processKey,
@@ -2189,6 +2211,10 @@ function createAgentRuntimeInternal(
             dynamicTools,
             disallowedTools,
             instructionMode,
+            ...(sessionKind !== undefined ? { sessionKind } : {}),
+            ...(requireNativeLoad === true
+              ? { requireNativeLoad: true as const }
+              : {}),
           };
           const plan = proc.adapter.buildCommandPlan(adapterCommand);
           if (plan.kind === "noop") {
@@ -2200,7 +2226,11 @@ function createAgentRuntimeInternal(
                 `No provider thread id available for ${threadId}`,
               );
             }
-            return { providerThreadId: currentProviderThreadId };
+            // A noop plan never reloaded anything: strict callers fail closed.
+            return {
+              providerThreadId: currentProviderThreadId,
+              ...(requireNativeLoad === true ? { nativeLoaded: false } : {}),
+            };
           }
           const cmd = plan;
 
@@ -2234,7 +2264,12 @@ function createAgentRuntimeInternal(
           });
 
           markHostedProviderSessionIdle(threadId);
-          return { providerThreadId: resolvedId };
+          return {
+            providerThreadId: resolvedId,
+            ...(requireNativeLoad === true
+              ? { nativeLoaded: result.nativeLoaded === true }
+              : {}),
+          };
         },
       });
     },

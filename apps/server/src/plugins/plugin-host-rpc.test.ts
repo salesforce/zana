@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { callPluginHostRpc, disposePluginHostWorkers, validatePluginHostValue } from './plugin-host-rpc.js';
 import { z } from 'zod';
+import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
 const artifact = { path: '/never-sent', generation: 'g1', digest: 'a'.repeat(64), byteLength: 12 };
 function fixture() {
   const call = vi.fn().mockResolvedValue({ output: 'result' });
@@ -47,4 +48,16 @@ it('validates declared schemas on both directions', async () => {
   expect(await validatePluginHostValue(z.string(), 'yes')).toBe('yes');
   await expect(validatePluginHostValue(z.string(), 3)).rejects.toThrow('validation');
   await expect(validatePluginHostValue(null, 3)).rejects.toThrow('schema');
+});
+it('holds generation admission until success, failure or cancellation has settled', async () => {
+  const { ctx, args, call } = fixture(); ctx.pluginHostArtifacts = new PluginHostArtifactRegistry();
+  let finish!: (value: unknown) => void;
+  call.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const pending = callPluginHostRpc(ctx, args);
+  expect(() => ctx.pluginHostArtifacts.beginUpdate('test')).toThrow('active host call');
+  finish({ output: 'done' }); await pending;
+  const resume = ctx.pluginHostArtifacts.beginUpdate('test');
+  await expect(callPluginHostRpc(ctx, args)).rejects.toThrow('update in progress'); resume();
+  call.mockRejectedValueOnce(new Error('failed')); await expect(callPluginHostRpc(ctx, args)).rejects.toThrow('failed');
+  ctx.pluginHostArtifacts.beginUpdate('test')();
 });

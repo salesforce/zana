@@ -1,5 +1,5 @@
 import { apiJson } from '../../lib/fetch-with-app-surface.js';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import { product, requestPreferredJoinCode } from '../../lib/product-client.js';
@@ -8,6 +8,7 @@ import { copyText } from '../../lib/copy-text.js';
 import { Modal } from '../../components/Modal.js';
 import { useHosts } from '../../hooks/useHosts.js';
 import { HostInstallStages } from '../../components/HostInstallStages.js';
+import { HostRepairAgentAction } from '../../components/HostRepairAgentAction.js';
 import {
   capHostInstallLogs,
   splitHostInstallLogText,
@@ -138,6 +139,7 @@ export function AddMachineDialogView({
   connectStages = [],
   connectLogs = [],
   connectError = null,
+  repairAction,
   hostsRefreshing = false,
   hostsWarning = null,
   onConnect,
@@ -174,6 +176,7 @@ export function AddMachineDialogView({
   connectStages?: HostInstallStageEntry[];
   connectLogs?: string[];
   connectError?: string | null;
+  repairAction?: ReactNode;
   hostsRefreshing?: boolean;
   hostsWarning?: string | null;
   onConnect?: () => void;
@@ -394,6 +397,7 @@ export function AddMachineDialogView({
               <pre className="machines-join-command">{connectLogs.join('\n')}</pre>
             </details>
           ) : null}
+          {!connectBusy && connectError ? repairAction : null}
         </div>
       ) : null}
 
@@ -462,6 +466,7 @@ function AddMachineDialogContent({
   const [connectStages, setConnectStages] = useState<HostInstallStageEntry[]>([]);
   const [connectLogs, setConnectLogs] = useState<string[]>([]);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [failedSshTarget, setFailedSshTarget] = useState<{ host: string; user?: string } | null>(null);
   const [connectedName, setConnectedName] = useState<string | null>(null);
   const connectSeq = useRef(0);
   const copiedTimer = useRef<number | null>(null);
@@ -630,6 +635,7 @@ function AddMachineDialogContent({
   const bootstrapOverSsh = async (host: string) => {
     const seq = ++connectSeq.current;
     const user = configHosts.find((entry) => entry.alias === host)?.user?.trim();
+    setFailedSshTarget(user ? { host, user } : { host });
     setConnectBusy(true);
     setConnectStages([]);
     setConnectLogs([]);
@@ -692,6 +698,11 @@ function AddMachineDialogContent({
       connectStages={connectStages}
       connectLogs={connectLogs}
       connectError={connectError}
+      repairAction={failedSshTarget ? <HostRepairAgentAction
+        state={{ target: failedSshTarget.host, error: connectError, logs: connectLogs, stages: connectStages }}
+        target={{ ssh: failedSshTarget }}
+        onStarted={onClose}
+      /> : undefined}
       hostsRefreshing={hostsRefreshing}
       hostsWarning={hostsWarning}
       onConnect={() => void run()}

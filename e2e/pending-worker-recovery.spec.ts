@@ -47,7 +47,8 @@ test('desktop and browser can check unknown workers without repeating a reserved
         await recovery.getByRole('button', { name: 'Check worker' }).click();
         await expect(recovery).toContainText('worker is still unconfirmed');
         const controls = path === '/goals' ? page.locator('.scheduler-card').filter({ hasText: 'Goal needs recovery' }) : page.getByTestId('schedule-info-panel');
-        await expect(controls.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
+        // Goals keep Resume; a schedule's on/off toggle is Enable (Resume there means reopening a conversation).
+        await expect(controls.getByRole('button', { name: path === '/goals' ? 'Resume' : 'Enable', exact: true })).toBeDisabled();
         await expect(controls.getByRole('button', { name: 'Run now', exact: true })).toBeDisabled();
       }
     }

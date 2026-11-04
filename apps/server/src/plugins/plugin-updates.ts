@@ -1,4 +1,4 @@
-/** How often the server re-checks installed catalog plugins for newer versions. */
+/** How often the server re-checks independently distributed plugins for newer versions. */
 export const PLUGIN_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export function startPluginUpdateSweep(args: {

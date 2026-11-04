@@ -1,3 +1,4 @@
+import { removeTreeWithoutFollowingLinksAsync } from '@zana-ai/zcc-agent-process-utils';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   mkdir,
@@ -178,7 +179,7 @@ async function pruneStaleDigests(args: EnsureCachedNodeArtifactArgs): Promise<vo
     )
     .map((entry) => join(args.cacheDir, entry.name));
   const results = await Promise.allSettled(
-    stale.map((directory) => rm(directory, { recursive: true, force: true }))
+    stale.map((directory) => removeTreeWithoutFollowingLinksAsync(directory))
   );
   results.forEach((result, index) => {
     if (result.status === 'fulfilled') return;

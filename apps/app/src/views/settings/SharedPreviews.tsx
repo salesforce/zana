@@ -12,7 +12,7 @@ const SHARED_PREVIEWS_TARGET = { searchId: 'remote-access.shared-previews' };
 
 type PreviewHost = { id: string; name: string; isPrimary?: boolean };
 
-export function SharedPreviews() {
+export function SharedPreviews({ available = true }: { available?: boolean }) {
   const [data, setData] = useState<PreviewList>();
   const [hosts, setHosts] = useState<PreviewHost[]>([]);
   const [hostId, setHostId] = useState('');
@@ -49,23 +49,27 @@ export function SharedPreviews() {
   // The primary host is the Zana computer itself; list it once, as the default.
   const primary = hosts.find(host => host.isPrimary);
   const otherHosts = hosts.filter(host => !host.isPrimary);
+  const enabled = available && data?.enabled === true;
   return <section className="shared-previews" aria-labelledby="shared-previews-title" data-settings-target={SHARED_PREVIEWS_TARGET.searchId}>
-    <h2 id="shared-previews-title">Shared previews</h2>
+    <details className="shared-previews-setup"><summary><h2 id="shared-previews-title">Share a web preview</h2><span>Open a running web app on another device.</span></summary>
     <p>Open a running web app on your phone or another computer. Each address requires your Connect account. Shares expire after eight hours; sharing again renews them.</p>
     {!data ? <p role="status">Loading previews…</p> : <>
-      {!data.enabled && <p>Turn on Remote access on the Zana computer to share a preview.</p>}
+      {!enabled && <p>Remote access must be on and connected to share a preview.</p>}
       <form className="shared-previews-form" onSubmit={event => { event.preventDefault(); void change('POST', { port: Number(port), ...(hostId ? { hostId } : {}) }); }}>
         <label>Machine<select value={hostId} onChange={event => setHostId(event.target.value)}><option value="">{primary ? `Zana computer (${primary.name})` : 'Zana computer'}</option>{otherHosts.map(host => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>
         <label>Port<input type="number" min={1024} max={65535} step={1} required placeholder="5173" value={port} onChange={event => setPort(event.target.value)} /></label>
-        <button className="btn primary" disabled={busy || !data.enabled}>Share preview</button>
+        <button className="btn primary" disabled={busy || !enabled}>Share preview</button>
       </form>
       {!data.shares.length && <p>No shared previews.</p>}
+    </>}
+    </details>
+    {data && <>
       <ul className="shared-previews-list">{data.shares.map(share => <li key={`${share.hostId}:${share.port}`}>
         <strong>{share.hostName}:{share.port}</strong><span role="status">{labels[share.status]}</span>
         <small>Expires {new Date(share.expiresAt).toLocaleString()}</small>
         {share.message && <p>{share.message}</p>}
         {share.url ? <><code>{share.url}</code><div className="remote-access-actions">
-          {hasDesktopBridge() ? <button className="btn" onClick={() => setOpened(share.url!)}>Open preview</button> : <a className="btn" href={share.url} target="_blank" rel="noreferrer">Open preview</a>}
+          {enabled && share.status === 'ready' && (hasDesktopBridge() ? <button className="btn" onClick={() => setOpened(share.url!)}>Open preview</button> : <a className="btn" href={share.url} target="_blank" rel="noreferrer">Open preview</a>)}
           <button className="btn" onClick={() => void navigator.clipboard.writeText(share.url!).then(() => setCopied(share.url!)).catch(() => setError('Could not copy. Select the address to copy it manually.'))}>{copied === share.url ? 'Copied' : 'Copy address'}</button>
         </div></> : <p>Choose a browser address on your Connect account page.</p>}
         <button className="btn" disabled={busy} onClick={() => void change('DELETE', { hostId: share.hostId, port: share.port })}>Stop sharing {share.port}</button>

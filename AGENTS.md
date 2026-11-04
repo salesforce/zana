@@ -18,7 +18,7 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 5. **Keep heavy, unbounded work off the main event loop** — bound/`LIMIT`/paginate growing reads; an accumulating store needs a retention cap.
 6. **Core never names a specific extension in logic.** Concrete ids appear only in the `MAIN_MODULES` (empty) / `APP_MODULES` (`docs`) registration. The `'zana'` module-id literal must not appear anywhere in `apps/app/src/**` code; `apps/app/src/__tests__/rule6-zana-literal.guard.test.ts` fails on any bare `'zana'`/`"zana"` token in comment-stripped renderer code. The registration site is guarded by `apps/server/src/services/extensions/__tests__/core-extension-separation.guard.test.ts`.
 7. **Promotion to a built-in is deliberate and bounded** — only when the broker can't grant the capability even scoped, and the trusted version (`builtinExec`/`builtinFetch`) is no weaker than its broker-gated twin (redirects, body cap, timeout).
-8. **New or modified code needs at least 80% test coverage**, covering meaningful branches and failure paths. For Electron main/renderer seams, also add or update the built-Electron E2E test. Before completion, run the focused tests plus any verification trigger below.
+8. **New or modified code needs at least 80% test coverage**, covering meaningful branches and failure paths. For Electron main/renderer seams, also add or update the built-Electron E2E test. Before completion, run the focused tests plus any matching command in the Verification triggers section (`docs/live-zana-verification.md`).
 9. **PR monitoring means diagnose and repair.** Watch checks until complete. On failure, use `gh run view <run-id> --job <job-id> --log-failed`; for external checks, `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` then `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` for file, line, rule, and remediation. Fix, verify locally, push, repeat until every required check passes.
 
 ## Native runtime and test isolation
@@ -33,8 +33,19 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 - Day-to-day changed-code verification: `pnpm verify:fast`. It runs typecheck, `vitest run --changed origin/main`, and source-text guard tests. Full CI remains merge authority.
 - Pre-push verifies feature branches in an isolated snapshot with typecheck, changed tests, and source-text guards. Protected refs and unsafe push shapes run `pnpm verify:full`. Policy: `docs/native-runtime-isolation.md`.
 
+### Optional TinyNod review and skips
+
+Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enabled true` or `ZANA_TINYNOD_REVIEW=1`; the pre-push adapter (`scripts/tinynod-pre-push-review.mjs`) runs an advisory review when enabled. Setup, opt-in/out, reading results, and troubleshooting are in the guide.
+
+- When reporting a push or handoff, state the skip/review reason, base, head, and which checks ran (Zana verification, TinyNod). Include no secrets, config bodies, or prompt contents.
+- Never claim a change was reviewed by TinyNod when review was skipped, failed, timed out, or returned non-JSON; that is a warning, not a clean review.
+- Never use `TINYNOD_SKIP_HOOK` to hide findings. It skips TinyNod only; Zana verification still runs.
+- The full pre-hook skip is a separate permission. If used, list every skipped gate (Zana verification and TinyNod).
+- Never run `tinynod hooks install` or change global `core.hooksPath`; Zana owns `.githooks`.
+
 ## Product Design Rules
 
+- **Explore meaningful UI changes interactively.** When building or substantially changing a user-facing Zana feature or plugin, proactively show a realistic, clickable mock early, with meaningful alternatives or a Current / Proposed comparison where useful; do not wait for an explicit mockup request. Make the interactions under review work. In Zana desktop, show the preview in the thread's in-app browser; in remote chat, return an accessible preview or artifact through that conversation. Use the `zana-ui-proposals` skill when available. Keep trivial fixes lightweight, honor explicit requests to implement directly, and continue within existing authorization without adding an automatic approval gate.
 - **A project has a fixed local or remote target.** Local projects browse their local checkout, remote projects their registered remote checkout. Explorer must not expose a Machine selector or a separate machine/path header, even when backend source mappings exist; thread explorers keep their recorded environment scope internally.
 - **Choose a layout per feature; never expose it as a preference.** A panel is either a centered reading/configuration surface or a full-width workbench, encoded in its layout classes. No global "Centered / Full width" Settings control.
 - **Keep catalogues distinct by ownership.** ZCC-installed extensions are **Plugins** in the ZCC Plugins hub. Claude Code's `~/.claude/plugins` catalogue is a compatibility surface and must not appear as a competing Settings destination unless a user explicitly asks.
@@ -42,23 +53,15 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 
 ## Cross-cutting invariants
 
+- **Help videos publish independently of app releases.** Add/revise the public catalogue and immutable media under `content/videos/`; read `content/videos/AGENTS.md` and `content/videos/README.md`. Merge content into `main` and run `pnpm exec tsx scripts/check-help-videos.ts`. Preserve stable IDs and compatibility bounds; do not add future videos only to the bundled renderer list or tag an app release just to publish a video.
+
 - **Core is portable; integrations are extensions.** No environment- or vendor-specific behavior in core. Integration points are the generic SSH parser (`apps/server/src/services/projects/ssh-config.ts`) and the extension SSH-host-provider seam; environment-specific integrations ship as separately distributed extensions, never in this tree.
 - **Plugins are full-trust in-process after install and never receive host-daemon tokens.**
 - **Verify child-process integrations at the real Electron production boundary**, not only via mocks, shell, or Node/Vitest — Electron main once truncated piped child stdout at exactly 8192 bytes while shell and Vitest saw the full payload. For every main-process CLI integration, test realistic output size, env/HOME, cwd, executable resolution, timeout, and exit/error behavior through the full IPC-to-UI flow in the built app. When pipes can't be proven complete, capture to uniquely named `0600` temp files with a size cap, timeout, concurrency bound, and cleanup on every path. Never swap a proven capture mechanism for `execFile` or piped `spawn` on unit-test or shell evidence. Example (OpenCode discovery): `apps/host-daemon/AGENTS.md`.
 
 ## Verification triggers
 
-| Change touches | Run | Details |
-| --- | --- | --- |
-| Job Team owner-launch surfaces (Team UI, CLI Agent owner, Modern ACP owner) | `pnpm run test:e2e:jobteam` | `docs/job-team-e2e.md` |
-| Thread / CLI Agent spawn, mode, reasoning, stop, plugin catalog injection: `acpMode`, `reasoningLevel`, `permissionMode`, `/api/v1/cli-agents`, `term.create`, `harnessRouting` / `executionState` / `modelLevel` / native roles, host-daemon harness providers, `PtyManager.create()`, Control SDK launch/wait, plugin session instructions, `zcc thread` / `zcc agent` | `pnpm live:mode-reasoning` then `pnpm live:memory` | `docs/control-sdk.md` |
-| Memory CLI, catalog injection (`contributeInstructions`), scope isolation, `zcc memory` | `pnpm live:memory` | `docs/control-sdk.md` |
-| BrowserView leases, loopback CDP, capture, cookie import-source redaction, `zcc browser` / `experimental_desktopBrowsers` | `pnpm live:browser` | `docs/control-sdk.md` |
-| OpenCode discovery, filtering, launcher, model catalog | see doc | `apps/host-daemon/AGENTS.md` |
-| Packaged plugin runtime seams | `pnpm test:e2e -- e2e/packaged-provider-startup.spec.ts` | `apps/server/src/services/extensions/AGENTS.md` |
-| Plugin authoring loop | `pnpm test:e2e -- e2e/plugin-authoring-live.spec.ts` | `apps/server/src/services/extensions/AGENTS.md` |
-
-Live suites (`live:*`) need an attached app on `:8780`/`:8781`, an enrolled host-daemon, and a host shell (`unset ZCC_SESSION_ID`). Preflight skips with `console.warn`, so a verify that finishes in milliseconds is a false green. Keep them off `pnpm live:matrix`.
+Triggers: Job Team launch surfaces; thread/CLI Agent lifecycle and configuration (spawn, stop, mode, reasoning, permissions, plugin catalog injection: `PtyManager.create()`, `term.create`, `/api/v1/cli-agents`, `acpMode` / `reasoningLevel` / `permissionMode`, `harnessRouting`, `zcc thread` / `zcc agent`); memory CLI (`contributeInstructions`, `zcc memory`); BrowserView / `zcc browser`; OpenCode discovery; packaged plugin runtime and plugin authoring; Windows title bar overlay (`titleBarOverlay`, `--bg-base` / `--titlebar-h`). Touching any of these requires reading [docs/live-zana-verification.md](docs/live-zana-verification.md) for the exact command before claiming verification.
 
 ## Coupling index
 

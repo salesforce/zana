@@ -13,7 +13,7 @@ vi.mock('./public-app-url.js', async importOriginal => ({ ...await importOrigina
 afterEach(() => vi.clearAllMocks());
 
 it('denies a host tool call on plugin policy and never invokes the tool', async () => {
-  vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+  vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
   vi.mocked(getConversationThread).mockReturnValue({
     id: '11111111-1111-4111-8111-111111111111', projectId: 'project-1', hostId: 'host-1', providerId: 'codex'
   } as never);

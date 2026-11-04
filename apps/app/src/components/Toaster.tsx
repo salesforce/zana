@@ -16,6 +16,11 @@ export function Toaster() {
           role="status"
         >
           {t.message}
+          {t.action && <button type="button" className="toast-action" onClick={(event) => {
+            event.stopPropagation();
+            dismiss(t.id);
+            t.action?.onClick();
+          }}>{t.action.label}</button>}
         </div>
       ))}
     </div>

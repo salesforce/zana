@@ -37,6 +37,7 @@ import { resolveModelAlias } from '@zana-ai/zcc-llm';
 import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { claudeInteractionHook } from './interaction-hooks.js';
 import { claudeLegacyRouting } from './legacy-routing.js';
 import { resolveGenuineClaudeFromPath } from './binary-identity.js';
 
@@ -106,7 +107,7 @@ const CLAUDE_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'osc' },
+  status: { mode: 'osc', interactionHook: claudeInteractionHook },
   legacyRouting: claudeLegacyRouting,
   evidence: [
     ...['haiku', 'sonnet', 'opus', 'fable'].flatMap((id) => [
@@ -262,7 +263,7 @@ function buildProjectSettingsArgs(s: ProjectSettings, profile: LaunchProfileId):
  * An explicit override (byId binary, or a `claudeBinary` containing a path
  * separator) is operator intent and is honored as-is. Otherwise the bare
  * command name is a PATH lookup — and PATH can carry an unrelated `claude`
- * shim (e.g. an AI Suite install dir) ahead of the genuine CLI, which the
+ * shim (e.g. a third-party install dir) ahead of the genuine CLI, which the
  * downstream spawn-time resolver (`resolveHarnessCommand`) would take as the
  * first match. Prefer a PATH entry that identifies as genuine Claude Code
  * over that first match; fall back to the plain name, unchanged, if none do.

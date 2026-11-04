@@ -3,8 +3,6 @@
 import { createHash } from "node:crypto";
 import {
   isStandaloneBuiltinCompactCommand,
-  approvalInteractionOutcomeSchema,
-  userQuestionInteractionOutcomeSchema,
   type DynamicTool,
   type PromptInput,
   type ThreadDelta,
@@ -58,7 +56,7 @@ import {
   summarizeCodexMacOsPermissions,
 } from "../extension-kinds.js";
 import {
-  buildCodexInteractiveResponse,
+  buildCodexInteractiveResult,
   decodeCodexInteractiveRequest,
   extractCodexMacOsPermissionRequest,
   type CodexMacOsPermissionRequest,
@@ -703,21 +701,16 @@ function codexSubjectToolName(subjectKind: string): string {
 
 // Synthesize the codex wire response for a policy decision WITHOUT a human prompt.
 // allow -> allow_once (always an available decision for these subjects, no grant);
-// deny -> deny. Reuses buildCodexInteractiveResponse so the encoder stays single-source.
+// deny -> deny. Reuses buildCodexInteractiveResult so the encoder stays single-source.
 function buildCodexPolicyInteractiveResponse(
   request: DecodedInteractiveRequest,
   decision: NativeToolDecision,
-): ReturnType<typeof buildCodexInteractiveResponse> {
+): ReturnType<typeof buildCodexInteractiveResult> {
   const resolution =
     decision.action === "allow"
       ? ({ decision: "allow_once", grantedPermissions: null } as const)
       : ({ decision: "deny" } as const);
-  return buildCodexInteractiveResponse(
-    approvalInteractionOutcomeSchema.parse({
-      payload: request.payload,
-      resolution,
-    }),
-  );
+  return buildCodexInteractiveResult(request.payload, { status: "fulfilled", value: resolution });
 }
 
 // Route a decoded command/file-change approval through the native-tool veto.
@@ -862,19 +855,10 @@ function handleChildRequest(
     payload: request.payload,
     providerNativeIds: true,
   })
-    .then((result) => {
-      const outcome =
-        request.payload.kind === "user_question"
-          ? userQuestionInteractionOutcomeSchema.parse({
-              payload: request.payload,
-              resolution: result,
-            })
-          : approvalInteractionOutcomeSchema.parse({
-              payload: request.payload,
-              resolution: result,
-            });
-      responder.result(buildCodexInteractiveResponse(outcome));
-    })
+    .then(
+      (value) => responder.result(buildCodexInteractiveResult(request.payload, { status: "fulfilled", value })),
+      (reason: unknown) => responder.result(buildCodexInteractiveResult(request.payload, { status: "rejected", reason })),
+    )
     .catch((error: unknown) => {
       responder.error(
         BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,

@@ -771,6 +771,7 @@ function buildFlatProjectionData(
         for (const rejectedMessage of parseRejectedUsersFromClientRequest({
           decoded: clientRequest.event,
           meta,
+          reason: decoded.reason,
           options: args.options,
         })) {
           appendProjectedUserMessage(state, rejectedMessage);

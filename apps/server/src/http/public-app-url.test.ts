@@ -11,6 +11,12 @@ import {
 } from './public-app-url.js';
 
 describe('public app URL', () => {
+  it.each([undefined, false, true])('presents the development startup default unless a saved preference exists (%s)', saved => {
+    const config = { pluginDevelopmentEnabled: saved };
+    expect(presentAppConfig(config, { env: { ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: '1' }, bundledUrl: '' })
+      .pluginDevelopmentEnabled).toBe(saved ?? true);
+    expect(presentAppConfig(config, { env: {}, bundledUrl: '' })).toBe(config);
+  });
   it('prefers runtime ZCC_APP_URL over a compile-time bake', () => {
     expect(resolvePublicAppUrl({
       env: { ZCC_APP_URL: 'https://machine.example.com/' },

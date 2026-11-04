@@ -5,8 +5,8 @@
  */
 import { DOC_STATUSES, isDocStatus, type DesignDocDetail, type DocActor, type DocStatus, type TextEdit } from '../shared/contract.js';
 import { pageText } from '../shared/html-scan.js';
-import { fileKindOf, imageMediaTypeOf } from '../shared/paths.js';
-import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
+import { fileKindOf, imageMediaTypeOf, relativeDocPath, renameClashingPaths, resolveDocLink } from '../shared/paths.js';
+import { renderTemplateFiles } from '../shared/templates.js';
 import {
   commentLine,
   formatBundle,
@@ -21,6 +21,7 @@ import {
 } from './format.js';
 import { NO_KIT, renderPage, type KitReader } from './pages.js';
 import type { RenderReports } from './render-reports.js';
+import { resolveNamedProject, type ProjectLister } from './project-guard.js';
 import { DesignDocError, type DesignDocStore } from './store.js';
 
 export interface OperationContext {
@@ -29,6 +30,8 @@ export interface OperationContext {
   changed(docId: string): void;
   /** The calling thread's project, when there is one. */
   projectId?: string | null;
+  /** Registered projects, for verifying a named projectId. Without it a named project is refused. */
+  listProjects?: ProjectLister;
   /** A project's display name, when known. */
   projectName?(projectId: string | null): string | null;
   /** The plugin's site kit, which pages load from `zcc-kit/`. */
@@ -174,7 +177,7 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
   const detail = ctx.store.get(ref);
   if (path) {
     const file = ctx.store.readFile(detail.id, path);
-    const text = `${formatFile(file)}\n\nTo change it, call design_doc_write with doc="${detail.id}", path="${file.path}", baseRevision=${file.revision}.`;
+    const text = `${formatFile(file)}\n\nTo change it, call design_doc_write with doc="${detail.id}", path="${file.path}", baseRevision=${file.revision}, baseFileId=${JSON.stringify(file.fileId)}.`;
     const mimeType = file.encoding === 'base64' ? imageMediaTypeOf(file.path) : null;
     if (mimeType && MODEL_IMAGE_TYPES.has(mimeType)) {
       return { content: [{ type: 'text', text }, { type: 'image', data: file.content, mimeType }] };
@@ -182,12 +185,13 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
     return [text, ...pageNotes(ctx, detail, file.path)].join('\n\n');
   }
   if (input.includeAll === true || input.includeAll === 'true') {
-    return `${formatBundle(detail, ctx.store.readAllFiles(detail.id), manifestOptions(ctx, detail))}\n\n${showHint(detail)}`;
+    return `${formatBundle(detail, ctx.store.readAllFiles(detail.id), manifestOptions(ctx, detail))}\n\nMetadata CAS: expectedHead=${JSON.stringify(detail.head)}\n\n${showHint(detail)}`;
   }
   const hasEntry = detail.files.some((file) => file.path === detail.entryPath);
   const entry = hasEntry ? formatFile(ctx.store.readFile(detail.id, detail.entryPath)) : '';
   return [
     formatManifest(detail, manifestOptions(ctx, detail)),
+    `Metadata CAS: expectedHead=${JSON.stringify(detail.head)} (required when paired; re-read before updating).`,
     entry ? `## Entry file\n${entry}` : '',
     ...(hasEntry ? pageNotes(ctx, detail, detail.entryPath) : []),
     reportedPages(ctx, detail) ?? '',
@@ -198,18 +202,20 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
     .join('\n\n');
 }
 
-export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor): string {
+export async function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor): Promise<string> {
   const input = asInput(raw);
+  // Origin is trusted callsite state, never agent/renderer-controlled JSON.
+  if (input.origin !== undefined) throw new DesignDocError('invalid', 'origin is not an authoring parameter');
   const template = optionalString(input, 'template');
-  if (template && !DESIGN_DOC_TEMPLATES.some((entry) => entry.id === template)) {
+  if (template && !ctx.store.templateByKey(template)) {
     throw new DesignDocError(
       'invalid',
-      `template must be one of ${DESIGN_DOC_TEMPLATES.map((entry) => entry.id).join(', ')}`
+      `unknown template ${JSON.stringify(template)}`
     );
   }
   const files = input.files;
   if (files !== undefined && !Array.isArray(files)) throw new DesignDocError('invalid', 'files must be an array');
-  const global = input.global === true || input.global === 'true';
+  const named = await resolveNamedProject(ctx.listProjects, input);
   const detail = ctx.store.create(
     {
       title: requiredString(input, 'title'),
@@ -226,7 +232,7 @@ export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
         return { path: entry.path, content: entry.content, encoding };
       }),
       entryPath: optionalString(input, 'entryPath'),
-      projectId: global ? null : (ctx.projectId ?? null)
+      projectId: named === undefined ? (ctx.projectId ?? null) : named
     },
     actor
   );
@@ -239,6 +245,7 @@ export function writeDoc(ctx: OperationContext, raw: unknown, actor: DocActor): 
   const ref = docRef(ctx, requiredString(input, 'doc'));
   const path = requiredString(input, 'path');
   const baseRevision = optionalInteger(input, 'baseRevision');
+  const baseFileId = input.baseFileId === null ? null : optionalString(input, 'baseFileId');
   const note = optionalString(input, 'note');
   const content = optionalString(input, 'content');
   const renameTo = optionalString(input, 'renameTo');
@@ -252,26 +259,26 @@ export function writeDoc(ctx: OperationContext, raw: unknown, actor: DocActor): 
   const doc = ctx.store.summary(ref);
 
   if (remove) {
-    ctx.store.deleteFile(doc.id, path, actor, { baseRevision, note });
+    ctx.store.deleteFile(doc.id, path, actor, { baseRevision, baseFileId, note });
     ctx.changed(doc.id);
     return `Deleted ${path} from ${doc.id}. It stays in history and can be restored from the Design Docs panel.`;
   }
   if (renameTo !== undefined) {
-    const result = ctx.store.renameFile(doc.id, path, renameTo, actor, { baseRevision, note });
+    const result = ctx.store.renameFile(doc.id, path, renameTo, actor, { baseRevision, baseFileId, note });
     ctx.changed(result.docId);
     return `Renamed ${path} to ${result.path} (rev ${result.revision}).`;
   }
   let result;
   if (edits !== undefined) {
     if (!Array.isArray(edits)) throw new DesignDocError('invalid', 'edits must be an array');
-    result = ctx.store.editFile(doc.id, { path, edits: edits as TextEdit[], baseRevision, note }, actor);
+    result = ctx.store.editFile(doc.id, { path, edits: edits as TextEdit[], baseRevision, baseFileId, note }, actor);
   } else {
     const encoding = input.encoding === 'base64' ? ('base64' as const) : undefined;
-    result = ctx.store.writeFile(doc.id, { path, content: content!, encoding, baseRevision, note }, actor);
+    result = ctx.store.writeFile(doc.id, { path, content: content!, encoding, baseRevision, baseFileId, note }, actor);
   }
   ctx.changed(result.docId);
   const verb = result.created ? 'Created' : 'Updated';
-  const done = `${verb} ${result.path} in ${result.docId} → revision ${result.revision}. Use baseRevision=${result.revision} for your next change to this file. The user sees updates live in the Design Docs panel.`;
+  const done = `${verb} ${result.path} in ${result.docId} → revision ${result.revision}. Use baseRevision=${result.revision}, baseFileId=${JSON.stringify(result.fileId)} for your next change to this file. The user sees updates live in the Design Docs panel.`;
   return [done, ...writtenPageNotes(ctx, result.docId, result.path)].join('\n\n');
 }
 
@@ -291,9 +298,10 @@ function writtenPageNotes(ctx: OperationContext, docId: string, path: string): s
   return notes;
 }
 
-export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor): string {
+export async function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor): Promise<string> {
   const input = asInput(raw);
   const ref = docRef(ctx, requiredString(input, 'doc'));
+  const moveTo = await resolveNamedProject(ctx.listProjects, input);
   const alternativeTo = optionalString(input, 'alternativeTo');
   const summary = ctx.store.update(
     ref,
@@ -303,7 +311,9 @@ export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
       status: optionalStatus(input, 'status'),
       tags: optionalStringArray(input, 'tags'),
       entryPath: optionalString(input, 'entryPath'),
-      alternativeTo: alternativeTo === undefined ? undefined : alternativeTo.trim() ? docRef(ctx, alternativeTo) : null
+      alternativeTo: alternativeTo === undefined ? undefined : alternativeTo.trim() ? docRef(ctx, alternativeTo) : null,
+      expectedHead: input.expectedHead === null ? null : optionalString(input, 'expectedHead'),
+      projectId: moveTo
     },
     actor
   );
@@ -385,4 +395,75 @@ export function docHistory(ctx: OperationContext, raw: unknown): string {
   return formatHistory(
     ctx.store.history(ref, { path: optionalString(input, 'path'), limit: optionalInteger(input, 'limit') })
   );
+}
+
+// ── Templates ───────────────────────────────────────────────────────────
+
+export interface TemplateReadResult {
+  key: string;
+  files: Array<{ path: string; content: string; encoding: 'utf8' | 'base64' }>;
+}
+
+/** A template's files exactly as stored: placeholders and AI-instruction comments intact. */
+export function readTemplate(ctx: OperationContext, raw: unknown): TemplateReadResult {
+  const key = requiredString(asInput(raw), 'key');
+  const template = ctx.store.templateByKey(key);
+  if (!template) throw new DesignDocError('not_found', `unknown template ${JSON.stringify(key)}; call design_doc_templates_list for valid keys`);
+  return {
+    key: template.id,
+    files: template.files.map((file) => ({ path: file.path, content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' }))
+  };
+}
+
+/** Markdown `](target` or html `="target"` / `='target'`; the target must end at the delimiter, so prefixes never match. */
+const LINK_TARGET = /\]\(([^)\s]*)(?=[)\s])|=(["'])([^"']*)\2/g;
+
+/**
+ * Writes a template's files into an existing doc as one atomic change. Never
+ * overwrites: a path the doc already has (any letter case) fails the whole call,
+ * unless `renameOnConflict` is true, which numbers the clashing files (`a-2.md`).
+ * Size and count limits are the store's, as for any other write.
+ */
+
+export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocActor): { added: string[]; renamed: Array<{ from: string; to: string }> } {
+  const input = asInput(raw);
+  const renameOnConflict = input.renameOnConflict === true;
+  const ref = docRef(ctx, requiredString(input, 'docId'));
+  const templateKey = requiredString(input, 'templateKey');
+  const template = ctx.store.templateByKey(templateKey);
+  if (!template) throw new DesignDocError('not_found', `unknown template ${JSON.stringify(templateKey)}; call design_doc_templates_list for valid keys`);
+  const doc = ctx.store.get(ref);
+  const title = optionalString(input, 'title') ?? doc.title;
+  const summary = optionalString(input, 'summary') ?? doc.summary;
+  const rendered = renderTemplateFiles(template, { title, summary });
+  const existing = new Set(doc.files.map((file) => file.path.toLowerCase()));
+  const clashes = rendered.filter((file) => existing.has(file.path.toLowerCase()));
+  if (clashes.length && !renameOnConflict) {
+    throw new DesignDocError('conflict', `${clashes[0]!.path} already exists in ${doc.id}; add_from_template never overwrites. Rename or delete it first.`);
+  }
+  const renames = renameClashingPaths(rendered.map((file) => file.path), doc.files.map((file) => file.path));
+  const files = rendered.map((file) => {
+    const path = renames.get(file.path) ?? file.path;
+    if (!renames.size || file.encoding === 'base64' || typeof file.content !== 'string') return { ...file, path };
+    // Keep links between the added files pointing at each other, not at the doc's older copies.
+    const content = file.content.replace(LINK_TARGET, (match, mdTarget: string | undefined, quote: string | undefined, attrTarget: string | undefined) => {
+      const target = mdTarget ?? attrTarget ?? '';
+      const cut = target.search(/[?#]/);
+      const bare = cut < 0 ? target : target.slice(0, cut);
+      const suffix = cut < 0 ? '' : target.slice(cut);
+      const resolved = resolveDocLink(file.path, bare);
+      const renamed = resolved === null ? undefined : renames.get(resolved);
+      if (renamed === undefined) return match;
+      const next = relativeDocPath(path, renamed) + suffix;
+      return mdTarget !== undefined ? `](${next}` : `=${quote}${next}${quote}`;
+    });
+    return { ...file, path, content };
+  });
+  const results = ctx.store.writeFiles(
+    doc.id,
+    files.map((file) => ({ ...file, baseRevision: 0, baseFileId: null, note: `Added from template ${template.id}` })),
+    actor
+  );
+  ctx.changed(doc.id);
+  return { added: results.map((result) => result.path), renamed: [...renames].map(([from, to]) => ({ from, to })) };
 }

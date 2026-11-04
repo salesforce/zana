@@ -230,6 +230,9 @@ export interface EnsureProviderArgs {
   providerId: string;
 }
 
+/** Whether a session is human-driven or an unattended worker. */
+export type AgentSessionKind = "interactive" | "automated";
+
 export interface StartThreadArgs {
   /** Immutable skill catalog selected for this session. */
   skillRoots?: readonly AgentRuntimeSkillRoot[];
@@ -247,6 +250,8 @@ export interface StartThreadArgs {
   dynamicTools?: DynamicTool[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
+  /** Absent means interactive. Bridges enforce automated isolation themselves. */
+  sessionKind?: AgentSessionKind;
   /** JSON Schema constraining the session's structured output. Session-level
    *  structured output is claude-code only (SDK `outputFormat` is fixed at
    *  query creation); other adapters reject it. Absent means no structured
@@ -261,6 +266,8 @@ export interface StartThreadArgs {
 
 export interface StartThreadResult {
   providerThreadId: string;
+  /** Set only when the provider explicitly reported per-session restore support at start. */
+  sessionRestorable?: boolean;
 }
 
 export interface PrepareThreadRewindArgs {
@@ -305,10 +312,19 @@ export interface ResumeThreadArgs {
   dynamicTools?: DynamicTool[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
+  /** Absent means interactive. Bridges enforce automated isolation themselves. */
+  sessionKind?: AgentSessionKind;
+  /**
+   * Strict resume: the provider must natively reload the session or the call
+   * fails. A provider that cannot confirm a native load fails closed.
+   */
+  requireNativeLoad?: true;
 }
 
 export interface ResumeThreadResult {
   providerThreadId: string;
+  /** Present only for requireNativeLoad resumes. True only when the provider confirmed a native load. */
+  nativeLoaded?: boolean;
 }
 
 export interface RunTurnArgs {

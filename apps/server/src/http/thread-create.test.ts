@@ -30,7 +30,7 @@ describe('createThreadFromRequest host spawn', () => {
     expect(source).toContain('isRemoteToolProxyActive(project, boundRemote ?? input.hostId)');
     expect(source).toContain('resolveHarnessWorkspacePath');
     expect(source).toContain('remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath');
-    expect(source).toContain('hosts: listHosts(ctx.db).map(toRemoteStartPathHost)');
+    expect(source).toContain('hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost)');
     expect(source).toContain("type: 'host.browse_directory'");
     expect(source).toContain('resolveSpawnChoiceForHost');
     expect(source).toContain('resolvePersonalTargetPathOnHost');

@@ -1,457 +1,70 @@
 ---
 name: zcc-inbox
-description: Push project updates to, and search, the user's inbox in Zana. Also list, run, and enable/disable the Scheduler UI's .zcc/schedules.
+description: Route Zana inbox, scheduler, remote-project, library, and Squad work to the correct MCP tools and snapshot-local references.
 ---
 
-# zcc-inbox — the user's inbox
-
-Zana exposes an MCP server, `zcc-inbox`, with these inbox tools:
-
-- **`inbox_push`** — surface something the user should see (a finished analysis,
-  a question, a blocked task, a status check-in) without making them re-read
-  your terminal scrollback.
-- **`inbox_search`** — read back what's already in the inbox: list recent
-  entries or substring-search them. Use it to answer "what's in my inbox?",
-  find an earlier entry, or check whether you already reported something.
-- **`schedule_list`** / **`schedule_get`** / **`schedule_update`** / **`schedule_reload`** / **`schedule_run_now`** / **`schedule_set_enabled`** —
-  list, read, edit, refresh, fire, and enable/disable the schedules the Scheduler UI
-  shows (`.zcc/schedules` JSON). Not the marketplace `zana_schedule_*` YAML
-  tools.
-- **`schedule_runs`** / **`schedule_retry`** / **`schedule_dismiss`** — find failed,
-  skipped and missed scheduled runs, retry them, or dismiss them. Same scope rules
-  as the other schedule tools.
-- **`remote_exec`** — run a shell command on a registered **remote (SSH)**
-  project and get its output back. Use it to inspect or act on a remote
-  workspace without opening a terminal there. First use asks the user for
-  permission.
-
-The `zcc-inbox` MCP server is wired up automatically by the launcher — you
-don't need to touch `.mcp.json`. This skill is injected into in-app threads
-with the other product builtins.
-
-## The tool
-
-**Tool:** `zcc-inbox.inbox_push`
-
-**Schema:**
-
-```ts
-{
-  subject?: string,                 // short one-line headline for the inbox row
-  intent?: string,                  // one line of CONTEXT — what you were trying to achieve
-  docs?: Array<{ path: string }>,  // paths relative to the project root
-  comments?: string,                // markdown
-  report?: boolean,                 // mark as a finished REPORT/deliverable (badge + Reports filter)
-
-  // Optional structured question. When present,
-  // `comments` becomes the question prompt and these render as a lettered form.
-  options?: string[],               // single-question choices (1–20), lettered A/B/C…
-  allowOther?: boolean,             // add a free-text "Other…" row
-  multiSelect?: boolean,            // checkboxes instead of radio
-  blocking?: boolean,               // default FALSE here — soft/optional follow-up
-  questions?: Array<{               // OR several questions at once (instead of options)
-    prompt: string,
-    options: string[],
-    allowOther?: boolean,
-    multiSelect?: boolean,
-    blocking?: boolean              // per-question; default FALSE on inbox_push
-  }>
-}
-```
-
-At least one of `docs` / `comments` must be present. The host assigns the option
-letters (never you). A pick is delivered back to you on this session as if typed
-— but ONLY when the push is on a live session; on the project-only route the
-options still show, just without answer-injection.
-
-**Blocking vs. soft.** A question on `inbox_push` defaults **non-blocking** — it's
-a soft follow-up on a status report ("done — want me to open a PR?"). It stays
-answerable but does NOT get pinned to the top "Needs your answer" band. That's
-the right shape for a report that ends with an optional ask. If you are genuinely
-BLOCKED and can't proceed without the answer, set `blocking: true` so it pins.
-
-## When to use it
-
-Push an update to the user's inbox from this project. Use this when you have
-something the user should see — a finished analysis (point to the report file
-via `docs`), a question back to the user (write it as `comments`), a blocked
-task that needs input, or a status check-in.
-
-`docs` are paths relative to this project root. Each one is rendered live in
-the inbox UI when the user opens the entry — no snapshot is taken, so later
-edits to the file will be reflected on subsequent reads.
-
-`comments` is markdown — your voice to the user about what you did or want to
-ask. Keep it short and direct; if more detail is needed put it in a doc and
-reference it.
-
-`subject` is an optional one-line headline that becomes the inbox row title (a
-few words — what this is about). Without it the row falls back to the session's
-task title, then the first line of `comments`. Set it when the first line of
-`comments` would make a poor heading (e.g. it opens mid-sentence, or the message
-is long). The host trims it to a single line and caps its length.
-
-`intent` is an optional one line of **context** — *what you (or the user) were
-trying to achieve* when this came up (the goal behind the message), NOT what the
-message says. The inbox renders it as a "Context" line on the message and in the
-pinned "Needs your answer" section, so the user can triage a full inbox at a
-glance without opening each entry. It's most valuable on a **question**: say what
-the answer unblocks (e.g. "Deciding the auth strategy before I wire the login
-route"). When omitted the inbox falls back to the session's task title, so always
-prefer a specific `intent` over the generic fallback. Trimmed to a single capped
-line like `subject`; like it, an `intent`-only push (no docs/comments) is still
-rejected — context is not content.
-
-`report` marks the entry as a finished **deliverable** — a completed analysis, an
-RCA, an audit, a design writeup, the kind of thing you point at with `docs`. Set
-`report: true` and the inbox gives it a "Report" badge in the feed, counts it in a
-dedicated **Reports** tab, and lets the user filter the feed down to just reports —
-so a deliverable surfaces fast instead of scrolling past in the mixed stream.
-Leave it **off** (the default) for routine status check-ins, progress pings, and
-questions: over-flagging every push defeats the point of the badge. A report-only
-push (no docs/comments/question) is still rejected — the flag is a label, not
-content.
-
-## Examples
-
-**Just a comment** (a question or status):
-
-```
-inbox_push({
-  comments: "Finished the migration audit. Two files use the legacy API and need a human eye — see `audit/report.md`. Want me to attempt the rewrite?"
-})
-```
-
-> **Asking a genuine decision? Give it structure.** A bare-prose question like the
-> one above lands in the inbox as a free-text reply box — the user has to type the
-> answer out. When you're offering discrete choices (an approach, a go/no-go, a
-> config value), pass `options` / `questions` on `inbox_push`: the host renders a
-> lettered picker with the exact choices YOU authored, and on a live session the
-> user's pick is delivered straight back to you. Reserve free-text `comments` for
-> open-ended questions and status updates.
-
-**Comment plus a doc pointer, flagged as a report** (preferred for deliverables —
-`report: true` gives it the badge + Reports filter so the user can find it fast):
-
-```
-inbox_push({
-  subject: "Macro analysis — 2026-05-14",
-  comments: "Macro analysis for 2026-05-14 done.",
-  docs: [{ path: "research/macro-2026-05-14.md" }],
-  report: true
-})
-```
-
-**Just docs** (when the doc speaks for itself):
-
-```
-inbox_push({
-  docs: [{ path: "design/proposed-api.md" }]
-})
-```
-
-**A status-plus-question with concrete choices** (renders as a lettered form; the
-pick comes back as if typed on a live session):
-
-```
-inbox_push({
-  comments: "Migration audit done — how do you want to handle the legacy API?",
-  options: ["Rewrite both files", "Leave them", "Show me the diff first"]
-})
-```
-
-## Reading the inbox — `inbox_search`
-
-**Tool:** `zcc-inbox.inbox_search` (read-only)
-
-**Schema:**
-
-```ts
-{
-  query?: string,        // case-insensitive substring over subject + intent + comments + doc paths
-  allProjects?: boolean, // default false → this project only
-  limit?: number,        // max matches to return (default 25)
-  before?: string        // entry id to page before (older than it)
-}
-```
-
-By default it reads **only this project's** inbox — the project identity comes
-from the MCP URL, same as `inbox_push`, so you can't peek at another project's
-inbox by accident. Pass `allProjects: true` only when the task is explicitly
-about searching across every inbox.
-
-Results are newest-first. Each entry comes back projected to
-`{ id, ts, projectId, projectLabel?, subject?, intent?, comments?, docs?, occurrences?, report? }`
-(`report: true` marks an entry you flagged as a deliverable).
-
-**List the most recent entries** (no query):
-
-```
-inbox_search({ limit: 10 })
-```
-
-**Find an entry by keyword**:
-
-```
-inbox_search({ query: "migration audit" })
-```
-
-**Search every project's inbox** (only when asked to):
-
-```
-inbox_search({ query: "deploy failed", allProjects: true })
-```
-
-## Operating schedules the Scheduler UI shows
-
-These tools read and mutate **Zana** schedules — JSON files at
-`~/.zcc/schedules/` and `<project>/.zcc/schedules/`, the same store the
-desktop Scheduler UI aggregates. They do **not** read
-`<workspace>/.zana/scheduler/*.yml`. If you see `zana_schedule_list` returning
-`[]` while the Scheduler UI has rows, you are on the marketplace MCP; use
-these `zcc-inbox` tools instead.
-
-**Tools:** `schedule_list` · `schedule_get` (read-only live definition) · `schedule_update` · `schedule_reload` · `schedule_run_now` ·
-`schedule_set_enabled` · `schedule_runs` (read-only) · `schedule_retry` · `schedule_dismiss` (first use of a mutating tool asks permission unless Trust ZCC tools is on)
-
-```ts
-// schedule_list
-{ allProjects?: boolean }   // default false → this project only
-
-// schedule_get / schedule_reload / schedule_run_now / schedule_set_enabled
-{
-  id: string,               // exact id, unique name, or unique id prefix
-  enabled?: boolean,        // schedule_set_enabled only
-  allProjects?: boolean     // default false → this project only
-}
-```
-
-The project identity comes from the MCP URL. A schedule in another project is
-invisible (and "not found" on mutate) unless you pass `allProjects: true`.
-Each list row is `{ id, name, enabled, projectId, schedule, lastRunAt?, nextRunAt?, lastRunResult?, runCount }`
-— no prompt, extraArgs, or run history.
-
-**List this project's schedules:**
-
-```
-schedule_list({})
-```
-
-**See every schedule the UI shows:**
-
-```
-schedule_list({ allProjects: true })
-```
-
-**Fire one now** (by name or id):
-
-```
-schedule_run_now({ id: "Hourly QA sweep" })
-```
-
-**Disable without deleting:**
-
-```
-schedule_set_enabled({ id: "qa-hourly", enabled: false })
-```
-
-Create schedules in the UI or using the JSON format in `zcc-center`.
-
-**Find and fix problem runs:**
-
-```ts
-// schedule_runs: every field optional; default state is "open"
-{ state?: "open" | "problems" | "all", outcomes?: ("success"|"error"|"skipped"|"incomplete"|"missed")[],
-  reasonCodes?: string[], since?: string, until?: string,   // ISO times
-  scheduleIds?: string[], limit?: number,                   // 1-500, default 100
-  allProjects?: boolean }
-
-// schedule_retry: exactly one of refs / open
-{ refs?: { scheduleId: string, runId: string }[],  // max 50, from schedule_runs rows
-  open?: true,                                     // retry every open retryable problem (up to 50)
-  allProjects?: boolean }
-
-// schedule_dismiss
-{ refs: { scheduleId: string, runId: string }[], allProjects?: boolean }  // max 200
-```
-
-`schedule_runs` returns `{ scope, rows, total, truncated }`; each row carries the
-run, its `outcome` and `reason`, and `manualRetry`. A ref is `scheduleId` plus
-`run.id`. `schedule_retry` answers one result per ref (`started` / `queued` or an
-`error`); a ref outside this project's scope is rejected as "schedule not found"
-unless `allProjects: true`. Dismissing keeps the run record and removes it from the
-open list.
-
-```
-schedule_runs({})
-schedule_retry({ open: true })
-schedule_dismiss({ refs: [{ scheduleId: "qa-hourly", runId: "3a4b5c6d" }] })
-```
-
-For edits to existing schedules, use `schedule_update({ id, patch })`. Its strict
-patch supports `prompt`, `extraArgs` (a string array, replaced as a whole), `every`,
-`cron`, and `tz` (`null` clears the timezone). Setting `every` clears `cron`, and
-setting `cron` clears `every`. This uses the same edit path as the Scheduler UI.
-Verify with `schedule_get({ id })`, which returns the app's live prompt,
-arguments, cadence and `updatedAt`; `schedule_list` remains a compact list.
-
-After a hand edit, use `schedule_reload({ id })`. A successful reload returns
-`reloaded: true`; `reloaded: false` includes `reason` and the blocking
-`sessionIds`. The request remains queued until the schedule's own run finishes.
-An unrelated project's live run does not block the reload. Invalid/deleted files
-produce an error. All three tools use the same project scope and optional
-`allProjects: true` widening as the other schedule tools.
-
-```javascript
-schedule_update({ id: "qa-hourly", patch: { prompt: "Run the full suite", extraArgs: ["--effort", "high"], every: "2h" } })
-schedule_get({ id: "qa-hourly" })
-schedule_reload({ id: "qa-hourly" })
-```
-`zcc schedule update|reload|run-now|enable|disable` from
-inside this session is refused (`FORBIDDEN_AGENT`); use these MCP tools.
-
-## Running a command on a remote project — `remote_exec`
-
-**Tool:** `zcc-inbox.remote_exec`
-
-**Schema:**
-
-```ts
-{
-  projectId: string,   // a REGISTERED remote (SSH) project — resolve via list_projects
-  command: string,     // shell command; runs in the project root by default
-  cwd?: string,        // optional working dir, must be UNDER the project root
-  timeoutMs?: number   // per-command timeout (default 120000, max 600000)
-}
-```
-
-You pass the **id of a project the user already registered as remote** — never a
-raw host or credentials. The app resolves the SSH target from that project and
-runs your command over the same transport the file Explorer uses, starting in
-the project's remote root. Shell operators (`|`, `&&`, redirection) work because
-the command runs in the remote login shell.
-
-Returns `{ projectId, exitCode, stdout, stderr, truncated }`. A **non-zero
-`exitCode` is returned as data, not an error** — so you can branch on it.
-Each stream is capped at 1 MB; `truncated` is `true` when output was clipped.
-
-This is a **privileged** capability: the first call raises a permission prompt
-the user blesses once (like `agent_send`). It is pre-approved only inside
-autonomous team runs.
-
-## Running a durable squad execution
-
-CLI Agent and Modern expose the same owner workflow. Tool spelling differs only
-because each UI's provider applies its MCP namespace:
-
-| Operation | CLI Agent MCP tool | Modern/OpenCode tool |
-|---|---|---|
-| Start | `mcp__zcc-inbox__execution.start` | `zcc_execution_start` |
-| Monitor | `mcp__zcc-inbox__execution.snapshot` | `zcc_execution_snapshot` |
-| Answer a question it reported | `mcp__zcc-inbox__execution.respond` | `zcc_execution_respond` |
-| Recover after restart | `mcp__zcc-inbox__execution.resume_binding` | `zcc_execution_resume_binding` |
-| Check a Squad plan | `mcp__zcc-inbox__squad_plan_check` | `zcc_squad_plan_check` |
-| Launch a Squad (`mode: 'review'` or `'now'`) | `mcp__zcc-inbox__squad_launch` | `zcc_squad_launch` |
-| Propose a Squad launch to the user (same as `squad_launch` review) | `mcp__zcc-inbox__squad_propose` | `zcc_squad_propose` |
-
-`execution.start` is for agent-owned orchestration: you own the run. It is the
-low-level path (explicit slots, work units, policy) and is deprecated for agent
-use: to launch a Squad, call `squad_launch` instead. Use `mode: 'now'` to build a design only
-when the user explicitly asks to start now; otherwise hand it to a Squad the
-**user** launches (the subsection below).
-
-`squad_launch { teamId, goal, planning?, sources?, title?, summary?, mode }`
-takes `mode: 'review'` (Inbox card, the user presses Launch) or `mode: 'now'`
-(you own the run and get the `[Squad report]`; answer blockers with
-`execution.respond`). A
-Squad or Project with Launch approval "Review before launch" refuses `now`,
-agent `execution.start` and `launch_team` (`LAUNCH_REVIEW_REQUIRED`): use
-`mode: 'review'`. Bounds:
-a repeat call within 10 minutes returns the same `executionId` with
-`deduped: true`; one launch in flight per conversation (`LAUNCH_IN_PROGRESS`);
-at most 3 active owned runs (`TOO_MANY_LAUNCHES`). If your conversation is gone,
-reports fall back to the Project Inbox.
-
-1. Build one bounded `execution.start` request with squad `teamId`, a unique
-   `launchRequestId`, and one `initialTask` per expanded slot: each worker slot
-   in order, then the orchestrator last. The orchestrator is the LAST slot of the
-   task list, so the brief goes on the last slot. Add `notify: true` so the run
-   reports back to you. Call Start once; the job-team engine launches workers and
-   gives each slot its task.
-2. Keep the returned `executionId`. After Start you will receive a
-   `[Squad report]` when the run finishes or needs a human answer. Don't poll in
-   a loop; call Monitor (`{ executionId, after }`) only when the user asks for
-   detail or after a report. Treat execution state, work units, blockers, and
-   events as authoritative. Without `notify: true` there are no reports, so
-   monitor the run yourself until it ends.
-3. When a report names a waiting question (`blocker <id>`), answer it with
-   `execution.respond { executionId, expectedStateVersion, blockerId, message }`
-   only if what the user already told you decides it (take
-   `expectedStateVersion` from Monitor). Otherwise ask the user; never invent an
-   answer. The question is in the user's Inbox too.
-4. Use Recover only after owner session restart and only with the stored resume
-   token. Do not call it during normal kickoff. Reports then follow you to the new
-   session.
-
-Do not launch an ad-hoc bare squad and separately simulate durable work. Start is
-the single owner handoff; job-team execution owns planning, worker work delivery,
-durable state, and completion.
+# zcc-inbox
+
+`zcc-inbox` is automatically wired into in-app sessions. Project and session
+identity comes from its MCP route; never invent ids, paths, hosts, or credentials.
+
+## Route Requests
+
+| Request | Use | Read only when needed |
+| --- | --- | --- |
+| Report, user update, or question | `inbox_push` | `references/inbox.md` |
+| Search earlier agent reports | `inbox_search` | `references/inbox.md` |
+| Scheduler UI schedules | `schedule_*` | `references/schedules.md` |
+| Remote registered project | `remote_*` | `references/remote.md` |
+| Project library or goals | `library_*`, `goal_*` | `references/library.md` |
+| Durable Squad or execution | `squad_*`, `execution_*` | `references/squads.md` |
+
+For broad local discovery use native `Glob` or `Grep`. Read identified files
+with native `Read`; request only supported ranges. Do not substitute shell reads.
+
+## Safety
+
+- `inbox_push` only when user needs durable visibility. Avoid progress noise.
+- Remote tools accept registered project ids only. Never supply raw SSH host or credentials.
+- `squad_launch` uses `mode: 'review'` unless user explicitly says start now.
+- Execution route/session identity and remote project confinement are host-owned.
+- Tool schemas are authoritative. Do not infer undocumented fields.
+
+## References
+
+References are inside this immutable skill snapshot. Load only reference matching
+current work; do not preload detailed schemas or examples.
+
+- `references/inbox.md` — reports, questions, and inbox search.
+- `references/schedules.md` — Scheduler UI operations.
+- `references/remote.md` — remote project work.
+- `references/library.md` — library and goal tools.
+- `references/squads.md` — Squad and durable execution workflow.
 
 ### Hand a design to a Squad
 
-When the user wants a design built by a Squad, how they phrase it picks the
-path. Review first is the default.
+| Operation | CLI Agent MCP tool | Modern/OpenCode tool |
+|---|---|---|
+| Answer a question it reported | `mcp__zcc-inbox__execution.respond` | `zcc_execution_respond` |
+
+`mcp__zcc-inbox__squad_plan_check` / `mcp__zcc-inbox__squad_propose` and
+`zcc_squad_plan_check` / `zcc_squad_propose` prepare a review launch.
+`mcp__zcc-inbox__squad_launch` / `zcc_squad_launch` start it only when the user
+explicitly asks now. `execution.start` is for agent-owned orchestration. It is the
+low-level path (explicit slots, work units, policy) and is deprecated for agent
+use. Add `notify: true` so the run reports back to you.
 
 | User says (examples) | Path | Tools |
 |---|---|---|
-| "build it with X", "prepare a launch for X", "propose X for this plan", "set up X to build this" | Review first | `squad_plan_check` → `list_teams` → `squad_launch` with `mode: 'review'`; tell the user to open the "Squad launch ready" Inbox card |
-| "run this with X now", "start X on this now", "launch X immediately, no review", "skip the Inbox and run it with X" | Start now | `squad_launch` with `mode: 'now'` (you own the run; a `[Squad report]` tells you when it ends or needs an answer) |
-| Anything else, or unclear | Review first | Same as row 1 |
+| "build it with X" | Review first | `squad_plan_check` → `list_teams` → `squad_launch` with `mode: 'review'` |
+| "run this with X now" | Start now | `squad_launch` with `mode: 'now'` |
+| Anything else, or unclear | Review first | `squad_launch` with `mode: 'review'` |
 
 Start now only when the user's message explicitly asks to start immediately. Do not
-infer it from urgency or from "go ahead". If unsure, propose and tell the user they
-can say "run it now with X" next time to skip the Inbox.
-
-Say which path you took, in one line: "Prepared a Squad launch for your review in
-the Inbox" or "Started X now; I own the run". The user can then catch a misroute.
-
-Review first: pass the design and plan files you wrote or read, wherever they are,
-by their exact paths (do not copy them), run `squad_plan_check`, pick a Squad with
-`list_teams`, then call `squad_launch` with `mode: 'review'`; do not call `execution.start`.
-The user reviews the Inbox card and presses Launch. Follow the steps in the
-`brainstorm` skill ("When the user wants it built"). A `[Squad report]` message
-later is for you to summarise to the user, not to act on.
-
-**Check a remote build:**
-
-```
-remote_exec({ projectId: "prj_abc", command: "npm run build" })
-```
-
-**Inspect git state in a subdirectory:**
-
-```
-remote_exec({ projectId: "prj_abc", command: "git status --porcelain", cwd: "services/api" })
-```
-
-To find remote project ids, call `list_projects` — remote projects carry a
-`remote` field; local ones don't.
-
-## Notes
-
-- The project identity is supplied by the URL path of the MCP endpoint, not
-  by you — you cannot push to (or, by default, read) a different project's
-  inbox even if you tried. `inbox_search({ allProjects: true })` is the one
-  explicit, opt-in way to read across projects.
-- `remote_exec` only works against a project the user registered as remote; a
-  local or unknown id returns an error. You never supply the host or credentials.
-- `inbox_search` is read-only: it never creates, edits, or removes entries.
-- `schedule_list`, `schedule_get` and `schedule_runs` are read-only. `schedule_retry` and
-  `schedule_dismiss` change run state only. `schedule_update`,
-  `schedule_reload`, `schedule_run_now` and `schedule_set_enabled` are
-  the in-session way to edit, refresh, fire or toggle a Scheduler UI schedule; they never
-  touch `.zana/scheduler` YAML.
-- `docs` are pointers, never snapshots. If you regenerate `report.md` later,
-  the user sees the new content next time they open the entry.
-- Don't push noise — every entry buys the user's attention. One good push at
-  the end of a task beats five status pings.
+infer it from urgency or from "go ahead". Say which path you took, in one line.
+After Start you will receive a
+`[Squad report]` when the run finishes or needs a human answer. Don't poll in
+a loop. Answer with `execution.respond { executionId, expectedStateVersion, blockerId, message }`.
+For review-first, pass sources by their exact paths (do not copy them), then call
+`squad_launch` with `mode: 'review'`; do not call `execution.start`. Use `mode: 'now'` to build a design only
+when the user explicitly asks to start now.

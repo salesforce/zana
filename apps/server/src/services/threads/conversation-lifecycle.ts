@@ -78,6 +78,10 @@ import { bridgeLaunchForProvider, getThreadProvider, waitForThreadProvider } fro
 import { readLastThreadExecution } from './thread-last-execution.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import { threadPermissionMode } from './thread-permission-mode.js';
+import {
+  copyThreadAutomatedSkillIds,
+  threadAutomatedSkillIds
+} from './thread-automated-skill-selection.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 import {
@@ -430,8 +434,16 @@ async function dispatchTurnSubmit(
     );
     await dispatch(command);
   } catch (error) {
-    if (args.lease.cancelled || (error instanceof ThreadCreateError && error.code === 'stale_plan')) settleLiveTurnCommandFailure(ctx, { thread: args.thread, commandType: 'turn.submit', clientRequestId: args.clientRequestId, error });
-    throw error;
+    const failure = args.lease.cancelled
+      ? new ThreadCreateError(409, 'send_cancelled', 'Send cancelled by Stop or Archive')
+      : error;
+    if (args.lease.cancelled || (error instanceof ThreadCreateError && error.code === 'stale_plan')) {
+      settleLiveTurnCommandFailure(ctx, {
+        thread: args.thread, commandType: 'turn.submit', clientRequestId: args.clientRequestId,
+        error: failure
+      });
+    }
+    throw failure;
   }
 }
 
@@ -456,9 +468,19 @@ async function recoverOrSettleTurnSubmit(
   error: unknown,
   commandType: 'thread.start' | 'turn.submit'
 ): Promise<void> {
+  // Recovery awaits can race Stop/Archive too; classify at settlement time.
+  const settleFailure = (failure: unknown) => {
+    const cancelled = args.lease.cancelled;
+    settleLiveTurnCommandFailure(ctx, {
+      thread: args.thread, commandType, clientRequestId: args.clientRequestId,
+      error: cancelled
+        ? new ThreadCreateError(409, 'send_cancelled', 'Send cancelled by Stop or Archive')
+        : failure
+    });
+    if (args.drain && !cancelled) throw failure;
+  };
   if (args.lease.cancelled) {
-    settleLiveTurnCommandFailure(ctx, { thread: args.thread, commandType, clientRequestId: args.clientRequestId,
-      error: new ThreadCreateError(409, 'send_cancelled', 'Send cancelled by Stop or Archive') });
+    settleFailure(error);
     return;
   }
   if (isHostOfflineError(error) && !isHostRpcTimeout(error) && !args.drain) {
@@ -486,35 +508,25 @@ async function recoverOrSettleTurnSubmit(
       });
       return;
     } catch (resumeError) {
-      settleLiveTurnCommandFailure(ctx, {
-        thread: args.thread,
-        commandType: 'turn.submit',
-        clientRequestId: args.clientRequestId,
-        error: resumeError
-      });
-      if (args.drain) throw resumeError;
+      settleFailure(resumeError);
       return;
     }
   }
-  settleLiveTurnCommandFailure(ctx, {
-    thread: args.thread,
-    commandType,
-    clientRequestId: args.clientRequestId,
-    error
-  });
-  if (args.drain) throw error;
+  settleFailure(error);
 }
 
 export async function stopConversation(
   ctx: ProductHttpContext,
-  threadId: string
+  threadId: string,
+  options: { requireHostRelease?: boolean } = {}
 ): Promise<ConversationThreadRow> {
-  return withConversationSendCancellation(ctx.db, threadId, () => stopConversationInternal(ctx, threadId));
+  return withConversationSendCancellation(ctx.db, threadId, () => stopConversationInternal(ctx, threadId, options));
 }
 
 async function stopConversationInternal(
   ctx: ProductHttpContext,
-  threadId: string
+  threadId: string,
+  options: { requireHostRelease?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -535,8 +547,15 @@ async function stopConversationInternal(
         hostId: thread.hostId,
         command: { type: 'thread.stop', threadId: thread.id }
       });
-    } catch {
+    } catch (error) {
+      if (options.requireHostRelease && !isUnknownThreadHostError(error)) throw error;
       /* Release is best-effort: idle/error stop must not pretend a turn was interrupted. */
+    }
+    if (options.requireHostRelease) {
+      ctx.pendingInteractions.interruptPendingInteractionsForThreadIds({
+        threadIds: [thread.id], reason: 'thread-stopped'
+      });
+      settleDanglingBackgroundTasksForStoppedThread({ db: ctx.db, hub: ctx.hub }, { threadId });
     }
     return getConversationThread(ctx.db, thread.id) ?? thread;
   }
@@ -558,6 +577,7 @@ async function stopConversationInternal(
       command: { type: 'thread.stop', threadId: thread.id }
     });
   } catch (error) {
+    if (options.requireHostRelease && !isUnknownThreadHostError(error)) throw error;
     if (isHostRpcTimeout(error) && !startingWithoutTurn) {
       const stopping = {
         ...(getConversationThread(ctx.db, thread.id) ?? thread),
@@ -622,19 +642,21 @@ export async function resumeConversation(
   ctx: ProductHttpContext,
   threadId: string
 ): Promise<ConversationThreadRow> {
-  const thread = getConversationThread(ctx.db, threadId);
-  if (!thread) {
-    throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
-  }
-  const live = recoverConversationProviderThreadId(ctx.db, thread);
-  ensureConversationThreadIsWritable(live);
-  if (!live.environmentId || !live.providerThreadId) {
-    throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
-  }
-  await resumeConversationOnHost(ctx, live);
-  const next = getConversationThread(ctx.db, live.id) ?? live;
-  ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
-  return next;
+  return withConversationSend(ctx.db, threadId, async lease => {
+    const thread = getConversationThread(ctx.db, threadId);
+    if (!thread) {
+      throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
+    }
+    const live = recoverConversationProviderThreadId(ctx.db, thread);
+    ensureConversationThreadIsWritable(live);
+    if (!live.environmentId || !live.providerThreadId) {
+      throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
+    }
+    await resumeConversationOnHost(ctx, live, lease.assertCurrent);
+    const next = getConversationThread(ctx.db, live.id) ?? live;
+    ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
+    return next;
+  });
 }
 
 export async function archiveConversation(
@@ -761,6 +783,7 @@ export async function forkConversation(
     targetThreadId: forked.id,
     sourceSeqEnd: options?.sourceSeqEnd
   });
+  copyThreadAutomatedSkillIds(ctx.db, thread.id, forked.id);
   const pluginSeed = Array.isArray(options?.agentContextSeed) ? options.agentContextSeed : [];
   const transcript = canCloneProviderSession(forkCapability)
     ? null
@@ -1055,6 +1078,7 @@ async function threadStartCommandForFork(
     listConversationThreadEvents(ctx.db, thread.id, { omitPayloadTypes: ['turn/diff/updated'] }),
     getThreadProvider(thread.providerId)?.capabilities.fork
   );
+  const automatedSkillIds = threadAutomatedSkillIds(ctx.db, thread.id);
   return {
     type: 'thread.start',
     threadId: thread.id,
@@ -1077,6 +1101,7 @@ async function threadStartCommandForFork(
     ...(clientRequestId ? { clientRequestId } : {}),
     ...(fork?.sourceProviderThreadId ? { providerThreadId: fork.sourceProviderThreadId } : {}),
     ...(fork?.sourceProviderCheckpointId ? { providerCheckpointId: fork.sourceProviderCheckpointId } : {}),
+    ...(automatedSkillIds !== undefined ? { automatedSkillIds } : {}),
     ...sessionTooling
   };
 }

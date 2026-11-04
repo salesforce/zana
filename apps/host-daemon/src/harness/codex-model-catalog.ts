@@ -32,7 +32,7 @@ export async function discoverCodexModels(binary: string, cacheKey = binary): Pr
   return cache.discover(cacheKey, async () => {
 
     const models = await new Promise<readonly HarnessModelTarget[]>((resolve) => {
-      const child = spawn(binary, ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
+      const child = spawn(binary, ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
       let buffer = '';
       let settled = false;
       const finish = (value: readonly HarnessModelTarget[]) => {

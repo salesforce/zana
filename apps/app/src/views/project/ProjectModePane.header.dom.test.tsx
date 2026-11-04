@@ -8,7 +8,8 @@ const state = vi.hoisted(() => ({
   tabs: [] as PluginProjectTabRegistration[],
   modules: [] as Array<{ id: string; title: string }>,
   desktop: false,
-  open: [] as Array<{ pluginId: string; tabId: string; projectId: string }>
+  open: [] as Array<{ pluginId: string; tabId: string; projectId: string }>,
+  tabBarProps: [] as Array<{ projectId?: string }>
 }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('@/store', () => ({
@@ -17,7 +18,7 @@ vi.mock('@/store', () => ({
   visibleTerminals: () => []
 }));
 vi.mock('@/modules', () => ({ useProjectTabModules: () => state.modules }));
-vi.mock('@/components/TabBar', () => ({ TabBar: () => null }));
+vi.mock('@/components/TabBar', () => ({ TabBar: (props: { projectId?: string }) => { state.tabBarProps.push(props); return null; } }));
 vi.mock('@/components/agentCardActions', () => ({ cliAgentRestartConfirm: () => '' }));
 vi.mock('@/components/FindBar', () => ({ FindBar: () => null }));
 vi.mock('@/views/agents/AgentsBoard', () => ({ AgentsBoard: () => null }));
@@ -50,8 +51,8 @@ afterEach(() => {
   state.open = [];
   state.modules = [];
 });
-function open(header?: 'custom', detachable?: boolean) {
-  state.tabs = [{ id: 'tools', pluginId: 'example', generation: 1, label: 'Tools', header, detachable,
+function open(header?: 'custom', detachable?: boolean, statusbar?: 'hidden') {
+  state.tabs = [{ id: 'tools', pluginId: 'example', generation: 1, label: 'Tools', header, detachable, statusbar,
     component: ({ projectId, headerActions }) => <section aria-label="Plugin toolbar">{projectId}{headerActions}</section> }];
   return render(<ProjectModePane projectId="p" mode="tools" paneId="pane" />);
 }
@@ -62,10 +63,27 @@ it('lets a plugin own its toolbar while retaining the host split controls', () =
 });
 it('keeps the existing host title and split controls for default project tabs', () => {
   const view = open();
+  expect(view.container.querySelector('.statusbar')?.textContent).toContain('/project');
   const header = view.container.querySelector('.project-topbar')!;
   expect(header.textContent).toContain('Tools');
   expect(header.contains(screen.getByRole('button', { name: 'Close pane' }))).toBe(true);
   expect(screen.getByRole('region', { name: 'Plugin toolbar' }).textContent).toBe('p');
+});
+it('omits the project footer only for a tab that explicitly hides it', () => {
+  const view = open('custom', false, 'hidden');
+  expect(view.container.querySelector('.statusbar')).toBeNull();
+  expect(screen.getByRole('region', { name: 'Plugin toolbar' })).toBeTruthy();
+  view.rerender(<ProjectModePane projectId="p" mode="agents" paneId="pane" />);
+  expect(view.container.querySelector('.statusbar')?.textContent).toContain('/project');
+  view.rerender(<ProjectModePane projectId="p" mode="tools" paneId="pane" />);
+  expect(view.container.querySelector('.statusbar')).toBeNull();
+});
+it('keeps the footer hidden on the opted-in tab detached placeholder', () => {
+  state.desktop = true;
+  state.open = [{ pluginId: 'example', tabId: 'tools', projectId: 'p' }];
+  const view = open('custom', true, 'hidden');
+  expect(screen.getByTestId('plugin-tab-detached')).toBeTruthy();
+  expect(view.container.querySelector('.statusbar')).toBeNull();
 });
 it('offers a detachable tab its own window from the host title row', () => {
   state.desktop = true;
@@ -103,4 +121,10 @@ it('gives a built-in module tab the same host side panel as plugin tabs', () => 
   expect(layout).toBeTruthy();
   expect(layout.contains(screen.getByRole('region', { name: 'Module tab' }))).toBe(true);
   expect(screen.getByRole('region', { name: 'Module tab' }).textContent).toBe('notes');
+});
+it('tells the terminal tab strip which project it belongs to, so Archive can word its History promise', () => {
+  state.tabs = [];
+  state.tabBarProps = [];
+  render(<ProjectModePane projectId="p" mode="terminals" paneId="pane" />);
+  expect(state.tabBarProps.at(-1)?.projectId).toBe('p');
 });

@@ -4,20 +4,22 @@ import { providerFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { liveScopedProviderFor } from './team-model-routing.js';
 
 const config = {} as never;
-const lowOf = (provider: OpenCodeProvider) => provider.adapter.descriptor.targets?.modelLevelMapping.low;
+const modelsOf = (provider: OpenCodeProvider) => provider.adapter.descriptor.targets?.models.map(model => model.id);
 
 describe('liveScopedProviderFor', () => {
   it('resolves through a per-call live view and never mutates the shared provider', async () => {
     const shared = new OpenCodeProvider();
-    const baseline = lowOf(shared);
-    vi.spyOn(shared, 'discoverModelTargets').mockImplementation(async ({ cwd }) => (cwd === '/a' ? ['llmgw/gpt-7-luna'] : ['llmgw/gpt-8-luna']));
+    const baseline = shared.adapter;
+    vi.spyOn(shared, 'discoverModelTargets').mockImplementation(async ({ cwd }) => (cwd === '/a' ? ['fixture-provider/gpt-7-luna'] : ['fixture-provider/gpt-8-luna']));
     const [a, b] = await Promise.all([
       liveScopedProviderFor(shared, { cwd: '/a', config }),
       liveScopedProviderFor(shared, { cwd: '/b', config })
     ]);
-    expect(lowOf(a)).toBe('llmgw/gpt-7-luna');
-    expect(lowOf(b)).toBe('llmgw/gpt-8-luna');
-    expect(lowOf(shared)).toBe(baseline);
+    expect(modelsOf(a)).toEqual(['fixture-provider/gpt-7-luna']);
+    expect(modelsOf(b)).toEqual(['fixture-provider/gpt-8-luna']);
+    expect(a.adapter.descriptor.targets?.modelLevelMapping.low).toBeUndefined();
+    expect(b.adapter.descriptor.targets?.modelLevelMapping.low).toBeUndefined();
+    expect(shared.adapter).toBe(baseline);
   });
 
   it('returns the shared provider when the probe is unavailable or empty', async () => {

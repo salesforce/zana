@@ -26,6 +26,18 @@ export interface SplitDragConfig {
   onEnd?: (result: { dropped: boolean }) => void;
   fallback?: SplitDragFallbackTarget;
   cancelSidebarReorderOnEngage?: boolean;
+  externalDrop?: {
+    resolve: (x: number, y: number) => ExternalDropTarget | null;
+    onDrop: (id: string) => void;
+    onHover?: (id: string | null) => void;
+  };
+}
+
+export interface ExternalDropTarget {
+  id: string;
+  element: HTMLElement;
+  label: string;
+  allowed: boolean;
 }
 
 interface ResolvedTarget {
@@ -47,6 +59,10 @@ export function beginSplitDrag(config: SplitDragConfig): () => void {
   let ghostEl: HTMLElement | null = null;
   let overlayEl: HTMLElement | null = null;
   let releaseFrames: (() => void) | null = null;
+  let externalTarget: ExternalDropTarget | null = null;
+  const clearExternal = (): void => {
+    externalTarget?.element.classList.remove('session-move-drop-allowed', 'session-move-drop-blocked');
+  };
 
   const preventNativeDrag = (event: DragEvent): void => {
     event.preventDefault();
@@ -92,6 +108,17 @@ export function beginSplitDrag(config: SplitDragConfig): () => void {
 
   const updateTarget = (clientX: number, clientY: number): void => {
     target = null;
+    const external = config.externalDrop?.resolve(clientX, clientY) ?? null;
+    if (external?.id !== externalTarget?.id) config.externalDrop?.onHover?.(external?.allowed ? external.id : null);
+    clearExternal();
+    externalTarget = external;
+    if (external) {
+      external.element.classList.add(external.allowed ? 'session-move-drop-allowed' : 'session-move-drop-blocked');
+      if (ghostEl) ghostEl.textContent = external.label;
+      if (overlayEl) overlayEl.style.display = 'none';
+      return;
+    }
+    if (ghostEl) ghostEl.textContent = config.ghostLabel;
     const resolved = resolveTarget(clientX, clientY);
     if (resolved && overlayEl) {
       const zone = pickZone(resolved.rect, clientX, clientY);
@@ -122,6 +149,8 @@ export function beginSplitDrag(config: SplitDragConfig): () => void {
   };
 
   const teardown = (): void => {
+    clearExternal();
+    config.externalDrop?.onHover?.(null);
     window.removeEventListener('pointermove', handleMove);
     window.removeEventListener('pointerup', handleUp);
     window.removeEventListener('pointercancel', handleCancel);
@@ -144,12 +173,14 @@ export function beginSplitDrag(config: SplitDragConfig): () => void {
     finished = true;
     const wasEngaged = engaged;
     const dropTarget = engaged ? target : null;
+    const externalId = engaged && externalTarget?.allowed ? externalTarget.id : null;
     teardown();
     if (wasEngaged) suppressPostDragClick();
     try {
-      if (dropTarget) config.onDrop(dropTarget);
+      if (externalId !== null) config.externalDrop?.onDrop(externalId);
+      else if (dropTarget) config.onDrop(dropTarget);
     } finally {
-      if (wasEngaged) config.onEnd?.({ dropped: dropTarget !== null });
+      if (wasEngaged) config.onEnd?.({ dropped: dropTarget !== null || externalId !== null });
     }
   }
 

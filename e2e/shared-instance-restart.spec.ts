@@ -2,12 +2,20 @@ import { test, expect, launchApp } from './fixtures/app.js';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { sharedInstancePage } from './fixtures/shared-instance.js';
 
 async function fakeAccount(app: Awaited<ReturnType<typeof launchApp>>, rows: Array<{ id: string; instanceId: string; name: string; browserUrl: string; live: boolean }>) {
   await app.electron.evaluate(({ session }, rows) => {
-    session.fromPartition('persist:zcc-shared-account').protocol.handle('https', request => {
+    session.fromPartition('persist:zcc-shared-account').protocol.handle('https', async request => {
       const url = new URL(request.url);
       if (url.hostname === 'zana-ide.com' && url.pathname === '/api/connect/account') return Response.json({ servers: rows });
+      if (url.hostname === 'zana-ide.com' && url.pathname === '/api/connect/browser/open/') {
+        const { serverId } = await request.json();
+        const selected = rows.find(row => row.id === serverId);
+        if (!selected || !selected.live) return new Response('Unavailable', { status: 403 });
+        return Response.json({ location: `${selected.browserUrl}/_connect/login?intent=1790000000000.${'i'.repeat(43)}` });
+      }
+      if (url.pathname === '/_connect/login') return new Response(null, { status: 303, headers: { location: url.origin + '/' } });
       const row = rows.find(row => row.browserUrl === url.origin);
       if (!row) return new Response('Denied', { status: 403 });
       return new Response(`<!doctype html><title>${row.name}</title><h1>${row.name}</h1><textarea aria-label="Draft"></textarea><script>const field=document.querySelector('textarea');field.value=localStorage.getItem('draft')||'';field.oninput=()=>localStorage.setItem('draft',field.value)</script>`, { headers: { 'content-type': 'text/html' } });
@@ -15,9 +23,8 @@ async function fakeAccount(app: Awaited<ReturnType<typeof launchApp>>, rows: Arr
   }, rows);
 }
 async function select(app: Awaited<ReturnType<typeof launchApp>>, id: string, name: string) {
-  const opened = app.electron.waitForEvent('window');
   await app.window.evaluate(id => window.cc.sharedClient.select(id), id);
-  const page = await opened; await expect(page.getByRole('heading', { name })).toBeVisible(); return page;
+  const page = await sharedInstancePage(app, `https://${name}-fixture.zana-ide.com`); await expect(page.getByRole('heading', { name })).toBeVisible(); return page;
 }
 
 test('shared instance switching keeps drafts separate and an expired account never restores local authority on restart', async ({ home }) => {

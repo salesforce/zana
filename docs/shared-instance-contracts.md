@@ -30,6 +30,46 @@ and only while the code, host and instance remain valid. The returned host key i
 stable for that private join token and product instance. Ordinary join codes keep
 their single-use semantics. Host removal invalidates pending/recovery codes.
 
+## Host purpose and plugin peer links
+
+A product `hosts` row has a purpose: `execution` (the default), or `plugin-link`
+with one or more `{pluginId, scope}` uses in `host_link_uses`. Plugin links never
+appear in execution listings: `/api/v1/hosts`, Settings → Machines, or a plugin's
+`hosts.list`. They are managed only through `/api/v1/peer-links`, the Settings →
+Peers hub. Removing one use leaves the link up while another use remains. The
+last use tears down the host and revokes its Connect machine. A plugin's
+`peers.list` sees only the links it uses. Each link is labelled by its owning
+plugin's registered name.
+
+Peer links require **no Connect changes**. Each direction is a base
+`connect_machines` row created from a forward-only machine code
+(`enrollment_capability = 'peer.forward'`, named `Zana peer link: …`).
+Invitation token v2 (`zccinv1.`) carries only
+`link: {code, accountUrl, serverId, hostId}`, with no server locator. It expires
+at the earlier of 10 minutes and the Connect code expiry. The redeemer:
+
+1. Checks that the token's `accountUrl` is its own.
+2. Redeems the code with a saved attempt secret.
+3. Confirms through `GET /api/connect/servers` that the redeemed instance is on
+   the same account.
+4. Enrolls forward-only over the machine route.
+
+Bootstrap then mints the reverse direction the same way. Once both owners
+approve, the inviter sends `bootstrap.nudge` over the redeemer's link, so the
+redeemer polls right away. Otherwise it would wait for its five-minute status
+poll. Only one invitation
+link may exist per app pair; another is refused with `already_redeemed`.
+Reconnect rotates the link: the destination re-mints the code for its inbound
+host, and the peer redeems it, replacing the credential hash in place. A rotation (including the
+inviter's first one, which renames its placeholder host) re-keys the link, so every plugin grant bound to
+the old key is revoked. A later `peers.enable` for the same scope replaces the superseded binding at once.
+Plugins must re-enable after a re-key; Design Docs' initiator does this for the bootstrap scope during setup
+and for the database scope after the group forms. Introductions use the
+same `{connect}` offer. Base Connect does not check the redeemer's account at
+redeem time. The same-account check runs on the redeemer. The inviter opens
+sync only after its owner approves the pairing, so paste an invitation only on
+the intended computer.
+
 ## Machine transport inventory
 
 Both ends of the Connect tunnel use `services/mobile-relay/machine-routes.mjs`.

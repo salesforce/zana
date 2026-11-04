@@ -26,6 +26,7 @@ let connections: ReturnType<typeof createHostServerSocket>[];
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zcc-reconnect-'));
   server = await startProductServer({ dataDir: dir, origins: { serverPort: 0, devAppPort: 5173 } });
+  await server.ctx.machineProjectSync?.dispose();
   const host = upsertHost(server.ctx.db, { name: 'fixture', hostKeyHash: hashHostKey(key), isPrimary: false });
   hostId = host.id; instanceId = randomUUID(); connections = [];
   openHostSession(server.ctx.db, { hostId, instanceId, hostName: host.name });
@@ -55,6 +56,26 @@ async function eventHost() {
     return batchId;
   };
 }
+
+it('accepts authenticated catalogue invalidations after commit and rejects malformed payloads', async () => {
+  const request = vi.spyOn(server.ctx.machineProjectSync!, 'request').mockImplementation(async id => {
+    expect(id).toBe(hostId);
+    expect(server.ctx.db.sqlite.inTransaction).toBe(false);
+  });
+  const acks: any[] = [];
+  const connection = connect({ onMessage: raw => acks.push(raw) });
+  await connection.ready; request.mockClear();
+  const batchId = randomUUID();
+  connection.send(JSON.stringify({ type: 'host.event', protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId, instanceId, batchId,
+    events: [
+      { kind: 'project.catalogue.changed', payload: {} },
+      { kind: 'project.catalogue.changed', payload: { revision: 'a'.repeat(64) } },
+      { kind: 'project.catalogue.changed', payload: { revision: 'invalid' } },
+      { kind: 'project.catalogue.changed', payload: { projects: [] } },
+    ] }));
+  await vi.waitFor(() => expect(acks.find(ack => ack.batchId === batchId)).toMatchObject({ accepted: 2, rejected: [expect.objectContaining({ index: 2 }), expect.objectContaining({ index: 3 })] }));
+  expect(request).toHaveBeenCalledTimes(2);
+});
 
 it('adopts an orphaned browser tab through authenticated host RPC and emits after the event transaction', async () => {
   const live = thread('idle');

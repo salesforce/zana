@@ -1,11 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import type { ComponentProps, MouseEvent, ReactElement } from 'react';
+import type { ComponentProps, ReactElement } from 'react';
 import type { SidebarRailItem } from '../SidebarRail.js';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { Project } from '@zana-ai/zcc-domain/product';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 const project: Project = {
   id: 'proj-1',
@@ -127,23 +127,31 @@ vi.mock('../../plugins/PluginExclusiveThreadList', () => ({
 
 import { ProjectScopedNav } from '../ProjectScopedNav.js';
 
-function renderNav(node: ReactElement) {
-  return renderToStaticMarkup(<MemoryRouter>{node}</MemoryRouter>);
+function renderNav(node: ReactElement, path = '/') {
+  return renderToStaticMarkup(<MemoryRouter initialEntries={[path]}>{node}</MemoryRouter>);
 }
 
 describe('ProjectScopedNav matches the global sidebar chrome', () => {
-  it('opens the existing launcher while retaining the project view and scoped split target', () => {
+  it.each(['focus', 'window'] as const)('navigates to project New Chat from the %s rail', (variant) => {
     h.state.setLauncherOpen.mockClear();
     h.state.setNav.mockClear();
-    renderNav(<ProjectScopedNav project={project} variant="focus" />);
+    renderNav(<ProjectScopedNav project={project} variant={variant} />);
     const newChat = h.railItems.find((item) => item.kind === 'row' && item.id === 'home');
     if (!newChat || newChat.kind !== 'row') throw new Error('New Chat is missing');
-    const preventDefault = vi.fn();
-    newChat.onClick?.({ preventDefault } as unknown as MouseEvent<HTMLAnchorElement>);
-    expect(preventDefault).toHaveBeenCalledOnce();
-    expect(h.state.setLauncherOpen).toHaveBeenCalledExactlyOnceWith(true);
+    expect(newChat.to).toBe('/projects/proj-1/threads/new');
+    expect(newChat.onClick).toBeUndefined();
+    expect(h.state.setLauncherOpen).not.toHaveBeenCalled();
     expect(h.state.setNav).not.toHaveBeenCalled();
     expect(newChat.splitContent).toEqual({ kind: 'new-thread', projectId: project.id });
+  });
+
+  it('highlights New Chat instead of Agents on the project compose route', () => {
+    renderNav(<ProjectScopedNav project={project} />, '/projects/proj-1/threads/new');
+    expect(h.railItems.find((item) => item.kind === 'row' && item.id === 'home')).toMatchObject({ active: true });
+    expect(h.railItems.find((item) => item.kind === 'row' && item.id === 'agents')).toMatchObject({ active: false });
+    renderNav(<ProjectScopedNav project={project} />, '/projects/proj-1');
+    expect(h.railItems.find((item) => item.kind === 'row' && item.id === 'home')).toMatchObject({ active: false });
+    expect(h.railItems.find((item) => item.kind === 'row' && item.id === 'agents')).toMatchObject({ active: true });
   });
 
   it.each(['focus', 'window'] as const)('pins New Chat before Inbox in the %s rail', (variant) => {
@@ -360,7 +368,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
   });
 
   it('opens this project Agents board from the Agents destination', () => {
-    const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ProjectScopedNav.tsx', import.meta.url));
 
     expect(source).toContain("mode: 'agents'");
     expect(source).toContain('useUi.getState().exitProjectFocus(');
@@ -405,8 +413,8 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
   });
 
   it('lets the Project tree occupy the same bottom rail slot as global Projects', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
-    const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
+    const source = readSourceText(new URL('../ProjectScopedNav.tsx', import.meta.url));
     expect(source).toContain('kind: \'section\'');
     expect(source).toContain('TRAILING_PROJECT_NAV_IDS');
     expect(css).toContain('.project-scoped-nav .sidebar-nav {\n  display: flex;\n  flex: 1 1 auto;\n  flex-direction: column;\n  gap: 2px;\n  min-height: 0;\n  overflow: hidden;');

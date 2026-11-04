@@ -7,6 +7,7 @@ import {
   type ProviderInfo
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
+import { harnessFamilyForThreadProviderId } from '@zana-ai/zcc-domain/launch-provider';
 import {
   getThreadProvider,
   listThreadProviders,
@@ -31,16 +32,9 @@ export interface ThreadExecutionOptionsResponse {
   acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
 }
 
-/** Thread provider ids → PTY harness families used by provider.status. */
+/** Thread provider ids → PTY harness families used by provider.status (shared table in zcc-domain). */
 export function threadProviderFamily(providerId: string): string | null {
-  if (providerId === 'claude-code') return 'claude';
-  if (providerId === 'acp-cursor') return 'cursor';
-  if (providerId === 'acp-opencode') return 'opencode';
-  if (providerId === 'acp-grok') return 'grok';
-  if (providerId === 'acp-mastracode') return 'mastracode';
-  if (providerId === 'acp-afcode') return 'afcode';
-  if (providerId === 'codex' || providerId === 'pi') return providerId;
-  return null;
+  return harnessFamilyForThreadProviderId(providerId);
 }
 
 export function isThreadProviderOffered(

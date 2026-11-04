@@ -24,7 +24,9 @@ vi.mock('./ui/PopoverPicklist.js', () => ({
       onClick={() => onChange(
         id === 'team-worktree-isolation' || id === 'team-routing-enforced'
           ? (value === 'inherit' ? 'on' : value === 'on' ? 'off' : 'inherit')
-          : value
+          : id === 'team-worktree-on-complete'
+            ? (value === 'inherit' ? 'merge' : value === 'merge' ? 'delete' : 'inherit')
+            : value
       )}>
       {value}
     </button>
@@ -66,6 +68,38 @@ describe('SquadEditor worktree isolation tri-state', () => {
   it('shows a stored false as off', () => {
     render(<SquadEditor team={{ ...base, worktreeIsolation: false }} mode="edit" onClose={vi.fn()} />);
     expect(screen.getByLabelText('Squad worktree isolation').getAttribute('data-value')).toBe('off');
+  });
+});
+
+describe('SquadEditor worktree on completion', () => {
+  it.each([[1, 'merge'], [2, 'delete'], [3, undefined]] as const)('click x%s saves %s', async (clicks, expected) => {
+    save.mockResolvedValue({ ok: true, value: { name: 'S' } });
+    render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
+    for (let i = 0; i < clicks; i++) fireEvent.click(screen.getByLabelText('Squad worktree on completion'));
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalled());
+    expect((save.mock.calls[0]![0] as { worktreeOnComplete?: string }).worktreeOnComplete).toBe(expected);
+  });
+  it('defaults to keep and saves undefined', async () => {
+    save.mockResolvedValue({ ok: true, value: { name: 'S' } });
+    render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
+    expect(screen.getByLabelText('Squad worktree on completion').getAttribute('data-value')).toBe('inherit');
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalled());
+    expect((save.mock.calls[0]![0] as { worktreeOnComplete?: string }).worktreeOnComplete).toBeUndefined();
+  });
+  it.each(['merge', 'delete'] as const)('round-trips a stored %s', async (mode) => {
+    save.mockResolvedValue({ ok: true, value: { name: 'S' } });
+    render(<SquadEditor team={{ ...base, worktreeOnComplete: mode }} mode="edit" onClose={vi.fn()} />);
+    expect(screen.getByLabelText('Squad worktree on completion').getAttribute('data-value')).toBe(mode);
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalled());
+    expect((save.mock.calls[0]![0] as { worktreeOnComplete?: string }).worktreeOnComplete).toBe(mode);
+  });
+  it('shows a stored leave as the keep default and explains the safeguards', () => {
+    render(<SquadEditor team={{ ...base, worktreeOnComplete: 'leave' }} mode="edit" onClose={vi.fn()} />);
+    expect(screen.getByLabelText('Squad worktree on completion').getAttribute('data-value')).toBe('inherit');
+    expect(screen.getByText(/failed or stopped runs always keep the worktree/)).toBeTruthy();
   });
 });
 

@@ -5,6 +5,7 @@ import {
   setPluginAppEnabledOnProductServer,
   checkPluginUpdatesFromProductServer,
   applyPluginUpdateOnProductServer,
+  applyAllPluginUpdatesOnProductServer,
   removePluginAppOnProductServer,
   callPluginRpcOnProductServer,
   getPluginSettingsFromProductServer,
@@ -115,6 +116,19 @@ describe('plugin-apps product-server fallback', () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/v1/plugin-apps/docs/update');
   });
 
+  it('routes update-all and reports unavailable or failed hosts', async () => {
+    const value = { updated: ['sample'], failed: [{ id: 'other', message: 'source unavailable' }] };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, value }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await applyAllPluginUpdatesOnProductServer('http://127.0.0.1:8780/')).toEqual({ ok: true, value });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/plugin-apps/update-all');
+    expect(await applyAllPluginUpdatesOnProductServer(null)).toMatchObject({ ok: false, code: 'UNAVAILABLE' });
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: 'failed' }), { status: 503 }));
+    expect(await applyAllPluginUpdatesOnProductServer('http://127.0.0.1:8780/')).toMatchObject({ ok: false, message: 'failed' });
+    await expect(checkPluginUpdatesFromProductServer(null)).rejects.toThrow(/unavailable/);
+    await expect(checkPluginUpdatesFromProductServer('http://127.0.0.1:8780/')).rejects.toThrow(/check failed/);
+  });
+
   it('POSTs plugin remove and maps failures', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -161,6 +175,22 @@ describe('plugin-apps product-server fallback', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ method: 'badge' })
     });
+  });
+
+  it('attaches the domain code of a 4xx RPC failure and ignores codes on other failures', async () => {
+    const respond = (status: number, body: unknown) =>
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })));
+    const base = 'http://127.0.0.1:8780/';
+    respond(400, { error: 'a design doc must keep at least one file', code: 'invalid' });
+    const expected = await callPluginRpcOnProductServer('docs', 'rm', undefined, base).catch((e) => e);
+    expect(expected).toMatchObject({ message: 'a design doc must keep at least one file', code: 'invalid' });
+    respond(404, { message: 'gone', error: 'ignored', code: 'not_found' });
+    await expect(callPluginRpcOnProductServer('docs', 'rm', undefined, base)).rejects.toMatchObject({ message: 'gone', code: 'not_found' });
+    respond(500, { error: 'crashed', code: 'invalid' });
+    const unexpected = await callPluginRpcOnProductServer('docs', 'rm', undefined, base).catch((e) => e);
+    expect(unexpected.message).toBe('crashed'); expect(unexpected).not.toHaveProperty('code');
+    respond(502, 'not json');
+    await expect(callPluginRpcOnProductServer('docs', 'rm', undefined, base)).rejects.toThrow('plugin host is unavailable');
   });
 
   it('GETs and POSTs plugin settings', async () => {

@@ -1,3 +1,4 @@
+import type { ApiErrorResumeConfig } from './api-error-resume.js';
 import type { AgentsViewId } from './agents-view.js';
 export { isAgentsViewId, type AgentsViewId } from './agents-view.js';
 import type { ProjectIcon } from './project-icons.js';
@@ -140,7 +141,7 @@ export type EffectiveHarnessDefaultResult =
       ok: true;
       profile: LaunchProfileId;
       family: HarnessFamily;
-      source: 'persona-pin' | 'project-canonical' | 'project-legacy' | 'global-default' | 'adapter-compatibility';
+      source: 'persona-pin' | 'project-canonical' | 'project-legacy' | 'global-default' | 'adapter-compatibility' | 'plugin-override';
     }
   | {
       ok: false;
@@ -1366,6 +1367,62 @@ export function isDurableCoordination(mode: TeamCoordinationMode | undefined): b
 }
 
 /**
+ * Trusted selector for an existing, user-owned execution target. It names a
+ * target by role and branch only — never by a raw host path — and main
+ * resolves it against the registered project's own git worktree list.
+ * `project-root` is the registered checkout; `worktree` is a non-main
+ * worktree of the same repository whose current branch is `branch`.
+ */
+export type SquadExecutionTargetSelector =
+  | { kind: 'project-root' }
+  | { kind: 'worktree'; branch: string };
+
+/** Who owns a squad execution target's lifecycle. Absent on legacy records means `managed`. */
+export type SquadWorktreeOwnership = 'managed' | 'user';
+
+const TARGET_BRANCH_MAX = 200;
+
+/** Shape check for a git branch name supplied in a target selector (no refspec tricks, no paths up). */
+export function isSafeTargetBranch(branch: unknown): branch is string {
+  if (typeof branch !== 'string' || !branch || branch.length > TARGET_BRANCH_MAX) return false;
+  if (branch.startsWith('-') || branch.startsWith('/') || branch.endsWith('/') || branch.endsWith('.')
+    || branch.endsWith('.lock') || branch.includes('..') || branch.includes('//') || branch.includes('@{')) return false;
+  return /^[A-Za-z0-9._/-]+$/.test(branch);
+}
+
+export function isSquadExecutionTargetSelector(value: unknown): value is SquadExecutionTargetSelector {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (record.kind === 'project-root') return keys.length === 1;
+  if (record.kind === 'worktree') return keys.length === 2 && isSafeTargetBranch(record.branch);
+  return false;
+}
+
+/**
+ * Deterministic admission rule for a target selector next to the legacy
+ * generated-worktree flag:
+ * - selector absent: legacy `worktree` boolean semantics are unchanged;
+ * - selector invalid: reject (never fall back to a generated worktree);
+ * - selector + `worktree: true`: reject as conflicting;
+ * - selector + `worktree: false`: the selector wins (false only opts out of generation);
+ * - selector + `onComplete` `merge`/`delete`: reject, a user-owned target is never merged or removed.
+ */
+export function validateSquadExecutionTarget(input: {
+  target?: unknown;
+  worktree?: boolean;
+  onComplete?: 'leave' | 'merge' | 'delete';
+}): { ok: true; target?: SquadExecutionTargetSelector } | { ok: false; message: string } {
+  if (input.target === undefined) return { ok: true };
+  if (!isSquadExecutionTargetSelector(input.target)) return { ok: false, message: 'invalid execution target selector' };
+  if (input.worktree === true) return { ok: false, message: 'execution target conflicts with a generated worktree request' };
+  if (input.onComplete === 'merge' || input.onComplete === 'delete') {
+    return { ok: false, message: `a user-owned execution target cannot use onComplete '${input.onComplete}'` };
+  }
+  return { ok: true, target: input.target };
+}
+
+/**
  * Canonical name for a PTY-spawned coding agent. Same shape as
  * {@link TerminalSession}; Threads use a separate domain type and must not
  * share this map, RPC, or event log.
@@ -1762,6 +1819,34 @@ export interface Shelf {
   rows: ShelfRow[];
 }
 
+/**
+ * Default instructions typed into an agent by "Wrap up before closing" (see
+ * {@link AppConfig.closeWrapUpEnabled}). One line per step; CLI agents get them
+ * collapsed to a single line, threads keep the line breaks.
+ */
+export const DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS = [
+  'Wrap up this session; it will be closed when you finish.',
+  '1. Summarise: what you set out to do, what you did (files, decisions, messages sent), and what is left or waiting on someone.',
+  '2. Self-learn: save anything a future session should know to memory (update an existing entry rather than adding a duplicate), and write a short retro to the project library if there were lessons worth keeping.',
+  '3. Tidy up: resolve or update the follow-ups this session owns, and stop background tasks, monitors and pollers you started. Do not commit, push or send anything I have not asked for.',
+  "4. Don't push a summary to the inbox; Zana adds one when it closes this session.",
+  '5. If something needs my decision before closing, ask it as your final message and stop. Otherwise end with the summary.'
+].join('\n');
+
+/** Longest custom wrap-up instructions text kept by `normalizeConfig`. */
+export const CLOSE_WRAP_UP_INSTRUCTIONS_MAX = 4_000;
+
+/** How long a wrap-up may run before the agent or thread is left open; also named in the inbox note. */
+export const CLOSE_WRAP_UP_TIMEOUT_MINUTES = 15;
+
+/** The wrap-up instructions to send: the configured text when it has any, else the default. */
+export function resolveCloseWrapUpInstructions(
+  config: Pick<AppConfig, 'closeWrapUpInstructions'> | null | undefined
+): string {
+  const custom = config?.closeWrapUpInstructions?.trim();
+  return custom ? custom : DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS;
+}
+
 export interface AppConfig {
   version: 1;
   /**
@@ -2012,6 +2097,13 @@ export interface AppConfig {
   scheduledRunConcurrency?: number;
   /** Over the limit: `auto` (default) skips Classic schedules and queues Recovery ones; retries always queue. */
   scheduledRunOverflow?: 'auto' | 'queue' | 'skip';
+  /**
+   * Global opt-out of per-run Claude config isolation for unattended (scheduled)
+   * runs. Default (unset/false): isolated. When true, scheduled Claude runs use
+   * the user's interactive config (MCPs, plugins, hooks). A schedule's own
+   * `useUserConfig` overrides this.
+   */
+  automatedUseUserConfig?: boolean;
   /** State of the one-time "turn on recovery" card on the Scheduler overview. */
   schedulerRecoveryIntro?: 'dismissed' | 'applied';
   /** How the inbox Feed groups rows within each day bucket: per-project
@@ -2369,6 +2461,20 @@ export interface AppConfig {
    */
   catchUpSummaryEnabled?: boolean;
   /**
+   * Wrap up before closing (EXPERIMENTAL). When ON, Close with follow-up (and
+   * Close idle with follow-ups) first asks each agent to save what it learnt and
+   * tidy up, then closes it with the same summary as Summarize to inbox and a
+   * follow-up if work is left; an agent that asks a question stays open. Default
+   * OFF / absent — Close with follow-up keeps today's quick note and closes at once.
+   */
+  closeWrapUpEnabled?: boolean;
+  /**
+   * Custom text typed into the agent by {@link closeWrapUpEnabled}. Absent or
+   * empty means {@link DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS}; trimmed and capped at
+   * {@link CLOSE_WRAP_UP_INSTRUCTIONS_MAX} characters in `normalizeConfig`.
+   */
+  closeWrapUpInstructions?: string;
+  /**
    * Skip the agent/thread inspector overlay (EXPERIMENTAL). When ON, opening a
    * CLI agent or thread — from the Agents canvas, favorites, a launch peek, or
    * the menu bar — navigates to the full session or thread page instead of a
@@ -2376,6 +2482,10 @@ export interface AppConfig {
    * surface.
    */
   classicSessionViewEnabled?: boolean;
+  /** Desktop title-bar shortcuts for opened threads. Enabled by default. */
+  threadTabsEnabled?: boolean;
+  /** Drag thread tools between right and bottom panels. Defaults on. */
+  dockableThreadToolsEnabled?: boolean;
   /**
    * Idle / blocked dwell (seconds) before the catch-up-summary add-on fires its
    * micro-call. On the working/blocked → idle edge (or entering 'blocked'), the
@@ -2400,6 +2510,8 @@ export interface AppConfig {
   feedNoiseClassifierEnabled?: boolean;
   /** Suspend installed non-bundled plugins without changing their enabled preference. */
   pluginSafeMode?: boolean;
+  /** Allow local bundled-plugin overrides and source watching. Saved choices override the startup flag. */
+  pluginDevelopmentEnabled?: boolean;
   /** Suppress non-default service tiers for this instance. */
   providerServiceTiersDisabled?: boolean;
   /**
@@ -2413,6 +2525,15 @@ export interface AppConfig {
    * write path shipped on; this setting only lets a user disable it).
    */
   terminalClipboardWriteEnabled?: boolean;
+  /**
+   * Whether Ctrl+V pastes the clipboard into a terminal on Windows and Linux,
+   * like Shift+Insert (and Ctrl+Shift+V, which always pastes there). When off,
+   * Ctrl+V sends the literal `^V` control character to the program, as
+   * readline's "insert next character literally" and vim's block select
+   * expect. Unset ⇒ platform default: on for Windows, off for Linux. macOS
+   * ignores it (⌘V pastes). See `apps/app/src/lib/terminalPaste.ts`.
+   */
+  terminalCtrlVPasteEnabled?: boolean;
   /**
    * Enable the Zana Mobile gateway — the authenticated network edge in front of
    * the loopback product server that a paired phone connects through
@@ -2509,6 +2630,25 @@ export interface AppConfig {
    * Clamped in {@link normalizeConfig}; read live on each sweep.
    */
   threadSessionReleaseMinutes?: number;
+  /**
+   * Code minimap in the Explorer file preview (see {@link EXPLORER_MINIMAP_DEFAULTS}).
+   * `explorerMinimapEnabled` shows/hides it; `explorerMinimapWidth` is its width.
+   * Absent ⇒ the default. Unknown values are dropped in {@link normalizeConfig};
+   * read live by the Explorer viewer and editable from its right-click menu.
+   */
+  explorerMinimapEnabled?: boolean;
+  explorerMinimapWidth?: ExplorerMinimapWidth;
+  explorerMinimapRenderCharacters?: boolean;
+  explorerMinimapVerticalSize?: ExplorerMinimapVerticalSize;
+  explorerMinimapSlider?: ExplorerMinimapSlider;
+  explorerMinimapSide?: ExplorerMinimapSide;
+  /**
+   * How files are marked in the Explorer, Changes list, Quick Open and Library
+   * (see {@link EXPLORER_FILE_ICON_THEME_CHOICES}). `seti` shows VS Code's default
+   * per-type icons, `minimal` one plain file glyph, `none` no file/folder icons.
+   * Absent ⇒ `seti`. Unknown values are dropped in {@link normalizeConfig}.
+   */
+  explorerFileIconTheme?: ExplorerFileIconTheme;
   /**
    * When an idle agent is auto-closed (see {@link autoCloseIdleEnabled}), also
    * drop a folded breadcrumb into the inbox's collapsed "Agent closed" section.
@@ -2666,6 +2806,8 @@ export interface AppConfig {
    * agent to continue or to say so and stop if it's blocked / done.
    */
   heartbeatMessage?: string;
+  /** Resume after API errors (Settings → Agents). Absent = off. */
+  apiErrorResume?: ApiErrorResumeConfig;
   /**
    * Autonomous-team run backstops. Defaults applied in main when a run starts
    * (see AUTONOMOUS_DEFAULTS). A value of 0 disables that backstop.
@@ -2928,6 +3070,8 @@ export const SESSION_MEMORY_DEFAULTS = {
   ramFractionForSessions: 0.5
 } as const;
 
+export * from './api-error-resume.js';
+
 /** Defaults for the Agent Heartbeat feature (used when the config field is absent). */
 export const HEARTBEAT_DEFAULTS = {
   delaySeconds: 30,
@@ -2956,6 +3100,101 @@ export function threadSessionReleaseLabel(minutes: number): string {
   if (minutes <= 0) return 'Never';
   if (minutes % 60 === 0) return `After ${minutes / 60} hour${minutes === 60 ? '' : 's'}`;
   return `After ${minutes} minutes`;
+}
+
+/** File icon themes for file lists; see {@link AppConfig.explorerFileIconTheme}. */
+export const EXPLORER_FILE_ICON_THEME_CHOICES = ['seti', 'minimal', 'none'] as const;
+export type ExplorerFileIconTheme = (typeof EXPLORER_FILE_ICON_THEME_CHOICES)[number];
+export const EXPLORER_FILE_ICON_THEME_DEFAULT: ExplorerFileIconTheme = 'seti';
+export const EXPLORER_FILE_ICON_THEME_LABELS: Record<ExplorerFileIconTheme, string> = {
+  seti: 'Seti (VS Code)',
+  minimal: 'Minimal',
+  none: 'None'
+};
+
+export function resolveExplorerFileIconTheme(
+  config: Pick<AppConfig, 'explorerFileIconTheme'>
+): ExplorerFileIconTheme {
+  const v = config.explorerFileIconTheme;
+  return v !== undefined && (EXPLORER_FILE_ICON_THEME_CHOICES as readonly string[]).includes(v)
+    ? v
+    : EXPLORER_FILE_ICON_THEME_DEFAULT;
+}
+
+/** Explorer preview minimap options; see {@link AppConfig.explorerMinimapWidth}. */
+export type ExplorerMinimapWidth = 'narrow' | 'default' | 'wide';
+export type ExplorerMinimapVerticalSize = 'proportional' | 'fill' | 'fit';
+export type ExplorerMinimapSlider = 'mouseover' | 'always';
+export type ExplorerMinimapSide = 'right' | 'left';
+
+export const EXPLORER_MINIMAP_WIDTH_CHOICES = ['narrow', 'default', 'wide'] as const;
+export const EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES = ['proportional', 'fill', 'fit'] as const;
+export const EXPLORER_MINIMAP_SLIDER_CHOICES = ['mouseover', 'always'] as const;
+export const EXPLORER_MINIMAP_SIDE_CHOICES = ['right', 'left'] as const;
+
+/** Resolved minimap preferences (every field filled). */
+export interface ExplorerMinimapPrefs {
+  enabled: boolean;
+  width: ExplorerMinimapWidth;
+  renderCharacters: boolean;
+  verticalSize: ExplorerMinimapVerticalSize;
+  slider: ExplorerMinimapSlider;
+  side: ExplorerMinimapSide;
+}
+
+export const EXPLORER_MINIMAP_DEFAULTS: ExplorerMinimapPrefs = {
+  enabled: true,
+  width: 'default',
+  renderCharacters: true,
+  verticalSize: 'proportional',
+  slider: 'mouseover',
+  side: 'right'
+};
+
+/** Monaco `minimap.maxColumn` per width. */
+export const EXPLORER_MINIMAP_MAX_COLUMN: Record<ExplorerMinimapWidth, number> = {
+  narrow: 60,
+  default: 120,
+  wide: 200
+};
+
+/** The minimap is hidden when the editor is narrower than this many px. */
+export const EXPLORER_MINIMAP_MIN_EDITOR_WIDTH = 480;
+
+export const EXPLORER_MINIMAP_LABELS = {
+  narrow: 'Narrow',
+  default: 'Default',
+  wide: 'Wide',
+  proportional: 'Proportional',
+  fill: 'Fill',
+  fit: 'Fit',
+  mouseover: 'Mouse Over',
+  always: 'Always',
+  right: 'Right',
+  left: 'Left'
+} as const;
+
+/** The `AppConfig.explorerMinimap*` keys. */
+export type ExplorerMinimapConfig = Pick<
+  AppConfig,
+  | 'explorerMinimapEnabled'
+  | 'explorerMinimapWidth'
+  | 'explorerMinimapRenderCharacters'
+  | 'explorerMinimapVerticalSize'
+  | 'explorerMinimapSlider'
+  | 'explorerMinimapSide'
+>;
+
+export function resolveExplorerMinimap(config: ExplorerMinimapConfig): ExplorerMinimapPrefs {
+  const d = EXPLORER_MINIMAP_DEFAULTS;
+  return {
+    enabled: config.explorerMinimapEnabled ?? d.enabled,
+    width: config.explorerMinimapWidth ?? d.width,
+    renderCharacters: config.explorerMinimapRenderCharacters ?? d.renderCharacters,
+    verticalSize: config.explorerMinimapVerticalSize ?? d.verticalSize,
+    slider: config.explorerMinimapSlider ?? d.slider,
+    side: config.explorerMinimapSide ?? d.side
+  };
 }
 
 /** Launch-surface default revision. See {@link AppConfig.composerLaunchSurfacesRev}. */
@@ -3272,6 +3511,8 @@ export interface FsEntry {
 export interface FsReadResult {
   ok: boolean;
   content?: string;
+  /** Byte cursor for the next page when a text read is truncated. */
+  nextByteOffset?: number;
   bytes?: number;
   binary?: boolean;
   truncated?: boolean;
@@ -3695,6 +3936,21 @@ export interface ScheduleCatchUp { mode: 'once' | 'skip' | 'all'; max?: number }
 /** Opt-in auto-retry policy for failed runs. */
 export interface ScheduleRetryPolicy { attempts: number; delayMinutes: number }
 
+/**
+ * The agent conversation a scheduled run started, so the run can be reopened
+ * later. Written by the scheduler at launch from the session it spawned.
+ * `id` is absent until a harness that detects its id after launch (Codex,
+ * OpenCode) has been resolved. Validated before use: project schedule files
+ * are editable.
+ */
+export interface ScheduleRunConversation {
+  profile: LaunchProfileId;
+  id?: string;
+  cwd: string;
+  /** ISO-8601 time the run's session was created. */
+  startedAt: string;
+}
+
 export interface ScheduleRun {
   /** Durable spawn reservation; pending launches must never be replayed. */
   launchState?: 'pending' | 'running' | 'failed';
@@ -3767,6 +4023,8 @@ export interface ScheduleRun {
   resolvedBy?: string;
   /** ISO time the user dismissed this problem. */
   dismissedAt?: string;
+  /** The agent conversation this run started; absent for runs that cannot be reopened. */
+  conversation?: ScheduleRunConversation;
 }
 
 export interface ScheduleStatus {
@@ -3776,7 +4034,11 @@ export interface ScheduleStatus {
   /** ISO-8601 timestamp of the next planned fire (informational; recomputed on load). */
   nextRunAt?: string;
   runCount: number;
-  /** Newest first. Capped at history.retain (default 10). */
+  /**
+   * Newest first. Trimmed to history.retain (default 10), except that the scheduler also keeps every row whose
+   * session is still alive, the newest real (non-skipped) run, the row a write is closing, and Squad runs that
+   * are still pending or live.
+   */
   runs: ScheduleRun[];
   /** Timing anchor: slots at or before this are handled. */
   slotCursorAt?: string;
@@ -3879,6 +4141,10 @@ export interface ScheduledTask {
    * interactive CLI never exits on its own. Default false.
    */
   autoCloseOnFinish?: boolean;
+  /** Opt this schedule out of per-run config isolation (uses the user's interactive Claude config). Unset inherits `AppConfig.automatedUseUserConfig`. */
+  useUserConfig?: boolean;
+  /** MCP server names (<=32, each <=128 chars) the isolated run must have; the run fails clearly, without launching, if one isn't carried into the isolated config. Ignored when the schedule opts out of isolation. */
+  requiredMcps?: string[];
   /**
    * Optional maximum runtime for this scheduled run in minutes.
    * If the run is still alive after this, the scheduler will force-close it.
@@ -3934,6 +4200,10 @@ export interface ScheduleCreateInput {
   /** Inbox loudness; defaults to `quiet` when omitted. See {@link InboxNotifyLevel}. */
   inboxLevel?: InboxNotifyLevel;
   autoCloseOnFinish?: boolean;
+  /** Opt this schedule out of per-run config isolation (uses the user's interactive Claude config). Unset inherits `AppConfig.automatedUseUserConfig`. */
+  useUserConfig?: boolean;
+  /** MCP server names (<=32, each <=128 chars) the isolated run must have; the run fails clearly, without launching, if one isn't carried into the isolated config. Ignored when the schedule opts out of isolation. */
+  requiredMcps?: string[];
   maxDurationMinutes?: number;
   /** Group id (see {@link ScheduleGroup}). Only meaningful for global scope. */
   group?: string;
@@ -4134,6 +4404,12 @@ export interface HarnessModelRoutingV1 {
   }>>;
 }
 
+/** A plugin's AI-harness override at one scope: Core's routing rows plus an optional harness choice. */
+export interface PluginHarnessOverrideV1 extends HarnessModelRoutingV1 {
+  /** Run the plugin's agents on this harness instead of the project's default harness. */
+  defaultHarness?: HarnessFamily;
+}
+
 /**
  * A named, reusable Claude Code personality (Reviewer, Architect, Bug-hunter…)
  * that composes native `claude` CLI flags. A persona is **not** a new launch
@@ -4287,18 +4563,28 @@ export type SquadTransport = 'CLI' | 'MODERN';
 export interface TeamLaunchTaskSlot {
   slotId: string;
   initialTask: string;
+  automatedSkillIds?: string[];
   authorizationId?: string;
   nativeRecovery?: TeamLaunchAuthorizationInputSlot['nativeRecovery'];
 }
 
 export interface TeamLaunchAuthorizationInputSlot {
   initialTask: string;
+  automatedSkillIds?: string[];
   /** Trusted native recovery identity, injected only by ExecutionService. */
   nativeRecovery?: {
     role: 'worker' | 'orchestrator';
     personaId?: string;
     profileId?: string;
     nativeConversationId: string;
+    /** Absent means CLI. MODERN identity fields are optional and additive. */
+    transport?: 'CLI' | 'MODERN';
+    threadId?: string;
+    generation?: number;
+    providerThreadId?: string;
+    providerId?: string;
+    environmentPath?: string;
+    hostId?: string;
   };
 }
 
@@ -4333,6 +4619,8 @@ export interface TeamLaunchRequestInput {
   worktree?: boolean;
   /** Main-owned terminal disposition for an execution-owned shared worktree. */
   onComplete?: 'leave' | 'merge' | 'delete';
+  /** Main-resolved existing user-owned target; see {@link validateSquadExecutionTarget}. */
+  target?: SquadExecutionTargetSelector;
   /** Main-only immutable execution display title for Team session cohorts. */
   executionJobTitle?: string;
   /** Main-derived admission digest; launch revalidates it before spawning. */
@@ -4341,6 +4629,8 @@ export interface TeamLaunchRequestInput {
   coordinationMode?: TeamCoordinationMode;
   /** Main-owned trigger identity propagated to execution-backed sessions. */
   origin?: LaunchOrigin;
+  /** Post an Inbox notice after this Squad completes. */
+  completionInboxNotice?: boolean;
   /** Main-owned durable job briefing composed after source snapshotting. */
   jobContext?: {
     objective: string;
@@ -4354,7 +4644,8 @@ export interface TeamLaunchRequestInput {
   /** Trusted execution-service recovery input. Never accepted from renderer input. */
   retainedRecovery?: {
     mode: 'exact-native';
-    slots: Array<{ slotId: string; role: 'worker' | 'orchestrator'; personaId?: string; profileId?: string; nativeConversationId: string }>;
+    slots: Array<{ slotId: string; role: 'worker' | 'orchestrator'; personaId?: string; profileId?: string; nativeConversationId: string;
+      transport?: 'CLI' | 'MODERN'; threadId?: string; generation?: number; providerThreadId?: string; providerId?: string; environmentPath?: string; hostId?: string }>;
   };
 }
 
@@ -4412,14 +4703,25 @@ export interface Team {
   initialPrompt?: string;
   /** Shared-worktree override for execution-backed squad runs. Absent ⇒ use the next default. */
   worktreeIsolation?: boolean;
+  /**
+   * What happens to the shared Squad worktree when a run finishes. Absent ⇒ `'leave'` (keep).
+   * `'merge'` merges into the base branch then removes it; `'delete'` removes it only when the run
+   * COMPLETED and the worktree is clean with no unmerged commits (otherwise it is kept). A launch
+   * request's own `onComplete` wins. Never applies to user-owned targets.
+   */
+  worktreeOnComplete?: 'leave' | 'merge' | 'delete';
   /** Override global structured-work routing enforcement for this Team. */
   routingEnforced?: boolean;
   /** Transport selected for every squad member. Absent persisted teams remain CLI. */
   transport?: SquadTransport;
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
+  /** Keep the orchestrator session open after successful Squad completion. */
+  retainOrchestrator?: boolean;
   /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
+  /** Preselected in the New Agent squad picker. Absent ⇒ the first squad alphabetically. */
+  isDefault?: boolean;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -4727,6 +5029,10 @@ export interface ScheduleUpdateInput {
   /** Inbox loudness. Omit to leave unchanged. See {@link InboxNotifyLevel}. */
   inboxLevel?: InboxNotifyLevel;
   autoCloseOnFinish?: boolean;
+  /** Opt this schedule out of per-run config isolation (uses the user's interactive Claude config). Unset inherits `AppConfig.automatedUseUserConfig`; `null` (update only) clears the override. */
+  useUserConfig?: boolean | null;
+  /** MCP server names (<=32, each <=128 chars) the isolated run must have; the run fails clearly, without launching, if one isn't carried into the isolated config. `null` (update only) clears it. Ignored when the schedule opts out of isolation. */
+  requiredMcps?: string[] | null;
   maxDurationMinutes?: number;
   /** Group id, or null to clear (move to Ungrouped). Omit to leave unchanged. */
   group?: string | null;
@@ -4855,6 +5161,8 @@ export interface GoalIteration {
   finishedAt?: string;
   /** Set on a spawn/evaluator error so the row explains itself. */
   error?: string;
+  /** The agent conversation this iteration ran in, recorded at spawn. Absent means no Resume. */
+  conversation?: ScheduleRunConversation;
 }
 
 /**
@@ -5139,6 +5447,14 @@ export interface CloseFollowupFailure {
   reason: CloseFollowupFailureReason;
   /** The LLM or write error text, trimmed by the server. */
   detail?: string;
+}
+
+/** Why Close with follow-up left an agent open after a wrap-up request. */
+export type CloseFollowupKeptOpenReason = 'asks-you' | 'typed' | 'timeout' | 'turn-error';
+
+export interface CloseFollowupKeptOpen {
+  sessionId: string;
+  reason: CloseFollowupKeptOpenReason;
 }
 
 export interface FollowUpUpdateInput {
@@ -5446,6 +5762,29 @@ export interface PluginEntry {
  * Redacted server-owned plugin app state. `appUrl` is same-origin and contains
  * no install path or credentials; the renderer uses it only to import a bundle.
  */
+export interface PluginUpdateAllResult {
+  updated: string[];
+  failed: Array<{ id: string; message: string }>;
+}
+
+export interface PluginRecoveryState {
+  phase: 'idle' | 'running' | 'complete';
+  total: number;
+  current?: string;
+  restored: string[];
+  skipped: Array<{ id: string; message: string }>;
+  failed: Array<{ id: string; message: string }>;
+}
+
+export interface PluginUpdateStatus {
+  checkedAt: number;
+  outcome: 'current' | 'available' | 'pinned' | 'incompatible' | 'unavailable';
+  detail?: string;
+  blocked?: { version: string; reasons: string[] };
+}
+
+export type PluginUpdatePolicy = 'bundled' | 'local' | 'independent' | 'migration-required';
+
 export interface PluginAppEntry {
   id: string;
   name: string;
@@ -5459,9 +5798,15 @@ export interface PluginAppEntry {
   collection?: 'coding-agents';
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
+  /** Host-derived recovery choices; local paths and replacement sources remain private. */
+  sourceRecovery?: { canLocate: boolean; canSwitchOfficial: boolean };
   appUrl: string | null;
-  /** Newer catalog version from the last `checkUpdates()` sweep, when any. */
+  /** Compatible remote release from the last persisted source check, when any. */
   availableVersion?: string;
+  /** Plugin declares `zcc.peers: true` (it links to other installs). */
+  peers?: boolean;
+  updateCheck?: PluginUpdateStatus;
+  updatePolicy?: PluginUpdatePolicy;
   projectTab?: {
     label?: string;
     icon?: string;
@@ -5810,6 +6155,8 @@ export interface MarketplaceEntry {
   author?: string;
   /** Lucide icon name (resolved renderer-side, like a manifest icon). */
   icon?: string;
+  /** Inert, bounded branding image supplied by the host. */
+  iconUrl?: string;
   /** Permissions the release declares — previewed before install. */
   permissions?: string[];
   /** True when an extension with this id is already installed on disk. */
@@ -6104,6 +6451,8 @@ export interface ExecutionBoardProjection {
        reclaimCount?: number;
        attemptedSlots?: string[];
        quarantinedSlots?: string[];
+       /** Present only while Zana is recovering this unit's worker after an API error. */
+       recovery?: { step: string; errorKind?: string; since: number };
     }>;
     rosterSlotIds: string[];
   };
@@ -6225,7 +6574,9 @@ export interface ExecutionBoardProjection {
       exactNative: {
         available: boolean;
         restorableSlots: number;
-        reason?: 'RECOVERY_NOT_ALLOWED' | 'NO_RESTORABLE_SLOTS' | 'NATIVE_RESTORE_UNAVAILABLE';
+        /** Present with PARTIAL_RESTORE: only some slots can be restored, so Resume is blocked. */
+        totalSlots?: number;
+        reason?: 'RECOVERY_NOT_ALLOWED' | 'NO_RESTORABLE_SLOTS' | 'NATIVE_RESTORE_UNAVAILABLE' | 'PARTIAL_RESTORE';
       };
     };
   };
@@ -6242,6 +6593,8 @@ export interface TeamJobLaunchInput {
   coordinationMode?: Extract<TeamCoordinationMode, 'structured' | 'freeform'>;
   /** Main-held Squad proposal id. Only valid from a desktop window; main re-authorizes it. */
   proposalId?: string;
+  /** Existing user-owned execution target by role/branch. Absent keeps legacy behavior; main resolves and revalidates it. */
+  target?: SquadExecutionTargetSelector;
 }
 
 /** Safe renderer projection for a main-owned, short-lived selected-file capability. */

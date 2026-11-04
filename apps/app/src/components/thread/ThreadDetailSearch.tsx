@@ -1,9 +1,27 @@
 import { useEffect, useRef, type FormEvent, type KeyboardEvent } from 'react';
 import { Search, X } from 'lucide-react';
 import { titleWithShortcut } from '../../lib/keyboard-shortcut-settings.js';
+import { THREAD_SEARCH_QUERY_MAX } from '@zana-ai/zcc-thread-view';
 
 export function threadDetailSearchClassName(draft: string): string {
   return draft.trim().length > 0 ? 'thread-detail-search has-query' : 'thread-detail-search';
+}
+
+/** Why a partial count may be low: the server could not count unloaded or collapsed messages. */
+export const THREAD_SEARCH_PARTIAL_NOTE = 'Some messages weren’t searched';
+
+/** The visible counter: `3/7`, or `0/0` when nothing matches; `+` marks a partial count. */
+export function threadSearchCounterText(index: number, count: number, partial = false): string {
+  const text = count === 0 ? '0/0' : `${index + 1}/${count}`;
+  return partial ? `${text}+` : text;
+}
+
+/** What screen readers hear when the counter changes. */
+export function threadSearchAnnouncement(index: number, count: number, partial = false): string {
+  const text = count === 0
+    ? 'No matches'
+    : index < 0 ? `${count} ${count === 1 ? 'match' : 'matches'}` : `Match ${index + 1} of ${count}`;
+  return partial ? `${text}. ${THREAD_SEARCH_PARTIAL_NOTE}` : text;
 }
 
 export function ThreadDetailSearch({
@@ -13,6 +31,9 @@ export function ThreadDetailSearch({
   mobileHeader = false,
   autoFocus = false,
   focusRequest = 0,
+  matchIndex,
+  matchCount,
+  partial = false,
   onClose
 }: {
   value: string;
@@ -22,9 +43,17 @@ export function ThreadDetailSearch({
   focusRequest?: number;
   onClose?: () => void;
   onChange: (value: string) => void;
-  onSubmit: (needle: string) => void;
+  /** Enter submits `'next'`, Shift+Enter `'previous'`; an empty needle clears. */
+  onSubmit: (needle: string, direction?: 'next' | 'previous') => void;
+  /** Current match (0-based, -1 for none yet); omit both to hide the counter. */
+  matchIndex?: number;
+  matchCount?: number;
+  /** Only loaded messages were counted (the outline search failed). */
+  partial?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const showCounter = matchCount !== undefined;
+  const announcement = showCounter ? threadSearchAnnouncement(matchIndex ?? -1, matchCount, partial) : '';
   useEffect(() => { if (autoFocus) inputRef.current?.focus(); }, [autoFocus]);
   useEffect(() => {
     if (focusRequest === 0) return;
@@ -38,6 +67,12 @@ export function ThreadDetailSearch({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+      // Handled here so Shift+Enter steps back; focus stays in the field.
+      event.preventDefault();
+      onSubmit(value.trim(), event.shiftKey ? 'previous' : 'next');
+      return;
+    }
     if (event.key !== 'Escape') return;
     onChange('');
     onSubmit('');
@@ -71,9 +106,17 @@ export function ThreadDetailSearch({
         value={value}
         aria-label="Search in thread"
         placeholder="Search"
+        maxLength={THREAD_SEARCH_QUERY_MAX}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={onKeyDown}
       />
+      {showCounter && <span
+        className={`thread-detail-search-count${matchCount === 0 ? ' is-empty' : ''}${partial ? ' is-partial' : ''}`}
+        data-testid="thread-detail-search-count"
+        title={announcement}
+        aria-hidden="true"
+      >{threadSearchCounterText(matchIndex ?? -1, matchCount, partial)}</span>}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
       {mobileHeader && <button
         type="button"
         className="icon-btn thread-detail-search-close"

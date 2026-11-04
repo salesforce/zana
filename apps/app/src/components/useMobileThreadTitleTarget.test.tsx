@@ -93,7 +93,9 @@ it('retains the action handler when it renders in the shell', () => {
 it('keeps only the plain title when the phone shell hosts it', () => {
   const target = document.createElement('div');
   const view = render(<ThreadDetailHeading title="Phone" titleTarget={target}
-    agent={{ providerId: 'claude-code', model: null, projectName: 'zcc', branchName: null }} />);
+    status={<span data-testid="desktop-status">Working</span>}
+    metadata={<span data-testid="desktop-meta">Project and branch</span>} />);
   expect(target.querySelector('h1')?.textContent).toBe('Phone');
-  expect(target.querySelector('[data-testid="thread-detail-meta"]')).toBeNull();
+  expect(view.queryByTestId('desktop-status')).toBeNull();
+  expect(view.queryByTestId('desktop-meta')).toBeNull();
 });

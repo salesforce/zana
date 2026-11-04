@@ -74,3 +74,67 @@ it('signals a roster thread turning archived, but not an unknown or already-arch
   harness.updated({ ...row('b', 'p2'), archivedAt: 7 });
   expect(listener).toHaveBeenCalledTimes(1);
 });
+
+it('keeps a live rename when a roster refresh returns its older snapshot', async () => {
+  let finish!: (rows: ThreadListItem[]) => void;
+  const original = useThreads.getState().threads.slice();
+  harness.list.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const loading = useThreads.getState().load();
+  harness.updated({ ...row('a'), title: 'Renamed project thread' });
+  finish(original);
+  await loading;
+  expect(useThreads.getState().threads.find(thread => thread.id === 'a')?.title).toBe('Renamed project thread');
+});
+
+it('merges live changed fields without discarding newer metadata from the list', async () => {
+  let finish!: (rows: ThreadListItem[]) => void;
+  harness.list.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const loading = useThreads.getState().load();
+  harness.updated({ ...row('a'), title: 'Live rename' });
+  finish([{ ...row('a'), status: 'active' }, row('b', 'p2'), row('from-list')]);
+  await loading;
+  expect(useThreads.getState().threads.find(thread => thread.id === 'a')).toMatchObject({ title: 'Live rename', status: 'active' });
+  expect(useThreads.getState().threads.map(thread => thread.id)).toEqual(['a', 'b', 'from-list']);
+});
+
+it('keeps live creations and removals while replacing unchanged rows with the snapshot', async () => {
+  let finish!: (rows: ThreadListItem[]) => void;
+  harness.list.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const loading = useThreads.getState().load();
+  harness.updated(row('created'));
+  useThreads.getState().remove('a');
+  finish([{ ...row('a'), title: 'Stale deleted row' }, { ...row('b', 'p2'), title: 'Fresh snapshot' }]);
+  await loading;
+  expect(useThreads.getState().threads.map(thread => thread.id)).toEqual(['created', 'b']);
+  expect(useThreads.getState().threads[1]?.title).toBe('Fresh snapshot');
+});
+
+it('merges a newly created live thread already present in the snapshot without duplicating it', async () => {
+  let finish!: (rows: ThreadListItem[]) => void;
+  harness.list.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const loading = useThreads.getState().load();
+  harness.updated({ ...row('created'), title: 'Latest creation' });
+  finish([row('created')]);
+  await loading;
+  expect(useThreads.getState().threads).toHaveLength(1);
+  expect(useThreads.getState().threads[0]?.title).toBe('Latest creation');
+});
+
+it('ignores older successful and failed requests while the newest request controls loading', async () => {
+  let oldSuccess!: (rows: ThreadListItem[]) => void;
+  let oldFailure!: (reason: Error) => void;
+  let newest!: (rows: ThreadListItem[]) => void;
+  harness.list.mockReturnValueOnce(new Promise(resolve => { oldSuccess = resolve; }));
+  const first = useThreads.getState().load();
+  harness.list.mockReturnValueOnce(new Promise((_, reject) => { oldFailure = reject; }));
+  const second = useThreads.getState().load();
+  harness.list.mockReturnValueOnce(new Promise(resolve => { newest = resolve; }));
+  const third = useThreads.getState().load();
+  oldSuccess([row('stale')]); oldFailure(new Error('stale failure'));
+  await Promise.all([first, second]);
+  expect(useThreads.getState().loading).toBe(true);
+  expect(useThreads.getState().threads.some(thread => thread.id === 'stale')).toBe(false);
+  newest([row('authoritative')]); await third;
+  expect(useThreads.getState().threads.map(thread => thread.id)).toEqual(['authoritative']);
+  expect(useThreads.getState().loading).toBe(false);
+});

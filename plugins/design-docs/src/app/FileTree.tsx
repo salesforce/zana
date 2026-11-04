@@ -1,12 +1,17 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, LayoutTemplate, Link2, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2, Upload } from 'lucide-react';
 import type { DesignDocDetail, DesignDocFileMeta } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
-import { extensionOf, fileKindOf, isBinaryKind } from '../shared/paths.js';
-import { errorMessage, toast, useApi } from './api.js';
+import { crossDocMarkdownLink, extensionOf, fileKindOf, isBinaryKind, renameClashingPaths } from '../shared/paths.js';
+import { errorMessage, toast, useApi, type DocKind } from './api.js';
 import { buildTree, type TreeNode } from './content.js';
-import { ConfirmDialog, FileIcon, IconButton, MenuItem, Popover, type ConfirmRequest } from './ui.js';
+import { copyText } from './clipboard.js';
+import { useTemplates } from './hooks.js';
+import { ConfirmDialog, Dialog, FileIcon, IconButton, MenuItem, Popover, type ConfirmRequest } from './ui.js';
+
+/** Why the only file of a doc cannot be deleted; the server enforces the same rule. */
+export const LAST_FILE_REASON = 'A design doc needs at least one file. Delete the doc instead.';
 
 /** A sensible first draft for a new file, by type. */
 export function starterContent(path: string): string {
@@ -96,6 +101,63 @@ function PathInput({
   );
 }
 
+/** Pick a template and add its files to this doc. Never overwrites: clashing files get a number (a-2.md). */
+function TemplateDialog({ docId, existing, onClose, onAdded }: { docId: string; existing: readonly string[]; onClose(): void; onAdded(firstPath: string | null): void }) {
+  const api = useApi();
+  const templates = useTemplates();
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const list = templates.data ?? [];
+  const chosen = list.find((template) => template.key === key) ?? null;
+  const renames = chosen ? renameClashingPaths(chosen.files, existing) : new Map<string, string>();
+  const names = chosen ? chosen.files.map((path) => renames.get(path) ?? path) : [];
+  const add = async () => {
+    if (!chosen) return;
+    setBusy(true);
+    try {
+      const result = await api.addFromTemplate(docId, chosen.key, true);
+      toast(`Added ${result.added.length} file${result.added.length === 1 ? '' : 's'} from ${chosen.label}${result.renamed.length ? `; renamed ${result.renamed.map((rename) => `${rename.from} to ${rename.to}`).join(', ')} to keep your existing files` : ''}`);
+      onAdded(result.added[0] ?? null);
+      onClose();
+    } catch (error) {
+      toast(`Could not add the template: ${errorMessage(error)}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      title="Add from template"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn primary" disabled={!chosen || busy} onClick={() => void add()}>Add files</button>
+        </>
+      }
+    >
+      <label className="dd-field">
+        <span className="dd-field-label">Template</span>
+        <select className="dd-input dd-select" value={key} onChange={(event) => setKey(event.target.value)}>
+          <option value="">Choose a template…</option>
+          {list.map((template) => (
+            <option key={template.key} value={template.key}>{template.label}</option>
+          ))}
+        </select>
+      </label>
+      {chosen ? (
+        <p className="dd-muted dd-field-help">
+          {chosen.description ? `${chosen.description} ` : ''}
+          {`Adds ${names.join(', ')}.`}
+          {renames.size ? ` Files already in the doc are kept, so ${[...renames].map(([from, to]) => `${from} is added as ${to}`).join(', ')}.` : ''}
+        </p>
+      ) : (
+        <p className="dd-muted dd-field-help">Adds the template's files to this doc, alongside what is already here.</p>
+      )}
+    </Dialog>
+  );
+}
+
 function FileRow({
   doc,
   file,
@@ -115,12 +177,13 @@ function FileRow({
   active: boolean;
   renaming: boolean;
   onOpen(): void;
-  onRename(): void;
+  onRename(file: DesignDocFileMeta): void;
   onRenameDone(to: string | null): void;
-  onDelete(): void;
+  onDelete(file: DesignDocFileMeta): void;
 }) {
   const api = useApi();
   const [menu, setMenu] = useState(false);
+  const menuSnapshot = useRef({ doc, file });
   const isEntry = doc.entryPath === file.path;
   const commentCount = doc.comments.filter((comment) => comment.status === 'open' && comment.path === file.path).length;
   if (renaming) {
@@ -136,7 +199,7 @@ function FileRow({
         type="button"
         className="dd-tree-open"
         onClick={onOpen}
-        onDoubleClick={onRename}
+        onDoubleClick={() => onRename(file)}
         title={`${file.path} · ${formatBytes(file.size)} · rev ${file.revision}`}
         aria-current={active ? 'page' : undefined}
       >
@@ -149,14 +212,27 @@ function FileRow({
         open={menu}
         onClose={() => setMenu(false)}
         className="dd-menu"
-        anchor={<IconButton icon={MoreHorizontal} label={`Actions for ${file.path}`} size={13} active={menu} onClick={() => setMenu(!menu)} />}
+        anchor={<IconButton icon={MoreHorizontal} label={`Actions for ${file.path}`} size={13} active={menu} onClick={() => {
+          if (!menu) menuSnapshot.current = { doc, file };
+          setMenu(!menu);
+        }} />}
       >
+        <MenuItem
+          icon={Link2}
+          label="Copy link"
+          hint="Paste into any doc"
+          onSelect={() => {
+            setMenu(false);
+            void copyText(crossDocMarkdownLink(menuSnapshot.current.doc, menuSnapshot.current.file.path)).then((ok) =>
+              toast(ok ? 'Copied link' : 'Could not copy link', ok ? 'info' : 'error'));
+          }}
+        />
         <MenuItem
           icon={Pencil}
           label="Rename or move"
           onSelect={() => {
             setMenu(false);
-            onRename();
+            onRename(menuSnapshot.current.file);
           }}
         />
         {isEntry || isBinaryKind(file.kind) ? null : (
@@ -166,7 +242,7 @@ function FileRow({
             hint="Make this the doc's entry file"
             onSelect={() => {
               setMenu(false);
-              void api.update(doc.id, { entryPath: file.path }).catch((error: unknown) => toast(errorMessage(error), 'error'));
+              void api.update(doc.id, { entryPath: menuSnapshot.current.file.path, expectedHead: menuSnapshot.current.doc.head }).catch((error: unknown) => toast(errorMessage(error), 'error'));
             }}
           />
         )}
@@ -174,9 +250,10 @@ function FileRow({
           icon={Trash2}
           label="Delete"
           danger
+          disabledReason={doc.files.length <= 1 ? LAST_FILE_REASON : undefined}
           onSelect={() => {
             setMenu(false);
-            onDelete();
+            onDelete(menuSnapshot.current.file);
           }}
         />
       </Popover>
@@ -190,7 +267,8 @@ export function FileTree({
   onOpen,
   onPathChanged,
   hasDraft,
-  onHide
+  onHide,
+  docKind
 }: {
   doc: DesignDocDetail;
   activePath: string | null;
@@ -201,11 +279,14 @@ export function FileTree({
   hasDraft?(path: string): boolean;
   /** Collapse the inline tree; absent where the tree is not a column. */
   onHide?(): void;
+  docKind?: DocKind;
 }) {
   const api = useApi();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [creating, setCreating] = useState(false);
-  const [renaming, setRenaming] = useState<string | null>(null);
+  const [fromTemplate, setFromTemplate] = useState(false);
+  const [addMenu, setAddMenu] = useState(false);
+  const [renaming, setRenaming] = useState<DesignDocFileMeta | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const uploadRef = useRef<HTMLInputElement | null>(null);
   const tree = buildTree(doc.files);
@@ -224,19 +305,20 @@ export function FileTree({
       return;
     }
     try {
-      await api.writeFile(doc.id, { path, content: starterContent(path) });
+      await api.writeFile(doc.id, { path, content: starterContent(path), baseRevision: 0, baseFileId: null }, docKind);
       onOpen(path);
     } catch (error) {
       toast(`Could not create ${path}: ${errorMessage(error)}`, 'error');
     }
   };
 
-  const rename = (from: string, to: string | null) => {
+  const rename = (file: DesignDocFileMeta, to: string | null) => {
+    const from = file.path;
     setRenaming(null);
     if (!to || to === from) return;
     const run = async () => {
       try {
-        const result = await api.renameFile(doc.id, from, to);
+        const result = await api.renameFile(doc.id, from, to, file.revision, file.fileId, docKind);
         onPathChanged(from, result.path);
       } catch (error) {
         toast(`Could not rename ${from}: ${errorMessage(error)}`, 'error');
@@ -269,9 +351,10 @@ export function FileTree({
       }
       const asset = kind === 'image' || kind === 'svg' || kind === 'font';
       const path = `${folderOfActive || (asset ? 'assets/' : '')}${file.name.replace(/[^\w.-]+/g, '-')}`;
+      const observed = doc.files.find((entry) => entry.path === path);
       try {
         const body = await readUpload(file);
-        await api.writeFile(doc.id, { path, ...body });
+        await api.writeFile(doc.id, { path, ...body, baseRevision: observed?.revision ?? 0, baseFileId: observed?.fileId ?? null }, docKind);
         const relative = path.slice(folderOfActive.length);
         toast(kind === 'font' || !asset ? `Added ${path}` : `Added ${path}. Reference it with ![${file.name}](${relative})`);
       } catch (error) {
@@ -281,7 +364,12 @@ export function FileTree({
     if (uploadRef.current) uploadRef.current.value = '';
   };
 
-  const askDelete = (file: DesignDocFileMeta) =>
+  const askDelete = (file: DesignDocFileMeta) => {
+    // The server refuses this too; never offer a request that can only be rejected.
+    if (doc.files.length <= 1) {
+      toast(LAST_FILE_REASON, 'error');
+      return;
+    }
     setConfirm({
       title: 'Delete file',
       body: (
@@ -294,13 +382,14 @@ export function FileTree({
       danger: true,
       run: async () => {
         try {
-          await api.deleteFile(doc.id, file.path);
+          await api.deleteFile(doc.id, file.path, file.revision, file.fileId, docKind);
           onPathChanged(file.path, null);
         } catch (error) {
           toast(`Could not delete ${file.path}: ${errorMessage(error)}`, 'error');
         }
       }
     });
+  };
 
   const toggle = (path: string) =>
     setCollapsed((previous) => {
@@ -333,11 +422,11 @@ export function FileTree({
           name={node.name}
           depth={depth}
           active={node.path === activePath}
-          renaming={renaming === node.path}
+          renaming={renaming?.path === node.path}
           onOpen={() => onOpen(node.path)}
-          onRename={() => setRenaming(node.path)}
-          onRenameDone={(to) => void rename(node.path, to)}
-          onDelete={() => askDelete(node.file)}
+          onRename={setRenaming}
+          onRenameDone={(to) => { if (renaming) rename(renaming, to); }}
+          onDelete={askDelete}
         />
       );
     });
@@ -348,9 +437,18 @@ export function FileTree({
         <span className="dd-section-label">Files</span>
         <span className="dd-tree-count">{doc.files.length}</span>
         <span className="dd-spacer" />
-        <IconButton icon={FilePlus2} label="Add files" size={13} disabled={full} onClick={() => uploadRef.current?.click()} />
-        <IconButton icon={Plus} label="New file" size={13} disabled={full} onClick={() => setCreating(true)} />
-        {onHide ? <IconButton icon={PanelLeftClose} label="Hide files" size={13} onClick={onHide} /> : null}
+        <Popover
+          open={addMenu}
+          onClose={() => setAddMenu(false)}
+          className="dd-menu dd-menu-add"
+          align="start"
+          anchor={<IconButton icon={Plus} label="Add to doc" hint="Add a file, template, or upload" size={13} active={addMenu} disabled={full} onClick={() => setAddMenu(!addMenu)} />}
+        >
+          <MenuItem icon={FilePlus2} label="New blank file…" hint="Type a name like notes.md" onSelect={() => { setAddMenu(false); setCreating(true); }} />
+          <MenuItem icon={LayoutTemplate} label="From template…" hint="Add a template's files" onSelect={() => { setAddMenu(false); setFromTemplate(true); }} />
+          <MenuItem icon={Upload} label="Upload files…" hint="From your computer" onSelect={() => { setAddMenu(false); uploadRef.current?.click(); }} />
+        </Popover>
+        {onHide ? <IconButton icon={PanelLeftClose} label="Hide files" hint="Hide the file list" size={13} onClick={onHide} /> : null}
         <input
           ref={uploadRef}
           type="file"
@@ -373,6 +471,7 @@ export function FileTree({
         ) : null}
       </div>
       {confirm ? <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} /> : null}
+      {fromTemplate ? <TemplateDialog docId={doc.id} existing={doc.files.map((file) => file.path)} onClose={() => setFromTemplate(false)} onAdded={(path) => { if (path) onOpen(path); }} /> : null}
     </nav>
   );
 }

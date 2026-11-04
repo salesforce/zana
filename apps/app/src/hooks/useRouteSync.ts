@@ -1,5 +1,5 @@
 import { product } from '../lib/product-client.js';
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useUi, type ExtensionsTab, type NavId, type ProjectView, type SettingsTab } from '../store.js';
 import { registerAppNavigate } from '../lib/app-navigate.js';
@@ -56,7 +56,11 @@ export function useRouteSync(): void {
     void navigate(next, { replace: true });
   }, [location.hash, location.pathname, location.search, navigate]);
 
-  useEffect(() => {
+  // Mirror before any passive effect runs. Navigations commit at once (#532),
+  // so a page effect can consume a one-shot field such as `settingsAnchor` and
+  // clear the hash in the same flush; a passive mirror would then re-apply the
+  // anchor from the location that was just left, and the reveal stays stuck.
+  useLayoutEffect(() => {
     const decoded = decodeRoutePath(location.pathname, location.hash, location.search);
     const current = useUi.getState();
     const keepFocus =

@@ -77,3 +77,21 @@ it('opens, closes, lists and subscribes to thread view windows through their IPC
   off();
   expect(electron.off).toHaveBeenCalledWith(IPC.windows.onThreadViewsChanged, handler);
 });
+
+it('binds close preflight readiness, completion and requests to the preload IPC bridge', async () => {
+  const cc = await api();
+  electron.invoke.mockClear();
+  await cc.windows.pluginViewCloseReady(true);
+  await cc.windows.pluginViewCloseComplete('r1', { ok: true });
+  expect(electron.invoke.mock.calls).toEqual([
+    [IPC.windows.pluginViewCloseReady, true],
+    [IPC.windows.pluginViewCloseComplete, 'r1', { ok: true }]
+  ]);
+  const callback = vi.fn();
+  const off = cc.windows.onPluginViewCloseRequest(callback);
+  const handler = electron.on.mock.calls.find(([name]) => name === IPC.windows.onPluginViewCloseRequest)![1];
+  handler({}, { requestId: 'r1' });
+  expect(callback).toHaveBeenCalledWith({ requestId: 'r1' });
+  off();
+  expect(electron.off).toHaveBeenCalledWith(IPC.windows.onPluginViewCloseRequest, handler);
+});

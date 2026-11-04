@@ -32,6 +32,30 @@ and issue reports are welcome.
 5. Open a pull request against `main`. Explain the problem, the solution, and
    how you tested it. Link any related issue.
 
+### Optional: local TinyNod review before you push
+
+Authorized internal developers can opt in to an advisory AI review that runs
+during `git push` alongside Zana's own verification. It never blocks a push and
+public CI never runs it. It sends the outgoing diff to an internal AI gateway,
+so read the data policy in the guide first.
+
+1. Install TinyNod 2.5.0+ from the CodeNod homepage,
+   <https://git.soma.salesforce.com/cc-oms/pr-reviewer> ("tinynod (standalone CLI)").
+2. If the CodeNod app is running, import its settings first:
+   `tinynod config import --from-app` (settings only, no key). Then store a
+   gateway key and a full model id. With DevBar / AI Suite:
+   `tinynod config set ai.apiKey "$('/Applications/devbar.app/Contents/MacOS/devbar' auth claude)"`
+   then `tinynod config set ai.model claude-opus-5-5`. Without DevBar / AI Suite:
+   `tinynod config init`.
+3. Opt in: `git config --local zana.tinynod.enabled true` (opt out: set `false`;
+   skip once: `TINYNOD_SKIP_HOOK=1 git push`).
+4. Push. Read the one-line result, and ask your coding agent to summarize and
+   fix findings (prompt in the guide).
+
+Full setup, troubleshooting (`no AI API key configured`, `Access denied`),
+result statuses, and the AI-assisted fix workflow:
+[`docs/tinynod-local-review.md`](docs/tinynod-local-review.md).
+
 ## Pull Request Expectations
 
 - Keep pull requests focused and avoid unrelated formatting or refactors.

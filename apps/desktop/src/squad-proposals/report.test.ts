@@ -37,11 +37,23 @@ describe('buildSquadReport', () => {
   });
 
   const worktree = { path: '/tmp/wt', branch: 'squad/x', baseBranch: 'main' };
+  it('does not claim Squad kept a user-owned worktree', () => {
+    const owned = record({ squadWorktree: { ...worktree, ownership: 'user' } as never });
+    for (const outcome of [undefined, 'kept' as const]) {
+      const text = buildSquadReport(owned, outcome ? { worktree: outcome } : {});
+      expect(text).toContain('Ran in your worktree squad/x at /tmp/wt.');
+      expect(text).not.toContain('kept');
+    }
+    const managed = record({ squadWorktree: { ...worktree, ownership: 'managed' } as never });
+    expect(buildSquadReport(managed, { worktree: 'kept' })).toContain('Branch squad/x, worktree kept at /tmp/wt.');
+  });
+
   it('names what the worktree handler actually did', () => {
     const merge = record({ squadWorktree: worktree, request: { version: 1, slots: [], onComplete: 'merge' } as never });
     expect(buildSquadReport(merge, { worktree: 'merged' })).toContain('Branch squad/x merged into main.');
     expect(buildSquadReport(merge, { worktree: 'kept' })).toContain('Branch squad/x, worktree kept at /tmp/wt.');
     expect(buildSquadReport(merge, { worktree: 'missing' })).toContain('Branch squad/x; its worktree was already removed.');
+    expect(buildSquadReport(merge, { worktree: 'deleted' })).toContain('Branch squad/x; its worktree and branch were deleted after completion.');
     // A run with a worktree but no outcome is described as kept (never guessed as merged).
     expect(buildSquadReport(merge)).toContain('worktree kept at /tmp/wt');
   });

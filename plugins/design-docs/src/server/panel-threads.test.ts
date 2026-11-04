@@ -3,6 +3,7 @@ import type { PluginAgentConfigureContext } from '@zana-ai/zcc-plugin-sdk/server
 import type { DocActor } from '../shared/contract.js';
 import { panelDocId, registerPanelThreadLinks } from './panel-threads.js';
 import { DesignDocStore } from './store.js';
+import { TOOL_NAMES } from './tools.js';
 import { createTestDatabase } from './test-db.js';
 
 const user: DocActor = { kind: 'user', label: 'You', threadId: null };
@@ -34,7 +35,7 @@ describe('panel thread links', () => {
       thread: { id: 't1', title: ' Review the API ' },
       pluginMetadata: { panelAgent: { panel: 'design-docs', view: `${doc.id}/README.md` } }
     } as unknown as PluginAgentConfigureContext;
-    expect(configure(ctx)).toBeUndefined();
+    expect(configure(ctx)).toEqual({ tools: [...TOOL_NAMES] });
     expect(store.get(doc.id).threads).toMatchObject([{ threadId: 't1', title: 'Review the API', role: 'assistant' }]);
     expect(changed).toHaveBeenCalledWith(doc.id);
 
@@ -44,11 +45,12 @@ describe('panel thread links', () => {
     expect(changed).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores threads without a doc binding or bound to a missing doc', () => {
+  it('ignores threads without a doc binding or bound to a missing doc, still offering every tool', () => {
     const { store, changed, doc, configure } = setup();
-    configure({ threadId: 't1', pluginMetadata: {} } as PluginAgentConfigureContext);
-    configure({ pluginMetadata: { panelAgent: { view: doc.id } } } as unknown as PluginAgentConfigureContext);
-    configure({ threadId: 't2', pluginMetadata: { panelAgent: { view: 'gone' } } } as unknown as PluginAgentConfigureContext);
+    const all = { tools: [...TOOL_NAMES] };
+    expect(configure({ threadId: 't1', pluginMetadata: {} } as PluginAgentConfigureContext)).toEqual(all);
+    expect(configure({ pluginMetadata: { panelAgent: { view: doc.id } } } as unknown as PluginAgentConfigureContext)).toEqual(all);
+    expect(configure({ threadId: 't2', pluginMetadata: { panelAgent: { view: 'gone' } } } as unknown as PluginAgentConfigureContext)).toEqual(all);
     expect(store.get(doc.id).threads).toEqual([]);
     expect(changed).not.toHaveBeenCalled();
   });

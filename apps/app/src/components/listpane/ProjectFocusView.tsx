@@ -20,11 +20,14 @@ import {
   useAgentCardActions,
   AgentCardMenu,
   clampMenuAnchor,
-  cliAgentDeleteConfirm,
-  cliAgentRemoveLabel
+  cliAgentKeepsHistory,
+  cliAgentRemoveConfirm,
+  cliAgentRemoveLabel,
+  cliAgentRemoveTitle
 } from '../agentCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
+import { sortCatalogueByName } from '../../lib/catalogue-sort.js';
 
 /** Quick-launch profiles offered by the focus-view "+" dropdown, in order. */
 const FOCUS_NEW_PROFILES: { profile: LaunchProfileId; label: string }[] = [
@@ -96,12 +99,18 @@ export function ProjectFocusView({ project }: { project: Project }) {
   const agentById = useAgentStatus((s) => s.byId);
   // Personas offered in the "+" menu: builtin + global + this project's own.
   const allPersonas = usePersonas((s) => s.personas);
-  const personas = allPersonas.filter(
-    (p) =>
-      typeof p.source !== 'object' ||
-      p.source === null ||
-      !('projectId' in p.source) ||
-      p.source.projectId === project.id
+  const quickLaunchPersonas = useMemo(
+    () =>
+      sortCatalogueByName(
+        allPersonas.filter(
+          (p) =>
+            typeof p.source !== 'object' ||
+            p.source === null ||
+            !('projectId' in p.source) ||
+            p.source.projectId === project.id
+        )
+      ),
+    [allPersonas, project.id]
   );
 
   const buckets = useMemo(() => {
@@ -221,12 +230,12 @@ export function ProjectFocusView({ project }: { project: Project }) {
                   <span>{label}</span>
                 </button>
               ))}
-              {personas.length > 0 && (
+              {quickLaunchPersonas.length > 0 && (
                 <>
                   <div className="focus-new-menu-label" role="presentation">
                     Personas
                   </div>
-                  {personas.map((p) => (
+                  {quickLaunchPersonas.map((p) => (
                     <button
                       key={p.id}
                       type="button"
@@ -346,13 +355,13 @@ export function ProjectFocusView({ project }: { project: Project }) {
                           <button
                             type="button"
                             className="project-terminal-close"
-                            aria-label={`${cliAgentRemoveLabel(exited)} ${t.title}`}
-                            title={exited ? cliAgentRemoveLabel(true) : 'Delete (ends the process)'}
+                            aria-label={`${cliAgentRemoveLabel(t)} ${t.title}`}
+                            title={cliAgentRemoveTitle(t, 'focus')}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (
                                 !exited &&
-                                !window.confirm(cliAgentDeleteConfirm(t.title))
+                                !window.confirm(cliAgentRemoveConfirm(t, cliAgentKeepsHistory(t, project)))
                               ) {
                                 return;
                               }

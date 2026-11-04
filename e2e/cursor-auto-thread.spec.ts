@@ -13,6 +13,8 @@ test.use({
     writeFileSync(join(bin, 'cursor-agent'), `#!${process.execPath}
 if (process.argv.includes('--version')) { console.log('2026.09.28-64d2043'); process.exit(0); }
 process.env.FAKE_ACP_CURSOR_PARAMETERIZED_MODELS = '1';
+process.env.FAKE_ACP_AUTH_METHODS = 'cursor_login';
+process.env.FAKE_ACP_PROMPT_PREFIX = 'cursor-probe:';
 process.env.FAKE_ACP_REQUEST_LOG = ${JSON.stringify(join(home, 'cursor-requests.jsonl'))};
 await import(${JSON.stringify(new URL('../plugins/provider-acp/src/bridge/fake-acp-agent.mjs', import.meta.url).href)});
 `, { mode: 0o700 });
@@ -32,7 +34,7 @@ test('Cursor Auto launches and accepts a follow-up in the built thread UI', asyn
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ projectId: project.value.id, providerId: 'acp-cursor',
         model: 'default', reasoningLevel: 'medium', serviceTier: 'default', acpMode: 'agent',
-        input: 'echo-selected-model', permissionMode: 'full' }),
+        input: 'cursor-probe:echo-selected-model', permissionMode: 'full' }),
     });
     const body = await response.json();
     if (!response.ok) throw Error(JSON.stringify(body));
@@ -48,7 +50,7 @@ test('Cursor Auto launches and accepts a follow-up in the built thread UI', asyn
     (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, id);
   await expect.poll(status).toBe('idle');
   const composer = app.window.getByTestId('thread-command-input');
-  await composer.fill('echo-selected-model');
+  await composer.fill('cursor-probe:echo-selected-model');
   await composer.press('Enter');
   await expect(timeline.getByText('selected-model:default', { exact: true })).toHaveCount(2, { timeout: 30_000 });
   await expect.poll(status).toBe('idle');
@@ -59,6 +61,10 @@ test('Cursor Auto launches and accepts a follow-up in the built thread UI', asyn
   const requests = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(requests.some(request => request.method === 'initialize' &&
     request.params.clientCapabilities?._meta?.parameterizedModelPicker === true)).toBe(true);
+  const authenticateIndex = requests.findIndex(request => request.method === 'authenticate');
+  expect(authenticateIndex).toBeGreaterThanOrEqual(0);
+  expect(requests[authenticateIndex].params).toEqual({ methodId: 'cursor_login', _meta: { headless: true } });
+  expect(requests.findIndex(request => request.method === 'session/new')).toBeGreaterThan(authenticateIndex);
   expect(requests.filter(request => request.method === 'session/prompt')).toHaveLength(2);
   expect(requests.some(request => request.params?.value === 'auto-smart' || request.params?.modelId === 'auto-smart')).toBe(false);
 

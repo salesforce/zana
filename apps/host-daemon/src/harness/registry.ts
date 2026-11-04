@@ -7,7 +7,7 @@
  */
 
 import { validateHarnessRegistrations } from '@zcc/harness-sdk';
-import type { LaunchProfileId, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, LaunchProfileId, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import type { HarnessFamily } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor, HarnessAdapterId, HarnessAvailability } from '@zana-ai/zcc-domain/harness-adapter';
 import { availabilityFromVerify } from '@zana-ai/zcc-domain/harness-adapter';
@@ -16,6 +16,8 @@ import { validateConfigFiles } from './adapter-contract.js';
 import { LeastCapableProvider } from './least-capable-provider.js';
 import type { RemoteCommandInput, RemoteCommandResult } from './launch-provider.js';
 import type { LaunchProvider } from './launch-provider.js';
+import { withLiveModelTargets } from './launch-provider.js';
+import { isLiveListedModelTargetId } from './target-resolution.js';
 import type { HarnessRegistration } from './registration.js';
 import { claudeHarness } from './claude/registration.js';
 import { cursorHarness } from './cursor/registration.js';
@@ -110,9 +112,13 @@ export function registeredAdapters(): readonly LaunchProvider[] {
 
 /** Build renderer-safe descriptors from trusted provider metadata plus verified availability. */
 export function harnessAdapterDescriptors(
-  availability: ReadonlyMap<HarnessAdapterId, HarnessAvailability>
+  availability: ReadonlyMap<HarnessAdapterId, HarnessAvailability>,
+  inventories: readonly HarnessModelInventory[] = []
 ): HarnessAdapterDescriptor[] {
-  return registeredAdapters().map((provider) => ({
+  return registeredAdapters().map((shared) => {
+    const inventory = inventories.find(row => row.family === shared.adapter.descriptor.id);
+    const provider = inventory ? withLiveModelTargets(shared, inventory.models) : shared;
+    return ({
     ...provider.adapter.descriptor,
     targets: provider.adapter.descriptor.targets ? {
       ...provider.adapter.descriptor.targets,
@@ -123,12 +129,48 @@ export function harnessAdapterDescriptors(
       installed: false,
       reason: 'Verification required'
     }
+    });
+  });
+}
+
+export interface HarnessModelInventory {
+  family: string;
+  models: string[];
+}
+
+/** Probe only verified installations on their owner host; never mutate shared providers. */
+export async function discoverHarnessModelInventories(
+  results: readonly { family: string; enabled: boolean; installed: boolean }[],
+  context: { cwd: string; config: AppConfig },
+  providers: readonly LaunchProvider[] = registeredAdapters()
+): Promise<HarnessModelInventory[]> {
+  const inventories = await Promise.all(providers.map(async provider => {
+    const family = provider.adapter.descriptor.id;
+    const verified = results.find(row => row.family === family);
+    if (!verified?.enabled || !verified.installed || !provider.discoverModelTargets) return undefined;
+    try {
+      const ids = await provider.discoverModelTargets(context);
+      if (!ids) return undefined;
+      const seen = new Set<string>();
+      const models: string[] = [];
+      for (const id of ids) {
+        if (typeof id !== 'string' || !isLiveListedModelTargetId(id) || !id.includes('/') || seen.has(id)) continue;
+        seen.add(id);
+        models.push(id);
+        if (models.length >= 10_000) break;
+      }
+      return { family, models };
+    } catch {
+      return undefined;
+    }
   }));
+  return inventories.filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
 }
 
 /** Resolve verified availability into renderer-safe trusted adapter descriptors. */
 export function harnessAdapterDescriptorsFromVerify(
-  results: readonly HarnessVerifyResult[]
+  results: readonly HarnessVerifyResult[],
+  inventories: readonly HarnessModelInventory[] = []
 ): HarnessAdapterDescriptor[] {
   return harnessAdapterDescriptors(
     new Map(registeredAdapters().map(({ adapter }) => [
@@ -137,7 +179,8 @@ export function harnessAdapterDescriptorsFromVerify(
         adapter.descriptor.id,
         results.find((result) => result.family === adapter.descriptor.id)
       )
-    ]))
+    ])),
+    inventories
   );
 }
 

@@ -14,10 +14,10 @@ it('bundles the page runtime and site kit as standalone scripts matching the shi
   outDirs.push(outDir);
   await buildPageAssets(pluginRoot, outDir);
   for (const [file, banner] of [['page-runtime.js', '// Generated from src/runtime'], ['kit/site.js', '// Design Docs site kit.']] as const) {
-    const built = readFileSync(join(outDir, file), 'utf8');
+    const built = readFileSync(join(outDir, file), 'utf8').replace(/\r\n/g, '\n');
     expect(built.startsWith(banner)).toBe(true);
     expect(built).toContain('(() => {');
     expect(built).not.toMatch(/^\s*import\s/m);
-    expect(built).toBe(readFileSync(join(pluginRoot, file), 'utf8'));
+    expect(built).toBe(readFileSync(join(pluginRoot, file), 'utf8').replace(/\r\n/g, '\n'));
   }
 }, 60_000);

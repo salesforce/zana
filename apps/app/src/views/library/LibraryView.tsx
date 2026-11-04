@@ -77,7 +77,7 @@ export function LibraryView({ project, deepLink = null }: Props) {
     [allDocs, project.id]
   );
 
-  const { compact, selectedDoc, setSelectedDoc, readerOpen, backToDocuments, rootRef, backRef } = useLibraryNavigation();
+  const { compact, selectedDoc, setSelectedDoc, readerOpen, backToDocuments, rootRef, backRef, fragment, openDocumentLink } = useLibraryNavigation(docs);
   const [searchQuery, setSearchQuery] = useState('');
   const { hits: bodyHits, searching: bodySearching, warning: searchWarning } = useLibraryBodySearch(searchQuery);
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
@@ -731,6 +731,13 @@ export function LibraryView({ project, deepLink = null }: Props) {
             <DocPreview
               key={selectedDoc.id || selectedDoc.relPath}
               doc={selectedDoc}
+              fragment={fragment}
+              onOpenDocument={link => {
+                if (openDocumentLink(link)) {
+                  setSearchQuery('');
+                  setSelectedTags(new Set());
+                }
+              }}
               autoEdit={startEditing}
               onAutoEditConsumed={() => setStartEditing(false)}
             />

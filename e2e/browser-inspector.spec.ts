@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { createServer } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -6,7 +7,7 @@ import { test, expect } from './fixtures/app.js';
 test.use({
   e2e: true,
   launchEnv: { ZCC_FAKE_PROVIDER: '1' },
-  initialConfig: { classicSessionViewEnabled: false, agentsBoardView: 'board', sponsorPromptDismissed: true }
+  initialConfig: { classicSessionViewEnabled: false, threadTabsEnabled: false, agentsBoardView: 'board', sponsorPromptDismissed: true }
 });
 
 for (const surface of ['thread', 'cli'] as const) {
@@ -51,7 +52,7 @@ for (const surface of ['thread', 'cli'] as const) {
       const modal = window.getByTestId(surface === 'thread' ? 'thread-modal' : 'agent-terminal-modal');
       await expect(modal).toBeVisible();
       await modal.getByTestId('thread-secondary-show').click();
-      await modal.getByTestId('thread-secondary-new-tab').click();
+      await openThreadToolLauncher(modal);
       await modal.getByTestId('thread-new-tab-browser').click();
       const location = modal.getByTestId('thread-browser-address');
       await location.fill(url);

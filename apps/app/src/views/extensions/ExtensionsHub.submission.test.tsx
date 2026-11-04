@@ -6,12 +6,12 @@ const plugins = vi.hoisted(() => ({ entries: [] as any[], modules: [] as any[] }
 vi.mock('@/modules', () => ({ useMergedModules: () => plugins.modules }));
 vi.mock('@/modules/ModulePanelHost', () => ({ getHost: vi.fn() }));
 vi.mock('@/plugins/plugin-app-loader', () => ({ reconcilePluginApps: vi.fn() }));
-vi.mock('@/plugins/PluginDefinedSettings', () => ({ PluginDefinedSettings: () => null }));
+vi.mock('@/plugins/PluginDefinedSettings', () => ({ PluginSettingsForm: () => null }));
 vi.mock('@/plugins/PluginSettingsSections', () => ({ PluginSettingsSections: () => null }));
 vi.mock('./PluginHubIncludes.js', () => ({ PluginHubIncludes: () => null }));
 vi.mock('../../lib/product-client.js', () => ({ product: {
   extensions: { list: async () => [], onChanged: () => () => {}, marketplaceList: async () => ({ ok: true, value: [] }) },
-  pluginApps: { list: async () => plugins.entries, onChanged: () => () => {} }
+  pluginApps: { getSettings: async () => ({ descriptors: {}, values: {} }), list: async () => plugins.entries, onChanged: () => () => {} }
 } }));
 import { useUi } from '@/store';
 import { InstalledView } from './ExtensionsHub.js';

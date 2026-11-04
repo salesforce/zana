@@ -157,14 +157,15 @@ function resolvePluginSdkAppEntry(): string {
  * Plugin app bundles are native ESM loaded with `import()` and no import map.
  * Bare `@zana-ai/zcc-plugin-sdk/app` specifiers throw in the renderer. Point
  * them at the SDK source so esbuild inlines the global-host shim (same idea
- * as `hostReactPlugin`).
+ * as `hostReactPlugin`). Backends can also use its pure helpers without a
+ * runtime SDK install. Only the exact root and server entries come from the host.
  */
-function hostPluginSdkPlugin(): {
+function hostPluginSdkPlugin(externalServerSdk = false): {
   name: string;
   setup(build: {
     onResolve(
       opts: { filter: RegExp },
-      fn: (args: { path: string }) => { path: string }
+      fn: (args: { path: string }) => { path: string; external?: boolean }
     ): void;
   }): void;
 } {
@@ -172,6 +173,9 @@ function hostPluginSdkPlugin(): {
   return {
     name: 'zcc-host-plugin-sdk-app',
     setup(build) {
+      if (externalServerSdk) {
+        build.onResolve({ filter: /^@zana-ai\/zcc-plugin-sdk(?:\/server)?$/ }, (args) => ({ path: args.path, external: true }));
+      }
       build.onResolve({ filter: /^@zana-ai\/zcc-plugin-sdk\/app$/ }, () => ({ path: sdkApp }));
     }
   };
@@ -211,11 +215,14 @@ export async function bundlePluginEntry(opts: {
       sourcemap: opts.sourcemap ?? false,
       logLevel: 'silent',
       loader: opts.platform === 'browser' ? { '.css': 'text' } : undefined,
-      plugins: opts.platform === 'browser' ? [hostReactPlugin(), hostPluginSdkPlugin()] : undefined,
+      plugins: opts.platform === 'browser' ? [hostReactPlugin(), hostPluginSdkPlugin()]
+        : opts.bundleSdk ? undefined : [hostPluginSdkPlugin(true)],
       banner: opts.platform === 'node' ? { js: NODE_ESM_REQUIRE_BANNER } : undefined,
       external:
         opts.bundleSdk ? [] : opts.platform === 'node'
-          ? ['@zana-ai/zcc-plugin-sdk', '@zana-ai/zcc-plugin-sdk/server']
+          // esbuild's package externals match every subpath. Resolve the exact
+          // host-provided entries above so SDK helpers are bundled as well.
+          ? []
           : ['@zana-ai/zcc-plugin-sdk/server']
     });
     mkdirSync(dirname(opts.outfile), { recursive: true });

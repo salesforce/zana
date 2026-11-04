@@ -1,0 +1,17 @@
+[
+  { "caption": "Squads: a team of agents that plan, split and deliver work together", "line": "Squads let a team of agents plan, split, and deliver work together." },
+  { "caption": "Two ways to build one. The quickest: ask an agent", "line": "There are two ways to build one. The quickest: just ask an agent." },
+  { "caption": "The agent writes the squad into your project", "line": "It writes the squad definition straight into your project." },
+  { "caption": "It shows up in Settings → Squads, ready to launch", "line": "And it shows up in Settings, ready to launch." },
+  { "caption": "Or build it yourself: New squad", "line": "Or build one yourself. Click New squad, and give it a name." },
+  { "caption": "Add one slot per role, each backed by a persona", "line": "Add one slot per role: an orchestrator, two workers, and a reviewer." },
+  { "caption": "Crown the orchestrator: it starts first, plans and delegates", "line": "Crown the orchestrator. It starts first, plans the work, and delegates." },
+  { "caption": "Optional: opening prompt, default project, worktree and launch policy", "line": "Optionally, set an opening prompt, a project, worktrees, and launch approval." },
+  { "caption": "Saved: your squad is in the catalogue, ready to launch", "line": "Save it, and your squad joins the catalogue." },
+  { "caption": "Launch: New agent → Squad, then describe the goal", "line": "To launch, open New agent, choose Squad, and describe the goal." },
+  { "caption": "The orchestrator plans; workers pick up tasks in parallel", "line": "The orchestrator breaks it into tasks, and workers pick them up in parallel." },
+  { "caption": "Flow view shows who is working and how work hands off", "line": "Flow view shows who is working, and how work hands off." },
+  { "caption": "When the squad needs a decision, it asks you in the Inbox", "line": "When the squad needs a decision, it asks you in the Inbox." },
+  { "caption": "Answer once, and the squad finishes the job", "line": "Answer once, and the squad finishes the job." },
+  { "caption": "Squads: ask an agent or build it yourself, then launch it for any goal", "line": "Ask an agent, or build it yourself. Then launch it for any goal." }
+]

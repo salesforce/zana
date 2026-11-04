@@ -12,6 +12,7 @@ import { ThreadCreateError } from './thread-create.js';
 
 /** Route-like text only: panel and view are echoed into the agent's grounding instructions. */
 const ROUTE_PATTERN = /^[\p{L}\p{N}/._~:@!$&'()*+,;=?#%-]{1,256}$/u;
+const VIEW_PATTERN = /^[\p{L}\p{N}/._~:@!$&'()*+,;=?#%-]{1,500}$/u;
 
 export interface PluginPanelBinding {
   originPluginId: string;
@@ -46,7 +47,7 @@ export function resolvePluginPanelBinding(
   }
   // The view is optional context, so a malformed one is dropped, not refused.
   const rawView = typeof rec?.view === 'string' ? rec.view.trim().replace(/^\/+/, '') : '';
-  const view = ROUTE_PATTERN.test(rawView) ? rawView : null;
+  const view = VIEW_PATTERN.test(rawView) ? rawView : null;
   return {
     originPluginId: pluginId,
     pluginMetadata: { panelAgent: view ? { panel, view } : { panel } },
@@ -65,7 +66,8 @@ export function pluginPanelThreads(
   plugins: Pick<PluginService, 'get'> | undefined,
   pluginId: string,
   limitParam: string | null,
-  panel: string | null = null
+  panel: string | null = null,
+  scope?: { projectId?: string; view?: string }
 ): { ok: true; threads: ConversationThreadRow[] } | { ok: false; status: number; message: string } {
   if (!pluginId || pluginId === 'sdk' || !plugins?.get(pluginId)) {
     return { ok: false, status: 404, message: `plugin ${pluginId} is not installed` };
@@ -74,7 +76,15 @@ export function pluginPanelThreads(
   if (!Number.isInteger(limit) || limit < 1) {
     return { ok: false, status: 400, message: 'limit must be a positive integer' };
   }
-  return { ok: true, threads: listPanelAgentThreads(db, pluginId, limit, panel?.trim() || undefined) };
+  for (const [field, value] of Object.entries(scope ?? {})) {
+    if (value !== undefined && (typeof value !== 'string' || !value.trim() || value.length > 2048 || /[\u0000-\u001f\u007f]/.test(value))) {
+      return { ok: false, status: 400, message: `${field} must be non-empty text without control characters (at most 2048 characters)` };
+    }
+  }
+  const page = panel?.trim() || undefined;
+  return { ok: true, threads: scope
+    ? listPanelAgentThreads(db, pluginId, limit, page, scope)
+    : listPanelAgentThreads(db, pluginId, limit, page) };
 }
 
 /**

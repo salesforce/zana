@@ -55,6 +55,8 @@ vi.mock('../ui/PopoverPicklist.js', () => ({
           ? value === 'agent' ? 'team' : 'agent'
           : id === 'sched-team'
             ? 'team-1'
+            : id === 'sched-use-user-config'
+              ? value === 'inherit' ? 'user' : value === 'user' ? 'isolated' : 'inherit'
             : id === 'sched-plan-source'
               ? 'provided'
               : value || 'p1'
@@ -158,6 +160,123 @@ describe('ScheduleEditor', () => {
     fireEvent.click(screen.getByLabelText('Run as'));
     await vi.waitFor(() => expect(screen.getByLabelText('Launch profile')).toBeTruthy());
     expect(screen.queryByLabelText('Squad')).toBeNull();
+  });
+
+  describe('Claude config control', () => {
+    const baseTask = {
+      id: 'sched-1', name: 'N', enabled: true, projectId: 'p1', profile: 'claude',
+      schedule: { every: '1h' }, overlap: 'skip', history: { retain: 10 },
+      status: { runCount: 0, runs: [] }, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z'
+    };
+    const picker = () => screen.getByRole('button', { name: 'Claude config for this schedule' });
+
+    it('defaults to global setting and omits useUserConfig on create', async () => {
+      create.mockResolvedValue({ ok: true, value: { id: 'c1' } });
+      render(<ScheduleEditor task={null} />);
+      expect(picker().textContent).toBe('inherit');
+      fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, { target: { value: 'X' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
+      await vi.waitFor(() => expect(create).toHaveBeenCalled());
+      expect(create.mock.calls.at(-1)![0]).not.toHaveProperty('useUserConfig');
+    });
+
+    it('sends true on create when set to my Claude config', async () => {
+      create.mockResolvedValue({ ok: true, value: { id: 'c1' } });
+      render(<ScheduleEditor task={null} />);
+      fireEvent.click(picker());
+      fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, { target: { value: 'X' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
+      await vi.waitFor(() => expect(create).toHaveBeenCalled());
+      expect(create.mock.calls.at(-1)![0].useUserConfig).toBe(true);
+    });
+
+    it('sends false on create when isolated', async () => {
+      create.mockResolvedValue({ ok: true, value: { id: 'c1' } });
+      render(<ScheduleEditor task={null} />);
+      fireEvent.click(picker());
+      fireEvent.click(picker());
+      fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, { target: { value: 'X' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
+      await vi.waitFor(() => expect(create).toHaveBeenCalled());
+      expect(create.mock.calls.at(-1)![0].useUserConfig).toBe(false);
+    });
+
+    it('prefills from the task and saves null when reset to global', async () => {
+      update.mockResolvedValue({ ok: true, value: { id: 'sched-1' } });
+      render(<ScheduleEditor task={{ ...baseTask, useUserConfig: false } as never} />);
+      expect(picker().textContent).toBe('isolated');
+      fireEvent.click(picker());
+      expect(picker().textContent).toBe('inherit');
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await vi.waitFor(() => expect(update).toHaveBeenCalled());
+      expect(update.mock.calls.at(-1)![1].useUserConfig).toBeNull();
+    });
+
+    it('saves true on edit for a task already on my Claude config', async () => {
+      update.mockResolvedValue({ ok: true, value: { id: 'sched-1' } });
+      render(<ScheduleEditor task={{ ...baseTask, useUserConfig: true } as never} />);
+      expect(picker().textContent).toBe('user');
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await vi.waitFor(() => expect(update).toHaveBeenCalled());
+      expect(update.mock.calls.at(-1)![1].useUserConfig).toBe(true);
+    });
+  });
+
+  describe('Required MCP servers control', () => {
+    const baseTask = {
+      id: 'sched-1', name: 'N', enabled: true, projectId: 'p1', profile: 'claude',
+      schedule: { every: '1h' }, overlap: 'skip', history: { retain: 10 },
+      status: { runCount: 0, runs: [] }, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z'
+    };
+    const field = () => document.querySelector('#sched-required-mcps') as HTMLTextAreaElement | null;
+
+    it('shows the hint and omits requiredMcps on create when empty', async () => {
+      create.mockResolvedValue({ ok: true, value: { id: 'c1' } });
+      render(<ScheduleEditor task={null} />);
+      expect(screen.getByText('Required MCP servers', { exact: false })).toBeTruthy();
+      expect(screen.getByText("The run fails clearly if one of these isn't available in the isolated config.")).toBeTruthy();
+      fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, { target: { value: 'X' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
+      await vi.waitFor(() => expect(create).toHaveBeenCalled());
+      expect(create.mock.calls.at(-1)![0]).not.toHaveProperty('requiredMcps');
+    });
+
+    it('parses comma and line separated names, de-duplicated, on create', async () => {
+      create.mockResolvedValue({ ok: true, value: { id: 'c1' } });
+      render(<ScheduleEditor task={null} />);
+      fireEvent.change(field()!, { target: { value: 'slack, github\n slack ,, ' } });
+      fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, { target: { value: 'X' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
+      await vi.waitFor(() => expect(create).toHaveBeenCalled());
+      expect(create.mock.calls.at(-1)![0].requiredMcps).toEqual(['slack', 'github']);
+    });
+
+    it('prefills from the task and saves null when cleared', async () => {
+      update.mockResolvedValue({ ok: true, value: { id: 'sched-1' } });
+      render(<ScheduleEditor task={{ ...baseTask, requiredMcps: ['slack'] } as never} />);
+      expect(field()!.value).toBe('slack');
+      fireEvent.change(field()!, { target: { value: '  ' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await vi.waitFor(() => expect(update).toHaveBeenCalled());
+      expect(update.mock.calls.at(-1)![1].requiredMcps).toBeNull();
+    });
+
+    it('saves the list on edit', async () => {
+      update.mockResolvedValue({ ok: true, value: { id: 'sched-1' } });
+      render(<ScheduleEditor task={{ ...baseTask, requiredMcps: ['slack'] } as never} />);
+      fireEvent.change(field()!, { target: { value: 'slack, jira' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await vi.waitFor(() => expect(update).toHaveBeenCalled());
+      expect(update.mock.calls.at(-1)![1].requiredMcps).toEqual(['slack', 'jira']);
+    });
+
+    it('is hidden when the schedule opts out of isolation or uses the shell profile', () => {
+      const first = render(<ScheduleEditor task={{ ...baseTask, useUserConfig: true } as never} />);
+      expect(field()).toBeNull();
+      first.unmount();
+      render(<ScheduleEditor task={{ ...baseTask, profile: 'shell' } as never} />);
+      expect(field()).toBeNull();
+    });
   });
 
   it('saves edits and re-enables the submit button', async () => {

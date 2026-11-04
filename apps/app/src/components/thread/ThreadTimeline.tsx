@@ -1,3 +1,4 @@
+import { ThreadAnnotationSelection } from './ThreadAnnotationSelection.js';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import {
@@ -36,6 +37,7 @@ import { TimelineRows } from './timeline/TimelineRows.js';
 import { retainTerminalExpansionIds } from './timeline/timeline-window.js';
 import { THREAD_MESSAGE_SENT_EVENT } from './timeline/thread-optimistic-events.js';
 import { observeStickyUserPrompts } from './timeline/timeline-sticky-user.js';
+import { useThreadSearchHighlights } from './timeline/search-highlight.js';
 import { PaneEmptyState } from '../PaneEmptyState.js';
 
 export interface ThreadTimelineProps {
@@ -58,6 +60,8 @@ export interface ThreadTimelineProps {
   onFork?: (sourceSeqEnd?: number) => void;
   forceExpandedRowIds?: ReadonlySet<string>;
   searchHitRowId?: string | null;
+  /** Active find-in-thread: matches are highlighted, the current one in `searchHitRowId`. */
+  search?: { query: string; occurrence: number; navigation: number };
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
   planExecution?: PlanExecutionView | null;
@@ -106,6 +110,7 @@ export function ThreadTimeline({
   onFork,
   forceExpandedRowIds,
   searchHitRowId,
+  search,
   messageActions,
   includePluginMessageActions,
   planExecution,
@@ -122,6 +127,7 @@ export function ThreadTimeline({
   const paneRef = useRef<HTMLDivElement>(null);
   const lastPinnedTopRef = useRef<number | null>(null);
   const lastPinnedHeightRef = useRef<number | null>(null);
+  const lastPinnedContentHeightRef = useRef<number | null>(null);
   const scrollbarIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedAway, setPinnedAway] = useState(false);
   const [initialOpen, setInitialOpen] = useState(true);
@@ -168,6 +174,7 @@ export function ThreadTimeline({
     pinScrollToBottom(pane);
     lastPinnedTopRef.current = pane.scrollTop;
     lastPinnedHeightRef.current = pane.clientHeight;
+    lastPinnedContentHeightRef.current = pane.scrollHeight;
   }, []);
 
   useLayoutEffect(() => {
@@ -207,8 +214,15 @@ export function ThreadTimeline({
     return () => window.removeEventListener(THREAD_MESSAGE_SENT_EVENT, onSend);
   }, [threadId, pin]);
 
+  const searchTarget = useMemo(
+    () => search && { ...search, rowId: searchHitRowId ?? null },
+    [search?.navigation, search?.occurrence, search?.query, searchHitRowId]
+  );
+  useThreadSearchHighlights(paneRef, searchTarget);
+
+  // Message links flash their row; find-in-thread highlights matches instead.
   useEffect(() => {
-    if (!searchHitRowId) return;
+    if (!searchHitRowId || searchTarget) return;
     const pane = paneRef.current;
     if (!pane) return;
     const el = pane.querySelector(`[data-row-id="${CSS.escape(searchHitRowId)}"]`);
@@ -219,7 +233,7 @@ export function ThreadTimeline({
       el.classList.remove('thread-timeline-search-hit');
     }, 1600);
     return () => window.clearTimeout(timer);
-  }, [searchHitRowId, viewRows]);
+  }, [searchHitRowId, viewRows, searchTarget]);
 
   useEffect(() => () => {
     clearTransientScrollbarScrolling(paneRef.current, scrollbarIdleRef);
@@ -229,10 +243,11 @@ export function ThreadTimeline({
     const pane = paneRef.current;
     if (!pane) return;
     markTransientScrollbarScrolling(pane, scrollbarIdleRef);
-    // WebKit may clamp/pan the scroll position as the keyboard changes the
-    // scrollport, before ResizeObserver can pin it. That is not scrollback.
+    // WebKit may adjust scroll before ResizeObserver when the keyboard resizes
+    // the pane or a width change rewraps its rows. That is not scrollback.
     // Once the user has released following, resizing must preserve their place.
-    if (stick && lastPinnedHeightRef.current !== pane.clientHeight) {
+    if (stick && (lastPinnedHeightRef.current !== pane.clientHeight
+      || lastPinnedContentHeightRef.current !== pane.scrollHeight)) {
       pin();
       return;
     }
@@ -264,6 +279,7 @@ export function ThreadTimeline({
 
   return (
     <div className="thread-detail-timeline-shell">
+      {threadId && <ThreadAnnotationSelection rootRef={paneRef} threadId={threadId} />}
       <div className="thread-banner-stack">
         <ThreadGoalBanner goal={goal} />
         <ThreadTimelineLoadError message={loadError} onRetry={onRetryLoad} />

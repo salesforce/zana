@@ -1,4 +1,5 @@
 export { fillTemplate, LlmService } from './llm-service.js';
+export { WorkloadMemo, WORKLOAD_MEMO_SKIPPED, type WorkloadMemoCounters } from './workload-memo.js';
 export { redactTranscript } from './redact-transcript.js';
 export {
   PromptRegistry,

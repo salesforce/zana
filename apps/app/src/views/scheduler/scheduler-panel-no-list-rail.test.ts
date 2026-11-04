@@ -1,26 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
-const panel = readFileSync(
-  fileURLToPath(new URL('./SchedulerView.tsx', import.meta.url)),
-  'utf8'
+const panel = readSourceText(
+  fileURLToPath(new URL('./SchedulerView.tsx', import.meta.url))
 );
-const groups = readFileSync(
-  fileURLToPath(new URL('../../components/ScheduleGroupsModal.tsx', import.meta.url)),
-  'utf8'
+const groups = readSourceText(
+  fileURLToPath(new URL('../../components/ScheduleGroupsModal.tsx', import.meta.url))
 );
-const css = readFileSync(
-  fileURLToPath(new URL('../../styles/global.css', import.meta.url)),
-  'utf8'
+const css = readSourceText(
+  fileURLToPath(new URL('../../styles/global.css', import.meta.url))
 );
-const detail = readFileSync(
-  fileURLToPath(new URL('./ScheduleDetailPage.tsx', import.meta.url)),
-  'utf8'
+const detail = readSourceText(
+  fileURLToPath(new URL('./ScheduleDetailPage.tsx', import.meta.url))
 );
-const area = readFileSync(
-  fileURLToPath(new URL('../thread-detail/SplitThreadArea.tsx', import.meta.url)),
-  'utf8'
+const area = readSourceText(
+  fileURLToPath(new URL('../thread-detail/SplitThreadArea.tsx', import.meta.url))
 );
 
 describe('SchedulerPanel has no inner list rail', () => {

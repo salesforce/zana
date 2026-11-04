@@ -1,16 +1,18 @@
 import type { PluginAgentToolContext, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { DOC_STATUSES, type DocActor } from '../shared/contract.js';
-import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
 import {
+  addFromTemplate,
   commentDoc,
   createDoc,
   listDocs,
   readDoc,
+  readTemplate,
   updateDoc,
   writeDoc,
   type OperationContext
 } from './operations.js';
 import type { KitReader } from './pages.js';
+import type { ProjectLister } from './project-guard.js';
 import type { ProjectNames } from './project-names.js';
 import type { RenderReports } from './render-reports.js';
 import { AGENT_FALLBACK_LABEL, CLI_AGENT_LABEL, type DesignDocStore } from './store.js';
@@ -20,9 +22,10 @@ const docRef = {
   description: 'Design doc id (dd_…) or slug, as shown by design_doc_list or the instructions catalog.'
 } as const;
 
-const TEMPLATE_IDS = DESIGN_DOC_TEMPLATES.map((template) => template.id);
-
 export const TOOL_NAMES = [
+  'design_doc_templates_list',
+  'design_doc_template_read',
+  'design_doc_add_from_template',
   'design_doc_list',
   'design_doc_read',
   'design_doc_create',
@@ -36,6 +39,8 @@ export interface ToolDeps {
   changed(docId: string): void;
   actorFor(threadId: string): Promise<DocActor>;
   projects?: ProjectNames;
+  /** Registered projects; a named projectId is verified against it (fail closed). */
+  listProjects?: ProjectLister;
   kit?: KitReader;
   reports?: RenderReports;
 }
@@ -75,11 +80,48 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       store: deps.store,
       changed: deps.changed,
       projectId: ctx.projectId || null,
+      listProjects: deps.listProjects,
       projectName: (projectId) => deps.projects?.name(projectId) ?? null,
       kit: deps.kit,
       reports: deps.reports
     };
   };
+
+  zcc.agents.registerTool({
+    name: 'design_doc_templates_list',
+    description: 'List available personal Design Docs templates. Call before design_doc_create when choosing a template.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    presentation: { label: { pending: 'Listing templates', completed: 'Listed templates' }, icon: { glyph: 'Files' } },
+    execute: async () => deps.store.listTemplates().map(({ id, label, description, files, entryPath }) => ({ key: id, label, description, files: files.map((file) => file.path), entryPath }))
+  });
+
+  zcc.agents.registerTool({
+    name: 'design_doc_template_read',
+    description: 'Read a template\'s full files (including any <!-- AI Instructions --> comments) by key from design_doc_templates_list. base64 files are marked encoding "base64".',
+    parameters: { type: 'object', properties: { key: { type: 'string', description: 'Template key.' } }, required: ['key'], additionalProperties: false },
+    presentation: { label: { pending: 'Reading template', completed: 'Read template' }, icon: { glyph: 'Files' } },
+    execute: async (input, ctx) => readTemplate(await context(ctx), input)
+  });
+
+  zcc.agents.registerTool({
+    name: 'design_doc_add_from_template',
+    description:
+      'Add a template\'s files to an EXISTING design doc ({{title}} and {{summary}} are filled in; they default to the doc\'s own). ' +
+      'Never overwrites: a file whose path already exists is added under a numbered name (README-2.md) and links between the added files are updated. Returns the added paths.',
+    parameters: {
+      type: 'object',
+      properties: {
+        docId: docRef,
+        templateKey: { type: 'string', description: 'Template key returned by design_doc_templates_list.' },
+        title: { type: 'string', description: 'Value for {{title}}; defaults to the doc title.' },
+        summary: { type: 'string', description: 'Value for {{summary}}; defaults to the doc summary.' }
+      },
+      required: ['docId', 'templateKey'],
+      additionalProperties: false
+    },
+    presentation: { label: { pending: 'Adding template files', completed: 'Added template files' }, icon: { glyph: 'File' } },
+    execute: async (input, ctx) => addFromTemplate(await context(ctx), input, await deps.actorFor(ctx.threadId))
+  });
 
   zcc.agents.registerTool({
     name: 'design_doc_list',
@@ -131,7 +173,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     name: 'design_doc_create',
     description:
       'Create a new design doc the user can review in the Design Docs panel. Pass files to write your own content, ' +
-      `or a template to start from (${TEMPLATE_IDS.join(', ')}). The doc belongs to the current project unless global=true. ` +
+      'or a template returned by design_doc_templates_list. The doc belongs to the current project unless global=true or projectId names another registered project (give the id; a wrong id returns the valid ones). ' +
       'Write rich GitHub-flavoured markdown: headings, tables, task lists, ```mermaid diagrams and $math$ all render. ' +
       'Put larger diagrams in .mmd files and UI mockups in self-contained .html files (inline CSS and JS; nothing loads from a CDN). ' +
       'For a web page or site that will publish to GitHub Pages, start from the report or html-design template, or link zcc-kit/site.css and zcc-kit/site.js (see the design-docs skill).',
@@ -140,10 +182,11 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       properties: {
         title: { type: 'string', description: 'Human title, e.g. "Offline sync for mobile".' },
         summary: { type: 'string', description: 'One or two sentences shown in lists.' },
-        template: { type: 'string', enum: TEMPLATE_IDS, description: 'Starter files when files is omitted.' },
+        template: { type: 'string', description: 'Template key returned by design_doc_templates_list; starter files when files is omitted.' },
         tags: { type: 'array', items: { type: 'string' } },
         status: { type: 'string', enum: [...DOC_STATUSES] },
-        global: { type: 'boolean', description: 'Make the doc visible to every project.' },
+        global: { type: 'boolean', description: 'Make the doc visible to every project. Not with projectId.' },
+        projectId: { type: 'string', description: 'Create the doc in this registered project instead of the current one. Not with global.' },
         files: {
           type: 'array',
           description: 'Initial files. Include a README.md (a written doc) or an index.html (a site) as the entry point.',
@@ -172,7 +215,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     description:
       'Change one file in a design doc. Pass exactly one of: edits (exact-match find/replace, preferred for changes), ' +
       'content (whole file; creates the file if it does not exist), delete=true, or renameTo. ' +
-      'Pass baseRevision (the revision you last read) so you never overwrite a concurrent edit by the user; ' +
+      'Pass baseRevision and baseFileId (the revision and identity you last read) so you never overwrite a concurrent edit or replacement by the user; ' +
       'on a conflict, re-read the file and reapply. Every write is kept in history and appears live in the panel. ' +
       'Writing an HTML page returns a page check: missing files and blocked resources to fix.',
     parameters: {
@@ -199,6 +242,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
         delete: { type: 'boolean' },
         renameTo: { type: 'string' },
         baseRevision: { type: 'integer', minimum: 0, description: 'Revision you read; 0 asserts the file is new.' },
+        baseFileId: { type: ['string', 'null'], description: 'File identity you read; null asserts the file is absent. Use with baseRevision.' },
         note: { type: 'string', description: 'Short change note shown in history.' }
       },
       required: ['doc', 'path'],
@@ -212,7 +256,9 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     name: 'design_doc_update',
     description:
       'Update design doc metadata: title, summary, status (draft → review → approved → implemented, or archived), tags, the entry file, ' +
-      'or alternativeTo (the doc this one is a competing proposal to, so it nests under it in the doc list).',
+      'alternativeTo (the doc this one is a competing proposal to, so it nests under it in the doc list), ' +
+      'or move it: projectId (a registered project) or global=true (visible to every project), never both. ' +
+      'When paired, pass expectedHead from design_doc_read. On conflict, re-read and review the replacement before updating.',
     parameters: {
       type: 'object',
       properties: {
@@ -225,7 +271,10 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
         alternativeTo: {
           type: 'string',
           description: 'Id or slug of the doc this one is an alternative to. Empty string detaches it. One level deep: point at the original doc, not another alternative.'
-        }
+        },
+        projectId: { type: 'string', description: 'Move the doc to this registered project. Not with global.' },
+        global: { type: 'boolean', description: 'Move the doc to global (every project). Not with projectId.' },
+        expectedHead: { type: ['string', 'null'], description: 'Head observed by design_doc_read; null asserts no head exists. Required when paired.' }
       },
       required: ['doc'],
       additionalProperties: false

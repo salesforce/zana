@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isProcessGroupAlive,
   killProcessGroup,
@@ -126,6 +126,19 @@ posixOnly("process tree helpers", () => {
     expect(isProcessGroupAlive(child)).toBe(true);
     process.kill(grandchildPid, "SIGKILL");
     await waitFor(() => !isProcessGroupAlive(child));
+  });
+
+  it("does not signal an already reaped command or treat a missing pid as a live group", async () => {
+    const child = spawnPortablePipedProcess({
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      detached: true,
+    });
+    await once(child, "exit");
+    const kill = vi.spyOn(child, "kill");
+    expect(isProcessGroupAlive({})).toBe(false);
+    await stopProcessGroupLeaderFirst({ child, timeoutMs: 1000, killGraceMs: 1000 });
+    expect(kill).not.toHaveBeenCalled();
   });
 
   it("rescans and kills processes that appear while the first targets shut down", async () => {

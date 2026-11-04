@@ -41,7 +41,7 @@ describe('worktree disabled reasons', () => {
     expect(resolveExistingWorktreeDisabledReason(2)).toBeNull();
   });
 
-  it('snaps New worktree and Existing worktree back to Work locally when disabled', () => {
+  it('snaps disabled worktree choices back to the project folder', () => {
     expect(snapWorkspaceChoice({ kind: 'worktree' }, {
       newWorktreeDisabled: true,
       existingWorktreeDisabled: false
@@ -77,8 +77,8 @@ describe('worktree disabled reasons', () => {
 describe('EnvironmentPicker menu', () => {
   const source = readFileSync(new URL('./EnvironmentPicker.tsx', import.meta.url), 'utf8');
 
-  it('keeps Work locally, New worktree, and Existing worktree as stable rows', () => {
-    expect(source).toContain("label: 'Work locally'");
+  it('keeps the execution target, New worktree, and Existing worktree as stable rows', () => {
+    expect(source).toContain("label: executionLabel");
     expect(source).toContain("label: 'New worktree'");
     expect(source).toContain("label: 'Existing worktree'");
     expect(source).not.toContain('This checkout');

@@ -2,6 +2,10 @@ export type { EmptyInput, Endpoint, Untyped } from "@zana-ai/zcc-hono-typed-rout
 
 export type PathId = { param: { id: string } };
 export type PathProjectId = { param: { id: string } };
+export type PathHostId = { param: { hostId: string } };
+export type PathPeerComputer = { param: { computerId: string } };
+export type PathPeerConnection = { param: { invitationId: string } };
+export type PathPeerLinkUse = { param: { hostId: string; pluginId: string } };
 export type PathThreadAndQueuedMessage = {
   param: { id: string; queuedMessageId: string };
 };

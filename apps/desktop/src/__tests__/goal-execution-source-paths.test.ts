@@ -96,6 +96,19 @@ describe('goalExecutionSourcePaths', () => {
     expect(descriptors.length).toBeGreaterThan(0);
   });
 
+  it('expands a leading ~/ to the user home for bare and quoted goal paths', async () => {
+    const userHome = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-userhome-')));
+    mkdirSync(join(userHome, 'notes'), { recursive: true });
+    writeFileSync(join(userHome, 'notes', 'plan.md'), '# plan');
+    const project = mkdtempSync(join(tmpdir(), 'zcc-home-'));
+
+    const bare = await goalExecutionSourcePaths('implement ~/notes/plan.md', project, userHome);
+    expect(bare.map((d) => d.canonicalPath)).toEqual([join(userHome, 'notes', 'plan.md')]);
+    const quoted = await goalExecutionSourcePaths('implement "~/notes/plan.md"', project, userHome);
+    expect(quoted.map((d) => d.canonicalPath)).toEqual([join(userHome, 'notes', 'plan.md')]);
+    await expect(goalExecutionSourcePaths('implement ~/notes/missing.md', project, userHome)).resolves.toEqual([]);
+  });
+
   it('skips a hard-linked file (Launch would refuse it and fail the whole launch)', async () => {
     const home = mkdtempSync(join(tmpdir(), 'zcc-home-'));
     writeFileSync(join(home, 'a.md'), '# a');

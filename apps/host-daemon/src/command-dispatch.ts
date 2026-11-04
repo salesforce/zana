@@ -1,9 +1,12 @@
+import { ProjectCatalogue } from './project-catalogue.js';
 import { listHostCommands } from "./native-root-scan.js";
+import { inspectDirectories } from './inspect-directories.js';
 import { discoverCliOnHost } from './cli-discovery.js';
 import type { CliTerminalStartCommand } from '@zana-ai/zcc-contracts/cli-terminal';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { realpath, stat as asyncStat, opendir, open } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type {
@@ -51,7 +54,7 @@ import {
 } from '@zana-ai/zcc-host-workspace';
 import { probeExtraAcpAgents } from './extra-acp-agent-probes.js';
 import { verifyHarnesses } from './harness/harness-verify.js';
-import { registrationFor, invalidateHarnessModelCatalog } from './harness/registry.js';
+import { registrationFor, invalidateHarnessModelCatalog, discoverHarnessModelInventories } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
 import { readConfinedFileRange } from './read-file-range.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
@@ -83,6 +86,7 @@ import {
 } from './host-fs.js';
 import type { DesktopBrowserBroker } from './desktop-browser-broker.js';
 import type { DesktopBrowserCommand } from '@zana-ai/zcc-host-daemon-contract';
+import { PeerForwarder, type LocalPeerAppResolver } from './peer-forward.js';
 
 import type { PluginHostManager } from './plugin-host-manager.js';
 import type { MachineEnvironment } from './machine-environment.js';
@@ -130,6 +134,10 @@ export type ThreadResumeInput = {
   providerOptions?: Record<string, unknown>;
   dynamicTools?: ThreadStartFields['dynamicTools'];
   instructions?: ThreadStartFields['instructions'];
+  sessionKind?: 'automated';
+  automatedSkillIds?: ThreadStartFields['automatedSkillIds'];
+  /** Strict resume: reload natively or fail; never fall back to a fresh session. */
+  requireNativeLoad?: true;
 };
 
 export type ThreadRewindPrepareInput = {
@@ -145,6 +153,7 @@ export type ThreadRewindPrepareInput = {
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  automatedSkillIds?: ThreadStartFields['automatedSkillIds'];
 };
 
 export type ThreadArchiveInput = {
@@ -157,6 +166,7 @@ export type ThreadArchiveInput = {
 };
 
 export interface CommandRuntime {
+  projectCatalogue?: ProjectCatalogue;
   previewTunnel?: import('./preview-tunnel.js').HostPreviewTunnel;
   pluginHosts?: PluginHostManager;
   dataDir: string;
@@ -172,7 +182,7 @@ export interface CommandRuntime {
   loadConfig: () => AppConfig;
   verifyProviders: () => Promise<ProviderStatusResult>;
   emit: (event: HostEventEnvelope) => void;
-  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
+  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string; sessionRestorable?: boolean } | void>;
   submitTurn?: (input: {
     threadId: string;
     input: PromptInput[];
@@ -188,7 +198,7 @@ export interface CommandRuntime {
     permissionEscalation?: 'ask' | 'deny';
     expectedTurnId?: string;
   }) => Promise<void>;
-  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
+  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string; nativeLoaded?: boolean } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
@@ -225,6 +235,7 @@ export interface CommandRuntime {
   }) => Promise<ProviderHealthResult>;
   homeDir?: string;
   peerSsh: PeerDaemonSsh;
+  peerForwarder?: PeerForwarder;
   desktopBrowserBroker?: DesktopBrowserBroker;
   /** In-memory environment pushed by the server (host.environment.replace). */
   machineEnvironment?: MachineEnvironment;
@@ -236,7 +247,7 @@ export function createCommandRuntime(options: {
   loadConfig?: () => AppConfig;
   verifyProviders?: () => Promise<ProviderStatusResult>;
   emit?: (event: HostEventEnvelope) => void;
-  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
+  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string; sessionRestorable?: boolean } | void>;
   submitTurn?: (input: {
     threadId: string;
     input: PromptInput[];
@@ -252,7 +263,7 @@ export function createCommandRuntime(options: {
     permissionEscalation?: 'ask' | 'deny';
     expectedTurnId?: string;
   }) => Promise<void>;
-  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
+  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string; nativeLoaded?: boolean } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
@@ -291,6 +302,8 @@ export function createCommandRuntime(options: {
   peerSsh?: PeerDaemonSsh;
   desktopBrowserBroker?: DesktopBrowserBroker;
   machineEnvironment?: MachineEnvironment;
+  resolveLocalPeerApp?: LocalPeerAppResolver;
+  peerForwardFetch?: typeof fetch;
 }): CommandRuntime {
   const terminals = new Map<string, { cwd: string }>();
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
@@ -331,6 +344,7 @@ export function createCommandRuntime(options: {
     providerHealth: options.providerHealth,
     homeDir: options.homeDir,
     peerSsh: options.peerSsh ?? createSystemPeerDaemonSsh(),
+    peerForwarder: new PeerForwarder({ resolveLocalPeerApp: options.resolveLocalPeerApp, fetchFn: options.peerForwardFetch }),
     desktopBrowserBroker: options.desktopBrowserBroker,
     machineEnvironment: options.machineEnvironment,
     verifyProviders: options.verifyProviders ?? (async () => {
@@ -410,8 +424,8 @@ async function applyThreadResume(
   command: {
     threadId: string;
     environmentId: string;
-  } & ThreadResumeFields
-): Promise<{ threadId: string; resumed: true; providerThreadId?: string }> {
+  } & ThreadResumeFields & { requireNativeLoad?: true }
+): Promise<{ threadId: string; resumed: true; providerThreadId?: string; nativeLoaded?: boolean }> {
   const environment = runtime.environments.get(command.environmentId);
   const environmentPath = environment?.path ?? command.cwd;
   if (!environmentPath) {
@@ -419,6 +433,7 @@ async function applyThreadResume(
   }
   const cwd = confineThreadCwd(environmentPath, command.cwd);
   let providerThreadId = command.providerThreadId;
+  let nativeLoaded = false;
   if (runtime.resumeWork) {
     const resumed = await runtime.resumeWork({
       threadId: command.threadId,
@@ -436,9 +451,13 @@ async function applyThreadResume(
       claudeCodePermissionMode: command.claudeCodePermissionMode,
       providerOptions: command.providerOptions,
       dynamicTools: command.dynamicTools,
-      instructions: command.instructions
+      instructions: command.instructions,
+      sessionKind: command.sessionKind,
+      automatedSkillIds: command.automatedSkillIds,
+      ...(command.requireNativeLoad === true ? { requireNativeLoad: true as const } : {})
     });
     providerThreadId = resumed?.providerThreadId ?? providerThreadId;
+    nativeLoaded = resumed?.nativeLoaded === true;
   }
   runtime.threads.set(command.threadId, {
     environmentId: command.environmentId,
@@ -453,7 +472,9 @@ async function applyThreadResume(
   return {
     threadId: command.threadId,
     resumed: true as const,
-    ...(providerThreadId ? { providerThreadId } : {})
+    ...(providerThreadId ? { providerThreadId } : {}),
+    // Only strict resumes report it; a runtime that cannot confirm fails closed (false).
+    ...(command.requireNativeLoad === true ? { nativeLoaded } : {})
   };
 }
 
@@ -592,8 +613,13 @@ export async function dispatchHostCommand(
   switch (command.type) {
     case 'provider.cli_discovery':
       return discoverCliOnHost(command, runtime.loadConfig());
-    case 'provider.status':
-      return runtime.verifyProviders();
+    case 'provider.status': {
+      const status = await runtime.verifyProviders();
+      if (!command.includeModelInventory) return status;
+      return { ...status, modelInventories: await discoverHarnessModelInventories(status.providers, {
+        cwd: homedir(), config: runtime.loadConfig()
+      }) };
+    }
     case 'provider.agent_descriptors': {
       const profile = parseProfile(command.profile);
       if (!profile) {
@@ -735,10 +761,12 @@ export async function dispatchHostCommand(
       }
       const cwd = confineThreadCwd(environment.path, command.cwd);
       let providerThreadId: string | undefined;
+      let sessionRestorable: boolean | undefined;
       if (runtime.startWork) {
         const { type: _type, cwd: _cwd, ...rest } = command;
         const started = await runtime.startWork({ ...rest, cwd });
         providerThreadId = started?.providerThreadId;
+        sessionRestorable = started?.sessionRestorable;
       }
       runtime.threads.set(command.threadId, {
         environmentId: command.environmentId,
@@ -748,7 +776,8 @@ export async function dispatchHostCommand(
       return {
         threadId: command.threadId,
         started: true as const,
-        ...(providerThreadId ? { providerThreadId } : {})
+        ...(providerThreadId ? { providerThreadId } : {}),
+        ...(sessionRestorable !== undefined ? { sessionRestorable } : {})
       };
     }
     case 'thread.resize': {
@@ -812,7 +841,8 @@ export async function dispatchHostCommand(
         bridgeLaunch: command.bridgeLaunch,
         permissionMode: command.permissionMode,
         model: command.model,
-        reasoningLevel: command.reasoningLevel
+        reasoningLevel: command.reasoningLevel,
+        automatedSkillIds: command.automatedSkillIds
       });
       return {
         threadId: command.threadId,
@@ -906,6 +936,10 @@ export async function dispatchHostCommand(
       if (command.type === 'plugin.host.call') return runtime.pluginHosts.call(command);
       if (command.type === 'plugin.host.cancel') return runtime.pluginHosts.cancel(command);
       return runtime.pluginHosts.dispose(command);
+    }
+    case 'peer.forward': {
+      if (!runtime.peerForwarder) throw new HostCommandError('peer_app_unavailable', 'trusted local peer app is unavailable');
+      return runtime.peerForwarder.forward(command);
     }
     case 'terminal.start_cli': {
       const cwd = confineThreadCwd(command.root, command.cwd);
@@ -1045,6 +1079,8 @@ export async function dispatchHostCommand(
       return browseHostDirectory(command);
     case 'host.paths_exist':
       return checkHostPathsExist(command);
+    case 'host.inspect_directories':
+      return inspectDirectories(command.paths);
     case 'host.list_paths':
       return listHostPaths(command);
     case 'host.read_path':
@@ -1161,11 +1197,15 @@ export async function dispatchHostCommand(
       });
       return { killed };
     }
+    case 'project.catalogue.list':
+      return (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).page(command.offset, command.limit);
+    case 'project.catalogue.register':
+      return { projects: await (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).register(command.projects) };
     case 'project.clone_default_path':
       return { path: await resolveCloneDefaultPath(runtime.dataDir, command.projectSlug) };
     case 'project.clone':
       try {
-        return await cloneProject({
+        const cloned = await cloneProject({
           dataDir: runtime.dataDir,
           projectSlug: command.projectSlug,
           remoteUrl: command.remoteUrl,
@@ -1174,6 +1214,8 @@ export async function dispatchHostCommand(
             runtime.emit({ kind: 'project.clone.progress', payload: { text } });
           }
         });
+        await (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).register([{ path: cloned.path }]);
+        return cloned;
       } catch (error) {
         mapWorkspaceError(error);
       }
@@ -1276,6 +1318,8 @@ export async function dispatchHostCommand(
     case 'desktop.browser.list_import_sources':
     case 'desktop.browser.import_cookies':
       return requestDesktopBrowser(runtime, command);
+    case 'peer.control':
+      throw new HostCommandError('capability_denied', 'peer control requires authenticated enrollment connection');
     default: {
       const exhaustive: never = command;
       throw new HostCommandError('unknown_command', `unsupported command ${(exhaustive as { type: string }).type}`);

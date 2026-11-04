@@ -22,8 +22,8 @@ vi.mock('@/components/HostDialogs', () => ({ HostDialogs: () => null }));
 vi.mock('@/components/Toaster', () => ({ Toaster: () => null }));
 vi.mock('@/plugins/PluginThemesHost', () => ({ PluginThemesHost: () => null }));
 vi.mock('@/views/thread-detail/PluginPanelHostLayout', () => ({
-  PluginPanelHostLayout: ({ pluginId, panelPath, scopeId, separateWindow, children }: { pluginId: string; panelPath: string; scopeId?: string; separateWindow?: boolean; children: ReactNode }) => (
-    <div data-testid="plugin-view-side-panel" data-page={`${pluginId}/${panelPath}`} data-scope={scopeId} data-window={String(separateWindow)}>{children}</div>
+  PluginPanelHostLayout: ({ pluginId, panelPath, scopeId, resourceId, separateWindow, children }: { pluginId: string; panelPath: string; scopeId?: string; resourceId?: string; separateWindow?: boolean; children: ReactNode }) => (
+    <div data-testid="plugin-view-side-panel" data-page={`${pluginId}/${panelPath}`} data-scope={scopeId} data-resource={resourceId} data-window={String(separateWindow)}>{children}</div>
   )
 }));
 vi.mock('@/plugins/PluginSlotBoundary', () => ({ PluginSlotBoundary: ({ children }: { children: ReactNode }) => children }));
@@ -33,7 +33,7 @@ vi.mock('@/plugins/plugin-app-loader', () => ({
 }));
 vi.mock('@/plugins/plugin-slots', () => ({ listProjectTabs: () => h.tabs, subscribePluginSlots: () => () => {} }));
 vi.mock('@/plugins/plugin-nav-href', () => ({
-  hrefForPluginProjectTab: (pluginId: string, projectId: string, tabId: string) => `/tabs/${pluginId}/${projectId}/${tabId}`
+  hrefForPluginProjectTab: (pluginId: string, projectId: string, tabId: string, resourceId?: string) => `/tabs/${pluginId}/${projectId}/${tabId}${resourceId === undefined ? "" : `?pluginResourceId=${encodeURIComponent(resourceId)}`}`
 }));
 vi.mock('@/plugins/plugin-view-windows', () => ({ closePluginViewWindow: h.close, showInMainWindow: h.show }));
 vi.mock('@/plugins/plugin-view-title', () => ({ usePluginViewTitle: () => h.title }));
@@ -162,4 +162,21 @@ it('ignores plugin apps that finish loading after the window closed', async () =
   view.unmount();
   await act(async () => { h.appsDone?.(); });
   expect(h.offChanged).toHaveBeenCalled();
+});
+
+it('keeps the project scope while passing resource identity to the host panel', async () => {
+  await act(async () => { render(<PluginViewApp target={{ ...target, resourceId: 'Help.agent' }} />); });
+  expect(screen.getByTestId('plugin-view-side-panel').dataset).toMatchObject({ scope: 'p-1', resource: 'Help.agent' });
+});
+
+it('returns a specific resource to main and leaves its window open if main cannot navigate', async () => {
+  render(<PluginViewApp target={{ ...target, resourceId: 'Help.agent' }} />);
+  await act(async () => { h.appsDone?.(); });
+  h.show.mockResolvedValueOnce(false);
+  await act(async () => { fireEvent.click(screen.getByTestId('plugin-view-bring-back')); });
+  expect(h.show).toHaveBeenCalledWith('/tabs/salesforce/p-1/studio?pluginResourceId=Help.agent');
+  expect(h.close).not.toHaveBeenCalled();
+  h.show.mockResolvedValueOnce(true);
+  await act(async () => { fireEvent.click(screen.getByTestId('plugin-view-bring-back')); });
+  expect(h.close).toHaveBeenCalledWith({ ...target, resourceId: 'Help.agent' });
 });

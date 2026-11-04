@@ -29,7 +29,6 @@ import {
   updateConversationPluginMetadata
 } from '../services/threads/conversation-plugin-metadata.js';
 import { listThreadProviders } from '../services/threads/thread-provider-catalog.js';
-import { defaultSpawnProviderId } from '../services/threads/default-spawn-provider.js';
 import type { ProductHttpContext } from './product-context.js';
 import { conversationThreadOutput } from '../plugins/thread-events.js';
 import { readHostFile } from './files-via-host.js';
@@ -37,7 +36,20 @@ import type { PluginSdkProject, PluginSdkThreadSummary } from '@zana-ai/zcc-plug
 import { resolvePluginDefaultExecutionOptions, overlayCustomModels } from '../services/threads/thread-execution-options.js';
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { asControlResult, callControlAsProductServer } from './cli-agent-ops.js';
-import type { PersonaInput, TeamInput } from '@zana-ai/zcc-domain/product';
+import type { Persona, PersonaInput, TeamInput } from '@zana-ai/zcc-domain/product';
+import { harnessEffectiveDefault, harnessVerifyBundle } from './harness-via-rpc.js';
+import { listJsonFiles } from './disk-json.js';
+import {
+  AI_HARNESS_SETTINGS_HINT,
+  PLUGIN_AI_HARNESS_SETTINGS_HINT,
+  PluginSpawnHarnessError,
+  pluginProviderAvailable,
+  resolvePluginSpawnProvider
+} from './plugin-thread-spawn.js';
+import { pluginEffectiveHarnessDefault, productPluginSpawnRouting } from './plugin-harness-routing.js';
+import { slashPlanPromptInput } from './plugin-thread-routing.js';
+import { ThreadCreateError } from './thread-create.js';
+import { resolveProjectHost } from './project-host.js';
 import { InteractionService } from '../services/interactions/interaction-service.js';
 import { startInteractionMaintenance } from '../services/interactions/interaction-maintenance.js';
 
@@ -156,6 +168,41 @@ function toPluginThreadSummary(row: {
     createdAt: row.createdAt,
     parentThreadId: row.parentThreadId
   };
+}
+
+/** The project's effective AI harness, resolved like `GET /api/v1/harness/effective-default`. */
+export function productProjectHarnessDefault(
+  ctx: Pick<ProductHttpContext, 'toProjects' | 'hostHub' | 'config' | 'dataDir' | 'db'>,
+  projectId: string,
+  hostId?: string
+) {
+  const project = ctx.toProjects().find((row) => row.id === projectId);
+  if (!project) return Promise.resolve({ ok: false as const, code: 'NOT_FOUND' as const, message: 'Project not found' });
+  return harnessEffectiveDefault({
+    hub: ctx.hostHub,
+    project,
+    config: ctx.config.getConfig(),
+    personas: listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[],
+    hostId: resolveProjectHost(ctx, hostId ?? project?.hostId)
+  });
+}
+
+/** `sdk.providers.list`: `available` reflects bridge state plus host install/enable when probeable. */
+export async function productListProviders(
+  ctx: Pick<ProductHttpContext, 'db' | 'hostHub'>,
+  environmentId?: string
+) {
+  const environment = environmentId ? getEnvironment(ctx.db, environmentId) : null;
+  const probe = await harnessVerifyBundle(ctx.hostHub, environment?.hostId ?? undefined).catch(() => null);
+  return listThreadProviders().map((provider) => ({
+    id: provider.id,
+    displayName: provider.displayName,
+    available: pluginProviderAvailable(provider, probe),
+    capabilities: {
+      permissionModes: [...(provider.capabilities.permissionModes ?? [])],
+      supportsServiceTier: provider.capabilities.supportsServiceTier
+    }
+  }));
 }
 
 export function createAttachedProductPluginService(
@@ -277,17 +324,7 @@ export function createAttachedProductPluginService(
         sizeBytes: result.sizeBytes
       };
     },
-    listProviders: async () => {
-      return listThreadProviders().map((provider) => ({
-        id: provider.id,
-        displayName: provider.displayName,
-        available: true,
-        capabilities: {
-          permissionModes: [...(provider.capabilities.permissionModes ?? [])],
-          supportsServiceTier: provider.capabilities.supportsServiceTier
-        }
-      }));
-    },
+    listProviders: async ({ environmentId }) => productListProviders(ctx, environmentId),
     loadProviderModels: async ({ providerId, hostId, environmentId }) => {
       const environment = environmentId ? getEnvironment(ctx.db, environmentId) : null;
       if (environmentId && !environment) throw new Error('unknown-environment');
@@ -344,6 +381,7 @@ export function createAttachedProductPluginService(
       projectId,
       prompt,
       providerId,
+      harness,
       parentThreadId,
       title,
       model,
@@ -355,27 +393,68 @@ export function createAttachedProductPluginService(
       serviceTier,
       pluginMetadata
     }) => {
-      const providers = listThreadProviders();
-      if (providerId && !providers.some((row) => row.id === providerId)) throw new Error(`unknown thread provider: ${providerId}`);
-      const resolvedProvider = providerId || defaultSpawnProviderId(providers, ctx.config.getConfig().defaultHarness);
-      if (!resolvedProvider) throw new Error('no thread provider is registered');
-      const thread = await createConversationFromRequest(ctx, {
-        projectId,
-        providerId: resolvedProvider,
-        input: [prompt],
-        promptInput: [{ type: 'text', text: prompt, mentions: [] }],
-        title: title?.trim() || `Plugin: ${pluginId}`,
-        parentThreadId,
-        originPluginId: pluginId,
-        ...(visibility ? { visibility } : {}),
-        ...(environment ? { environment } : {}),
-        ...(hostId ? { hostId } : {}),
-        ...(serviceTier ? { serviceTier } : {}),
-        ...(model ? { model } : {}),
-        ...(reasoningLevel ? { reasoningLevel: reasoningLevel as never } : {}),
-        ...(permissionMode ? { permissionMode } : {}),
-        ...(pluginMetadata ? { pluginMetadata } : {})
+      // Local projects created before host binding belong to the primary
+      // machine. Probe and route on the same host thread creation will use,
+      // even when several other machines are connected.
+      if (harness === 'project-default') {
+        const project = ctx.toProjects().find((row) => row.id === projectId);
+        hostId = resolveProjectHost(ctx, project?.remote ? project.hostId : hostId ?? project?.hostId);
+      }
+      const resolved = await resolvePluginSpawnProvider({
+        providerId,
+        harness,
+        providers: listThreadProviders(),
+        defaultHarness: ctx.config.getConfig().defaultHarness,
+        effectiveDefault: () => pluginEffectiveHarnessDefault(
+          ctx,
+          { pluginId, projectId, ...(hostId ? { hostId } : {}) },
+          () => productProjectHarnessDefault(ctx, projectId, hostId)
+        )
       });
+      const routing = await productPluginSpawnRouting(ctx, {
+        projectId,
+        pluginId,
+        ...(hostId ? { hostId } : {}),
+        providerId: resolved.providerId,
+        ...(resolved.harness ? { harness: resolved.harness } : {})
+      });
+      // Explicit spawn arguments win over resolved overrides (they are the
+      // plugin's per-call choice); resolved overrides win over the yolo hint.
+      const effectiveModel = model ?? routing?.model;
+      const effectivePermissionMode = permissionMode ?? routing?.permissionMode ?? resolved.permissionMode;
+      const planned = routing?.slashPlan ? slashPlanPromptInput(prompt) : null;
+      let thread: Awaited<ReturnType<typeof createConversationFromRequest>>;
+      try {
+        thread = await createConversationFromRequest(ctx, {
+          projectId,
+          providerId: resolved.providerId,
+          input: [planned?.text ?? prompt],
+          promptInput: [planned?.input ?? { type: 'text', text: prompt, mentions: [] }] as never,
+          title: title?.trim() || `Plugin: ${pluginId}`,
+          parentThreadId,
+          originPluginId: pluginId,
+          ...(visibility ? { visibility } : {}),
+          ...(environment ? { environment } : {}),
+          ...(hostId ? { hostId } : {}),
+          ...(serviceTier ? { serviceTier } : {}),
+          ...(effectiveModel ? { model: effectiveModel } : {}),
+          ...(reasoningLevel ? { reasoningLevel: reasoningLevel as never } : {}),
+          ...(effectivePermissionMode ? { permissionMode: effectivePermissionMode } : {}),
+          ...(routing?.acpMode ? { acpMode: routing.acpMode } : {}),
+          ...(pluginMetadata ? { pluginMetadata } : {})
+        });
+      } catch (error) {
+        // A model chosen by an AI-harness override (not by the caller) that the
+        // thread catalog rejects is a settings problem; say where it came from.
+        const fromOverride = !model && routing?.applied.find((entry) => entry.field === 'model');
+        if (fromOverride && error instanceof ThreadCreateError && error.code === 'invalid-model') {
+          throw new PluginSpawnHarnessError(
+            `${error.message} (from the ${fromOverride.source} AI harness override).`,
+            fromOverride.source === 'plugin' ? PLUGIN_AI_HARNESS_SETTINGS_HINT : AI_HARNESS_SETTINGS_HINT
+          );
+        }
+        throw error;
+      }
       return { id: thread.id };
     },
     unarchiveThread: async ({ threadId }) => {
@@ -440,12 +519,14 @@ export function bundledPluginsRootFromDataDir(dataDir: string, override?: string
   return override ?? join(dataDir, '..', 'plugins');
 }
 
-/** Contained plugin root for `/plugins/:id/assets/*`, or null when that id has no renderer bundle. */
+/** Branding remains available for disabled and headless plugins. */
 export function pluginAssetRootFromService(
   plugins: PluginService | undefined,
-  pluginId: string
+  pluginId: string,
+  assetPath?: string
 ): string | null {
   const row = plugins?.get(pluginId);
+  if (row?.icon?.startsWith('./') && /\.(svg|png|webp|jpe?g|gif)$/i.test(row.icon) && assetPath === row.icon.slice(2)) return row.rootDir;
   return row?.enabled && row.appEntry && plugins?.appUrl(pluginId) ? row.rootDir : null;
 }
 

@@ -230,6 +230,34 @@ export function markDeferredThreadMessageDispatching(
   return Number(result.changes ?? 0) > 0;
 }
 
+/** Claim an entire automatic send group while no earlier send is preparing. */
+export function claimDeferredThreadMessageGroup(
+  db: ZccDatabase,
+  args: { threadId: string; rows: Pick<DeferredThreadMessageRow, 'id' | 'updatedAt'>[]; overrideEditHold?: boolean; now?: number }
+): boolean {
+  return db.transaction(() => {
+    if (args.rows.length === 0 || args.rows.length > DEFERRED_THREAD_MESSAGE_CAP) return false;
+    const inFlight = db.sqlite.prepare(
+      "SELECT 1 FROM deferred_thread_messages WHERE thread_id = ? AND status = 'dispatching' LIMIT 1"
+    ).get(args.threadId);
+    if (inFlight) return false;
+    const now = args.now ?? Date.now();
+    const rows = args.rows.map(row => getDeferredThreadMessage(db, { id: row.id, threadId: args.threadId }));
+    // Validate every member before writing so an edited/held member cannot split a group.
+    if (new Set(args.rows.map(row => row.id)).size !== args.rows.length || rows.some((row, index) =>
+      !row || row.status !== 'queued' || row.updatedAt !== args.rows[index]!.updatedAt
+      || (!args.overrideEditHold && row.editHeldUntil !== null && row.editHeldUntil > now)
+    )) return false;
+    for (const row of args.rows) {
+      markDeferredThreadMessageDispatching(db, {
+        id: row.id, threadId: args.threadId, expectedUpdatedAt: row.updatedAt,
+        overrideEditHold: args.overrideEditHold, now
+      });
+    }
+    return true;
+  });
+}
+
 export type HoldDeferredThreadMessageForEditResult = 'held' | 'not_found' | 'claimed';
 
 /**

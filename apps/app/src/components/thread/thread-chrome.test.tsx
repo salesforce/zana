@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { WorkspaceFileStatus } from '@zana-ai/zcc-domain';
@@ -44,6 +43,8 @@ import {
   ThreadStatusBadge
 } from './timeline/ThreadBanners.js';
 import { BackgroundCommandsCard } from './timeline/ComposerStackCards.js';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
+import { ThreadDetailContext } from './ThreadDetailContext.js';
 
 function file(overrides: Partial<WorkspaceFileStatus> & Pick<WorkspaceFileStatus, 'path'>): WorkspaceFileStatus {
   return {
@@ -115,7 +116,7 @@ describe('workspace banner', () => {
   });
 
   it('sits inside the composer dock as the top of the same rounded box', () => {
-    const detail = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const detail = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     const dockAt = detail.indexOf('className="thread-composer-dock"');
     const bannerAt = detail.indexOf('<ThreadWorkspaceBanner');
     const composerAt = detail.indexOf('<ThreadCommandComposer');
@@ -123,7 +124,7 @@ describe('workspace banner', () => {
     expect(bannerAt).toBeGreaterThan(dockAt);
     expect(composerAt).toBeGreaterThan(bannerAt);
 
-    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const css = readSourceText(fileURLToPath(new URL('../../styles/global.css', import.meta.url)));
     const linked = css.slice(
       css.indexOf('.thread-composer-dock > .thread-workspace-banner {'),
       css.indexOf('.thread-workspace-banner.is-open {')
@@ -278,7 +279,7 @@ describe('diff hunk helper', () => {
   });
 
   it('loads a file TOC and stacked per-file cards instead of one workspace diff blob', () => {
-    const source = readFileSync(fileURLToPath(new URL('./ThreadDiffPanel.tsx', import.meta.url)), 'utf8');
+    const source = readSourceText(fileURLToPath(new URL('./ThreadDiffPanel.tsx', import.meta.url)));
     expect(source).toContain('diffFiles');
     expect(source).toContain('diffPatch');
     expect(source).toContain('thread-diff-cards');
@@ -294,7 +295,7 @@ describe('diff hunk helper', () => {
     expect(source).toContain('setInterval');
     expect(source).not.toContain('Show {hiddenCount} more');
     expect(source).not.toMatch(/environments\.diff\(/);
-    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const css = readSourceText(fileURLToPath(new URL('../../styles/global.css', import.meta.url)));
     expect(css).toContain('.thread-diff-card {');
     expect(css).toContain('.thread-diff-cards {');
     expect(css).toContain('.thread-diff-skeleton');
@@ -700,20 +701,22 @@ describe('expandable row and chips', () => {
     expect(backgroundHtml).toContain('zcc plugin dev');
   });
 
-  it('keeps the thread title and overflow on the left, with search and status as actions', () => {
+  it('keeps status beside the balanced title, with quiet metadata below', () => {
     const html = renderToStaticMarkup(
       <ThreadDetailHeading
         title="Hello"
+        status={<ThreadStatusBadge status="active" thinking={{ id: 'th', text: '', startedAt: 1, updatedAt: 1 }} />}
+        metadata={<ThreadDetailContext agent={{ providerId: 'codex', model: null, projectName: 'zcc', branchName: 'fix/header' }} />}
         overflow={<button type="button" data-testid="thread-overflow-trigger">…</button>}
       />
     );
     expect(html).toContain('<h1 title="Hello">Hello</h1>');
     expect(html).toContain('data-testid="thread-overflow-trigger"');
-    expect(html).not.toContain('data-testid="thread-detail-status"');
+    expect(html).toContain('data-testid="thread-detail-status"');
     expect(html).not.toContain('data-testid="thread-detail-search"');
     expect(html).not.toContain('data-testid="thread-agents-crumb"');
 
-    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const css = readSourceText(fileURLToPath(new URL('../../styles/global.css', import.meta.url)));
     const header = css.slice(
       css.indexOf('.thread-detail-header {'),
       css.indexOf('.thread-status-badge .tab-agent-dot {')
@@ -722,7 +725,8 @@ describe('expandable row and chips', () => {
     expect(header).toContain('flex: 1 1 auto;');
     expect(header).toContain('font-weight: 600;');
     expect(header).not.toContain('.thread-detail-avatar');
-    expect(header).toContain('.thread-detail-meta-chip {');
+    expect(header).toContain('.thread-context-trigger {');
+    expect(header).toContain('@container thread-header (max-width: 480px)');
     expect(header).toContain('.thread-detail-search:focus-within input,');
     expect(header).toContain('.thread-detail-overflow-btn {');
     expect(header).toContain('.thread-detail-overflow-menu {');
@@ -730,40 +734,52 @@ describe('expandable row and chips', () => {
     expect(header).not.toContain('position: absolute;');
   });
 
-  it('shows the agent identity next to the title on desktop', () => {
+  it('shows agent, project, and branch as quiet metadata while keeping full context in a popover', () => {
     const html = renderToStaticMarkup(
-      <ThreadDetailHeading
-        title="Check my ticket"
+      <ThreadDetailContext
         agent={{ providerId: 'claude-code', model: 'claude-opus-5[1m]', projectName: 'zcc', branchName: 'fix/header' }}
       />
     );
-    expect(html).toContain('<h1 title="Check my ticket">Check my ticket</h1>');
-    expect(html).not.toContain('thread-detail-avatar');
     expect(html).toContain('Claude Code · Opus 5 (1M)');
-    expect(html).toContain('title="Project: zcc"');
-    expect(html).toContain('title="Branch: fix/header"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('fix/header');
+    expect(html).toContain('Project: zcc');
+    expect(html).toContain('data-testid="thread-header-meta"');
   });
 
   it('omits empty identity', () => {
     const html = renderToStaticMarkup(
-      <ThreadDetailHeading
-        title="Agent"
+      <ThreadDetailContext
         agent={{ providerId: null, model: null, projectName: null, branchName: null }}
       />
     );
-    expect(html).toContain('title="Agent"');
-    expect(html).not.toContain('data-testid="thread-detail-meta"');
+    expect(html).toBe('');
   });
 
-  it('keeps location chips when the harness is unknown', () => {
+  it('keeps a context trigger when only the execution location is available', () => {
+    for (const machineRemote of [true, false]) {
+      const html = renderToStaticMarkup(<ThreadDetailContext agent={{
+        providerId: null, model: null, projectName: 'Default Project', branchName: null,
+        machineName: 'Devbox', machineRemote
+      }} />);
+      expect(html).toContain('aria-label="Thread context"');
+      expect(html).toContain('Default Project');
+    }
+    const html = renderToStaticMarkup(<ThreadDetailContext agent={{
+      providerId: null, model: null, projectName: null, branchName: null, machineName: 'Unavailable machine'
+    }} />);
+    expect(html).toContain('aria-label="Thread context"');
+  });
+
+  it('keeps the context trigger when only a project is known', () => {
     const chipsOnly = renderToStaticMarkup(
-      <ThreadDetailHeading
-        title="Agent"
+      <ThreadDetailContext
         agent={{ providerId: null, model: null, projectName: 'zcc', branchName: null }}
       />
     );
-    expect(chipsOnly).toContain('data-testid="thread-detail-meta"');
-    expect(chipsOnly).not.toContain('thread-detail-meta-identity');
+    expect(chipsOnly).toContain('data-testid="thread-context-trigger"');
+    expect(chipsOnly).not.toContain('data-testid="thread-detail-meta"');
     expect(chipsOnly).not.toContain('Branch:');
 
   });
@@ -789,9 +805,9 @@ describe('expandable row and chips', () => {
   });
 
   it('opens the secondary panel Diff pin from Review', () => {
-    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const source = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     expect(source).toContain("selectPin('diff')");
-    expect(source).toContain("selectPin('plan')");
+    expect(source).toContain("onOpenPlan={() => activateTool('plan')}");
     expect(source).toContain('<ThreadPlanPanel');
     expect(source).not.toContain('shouldAutoOpenThreadPlanPanel');
     expect(source).toContain('showPlanPin');
@@ -808,7 +824,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain('resolveTimelinePollRows');
     expect(source).toContain('loadThreadDetailProgressively');
     expect(source).not.toContain('/* keep last */');
-    const load = readFileSync(fileURLToPath(new URL('../../views/threads/thread-detail-load.ts', import.meta.url)), 'utf8');
+    const load = readSourceText(fileURLToPath(new URL('../../views/threads/thread-detail-load.ts', import.meta.url)));
     expect(load).toContain('applyTimelineDelta');
     expect(load).toContain('retainLatestTimelineWindow');
     expect(source).toContain('afterSequence');
@@ -818,7 +834,7 @@ describe('expandable row and chips', () => {
   });
 
   it('keeps the secondary panel a sibling of the main column', () => {
-    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const source = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     expect(source).toContain('thread-detail-main');
     expect(source).toContain('thread-detail-split');
     expect(source).toContain('<ThreadSecondaryPanel');
@@ -834,17 +850,17 @@ describe('expandable row and chips', () => {
   });
 
   it('keeps the thread-detail-header in the left column of the split', () => {
-    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const source = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     const splitAt = source.indexOf('className="thread-detail-split"');
     const mainAt = source.indexOf('className="thread-detail-main"');
-    const headerAt = source.indexOf('className="thread-detail-header"');
+    const headerAt = source.indexOf('className="thread-detail-header thread-detail-header--balanced"');
     const bodyAt = source.indexOf('className="thread-detail-body"');
     expect(splitAt).toBeGreaterThan(-1);
     expect(mainAt).toBeGreaterThan(splitAt);
     expect(headerAt).toBeGreaterThan(mainAt);
     expect(bodyAt).toBeGreaterThan(headerAt);
 
-    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const css = readSourceText(fileURLToPath(new URL('../../styles/global.css', import.meta.url)));
     expect(css).toContain('.thread-detail-split {');
     expect(css).toContain('.thread-detail-view.is-secondary-maximized .thread-detail-main {\n  display: none;');
     expect(css).toContain('.thread-detail-view.is-secondary-open:not(.is-secondary-maximized) .thread-detail-split');
@@ -852,7 +868,7 @@ describe('expandable row and chips', () => {
   });
 
   it('keeps the transcript, workspace banner, and composer in one column', () => {
-    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const source = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     const columnAt = source.indexOf('className="thread-detail-column"');
     expect(columnAt).toBeGreaterThan(-1);
     expect(source).not.toContain('ThreadTableOfContents');
@@ -887,7 +903,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain('isLivePlanFilePath');
     expect(source).not.toContain('ThreadPromptModeChip');
 
-    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const css = readSourceText(fileURLToPath(new URL('../../styles/global.css', import.meta.url)));
     const columnCss = css.slice(
       css.indexOf('.thread-detail-column {'),
       css.indexOf('.thread-detail-column > .thread-composer-dock')
@@ -975,6 +991,8 @@ describe('expandable row and chips', () => {
     expect(stickyUser).toContain('top: 0;');
     expect(stickyUser).toContain('z-index: 4;');
     expect(stickyUser).toContain('background: var(--bg-base);');
+    expect(stickyUser).toContain('.app-shell.shell-inset .thread-timeline-current-turn > .thread-timeline-item.is-user,');
+    expect(stickyUser).toContain('background: var(--bg-panel);');
     expect(stickyUser).toContain('.thread-timeline-current-turn > .thread-timeline-item.is-user[data-sticky-prompt] {\n  position: sticky;');
     expect(stickyUser.split('}')[0]).not.toContain('position: sticky;');
     const assistantBubble = css.slice(
@@ -990,13 +1008,15 @@ describe('expandable row and chips', () => {
     expect(userBubble).toContain('border: 1px solid var(--border);');
     expect(userBubble).toContain('background: var(--bg-elevated, var(--bg-background));');
     expect(userBubble).toContain('border-radius: 12px;');
-    expect(css).toContain('.thread-timeline-item:hover,\n.thread-timeline-item:focus-within {\n  z-index: 1;');
+    const hover = css.match(/\.thread-timeline-item:hover,\s*\.thread-timeline-item:focus-within\s*\{[^}]*z-index:\s*(\d+)/)?.[1];
+    const sticky = css.match(/\.thread-timeline-current-turn > \.thread-timeline-item\.is-user\[data-sticky-prompt\]\s*\{[^}]*z-index:\s*(\d+)/)?.[1];
+    expect(Number(hover)).toBeGreaterThan(Number(sticky));
     expect(css).toContain('.thread-detail-timeline {\n  user-select: text;');
     expect(css).not.toContain('.thread-toc');
   });
 
   it('gives mermaid diagrams a definite thread-bubble width so they cannot resize-loop', () => {
-    const mermaid = readFileSync(fileURLToPath(new URL('../MermaidDiagram.tsx', import.meta.url)), 'utf8');
+    const mermaid = readSourceText(fileURLToPath(new URL('../MermaidDiagram.tsx', import.meta.url)));
     expect(mermaid).toContain('mermaidSvgLayout');
     expect(mermaid).toContain('inbox-mermaid-frame');
     expect(mermaid).toContain('flowchart: { useMaxWidth: false }');
@@ -1004,11 +1024,11 @@ describe('expandable row and chips', () => {
     expect(mermaid).toContain('readMermaidSvgCache');
     expect(mermaid).not.toMatch(/setSvg\(null\)/);
 
-    const markdown = readFileSync(fileURLToPath(new URL('../MarkdownContent.tsx', import.meta.url)), 'utf8');
+    const markdown = readSourceText(fileURLToPath(new URL('../MarkdownContent.tsx', import.meta.url)));
     expect(markdown).toContain('renderFencedPre');
     expect(markdown).toContain('useCallback');
 
-    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const css = readSourceText(fileURLToPath(new URL('../../styles/global.css', import.meta.url)));
     const mermaidRow = css.slice(
       css.indexOf('.thread-timeline-row:has(.inbox-mermaid)'),
       css.indexOf('.thread-timeline-row .inbox-mermaid,')
@@ -1026,7 +1046,7 @@ describe('expandable row and chips', () => {
   });
 
   it('keeps the transcript scrollbar invisible at rest and paints it only while scrolling', () => {
-    const source = readFileSync(fileURLToPath(new URL('./ThreadTimeline.tsx', import.meta.url)), 'utf8');
+    const source = readSourceText(fileURLToPath(new URL('./ThreadTimeline.tsx', import.meta.url)));
     expect(source).toContain('thread-detail-timeline thread-scrollbar');
     expect(source).toContain('markTransientScrollbarScrolling');
     expect(source).toContain('clearTransientScrollbarScrolling');
@@ -1036,7 +1056,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain('pinScrollToBottom');
     expect(source).toContain('new ResizeObserver(pin)');
 
-    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const css = readSourceText(fileURLToPath(new URL('../../styles/global.css', import.meta.url)));
     const scrollbar = css.slice(
       css.indexOf('.thread-scrollbar {'),
       css.indexOf('.thread-timeline-turn {')
@@ -1048,7 +1068,7 @@ describe('expandable row and chips', () => {
   });
 
   it('can render the same thread surface embedded in the Agents list monitor', () => {
-    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const source = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     expect(source).toContain('export function ThreadDetail(');
     expect(source).toContain('embedded = false');
     expect(source).toContain('thread-detail-view--embedded');
@@ -1064,7 +1084,7 @@ describe('expandable row and chips', () => {
     expect(source).not.toContain('useThreads((s) => s.threads.filter');
     expect(source).toContain('lastReadSeq: typeof timeline?.lastReadSeq === \'number\' ? timeline.lastReadSeq : existing?.lastReadSeq ?? null');
     expect(source).toContain('useThreads.getState().upsert({ ...existing, lastReadSeq: seq })');
-    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const css = readSourceText(fileURLToPath(new URL('../../styles/global.css', import.meta.url)));
     expect(css).toContain('.thread-detail-view--embedded');
     expect(css).toContain('.thread-detail-view--modal');
     expect(css).toContain('.thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {\n  background: var(--bg-panel);\n}');

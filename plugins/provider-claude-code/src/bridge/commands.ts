@@ -60,6 +60,7 @@ export const claudeThreadStartParamsSchema = z.object({
   instructionMode: bridgeInstructionModeSchema,
   dynamicTools: z.array(dynamicToolSchema).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  sessionKind: z.enum(["interactive", "automated"]).optional(),
 });
 
 export const claudeThreadResumeParamsSchema =

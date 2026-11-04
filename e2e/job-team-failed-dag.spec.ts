@@ -38,8 +38,8 @@ async function launchFailedDag(window: Page, projectName: string): Promise<void>
   await modal.getByTestId('team-command-input').fill('verify deterministic failed DAG settlement');
   await modal.getByLabel('Squad', { exact: true }).click();
   await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'E2E Failure Team' }).click();
-  await modal.getByRole('button', { name: 'Project', exact: true }).click();
-  await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
+  await modal.getByRole('button', { name: 'Machine and project', exact: true }).click();
+  await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: projectName, exact: false }).click();
   // The goal carries no portable plan: the fake coordinator registers the failed
   // DAG itself, so this is the infer (freeform) mode. "Plan provided in goal" with
   // no parseable plan now parks the run for operator plan correction instead.

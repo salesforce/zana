@@ -132,6 +132,16 @@ publish:
 beforePack: scripts/before-pack-plugins.mjs
 afterPack: scripts/after-pack-trim-opencode.mjs
 
+# Plugin deep links (`zana://plugin/<pluginId>/<route>?d=<payload>`). Packaged
+# builds own the prod scheme only: mac CFBundleURLTypes, NSIS registry entries on
+# Windows, and the x-scheme-handler MimeType on Linux all come from `protocols`.
+# Dev (`zana-dev`) and E2E schemes are never declared here. See
+# apps/desktop/src/deep-link-host.ts.
+protocols:
+  - name: Zana plugin link
+    schemes:
+      - zana
+
 asar: true
 asarUnpack:
   # node-pty and better-sqlite3 each ship a native .node binary that can't run

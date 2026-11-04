@@ -100,3 +100,79 @@ describe('join code inspect', () => {
     expect(store.inspect(issued.joinCode, undefined, 1_001)).toEqual({ ok: false, reason: 'missing' });
   });
 });
+
+describe('forward-only join codes', () => {
+  it('carry a server-decided capability through peek, redeem and recovery; default stays execution', () => {
+    const store = createJoinCodeStore();
+    const forward = store.mintForwardOnly(10), normal = store.mint(10);
+    expect(forward.enrollmentCapability).toBe('peer.forward');
+    expect(normal.enrollmentCapability).toBe('execution');
+    expect(store.mintForHost('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 10).enrollmentCapability).toBe('execution');
+    expect(store.peek(forward.joinCode, 11)?.enrollmentCapability).toBe('peer.forward');
+    expect(store.redeem(forward.joinCode, 12)?.enrollmentCapability).toBe('peer.forward');
+    expect(store.recovered(forward.joinCode, 13)?.enrollmentCapability).toBe('peer.forward');
+    expect(store.redeem(forward.joinCode, 14)).toBeNull();
+  });
+
+  it('persists the capability durably and a repair mint for the same host replaces it', async () => {
+    const { openDatabase } = await import('@zana-ai/zcc-db');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'forward-join-')), file = join(dir, 'state.sqlite');
+    let db = openDatabase(file);
+    try {
+      const forward = createJoinCodeStore(db).mintForwardOnly(1000);
+      db.close(); db = openDatabase(file);
+      const store = createJoinCodeStore(db);
+      expect(store.peek(forward.joinCode, 1001)?.enrollmentCapability).toBe('peer.forward');
+      expect(store.redeem(forward.joinCode, 1002)).toEqual(forward);
+      expect(store.mintForHost(forward.hostId, 1003).enrollmentCapability).toBe('execution');
+      expect(store.recovered(forward.joinCode, 1004)).toBeNull();
+    } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('mintForwardOnlyForHost (peer-link rotation)', () => {
+  async function withDb<T>(run: (db: import('@zana-ai/zcc-db').ZccDatabase, zcc: typeof import('@zana-ai/zcc-db')) => T | Promise<T>): Promise<T> {
+    const zcc = await import('@zana-ai/zcc-db');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'forward-rotate-')), db = zcc.openDatabase(join(dir, 'state.sqlite'));
+    try { return await run(db, zcc); } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+  }
+
+  it('rejects non-UUID ids and any store without a database', () => {
+    const store = createJoinCodeStore();
+    expect(() => store.mintForwardOnlyForHost('not-a-uuid')).toThrow(/UUID/);
+    expect(() => store.mintForwardOnlyForHost('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')).toThrow(/existing peer link/);
+  });
+
+  it('rejects unknown, destroyed, primary and execution hosts', async () => {
+    await withDb((db, { upsertHost }) => {
+      const store = createJoinCodeStore(db);
+      const unknown = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+      const primary = upsertHost(db, { name: 'Primary', hostKeyHash: 'a'.repeat(64), isPrimary: true });
+      const execution = upsertHost(db, { name: 'Exec', hostKeyHash: 'b'.repeat(64), isPrimary: false });
+      const destroyed = upsertHost(db, { name: 'Gone', hostKeyHash: 'c'.repeat(64), isPrimary: false, enrollmentCapability: 'peer.forward' });
+      db.sqlite.prepare('UPDATE hosts SET destroyed_at = ? WHERE id = ?').run(Date.now(), destroyed.id);
+      for (const id of [unknown, primary.id, execution.id, destroyed.id]) expect(() => store.mintForwardOnlyForHost(id)).toThrow(/existing peer link/);
+      expect(db.sqlite.prepare('SELECT COUNT(*) AS n FROM host_join_codes').get()).toEqual({ n: 0 });
+    });
+  });
+
+  it('issues a peer.forward code for a live peer host and invalidates its previous pending code', async () => {
+    await withDb((db, { upsertHost }) => {
+      const store = createJoinCodeStore(db);
+      const host = upsertHost(db, { name: 'Peer', hostKeyHash: 'd'.repeat(64), isPrimary: false, enrollmentCapability: 'peer.forward' });
+      const first = store.mintForwardOnlyForHost(host.id, 1000);
+      expect(first).toMatchObject({ hostId: host.id, enrollmentCapability: 'peer.forward', expiresAt: 1000 + JOIN_CODE_TTL_MS });
+      const second = store.mintForwardOnlyForHost(host.id, 2000);
+      expect(second.joinCode).not.toBe(first.joinCode);
+      expect(store.peek(first.joinCode, 2001)).toBeNull();
+      expect(store.peek(second.joinCode, 2001)?.enrollmentCapability).toBe('peer.forward');
+      expect(db.sqlite.prepare('SELECT COUNT(*) AS n FROM host_join_codes').get()).toEqual({ n: 1 });
+    });
+  });
+});

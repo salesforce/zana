@@ -34,6 +34,7 @@ const chain = {
   run: vi.fn(() => true)
 };
 const editor = {
+  on: vi.fn(), off: vi.fn(),
   getJSON: () => editorState.json,
   state: {
     selection: { empty: true, from: 0, to: 0, $from: { parent: { textBetween: () => '' } } },
@@ -189,6 +190,24 @@ describe('useComposerPromptField', () => {
     unmount();
     await act(async () => finish());
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('claims Cmd/Ctrl+Enter so the editor inserts no line break, and leaves the submit to the chrome handler', () => {
+    const onSubmit = vi.fn();
+    const { result } = renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [],
+      slashCatalog: { kind: 'cli' }, onSubmit
+    }));
+    const { handleKeyDown } = editorState.options!.editorProps as unknown as { handleKeyDown: (view: unknown, event: KeyboardEvent) => boolean };
+    for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+      const event = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, ...modifier });
+      expect(handleKeyDown({}, event)).toBe(true);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(handleKeyDown({}, new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, cancelable: true }))).toBe(false);
+    act(() => result.current.handleChromeKeyDown(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, cancelable: true }) as never));
+    expect(onSubmit).toHaveBeenCalledWith({ modifierEnter: true });
   });
 
   it('rerenders consumers with updated serialized editor text', () => {

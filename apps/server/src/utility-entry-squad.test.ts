@@ -7,15 +7,18 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
 
 const h = vi.hoisted(() => ({
+  localWork: vi.fn(() => false),
   context: null as any,
   handlers: new Map<string, () => void>(),
   launchOptions: null as any,
   squad: {
     preflightSquadRuntime: vi.fn(), createSquadMemberConversation: vi.fn(), activateSquadMemberConversation: vi.fn(),
     deliverSquadMemberConversation: vi.fn(), completeSquadMemberDelivery: vi.fn(), squadMemberStatus: vi.fn(),
-    stopSquadMemberConversation: vi.fn(), resolveSquadMember: vi.fn(), isSquadMemberThread: vi.fn()
+    stopSquadMemberConversation: vi.fn(), resolveSquadMember: vi.fn(), isSquadMemberThread: vi.fn(),
+    resumeSquadMemberConversation: vi.fn()
   }
 }));
+vi.mock('./services/threads/local-thread-work.js', () => ({ hasLocalThreadWork: h.localWork }));
 vi.mock('./services/threads/squad-member-runtime.js', () => h.squad);
 vi.mock('./services/agents/modern-team-launch-config.js', () => ({
   createModernTeamLaunchConfigSource: (options: unknown) => { h.launchOptions = options; return {}; }
@@ -42,6 +45,7 @@ vi.mock('@zana-ai/zcc-process-utils', async original => ({
 }));
 
 const projectId = 'project-1';
+const localHostId = randomUUID();
 const control = { bindingId: randomUUID(), generation: 1, projectId };
 const member = {
   ...control, teamId: 'team', cohortId: randomUUID(), providerId: 'claude-code', role: 'worker',
@@ -49,6 +53,7 @@ const member = {
 };
 const delivery = { ...control, assignmentId: 'a1', idempotencyKey: 'k1', message: 'go' };
 const completion = { ...control, assignmentId: 'a1', idempotencyKey: 'k1' };
+const resume = { projectId, bindingId: control.bindingId, expectedGeneration: 1, newGeneration: 2, expectedProviderThreadId: 'provider-thread' };
 const preflight = { projectId, providerIds: ['claude-code'] };
 
 describe('squad member runtime operations over the runtime channel', () => {
@@ -77,7 +82,8 @@ describe('squad member runtime operations over the runtime channel', () => {
     ['squad-member-activate', member, 'activateSquadMemberConversation'],
     ['squad-member-deliver', delivery, 'deliverSquadMemberConversation'],
     ['squad-member-delivery-complete', completion, 'completeSquadMemberDelivery'],
-    ['squad-member-status', control, 'squadMemberStatus']
+    ['squad-member-status', control, 'squadMemberStatus'],
+    ['squad-member-resume', resume, 'resumeSquadMemberConversation']
   ];
 
   beforeAll(async () => {
@@ -89,7 +95,7 @@ describe('squad member runtime operations over the runtime channel', () => {
       hub: { emit() {}, subscribe: (name: string, fn: () => void) => { h.handlers.set(name, fn); return () => h.handlers.delete(name); } }
     };
     await import('./utility-entry.js');
-  });
+  }, 60_000);
 
   afterAll(async () => {
     if (!stopped) await stop();
@@ -127,6 +133,8 @@ describe('squad member runtime operations over the runtime channel', () => {
   it('replies with an error when a squad operation throws', async () => {
     h.squad.createSquadMemberConversation.mockRejectedValueOnce(new Error('provider unavailable'));
     await expect(send('squad-member-create', member)).resolves.toMatchObject({ type: 'error', message: 'provider unavailable' });
+    h.squad.resumeSquadMemberConversation.mockRejectedValueOnce(new Error('resume refused'));
+    await expect(send('squad-member-resume', resume)).resolves.toMatchObject({ type: 'error', message: 'resume refused' });
     h.squad.stopSquadMemberConversation.mockRejectedValueOnce(new Error('stop failed'));
     await expect(send('squad-member-stop', control)).resolves.toMatchObject({ type: 'error', message: 'stop failed' });
   });
@@ -142,6 +150,17 @@ describe('squad member runtime operations over the runtime channel', () => {
     expect(h.squad.isSquadMemberThread).toHaveBeenCalledWith(h.context, 'thread-1');
   });
 
+  it('publishes initial local activity without waiting for a thread event', async () => {
+    await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'menubar-threads-changed', localThreadsWorking: false
+    })));
+    // The terminal transport's hostBinding is a different identity. It must
+    // never be used to classify product threads as local.
+    expect(h.localWork).not.toHaveBeenCalled();
+    parent.emit('message', { data: { type: 'local-host', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, hostId: localHostId } });
+    await vi.waitFor(() => expect(h.localWork).toHaveBeenCalledWith(h.context.db, localHostId));
+  });
+
   it('coalesces thread status and progress events into one leading menubar hint', async () => {
     expect([...h.handlers.keys()].sort()).toEqual(['threads:event', 'threads:updated']);
     const hints = () => parent.postMessage.mock.calls.filter(([m]) => m.type === 'menubar-threads-changed').length;
@@ -150,10 +169,14 @@ describe('squad member runtime operations over the runtime channel', () => {
     h.handlers.get('threads:updated')!();
     h.handlers.get('threads:event')!();
     await vi.waitFor(() => expect(hints()).toBe(before + 1));
+    expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'menubar-threads-changed', localThreadsWorking: false }));
+    expect(h.localWork).toHaveBeenCalledWith(h.context.db, localHostId);
     await new Promise((r) => setTimeout(r, 150));
     expect(hints()).toBe(before + 1);
+    h.localWork.mockReturnValue(true);
     h.handlers.get('threads:updated')!();
     await vi.waitFor(() => expect(hints()).toBe(before + 2));
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'menubar-threads-changed', localThreadsWorking: true }));
   });
 
   it('disposes both hint subscriptions on stop', async () => {

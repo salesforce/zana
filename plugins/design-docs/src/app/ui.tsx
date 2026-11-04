@@ -103,10 +103,13 @@ export function IconButton({
   active = false,
   danger = false,
   disabled = false,
-  size = 14
+  size = 14,
+  hint
 }: {
   icon: Icon;
   label: string;
+  /** Visible hover/focus tooltip text; the native title tooltip is skipped when set. */
+  hint?: string;
   onClick(): void;
   active?: boolean;
   danger?: boolean;
@@ -117,7 +120,8 @@ export function IconButton({
     <button
       type="button"
       className={`icon-btn dd-icon-btn${active ? ' on' : ''}${danger ? ' danger' : ''}`}
-      title={label}
+      title={hint ? undefined : label}
+      data-tip={hint}
       aria-label={label}
       aria-pressed={active || undefined}
       disabled={disabled}
@@ -262,7 +266,8 @@ export function MenuItem({
   hint,
   onSelect,
   danger = false,
-  checked = false
+  checked = false,
+  disabledReason
 }: {
   icon?: Icon;
   label: ReactNode;
@@ -270,12 +275,17 @@ export function MenuItem({
   onSelect(): void;
   danger?: boolean;
   checked?: boolean;
+  /** When set, the item is shown but cannot be chosen, and this explains why. */
+  disabledReason?: string;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
       className={`dd-menu-item${danger ? ' dd-menu-danger' : ''}${checked ? ' dd-menu-checked' : ''}`}
+      disabled={!!disabledReason}
+      aria-disabled={disabledReason ? true : undefined}
+      title={disabledReason}
       onClick={onSelect}
     >
       {Glyph ? <Glyph size={14} aria-hidden /> : null}

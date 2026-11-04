@@ -1,4 +1,7 @@
-import type { AgentState, ScheduledTask } from '@zana-ai/zcc-domain/product';
+import type { AgentState, Project, ScheduledTask } from '@zana-ai/zcc-domain/product';
+import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
+import { sessionLocation } from '../lib/session-location.js';
+import { isScratchWorkspaceProject } from './composer-project-default.js';
 import {
   isClaudeProfile,
   isCodexProfile,
@@ -247,14 +250,15 @@ export function threadHarnessLabel(providerId: string): string {
 export function threadCardRuntimeLabel(
   thread: Pick<ThreadListItem, 'providerId' | 'isWorktree'>,
   remoteToolProxy = false,
-  remoteHost = false
+  remoteHost = false,
+  machineName?: string
 ): string {
   const harness = threadHarnessLabel(thread.providerId);
   const runtime = remoteToolProxy
-    ? 'Local agent · remote tools'
+    ? `${machineName ?? 'Local agent'} · remote tools`
     : remoteHost
-      ? 'Remote host'
-      : thread.isWorktree ? 'Worktree' : 'Local';
+      ? machineName ? `Remote · ${machineName}` : 'Remote host'
+      : thread.isWorktree ? ['Worktree', machineName].filter(Boolean).join(' · ') : machineName ?? 'Local';
   return `${harness} · ${runtime}`;
 }
 
@@ -282,12 +286,13 @@ export function agentCardRuntimeLabel(input: {
   personaName?: string | null;
   remote?: boolean;
   remoteToolProxy?: boolean;
+  machineName?: string;
 }): string {
   const name = input.personaName?.trim();
   const harness = name || cliHarnessLabel(input.profile);
   const runtime = input.remoteToolProxy
-    ? 'Local agent · remote tools'
-    : input.remote ? 'Remote host' : 'Local';
+    ? `${input.machineName ?? 'Local agent'} · remote tools`
+    : input.remote ? input.machineName ? `Remote · ${input.machineName}` : 'Remote host' : input.machineName ?? 'Local';
   return `${harness} · ${runtime}`;
 }
 
@@ -312,29 +317,46 @@ export function fleetMatchesLane(
 }
 
 /** Keep project positions independent of card recency/count, preserving card order within each group. */
-export function groupFleetByProject(items: FleetItem[], projectOrder: readonly string[]): Array<{
+export function groupFleetByProject(
+  items: FleetItem[],
+  projectOrder: readonly string[],
+  projects: readonly Project[] = [],
+  hosts: readonly Host[] = []
+): Array<{
+  key: string;
   projectId: string;
   projectName: string;
   projectColor?: string;
   cards: FleetItem[];
 }> {
   const groups: Array<{
+    key: string;
     projectId: string;
     projectName: string;
     projectColor?: string;
     cards: FleetItem[];
   }> = [];
+  const projectsById = new Map(projects.map(project => [project.id, project]));
   const byId = new Map<string, (typeof groups)[number]>();
   for (const item of items) {
-    let group = byId.get(item.projectId);
+    const project = projectsById.get(item.projectId);
+    const hostId = item.kind === 'thread' ? item.thread.hostId
+      : item.kind === 'agent' ? item.card.modernThread?.hostId ?? item.card.session.hostId : undefined;
+    const location = project && isScratchWorkspaceProject(project)
+      ? sessionLocation(hostId, project, hosts) : undefined;
+    // Default Project is shared metadata; its personal environments belong to
+    // separate machines. Keep their cards apart even while a host is offline.
+    const key = JSON.stringify([item.projectId, location?.hostId ?? null]);
+    let group = byId.get(key);
     if (!group) {
       group = {
+        key,
         projectId: item.projectId,
-        projectName: item.projectName,
+        projectName: location?.machineName ? `${item.projectName} · ${location.machineName}` : item.projectName,
         projectColor: item.projectColor,
         cards: []
       };
-      byId.set(item.projectId, group);
+      byId.set(key, group);
       groups.push(group);
     }
     group.cards.push(item);
@@ -344,6 +366,7 @@ export function groupFleetByProject(items: FleetItem[], projectOrder: readonly s
     (ranks.get(a.projectId) ?? Infinity) - (ranks.get(b.projectId) ?? Infinity)
     // Missing projects still have a stable order while the project list loads.
     || a.projectId.localeCompare(b.projectId)
+    || a.key.localeCompare(b.key)
   );
 }
 

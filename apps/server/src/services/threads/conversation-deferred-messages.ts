@@ -13,6 +13,7 @@ import {
   listRetryableDeferredThreadMessages,
   retryDeferredThreadMessage,
   postponeDeferredThreadRetry,
+  claimDeferredThreadMessageGroup,
   markDeferredThreadMessageDispatching,
   holdDeferredThreadMessage,
   holdDeferredThreadMessageForEdit,
@@ -513,12 +514,12 @@ export async function flushDeferredConversationMessages(
       if (options.force) throw forceFlushError(decision.reason);
       return { flushed, delayed: decision.reason };
     }
-    const claimed: DeferredThreadMessageRow[] = [];
-    for (const row of prefix) {
-      if (!markDeferredThreadMessageDispatching(ctx.db, { id: row.id, threadId, ...(options.force ? { overrideEditHold: true } : {}) })) continue;
-      claimed.push(row);
-    }
-    if (claimed.length === 0) return { flushed };
+    // The durable claim covers admission, attachments and provider preparation,
+    // before the thread itself becomes active. Concurrent drains must wait here.
+    if (!claimDeferredThreadMessageGroup(ctx.db, {
+      threadId, rows: prefix, ...(options.force ? { overrideEditHold: true } : {})
+    })) return { flushed, delayed: 'dispatch-in-progress' };
+    const claimed = prefix;
     try {
       await deliver(mergeDeferredSendPayloads(claimed));
       for (const row of claimed) deleteDeferredThreadMessage(ctx.db, { id: row.id, threadId });

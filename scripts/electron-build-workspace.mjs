@@ -47,6 +47,9 @@ export async function buildElectron(root, outDir, run = runCommand) {
   const pending = join(outDir, '.build-in-progress');
   writeFileSync(pending, String(process.pid));
   const env = { ...process.env, ZCC_BUILD_OUT_DIR: outDir };
+  // build:prepare runs seed-extensions before this isolated runtime snapshot.
+  // Those generated plugin artifacts can leave unrelated source-tree changes.
+  process.stderr.write('warning: E2E build regenerates plugin artifacts in source tree; generated plugin diffs are not test output.\n');
   const prepare = await run('pnpm', ['run', 'build:prepare'], {
     cwd: root, env, shell: process.platform === 'win32'
   });

@@ -1,6 +1,8 @@
+import { createBrowserPageEvaluator } from './desktop-browser-page.js';
 import { BrowserWindow, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import {
   parseDesktopBrowserAttachRequest,
+  parseDesktopBrowserEvaluateRequest,
   parseDesktopBrowserFindInPageRequest,
   parseDesktopBrowserImportCookiesRequest,
   parseDesktopBrowserNavigateRequest,
@@ -44,6 +46,19 @@ export function registerDesktopBrowserIpc(
     browserImport?: BrowserImportService;
   }
 ): void {
+  const evaluatePage = createBrowserPageEvaluator();
+  ipcMain.handle(IPC.browser.evaluate, async (event, payload: unknown) => {
+    const hostWindow = hostWindowFromEvent(event);
+    const parsed = parseDesktopBrowserEvaluateRequest(payload);
+    if (!hostWindow || !parsed.success) throw new Error('Invalid browser page request');
+    const request = parsed.data;
+    if (options?.broker?.getControl(event.sender.id,request.tabId)?.control) throw new Error('Browser page is controlled by another session');
+    const tab = manager.getAutomationTabs({hostWebContentsId:hostWindow.webContents.id,threadId:request.threadId}).find(tab => tab.tabId === request.tabId);
+    if (!tab) throw new Error('Browser tab is unavailable in this thread');
+    return evaluatePage(tab.webContents, request, data => {
+      if (!hostWindow.isDestroyed() && !hostWindow.webContents.isDestroyed()) hostWindow.webContents.send(IPC.browser.pageMessage,{tabId:request.tabId,threadId:request.threadId,data});
+    });
+  });
   const broker = options?.broker;
   const browserImport = options?.browserImport;
   ipcMain.handle(IPC.browser.getClosedTabs, (event) => {

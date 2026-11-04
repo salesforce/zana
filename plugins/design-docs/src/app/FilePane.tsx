@@ -8,6 +8,7 @@ import { FilePreview, type PreviewHandle } from './FilePreview.js';
 import { RevisionView } from './HistoryPane.js';
 import { useFile } from './hooks.js';
 import { ActorLabel, FileIcon, IconButton, Spinner, TimeAgo } from './ui.js';
+import type { DocKind } from './api.js';
 
 export type ViewMode = 'preview' | 'edit' | 'split';
 
@@ -18,8 +19,8 @@ const MODES: Array<{ id: ViewMode; label: string; icon: typeof Eye }> = [
 ];
 
 /** Keep showing the last loaded content of a path while its next revision loads. */
-function useStickyFile(docId: string, path: string, revision: number | null) {
-  const resource = useFile(docId, path, revision);
+function useStickyFile(docId: string, path: string, revision: number | null, kind?: DocKind) {
+  const resource = useFile(docId, path, revision, kind);
   const last = useRef<DesignDocFile | null>(null);
   if (resource.data) last.current = resource.data;
   const sticky = last.current && last.current.path === path ? last.current : null;
@@ -55,8 +56,10 @@ export function FilePane({
   onOpenPath,
   onQuote,
   onAskAbout,
+  onAddToThread,
   onEditorState,
-  leading
+  leading,
+  kind
 }: {
   doc: DesignDocDetail;
   path: string;
@@ -70,12 +73,14 @@ export function FilePane({
   onOpenPath(path: string): void;
   onQuote(text: string): void;
   onAskAbout(text: string): void;
+  onAddToThread?(text: string): void;
   onEditorState(state: EditorState): void;
   /** Extra toolbar content before the path (the compact file switcher). */
   leading?: ReactNode;
+  kind?: DocKind;
 }) {
   const meta = doc.files.find((file) => file.path === path) ?? null;
-  const { file, error, loading } = useStickyFile(doc.id, path, meta?.revision ?? null);
+  const { file, error, loading } = useStickyFile(doc.id, path, meta?.revision ?? null, kind);
   const flash = useAgentFlash(path, meta?.revision ?? null, meta?.updatedBy);
   const editable = !meta || !isBinaryKind(meta.kind);
   const effectiveMode: ViewMode = editable ? mode : 'preview';
@@ -94,7 +99,7 @@ export function FilePane({
 
   let body: ReactNode;
   if (revision) {
-    body = <RevisionView key={revision.id} doc={doc} revision={revision} onClose={onCloseRevision} onOpenPath={onOpenPath} />;
+    body = <RevisionView key={revision.id} doc={doc} revision={revision} onClose={onCloseRevision} onOpenPath={onOpenPath} docKind={kind} />;
   } else if (!meta && !(file && effectiveMode !== 'preview')) {
     body = <div className="dd-center dd-muted">{path} is not in this doc anymore.</div>;
   } else if (!file) {
@@ -108,21 +113,24 @@ export function FilePane({
         quotes={quotes}
         onOpenPath={onOpenPath}
         onQuote={onQuote}
-        onAskAbout={onAskAbout}
-        handleRef={previewHandle}
+          onAskAbout={onAskAbout}
+          onAddToThread={onAddToThread}
+          handleRef={previewHandle}
+          kind={kind}
       />
     );
   } else {
     body = (
-      <FileEditor
+          <FileEditor
         key={`${doc.id}\u0000${path}`}
         docId={doc.id}
         file={file}
         removed={!meta}
         split={effectiveMode === 'split'}
-        onStateChange={onEditorState}
-        renderPreview={(content) => (
-          <FilePreview docId={doc.id} file={{ ...file, content }} files={doc.files} onOpenPath={onOpenPath} draft={content !== file.content} />
+            onStateChange={onEditorState}
+            kind={kind}
+            renderPreview={(content) => (
+              <FilePreview docId={doc.id} file={{ ...file, content }} files={doc.files} onOpenPath={onOpenPath} draft={content !== file.content} kind={kind} />
         )}
       />
     );

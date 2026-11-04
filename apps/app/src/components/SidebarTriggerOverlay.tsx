@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useUi } from '../store.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
-import { getNewThreadRoutePath } from '../lib/route-paths.js';
+import { getNewThreadRoutePath, getRootRoutePath } from '../lib/route-paths.js';
+import { getScopedProjectId } from '../lib/windowScope.js';
 import { SidebarHistoryControls } from './SidebarHistoryControls.js';
 import { CollapsedUnreadThreads } from './CollapsedUnreadThreads.js';
 import { MobileAgentsBack } from './MobileAgentsBack.js';
@@ -21,6 +22,8 @@ export function SidebarTriggerOverlay({
 }: { collapsed?: boolean; onToggle?: () => void } = {}) {
   const compact = useCompactLayout();
   const storedCollapsed = useUi((s) => s.sidebarCollapsed);
+  const focusedProjectId = useUi((s) => s.focusedProjectId);
+  const projectId = getScopedProjectId() ?? focusedProjectId;
   const collapsed = collapsedOverride ?? storedCollapsed;
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
@@ -58,7 +61,7 @@ export function SidebarTriggerOverlay({
           <button
             type="button"
             className="sidebar-expand-control"
-            onClick={() => navigate(getNewThreadRoutePath())}
+            onClick={() => navigate(projectId ? getNewThreadRoutePath(projectId) : getRootRoutePath())}
             aria-label="New Chat"
             title="New Chat"
             data-testid="sidebar-collapsed-new-chat"

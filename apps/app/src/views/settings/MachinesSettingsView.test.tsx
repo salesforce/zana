@@ -562,7 +562,6 @@ describe('remote and project search entries', () => {
     const mods = await Promise.all([
       import('../../lib/settings-search/entries/machines.js'),
       import('../../lib/settings-search/entries/connectivity.js'),
-      import('../../lib/settings-search/entries/phone.js'),
       import('../../lib/settings-search/entries/remote-access.js'),
       import('../../lib/settings-search/entries/project.js')
     ]);

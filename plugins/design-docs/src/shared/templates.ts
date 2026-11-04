@@ -9,7 +9,7 @@ export interface DesignDocTemplate {
   id: string;
   label: string;
   description: string;
-  files: ReadonlyArray<{ path: string; content: string }>;
+  files: ReadonlyArray<{ path: string; content: string; encoding?: 'utf8' | 'base64' }>;
   entryPath?: string;
 }
 
@@ -276,9 +276,10 @@ export function templateById(id: unknown): DesignDocTemplate | null {
 export function renderTemplateFiles(
   template: DesignDocTemplate,
   values: { title: string; summary: string }
-): Array<{ path: string; content: string }> {
+): Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }> {
   const summary = values.summary.trim() || 'One-paragraph summary of the proposal.';
   return template.files.map((file) => {
+    if (file.encoding === 'base64') return { ...file };
     const page = /\.html?$/i.test(file.path);
     const text = (value: string) => (page ? escapeHtml(value) : value);
     return { path: file.path, content: file.content.replaceAll('{{title}}', text(values.title)).replaceAll('{{summary}}', text(summary)) };

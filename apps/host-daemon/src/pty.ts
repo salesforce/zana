@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readdir as readdirAsync, stat as statAsync, unlink as unlinkAsync } from 'node:fs/promises';
-import { dirname, join, sep } from 'node:path';
+import { dirname, isAbsolute, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree, HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
@@ -20,6 +20,14 @@ import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync } from './mcp
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
+import {
+  SESSION_CALLBACK_ENV_KEYS,
+  SESSION_IDENTITY_ENV_KEYS,
+  sessionEnvFilePath,
+  stripInheritedSessionCallbacks,
+  withBlankedSessionCallbacks,
+  writeSessionEnvFile
+} from './tmux-session-env.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
@@ -33,6 +41,12 @@ import {
   type ExecutionSession
 } from './harness/execution-environment.js';
 import { personaArgs_build } from './harness/claude/provider.js';
+import {
+  planAutomatedClaudeLaunch,
+  removeAutomatedConfigDir,
+  sweepStaleAutomatedConfigDirs
+} from './harness/claude/automated-isolation.js';
+import { resolveZccDataDir } from './host-config.js';
 import { shellQuote } from './harness/shell-quote.js';
 import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from './harness/argv-utils.js';
 import {
@@ -517,6 +531,36 @@ export class PtyManager extends EventEmitter {
    *  written on spawn and unlinked in {@link finalizeExit}. Absent for providers
    *  that carry MCP another way (claude file-arg, codex `-c`, shell none). */
   private sessionMcpConfigFiles = new Map<string, string>();
+  /** Tmux identity env files not yet consumed by the pane; unlinked on exit (the pane normally deletes it first). */
+  private sessionEnvFiles = new Map<string, string>();
+  /** Per-run isolated CLAUDE_CONFIG_DIR of unattended Claude sessions, by session id; removed in {@link finalizeExit}. */
+  private automatedConfigDirs = new Map<string, string>();
+  private automatedConfigSwept = false;
+
+  /** Prepare an unattended Claude run's isolated config dir. Also sweeps stale leaves once per process. */
+  private planAutomatedClaude(sessionId: string, cwd: string, requiredMcps?: readonly string[]): ReturnType<typeof planAutomatedClaudeLaunch> {
+    const plan = planAutomatedClaudeLaunch({ ownerId: sessionId, cwd, ...(requiredMcps?.length ? { requiredMcps } : {}) });
+    this.automatedConfigDirs.set(sessionId, plan.configDir);
+    if (!this.automatedConfigSwept) {
+      this.automatedConfigSwept = true;
+      sweepStaleAutomatedConfigDirs({
+        dataDir: resolveZccDataDir(),
+        liveOwnerIds: new Set(this.automatedConfigDirs.keys())
+      });
+    }
+    return plan;
+  }
+
+  private releaseAutomatedConfigDir(sessionId: string): void {
+    const leaf = this.automatedConfigDirs.get(sessionId);
+    if (!leaf) return;
+    this.automatedConfigDirs.delete(sessionId);
+    try {
+      removeAutomatedConfigDir(resolveZccDataDir(), leaf);
+    } catch {
+      /* best-effort — swept by age on a later launch */
+    }
+  }
 
   /** Run scheduled commands through a native supervisor with stable child PID ownership. */
   private scheduledSupervisor(command: string, args: string[]): { command: string; args: string[] } {
@@ -831,7 +875,25 @@ export class PtyManager extends EventEmitter {
     }
   }
 
-  create(opts: {
+  /**
+   * Spawn a local session. A throw before the PTY exists never reaches
+   * {@link finalizeExit}, so any automated config dir registered during the
+   * failed call is released here instead of leaking for the process lifetime.
+   */
+  create(opts: Parameters<PtyManager['createUnguarded']>[0]): TerminalSession {
+    const before = new Set(this.automatedConfigDirs.keys());
+    try {
+      return this.createUnguarded(opts);
+    } catch (error) {
+      for (const id of [...this.automatedConfigDirs.keys()]) {
+        if (!before.has(id) && !this.live.has(id)) this.releaseAutomatedConfigDir(id);
+      }
+      throw error;
+    }
+  }
+
+  /** @internal Use {@link create}; this is its unguarded body. */
+  createUnguarded(opts: {
     /** Main coordinator-owned identity, allocated before authorization/commit. */
     preallocatedSessionId?: string;
     projectId: string;
@@ -888,6 +950,19 @@ export class PtyManager extends EventEmitter {
      */
     scheduled?: boolean;
     /**
+     * Opt an unattended (headless / scheduled / autonomous) Claude spawn out of
+     * the per-run automated config isolation: no `--setting-sources user`, no
+     * forced CLAUDE_CONFIG_DIR, so the user's MCPs/plugins/hooks apply. Set only
+     * by trusted main-side callers (scheduler); never from renderer input.
+     */
+    useUserConfig?: boolean;
+    /**
+     * MCP server names an isolated unattended Claude run needs (scheduler-set).
+     * Launch is refused, before any process starts, when one is not carried into
+     * the isolated config. Ignored when the run is not isolated.
+     */
+    requiredMcps?: string[];
+    /**
      * Mark this spawn as part of an AUTONOMOUS team run (agents must act
      * unattended). Full bypass (`--dangerously-skip-permissions`) is NOT used —
      * an enterprise-managed Claude Code policy (`managed-settings.json:
@@ -902,6 +977,14 @@ export class PtyManager extends EventEmitter {
     autonomous?: boolean;
     /** Main-owned Team launch semantics; renderer cannot set this field. */
     coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
+    /**
+     * Absolute paths of the durable coordinator's plan-handoff files (authored
+     * plan plus the host-named plan-correction files). MAIN-only. Each grants an
+     * exact-file `Edit(//abs)` rule (the Claude CLI ignores `Write(path)` rules;
+     * `Edit(path)` covers every file-editing tool) so the coordinator can write
+     * only those files without a broad edit permission.
+     */
+    authoredPlanPaths?: readonly string[];
     /** Opening task already composes persona kickoff, so delayed pty injection must stay off. */
     suppressPersonaInitialPrompt?: boolean;
     /**
@@ -1133,6 +1216,17 @@ export class PtyManager extends EventEmitter {
     // name the exact tab to close — without it, callbacks can only target
     // the project, not the specific session.
     const sessionId = opts.preallocatedSessionId ?? randomUUID();
+    // Unattended Claude runs (headless / scheduled / autonomous) load only a
+    // Zana-generated auth+gateway settings file from a per-run CLAUDE_CONFIG_DIR
+    // instead of the user's full hooks/plugins/project settings. A failed
+    // automated admission throws before any interactive launch state is built.
+    const automatedClaude =
+      caps.injectsClaudeMcpConfig &&
+      (opts.headless || opts.scheduled || opts.autonomous) &&
+      !opts.useUserConfig &&
+      (!opts.environment || opts.environment === 'local' || opts.environment === 'runtime-host')
+        ? this.planAutomatedClaude(sessionId, opts.cwd, opts.requiredMcps)
+        : null;
     // The per-session zcc-inbox MCP server URL, with the project + session
     // identity baked into the path so callbacks (inbox_push, hooks) can stamp the
     // exact originating terminal. Null until the local MCP server has a base URL.
@@ -1588,16 +1682,25 @@ export class PtyManager extends EventEmitter {
           'mcp__zcc-inbox__execution.work.answer',
           'mcp__zcc-inbox__execution.work.release',
           'mcp__zcc-inbox__execution.work.retry',
+          'mcp__zcc-inbox__execution.work.heartbeat',
           'mcp__zcc-inbox__execution.delivery.pull',
           'mcp__zcc-inbox__execution.delivery.ack',
           'mcp__zcc-inbox__execution.event',
-          'mcp__zcc-inbox__execution.artifact.put',
-          'mcp__zcc-inbox__execution.artifact.list',
           'mcp__zcc-inbox__execution.complete'
       ]
       : [];
     const jobTeamArgs = claudeJobTeamPolicy
       ? ['--disallowedTools', 'AskUserQuestion']
+      : [];
+    // Exact-file plan-authoring grant (`//` = absolute in Claude permission rules).
+    // Deny rules still win over this allow, so it never widens persona/managed policy.
+    // Every path is checked on its own; an unsafe entry is dropped, never widened.
+    const authoredPlanAllow = claudeJobTeamPolicy
+      ? (opts.authoredPlanPaths ?? [])
+          .filter((path) => typeof path === 'string' && isAbsolute(path)
+            && !/[(),*?\[\]]/.test(path)
+            && !path.split(/[\\/]/).includes('..'))
+          .map((path) => `Edit(/${path})`)
       : [];
     // Codex supports native MCP approval configuration via `-c`. Keep ordinary
     // sessions on their configured on-request policy; durable Job Teams get only
@@ -1652,9 +1755,10 @@ export class PtyManager extends EventEmitter {
           ...autonomousArgs,
           ...jobTeamArgs,
            ...lifecycleContribution.args,
+          ...(automatedClaude?.args ?? []),
           ...cleanedExtra
         ],
-        [...inboxAllow, ...(claudeJobTeamPolicy ? jobTeamAllow : [])]
+        [...inboxAllow, ...(claudeJobTeamPolicy ? jobTeamAllow : []), ...authoredPlanAllow]
       ),
       opts.remoteToolProxy && caps.injectsClaudeMcpConfig
         ? [...REMOTE_TOOL_PROXY_DISALLOWED_TOOLS]
@@ -1683,6 +1787,12 @@ export class PtyManager extends EventEmitter {
     // dev, but sanitizing at the source removes the footgun for good. See
     // stripInheritedClaudeSession.
     stripInheritedClaudeSession(env);
+    // Same footgun for Zana's own per-session callback URLs: an app launched from
+    // a Zana tab inherits that tab's ZCC_MCP_URL / hook URLs. A harness that does
+    // not re-set a key below (codex wires MCP via `-c`, not ZCC_MCP_URL) would
+    // otherwise call back into the PARENT session's route, which is not bound to
+    // this session's execution. Every key this launch owns is re-set later.
+    stripInheritedSessionCallbacks(env);
     ensureInteractiveTerminalEnv(env);
     // Per-harness auth env override: merge AFTER stripInheritedClaudeSession (it
     // touches only CLAUDE* session markers, never our auth vars) and AFTER the
@@ -1727,6 +1837,8 @@ export class PtyManager extends EventEmitter {
       env.CLAUDE_CODE_TRUST_ALL_WORKSPACES = '1';
     }
     Object.assign(env, lifecycleContribution.env);
+    // Last, so no ambient or stored value can redirect an isolated run's config dir.
+    if (automatedClaude) Object.assign(env, automatedClaude.env);
     if (mcpConfigPath && mcpServerUrl) {
       // Claude env-substitutes `${ZCC_MCP_URL}` into its `--mcp-config` file at
       // spawn. (codex bakes the same URL directly into `providerMcpArgs` instead,
@@ -1759,20 +1871,16 @@ export class PtyManager extends EventEmitter {
     // (PATH, HOME, …) still inherits normally; only these per-session ZCC_*
     // vars need the override.
     const sessionEnv: Record<string, string | undefined> = {
-      ZCC_MCP_URL: env.ZCC_MCP_URL,
-      ZCC_HOOK_URL: env.ZCC_HOOK_URL,
-      ZCC_NOTIFY_URL: env.ZCC_NOTIFY_URL,
-      ZCC_FIRSTPROMPT_URL: env.ZCC_FIRSTPROMPT_URL,
-      ZCC_SUBAGENT_URL: env.ZCC_SUBAGENT_URL,
-      ZCC_TOOLACTIVITY_URL: env.ZCC_TOOLACTIVITY_URL,
-      ZCC_OVERSEER_URL: env.ZCC_OVERSEER_URL,
-      ZCC_CONTENTSCREEN_URL: env.ZCC_CONTENTSCREEN_URL,
+      ...Object.fromEntries(SESSION_CALLBACK_ENV_KEYS.map((key) => [key, env[key]])),
       // OpenCode's inline MCP config carries the per-session zcc-inbox URL, so it's
       // session-scoped exactly like the ZCC_*_URL vars: without the `-e` override a
       // 2nd+ tmux-backed OpenCode agent would inherit the 1st's baked-in session URL
       // and mis-route its inbox callbacks. Undefined (omitted) for every non-OpenCode
       // launch. See providerMcpEnv above.
-      OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT
+      OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT,
+      // A tmux pane inherits the server's env, not this client's: hand the
+      // isolated config dir over explicitly (omitted for every other launch).
+      ...(automatedClaude ? automatedClaude.env : {})
     };
     // The provider MCP-config-file env var (OpenCode's `OPENCODE_CONFIG`) is
     // session-scoped exactly like the vars above — its file carries this session's
@@ -1958,8 +2066,17 @@ export class PtyManager extends EventEmitter {
     // above any prompt we emit, so when the tmux-wrapped command would breach the
     // imsg budget we fall back to a plain (non-restore-backed) spawn: launching
     // correctly beats tmux restore-backing for the rare oversized session.
-    const prospectiveTmux = wantsTmux
-      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, sessionEnv)
+    // Identity rides a 0600 env file the pane sources then deletes, never `-e`.
+    let identityEnvFile: string | undefined;
+    if (wantsTmux) {
+      try {
+        identityEnvFile = sessionEnvFilePath(sessionId);
+      } catch (err) {
+        console.warn(`[pty] session ${sessionId}: identity env dir unavailable; spawning without tmux:`, err);
+      }
+    }
+    const prospectiveTmux = identityEnvFile
+      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, withBlankedSessionCallbacks(sessionEnv), identityEnvFile)
       : undefined;
     // Conservative bound below MAX_IMSGSIZE (16384) minus tmux's per-arg framing
     // and imsg header; empirically a serialized argv ~16 KiB is rejected while
@@ -1968,12 +2085,24 @@ export class PtyManager extends EventEmitter {
     const tmuxCommandBytes = prospectiveTmux
       ? Buffer.byteLength([prospectiveTmux.command, ...prospectiveTmux.args].join(' '), 'utf8')
       : 0;
-    const useTmux = wantsTmux && tmuxCommandBytes < TMUX_IMSG_SAFE_BYTES;
-    if (wantsTmux && !useTmux) {
+    let useTmux = !!prospectiveTmux && tmuxCommandBytes < TMUX_IMSG_SAFE_BYTES;
+    if (prospectiveTmux && !useTmux) {
       console.warn(
         `[pty] session ${sessionId}: tmux wrapper skipped — command ${tmuxCommandBytes}B ` +
           `exceeds imsg-safe budget ${TMUX_IMSG_SAFE_BYTES}B; spawning directly (no restore backing).`
       );
+    }
+    if (useTmux && identityEnvFile) {
+      try {
+        writeSessionEnvFile(
+          sessionId,
+          Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]]))
+        );
+        this.sessionEnvFiles.set(sessionId, identityEnvFile);
+      } catch (err) {
+        console.warn(`[pty] session ${sessionId}: writing ${identityEnvFile} failed; spawning without tmux:`, err);
+        useTmux = false;
+      }
     }
     const spawnCmd = useTmux && prospectiveTmux
       ? prospectiveTmux
@@ -2196,6 +2325,17 @@ export class PtyManager extends EventEmitter {
     }
     this.clearDataBuffer(sessionId);
     this.diagnosticFiles.delete(sessionId);
+    // Unlink the tmux identity env file if the pane never consumed it.
+    const envFile = this.sessionEnvFiles.get(sessionId);
+    if (envFile) {
+      this.sessionEnvFiles.delete(sessionId);
+      try {
+        unlinkSync(envFile);
+      } catch {
+        /* best-effort — the pane already consumed it */
+      }
+    }
+    this.releaseAutomatedConfigDir(sessionId);
     // Unlink this session's provider MCP config file (OpenCode's `OPENCODE_CONFIG`),
     // if we wrote one. Best-effort; a crash orphan is swept by age on next write.
     const mcpConfigFile = this.sessionMcpConfigFiles.get(sessionId);
@@ -2674,6 +2814,7 @@ export class PtyManager extends EventEmitter {
       TERM: 'xterm-256color'
     };
     spawnEnv.PATH = augmentPath(spawnEnv.PATH ?? process.env.PATH);
+    stripInheritedSessionCallbacks(spawnEnv);
     ensureInteractiveTerminalEnv(spawnEnv);
 
     (this.hostServices.prepareNativePty ?? ensureNodePtySpawnHelperExecutable)();
@@ -2975,7 +3116,7 @@ export class PtyManager extends EventEmitter {
       'tmux', 'has-session', '-t', r.tmuxName
     ];
     return new Promise<RemoteLiveness>((resolve) => {
-      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (err) => {
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (err) => {
         if (!err) return resolve('alive'); // exit 0 → session exists
         // ssh's own failures (connect refused/timeout, auth) exit 255; a killed
         // (timed-out) probe has err.killed. Both are "can't tell" → transient.
@@ -3161,7 +3302,7 @@ export class PtyManager extends EventEmitter {
         (literal ? ' -l' : '') +
         ` ${shellQuote(keys)}`;
       const args = [...r.probeOpts, '-o', 'BatchMode=yes', r.target, remoteCmd];
-      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (err) => {
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (err) => {
         if (!err) then?.();
       });
     };
@@ -3197,7 +3338,7 @@ export class PtyManager extends EventEmitter {
       'tmux', 'kill-session', '-t', reattach.tmuxName
     ];
     return new Promise((resolve) => {
-      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (error) => {
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (error) => {
         if (!error) {
           const current = this.live.get(id);
           if (current) current.remoteTerminationInFlight = false;
@@ -3215,7 +3356,7 @@ export class PtyManager extends EventEmitter {
           reattach.target,
           'tmux', 'has-session', '-t', reattach.tmuxName
         ];
-        execFile('ssh', probeArgs, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (probeError) => {
+        execFile('ssh', probeArgs, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (probeError) => {
           if (remoteCommandExitCode(probeError) === 1) {
             const current = this.live.get(id);
             if (current) current.remoteTerminationInFlight = false;
@@ -3305,7 +3446,7 @@ export class PtyManager extends EventEmitter {
     }
     const args = [...probeOpts, '-o', 'BatchMode=yes', target, remoteCmd];
     return new Promise((resolve) => {
-      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (error) => resolve(!error));
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (error) => resolve(!error));
     });
   }
 

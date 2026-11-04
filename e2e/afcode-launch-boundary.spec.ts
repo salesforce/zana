@@ -14,7 +14,11 @@ test.use({
   e2e: true,
   // Assert the PTY byte stream, independent of a developer's tmux screen settings.
   initialConfig: { tmuxScope: 'off', defaultHarness: 'claude' },
-  launchEnv: { PATH: `${fileURLToPath(new URL('./fixtures/bin', import.meta.url))}${delimiter}${process.env.PATH ?? ''}` }
+  launchEnv: {
+    PATH: `${fileURLToPath(new URL('./fixtures/bin', import.meta.url))}${delimiter}${process.env.PATH ?? ''}`,
+    // This boundary intentionally installs the checked-out provider directory.
+    ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: '1'
+  }
 });
 test.setTimeout(180_000);
 test.beforeAll(async () => { await buildPluginHost(pluginPath, '2.1.2'); });
@@ -128,8 +132,8 @@ test('afcode CLI adapter delivers input, retains large output and opens its resu
       providerId: 'acp-afcode', byProvider: {}
     })));
     await window.getByTestId('agents-board-new-thread').first().click();
-    await modal.getByRole('button', { name: 'Project', exact: true }).click();
-    await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: basename(projectPath), exact: true }).click();
+    await modal.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: basename(projectPath), exact: false }).click();
     const modelPicker = modal.getByTestId('model-reasoning-picker-trigger');
     await modelPicker.click();
     await expect(window.getByTestId('model-reasoning-provider-acp-afcode')).toHaveAttribute('aria-selected', 'true');
@@ -178,8 +182,8 @@ test('CLI Agent afcode tab launches afcode instead of remembered Claude', async 
     await window.getByTestId('agents-board-new-thread').first().click();
     const modal = window.getByTestId('launch-modal');
     await modal.getByRole('button', { name: 'CLI Agent', exact: true }).click();
-    await modal.getByRole('button', { name: 'Project', exact: true }).click();
-    await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: basename(projectPath), exact: true }).click();
+    await modal.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: basename(projectPath), exact: false }).click();
     const modelPicker = modal.getByTestId('model-reasoning-picker-trigger');
     await modelPicker.click();
     const afcodeTab = window.getByTestId('model-reasoning-provider-acp-afcode');

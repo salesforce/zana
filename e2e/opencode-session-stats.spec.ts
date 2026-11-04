@@ -1,8 +1,10 @@
-import { test, expect, launchApp } from './fixtures/app.js';
+import { test, expect, closeApp, launchApp } from './fixtures/app.js';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { cleanupTmuxEnvironment } from './fixtures/tmux-isolation.js';
 
 function python(script: string, args: string[]): void {
   execFileSync('python3', ['-c', script, ...args]);
@@ -48,7 +50,7 @@ sleep 60
     }, projectId);
 
     const now = String(Date.now());
-    python("import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', sys.argv[2:]); db.commit(); db.close()", [dbPath, 'ses_e2e', projectDir, '1.18.10', 'build', JSON.stringify({ id: 'gpt-5.6-terra', providerID: 'aisuite' }), '0', '100', '20', '5', '300', '0', now, now]);
+    python("import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', sys.argv[2:]); db.commit(); db.close()", [dbPath, 'ses_e2e', projectDir, '1.18.10', 'build', JSON.stringify({ id: 'gpt-5.6-terra', providerID: 'legacy-provider' }), '0', '100', '20', '5', '300', '0', now, now]);
 
     await expect.poll(() => window.evaluate(
       ({ pid, sid }) => window.cc.terminals.sessionStats(pid, sid),
@@ -63,7 +65,10 @@ sleep 60
     if (sessionId) {
       await app.window.evaluate((sid) => window.cc.terminals.close(sid).catch(() => {}), sessionId);
     }
-    await app.electron.close().catch(() => {});
-    rmSync(home, { recursive: true, force: true });
+    await closeApp(app.electron);
+    await cleanupTmuxEnvironment(home);
+    // A CLI status probe can finish writing its sandbox cache after Electron
+    // exits. Retry this transient ENOTEMPTY without hiding teardown failures.
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

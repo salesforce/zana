@@ -1,0 +1,60 @@
+WEBVTT
+
+00:00:00.500 --> 00:00:03.854
+Building agents used to be complicated and painful.
+
+00:00:04.900 --> 00:00:11.112
+Meet Agentforce Studio in Zana: build,
+test, and fix your agents in one place.
+
+00:00:11.301 --> 00:00:18.739
+Here's Northstar Support, open in Agentforce Studio: real
+Agent Script, with a compiler that checks every line.
+
+00:00:18.920 --> 00:00:22.171
+Graph view shows the whole conversation at a glance.
+
+00:00:23.300 --> 00:00:27.763
+Each action opens in its own
+tab, down to the Apex behind it,
+
+00:00:27.944 --> 00:00:31.008
+and the Flow, drawn as its real canvas.
+
+00:00:31.189 --> 00:00:37.046
+The order lookup returns a Lightning Type: its
+schema, and the card component that renders it.
+
+00:00:37.227 --> 00:00:46.551
+Compile, then preview. Can I return an item after twenty-one
+days? The agent says fourteen days. Our policy is thirty.
+
+00:00:46.732 --> 00:00:57.394
+Now hand it to the agent. Ask for test scenarios, and they land in the shared
+Scenarios tab, each with a persona, a goal and the criteria a judge will check.
+
+00:00:57.576 --> 00:01:02.904
+Ask it to run them. Three customers,
+in parallel, each scored by the judge.
+
+00:01:03.655 --> 00:01:08.549
+Two pass. The judge shows exactly
+why the return policy failed.
+
+00:01:08.732 --> 00:01:15.523
+Ask it to improve the failing one. It tests every attempt
+against the same batch, without touching your file.
+
+00:01:19.727 --> 00:01:22.990
+Baseline two of three. Best, three of three.
+
+00:01:23.171 --> 00:01:27.407
+You review the change as a diff. Accept it, and save.
+
+00:01:28.032 --> 00:01:33.240
+Ask it to check again: thirty days. And
+the batch now passes, three of three.
+
+00:01:37.034 --> 00:01:44.508
+That's Agentforce Studio. Build, see, test, and
+fix your agents, with the evidence to ship them.

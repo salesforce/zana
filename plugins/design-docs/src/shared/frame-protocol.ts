@@ -8,6 +8,7 @@
  * untrusted: `parseFromPage` checks shapes and bounds sizes, and the app never
  * does more for a page than a static host would.
  */
+import { MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
 import { MAX_QUOTE_LENGTH } from './limits.js';
 import type { FileKind } from './paths.js';
 
@@ -165,7 +166,7 @@ export function parseFromPage(data: unknown): FromPage | null {
       return problem ? { type: 'problem', problem } : null;
     }
     case 'selection': {
-      const selected = clipped(message.text, MAX_QUOTE_LENGTH);
+      const selected = text(message.text, MAX_CONTEXT_REFERENCE_TEXT);
       const box = rect(message.rect);
       return selected === null || box === undefined ? null : { type: 'selection', text: selected, rect: box };
     }

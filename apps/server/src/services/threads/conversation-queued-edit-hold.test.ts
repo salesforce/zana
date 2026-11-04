@@ -299,3 +299,53 @@ describe('concurrent writers stay serialized', () => {
     expect(releaseDeferredConversationMessageEditHold(context, threadId, row.id)).toBe(true);
   });
 });
+
+describe('preparing dispatches serialize automatic drains', () => {
+  it.each([false, true])('waits for a preparing group, including force=%s, while other threads can drain', async force => {
+    queue('first', { groupBoundaryId: 'group' });
+    queue('also first', { groupBoundaryId: 'group' });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const firstDeliver = vi.fn(async () => { await gate; });
+    const first = flushDeferredConversationMessages(context, threadId, firstDeliver);
+    const second = queue('second');
+    const secondDeliver = vi.fn(async () => undefined);
+    try {
+      expect(firstDeliver).toHaveBeenCalledWith(expect.objectContaining({ input: ['first', 'also first'] }));
+      await expect(flushDeferredConversationMessages(context, threadId, secondDeliver, { force })).resolves.toEqual({ flushed: 0, delayed: 'dispatch-in-progress' });
+      expect(secondDeliver).not.toHaveBeenCalled();
+      expect(getDeferredThreadMessage(db, key(second))?.status).toBe('queued');
+      queue('other thread', { threadId: otherThreadId });
+      await expect(flushDeferredConversationMessages(context, otherThreadId, secondDeliver)).resolves.toEqual({ flushed: 1 });
+      expect(inputs(secondDeliver)).toEqual(['other thread']);
+    } finally { release(); await first; }
+    // The original drain picks up the waiting message after its preparation completes.
+    expect(inputs(firstDeliver)).toEqual([['first', 'also first'], 'second']);
+    expect(listDeferredThreadMessages(db, threadId)).toEqual([]);
+  });
+
+  it('lets an explicit single-row send proceed and holds automatic neighbors until it settles', async () => {
+    const explicit = queue('explicit');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const send = sendDeferredConversationMessage(context, threadId, explicit.id, async () => { await gate; });
+    queue('next');
+    const deliver = vi.fn(async () => undefined);
+    try {
+      await expect(flushDeferredConversationMessages(context, threadId, deliver)).resolves.toMatchObject({ flushed: 0, delayed: 'dispatch-in-progress' });
+      expect(deliver).not.toHaveBeenCalled();
+    } finally { release(); await send; }
+    await expect(flushDeferredConversationMessages(context, threadId, deliver)).resolves.toEqual({ flushed: 1 });
+    expect(inputs(deliver)).toEqual(['next']);
+  });
+
+  it('releases the preparation claim after failure so the next drain can send', async () => {
+    queue('fails');
+    const result = await flushDeferredConversationMessages(context, threadId, async () => { throw new Error('rejected'); });
+    expect(result).toEqual({ flushed: 0, delayed: 'dispatch-failed' });
+    queue('next');
+    const deliver = vi.fn(async () => undefined);
+    await expect(flushDeferredConversationMessages(context, threadId, deliver)).resolves.toEqual({ flushed: 1 });
+    expect(inputs(deliver)).toEqual(['next']);
+  });
+});

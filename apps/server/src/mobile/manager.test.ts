@@ -59,7 +59,7 @@ describe('MobileGatewayManager', () => {
       error: null,
       distribution: { testFlightUrl: null },
       readySessions: [],
-      connection: { mode: 'connect', publicUrl: 'https://computer.example', hasRelayToken: true, accountUrl: 'https://account.example' },
+      connection: { mode: 'connect', publicUrl: 'https://computer.example', hasRelayToken: true, accountUrl: 'https://account.example', serverId: 'computer-1' },
       relayState: 'connected'
     });
     await manager.start();

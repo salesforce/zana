@@ -256,7 +256,10 @@ export function registerTerminalsIpc(): void {
   safeProductHandle(
     IPC.terminals.closeFollowup,
     (projectId: string, sessionIds: string[]) =>
-      ctx.closeSummary.summarizeAndFollowUp(projectId, sessionIds),
+      // "Wrap up before closing" (Experimental): ask the agents to wrap up first; off = today's summary.
+      store.getConfig().closeWrapUpEnabled === true
+        ? ctx.wrapUpClose.run(projectId, sessionIds)
+        : ctx.closeSummary.summarizeAndFollowUp(projectId, sessionIds),
     // A failed summary/follow-up must not block the close the renderer does next.
     () => ({ summarized: 0, followedUp: 0 })
   );

@@ -1,10 +1,13 @@
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readlinkSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -58,6 +61,7 @@ import {
   experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 import { BRIDGE_JSON_RPC_ERRORS } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import { flushSessionKindTelemetry } from "../session-kind-telemetry.js";
 import type { BridgeJsonRpcOutputMessage } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 
 import {
@@ -153,11 +157,13 @@ interface ControlledClaudeQuery {
 }
 
 interface ClaudeQueryCallOptions {
+  allowedTools?: string[];
   canUseTool?: CanUseTool;
   env?: Record<string, string | undefined>;
   extraArgs?: Record<string, string | null>;
   hooks?: BridgeSessionHooks;
   model?: string;
+  mcpServers?: Record<string, unknown>;
   permissionMode?: ClaudePermissionMode;
   resume?: string;
   sandbox?: BridgeSessionOptions["sandbox"];
@@ -3034,6 +3040,340 @@ describe("bridge", () => {
     }
   });
 
+  describe("automated session config isolation", () => {
+    const ENV_KEYS = [
+      "HOME",
+      "ZCC_DATA_DIR",
+      "CLAUDE_CONFIG_DIR",
+      "ANTHROPIC_API_KEY",
+    ] as const;
+    let saved: Record<string, string | undefined>;
+    let dataDir: string;
+
+    beforeEach(() => {
+      saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+      dataDir = mkdtempSync(join(tmpdir(), "zcc-automated-"));
+      process.env.HOME = "/Users/test-bb";
+      process.env.ZCC_DATA_DIR = dataDir;
+      delete process.env.CLAUDE_CONFIG_DIR;
+      // Isolation only applies when the isolated dir can authenticate.
+      process.env.ANTHROPIC_API_KEY = "test-key";
+    });
+
+    afterEach(() => {
+      for (const key of ENV_KEYS) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+      rmSync(dataDir, { recursive: true, force: true });
+    });
+
+    function startRequest(threadId: string, sessionKind?: string) {
+      return {
+        threadId,
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        ...(sessionKind === undefined ? {} : { sessionKind }),
+        dynamicTools: [
+          {
+            name: "zana_ping",
+            description: "ping",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+        options: {
+          permissionMode: "accept-edits",
+          permissionScope: "workspace",
+          approvalReviewer: "user",
+          permissionEscalation: "ask",
+          instructions: "test",
+          providerOptions: { workflowsEnabled: false },
+        },
+      };
+    }
+
+    async function readTelemetry(): Promise<Array<Record<string, unknown>>> {
+      await flushSessionKindTelemetry();
+      const file = join(dataDir, "diagnostics", "claude-session-kind.jsonl");
+      if (!existsSync(file)) return [];
+      return readFileSync(file, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+    }
+
+    it("isolates an admitted automated session and keeps HOME and Zana tools", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest("thread-auto", "automated"));
+        await bridge.waitForResponse(1);
+
+        const queryOptions = getLatestQueryOptions();
+        const configDir = join(dataDir, "claude-automated-config", "thread-auto");
+        expect(queryOptions.env?.HOME).toBe("/Users/test-bb");
+        expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBe(configDir);
+        expect(statSync(configDir).mode & 0o777).toBe(0o700);
+        expect(queryOptions.settingSources).toEqual([]);
+        expect(queryOptions.mcpServers).toBeDefined();
+        expect(queryOptions.hooks).toBeDefined();
+
+        const [start] = await readTelemetry();
+        expect(start).toMatchObject({
+          event: "start",
+          sessionKind: "automated",
+          admission: "applied",
+          isolatedConfig: true,
+          settingSources: [],
+          dynamicToolCount: 1,
+        });
+        expect(JSON.stringify(start)).not.toContain(dataDir);
+
+        bridge.sendRequest(2, "thread/discard", {
+          threadId: "thread-auto",
+          providerThreadId: "thread-auto",
+        });
+        await bridge.waitForResponse(2);
+        expect(existsSync(configDir)).toBe(false);
+        expect((await readTelemetry()).at(-1)).toMatchObject({ event: "end" });
+      } finally {
+        bridge.restore();
+      }
+    });
+
+    it("loads only the generated per-run settings when the real settings carry auth config", async () => {
+      const sourceDir = mkdtempSync(join(tmpdir(), "zcc-real-claude-"));
+      writeFileSync(
+        join(sourceDir, "settings.json"),
+        JSON.stringify({
+          apiKeyHelper: "/bin/helper",
+          hooks: { PreToolUse: [{ command: "evil" }] },
+        }),
+      );
+      process.env.CLAUDE_CONFIG_DIR = sourceDir;
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest("thread-seeded", "automated"));
+        await bridge.waitForResponse(1);
+
+        const queryOptions = getLatestQueryOptions();
+        const configDir = join(dataDir, "claude-automated-config", "thread-seeded");
+        expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBe(configDir);
+        expect(queryOptions.settingSources).toEqual(["user"]);
+        expect(JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8"))).toEqual({
+          apiKeyHelper: "/bin/helper",
+        });
+        expect((await readTelemetry())[0]).toMatchObject({ settingSources: ["user"] });
+      } finally {
+        bridge.restore();
+        rmSync(sourceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("blocks an automated session when the home has only OAuth login state", async () => {
+      const sourceDir = mkdtempSync(join(tmpdir(), "zcc-oauth-claude-"));
+      writeFileSync(
+        join(sourceDir, ".claude.json"),
+        JSON.stringify({ oauthAccount: { emailAddress: "a@b.c" } }),
+      );
+      process.env.CLAUDE_CONFIG_DIR = sourceDir;
+      const savedAuth = Object.fromEntries(
+        Object.entries(process.env).filter(([key]) =>
+          /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/.test(key),
+        ),
+      );
+      for (const key of Object.keys(savedAuth)) delete process.env[key];
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest("thread-oauth", "automated"));
+        const response = await bridge.waitForResponse(1);
+        expect(response).toMatchObject({ error: { message: "Automated Claude admission blocked: authentication-unavailable" } });
+        expect(queryMock).not.toHaveBeenCalled();
+        expect(existsSync(join(dataDir, "claude-automated-config", "thread-oauth"))).toBe(false);
+      } finally {
+        bridge.restore();
+        Object.assign(process.env, savedAuth);
+        rmSync(sourceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("blocks an automated session when the config dir cannot be created", async () => {
+      // A data dir that is a regular file makes every mkdir under it fail.
+      const blocker = join(dataDir, "not-a-dir");
+      writeFileSync(blocker, "x");
+      process.env.ZCC_DATA_DIR = blocker;
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest("thread-mkdir-fails", "automated"));
+        const response = await bridge.waitForResponse(1);
+
+        expect(response).toMatchObject({ error: { message: "Automated Claude admission blocked: config-unavailable" } });
+        expect(queryMock).not.toHaveBeenCalled();
+      } finally {
+        bridge.restore();
+      }
+    });
+
+    it("blocks automated resume and fork before constructing an SDK session", async () => {
+      const sourceDir = mkdtempSync(join(tmpdir(), "zcc-oauth-claude-"));
+      writeFileSync(join(sourceDir, ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "a@b.c" } }));
+      process.env.CLAUDE_CONFIG_DIR = sourceDir;
+      const savedAuth = Object.fromEntries(
+        Object.entries(process.env).filter(([key]) =>
+          /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/.test(key),
+        ),
+      );
+      for (const key of Object.keys(savedAuth)) delete process.env[key];
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      try {
+        bridge.sendRequest(1, "thread/resume", {
+          ...startRequest("thread-resume-blocked", "automated"),
+          providerThreadId: "provider-resume",
+        });
+        expect(await bridge.waitForResponse(1)).toMatchObject({
+          error: { message: "Automated Claude admission blocked: authentication-unavailable" },
+        });
+
+        bridge.sendRequest(2, "thread/fork", {
+          ...startRequest("thread-fork-blocked", "automated"),
+          sourceProviderThreadId: "source-session",
+        });
+        expect(await bridge.waitForResponse(2)).toMatchObject({
+          error: { message: "Automated Claude admission blocked: authentication-unavailable" },
+        });
+        expect(queryMock).not.toHaveBeenCalled();
+        expect(forkSessionMock).not.toHaveBeenCalled();
+      } finally {
+        bridge.restore();
+        Object.assign(process.env, savedAuth);
+        rmSync(sourceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("does not create a replacement automated leaf when provider fork validation fails", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      forkSessionMock.mockRejectedValue(new Error("checkpoint unavailable"));
+      const threadId = "thread-fork-validation";
+      const configDir = join(dataDir, "claude-automated-config", threadId);
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest(threadId, "automated"));
+        await bridge.waitForResponse(1);
+        expect(existsSync(configDir)).toBe(true);
+
+        bridge.sendRequest(2, "thread/fork", {
+          ...startRequest(threadId, "automated"),
+          sourceProviderThreadId: "source-session",
+        });
+        await expect(bridge.waitForResponse(2)).resolves.toMatchObject({
+          error: { message: "checkpoint unavailable" },
+        });
+        expect(existsSync(configDir)).toBe(false);
+      } finally {
+        bridge.restore();
+      }
+    });
+
+    it("recreates isolation only after replacing an attached automated fork session", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      const queries: ControlledClaudeQuery[] = [];
+      queryMock.mockImplementation(() => {
+        const query = createControlledClaudeQuery();
+        queries.push(query);
+        return query;
+      });
+      const threadId = "thread-fork-replace";
+      const configDir = join(dataDir, "claude-automated-config", threadId);
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest(threadId, "automated"));
+        await bridge.waitForResponse(1);
+        bridge.sendRequest(2, "thread/fork", {
+          ...startRequest(threadId, "automated"),
+          sourceProviderThreadId: "source-session",
+        });
+        await expect(bridge.waitForResponse(2)).resolves.toMatchObject({
+          result: { providerThreadId: "forked-session-1" },
+        });
+        expect(existsSync(configDir)).toBe(true);
+        expect(getLatestQueryOptions().env?.CLAUDE_CONFIG_DIR).toBe(configDir);
+      } finally {
+        await stopBridgeThread({ bridge, queries, threadId });
+        bridge.restore();
+      }
+    });
+
+    it("keeps a session without sessionKind interactive and unisolated", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest("thread-interactive"));
+        await bridge.waitForResponse(1);
+
+        const queryOptions = getLatestQueryOptions();
+        expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+        expect(queryOptions.settingSources).toEqual(["user", "project", "local"]);
+        expect(existsSync(join(dataDir, "claude-automated-config"))).toBe(false);
+        expect((await readTelemetry())[0]).toMatchObject({
+          sessionKind: "interactive",
+          admission: "default-interactive",
+          isolatedConfig: false,
+        });
+      } finally {
+        bridge.restore();
+      }
+    });
+
+    it("keeps the automated kind and config dir when a resume omits sessionKind", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest("thread-resume", "automated"));
+        await bridge.waitForResponse(1);
+        const configDir = join(dataDir, "claude-automated-config", "thread-resume");
+
+        bridge.sendRequest(2, "thread/resume", {
+          ...startRequest("thread-resume"),
+          providerThreadId: "provider-resume",
+          options: {
+            ...startRequest("thread-resume").options,
+            instructions: "changed so the session is rebuilt",
+          },
+        });
+        await bridge.waitForResponse(2);
+
+        const queryOptions = getLatestQueryOptions();
+        expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBe(configDir);
+        expect(queryOptions.settingSources).toEqual([]);
+        expect(existsSync(configDir)).toBe(true);
+      } finally {
+        bridge.restore();
+      }
+    });
+
+    it("never lets a caller-supplied CLAUDE_CONFIG_DIR override an automated session", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", {
+          ...startRequest("thread-override", "automated"),
+          options: {
+            ...startRequest("thread-override").options,
+            envVars: { CLAUDE_CONFIG_DIR: "/Users/test-bb/.claude" },
+          },
+        });
+        await bridge.waitForResponse(1);
+        expect(getLatestQueryOptions().env?.CLAUDE_CONFIG_DIR).toBe(
+          join(dataDir, "claude-automated-config", "thread-override"),
+        );
+      } finally {
+        bridge.restore();
+      }
+    });
+  });
+
   it("includes captured Claude stderr when the SDK stream fails", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
     const queries: ControlledClaudeQuery[] = [];
@@ -3257,6 +3597,50 @@ describe("bridge", () => {
       bridge.sendRequest(2, "thread/stop", {
         threadId: "thread-resume-roots",
         providerThreadId: "thread-resume-roots",
+        intent: "interrupt",
+        activeTurnId: null,
+      });
+      await bridge.flushWork();
+      queries[0]?.finish();
+      await bridge.waitForResponse(2);
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("never claims nativeLoaded for a strict thread/resume (fails closed)", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      bridge.sendRequest(1, "thread/resume", {
+        threadId: "thread-resume-strict",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        providerThreadId: "provider-thread-strict",
+        requireNativeLoad: true,
+        options: {
+          permissionMode: "auto",
+          permissionScope: "workspace",
+          approvalReviewer: "automatic",
+          permissionEscalation: "deny",
+          providerOptions: { workflowsEnabled: false },
+        },
+      });
+      const response = await bridge.waitForResponse(1);
+      const result = response.result as Record<string, unknown>;
+      expect(result.providerThreadId).toBe("provider-thread-strict");
+      // Absent nativeLoaded is treated as false by the runtime and host.
+      expect(result.nativeLoaded).not.toBe(true);
+
+      bridge.sendRequest(2, "thread/stop", {
+        threadId: "thread-resume-strict",
+        providerThreadId: "provider-thread-strict",
         intent: "interrupt",
         activeTurnId: null,
       });
@@ -5901,6 +6285,89 @@ describe("canonical skills/configure", () => {
     } finally {
       bridge.sendRequest(99, "skills/configure", { roots: [] });
       queries[0]?.finish();
+      bridge.restore();
+      rmSync(stagedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("copies a native-* root instead of linking it and skips one that cannot be copied (#587)", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const stagedRoot = mkdtempSync(join(tmpdir(), "bb-claude-skill-native-"));
+    const nativeRoot = join(stagedRoot, "home", "skills");
+    mkdirSync(join(nativeRoot, "demo"), { recursive: true });
+    writeFileSync(join(nativeRoot, "demo", "SKILL.md"), "---\nname: demo\n---\n");
+    const missingRoot = join(stagedRoot, "gone", "skills");
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      bridge.sendRequest(1, "skills/configure", {
+        roots: [
+          { id: "native-claude-0", path: nativeRoot, skills: [] },
+          { id: "native-claude-1", path: missingRoot, skills: [] },
+        ],
+      });
+      const configured = await bridge.waitForResponse(1);
+      const lines = stderr.mock.calls.map((call) => String(call[0])).join("");
+      expect(lines).toContain('skipping injected skill root "native-claude-1"');
+      expect(lines).not.toContain('"native-claude-0"');
+      expect(configured).toMatchObject({ result: { ok: true } });
+      bridge.sendRequest(2, "thread/start", {
+        threadId: "thread-native-copy",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(2);
+      const plugins = (getLatestQueryOptions() as { plugins?: { path: string }[] })
+        .plugins;
+      expect(plugins).toHaveLength(1);
+      const skills = join(plugins?.[0]?.path ?? "", "skills");
+      expect(lstatSync(skills).isSymbolicLink()).toBe(false);
+      expect(existsSync(join(skills, "demo", "SKILL.md"))).toBe(true);
+      // A2: a skill added after configure reaches the next thread start.
+      mkdirSync(join(nativeRoot, "added"), { recursive: true });
+      writeFileSync(join(nativeRoot, "added", "SKILL.md"), "---\nname: added\n---\n");
+      // Thread starts refresh at most every 5 s; move the clock past that.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 6_000 });
+      bridge.sendRequest(3, "thread/start", {
+        threadId: "thread-native-copy-2",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(3);
+      expect(existsSync(join(skills, "added", "SKILL.md"))).toBe(true);
+      // A9: a refresh that fails keeps the root's last good copy.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 20_000 });
+      rmSync(nativeRoot, { recursive: true, force: true });
+      bridge.sendRequest(5, "thread/start", {
+        threadId: "thread-native-copy-4",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(5);
+      const kept = (getLatestQueryOptions() as { plugins?: { path: string }[] })
+        .plugins;
+      expect(kept).toHaveLength(1);
+      expect(existsSync(join(kept?.[0]?.path ?? "", "skills", "demo", "SKILL.md"))).toBe(true);
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() - 20_000 + 1_000 });
+      // A thread start inside the interval does not rescan (rate limit).
+      mkdirSync(join(nativeRoot, "too-soon"), { recursive: true });
+      writeFileSync(join(nativeRoot, "too-soon", "SKILL.md"), "x\n");
+      bridge.sendRequest(4, "thread/start", {
+        threadId: "thread-native-copy-3",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(4);
+      expect(existsSync(join(skills, "too-soon"))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      stderr.mockRestore();
+      bridge.sendRequest(99, "skills/configure", { roots: [] });
       bridge.restore();
       rmSync(stagedRoot, { recursive: true, force: true });
     }

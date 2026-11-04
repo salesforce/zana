@@ -1,12 +1,20 @@
 import {
-  CLI_CALLBACK_MAX_BODY_BYTES, CLI_CALLBACK_MAX_RESPONSE_BYTES, CliCallbackGrantSchema,
-  CliCallbackRequestSchema, CliCallbackResponseSchema, cliCallbackPaths,
+  CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL, CLI_CALLBACK_MAX_BODY_BYTES, CLI_CALLBACK_MAX_RESPONSE_BYTES, CliCallbackGrantSchema,
+  CliCallbackRequestSchema, CliCallbackResponseSchema, cliCallbackPaths, isCliNativeToolPath,
   type CliCallbackGrant, type CliCallbackWireResponse
 } from '@zana-ai/zcc-contracts/cli-callbacks';
 import { getHost } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import { createNativeToolPolicyHook } from '../../plugins/native-tool-hook.js';
+import { decideMainOwnedToolPolicy } from '../../plugins/native-tool-policy.js';
 
-interface SessionOwner { projectId: string; hostId: string; daemonInstanceId: string; active: boolean }
+/** Below the relay's `curl -m 5`, leaving time for the proxy, daemon client and transit. */
+const NATIVE_TOOL_POLICY_TIMEOUT_MS = 3_000;
+/** Per session; a global ceiling still bounds all sessions together. */
+const MAX_PENDING_NATIVE_TOOL_PER_SESSION = 8;
+const MAX_PENDING_NATIVE_TOOL = CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL;
+
+interface SessionOwner { projectId: string; hostId: string; daemonInstanceId: string; active: boolean; profile?: string }
 interface Grant {
   identity: CliCallbackGrant;
   owner: SessionOwner;
@@ -15,14 +23,19 @@ interface Grant {
 }
 
 export function createProductCliCallbackAuthority(ctx: ProductHttpContext, mcpBaseUrl: () => string | null): CliCallbackAuthority {
-  return new CliCallbackAuthority({ mcpBaseUrl, owner(sessionId) {
+  return new CliCallbackAuthority({ mcpBaseUrl, plugins: () => ctx.plugins, owner(sessionId) {
     const session = ctx.terminalSessions.get(sessionId);
     if (!session || session.profile === 'shell' || !session.daemonInstanceId || session.status === 'exited'
       || !ctx.projects.list().some(project => project.id === session.projectId)) return undefined;
     const host = getHost(ctx.db, session.hostId), connected = ctx.hostHub.getSession(session.hostId);
     if (!host || host.destroyedAt || connected?.instanceId !== session.daemonInstanceId) return undefined;
-    return { projectId: session.projectId, hostId: session.hostId, daemonInstanceId: session.daemonInstanceId, active: true };
+    return { projectId: session.projectId, hostId: session.hostId, daemonInstanceId: session.daemonInstanceId, active: true, profile: session.profile };
   } });
+}
+function decodeBody(bodyBase64: string): Buffer {
+  const body = Buffer.from(bodyBase64, 'base64');
+  if (body.length > CLI_CALLBACK_MAX_BODY_BYTES || body.toString('base64') !== bodyBase64) throw new Error('Invalid CLI callback body');
+  return body;
 }
 export class CliCallbackError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -34,10 +47,16 @@ export class CliCallbackError extends Error {
 export class CliCallbackAuthority {
   private grants = new Map<string, Grant>();
   private pending = 0;
+  private pendingNativeTool = 0;
+  private pendingNativeToolBySession = new Map<string, number>();
   private disposed = false;
   constructor(private readonly options: {
     owner(sessionId: string): SessionOwner | undefined;
     mcpBaseUrl(): string | null;
+    /** Read late: plugins attach to the product context after the authority exists. */
+    plugins?(): Parameters<typeof decideMainOwnedToolPolicy>[0];
+    /** Policy failures are denials; this records why. Defaults to console.warn. */
+    log?(message: string): void;
     fetch?: typeof fetch;
     timeoutMs?: number;
   }) {}
@@ -80,13 +99,57 @@ export class CliCallbackAuthority {
       && owner.daemonInstanceId === grant.owner.daemonInstanceId;
   }
 
+  /** The tool-call policy is answered here: main only resolves PTYs it owns, never a host-daemon's.
+   * Identity is the grant plus the server's own session record, never the agent's request body. */
+  private async forwardNativeTool(grant: Grant, bodyBase64: string, signal: AbortSignal): Promise<CliCallbackWireResponse> {
+    const { projectId, sessionId } = grant.identity, session = this.pendingNativeToolBySession.get(sessionId) ?? 0;
+    if (this.pendingNativeTool >= MAX_PENDING_NATIVE_TOOL || session >= MAX_PENDING_NATIVE_TOOL_PER_SESSION) throw new CliCallbackError(429, 'CLI native tool capacity reached');
+    const body = decodeBody(bodyBase64);
+    this.pendingNativeTool++; this.pendingNativeToolBySession.set(sessionId, session + 1);
+    let timer: ReturnType<typeof setTimeout> | undefined, onAbort: (() => void) | undefined;
+    try {
+      const hook = createNativeToolPolicyHook({
+        getSession: id => {
+          const owner = this.options.owner(id);
+          return id === sessionId && owner?.active && owner.profile && this.current(grant)
+            ? { id, projectId, profile: owner.profile, status: 'running' } : null;
+        },
+        log: message => (this.options.log ?? console.warn)(`[cli-callback] ${message}`),
+        decider: () => request => decideMainOwnedToolPolicy(this.options.plugins?.(), request)
+      });
+      const verdict = await Promise.race([
+        hook(projectId, sessionId, body.toString('utf8')).then(
+          result => result ?? { decision: 'deny' as const, reason: 'no native tool policy decision' },
+          () => ({ decision: 'deny' as const, reason: 'native tool policy error' })
+        ),
+        new Promise<{ decision: 'deny'; reason: string }>(resolve => {
+          timer = setTimeout(() => resolve({ decision: 'deny', reason: 'native tool policy timed out' }), NATIVE_TOOL_POLICY_TIMEOUT_MS);
+        }),
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(new Error('callback aborted'));
+          if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true });
+        })
+      ]);
+      if (this.grants.get(sessionId) !== grant || !this.current(grant)) throw new CliCallbackError(403, 'CLI callback ownership changed');
+      const reply = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: verdict.decision, permissionDecisionReason: verdict.reason } };
+      return CliCallbackResponseSchema.parse({
+        status: 200, contentType: 'application/json; charset=utf-8', bodyBase64: Buffer.from(JSON.stringify(reply)).toString('base64')
+      });
+    } finally {
+      clearTimeout(timer); if (onAbort) signal.removeEventListener('abort', onAbort);
+      this.pendingNativeTool--;
+      const left = (this.pendingNativeToolBySession.get(sessionId) ?? 1) - 1;
+      if (left > 0) this.pendingNativeToolBySession.set(sessionId, left); else this.pendingNativeToolBySession.delete(sessionId);
+    }
+  }
+
   async forward(authenticatedHostId: string, input: unknown, signal: AbortSignal): Promise<CliCallbackWireResponse> {
     const request = CliCallbackRequestSchema.parse(input);
     const grant = this.grants.get(request.sessionId);
     if (!grant || !this.current(grant) || grant.owner.hostId !== authenticatedHostId || !grant.paths.has(request.path)) throw new CliCallbackError(403, 'CLI callback is not authorized');
+    if (isCliNativeToolPath(request.path)) return this.forwardNativeTool(grant, request.bodyBase64, signal);
     if (this.pending >= 8) throw new CliCallbackError(429, 'CLI callback capacity reached');
-    const body = Buffer.from(request.bodyBase64, 'base64');
-    if (body.length > CLI_CALLBACK_MAX_BODY_BYTES || body.toString('base64') !== request.bodyBase64) throw new Error('Invalid CLI callback body');
+    const body = decodeBody(request.bodyBase64);
     const base = this.options.mcpBaseUrl();
     if (!base) throw new CliCallbackError(503, 'CLI callback owner is unavailable');
     const url = new URL(base);

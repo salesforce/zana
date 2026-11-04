@@ -1,12 +1,14 @@
 import { useSidebarThreads, useSidebarThreadActions, useSidebarThreadSplit } from './sidebar-thread-hooks.js';
 import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import type {
+  HarnessRoutingEditorProps as PluginHarnessRoutingEditorProps,
   PluginComposerApi,
   PluginSdkApp,
   PluginSettingsState,
   ThreadChatProps,
   ZccContext,
+  ZccDeepLinks,
   ZccNavigate,
   ZccWindowTitle
 } from '@zana-ai/zcc-plugin-sdk/app';
@@ -22,7 +24,7 @@ import {
 import { appNavigate } from '../lib/app-navigate.js';
 import { getPluginViewTarget } from '../lib/pluginViewSurface.js';
 import { isScopedWindow } from '../lib/windowScope.js';
-import { hrefForPluginNavPanel, hrefForPluginProjectTab } from './plugin-nav-href.js';
+import { hrefForPluginNavPanel, hrefForPluginProjectTab, pluginProjectResourceFromSearch } from './plugin-nav-href.js';
 import { listProjectTabs } from './plugin-slots.js';
 import {
   isPluginViewOpen,
@@ -30,14 +32,18 @@ import {
   openPluginViewWindow,
   showInMainWindow
 } from './plugin-view-windows.js';
-import { ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
+import { addThreadContext } from './thread-context-target.js';
+import { ComposerApiContext, ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
+import { registerPluginWindowCloseHandler } from './plugin-window-close.js';
 import { claimPluginViewTitle, sanitizePluginViewTitle, type PluginViewTitleSlot } from './plugin-view-title.js';
 import { requestPluginPanelAgent } from './plugin-panel-agent.js';
-import { requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from './plugin-page-panel.js';
+import { requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from './plugin-page-panel.js';
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
+import { deepLinksFor } from './plugin-deep-links.js';
+import { HarnessRoutingEditor } from '../views/settings/HarnessRoutingEditor.js';
 
 const ThreadDetailLazy = lazy(async () => {
   const mod = await import('../views/threads/ThreadDetailView.js');
@@ -112,6 +118,8 @@ function useRealtimeConnectionStateImpl() {
 }
 
 function useZccContextImpl(): ZccContext {
+  const location = useLocation();
+  const panelOwnerId = useThreadPanelOwnerId();
   const route = useRouteState();
   const { pluginId } = usePluginRuntimeContext();
   // Only the page's own plugin gets its side panel; another plugin's slot nested in it does not.
@@ -121,10 +129,12 @@ function useZccContextImpl(): ZccContext {
     : {};
   const view = getPluginViewTarget();
   // A plugin view window shows one project tab and has no routes of its own.
-  if (view) return { projectId: view.projectId, threadId: null, surface: 'plugin-view', ...sidePanel };
+  if (view) return { projectId: view.projectId, threadId: null, surface: 'plugin-view', ...(view.resourceId === undefined ? {} : { resourceId: view.resourceId }), ...sidePanel };
+  const resourceId = pluginProjectResourceFromSearch(pluginId, route.focusedProjectId, location.pathname, location.search);
   return {
+    ...(resourceId === undefined ? {} : { resourceId, resourceRequestId: location.key }),
     projectId: route.focusedProjectId,
-    threadId: route.threadId,
+    threadId: panelOwnerId ?? route.threadId,
     surface: isScopedWindow() ? 'project-window' : 'main',
     ...sidePanel
   };
@@ -155,6 +165,18 @@ function useWindowTitleImpl(title: ZccWindowTitle | null | undefined): void {
   }, [own, badge, detail, text, tone]);
 }
 
+function useWindowCloseHandlerImpl(handler: ((signal: AbortSignal) => void | Promise<void>) | null): void {
+  const { pluginId } = usePluginRuntimeContext();
+  const own = getPluginViewTarget()?.pluginId === pluginId;
+  const latest = useRef(handler);
+  latest.current = handler;
+  const enabled = own && handler !== null;
+  useEffect(() => {
+    if (!enabled) return;
+    return registerPluginWindowCloseHandler(signal => latest.current?.(signal));
+  }, [enabled]);
+}
+
 /** This plugin's detachable project tab: the named one, else its first. */
 function detachableProjectTab(pluginId: string, tabId: string | undefined) {
   return listProjectTabs().find(
@@ -181,11 +203,11 @@ function useZccNavigateImpl(): ZccNavigate {
       toThread(threadId: string) {
         go(getThreadRoutePath(threadId));
       },
-      toProject(projectId: string, options?: { tabId?: string }) {
+      toProject(projectId: string, options?: { tabId?: string; inMainWindow?: boolean }) {
         if (options?.tabId) {
           const target = { pluginId, tabId: options.tabId, projectId };
           // A tab open in its own window (this one included) lives there; bring that window forward.
-          if (isPluginViewOpen(view ? [view, ...listOpenPluginViews()] : listOpenPluginViews(), target)) {
+          if (!options.inMainWindow && isPluginViewOpen(view ? [view, ...listOpenPluginViews()] : listOpenPluginViews(), target)) {
             void openPluginViewWindow(target);
             return;
           }
@@ -204,10 +226,10 @@ function useZccNavigateImpl(): ZccNavigate {
         const query = params.toString();
         go(query ? `${NEW_THREAD_ROUTE_PATH}?${query}` : NEW_THREAD_ROUTE_PATH);
       },
-      openInWindow(projectId: string, options?: { tabId?: string }) {
+      openInWindow(projectId: string, options?: { tabId?: string; resourceId?: string }) {
         const tab = detachableProjectTab(pluginId, options?.tabId);
         if (!tab) return Promise.resolve(false);
-        return openPluginViewWindow({ pluginId, tabId: tab.id, projectId });
+        return openPluginViewWindow({ pluginId, tabId: tab.id, projectId, ...(options?.resourceId === undefined ? {} : { resourceId: options.resourceId }) });
       },
       openThreadPanel(options) {
         // No conversation sits beside a plugin view window.
@@ -225,14 +247,27 @@ function useZccNavigateImpl(): ZccNavigate {
           params: options.params ?? null
         });
       },
+      supportsContextReferences: true,
+      addThreadContext(reference) {
+        if (view || enclosing) return false;
+        return addThreadContext(resolveThreadPanelOwnerId([panelOwnerId, route.threadId]), reference);
+      },
       openPanelAgent(options) {
         return requestPluginPanelAgent({ ...options, pluginId }, sidePanel);
+      },
+      setPanelScope(scope) {
+        requestPluginPanelScope(pluginId, scope, sidePanel);
       },
       openPanelTool(options) {
         return requestPluginPanelTool(pluginId, options, sidePanel);
       }
     };
-  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId, sidePanel]);
+  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId, sidePanel, enclosing]);
+}
+
+function useZccDeepLinksImpl(): ZccDeepLinks {
+  const { pluginId } = usePluginRuntimeContext();
+  return useMemo(() => deepLinksFor(pluginId), [pluginId]);
 }
 
 const composerFallback: PluginComposerApi = {
@@ -289,6 +324,10 @@ function NewThreadComposerImpl({
   );
 }
 
+function HarnessRoutingEditorImpl({ descriptors, ...rest }: PluginHarnessRoutingEditorProps) {
+  return <HarnessRoutingEditor descriptors={[...descriptors]} {...rest} />;
+}
+
 export function installPluginRuntime(): void {
   const runtime: PluginSdkApp = {
     definePluginApp: (setup) => ({ __zccPluginApp: true, setup }),
@@ -298,10 +337,15 @@ export function installPluginRuntime(): void {
     useSettings: useSettingsImpl,
     useZccContext: useZccContextImpl,
     useZccNavigate: useZccNavigateImpl,
+    useZccDeepLinks: useZccDeepLinksImpl,
     useWindowTitle: useWindowTitleImpl,
+    useWindowCloseHandler: useWindowCloseHandlerImpl,
     useComposer: () => {
       const { pluginId } = usePluginRuntimeContext();
-      const api = getActiveComposerApi() ?? composerFallback;
+      const scoped = useContext(ComposerApiContext);
+      const active = getActiveComposerApi() ?? composerFallback;
+      // New insertion is scoped; retain legacy global behavior for older APIs.
+      const api = scoped ?? { ...active, insertContextReference: undefined };
       return {
         ...api,
         experimental_setLaunchPatch(patch) {
@@ -326,6 +370,7 @@ export function installPluginRuntime(): void {
     ThreadChat: ThreadChatImpl,
     Markdown: MarkdownImpl as ComponentType<{ content: string; className?: string }>,
     experimental_NewThreadComposer: NewThreadComposerImpl as never,
+    experimental_HarnessRoutingEditor: HarnessRoutingEditorImpl,
     toast: (message, kind = 'info') => {
       void import('../store.js').then((mod) => {
         mod.useUi.getState().pushToast(message, kind);

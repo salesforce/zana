@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
@@ -31,7 +32,7 @@ test('side-panel terminal opens, resizes and preserves output while project scan
   await expect(page.getByRole('heading', { name: 'Terminal panel test', exact: true })).toBeVisible();
   const show = page.getByTestId('thread-secondary-show');
   if (await show.isVisible()) await show.click();
-  await page.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(page);
   await page.getByTestId('thread-new-tab-terminal').click();
   const anchor = page.getByTestId('thread-terminal-tab');
   const terminal = anchor.locator('.xterm');
@@ -85,7 +86,7 @@ test('side-panel terminal opens, resizes and preserves output while project scan
     const result = await page.evaluate((root) => window.cc.fs.searchFiles(root, 'panel-scan-needle'), root);
     expect(result.hits).toHaveLength(500);
     expect(result.truncated).toBe(true);
-    await page.getByTestId('thread-secondary-new-tab').click();
+    await openThreadToolLauncher(page);
     await page.getByRole('searchbox', { name: 'Search tools and files' }).fill('file-1499');
     await expect(page.getByRole('button', { name: 'file-1499.txt', exact: true })).toBeVisible();
   } finally {

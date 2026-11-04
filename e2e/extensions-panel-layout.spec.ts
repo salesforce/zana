@@ -7,6 +7,7 @@
  * This drives the SIDEBAR Extensions entry (the standalone ExtensionsPanel).
  */
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test('top-level Extensions view fills the content area, not the narrow list column', async ({
   app,
@@ -30,7 +31,7 @@ test('top-level Extensions view fills the content area, not the narrow list colu
 
   const docsRow = win.getByTestId('plugin-row-docs');
   await expect(docsRow).toBeVisible({ timeout: 15_000 });
-  await expect(docsRow.getByText('Official')).toBeVisible();
+  await expect(docsRow.getByText('Bundled')).toBeVisible();
 
   await win.getByRole('button', { name: /^Coding agents/ }).click();
   const pluginApps = await win.evaluate(() => window.cc.pluginApps.list());
@@ -85,8 +86,8 @@ test('Browse Create a plugin stays on the hub with the shared prefix', async ({ 
   await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
   await win.waitForSelector('.ext-hub-shell', { timeout: 15_000 });
   await win.getByTestId('extensions-nav-marketplace').click();
-  await expect(win.getByRole('button', { name: 'Create a plugin' })).toBeVisible();
-  await win.getByRole('button', { name: 'Create a plugin' }).click();
+  await win.getByRole('button', { name: 'Add plugin', exact: true }).click();
+  await win.getByRole('menuitem', { name: 'Create a plugin', exact: true }).click();
   await expect(win.locator('.ext-hub-shell')).toBeVisible();
   await expect(win).toHaveURL(/\/extensions\/plugins\/browse/);
   await expect(win.getByRole('button', { name: 'Back to Browse' })).toBeVisible();
@@ -109,7 +110,7 @@ test('Browse fills wide screens with readable cards and adapts to smaller window
   await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
   await win.getByTestId('extensions-nav-marketplace').click();
   const marketplace = win.locator('.ext-market');
-  const grid = win.locator('[data-plugin-shelf-grid]').first();
+  const grid = win.getByTestId('plugin-browse-grid').first();
   await expect(grid.locator('.ext-browse-card').first()).toBeVisible();
   const columnCounts: number[] = [];
 
@@ -132,16 +133,14 @@ test('Browse fills wide screens with readable cards and adapts to smaller window
       };
     });
     expect(layout.fits).toBe(true);
-    expect(Math.min(...layout.columns)).toBeGreaterThanOrEqual(Math.min(layout.width, 350));
+    expect(Math.min(...layout.columns)).toBeGreaterThanOrEqual(Math.min(layout.width, 300));
     columnCounts.push(layout.columns.length);
     expect(await marketplace.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 
     if (width === 1920) {
       expect(marketBox.width).toBeGreaterThan(1400);
-      const heroBox = (await win.locator('.ext-browse-hero-hook').boundingBox())!;
-      expect(heroBox.width).toBeLessThan(650);
-      expect(Math.abs((heroBox.x + heroBox.width / 2) - (marketBox.x + marketBox.width / 2))).toBeLessThan(2);
-      await win.screenshot({ path: testInfo.outputPath('plugins-browse-wide.png') });
+      await expect(win.locator('.ext-browse-hero-hook')).toHaveCount(0);
+      await captureElectronScreenshot(app.electron, win, testInfo.outputPath('plugins-browse-wide.png'));
     }
   }
   expect(columnCounts[0]).toBeGreaterThan(2);

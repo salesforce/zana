@@ -100,6 +100,56 @@ describe('openThreadFilePreview', () => {
     });
   });
 
+  it.each(['conversation', 'cli'])('opens absolute artifacts for a registered %s', (owner) => {
+    const d = deps(owner === 'cli' ? { getThread: () => null } : { getEnvironmentPath: () => null });
+    const path = join(d.dataDir, 'artifacts', 'data-org-test-20261027', 'B-quote-method-desktop.png');
+    const result = openThreadFilePreview(d, {
+      threadId: owner === 'cli' ? 'sess-pty' : 'thr-1',
+      projectId: 'proj-1', source: 'workspace', path
+    });
+    expect(result.path).toBe(path);
+    expect(threadOpenSignalSchema.parse(d.emitted[0])).toMatchObject({
+      file: { source: 'workspace', path, lineNumber: null }
+    });
+  });
+
+  it('opens attachments only from the conversation project', () => {
+    const d = deps();
+    const path = join(d.dataDir, 'attachments', 'proj-1', 'shot.png');
+    expect(openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path }).path).toBe(path);
+    expect(() => openThreadFilePreview(d, {
+      threadId: 'thr-1', source: 'workspace', path: join(d.dataDir, 'attachments', 'proj-2', 'shot.png')
+    })).toThrow(PreviewFileError);
+    expect(d.emitted).toHaveLength(1);
+  });
+
+  it('rejects artifact traversal, sibling roots, and using thread storage to open artifacts', () => {
+    const d = deps();
+    for (const path of [
+      join(d.dataDir, 'artifacts-other', 'shot.png'),
+      join(d.dataDir, 'artifacts', '..', 'config.json'),
+      join(d.dataDir, 'artifacts')
+    ]) {
+      expect(() => openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path }))
+        .toThrow(PreviewFileError);
+    }
+    expect(() => openThreadFilePreview(d, {
+      threadId: 'thr-1', source: 'thread-storage', path: join(d.dataDir, 'artifacts', 'shot.png')
+    })).toThrow(PreviewFileError);
+    expect(d.emitted).toHaveLength(0);
+  });
+
+  it('does not open artifacts for an unregistered thread or project', () => {
+    const d = deps({ getThread: () => null, getProjectPath: () => null });
+    const path = join(d.dataDir, 'artifacts', 'shot.png');
+    expect(() => openThreadFilePreview(d, { threadId: 'missing', source: 'workspace', path }))
+      .toThrowError(/thread is not registered/);
+    expect(() => openThreadFilePreview(d, {
+      threadId: 'missing', projectId: 'missing', source: 'workspace', path
+    })).toThrowError(/project is not registered/);
+    expect(d.emitted).toHaveLength(0);
+  });
+
   it('confines thread-storage paths against the storage root', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-preview-data-'));
     const d = deps({ dataDir });

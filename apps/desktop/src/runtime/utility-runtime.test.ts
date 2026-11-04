@@ -83,6 +83,16 @@ describe('plugins-tool-policy requests', () => {
     child.emit('message', { type: 'result', protocolVersion, id: message.id, value: { action: 'allow' } });
     expect(await pending).toEqual({ action: 'allow' }); expect(vi.getTimerCount()).toBe(0);
   });
+  it('attaches the domain code of an error reply to the rejection and leaves plain failures codeless', async () => {
+    vi.useFakeTimers(); const { child, runtime } = fixture();
+    const coded = runtime.request('plugins-call-rpc', 'demo', 'op', {});
+    child.emit('message', { type: 'error', protocolVersion, id: child.postMessage.mock.calls[0]![0].id, message: 'keep one file', code: 'invalid' });
+    await expect(coded).rejects.toMatchObject({ message: 'keep one file', code: 'invalid' });
+    const plain = runtime.request('plugins-call-rpc', 'demo', 'op', {});
+    child.emit('message', { type: 'error', protocolVersion, id: child.postMessage.mock.calls[1]![0].id, message: 'boom' });
+    const error = await plain.catch((e: Error) => e);
+    expect(error).toMatchObject({ message: 'boom' }); expect(error).not.toHaveProperty('code');
+  });
   it('rejects on an error reply, on silence and on child exit without leaving timers', async () => {
     vi.useFakeTimers(); const { child, runtime } = fixture();
     const failed = expect(runtime.request('plugins-tool-policy', call)).rejects.toThrow('invalid server runtime message');

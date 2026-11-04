@@ -1,5 +1,6 @@
 import { TERMINAL_THEME_OPTIONS } from '@zana-ai/zcc-domain/terminal-themes';
 import type { SettingsSearchEntry } from '../types';
+import { ctrlVPastesByDefault } from '../../terminalPaste.js';
 
 const onOff = (value: boolean | undefined, fallback: boolean) => ((value ?? fallback) ? 'On' : 'Off');
 const TMUX_SCOPES: Record<string, string> = { off: 'Off', remote: 'Remote only', all: 'All sessions' };
@@ -52,7 +53,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'terminal',
     anchor: 'terminal-clipboard',
     label: 'Clipboard',
-    help: 'Control whether terminal output may change your system clipboard.',
+    help: 'Control how the terminal pastes, and whether terminal output may change your system clipboard.',
     keywords: ['copy', 'paste'],
     kind: 'subsection'
   },
@@ -65,6 +66,16 @@ export const entries: readonly SettingsSearchEntry[] = [
     keywords: ['osc52', 'osc 52', 'copy', 'security', 'escape sequence', 'poisoning'],
     kind: 'setting',
     value: (s) => onOff(s.config.terminalClipboardWriteEnabled, true)
+  },
+  {
+    id: 'terminal.ctrl-v-paste',
+    section: 'terminal',
+    anchor: 'terminal-clipboard',
+    label: 'Ctrl+V pastes',
+    help: 'Windows and Linux. When on (the default on Windows), Ctrl+V pastes the clipboard into the terminal, like Shift+Insert. Turn OFF to send a literal ^V to the program instead (bash’s “insert next character literally”, vim’s block select, or an agent’s own image paste). Ctrl+Shift+V always pastes. On macOS, ⌘V pastes and this setting has no effect. Applies immediately to open terminals.',
+    keywords: ['paste', 'ctrl+v', 'ctrl v', 'ctrl+shift+v', 'shift+insert', 'clipboard', '^v', 'keyboard'],
+    kind: 'setting',
+    value: (s) => onOff(s.config.terminalCtrlVPasteEnabled, ctrlVPastesByDefault())
   },
   {
     id: 'terminal.tmux-intro',

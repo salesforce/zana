@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test as base, expect } from './fixtures/app.js';
@@ -43,7 +44,7 @@ test('New Tab groups installed plugin tools, searches collapsed categories, and 
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
   await window.getByTestId('thread-secondary-show').click();
-  await window.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(window);
   const launcher = window.getByTestId('thread-new-tab-page');
   const example = launcher.getByRole('region', { name: 'Example tools' });
   await expect(example).toBeVisible({ timeout: 30_000 });
@@ -70,7 +71,7 @@ test('New Tab groups installed plugin tools, searches collapsed categories, and 
   await expect(launcher.getByRole('button', { name: 'Draft document', exact: true })).toBeVisible();
   await launcher.getByRole('button', { name: 'Report', exact: true }).click();
   await expect(window.getByTestId('launcher-fixture-panel')).toHaveText('Opened from a category');
-  await window.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(window);
   await expect(window.getByTestId('thread-new-tab-recents')).toContainText('Report');
   await launcher.getByRole('searchbox').fill('no-matching-tool');
   await expect(launcher.getByRole('status')).toHaveText('No matching tools or files');

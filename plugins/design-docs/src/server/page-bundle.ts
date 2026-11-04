@@ -17,7 +17,7 @@
 import { Buffer } from 'node:buffer';
 import { attribute, escapeAttribute, isScriptType, prependToHead, scanTags, startTag, type HtmlAttribute, type HtmlTag } from '../shared/html-scan.js';
 import { PAGE_ASSET_BUDGET, pageBaseHref, pageUrl, type PageBundle } from '../shared/page.js';
-import { imageMediaTypeOf, mediaTypeOf, resolveDocLink, type FileKind } from '../shared/paths.js';
+import { imageMediaTypeOf, isCrossDocScheme, mediaTypeOf, resolveDocLink, type FileKind } from '../shared/paths.js';
 
 export interface PageSource {
   path: string;
@@ -318,8 +318,33 @@ class PageBundler {
       output += html.slice(last, start) + text;
       last = end;
     };
+    const tags: Array<HtmlTag | { name: '/a'; start: number; end: number }> = [];
+    const claimed = new Set<number>(); // an unclosed cross-doc anchor must not share its </a> with a later one
     for (const tag of scanTags(html)) {
-      if (tag.name === 'base') {
+      tags.push(tag);
+      if (tag.name === 'a' && isCrossDocScheme(attribute(tag, 'href') ?? '')) {
+        // Anchors do not nest, so the next </a> closes this one.
+        const closer = /<\/a\s*>/gi;
+        closer.lastIndex = tag.end;
+        const match = closer.exec(html);
+        if (match && !claimed.has(match.index)) {
+          claimed.add(match.index);
+          tags.push({ name: '/a', start: match.index, end: match.index + match[0].length });
+        }
+      }
+    }
+    tags.sort((a, b) => a.start - b.start);
+    for (const tag of tags) {
+      if (!('attributes' in tag)) {
+        replace(tag.start, tag.end, '</span>');
+        continue;
+      }
+      if (tag.name === 'a' && isCrossDocScheme(attribute(tag, 'href') ?? '')) {
+        // A page is a standalone export: another doc is not there to open, so keep only the label.
+        const href = attribute(tag, 'href') ?? '';
+        this.warn(`Link to another design doc (${href.trim().slice(0, 80)}) was exported as plain text.`);
+        replace(tag.start, tag.end, '<span data-dd-crossdoc="1">');
+      } else if (tag.name === 'base') {
         replace(tag.start, tag.end, '');
       } else if (tag.name === 'link') {
         const rel = (attribute(tag, 'rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean);

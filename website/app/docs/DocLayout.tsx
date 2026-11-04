@@ -2,8 +2,10 @@ import Link from 'next/link';
 import { DocsSidebar } from './DocsSidebar';
 import { DocsEnhancer } from './DocsEnhancer';
 import { DocsSearch } from './DocsSearch';
-import { getDocSiblings, type DocMeta, type TocItem } from '@/lib/docs';
-import { buildSearchIndex } from '@/lib/search-index';
+import { getDocSiblings, type DocMeta, type TocItem } from '../../lib/docs';
+import { buildSearchIndex } from '../../lib/search-index';
+import { loadHelpVideos } from '../../lib/help-videos';
+import { GettingStarted } from './GettingStarted';
 
 /** Right-hand "On this page" table of contents (scroll-spied client-side). */
 function DocsToc({ toc }: { toc: TocItem[] }) {
@@ -91,11 +93,13 @@ function DocsNextStep({ slug }: { slug: string }) {
 
 export async function DocLayout({ meta, html, toc }: { meta: DocMeta; html: string; toc: TocItem[] }) {
   const searchIndex = await buildSearchIndex();
+  const isGettingStarted = meta.slug === 'getting-started';
+  const videos = isGettingStarted ? await loadHelpVideos() : [];
   return (
     <div className="wrap">
       {/* ⌘K search palette — index built at build time, hydrated client-side */}
       <DocsSearch index={searchIndex} />
-      <div className="docs-shell">
+      <div className={`docs-shell${isGettingStarted ? ' docs-shell-videos' : ''}`}>
         <div className="docs-nav-wrap">
           <DocsSidebar active={meta.slug} />
         </div>
@@ -112,13 +116,13 @@ export async function DocLayout({ meta, html, toc }: { meta: DocMeta; html: stri
           {/* mobile: sidebar collapses to a select */}
           <DocsSidebar active={meta.slug} mobile />
 
-           <article className="prose" dangerouslySetInnerHTML={{ __html: html }} />
-           <DocsNextStep slug={meta.slug} />
+           {isGettingStarted ? <GettingStarted videos={videos} /> : <article className="prose" dangerouslySetInnerHTML={{ __html: html }} />}
+           {!isGettingStarted && <DocsNextStep slug={meta.slug} />}
            <DocsPager slug={meta.slug} />
           <DocsEnhancer slug={meta.slug} />
         </div>
 
-        <DocsToc toc={toc} />
+        {!isGettingStarted && <DocsToc toc={toc} />}
       </div>
     </div>
   );

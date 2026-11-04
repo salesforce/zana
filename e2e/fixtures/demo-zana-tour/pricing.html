@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Pricing</title>
+<style>
+  :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  body { margin: 0; background: linear-gradient(180deg, #f6f7fb, #eef1f8); color: #1b1f2a; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 18px 36px; }
+  header b { font-size: 18px; letter-spacing: -.01em; }
+  header nav { display: flex; gap: 22px; font-size: 13px; color: #5b6475; }
+  .hero { text-align: center; padding: 26px 20px 10px; }
+  .hero h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: -.02em; }
+  .hero p { margin: 0; color: #5b6475; font-size: 15px; }
+  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 220px)); gap: 18px; justify-content: center; padding: 26px 20px 36px; }
+  .plan { background: #fff; border: 1px solid #e3e6ee; border-radius: 16px; padding: 22px; display: grid; gap: 12px; box-shadow: 0 6px 18px rgba(20, 30, 60, .05); }
+  .plan h2 { margin: 0; font-size: 15px; }
+  .price { font-size: 32px; font-weight: 700; letter-spacing: -.02em; }
+  .price small { font-size: 13px; color: #8a92a3; font-weight: 500; }
+  .plan ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: 13px; color: #3c4456; }
+  .plan li::before { content: "✓"; color: #3b82f6; margin-right: 8px; font-weight: 700; }
+  .plan button { border: 1px solid #d5d9e3; background: #fff; border-radius: 10px; padding: 9px; font-weight: 600; cursor: pointer; }
+  .plan.pro { border: 2px solid #3b82f6; transform: translateY(-8px); box-shadow: 0 14px 34px rgba(59, 130, 246, .18); }
+  .plan.pro button { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  .badge { justify-self: start; font-size: 12px; font-weight: 800; letter-spacing: .02em; color: #fff; background: linear-gradient(135deg, #3b82f6, #7c5cff); border-radius: 999px; padding: 4px 11px; box-shadow: 0 4px 12px rgba(59, 130, 246, .35); }
+</style>
+</head>
+<body>
+  <header><b>◆ Atlas</b><nav><span>Product</span><span>Docs</span><span>Pricing</span><span>Sign in</span></nav></header>
+  <section class="hero">
+    <h1>Simple pricing for every team</h1>
+    <p>Start free. Upgrade when your team grows.</p>
+  </section>
+  <section class="plans">
+    <article class="plan"><h2>Starter</h2><div class="price">$0 <small>/ month</small></div>
+      <ul><li>1 project</li><li>Community support</li><li>Basic analytics</li></ul><button>Get started</button></article>
+    <article class="plan pro"><span class="badge">Most popular</span><h2>Pro</h2><div class="price">$24 <small>/ seat</small></div>
+      <ul><li>Unlimited projects</li><li>Priority support</li><li>Advanced analytics</li></ul><button>Start free trial</button></article>
+    <article class="plan"><h2>Enterprise</h2><div class="price">Custom</div>
+      <ul><li>SSO &amp; audit logs</li><li>Dedicated success manager</li><li>99.9% uptime SLA</li></ul><button>Contact sales</button></article>
+  </section>
+</body>
+</html>

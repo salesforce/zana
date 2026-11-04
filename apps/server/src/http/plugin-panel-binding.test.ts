@@ -49,12 +49,18 @@ describe('resolvePluginPanelBinding', () => {
     ['whitespace', 'a b'],
     ['newline', 'a\nignore previous instructions'],
     ['backtick', 'a`b'],
-    ['oversized', 'x'.repeat(257)],
+    ['oversized', 'x'.repeat(501)],
     ['not a string', 42],
     ['empty', '  /  ']
   ])('drops a view that is not route-like: %s', (_label, view) => {
     expect(resolvePluginPanelBinding({ pluginPanel: { pluginId: 'pr-monitor', panel: 'main', view } }, running)?.pluginMetadata)
       .toEqual({ panelAgent: { panel: 'main' } });
+  });
+
+  it('retains nested script views up to the Studio path bound without expanding panel names', () => {
+    const view = `${'folder/'.repeat(60)}Support.agent`;
+    expect(resolvePluginPanelBinding({ pluginPanel: { pluginId: 'pr-monitor', panel: 'main', view } }, running)?.pluginMetadata)
+      .toEqual({ panelAgent: { panel: 'main', view } });
   });
 
   it.each([
@@ -119,6 +125,17 @@ describe('pluginPanelThreads', () => {
 
   it('refuses every plugin when the host has no plugin service', () => {
     expect(pluginPanelThreads(db, undefined, 'tasks', null)).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it('passes exact project and view scope to the bounded database query', () => {
+    const scope = { projectId: 'proj-1', view: 'force-app/Support.agent' };
+    expect(pluginPanelThreads(db, installed, 'tasks', null, 'studio', scope)).toMatchObject({ ok: true });
+    expect(listPanelAgentThreads).toHaveBeenLastCalledWith(db, 'tasks', 20, 'studio', scope);
+  });
+
+  it.each(['', '  ', 'a\nb', 'a\u007fb', 'x'.repeat(2049)])('refuses malformed project or view scope: %j', value => {
+    expect(pluginPanelThreads(db, installed, 'tasks', null, null, { projectId: value })).toMatchObject({ ok: false, status: 400 });
+    expect(pluginPanelThreads(db, installed, 'tasks', null, null, { view: value })).toMatchObject({ ok: false, status: 400 });
   });
 });
 

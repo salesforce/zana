@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 export const CLI_CALLBACK_MAX_BODY_BYTES = 1024 * 1024;
 export const CLI_CALLBACK_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+/** Owner-wide ceilings on in-flight callbacks; native tool policy calls have their own pool so long /mcp calls cannot starve them. */
+export const CLI_CALLBACK_MAX_ACTIVE = 8;
+export const CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL = 64;
 export const CliCallbackGrantSchema = z.object({
   projectId: z.string().regex(/^[\w-]{1,200}$/),
   sessionId: z.string().uuid(),
@@ -40,6 +43,10 @@ export function cliCallbackPaths(input: CliCallbackGrant): ReadonlySet<string> {
     ...['stop', 'firstprompt', 'overseer', 'contentscreen', 'question'].map(kind => `/hook/${kind}/${suffix}`),
     ...['blocked', 'unblocked'].map(action => `/hook/notify/${suffix}/${action}`),
     ...['start', 'stop'].map(action => `/hook/subagent/${suffix}/${action}`),
-    ...['start', 'stop', 'clear'].map(action => `/hook/toolactivity/${suffix}/${action}`)
+    ...['start', 'stop', 'clear'].map(action => `/hook/toolactivity/${suffix}/${action}`),
+    `/hook/nativetool/${suffix}`
   ]);
 }
+
+/** The PreToolUse policy callback fires on every tool call; it gets its own bounded pool. */
+export const isCliNativeToolPath = (path: string): boolean => path.startsWith('/hook/nativetool/');

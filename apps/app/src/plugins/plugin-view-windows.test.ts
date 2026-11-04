@@ -127,6 +127,13 @@ describe('open plugin view mirror', () => {
 });
 
 describe('isPluginViewOpen', () => {
+  it('does not hide the whole project tab when only a resource window is open', () => {
+    const a = { ...view, resourceId: 'Help.agent' };
+    expect(isPluginViewOpen([a], view)).toBe(false);
+    expect(isPluginViewOpen([view], a)).toBe(false);
+    expect(isPluginViewOpen([a], { ...a })).toBe(true);
+    expect(isPluginViewOpen([a], { ...a, resourceId: 'Quote.agent' })).toBe(false);
+  });
   it('matches on plugin, tab and project', () => {
     expect(isPluginViewOpen([view], { ...view })).toBe(true);
     expect(isPluginViewOpen([view], other)).toBe(false);

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { parseRpcErrorEnvelope, rpcErrorFrom } from '@zana-ai/zcc-contracts/rpc-error';
 import type {
   CcApi,
   DesktopBrowserApi,
@@ -28,6 +29,11 @@ import {
   parseDesktopBrowserState,
   parseDesktopBrowserTabRef
 } from '@zana-ai/zcc-desktop-contract';
+import { seedDocumentTheme } from './window/window-theme.js';
+
+// Paint the first frame in the window's theme: main passes it in argv
+// (`--zcc-theme=`), and the renderer's applyTheme takes over once the config loads.
+seedDocumentTheme(process.argv, globalThis.document, globalThis.MutationObserver);
 
 // `ipcRenderer` is a single process-wide EventEmitter shared by every subscriber
 // in the renderer. High-fan-out channels — chiefly `terminals:onData`/`onExit`,
@@ -84,16 +90,17 @@ const browserControlListeners = new Set<(state: DesktopBrowserControlState) => v
 const browserFindResultListeners = new Set<(result: DesktopBrowserFindResult) => void>();
 const browserAppCommandListeners = new Set<(command: string) => void>();
 
+// Round inward so the native view never paints over the borders around it.
 function browserViewBoundsAtWindowScale(bounds: DesktopBrowserViewBounds): DesktopBrowserViewBounds {
   const zoomFactor = webFrame.getZoomFactor();
   if (zoomFactor === 1) return bounds;
-  const x = Math.round(bounds.x * zoomFactor);
-  const y = Math.round(bounds.y * zoomFactor);
+  const x = Math.ceil(bounds.x * zoomFactor);
+  const y = Math.ceil(bounds.y * zoomFactor);
   return {
     x,
     y,
-    width: Math.max(0, Math.round((bounds.x + bounds.width) * zoomFactor) - x),
-    height: Math.max(0, Math.round((bounds.y + bounds.height) * zoomFactor) - y)
+    width: Math.max(0, Math.floor((bounds.x + bounds.width) * zoomFactor) - x),
+    height: Math.max(0, Math.floor((bounds.y + bounds.height) * zoomFactor) - y)
   };
 }
 
@@ -168,6 +175,12 @@ function createDesktopBrowserApi(): DesktopBrowserApi {
     onClosed(listener) {
       browserClosedListeners.add(listener);
       return () => { browserClosedListeners.delete(listener); };
+    },
+    evaluate(request) { return ipcRenderer.invoke(IPC.browser.evaluate, request); },
+    onPageMessage(listener) {
+      const handler = (_event: Electron.IpcRendererEvent, message: import('@zana-ai/zcc-desktop-contract').DesktopBrowserPageMessage) => listener(message);
+      ipcRenderer.on(IPC.browser.pageMessage, handler);
+      return () => { ipcRenderer.off(IPC.browser.pageMessage, handler); };
     },
     getClosedTabs() {
       return ipcRenderer.invoke(IPC.browser.getClosedTabs);
@@ -333,8 +346,8 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.executionBoard.recoverTimedOut, projectId, executionId, expectedStateVersion, clientRequestId),
     recoverRetainedSquad: (projectId, executionId, expectedStateVersion, mode) =>
       ipcRenderer.invoke(IPC.executionBoard.recoverRetained, projectId, executionId, expectedStateVersion, mode),
-    worktreeAction: (projectId, executionId, expectedStateVersion, action, instruction) =>
-      ipcRenderer.invoke(IPC.executionBoard.worktreeAction, projectId, executionId, expectedStateVersion, action, instruction),
+    worktreeAction: (projectId, executionId, expectedStateVersion, action, instruction, personaId) =>
+      ipcRenderer.invoke(IPC.executionBoard.worktreeAction, projectId, executionId, expectedStateVersion, action, instruction, personaId),
     clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
     relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
   },
@@ -442,6 +455,13 @@ const api: CcApi = {
     },
     remove: async () => ({ ok: true as const })
   },
+  pluginPacks: {
+    list: () => ipcRenderer.invoke(IPC.pluginPacks.list),
+    plan: (identity) => ipcRenderer.invoke(IPC.pluginPacks.plan, identity),
+    install: (request) => ipcRenderer.invoke(IPC.pluginPacks.install, request),
+    listInstalled: () => ipcRenderer.invoke(IPC.pluginPacks.listInstalled),
+    forget: (identity) => ipcRenderer.invoke(IPC.pluginPacks.forget, identity)
+  },
   cliSkills: {
     status: async () => ({ machines: [] }),
     install: async () => ({ results: [] })
@@ -462,6 +482,7 @@ const api: CcApi = {
     list: async () => [],
     get: async () => ({ thread: {} }),
     send: async () => ({ ok: false }),
+    move: async () => { throw new Error('threads require the product server'); },
     stop: async () => ({ ok: false }),
     stopBackground: async () => ({ ok: false }),
     implementPlan: async () => ({ ok: false }),
@@ -525,6 +546,9 @@ const api: CcApi = {
       throw new Error('threads require the product server');
     },
     hostFileContent: async () => {
+      throw new Error('threads require the product server');
+    },
+    resolvePreviewPath: async () => {
       throw new Error('threads require the product server');
     },
     storageFiles: async () => ({ files: [], truncated: false, storageRootPath: '' }),
@@ -719,6 +743,9 @@ const api: CcApi = {
       return () => ipcRenderer.off(IPC.config.onChanged, handler);
     }
   },
+  apiErrorResume: {
+    check: (input) => ipcRenderer.invoke(IPC.apiErrorResume.check, input)
+  },
   overseer: {
     recent: (limit) => ipcRenderer.invoke(IPC.overseer.recent, limit)
   },
@@ -845,7 +872,8 @@ const api: CcApi = {
     }
   },
   usage: {
-    getSummary: () => ipcRenderer.invoke(IPC.usage.getSummary)
+    getSummary: () => ipcRenderer.invoke(IPC.usage.getSummary),
+    getMemoCounters: () => ipcRenderer.invoke(IPC.usage.getMemoCounters)
   },
   suggestions: {
     list: (projectId) => ipcRenderer.invoke(IPC.suggestions.list, projectId ?? undefined),
@@ -1026,13 +1054,22 @@ const api: CcApi = {
   pluginApps: {
     list: () => ipcRenderer.invoke(IPC.pluginApps.list),
     setEnabled: (id, enabled) => ipcRenderer.invoke(IPC.pluginApps.setEnabled, id, enabled),
-    callRpc: (pluginId, method, args) => ipcRenderer.invoke(IPC.pluginApps.callRpc, pluginId, method, args),
+    callRpc: async (pluginId, method, args) => {
+      const result = await ipcRenderer.invoke(IPC.pluginApps.callRpc, pluginId, method, args);
+      // Main resolves expected domain errors as an envelope (no main-process error log); surface
+      // them as a plain rejection with the bare message and optional `code`.
+      const expected = parseRpcErrorEnvelope(result);
+      if (expected) throw rpcErrorFrom(expected.message, expected.code);
+      return result;
+    },
     getSettings: (pluginId, options) => ipcRenderer.invoke(IPC.pluginApps.getSettings, pluginId, options),
     setSettings: (pluginId, values) => ipcRenderer.invoke(IPC.pluginApps.setSettings, pluginId, values),
     checkUpdates: () => ipcRenderer.invoke(IPC.pluginApps.checkUpdates),
     applyUpdate: (id) => ipcRenderer.invoke(IPC.pluginApps.applyUpdate, id),
+    applyAllUpdates: () => ipcRenderer.invoke(IPC.pluginApps.applyAllUpdates),
     remove: (id) => ipcRenderer.invoke(IPC.pluginApps.remove, id),
     reload: (id) => ipcRenderer.invoke(IPC.pluginApps.reload, id),
+    repair: (id, action) => ipcRenderer.invoke(IPC.pluginApps.repair, id, action),
     onChanged: (cb) => {
       const handler = (_e: unknown, entries: PluginAppEntry[]) => cb(entries);
       ipcRenderer.on(IPC.pluginApps.onChanged, handler);
@@ -1119,6 +1156,15 @@ const api: CcApi = {
   commands: {
     list: (projectPath?: string) => ipcRenderer.invoke(IPC.commands.list, projectPath)
   },
+  deepLinks: {
+    config: () => ipcRenderer.invoke(IPC.deepLinks.config),
+    open: (raw: string) => ipcRenderer.invoke(IPC.deepLinks.open, raw),
+    onLink: (cb) => {
+      const handler = (_e: unknown, delivery: Parameters<typeof cb>[0]) => cb(delivery);
+      ipcRenderer.on(IPC.deepLinks.onLink, handler);
+      return () => ipcRenderer.off(IPC.deepLinks.onLink, handler);
+    }
+  },
   scheduler: {
     list: () => ipcRenderer.invoke(IPC.scheduler.list),
     get: (id) => ipcRenderer.invoke(IPC.scheduler.get, id),
@@ -1131,6 +1177,7 @@ const api: CcApi = {
     runNow: (id) => ipcRenderer.invoke(IPC.scheduler.runNow, id),
     queryRuns: (query) => ipcRenderer.invoke(IPC.scheduler.queryRuns, query),
     retryRuns: (refs) => ipcRenderer.invoke(IPC.scheduler.retryRuns, refs),
+    resumeRun: (input) => ipcRenderer.invoke(IPC.scheduler.resumeRun, input),
     dismissRuns: (refs) => ipcRenderer.invoke(IPC.scheduler.dismissRuns, refs),
     reconcile: (id) => ipcRenderer.invoke(IPC.scheduler.reconcile, id),
     onChanged: (cb) => {
@@ -1165,6 +1212,7 @@ const api: CcApi = {
     delete: (id) => ipcRenderer.invoke(IPC.goals.delete, id),
     setStatus: (id, status) => ipcRenderer.invoke(IPC.goals.setStatus, id, status),
     runNow: (id) => ipcRenderer.invoke(IPC.goals.runNow, id),
+    resumeIteration: (input) => ipcRenderer.invoke(IPC.goals.resumeIteration, input),
     reconcile: (id) => ipcRenderer.invoke(IPC.goals.reconcile, id),
     onChanged: (cb) => {
       const handler = (_e: unknown, goals: Parameters<typeof cb>[0]) => cb(goals);
@@ -1328,6 +1376,13 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.windows.openPluginView, target),
     closePluginView: (target: PluginViewTarget) =>
       ipcRenderer.invoke(IPC.windows.closePluginView, target),
+    pluginViewCloseReady: (ready: boolean) => ipcRenderer.invoke(IPC.windows.pluginViewCloseReady, ready),
+    pluginViewCloseComplete: (requestId: string, result: { ok: boolean; error?: string }) => ipcRenderer.invoke(IPC.windows.pluginViewCloseComplete, requestId, result),
+    onPluginViewCloseRequest: (cb: (request: { requestId?: string; error?: string }) => void) => {
+      const handler = (_e: unknown, request: { requestId?: string; error?: string }) => cb(request);
+      ipcRenderer.on(IPC.windows.onPluginViewCloseRequest, handler);
+      return () => ipcRenderer.off(IPC.windows.onPluginViewCloseRequest, handler);
+    },
     listPluginViews: () => ipcRenderer.invoke(IPC.windows.listPluginViews),
     onPluginViewsChanged: (cb: (views: PluginViewTarget[]) => void) => {
       const handler = (_e: unknown, views: PluginViewTarget[]) => cb(views);

@@ -87,8 +87,8 @@ export function resolvePublicAppUrl(input?: {
     ?? parseJoinPublicOrigin(readPublicAppUrlFile(input?.cwd));
 }
 
-/** Renderer-facing config with the resolved public origin. */
-export function presentAppConfig<T extends { publicAppUrl?: string }>(
+/** Renderer-facing config with resolved startup defaults. */
+export function presentAppConfig<T extends { publicAppUrl?: string; pluginDevelopmentEnabled?: boolean }>(
   config: T,
   input?: { env?: NodeJS.ProcessEnv; bundledUrl?: string | null }
 ): T {
@@ -97,8 +97,10 @@ export function presentAppConfig<T extends { publicAppUrl?: string }>(
     ...(input && 'bundledUrl' in input ? { bundledUrl: input.bundledUrl } : {}),
     configUrl: config.publicAppUrl
   });
-  if (publicAppUrl === config.publicAppUrl) return config;
-  return { ...config, publicAppUrl };
+  const pluginDevelopmentEnabled = config.pluginDevelopmentEnabled
+    ?? ((input?.env ?? process.env).ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD === '1' ? true : undefined);
+  if (publicAppUrl === config.publicAppUrl && pluginDevelopmentEnabled === config.pluginDevelopmentEnabled) return config;
+  return { ...config, publicAppUrl, ...(pluginDevelopmentEnabled === undefined ? {} : { pluginDevelopmentEnabled }) };
 }
 
 export function publicOriginHost(publicAppUrl: string | undefined): string | undefined {

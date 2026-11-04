@@ -26,6 +26,7 @@ npm run build        # production standalone build in .next/
 | `/marketplace` | Same-origin `GET /marketplace/v1/marketplace.json` — official first-party plugin pointers (`schemaVersion: 1`). Generated from repo `plugins/*/package.json`. |
 | `/marketplace/v1/marketplace.json` | Public catalog for `zcc marketplace add` (CORS `*`). Alias: `/plugins/index.json`. |
 | `/docs/*` | Rendered at build time from allowlisted `docs/*.md` via `scripts/sync-docs.mjs` (internal audits, architecture notes, and the root README are NOT published) |
+| `/docs/getting-started/` | Three setup steps and the same public How To video catalogue as desktop Help, refreshed every five minutes. `scripts/sync-help-videos.mjs` keeps a metadata fallback for upstream outages and website-only builds; media stays in `content/videos/media/` on the public repository. |
 | `/extensions` | In-app Plugin Guide `ProductMap` synced from `plugins/plugin-guide/` via `scripts/sync-plugin-guide.mjs` |
 | `/extensions/sdk` | SDK overview — four layers and a link to the Plugin Guide map |
 | `/download` | Server-side GitHub latest-release lookup (cached 10 min) for direct macOS `.dmg` and Windows `.exe` links; falls back to GitHub Releases |
@@ -119,6 +120,23 @@ Edit the `DOCS` allowlist in `scripts/sync-docs.mjs`, then run
 `npm run sync-docs` (also a `predev` / `prebuild` hook). Only listed files are
 published; this is deliberate so internal `docs/*` (audits, plans, reviews)
 stay private. `lib/docs.ts` reads the generated `content/docs/_manifest.json`.
+
+## Agent City demo
+
+The homepage reuses the Agent City plugin's canvas renderer and visibility-aware
+animation loop. `node scripts/sync-agent-city.mjs` refreshes the committed
+`lib/agent-city/` snapshot from plugin sources. It strips TypeScript types with
+Node 22's built-in type stripper, so the website has no plugin SDK dependency.
+The `predev`/`prebuild` hooks refresh it in a full checkout; website-only Docker
+builds keep the snapshot. Edit the original plugin artwork, then sync; do not
+hand-edit the generated files. The demo's public fixtures and accessible controls
+live in `app/components/AgentCityDemo.tsx` and `agent-city-demo-data.ts`.
+
+To verify a running build, navigate a Browser Automation session's `main` page
+to its origin, then run `scripts/verify-homepage.browser.js` with
+`zcc browser-automation run <session> --script-file "$PWD/website/scripts/verify-homepage.browser.js" --script-host <host-id>`
+from the repository root. It checks the rendered canvas, interiors, keyboard
+return, motion preferences, 320–1280px layouts, and the deeper-page destinations.
 
 ## Plugin Guide map
 

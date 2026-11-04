@@ -103,17 +103,21 @@ test('CLI Agent offers Opus 5.5 1M and launches its exact model id', async ({ ho
   });
   try {
     const { window } = app;
-    const catalog = await window.evaluate(async () => {
-      const response = await fetch('/api/v1/system/execution-options?providerId=claude-code&projectId=opus-project');
-      if (!response.ok) throw new Error(`Execution options: ${response.status}`);
-      return response.json();
-    });
-    expect(catalog.modelLoadError, JSON.stringify(catalog)).toBeNull();
-    expect(catalog.models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'claude-opus-5-5[1m]', model: 'claude-opus-5-5[1m]', displayName: 'Opus 5.5 (1M)' }),
-      expect.objectContaining({ id: 'claude-opus-5-5', displayName: 'Opus 5.5' })
-    ]));
-    expect(catalog.models.some((row: { id: string }) => row.id === 'claude-opus-5[1m]')).toBe(false);
+    // The renderer can mount before bundled providers finish registering.
+    // Wait for the real catalog rather than treating first paint as readiness.
+    await expect(async () => {
+      const catalog = await window.evaluate(async () => {
+        const response = await fetch('/api/v1/system/execution-options?providerId=claude-code&projectId=opus-project');
+        if (!response.ok) throw new Error(`Execution options: ${response.status}`);
+        return response.json();
+      });
+      expect(catalog.modelLoadError, JSON.stringify(catalog)).toBeNull();
+      expect(catalog.models).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'claude-opus-5-5[1m]', model: 'claude-opus-5-5[1m]', displayName: 'Opus 5.5 (1M)' }),
+        expect.objectContaining({ id: 'claude-opus-5-5', displayName: 'Opus 5.5' })
+      ]));
+      expect(catalog.models.some((row: { id: string }) => row.id === 'claude-opus-5[1m]')).toBe(false);
+    }).toPass({ timeout: 30_000 });
 
     const modal = await openCliAgentLauncher(window);
     await modal.getByTestId('model-reasoning-picker-trigger').click();
@@ -155,7 +159,7 @@ test('local project switches reuse models while remote discovery remains pending
     { id: remoteId, name: 'Remote first in store', path: '/remote', hostId: remoteHost },
     ...localProjects
   ]));
-  const app = await launchApp(home, { initialConfig: { lastProjectId: remoteId } });
+  const app = await launchApp(home, { initialConfig: { lastProjectId: remoteId, defaultHarness: 'claude' } });
   const { window } = app;
   let releaseRemote!: () => void;
   const remoteGate = new Promise<void>((resolve) => { releaseRemote = resolve; });
@@ -183,15 +187,24 @@ test('local project switches reuse models while remote discovery remains pending
       window.dispatchEvent(new PopStateEvent('popstate'));
     });
     const modal = await openCliAgentLauncher(window);
-    const project = modal.getByRole('button', { name: 'Project', exact: true });
+    const project = modal.getByRole('button', { name: 'Machine and project', exact: true });
     const model = modal.getByTestId('model-reasoning-picker-trigger');
     await expect(project).not.toContainText('Remote first in store');
     const choose = async (name: string) => {
       await project.click();
-      await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name, exact: false }).click();
+      await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name, exact: false }).click();
       await expect(project).toContainText(name);
     };
+    // Warm model rows can render before this project's own discovery finishes.
+    // Measure cache reuse only after its selected provider response has arrived.
+    const localCatalogReady = window.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/v1/system/execution-options'
+        && url.searchParams.get('projectId') === 'composer-local-a'
+        && url.searchParams.get('providerId') === 'claude-code';
+    });
     await choose('Local A');
+    await localCatalogReady;
     await expect(model).toContainText('Local Model');
     const localRequestCount = () => requests.filter((query) => query.includes('composer-local-a')).length;
     const count = localRequestCount();
@@ -202,10 +215,10 @@ test('local project switches reuse models while remote discovery remains pending
     await expect(model.locator('[data-model-loading-placeholder]')).toHaveCount(0);
     await choose('Local A');
     await expect(model).toContainText('Local Model');
-    expect(localRequestCount()).toBe(count);
+    expect(localRequestCount(), JSON.stringify(requests)).toBe(count);
     await modal.getByRole('button', { name: 'Modern', exact: true }).click();
     await expect(modal.getByTestId('model-reasoning-picker-trigger')).toContainText('Local Model');
-    expect(localRequestCount()).toBe(count);
+    expect(localRequestCount(), JSON.stringify(requests)).toBe(count);
   } finally {
     releaseRemote();
     try { await window.unrouteAll({ behavior: 'wait' }); } finally { await app.electron.close(); }

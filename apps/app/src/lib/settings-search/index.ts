@@ -13,5 +13,10 @@ export function searchSettings(
   options: SearchSettingsOptions = {}
 ): SettingsSearchHit[] {
   if (!query.trim()) return [];
-  return matchCorpus(buildCorpus(snapshot, options.entries, options.providers), query, options.limit);
+  const corpus = buildCorpus(snapshot, options.entries, options.providers);
+  const hidden = options.hiddenSections;
+  const visible = hidden && hidden.size > 0
+    ? { ...corpus, entries: corpus.entries.filter((row) => !hidden.has(row.entry.section)) }
+    : corpus;
+  return matchCorpus(visible, query, options.limit);
 }

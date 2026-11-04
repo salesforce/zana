@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -98,6 +98,40 @@ it("starts an exported bridge with its plugin-scoped directories", async () => {
   expect(reported.context.tempDir).toContain("provider-fixture");
   // The temp dir belongs to the process, so nothing of it outlives the exit.
   expect(existsSync(reported.context.tempDir)).toBe(false);
+});
+
+it("removes links in the temp dir on exit without emptying the folders they point at", async () => {
+  const fixture = await createFixture(
+    [
+      "import { mkdirSync, symlinkSync } from 'node:fs';",
+      "import { join } from 'node:path';",
+      "let tempDir = null;",
+      "export const experimental_providerBridge = {",
+      "  experimental_apiVersion: 1,",
+      "  start(context) {",
+      "    tempDir = context.tempDir;",
+      "    mkdirSync(join(tempDir, 'skills', 'plugin'), { recursive: true });",
+      "    symlinkSync(process.env.USER_SKILLS, join(tempDir, 'skills', 'plugin', 'skills'), 'junction');",
+      "  },",
+      "  handleLine() { process.stdout.write(tempDir + '\\n'); },",
+      "};",
+    ].join("\n"),
+  );
+  const userSkills = join(fixture.dataDir, "user-skills");
+  await mkdir(join(userSkills, "my-skill"), { recursive: true });
+  await writeFile(join(userSkills, "my-skill", "SKILL.md"), "keep me\n");
+
+  const result = await runWorker(
+    [fixture.bridgeModulePath, "provider-fixture", fixture.dataDir],
+    "{}\n",
+    { USER_SKILLS: userSkills },
+  );
+
+  expect(result.code).toBe(0);
+  expect(existsSync(result.stdout.trim())).toBe(false);
+  expect(await readFile(join(userSkills, "my-skill", "SKILL.md"), "utf8")).toBe(
+    "keep me\n",
+  );
 });
 
 it("refuses an artifact with no bridge export, naming the plugin", async () => {

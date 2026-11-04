@@ -75,7 +75,7 @@ export function GlobalView({
         <SettingsActionRow
           searchId="global.replay-walkthrough"
           label="Replay walkthrough"
-          help="For new users: starting a conversation, the CLI Agent composer, adding a project, and creating a schedule."
+          help="For new users: a 30-second intro video, then starting a conversation, the CLI Agent composer, adding a project, and creating a schedule."
         >
           <button
             type="button"

@@ -213,8 +213,30 @@ describe('composer host status', () => {
     const action = resolveComposerHostAction({
       hosts: [{ ...primary, status: 'disconnected' }]
     });
-    expect(action.kind).toBe('blocked');
+    expect(action.kind).toBe('restart');
+    expect(composerHostActionChipLabel(action)).toBe('Restart host daemon');
     expect(shouldBlockComposerSend(action)).toBe(true);
+  });
+
+  it('offers local recovery even when another machine is connected', () => {
+    expect(resolveComposerHostAction({ hosts: [{ ...primary, status: 'disconnected' }, { ...remoteHost, status: 'connected' }] }))
+      .toMatchObject({ kind: 'restart' });
+  });
+
+  it('does not require the primary daemon to repair or use a remote machine', () => {
+    const offlinePrimary = { ...primary, status: 'disconnected' as const };
+    const project = { ...sshProject, hostId: remoteHost.id };
+    expect(resolveComposerHostAction({ hosts: [offlinePrimary, remoteHost], project })).toMatchObject({ kind: 'fix', hostId: remoteHost.id });
+    expect(resolveComposerHostAction({ hosts: [offlinePrimary, { ...remoteHost, status: 'connected' }], project })).toEqual({ kind: 'ready' });
+    expect(resolveComposerHostAction({ hosts: [offlinePrimary], project: sshProject })).toMatchObject({ kind: 'install' });
+  });
+
+  it('never turns missing registration or a foreign checkout into local recovery', () => {
+    expect(resolveComposerHostAction({ hosts: [] })).toMatchObject({ kind: 'blocked' });
+    expect(resolveComposerHostAction({ hosts: [primary], selectedHostId: 'missing' })).toMatchObject({ kind: 'blocked' });
+    expect(resolveComposerHostAction({ hosts: [{ ...primary, status: 'disconnected' }, remoteHost],
+      project: { ...sshProject, remote: undefined, hostId: remoteHost.id }, selectedHostId: primary.id })).toMatchObject({ kind: 'blocked' });
+    expect(resolveComposerHostAction({ hosts: [remoteHost] })).toMatchObject({ kind: 'fix', hostId: remoteHost.id });
   });
 
   it('labels this machine and online/offline status', () => {

@@ -17,8 +17,13 @@ exec cat
   const report = '.zcc/report #1.md';
   writeFileSync(join(projectPath, report), `# CLI preview loaded\n\n${'Complete report content. '.repeat(1000)}\n\nEND OF REPORT\n`);
   writeFileSync(join(projectPath, 'shot.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=', 'base64'));
+  const artifactRoot = join(home, '.zcc', 'artifacts', 'data-org-test-20261027');
+  mkdirSync(artifactRoot, { recursive: true });
+  const artifactPath = join(artifactRoot, 'B-quote-method-desktop.png');
+  writeFileSync(artifactPath, readFileSync(join(projectPath, 'shot.png')));
   writeFileSync(join(home, 'outside.md'), 'PRIVATE OUTSIDE FILE');
   symlinkSync(join(home, 'outside.md'), join(projectPath, 'escape.md'));
+  symlinkSync(join(home, 'outside.md'), join(artifactRoot, 'escape.md'));
   let sessionId: string | undefined;
   try {
     await window.evaluate((binary) => window.cc.config.set({ claudeBinary: binary }), agent.path);
@@ -61,7 +66,12 @@ exec cat
     await expect(image).toBeVisible();
     await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(1);
 
-    const reads = await window.evaluate(async ({ projectId, sessionId, projectPath }) => {
+    await preview(artifactPath);
+    const artifactImage = panel.getByRole('img', { name: 'B-quote-method-desktop.png' });
+    await expect(artifactImage).toBeVisible();
+    await expect.poll(() => artifactImage.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(1);
+
+    const reads = await window.evaluate(async ({ projectId, sessionId, projectPath, artifactRoot }) => {
       const read = async (path: string, scope: string | null = projectId) => {
         const query = new URLSearchParams({ path, ...(scope ? { projectId: scope } : {}) });
         const response = await fetch(`/api/v1/threads/${sessionId}/host-files/content?${query}`);
@@ -69,15 +79,19 @@ exec cat
       };
       return Promise.all([
         read(`${projectPath}/.zcc/report #1.md`), read('../outside.md'), read('escape.md'),
-        read('missing.md'), read('.zcc/report #1.md', 'unregistered'), read('.zcc/report #1.md', null)
+        read('missing.md'), read('.zcc/report #1.md', 'unregistered'), read('.zcc/report #1.md', null),
+        read(`${artifactRoot}/escape.md`), read(`${artifactRoot}/missing.png`),
+        read(`${artifactRoot}/../../config.json`),
+        read(`${artifactRoot}/B-quote-method-desktop.png`, 'unregistered'),
+        read(`${artifactRoot}/B-quote-method-desktop.png`, null)
       ]);
-    }, { ...ids, projectPath });
+    }, { ...ids, projectPath, artifactRoot });
     expect(reads[0].status).toBe(200);
     expect(reads[0].body).toContain('END OF REPORT');
     expect(reads.slice(1).every((row) => row.status >= 400)).toBe(true);
     expect(reads.slice(1).every((row) => !row.body.includes('PRIVATE OUTSIDE FILE'))).toBe(true);
 
-    // Existing conversation previews still use their environment; storage stays separate.
+    // Conversations preview checkout files, storage files and server artifacts.
     const threadId = await window.evaluate(async (projectId) => {
       const response = await fetch('/api/v1/threads', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -95,14 +109,24 @@ exec cat
       dispatchEvent(new PopStateEvent('popstate'));
     }, threadId);
     await expect(window.getByTestId('thread-detail')).toBeVisible();
-    for (const file of [{ source: 'workspace', path: report }, { source: 'thread-storage', path: 'stored.md' }]) {
+    for (const file of [
+      { source: 'workspace', path: report },
+      { source: 'thread-storage', path: 'stored.md' },
+      { source: 'workspace', path: artifactPath }
+    ]) {
       await window.evaluate(async ({ threadId, file }) => {
         const response = await fetch(`/api/v1/threads/${threadId}/open`, {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ file })
         });
         if (!response.ok) throw new Error(await response.text());
       }, { threadId, file });
-      await expect(window.getByRole('heading', { name: file.source === 'workspace' ? 'CLI preview loaded' : 'Stored preview loaded' }).last()).toBeVisible();
+      if (file.path === artifactPath) {
+        const image = window.getByTestId('thread-secondary-panel').getByRole('img', { name: 'B-quote-method-desktop.png' });
+        await expect(image).toBeVisible();
+        await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(1);
+      } else {
+        await expect(window.getByRole('heading', { name: file.source === 'workspace' ? 'CLI preview loaded' : 'Stored preview loaded' }).last()).toBeVisible();
+      }
     }
   } finally {
     if (sessionId) await window.evaluate((id) => window.cc.terminals.close(id), sessionId).catch(() => undefined);

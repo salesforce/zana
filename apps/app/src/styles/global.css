@@ -2296,6 +2296,12 @@ body.resizing-col {
   user-select: none;
 }
 
+/* Embedded frames (plugin editors, previews) would swallow the drag's mouse events. */
+body.resizing-col iframe,
+body.resizing-col webview {
+  pointer-events: none !important;
+}
+
 .list-header {
   padding: 12px 14px;
   display: flex;
@@ -9395,6 +9401,7 @@ body.resizing-col .ext-hub-resizer::before {
   display: none;
 }
 .ext-plugin-settings-panel {
+  container: plugin-settings / inline-size;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -9468,9 +9475,10 @@ body.resizing-col .ext-hub-resizer::before {
   padding: 8px 10px;
   color: var(--text-primary);
 }
+.plugin-setting-row[data-control-placement='inline'] > .plugin-setting-control { width: 100%; }
 .plugin-setting-row[data-control-placement='inline'] input,
 .plugin-setting-row[data-control-placement='inline'] select {
-  width: 16rem;
+  width: 100%;
   max-width: 100%;
   background: var(--bg-base);
   border: 1px solid var(--border);
@@ -9479,7 +9487,7 @@ body.resizing-col .ext-hub-resizer::before {
   font-size: 13px;
   color: var(--text-primary);
 }
-@media (min-width: 640px) {
+@container plugin-settings (min-width: 600px) {
   .plugin-setting-row[data-control-placement='inline'] {
     flex-direction: row;
     justify-content: space-between;
@@ -9490,7 +9498,8 @@ body.resizing-col .ext-hub-resizer::before {
     align-items: flex-start;
   }
   .plugin-setting-row[data-control-placement='inline'] > .plugin-setting-control {
-    flex: 0 0 auto;
+    flex: 0 0 16rem;
+    width: 16rem;
   }
 }
 .ext-plugin-overview {
@@ -11523,6 +11532,21 @@ button.statusbar-item {
   color: var(--accent-gold);
 }
 
+/* No icon theme: collapse the empty slot so names align without a gap. */
+.tree-icon:empty,
+.palette-icon:empty {
+  display: none;
+}
+
+.file-icon {
+  font-family: 'seti';
+  font-style: normal;
+  font-weight: normal;
+  line-height: 1;
+  white-space: pre;
+  user-select: none;
+}
+
 .tree-name {
   flex: 1;
   min-width: 0;
@@ -11591,6 +11615,54 @@ button.statusbar-item {
 
 .tree-context-menu button:hover {
   background: var(--bg-hover);
+}
+
+/* Explorer minimap right-click menu (VS Code-style submenus). */
+.minimap-context-menu {
+  min-width: 200px;
+}
+.minimap-context-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.minimap-context-menu button:disabled:hover {
+  background: transparent;
+}
+.minimap-menu-check {
+  display: inline-flex;
+  width: 14px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+}
+.minimap-menu-label {
+  flex: 1;
+}
+.minimap-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-strong);
+}
+.minimap-menu-note {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.minimap-submenu-wrap {
+  position: relative;
+}
+.minimap-submenu {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  min-width: 170px;
+  margin-left: 2px;
+}
+.minimap-submenu.flip {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: 2px;
 }
 
 .tab-context-menu {
@@ -12154,7 +12226,7 @@ body.resizing-col .explorer-resizer::after {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background: var(--bg-base);
+  background: var(--bg-panel);
 }
 
 .explorer-viewer-empty {
@@ -12166,6 +12238,10 @@ body.resizing-col .explorer-resizer::after {
   text-align: center;
   padding: 24px;
   gap: 12px;
+}
+
+.explorer-viewer-loading {
+  width: 100%;
 }
 
 .explorer-viewer-header {
@@ -12224,7 +12300,7 @@ body.resizing-col .explorer-resizer::after {
   height: 100%;
   overflow: auto;
   padding: 16px 28px;
-  background: var(--bg-base);
+  background: var(--bg-panel);
 }
 
 .explorer-md-preview .inbox-md {
@@ -13576,7 +13652,7 @@ body.resizing-col .explorer-resizer::after {
 .inbox-view {
   --inbox-list-min: 345px;
   grid-column: 2 / -1;
-  background: var(--bg-base);
+  background: var(--bg-panel);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -16251,6 +16327,13 @@ body.resizing-col .explorer-resizer::after {
   vertical-align: baseline;
 }
 
+.inbox-md .inbox-md-file-link {
+  color: var(--accent-gold);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 .inbox-md .inbox-md-file-chip:hover,
 .inbox-md .inbox-md-file-chip:focus-visible {
   text-decoration: underline;
@@ -17416,6 +17499,15 @@ body.resizing-col .explorer-resizer::after {
   border: 1px solid var(--border);
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+.scheduler-pill--default {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-gold);
+  border-color: color-mix(in srgb, var(--accent-gold) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-gold) 12%, var(--bg-elevated));
 }
 
 .scheduler-pill--interval {
@@ -19572,11 +19664,13 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .scheduler-card-compact-when {
-  flex: 0 0 auto;
+  /* Shrinks (down to min-width) so a long skipped pill never squeezes the schedule name out of a narrow row. */
+  flex: 0 1 auto;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;
   min-width: 88px;
+  max-width: 40%;
 }
 
 /* ---- Follow-ups: kind-typed leading tile + structured meta row ------------ */
@@ -19731,6 +19825,16 @@ body.resizing-col .explorer-resizer::after {
   background: rgba(210, 153, 34, 0.15);
   color: rgb(210, 153, 34);
   border: 1px solid rgba(210, 153, 34, 0.35);
+}
+
+.scheduler-pill--skipped-last {
+  display: inline-block;
+  vertical-align: middle;
+  max-width: min(320px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 6px;
 }
 
 .scheduler-card-detail {
@@ -22209,6 +22313,23 @@ body.resizing-col .gus-rail-resizer::after {
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+/* Intro step: the 16:9 clip replaces the icon, so the card widens and the
+   Skip button moves off the video. */
+.walkthrough-card--media {
+  width: min(760px, 92vw);
+  max-height: calc(100vh - var(--titlebar-h) - 32px);
+  overflow-y: auto;
+  padding-top: 44px;
+}
+.walkthrough-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #1b1b1b;
 }
 .walkthrough-skip {
   position: absolute;
@@ -25674,6 +25795,23 @@ button.launch-persona {
   margin-top: 8px;
 }
 
+.team-composer-limit {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.team-composer-limit.is-over {
+  color: var(--danger, #e5484d);
+}
+
+.team-composer-limit-message {
+  margin: 6px 0 0;
+  color: var(--danger, #e5484d);
+  font-size: 12px;
+}
+
 .launch-job-details textarea {
   background: var(--bg-app, var(--bg-panel));
   border: 1px solid var(--border);
@@ -26202,7 +26340,7 @@ body.resizing-col .library-resizer::after {
   min-height: 0;
   overflow: auto;
   padding: 16px 28px;
-  background: var(--bg-base);
+  background: var(--bg-panel);
 }
 
 .library-md-editor .library-md-editor-surface,
@@ -32029,6 +32167,9 @@ body.resizing-col .library-split-resizer::after {
 
 :root[data-theme='light'] .scheduler-form-field select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2357606a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
 }
 
 /* A mouse click leaves the button focused, and the UA's default rectangular
@@ -33254,6 +33395,9 @@ textarea.ui-command-composer-input {
   font-size: 10.5px;
   text-align: center;
 }
+.thread-pending-question-hint kbd + kbd {
+  margin-left: 2px;
+}
 @container (max-width: 420px) {
   .thread-pending-question-hint {
     display: none;
@@ -34355,6 +34499,15 @@ textarea.ui-command-composer-input {
   font-size: 13px;
 }
 
+.thread-command-hint {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
 .team-requirement-failure {
   display: grid;
   gap: 10px;
@@ -34842,7 +34995,7 @@ textarea.thread-command-editor {
 }
 
 .split-pane-scrim.is-dimmed {
-  background: color-mix(in oklab, var(--bg-base) 30%, transparent);
+  background: color-mix(in oklab, var(--bg-base) 12%, transparent);
 }
 
 .split-pane-bar {
@@ -35519,6 +35672,22 @@ body.split-frame-guard webview {
   flex: 0 0 auto;
 }
 
+.thread-detail-header--balanced {
+  container: thread-header / inline-size;
+  align-items: flex-start;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.thread-detail-header--balanced .thread-detail-heading h1 {
+  flex: 0 1 auto;
+}
+
+.thread-detail-header--balanced .thread-detail-title-row {
+  align-items: center;
+  min-height: 28px;
+}
+
 /* Focused split pane: the thread header carries the pane-bar accent. Every
    split pane gets the room under it, so focus changes never shift content. */
 .split-workspace[data-split='true'] .split-pane .thread-detail-header {
@@ -35583,6 +35752,19 @@ body.split-frame-guard webview {
   pointer-events: auto;
 }
 
+.thread-detail-search-count {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.thread-detail-search-count.is-empty {
+  color: var(--danger, var(--text-muted));
+}
+
 .thread-detail-title-row {
   display: flex;
   align-items: baseline;
@@ -35634,14 +35816,14 @@ body.split-frame-guard webview {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
   min-width: 0;
 }
 
 .thread-detail-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
@@ -35650,32 +35832,117 @@ body.split-frame-guard webview {
   white-space: nowrap;
 }
 
-.thread-detail-meta-identity {
-  flex: 0 0 auto;
-}
-
-/* Chips give way first when the pane narrows; harness and model stay legible. */
-.thread-detail-meta-chip {
+.thread-context-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  flex: 0 1 auto;
+  gap: 5px;
   min-width: 0;
+  max-width: 100%;
   height: 18px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
+  padding: 0;
+  border: 0;
   border-radius: 5px;
-  background: var(--bg-elevated);
-  font-size: 11px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
 }
 
-.thread-detail-meta-chip > svg {
+.thread-context-trigger:hover,
+.thread-context-trigger[aria-expanded='true'] {
+  color: var(--accent-blue);
+}
+
+.thread-context-trigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.thread-context-identity {
+  flex: 0 1 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-context-trigger > svg,
+.thread-context-summary > svg,
+.thread-context-separator {
   flex: 0 0 auto;
 }
 
-.thread-detail-meta-chip > span {
+.thread-context-separator { color: var(--text-dim); }
+
+.thread-context-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.thread-context-summary > span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@container thread-header (max-width: 480px) {
+  .thread-context-branch { display: none; }
+}
+
+.thread-context-popover {
+  position: fixed;
+  z-index: 110;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: 0 12px 32px #0003;
+  font-size: 12px;
+}
+
+.thread-context-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.thread-context-popover dl { margin: 0; }
+
+.thread-context-popover dl > div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.thread-context-popover dt { color: var(--text-muted); }
+
+.thread-context-popover dd {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
+.thread-context-popover dd > svg {
+  align-self: flex-start;
+  margin-top: 3px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.thread-context-popover dd > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .thread-detail-overflow-wrap {
@@ -35808,9 +36075,10 @@ body.split-frame-guard webview {
   width: 100%;
 }
 
+/* Message actions extend below their row and must stay above the next sticky prompt. */
 .thread-timeline-item:hover,
 .thread-timeline-item:focus-within {
-  z-index: 1;
+  z-index: 5;
 }
 
 .thread-timeline-item.is-user,
@@ -35940,6 +36208,9 @@ body.split-frame-guard webview {
   min-width: 0;
 }
 
+/* Sticky prompts need an opaque backing that matches their hosting surface. */
+.app-shell.shell-inset .thread-timeline-current-turn > .thread-timeline-item.is-user,
+.panel-agent-tab .thread-timeline-current-turn > .thread-timeline-item.is-user,
 .thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {
   background: var(--bg-panel);
 }
@@ -36014,6 +36285,14 @@ body.split-frame-guard webview {
 .thread-timeline-row .inbox-mermaid-loading {
   width: 100%;
   box-sizing: border-box;
+}
+
+/* Keep small graphs at their natural scale and tall flows within the chat.
+   The SVG fits the bounded frame without cropping; Expand keeps details readable. */
+.thread-timeline-row .inbox-mermaid-frame.is-sized {
+  max-width: var(--mermaid-intrinsic-width);
+  max-height: min(480px, 60vh);
+  margin-inline: auto;
 }
 
 .thread-timeline-work {
@@ -36685,6 +36964,23 @@ body.split-frame-guard webview {
 @keyframes thread-search-flash {
   from { background: color-mix(in srgb, var(--accent, #4c8dff) 28%, transparent); }
   to { background: transparent; }
+}
+
+/* Find-in-thread: every match, and the current one (CSS Custom Highlight API). */
+::highlight(thread-search-match) {
+  background-color: color-mix(in srgb, var(--accent-gold, #d4a017) 35%, transparent);
+}
+
+::highlight(thread-search-current) {
+  background-color: var(--accent-gold, #d4a017);
+  color: #000;
+}
+
+/* When the current match is not in rendered text, its row is marked instead. */
+.thread-timeline-search-current {
+  border-radius: 6px;
+  outline: 2px solid var(--accent-gold, #d4a017);
+  outline-offset: 2px;
 }
 
 .thread-scroll-bottom {
@@ -38653,6 +38949,12 @@ body.split-frame-guard webview {
   min-width: 0;
 }
 
+/* Keep the saved drag width inside the live container after a window shrinks.
+   This matches the shared panel's 70% drag limit without discarding its saved width. */
+.plugin-panel-host-layout:not(.is-secondary-maximized):not(.is-compact) > .thread-secondary-panel {
+  flex-basis: min(var(--thread-secondary-width, 22rem), 70%);
+}
+
 .plugin-panel-host-layout:is(.is-secondary-maximized, .is-compact.is-secondary-open) > .split-plugin-main {
   display: none;
 }
@@ -38685,6 +38987,19 @@ body.split-frame-guard webview {
   gap: 4px;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+/* Phone/tablet: the rail floats over the page so plugin content keeps the full
+   screen width (a 36px column is a tenth of a phone). The launchers stay reachable. */
+.plugin-panel-host-layout.is-compact > .plugin-panel-host-launchers {
+  position: absolute;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 5;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
 }
 
 .panel-agent-tab {
@@ -39329,6 +39644,21 @@ body.split-frame-guard webview {
 
 .composer-typeahead-section + .composer-typeahead-section {
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+/* Portalled menus escape the launcher's scroll clipping and backdrop layer. */
+.composer-typeahead-menu.composer-typeahead-menu--floating {
+  position: fixed;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  z-index: 401;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+}
+
+.composer-typeahead-menu > .composer-typeahead-section {
+  flex-shrink: 0;
 }
 
 .composer-typeahead-heading {
@@ -40829,8 +41159,9 @@ body.split-frame-guard webview {
   color: inherit;
   font: inherit;
   cursor: grab;
-  /* Fixed-width card (width set inline). Clip so nothing spills past the
-     rounded edge if a child row is wider than the content box. */
+  /* Width and height are set inline from squadFlowLayout's nodeHeight(); every
+     line below has a fixed height so that estimate is exact. Clip so nothing
+     spills past the rounded edge. */
   overflow: hidden;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
@@ -40914,6 +41245,11 @@ body.split-frame-guard webview {
 
 .squad-flow-live {
   align-self: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 9.5px;
   font-weight: 700;
   text-transform: uppercase;
@@ -40941,6 +41277,11 @@ body.split-frame-guard webview {
    from the blue live badge and from the gold orchestrator tag. No motion. */
 .squad-flow-claimed {
   align-self: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 9.5px;
   font-weight: 700;
   text-transform: uppercase;
@@ -40951,10 +41292,39 @@ body.split-frame-guard webview {
   border-radius: 5px;
 }
 
+.squad-flow-node-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.squad-flow-node-icon {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.squad-flow-node-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+}
+.squad-flow-node-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.squad-flow-node-chevron {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
 .squad-flow-node-top {
   display: flex;
   align-items: center;
   gap: 8px;
+  height: 20px;
   /* Allow children to shrink below their content width so the label can
      ellipsis instead of pushing the orchestrator tag out of the card. */
   min-width: 0;
@@ -40983,6 +41353,11 @@ body.split-frame-guard webview {
   border-radius: 5px;
 }
 .squad-flow-node-role {
+  flex: 0 4 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--text-dim);
 }
@@ -40990,12 +41365,23 @@ body.split-frame-guard webview {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  height: 20px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
   font-size: 11.5px;
+}
+/* The verb never shrinks: chips to its right give up width first (role and
+   sub-agent count before live/claimed), each ellipsizing with full text in title. */
+.squad-flow-state-text {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .squad-flow-node-blocker {
   display: block;
-  margin-top: 3px;
+  height: 16px;
+  line-height: 16px;
   color: var(--danger);
   font-size: 10.5px;
   white-space: nowrap;
@@ -41004,7 +41390,8 @@ body.split-frame-guard webview {
 }
 .squad-flow-node-coord {
   display: block;
-  margin-top: 3px;
+  height: 16px;
+  line-height: 16px;
   color: var(--text-muted);
   font-size: 10.5px;
   white-space: nowrap;
@@ -41024,8 +41411,13 @@ body.split-frame-guard webview {
   color: var(--success);
 }
 .squad-flow-subagents {
-  display: inline-flex;
-  align-items: center;
+  /* block, not inline-flex: text-overflow only ellipsizes a block's own text. */
+  display: block;
+  flex: 0 2 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 10.5px;
   color: var(--text-muted);
   background: var(--bg-hover);
@@ -41047,8 +41439,10 @@ body.split-frame-guard webview {
   display: flex;
   align-items: center;
   gap: 6px;
+  height: 16px;
   font-size: 11px;
   min-width: 0;
+  overflow: hidden;
 }
 .squad-flow-child-type {
   flex: 0 0 auto;
@@ -41062,12 +41456,15 @@ body.split-frame-guard webview {
   border-radius: 4px;
 }
 .squad-flow-child-desc {
+  min-width: 0;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .squad-flow-child-more {
+  height: 16px;
+  line-height: 16px;
   font-size: 10.5px;
   color: var(--text-dim);
   padding-left: 15px;

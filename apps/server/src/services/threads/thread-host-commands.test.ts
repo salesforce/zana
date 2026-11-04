@@ -32,6 +32,7 @@ vi.mock('@zana-ai/zcc-db', () => ({
   getConversationThread: vi.fn(() => thread),
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
   getHost: vi.fn(() => ({ permissionMode: 'auto' })),
+  getThreadPluginMetadata: vi.fn(() => ({ metadata: {}, corrupt: false })),
   getThreadExecutionState: vi.fn(() => null),
   getLatestConversationCheckpoint: vi.fn(() => null),
   listConversationThreadEvents: vi.fn(() => []),

@@ -10,6 +10,11 @@ You are already inside a local plugin working directory
 — start from **Plugins → New plugin** (or `zcc plugin new`) in an ordinary
 project thread. Stay in this directory; the **app** path-installs the source.
 
+For meaningful UI changes, proactively use `zana-ui-proposals` to show an
+interactive mock early, with alternatives or a Current / Proposed comparison
+where useful. Keep trivial fixes lightweight and honor explicit requests to
+implement directly.
+
 ## The loop
 
 1. Read the scaffolded files: `package.json` (`zcc` block), `server.ts` /

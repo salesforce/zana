@@ -20,9 +20,13 @@ import { parseFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
 import { LibraryMarkdownEditor } from './LibraryMarkdownEditor.js';
 import { DocumentPdfButton } from '@/components/DocumentPdfButton';
 import { LibrarySaveRecovery } from './LibrarySaveRecovery.js';
+import { DocumentLinkBoundary } from '../../../components/DocumentLinkBoundary.js';
+import { documentLinkUrlTransform, type DocumentLink } from '../../../components/document-links.js';
 
 export interface DocPreviewProps {
   doc: LibraryDoc;
+  fragment?: string;
+  onOpenDocument?: (link: DocumentLink) => void;
   /** Open straight into edit mode (used right after "New idea"/"New note"). */
   autoEdit?: boolean;
   onAutoEditConsumed?: () => void;
@@ -36,7 +40,7 @@ type EditSurface = 'rich' | 'source';
  * through the same scope-confined `product.library.read/write` seam, so a
  * doc's scope (global vs project) is opaque to this component.
  */
-export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProps) {
+export function DocPreview({ doc, autoEdit, onAutoEditConsumed, fragment, onOpenDocument }: DocPreviewProps) {
   const pushToast = useUi((s) => s.pushToast);
   const monacoTheme = useMonacoTheme();
   const [content, setContent] = useState<string | null>(null);
@@ -178,7 +182,11 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
   // (BB Docs-style); Source switches to full-width Monaco for raw markdown.
   if (doc.kind === 'md' && content !== null) {
     return (
-      <div className="library-md-pane">
+      <DocumentLinkBoundary className="library-md-pane" documentPath={doc.relPath} fragment={fragment}
+        onOpenDocument={link => {
+          if (editing && draft !== content && !window.confirm('Discard unsaved changes?')) return;
+          onOpenDocument?.(link);
+        }}>
         <div className="library-edit-bar">
           <DocumentPdfButton
             path={doc.relPath}
@@ -275,7 +283,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
             <div className="inbox-md">{renderMarkdownBody(content)}</div>
           </div>
         )}
-      </div>
+      </DocumentLinkBoundary>
     );
   }
 
@@ -319,6 +327,7 @@ function renderMarkdownBody(text: string) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      urlTransform={documentLinkUrlTransform}
       components={{
         pre: (props) => {
           const mermaid = extractMermaid(props.children);

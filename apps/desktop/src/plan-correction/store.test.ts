@@ -31,6 +31,21 @@ describe('plan correction store', () => {
     }
   });
 
+  it('round-trips a register-channel record and fails closed on an unknown channel', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zana-plan-correction-'));
+    const filePath = join(directory, 'corrections.json');
+    try {
+      const registered = { ...record, channel: 'register' as const };
+      await createPlanCorrectionStore({ filePath }).put(registered);
+      await expect(createPlanCorrectionStore({ filePath }).get(record.executionId)).resolves.toEqual(registered);
+      const bogus = createPlanCorrectionStore({ filePath: join(directory, 'bogus.json') });
+      await bogus.put({ ...record, channel: 'file' as never });
+      await expect(bogus.get(record.executionId)).rejects.toThrow('corrupt plan correction store');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('returns undefined for an execution without a correction record', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'zana-plan-correction-'));
     try {

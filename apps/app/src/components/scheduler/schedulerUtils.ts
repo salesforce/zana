@@ -1,5 +1,7 @@
 import type { ScheduledTask, LaunchProfileId, Project, ScheduleTemplate, ScheduleRun, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { parseEvery, formatInterval } from '@zana-ai/zcc-domain/parse-every';
+import { reasonHint, reasonLabel } from '@zana-ai/zcc-domain/schedule-health';
+import { lastRunSkipped, type SkippedLastRun } from '@zana-ai/zcc-domain/schedule-skipped';
 import {
   ShieldCheck,
   Sun,
@@ -68,7 +70,7 @@ export function missedRunChoices(cadence: 'interval' | 'cron', includeOriginal: 
       : {
           value: 'original',
           title: 'Run once, skip when busy',
-          hint: 'Run once for the latest missed time, but skip it when too many runs are going. Resuming a paused schedule also runs the time it missed.'
+          hint: 'Run once for the latest missed time, but skip it when too many runs are going. Turning a schedule back on also runs the time it missed.'
         });
   }
   return choices;
@@ -179,15 +181,37 @@ export function pickLiveRun(
   return finishedOpen;
 }
 
+/**
+ * The rows the Recent runs list shows: the newest `retain` rows, plus the newest real (non-skip) run when it
+ * falls outside them. The scheduler keeps that run beyond `retain` so a burst of overlap skips can't push a
+ * long run's own outcome out of history; without this the list would show only "Previous run still active".
+ * Rows kept beyond `retain` only because their session is still open are deliberately not listed: the newest
+ * real run is the one that matters here.
+ */
+export function recentRunRows(runs: readonly ScheduleRun[], retain: number | undefined): ScheduleRun[] {
+  const visible = runs.slice(0, Math.max(1, retain ?? 10));
+  const newestReal = runs.find((run) => run.result !== 'skipped');
+  return newestReal && !visible.includes(newestReal) ? [...visible, newestReal] : visible;
+}
+
+/**
+ * Whether a run's pty/thread is still open: listed for its project and `running` or `starting`.
+ * The one rule for "this run is open" on the Overview, the schedule row and the info panel.
+ */
+export function isSessionAlive(
+  sessions: ReadonlyArray<Pick<TerminalSession, 'id' | 'status'>> | undefined,
+  sessionId: string | undefined
+): boolean {
+  return !!sessionId && (sessions ?? []).some((s) => s.id === sessionId && (s.status === 'running' || s.status === 'starting'));
+}
+
 /** Alive pty/thread id for a schedule, or null when nothing is running. */
 export function liveSessionIdForTask(
   task: Pick<ScheduledTask, 'projectId' | 'status'>,
   terminals: Record<string, Array<Pick<TerminalSession, 'id' | 'status'>> | undefined>
 ): string | null {
-  const list = terminals[task.projectId] ?? [];
-  const isAlive = (sessionId: string) =>
-    list.some((s) => s.id === sessionId && (s.status === 'running' || s.status === 'starting'));
-  return pickLiveRun(task.status.runs ?? [], isAlive)?.sessionId ?? null;
+  const list = terminals[task.projectId];
+  return pickLiveRun(task.status.runs ?? [], (sessionId) => isSessionAlive(list, sessionId))?.sessionId ?? null;
 }
 
 export function formatRelative(d: Date): string {
@@ -225,4 +249,41 @@ export function formatCountdown(d: Date): string {
   const h = Math.floor(m / 60);
   const remM = m % 60;
   return `${h}h ${remM}m`;
+}
+
+/** When a skipped slot was due: the time today, the weekday and time within a week, else the date. */
+function skippedWhen(slotMs: number, nowMs: number): string {
+  const slot = new Date(slotMs);
+  const time = slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const now = new Date(nowMs);
+  const calendarDay = (date: Date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const daysAgo = (calendarDay(now) - calendarDay(slot)) / 86_400_000;
+  if (daysAgo === 0) return time;
+  if (daysAgo > 0 && daysAgo < 7) return `${slot.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+  return slot.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
+/** The pill text and hover title for a schedule that skipped its last run. */
+export function skippedLastRunLabel(skipped: SkippedLastRun, nowMs: number, squad = false): { text: string; title: string } {
+  const when = skippedWhen(Date.parse(skipped.slotAt), nowMs);
+  const { reason } = skipped;
+  const text = reason ? `skipped ${when} · ${reasonLabel(reason)}` : `skipped ${when}`;
+  let detail: string;
+  if (reason === 'overlap') {
+    detail = squad
+      ? "The previous Squad run was still running, so this run didn't start."
+      : "The previous run's session was still open, so this run didn't start. Close that session or press Run now.";
+  } else if (reason) {
+    detail = `${reasonHint(reason)} Press Run now to run it.`;
+  } else {
+    detail = 'No run was recorded for this time. Press Run now to run it.';
+  }
+  return { text, title: `Skipped the ${when} run. ${detail}` };
+}
+
+/** The skipped pill for a schedule row, or null: /loop rows and schedules that ran their last due time get none. */
+export function skippedLastRunPill(task: ScheduledTask, nowMs: number): { text: string; title: string } | null {
+  if (task.external?.kind === 'claude-loop') return null;
+  const skipped = lastRunSkipped(task, nowMs);
+  return skipped ? skippedLastRunLabel(skipped, nowMs, task.kind === 'team') : null;
 }

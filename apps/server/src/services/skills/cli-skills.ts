@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { listHosts } from '@zana-ai/zcc-db';
+import { listExecutionHosts } from '@zana-ai/zcc-db';
 import type {
   CliSkillMachineStatus,
   SystemCliSkillsStatusResponse,
@@ -33,7 +33,7 @@ function statusFromEntries(
 }
 
 function selectedHosts(ctx: ProductHttpContext, hostIds?: string[]) {
-  const all = listHosts(ctx.db);
+  const all = listExecutionHosts(ctx.db);
   if (!hostIds || hostIds.length === 0) return all;
   const wanted = new Set(hostIds);
   return all.filter((host) => wanted.has(host.id));

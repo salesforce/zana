@@ -24,9 +24,11 @@ import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery as parseEveryShared } from
 import { nextCronRunAt } from '@zana-ai/zcc-domain/parse-cron';
 import { isCronCadence, previousCronSlots, slotsBetween, validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
 import { collectRunRows, isOpenProblem, isProblemRun, isRecoveryMode, runReason, SCHEDULE_REASONS } from '@zana-ai/zcc-domain/schedule-health';
-import { normalizeCatchUp, normalizeRetry } from './schedule-validation.js';
+import { normalizeCatchUp, normalizeRequiredMcps, normalizeRetry } from './schedule-validation.js';
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
+import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { buildRunConversation, withDetectedConversationId } from './run-conversation.js';
 import type { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import type { LaunchTerminal } from '../launch/terminal-launcher.js';
 import type { IInboxStore } from '../inbox/inbox-store.js';
@@ -62,6 +64,16 @@ const MAX_RETAIN = 100;
 const DEFAULT_SCHEDULED_RUN_LIMIT = 5;
 const MIN_SCHEDULED_RUN_LIMIT = 1;
 const MAX_SCHEDULED_RUN_LIMIT = 20;
+
+function requiredMcpsField(value: unknown): { requiredMcps?: string[] } {
+  const names = value == null ? undefined : normalizeRequiredMcps(value);
+  return names ? { requiredMcps: names } : {};
+}
+
+function requireBooleanFlag(name: string, value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${name} must be a boolean`);
+  return value;
+}
 
 /**
  * Fallback max-runtime for a scheduled `autoCloseOnFinish` run whose provider
@@ -554,7 +566,9 @@ export class SchedulerManager extends EventEmitter {
       // always sends an explicit value; this default only applies to callers
       // (e.g. the skill-authored create path) that omit it.
       autoCloseOnFinish: input.autoCloseOnFinish ?? true,
-      maxDurationMinutes: input.maxDurationMinutes
+      maxDurationMinutes: input.maxDurationMinutes,
+      ...(input.useUserConfig !== undefined ? { useUserConfig: requireBooleanFlag('useUserConfig', input.useUserConfig) } : {}),
+      ...requiredMcpsField(input.requiredMcps)
     };
     if (task.kind === 'team' && !task.teamId) throw new Error('teamId is required for team schedules');
     // New schedules start in Recovery; an explicit `catchUp: null` keeps Classic.
@@ -642,6 +656,13 @@ export class SchedulerManager extends EventEmitter {
     }
     if (patch.inboxLevel !== undefined) next.inboxLevel = patch.inboxLevel;
     if (patch.autoCloseOnFinish !== undefined) next.autoCloseOnFinish = patch.autoCloseOnFinish;
+    if (patch.useUserConfig === null) delete next.useUserConfig;
+    else if (patch.useUserConfig !== undefined) next.useUserConfig = requireBooleanFlag('useUserConfig', patch.useUserConfig);
+    if (patch.requiredMcps === null) delete next.requiredMcps;
+    else if (patch.requiredMcps !== undefined) {
+      const requiredMcps = normalizeRequiredMcps(patch.requiredMcps);
+      if (requiredMcps) next.requiredMcps = requiredMcps; else delete next.requiredMcps;
+    }
     if (patch.maxDurationMinutes !== undefined) {
       next.maxDurationMinutes = patch.maxDurationMinutes || undefined;
     }
@@ -919,12 +940,7 @@ export class SchedulerManager extends EventEmitter {
     const aliveIdsFor = (projectId: string): Set<string> => {
       let set = aliveByProject.get(projectId);
       if (!set) {
-        set = new Set(
-          this.deps!.ptys
-            .list(projectId)
-            .filter((s) => s.status === 'running' || s.status === 'starting')
-            .map((s) => s.id)
-        );
+        set = this.aliveSessionIds(projectId);
         aliveByProject.set(projectId, set);
       }
       return set;
@@ -963,11 +979,30 @@ export class SchedulerManager extends EventEmitter {
     );
   }
 
-  private retainRuns(task: ScheduledTask, runs: ScheduleRun[]): ScheduleRun[] {
+  /** Ids of the project's sessions that are running or starting: the one rule for "this run's tab is alive". */
+  private aliveSessionIds(projectId: string): Set<string> {
+    return new Set(this.deps?.ptys.list(projectId)
+      .filter(session => session.status === 'running' || session.status === 'starting').map(session => session.id));
+  }
+
+  private retainRuns(task: ScheduledTask, runs: ScheduleRun[], closingRunId?: string): ScheduleRun[] {
     // Squad runs are scheduler-owned overlap state until their durable
     // execution reaches a terminal state, so they sit outside display history.
-    return trimRuns(runs, task.history.retain, Date.now(), run =>
+    const kept = trimRuns(runs, task.history.retain, Date.now(), run =>
       run.launchState === 'pending' || (this.runLaunchKind(task, run) === 'team' && this.isLiveSquadRun(run)));
+    // Rows stay beyond `retain` when dropping them breaks the overlap guard or loses a run's outcome: EVERY row
+    // whose session is still alive (even once its Stop hook stamped finishedAt: the tab holds the overlap slot, and
+    // a trimmed row means the next fire starts a duplicate, or the exit is dropped; a manual run beside a scheduled
+    // one leaves two), the newest real (non-skip) run (overlap skips must not push it out of history), and the run
+    // this write is closing.
+    const aliveIds = this.aliveSessionIds(task.projectId);
+    const protectedRuns = new Set([
+      ...runs.filter(run => !!run.sessionId && aliveIds.has(run.sessionId)),
+      runs.find(run => run.result !== 'skipped'),
+      runs.find(run => closingRunId !== undefined && run.id === closingRunId)
+    ].filter((run): run is ScheduleRun => !!run));
+    const missing = [...protectedRuns].filter(run => !kept.includes(run));
+    return missing.length ? runs.filter(run => kept.includes(run) || missing.includes(run)) : kept;
   }
 
   private async observeSquadExecutions() {
@@ -1415,12 +1450,7 @@ export class SchedulerManager extends EventEmitter {
       // success) and frees the slot.
       this.deps.ptys.reapDeadSessions();
 
-      const aliveIds = new Set(
-        this.deps.ptys
-          .list(live.task.projectId)
-          .filter((s) => s.status === 'running' || s.status === 'starting')
-          .map((s) => s.id)
-      );
+      const aliveIds = this.aliveSessionIds(live.task.projectId);
       const squad = live.task.kind === 'team';
       const aliveRunSessionId = squad ? undefined : live.task.status.runs
         .map((r) => r.sessionId)
@@ -1437,9 +1467,9 @@ export class SchedulerManager extends EventEmitter {
           id: randomUUID(),
           at: new Date().toISOString(),
           result: 'skipped',
-          ...(aliveRunSessionId ? { sessionId: aliveRunSessionId } : {}),
           reasonCode: 'overlap',
-          ...runMeta(opts),
+          // No sessionId: the skip is its own row. Carrying the live run's session made recordRun merge it over that run.
+          ...runMeta({ ...opts, slotAt: opts.slotAt ?? live.targetAt }),
           message: squad ? 'previous squad run still active' : 'previous run still active'
         });
         if (live.task.enabled) this.arm(id);
@@ -1524,6 +1554,8 @@ export class SchedulerManager extends EventEmitter {
     const promptArgs = live.task.prompt ? seedPromptArgs(effectiveProfile, live.task.prompt) : [];
     const extraArgs = [...userExtraArgs, ...promptArgs];
 
+    // Resolve once: the flag and requiredMcps must agree even if the global setting changes mid-launch.
+    const useUserConfig = this.useUserConfig(live.task);
     const launchOptions = {
       preallocatedSessionId: reservedSessionId,
       projectId: project.id,
@@ -1551,7 +1583,12 @@ export class SchedulerManager extends EventEmitter {
       // Bake the schedule's loudness into the session so an agent-initiated
       // inbox_push during this run is stamped (or dropped, when silent) with
       // the right level — independent of later edits to the schedule.
-      inboxLevel: live.task.inboxLevel ?? 'quiet'
+      inboxLevel: live.task.inboxLevel ?? 'quiet',
+      // Opt-out of per-run Claude config isolation: schedule flag wins over the
+      // global setting; omitted entirely (byte-identical) when not opted out.
+      ...(useUserConfig ? { useUserConfig: true } : {}),
+      // Only an isolated run is checked: an opted-out run uses the user's real config.
+      ...(!useUserConfig && live.task.requiredMcps?.length ? { requiredMcps: [...live.task.requiredMcps] } : {})
     } as const;
     const unattendedLaunch = applyUnattendedScheduledLaunch(launchOptions);
     // Reserve before any process can start. Persist disabled so a downgrade
@@ -1768,6 +1805,10 @@ export class SchedulerManager extends EventEmitter {
           ? 'exited without filing a schedule_report — possible silent failure'
           : undefined
       };
+      // A detected-id harness (Codex, OpenCode) has stamped its id on the live
+      // session by now; `recordRun` merges, so the rest of `conversation` is kept.
+      const detected = withDetectedConversationId(existingRun?.conversation, registrationFor(effectiveProfile), session);
+      if (detected) finalRun.conversation = detected;
       await this.recordRun(id, finalRun);
       if (result === 'success') await this.onFinishedSuccess(id, runId);
       // A failure that just scheduled an auto-retry is not final: one notice per chain.
@@ -1796,13 +1837,18 @@ export class SchedulerManager extends EventEmitter {
     // Optimistically record the run as success at fire time so the UI shows the
     // schedule advanced, even if the session is long-lived. The exit handler
     // above will overwrite the entry once the pty closes.
+    // Record the conversation this run started so it can be reopened after its
+    // tab closes. Only for harnesses that can resume one; Squad runs never get here.
+    const registration = registrationFor(effectiveProfile);
+    const conversation = buildRunConversation(registration, session, effectiveProfile, runStartedAt);
     await this.recordRun(id, {
       id: runId,
       at: runStartedAt,
       result: existing?.launchState === 'pending' ? 'success' : existing?.result ?? 'success',
       sessionId: session.id,
       launchState: 'running',
-      message: undefined
+      message: undefined,
+      ...(conversation ? { conversation } : {})
     }, wasEnabled);
     const actual = this.deps?.ptys.list(project.id).find(candidate => candidate.id === session.id);
     if (actual?.status === 'exited') onExit(session.id, actual.exitCode ?? -1);
@@ -1871,14 +1917,20 @@ export class SchedulerManager extends EventEmitter {
     const knownIdxById = run.id
       ? status.runs.findIndex((r) => r.id === run.id)
       : -1;
-    const knownIdx =
+    let knownIdx =
       knownIdxById >= 0
         ? knownIdxById
         : run.sessionId
         ? runIndexBySession.get(run.sessionId)
         : undefined;
+    // The session fallback never merges a record with its own id onto a row that has a different id.
+    const fallbackRow = knownIdxById < 0 && knownIdx !== undefined ? status.runs[knownIdx] : undefined;
+    if (run.id && fallbackRow?.id && fallbackRow.id !== run.id) knownIdx = undefined;
+    let closedLiveRunId: string | undefined;
     if (knownIdx !== undefined && knownIdx >= 0 && status.runs[knownIdx]) {
-      status.runs[knownIdx] = { ...status.runs[knownIdx], ...run };
+      const before = status.runs[knownIdx];
+      if (before.sessionId && (run.durationMs !== undefined || run.finishedAt)) closedLiveRunId = before.id;
+      status.runs[knownIdx] = { ...before, ...run };
     } else if (run.id && countedRunIds.has(run.id)) {
       // This run was already counted at fire time but has since scrolled past
       // `retain` and been evicted by newer fires. This is its exit-time tail,
@@ -1907,7 +1959,7 @@ export class SchedulerManager extends EventEmitter {
     }
     // Terminal records obey the configured history cap even when this was an
     // update to a formerly-active squad run. Rebuild indexes from survivors.
-    status.runs = this.retainRuns(live.task, status.runs);
+    status.runs = this.retainRuns(live.task, status.runs, closedLiveRunId);
     runIndexBySession.clear();
     status.runs.forEach((r, idx) => {
       if (r.sessionId) runIndexBySession.set(r.sessionId, idx);
@@ -1923,7 +1975,12 @@ export class SchedulerManager extends EventEmitter {
     } else {
       status.lastRunAt = run.at;
       status.lastRunResult = run.result;
-      status.lastRunSessionId = run.sessionId;
+      // An overlap skip spawns no session, so it points at the run that holds the slot (the newest row whose session is
+      // alive), keeping readers such as the Stream Deck tile on the live run.
+      if (run.result === 'skipped' && run.reasonCode === 'overlap' && !run.sessionId) {
+        const aliveIds = this.aliveSessionIds(live.task.projectId);
+        status.lastRunSessionId = status.runs.find(row => !!row.sessionId && aliveIds.has(row.sessionId))?.sessionId ?? status.lastRunSessionId;
+      } else status.lastRunSessionId = run.sessionId;
     }
     await this.persist(next, enabled === undefined ? {} : { enabled });
     this.publishRuntime(live, next);
@@ -2079,6 +2136,19 @@ export class SchedulerManager extends EventEmitter {
   }
 
   // ----- limit, queue and drain ------------------------------------------------
+
+  /** Schedule `useUserConfig` wins; otherwise the global `automatedUseUserConfig`. Default isolated. */
+  private useUserConfig(task: ScheduledTask): boolean {
+    if (typeof task.useUserConfig === 'boolean') return task.useUserConfig;
+    let configured: unknown;
+    try {
+      configured = this.deps?.store.getConfig().automatedUseUserConfig;
+    } catch (err) {
+      this.log(`read automatedUseUserConfig for schedule ${task.id} (defaulting to isolated)`, err);
+      configured = undefined;
+    }
+    return configured === true;
+  }
 
   /** The configured ceiling on concurrent scheduled runs, read fresh at each check. */
   private runLimit(): number {

@@ -61,6 +61,31 @@ function View({ initial = {} as AppConfig, update = vi.fn(async () => undefined)
 }
 
 describe('Harness setup layout', () => {
+  it('lists installed harnesses alphabetically by label regardless of probe order', async () => {
+    state.rows = [
+      { family: 'pi', label: 'Pi', installed: false, alwaysEnabled: false, enabled: false, binary: 'pi', installHint: 'install' },
+      { family: 'codex', label: 'Codex', installed: true, alwaysEnabled: false, enabled: true, binary: 'codex', installHint: 'install' },
+      { family: 'claude', label: 'Claude Code', installed: true, alwaysEnabled: true, enabled: true, binary: 'claude', installHint: 'install' },
+      { family: 'opencode', label: 'Pi', installed: true, alwaysEnabled: false, enabled: true, binary: 'opencode', installHint: 'install' }
+    ];
+    state.descriptors.mockResolvedValue(state.rows.map((row) => ({
+      id: row.family, label: row.label, agentDefaultEligible: true, terminalEligible: false,
+      profiles: [], availability: { enabled: row.enabled, installed: row.installed },
+      capabilities: {} as HarnessAdapterDescriptor['capabilities'],
+      settingsContributionIds: [], configFiles: [],
+      initialTaskDelivery: { local: 'spawn-arg', remote: 'spawn-arg', readinessSignal: 'process-spawned', acceptanceSignal: 'argv-bound' }
+    })));
+    state.anchor = 'harness-legacy';
+    render(<View initial={{ defaultHarness: 'pi' } as AppConfig} />);
+    await waitFor(() => expect(screen.getByText('3 installed · 3 enabled')).toBeTruthy());
+    const names = [...screen.getByTestId('harness-status-list').querySelectorAll('.opener-row-name')].map((el) => el.textContent);
+    expect(names).toEqual(['Claude Code', 'Codex', 'Pi', 'Pi']);
+    expect(state.rows.map((row) => row.family)).toEqual(['pi', 'codex', 'claude', 'opencode']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Default harness' }));
+    const options = (await screen.findAllByRole('option')).map((el) => el.textContent ?? '');
+    expect(options.map((text) => text.replace(' (not installed)', '').trim())).toEqual(['Claude Code', 'Codex', 'Pi', 'Pi']);
+  });
+
   it('leads with installation, gives the machine context, and persists the enable switch immediately', async () => {
     const update = vi.fn(async () => undefined);
     const { container } = render(<View update={update} />);

@@ -1,0 +1,14 @@
+.development-recovery-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 0;
+}
+.development-recovery-row > div { min-width: 0; }
+.development-recovery-row > button { flex-shrink: 0; }
+.development-recovery-result { font-size: 13px; overflow-wrap: anywhere; }
+.development-recovery-result ul, .development-recovery-confirm { padding-left: 20px; line-height: 1.7; }
+@media (max-width: 700px) {
+  .development-recovery-row { align-items: flex-start; flex-direction: column; gap: 10px; }
+}

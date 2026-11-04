@@ -65,8 +65,8 @@ async function parseFile(path: string, seen: Set<string>, out: SshHostEntry[]): 
       flush();
       const aliases = value.split(/\s+/).filter(Boolean);
       // A Host line with multiple aliases is a pattern block, not a list of
-      // pickable targets — skip the whole block. (Matches the OpenSSH
-      // semantics and aisuite's config.go discovery rule.)
+      // pickable targets — skip the whole block rather than treating patterns
+      // as individual connection targets.
       if (aliases.length > 1) {
         current = null;
         continue;

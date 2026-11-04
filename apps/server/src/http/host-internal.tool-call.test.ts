@@ -110,7 +110,7 @@ afterEach(() => {
 describe('host internal plugin tool-call', () => {
   it('grants desktop presentation only to credentialed visible local calls, never tool argument assertions', async () => {
     vi.stubEnv('ZCC_PRODUCT_SERVER_CREDENTIAL', '');
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getPrimaryHost).mockReturnValue({ id: 'host-1' } as never);
     for (const [credential, visibility, local, expected] of [
       [undefined, 'visible', true, false], ['boot-secret', 'visible', true, true],
@@ -127,7 +127,7 @@ describe('host internal plugin tool-call', () => {
     }
   });
   it('stamps remote presentation context from the authenticated thread, ignoring tool arguments', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue({ ...thread, originPluginId: 'chat' } as never);
     vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { interactionSurface: { kind: 'remote', label: 'Chat' } }, corrupt: false } as never);
     const invokeAgentTool = vi.fn(async () => ({ success: true, contentItems: [] }));
@@ -150,7 +150,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('invokes the plugin tool for a host-owned thread', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue(thread as never);
     const invokeAgentTool = vi.fn(async () => ({
       success: true,
@@ -193,7 +193,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('fails closed when a partial plugin service lacks tool policy support', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue(thread as never);
     const invokeAgentTool = vi.fn();
     const captured = captureResponse();
@@ -212,7 +212,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('rejects a browser Origin and a thread owned by another host', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue({ ...thread, hostId: 'other-host' } as never);
     const ctx = {
       config: { getConfig: () => ({}) },
@@ -252,7 +252,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('opens a host preview_file without a plugin service and ignores a forged threadId', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue(thread as never);
     vi.mocked(openThreadFilePreview).mockReturnValue({
       delivered: 1,
@@ -295,7 +295,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('opens a host run_in_terminal without a plugin service and ignores a forged threadId', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue(thread as never);
     vi.mocked(openThreadTerminal).mockReturnValue({
       delivered: 1,
@@ -339,7 +339,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('answers inbox_push from the owning thread and does not dispatch to plugins', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue(thread as never);
     const append = vi.fn(async () => ({ id: 'inb-1', ts: 1, projectId: thread.projectId }));
     const invokeAgentTool = vi.fn();
@@ -374,7 +374,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('returns an unsuccessful tool result when no plugin service is wired', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue(thread as never);
     const captured = captureResponse();
     await handleHostInternalHttp(
@@ -400,7 +400,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('maps invoke failures and unknown threads to unsuccessful tool results', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue(null);
     const missing = captureResponse();
     await handleHostInternalHttp(
@@ -447,7 +447,7 @@ describe('host internal plugin tool-call', () => {
   });
 
   it('keeps tool execution alive after request body closes', async () => {
-    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
     vi.mocked(getConversationThread).mockReturnValue(thread as never);
     let signal: AbortSignal | undefined;
     const invokeAgentTool = vi.fn(async (args: { ctx: { signal: AbortSignal } }) => {
@@ -482,7 +482,7 @@ describe('host internal plugin tool-call', () => {
   it('streams heartbeats while a slow tool waits and still answers with parseable JSON', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
-      vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+      vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
       vi.mocked(getConversationThread).mockReturnValue(thread as never);
       let answer!: (value: unknown) => void;
       const invokeAgentTool = vi.fn(() => new Promise((resolve) => { answer = resolve; }));
@@ -523,7 +523,7 @@ describe('host internal plugin tool-call', () => {
   it('stops the heartbeat and aborts the tool when the daemon goes away', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
-      vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+      vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
       vi.mocked(getConversationThread).mockReturnValue(thread as never);
       const invokeAgentTool = vi.fn((args: { ctx: { signal: AbortSignal } }) => new Promise((_resolve, reject) => {
         args.ctx.signal.addEventListener('abort', () => reject(new Error('aborted by caller')));

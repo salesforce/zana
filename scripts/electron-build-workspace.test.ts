@@ -62,8 +62,11 @@ describe('Electron verification workspace', () => {
   it('marks failed builds unusable until a complete build succeeds', async () => {
     const root = fixture();
     const out = join(root, 'out');
+    const warning = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const run = vi.fn().mockResolvedValueOnce(1);
     expect(await buildElectron(root, out, run)).toBe(1);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('regenerates plugin artifacts in source tree'));
+    warning.mockRestore();
     expect(run).toHaveBeenCalledTimes(1);
     expect(() => assertCompleteBuild(out)).toThrow('incomplete');
     run.mockReset().mockResolvedValueOnce(0).mockResolvedValueOnce(2);

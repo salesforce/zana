@@ -26,7 +26,7 @@ export const REMAPPABLE_COMMANDS: Array<{
   { command: 'thread.find', label: 'Search in thread', help: 'Search the conversation in the open thread.' },
   { command: 'file.quickOpen', label: 'Quick Open', help: 'Open a file in the selected project.' },
   { command: 'sidebar.toggle', label: 'Toggle explorer', help: 'Switch between terminals and the file explorer.' },
-  { command: 'settings.open', label: 'Settings', help: 'Open or close Settings.' },
+  { command: 'settings.open', label: 'Settings', help: 'Open or close Settings. Inside a project, opens its Project settings.' },
   { command: 'browser.focusLocation', label: 'Browser address bar', help: 'Focus the in-app browser address bar.' },
   { command: 'browser.find', label: 'Find in page', help: 'Find text in the in-app browser tab.' },
   { command: 'browser.reload', label: 'Reload browser tab', help: 'Reload the in-app browser tab.' },

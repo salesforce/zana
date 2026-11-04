@@ -6,6 +6,7 @@ import {
   renderCandidatesForPrompt,
   parseRoutineIds
 } from './feed-noise-classifier.js';
+import { WorkloadMemo } from '@zana-ai/zcc-llm';
 import {
   AUTO_CLOSE_KEY_PREFIX,
   HEARTBEAT_KEY_PREFIX,
@@ -64,10 +65,10 @@ describe('parseRoutineIds', () => {
     expect(parseRoutineIds('sure!\n```\n{"routine":["r1","r1"]}\n```', valid)).toEqual(['r1']);
   });
 
-  it('returns [] on unparsable / empty / non-array', () => {
-    expect(parseRoutineIds('', valid)).toEqual([]);
-    expect(parseRoutineIds('not json', valid)).toEqual([]);
-    expect(parseRoutineIds('{"routine":"nope"}', valid)).toEqual([]);
+  it('returns null on unparsable / empty / non-array', () => {
+    expect(parseRoutineIds('', valid)).toBeNull();
+    expect(parseRoutineIds('not json', valid)).toBeNull();
+    expect(parseRoutineIds('{"routine":"nope"}', valid)).toBeNull();
   });
 });
 
@@ -129,5 +130,50 @@ describe('FeedNoiseClassifier.classify', () => {
     const svc = new FeedNoiseClassifier({ readEntries: async () => [e({ id: 'r1' })], runClassify });
     await svc.classify('projX');
     expect(runClassify.mock.calls[0][1]).toBe('feed-noise:projX');
+  });
+
+  it('reuses only a validated classification for unchanged candidates', async () => {
+    const runClassify = vi.fn().mockResolvedValue(okResult('{"routine":["r1"]}'));
+    const svc = new FeedNoiseClassifier({
+      readEntries: async () => [e({ id: 'r1' })], runClassify,
+      requestIdentity: (text) => text,
+      memo: new WorkloadMemo()
+    });
+    await svc.classify('proj');
+    await svc.classify('proj');
+    expect(runClassify).toHaveBeenCalledTimes(1);
+  });
+
+  it('reruns when candidates change instead of applying a stale overlay', async () => {
+    let entries = [e({ id: 'r1', comments: 'first' })];
+    const runClassify = vi.fn().mockResolvedValue(okResult('{"routine":["r1"]}'));
+    const svc = new FeedNoiseClassifier({ readEntries: async () => entries, runClassify, requestIdentity: (text) => text, memo: new WorkloadMemo() });
+    await svc.classify('proj');
+    entries = [e({ id: 'r2', comments: 'second' })];
+    await svc.classify('proj');
+    expect(runClassify).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retain malformed model output as a valid empty classification', async () => {
+    const runClassify = vi.fn()
+      .mockResolvedValueOnce(okResult('not json'))
+      .mockResolvedValueOnce(okResult('{"routine":["r1"]}'));
+    const svc = new FeedNoiseClassifier({
+      readEntries: async () => [e({ id: 'r1' })], runClassify,
+      requestIdentity: (text) => text, memo: new WorkloadMemo()
+    });
+    expect((await svc.classify('proj')).failed).toBe(true);
+    expect((await svc.classify('proj')).routineIds).toEqual(['r1']);
+    expect(runClassify).toHaveBeenCalledTimes(2);
+  });
+
+  it('revalidates cached ids against current candidates', async () => {
+    let entries = [e({ id: 'r1', comments: 'first' })];
+    const runClassify = vi.fn().mockResolvedValue(okResult('{"routine":["r1"]}'));
+    const svc = new FeedNoiseClassifier({ readEntries: async () => entries, runClassify, requestIdentity: () => 'same', memo: new WorkloadMemo() });
+    await svc.classify('proj');
+    entries = [e({ id: 'r2', comments: 'second' })];
+    expect((await svc.classify('proj')).routineIds).toEqual([]);
+    expect(runClassify).toHaveBeenCalledTimes(1);
   });
 });

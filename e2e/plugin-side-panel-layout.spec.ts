@@ -12,12 +12,10 @@ test('plugin pages share the rail, tabs, resizing and maximize layout across glo
   const pages = [
     ['pr-monitor', '/plugins/pr-monitor/main'],
     ['design-docs', '/plugins/design-docs/design-docs'],
-    ['salesforce', '/plugins/salesforce/orgs'],
     ['tasks', '/plugins/tasks/tasks'],
     ['storage-retention', '/plugins/storage-retention/storage'],
     ['plugin-guide', '/extensions/pages/plugin-guide/plugin-guide']
   ];
-  // A missing Salesforce CLI degrades server tools while its page remains available.
   for (const [id] of [...pages, ['docs', '']]) {
     expect(await win.evaluate((id) => window.cc.extensions.install({ kind: 'bundled', id }), id)).toMatchObject({ ok: true });
     await expect.poll(() => win.evaluate(async (id) => (await window.cc.pluginApps.list()).find(row => row.id === id)?.status, id), { timeout: 30_000 }).toMatch(/running|needs-configuration|degraded/);
@@ -33,7 +31,6 @@ test('plugin pages share the rail, tabs, resizing and maximize layout across glo
     ...pages.map(([, path]) => path),
     '/plugins/docs/panel',
     `/projects/${projectId}/design-docs`,
-    `/projects/${projectId}/salesforce`,
     `/projects/${projectId}/library`
   ];
   for (const [index, destination] of destinations.entries()) {
@@ -45,13 +42,18 @@ test('plugin pages share the rail, tabs, resizing and maximize layout across glo
       const rail = host.getByRole('toolbar', { name: 'Side panel' });
       await expect(rail).toBeVisible();
       const main = host.locator(':scope > .split-plugin-main');
-      const hostBox = (await host.boundingBox())!;
-      const mainBox = (await main.boundingBox())!;
-      const railBox = (await rail.boundingBox())!;
-      expect(Math.abs(mainBox.x + mainBox.width - railBox.x)).toBeLessThan(2);
-      expect(railBox.width).toBeGreaterThanOrEqual(35.5);
-      expect(railBox.width).toBeLessThanOrEqual(38);
-      expect(Math.abs(railBox.x + railBox.width - hostBox.x - hostBox.width)).toBeLessThan(2);
+      // The previous page's host can still match right after the route change and be replaced mid-measurement (a null
+      // box on slow runners), so measure all three together until the new page's layout holds.
+      let hostBox!: { x: number; y: number; width: number; height: number };
+      await expect(async () => {
+        const [h, m, r] = await Promise.all([host.boundingBox(), main.boundingBox(), rail.boundingBox()]);
+        expect(h && m && r).toBeTruthy();
+        expect(Math.abs(m!.x + m!.width - r!.x)).toBeLessThan(2);
+        expect(r!.width).toBeGreaterThanOrEqual(35.5);
+        expect(r!.width).toBeLessThanOrEqual(38);
+        expect(Math.abs(r!.x + r!.width - h!.x - h!.width)).toBeLessThan(2);
+        hostBox = h!;
+      }).toPass({ timeout: 10_000 });
       await captureElectronScreenshot(app.electron, win, testInfo.outputPath(`page-${index}-rail.png`));
 
       await host.getByTestId('plugin-panel-secondary-show').click();
@@ -70,8 +72,38 @@ test('plugin pages share the rail, tabs, resizing and maximize layout across glo
       await win.mouse.down();
       await win.mouse.move(resizeBox.x - 70, resizeBox.y + 100);
       await win.mouse.up();
-      const resized = (await panel.boundingBox())!.width;
+      let resized = (await panel.boundingBox())!.width;
       expect(resized).toBeGreaterThan(panelBox.width + 40);
+
+      if (index === 0) {
+        // A drag released over an embedded frame (Studio's editor) must still end.
+        const shrink = (await resize.boundingBox())!;
+        await win.mouse.move(shrink.x + 4, shrink.y + 100);
+        await win.mouse.down();
+        await win.mouse.move(shrink.x + 300, shrink.y + 100, { steps: 6 });
+        await win.mouse.up();
+        const narrow = (await panel.boundingBox())!.width;
+        expect(narrow).toBeLessThan(resized - 200);
+        await main.evaluate((node) => {
+          const frame = document.createElement('iframe');
+          frame.dataset.testid = 'resize-frame-probe';
+          frame.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0';
+          node.style.position = 'relative';
+          node.appendChild(frame);
+        });
+        const grow = (await resize.boundingBox())!;
+        await win.mouse.move(grow.x + 4, grow.y + 100);
+        await win.mouse.down();
+        await win.mouse.move(grow.x - 150, grow.y + 100, { steps: 6 });
+        await win.mouse.up();
+        const overFrame = (await panel.boundingBox())!.width;
+        expect(overFrame).toBeGreaterThan(narrow + 100);
+        expect(await win.evaluate(() => document.body.classList.contains('resizing-col'))).toBe(false);
+        await win.mouse.move(grow.x + 100, grow.y + 100, { steps: 4 });
+        expect(Math.abs((await panel.boundingBox())!.width - overFrame)).toBeLessThan(2);
+        await main.evaluate((node) => node.querySelector('[data-testid="resize-frame-probe"]')?.remove());
+        resized = overFrame;
+      }
 
       await host.getByTestId('thread-secondary-maximize').click();
       await expect(main).toBeHidden();

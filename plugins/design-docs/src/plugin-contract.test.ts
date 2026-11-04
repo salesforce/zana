@@ -36,6 +36,23 @@ function docIdIn(text: string): string {
 }
 
 describe('design-docs plugin contract', () => {
+  it('keeps standalone docs usable when production host omits peer SDK', async () => {
+    const host = createFakePluginHost({ pluginId: 'design-docs', database: createTestDatabase() });
+    delete (host.zcc.sdk as Partial<typeof host.zcc.sdk>).peers;
+    plugin(host.zcc);
+    const created = await host.harness.callRpc('create', { title: 'Standalone', template: 'blank' });
+    expect(created).toMatchObject({ title: 'Standalone' });
+    await expect(host.harness.callRpc('groupStatus', {})).rejects.toThrow(/setup is unavailable/);
+    await host.harness.dispose();
+  });
+  it('legacy transport without complete lifecycle SDK leaves standalone docs usable', async () => {
+    const host = createFakePluginHost({ pluginId: 'design-docs', database: createTestDatabase() });
+    delete (host.zcc.sdk.peers as Partial<typeof host.zcc.sdk.peers>).enable;
+    plugin(host.zcc);
+    expect(await host.harness.callRpc('create', { title: 'Legacy host', template: 'blank' })).toMatchObject({ title: 'Legacy host' });
+    await expect(host.harness.callRpc('groupStatus', {})).rejects.toThrow(/setup is unavailable/);
+    await host.harness.dispose();
+  });
   it('declares the manifest the host loads', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
     expect(pkg.name).toBe('@zcc-ext/design-docs');
@@ -139,5 +156,12 @@ describe('design-docs plugin contract', () => {
     expect(detail.threads).toEqual([]);
     expect(harness.published.length).toBe(before + 2);
     await harness.dispose();
+  });
+});
+
+describe('design-docs manifest', () => {
+  it('declares the generic peers capability that gates the core Peers settings page', () => {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { zcc: { peers?: boolean } };
+    expect(pkg.zcc.peers).toBe(true);
   });
 });

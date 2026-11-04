@@ -80,6 +80,21 @@ describe('workspace git', () => {
 });
 
 describe('managed worktree', () => {
+  it('rolls back when cancelled before include files are copied', async () => {
+    const repo = await initRepo();
+    const target = join(await tempDir('zcc-ws-cancel-'), 'repo');
+    const controller = new AbortController();
+    await expect(createWorktree({
+      sourcePath: repo, targetPath: target, branchName: 'zcc/cancel', baseBranch: 'main',
+      signal: controller.signal,
+      onProgress: entry => {
+        if (entry.key === 'worktree' && entry.status === 'completed') controller.abort(new Error('Provision cancelled'));
+      }
+    })).rejects.toThrow('Provision cancelled');
+    await expect(workspaceStatus(target)).resolves.toMatchObject({ isGitRepo: false });
+    expect((await runGit(repo, ['worktree', 'list', '--porcelain'])).stdout).not.toContain(target);
+  });
+
   it('creates an isolated branch, copies include files, and removes the worktree', async () => {
     const repo = await initRepo();
     await writeFile(join(repo, '.env'), 'SECRET=1\n');
@@ -183,6 +198,7 @@ describe('include copy', () => {
   it('skips symlinks and does not overwrite tracked files', async () => {
     const source = await tempDir('zcc-inc-src-');
     const target = await tempDir('zcc-inc-dst-');
+    await runGit(source, ['init', '-b', 'main']);
     await writeFile(join(source, '.worktreeinclude'), '.env\ntracked.txt\n');
     await writeFile(join(source, '.env'), 'ok\n');
     await writeFile(join(source, 'tracked.txt'), 'from-source\n');

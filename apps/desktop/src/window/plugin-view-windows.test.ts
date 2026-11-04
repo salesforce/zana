@@ -35,7 +35,13 @@ describe('parsePluginViewTarget', () => {
     { ...target, projectId: '   ' },
     { ...target, projectId: 'p'.repeat(257) },
     { ...target, projectId: 'p\n1' },
-    { ...target, projectId: 7 }
+    { ...target, projectId: 7 },
+    { ...target, resourceId: '' },
+    { ...target, resourceId: '  ' },
+    { ...target, resourceId: 7 },
+    { ...target, resourceId: 'a'.repeat(2049) },
+    { ...target, resourceId: 'a\nb' },
+    { ...target, resourceId: 'a\x7fb' }
   ])('rejects %j', (input) => {
     expect(parsePluginViewTarget(input)).toBeNull();
   });
@@ -63,6 +69,21 @@ describe('authorizePluginView', () => {
 });
 
 describe('view identity', () => {
+  it('preserves opaque resources and isolates identities, geometry keys and renderer params', () => {
+    const a = { ...target, resourceId: 'agents/Help #1.agent' };
+    const b = { ...target, resourceId: 'agents/Quote.agent' };
+    expect(parsePluginViewTarget({ ...a, extra: true })).toEqual(a);
+    expect(parsePluginViewTarget({ ...a, resourceId: 'a'.repeat(2048) })).not.toBeNull();
+    expect(samePluginView(a, { ...a })).toBe(true);
+    expect(samePluginView(a, b)).toBe(false);
+    expect(samePluginView(a, target)).toBe(false);
+    expect(pluginViewKey(a)).not.toBe(pluginViewKey(b));
+    expect(pluginViewKey(a)).not.toBe(pluginViewKey(target));
+    expect(pluginViewRendererParams(a)).toMatchObject({ resourceId: a.resourceId });
+    const record = writePluginViewBounds(undefined, pluginViewKey(a), { windowBounds: { width: 900, height: 600 } }, 1);
+    expect(readPluginViewBounds(record, pluginViewKey(b)).bounds).toBeUndefined();
+    expect(readPluginViewBounds(record, pluginViewKey(a)).bounds?.width).toBe(900);
+  });
   it('keys and compares on plugin, tab and project', () => {
     expect(pluginViewKey(target)).toBe('salesforce/salesforce@p-1');
     expect(samePluginView(target, { ...target })).toBe(true);
@@ -94,9 +115,11 @@ describe('view identity', () => {
 describe('parseMainWindowPath', () => {
   it('accepts relative in-app paths', () => {
     expect(parseMainWindowPath('/projects/p-1/threads/t-1?x=1#h')).toBe('/projects/p-1/threads/t-1?x=1#h');
+    const resourceUrl = `/projects/p-1/studio?${new URLSearchParams({ pluginResourceId: '界'.repeat(2048) })}`;
+    expect(parseMainWindowPath(resourceUrl)).toBe(resourceUrl);
   });
 
-  it.each(['', 'projects', '//evil.example', '/a\\b', 'https://x', '/a\nb', 7, `/${'a'.repeat(2048)}`])(
+  it.each(['', 'projects', '//evil.example', '/a\\b', 'https://x', '/a\nb', 7, `/${'a'.repeat(32768)}`])(
     'rejects %j',
     (input) => {
       expect(parseMainWindowPath(input)).toBeNull();

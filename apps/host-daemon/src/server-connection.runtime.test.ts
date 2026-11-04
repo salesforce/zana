@@ -9,7 +9,7 @@ vi.mock('./runtime-manager.js', () => ({ createRuntimeManager: () => mocks.adapt
 vi.mock('./command-dispatch.js', () => ({
   createCommandRuntime: (options: unknown) => {
     mocks.commandOptions = options;
-    return { terminals: new Map(), emit: () => {} };
+    return { dataDir: '/test/isolated-daemon', terminals: new Map(), emit: () => {} };
   }
 }));
 vi.mock('./plugin-host-manager.js', () => ({ PluginHostManager: class {} }));

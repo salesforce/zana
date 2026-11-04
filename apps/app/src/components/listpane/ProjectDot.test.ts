@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ProjectDot } from './ProjectDot.js';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 describe('ProjectDot', () => {
   it('renders a saved icon with the project color and unread indicator', () => {
@@ -80,7 +80,7 @@ describe('ProjectDot', () => {
   });
 
   it('styles the home glyph as an outline icon instead of a filled circle', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(css).toContain('.project-dot--home {\n  width: 12px;\n  height: 12px;\n  background: transparent;');
     expect(css).toContain('.overview-project-row .project-dot--home {\n  width: 12px;\n  height: 12px;\n  background: transparent;');
   });

@@ -31,6 +31,12 @@ function acquireState(db: ZccDatabase, threadId: string) {
   };
 }
 
+/** Prepared sends count as running until accepted or cancelled, even while the row is idle. */
+export function hasPendingConversationSend(db: ZccDatabase, threadId: string): boolean {
+  const sends = states.get(db)?.get(threadId)?.sends;
+  return sends ? [...sends].some(send => !send.cancelled) : false;
+}
+
 /** Track preparation and acceptance, so a late callback cannot restart stopped work. */
 export async function withConversationSend<T>(
   db: ZccDatabase, threadId: string, run: (lease: ConversationSendLease) => Promise<T>

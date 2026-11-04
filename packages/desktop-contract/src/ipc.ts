@@ -169,6 +169,10 @@ export const IPC = {
      *  rebuild the status/session lists (same render-storm guard as onIdleTriage). */
     onOverseerActivity: 'terminals:onOverseerActivity'
   },
+  apiErrorResume: {
+    /** Settings "Check an error": which rule would fire for a pasted error. */
+    check: 'apiErrorResume:check'
+  },
   overseer: {
     /** Recent Overseer decisions for the dry-run review pane (bounded by the
      *  audit ring's cap). Read-only diagnostic surface. */
@@ -315,7 +319,8 @@ export const IPC = {
    * lands in a follow-up PR.
    */
   usage: {
-    getSummary: 'usage:getSummary'
+    getSummary: 'usage:getSummary',
+    getMemoCounters: 'usage:getMemoCounters'
   },
   /**
    * Suggested Actions launcher (afl-03). `list` reads the store scoped to a
@@ -394,8 +399,10 @@ export const IPC = {
     setSettings: 'pluginApps:setSettings',
     checkUpdates: 'pluginApps:checkUpdates',
     applyUpdate: 'pluginApps:applyUpdate',
+    applyAllUpdates: 'pluginApps:applyAllUpdates',
     remove: 'pluginApps:remove',
-    reload: 'pluginApps:reload'
+    reload: 'pluginApps:reload',
+    repair: 'pluginApps:repair'
   },
   /**
    * Configured plugin marketplace catalogs (`plugins/marketplaces.json`).
@@ -404,6 +411,13 @@ export const IPC = {
    */
   marketplaces: {
     list: 'marketplaces:list'
+  },
+  pluginPacks: {
+    list: 'pluginPacks:list',
+    plan: 'pluginPacks:plan',
+    install: 'pluginPacks:install',
+    listInstalled: 'pluginPacks:listInstalled',
+    forget: 'pluginPacks:forget'
   },
   /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the
@@ -528,6 +542,12 @@ export const IPC = {
   commands: {
     list: 'commands:list'
   },
+  /** Plugin deep links: `config`/`open` are renderer requests (main validates); `onLink` is a main push. */
+  deepLinks: {
+    config: 'deepLinks:config',
+    open: 'deepLinks:open',
+    onLink: 'deepLinks:onLink',
+  },
   app: {
     performance: 'app:performance',
     homedir: 'app:homedir',
@@ -581,6 +601,9 @@ export const IPC = {
     openProject: 'windows:openProject',
     openPluginView: 'windows:openPluginView',
     closePluginView: 'windows:closePluginView',
+    pluginViewCloseReady: 'windows:pluginViewCloseReady',
+    pluginViewCloseComplete: 'windows:pluginViewCloseComplete',
+    onPluginViewCloseRequest: 'windows:onPluginViewCloseRequest',
     listPluginViews: 'windows:listPluginViews',
     onPluginViewsChanged: 'windows:onPluginViewsChanged',
     openThreadView: 'windows:openThreadView',
@@ -693,6 +716,7 @@ export const IPC = {
     runNow: 'scheduler:runNow',
     queryRuns: 'scheduler:queryRuns',
     retryRuns: 'scheduler:retryRuns',
+    resumeRun: 'scheduler:resumeRun',
     dismissRuns: 'scheduler:dismissRuns',
     reconcile: 'scheduler:reconcile',
     onChanged: 'scheduler:onChanged',
@@ -714,6 +738,7 @@ export const IPC = {
     setStatus: 'goals:setStatus',
     runNow: 'goals:runNow',
     reconcile: 'goals:reconcile',
+    resumeIteration: 'goals:resumeIteration',
     onChanged: 'goals:onChanged'
   },
   followups: {
@@ -814,6 +839,8 @@ export const IPC = {
    * resize snapshots, and agent-open requests.
    */
   browser: {
+    evaluate: 'desktop:browser:evaluate',
+    pageMessage: 'desktop:browser:page-message',
     attach: 'desktop:browser:attach',
     detach: 'desktop:browser:detach',
     navigate: 'desktop:browser:navigate',

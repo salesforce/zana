@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   dismiss: null as (() => void) | null,
+  pluginList: vi.fn(async () => []),
   ui: {
     settingsTab: 'global',
     setSettingsAnchor: vi.fn(),
@@ -36,8 +37,15 @@ vi.mock('../../lib/settings-search/snapshot.js', () => ({
   }
 }));
 vi.mock('../mobile-nav-context.js', () => ({ useMobileNavDismiss: () => h.dismiss }));
+vi.mock('../../lib/app-surface.js', () => ({ hasDesktopBridge: () => true }));
+vi.mock('../../views/settings/SharedInstancePicker.js', () => ({ SharedInstancePicker: () => <p>Instance picker opened</p> }));
+vi.mock('../../lib/product-client.js', () => ({
+  product: { pluginApps: { list: h.pluginList, getSettings: async () => ({ descriptors: {}, values: {} }) } }
+}));
 
 import { SettingsPane, groupHitsByPage, shouldAutofocusSettingsSearch } from './SettingsPane.js';
+import { InstanceMenu } from '../InstanceMenu.js';
+import { ensureSettingsSearchProviders } from '../../lib/settings-search/runtime.js';
 import type { SettingsSearchHit } from '../../lib/settings-search/index.js';
 
 function Location() {
@@ -50,18 +58,33 @@ function Hash() {
 }
 
 function mount() {
-  return render(<MemoryRouter initialEntries={['/settings/global']}><SettingsPane /><Location /><Hash /></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={['/settings/global']}><InstanceMenu /><SettingsPane /><Location /><Hash /></MemoryRouter>);
 }
+
+it('opens another Zana from the Settings menu and search without mixing it into setup', async () => {
+  mount();
+  const search = screen.getByRole('combobox', { name: 'Search settings' });
+  fireEvent.change(search, { target: { value: 'Open another computer' } });
+  fireEvent.click(screen.getAllByRole('option').find(option => option.textContent?.includes('Open another computer'))!);
+  expect(await screen.findByRole('dialog', { name: 'Open another computer' })).toBeTruthy();
+  expect(screen.getByText('Instance picker opened')).toBeTruthy();
+});
 
 beforeEach(() => {
   h.dismiss = null;
   h.ui.settingsTab = 'global';
   h.ui.selectedProjectId = 'selected';
   h.ui.focusedProjectId = null;
+  h.peersVisible = false;
   h.ui.settingsAnchor = null;
   vi.clearAllMocks();
 });
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  const runtime = ensureSettingsSearchProviders();
+  await act(async () => { await runtime.prefetchPluginSettings(); });
+  runtime.dispose();
+});
 
 describe('groupHitsByPage', () => {
   const hit = (id: string, section: string, tier: 1 | 2 | 3): SettingsSearchHit =>
@@ -98,6 +121,7 @@ describe('search focus on entering Settings', () => {
   it('focuses the search box when Settings opens, so typing goes straight into it', () => {
     mount();
     expect(document.activeElement).toBe(search());
+    expect(h.pluginList).toHaveBeenCalledTimes(1);
     // Moving between sections keeps the rail mounted and never re-takes focus.
     fireEvent.click(screen.getByRole('link', { name: 'Terminal' }));
     const other = document.createElement('button');
@@ -300,5 +324,13 @@ describe('focused Settings navigation', () => {
     h.ui.selectedProjectId = null;
     mount();
     expect(screen.getByRole('link', { name: 'Project settings' }).getAttribute('href')).toBe('/settings/project');
+  });
+});
+
+describe('SettingsPane Peers navigation', () => {
+  it('always shows the Peers row', () => {
+    mount();
+    expect(screen.getByTestId('settings-nav-peers')).toBeTruthy();
+    expect(screen.getByTestId('settings-nav-machines')).toBeTruthy();
   });
 });

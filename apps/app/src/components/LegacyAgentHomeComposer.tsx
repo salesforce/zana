@@ -97,7 +97,10 @@ import { threadModelCatalogForHost } from './thread/pickers/thread-model-catalog
 import { useHosts } from '../hooks/useHosts.js';
 import { cliAgentCatalogScope } from './cli-agent-catalog-scope.js';
 import { RemoteComposerConnection } from './RemoteComposerConnection.js';
+import { ComposerDaemonRestart } from './ComposerDaemonRestart.js';
+import { resolveComposerHostAction } from './composer-host-status.js';
 import { effectiveWorktreeIsolation } from '../lib/workspace-choice.js';
+import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 const CLI_WORK_MODE_ENTRIES = composerModeEntries({
@@ -201,6 +204,7 @@ export function LegacyAgentHomeComposer({
   const hosts = useHosts();
   const catalogScope = cliAgentCatalogScope(project, hosts);
   const executionHostId = catalogScope.executionHostId;
+  const hostRecovery = resolveComposerHostAction({ hosts, project, selectedHostId: executionHostId });
   const selectedHarness = descriptors.find((descriptor) => descriptor.id === familyId);
   const unrestrictedId = unrestrictedProfileId(selectedHarness?.profiles);
 
@@ -664,8 +668,7 @@ export function LegacyAgentHomeComposer({
       // A picked OpenCode native agent pins its OWN model. Forcing a catalog
       // `--model` alongside `--agent <role>` overrides that pin and dies with
       // ProviderModelNotFoundError on any install whose provider inventory
-      // differs from the static `aisuite/*` snapshot (e.g. an `llmgw`-backed
-      // setup) — the exit-64 dead-session bug. So a native role and a forced
+      // differs from a previously discovered model catalogue. A native role and a forced
       // model are mutually exclusive here: the role wins and carries no model.
       const adapterEntry = validRoleId
         ? { roleTargetId: validRoleId }
@@ -746,12 +749,17 @@ export function LegacyAgentHomeComposer({
     'claude-code'
   ).filter((row) => !project?.remote || (catalogScope.ready && catalog.providers.some(provider => provider.id === row.id)))
     .map((row) => ({ value: row.id, label: row.displayName }));
+  const personaOptions = useMemo(
+    () => [{ value: '', label: 'None' }, ...sortCatalogueByName(personas).map((persona) => ({ value: persona.id, label: persona.name }))],
+    [personas]
+  );
 
   return (
     <PluginComposerChrome
       scope={{ kind: 'cli-agent', projectId: projectId || null }}
       text={field.text}
       setText={field.setText}
+      insertContextReference={field.insertContextReference}
       focus={field.focus}
       familyId={familyId || undefined}
       providerId={selectedProviderId || undefined}
@@ -944,6 +952,7 @@ export function LegacyAgentHomeComposer({
               disabled={launching}
             />
           ) : null}
+          {!project?.remote && hostRecovery.kind === 'restart' && <ComposerDaemonRestart reason={hostRecovery.reason} />}
           <button
             type="button"
             className="launch-advanced-toggle"
@@ -1001,10 +1010,7 @@ export function LegacyAgentHomeComposer({
                 ariaLabel="Persona"
                 searchable={false}
                 onChange={setPersonaId}
-                options={[
-                  { value: '', label: 'None' },
-                  ...personas.map((persona) => ({ value: persona.id, label: persona.name }))
-                ]}
+                options={personaOptions}
               />
             </div>
             <PluginComposerAdvanced scope={{ kind: 'cli-agent', projectId: projectId || null }} />

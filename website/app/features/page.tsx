@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { AuroraGrid } from '../components/AuroraGrid';
 import { ProductGallery } from '../components/product-tour/ProductGallery';
+import { LibraryStory } from '../components/BrandStories';
 
 export const metadata: Metadata = {
   title: 'Features',
@@ -33,6 +34,14 @@ export default function FeaturesPage() {
       </section>
       <div className="wrap features-gallery-wrap">
         <ProductGallery />
+        <section id="library" className="fairy-section fairy-split" aria-labelledby="library-heading">
+          <div className="fairy-story-copy">
+            <p className="fairy-kicker lavender">Project Library</p>
+            <h2 id="library-heading">Keep what you learned.</h2>
+            <p>Give reports, diagrams, and findings a home with your project. The next task starts with the context you saved.</p>
+          </div>
+          <LibraryStory />
+        </section>
       </div>
       <section className="home-cta" aria-labelledby="features-cta-heading">
         <div className="wrap">

@@ -1,9 +1,12 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { platformKey, platformShortcut } from '../lib/platformShortcut.js';
+import { ctrlVPastesByDefault, terminalPasteHelpRow } from '../lib/terminalPaste.js';
 
 interface Props {
   onClose: () => void;
+  /** Live "Ctrl+V pastes" setting; the platform default when omitted. */
+  ctrlVPasteEnabled?: boolean;
 }
 
 interface Row {
@@ -16,7 +19,7 @@ interface Section {
   rows: Row[];
 }
 
-const SECTIONS: Section[] = [
+const sections = (pasteRow: Row | null): Section[] => [
   {
     title: 'Navigation',
     rows: [
@@ -32,7 +35,7 @@ const SECTIONS: Section[] = [
       { keys: ['⌘', 'O'], label: 'Open Agents dashboard' },
       { keys: ['⌘', 'I'], label: 'Toggle Inbox' },
       { keys: ['⌘', 'J'], label: 'Toggle Scheduler' },
-      { keys: ['⌘', ','], label: 'Toggle Settings' },
+      { keys: ['⌘', ','], label: 'Toggle Settings (Project settings inside a project)' },
       { keys: ['⌘', '?'], label: 'This help' }
     ]
   },
@@ -54,7 +57,7 @@ const SECTIONS: Section[] = [
       { keys: ['⌘', '⇧', 'R'], label: 'Restart active tab (kill + respawn)' },
       { keys: ['⌘', '⇧', 'T'], label: 'Reopen / resume last removed tab' },
       { keys: ['⌘', 'W'], label: 'Hide active tab (process keeps running)' },
-      { keys: ['⌘', '⇧', 'W'], label: 'Delete active tab (terminates the process)' },
+      { keys: ['⌘', '⇧', 'W'], label: 'Archive active agent tab (a plain shell is deleted)' },
       { keys: ['⌘', '1'], label: 'Switch to tab 1 (… up to ⌘9)' },
       { keys: ['⌘', ']'], label: 'Next tab' },
       { keys: ['⌘', '['], label: 'Previous tab' }
@@ -64,7 +67,10 @@ const SECTIONS: Section[] = [
     title: 'Thread',
     rows: [
       { keys: ['⌘', 'F'], label: 'Search in the open thread (remappable in Settings → Shortcuts)' },
-      { keys: ['Esc'], label: 'Close thread search' }
+      { keys: ['Esc'], label: 'Close thread search' },
+      { keys: ['⌘', '↵'], label: 'Agent question: Next, or Submit on the last question' },
+      { keys: ['1–9'], label: 'Agent question: choose an option (focus in the panel)' },
+      { keys: ['↵'], label: 'Agent question: Next, or Submit, from a focused option' }
     ]
   },
   {
@@ -72,6 +78,7 @@ const SECTIONS: Section[] = [
     rows: [
       { keys: ['⌘', 'F'], label: 'Find in active terminal' },
       { keys: ['⌘', 'K'], label: 'Clear active terminal scrollback' },
+      ...(pasteRow ? [pasteRow] : []),
       { keys: ['Enter'], label: 'Find: next match' },
       { keys: ['⇧', 'Enter'], label: 'Find: previous match' },
       { keys: ['Esc'], label: 'Close find / palette' },
@@ -106,13 +113,14 @@ const SECTIONS: Section[] = [
       { keys: ['Hide'], label: 'Detach: hide tab, keep process running' },
       { keys: ['Hide others'], label: 'Hide every other tab (processes keep running)' },
       { keys: ['Hide to right'], label: 'Hide all tabs after this one' },
-      { keys: ['Delete'], label: 'Terminate the process and remove the tab' },
+      { keys: ['Archive'], label: 'Stop the agent and remove the tab; its conversation stays in History' },
+      { keys: ['Delete'], label: 'Plain shell: end it and remove the tab' },
       { keys: ['Dismiss exited'], label: 'Clean up dead tabs' }
     ]
   }
 ];
 
-export function ShortcutsHelp({ onClose }: Props) {
+export function ShortcutsHelp({ onClose, ctrlVPasteEnabled = ctrlVPastesByDefault() }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -131,7 +139,7 @@ export function ShortcutsHelp({ onClose }: Props) {
           </button>
         </header>
         <div className="shortcuts-body">
-          {SECTIONS.map((s) => (
+          {sections(terminalPasteHelpRow(ctrlVPasteEnabled)).map((s) => (
             <section key={s.title} className="shortcuts-section">
               <h4>{s.title}</h4>
               {s.rows.map((r, i) => (

@@ -39,10 +39,20 @@ describe('ExecutionJobDetails phase 5 projection', () => {
   it('renders usage, assembled result, route fit, and final summary from projection', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
     expect(await screen.findByText(/Attribution: partial · Observations 2 · Gaps 1/)).toBeTruthy();
-    expect(screen.getByText(/worker: input unknown · output unknown/)).toBeTruthy();
+    expect(screen.getByText(/worker: input unknown · output unknown.*provider-reported cost unknown/)).toBeTruthy();
     expect(screen.getByText('visible result')).toBeTruthy();
     expect(screen.getByText(/appropriate · legal route · inactive proposal/)).toBeTruthy();
     expect(screen.getByText('final result')).toBeTruthy();
+  });
+
+  it('identifies available cost as provider-reported', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.usage!.byRole[0].providerCostUsd = 0.0123;
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+
+    expect(await screen.findByText(/worker: input unknown · output unknown.*provider-reported cost \$0\.0123/)).toBeTruthy();
   });
 
   it('offers recovery only for blocker timeouts and keeps terminal response disabled', async () => {
@@ -111,6 +121,20 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     const unavailable = await screen.findByRole('button', { name: 'Resume existing Squad' });
     expect((unavailable as HTMLButtonElement).disabled).toBe(true);
     expect(unavailable.getAttribute('title')).toBe('Existing Squad sessions cannot be restored on this device.');
+  });
+
+  it('explains partial restore with N of M copy and disables Resume', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'FAILED';
+    snapshot.execution.recovery = { status: 'terminal', actions: {
+      freshPlan: { available: true },
+      exactNative: { available: false, restorableSlots: 1, totalSlots: 3, reason: 'PARTIAL_RESTORE' }
+    } };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    const blocked = await screen.findByRole('button', { name: 'Resume existing Squad' });
+    expect((blocked as HTMLButtonElement).disabled).toBe(true);
+    expect(blocked.getAttribute('title')).toBe('Only 1 of 3 agents can be resumed. Use Relaunch Squad from retained plan.');
   });
 
   it('offers native recovery after a failed replacement when main retains a usable snapshot', async () => {
@@ -233,6 +257,7 @@ describe('ExecutionJobDetails copy job details', () => {
     expect(text).toContain('heartbeatAt:');
     expect(text).toMatch(/heartbeatAt: [^·]*· progressAt:/);
     expect(text).toContain('worker: input —');
+    expect(text).toContain('provider-reported cost —');
     expect(text).toContain('Assembled result:');
     expect(text).toContain('Final summary: final result');
     expect(text).toMatch(/Events \(last 0 of 0\)/);

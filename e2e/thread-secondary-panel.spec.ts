@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 /**
  * Thread secondary panel chrome: header toggle, Info, Hide, New Tab, and
  * in-app browser. Nested `/threads/:id` URLs cannot use `page.goto` against the
@@ -36,7 +37,7 @@ test('thread secondary panel opens Info, hides, and shows New Tab actions', asyn
   await expect(window.getByTestId('thread-secondary-panel')).toHaveCount(0);
 
   await window.getByTestId('thread-secondary-show').click();
-  await window.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(window);
   await expect(window.getByTestId('thread-new-tab-page')).toBeVisible();
   await expect(window.getByTestId('thread-new-tab-terminal')).toBeVisible();
 
@@ -52,7 +53,7 @@ test('thread secondary panel opens Info, hides, and shows New Tab actions', asyn
       await expect(window.getByTestId('explorer-worktree-menu')).toBeVisible();
       await gitFooter.click();
     }
-    await window.getByTestId('thread-secondary-new-tab').click();
+    await openThreadToolLauncher(window);
     await expect(window.getByTestId('thread-new-tab-page')).toBeVisible();
   }
 
@@ -60,7 +61,7 @@ test('thread secondary panel opens Info, hides, and shows New Tab actions', asyn
   if (await inbox.count()) {
     await inbox.click();
     await expect(window.getByTestId('thread-inbox-tab')).toBeVisible();
-    await window.getByTestId('thread-secondary-new-tab').click();
+    await openThreadToolLauncher(window);
     await expect(window.getByTestId('thread-new-tab-page')).toBeVisible();
   }
 

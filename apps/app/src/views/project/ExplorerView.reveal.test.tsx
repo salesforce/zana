@@ -2,7 +2,7 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ list: vi.fn(), read: vi.fn(), remoteRoot: vi.fn(), listRemote: vi.fn(), readRemote: vi.fn(), toast: vi.fn(), tree: {} as Record<string, Array<{ name: string; kind: 'file' | 'dir' }>> }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), read: vi.fn(), remoteRoot: vi.fn(), listRemote: vi.fn(), readRemote: vi.fn(), toast: vi.fn(), viewer: {} as any, tree: {} as Record<string, Array<{ name: string; kind: 'file' | 'dir' }>> }));
 vi.mock('@/lib/monacoSetup', () => ({}));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [{ id: 'a', name: 'Primary', isPrimary: true, status: 'connected' }] }));
 vi.mock('@/hooks/useMonacoTheme', () => ({ useMonacoTheme: () => 'dark' }));
@@ -25,7 +25,7 @@ vi.mock('@/store', async () => {
 });
 vi.mock('@/components/explorer', async () => ({
   WorktreeMenu: () => null, ExplorerGitFooter: () => null, ExplorerTreeHeader: () => null,
-  ExplorerContextMenu: () => null, ChangesList: () => null, useFileOperations: () => ({}), FileViewer: () => null,
+  ExplorerContextMenu: () => null, ChangesList: () => null, useFileOperations: () => ({}), FileViewer: (props: any) => { mocks.viewer = props; return null; },
   TreeList: (await import('../../components/explorer/TreeList.js')).TreeList
 }));
 import { ExplorerView } from './ExplorerView.js';
@@ -226,4 +226,34 @@ it('reveals files in a remote project through the remote listing', async () => {
   // (The root is listed twice on mount on main already; the reveal adds only lib.)
   expect(mocks.listRemote.mock.calls.map(([, path]) => path).filter(path => path !== '/remote')).toEqual(['/remote/lib']);
   expect(mocks.list).not.toHaveBeenCalled();
+});
+
+it('opens linked documents through the existing file reader and forwards their heading', async () => {
+  render(<ExplorerView project={project} />);
+  await open('/a/README.md');
+  await waitFor(() => expect(mocks.viewer.fileLoading).toBe(false));
+  await act(async () => { mocks.viewer.onOpenDocument({ path: '/a/src/guide.md', fragment: 'section-2' }); });
+  await waitFor(() => expect(mocks.read).toHaveBeenLastCalledWith('/a/src/guide.md', { projectId: 'p', hostId: 'a' }));
+  expect(useUi.getState().explorerFile.p).toBe('/a/src/guide.md');
+  expect(mocks.viewer.fragment).toBe('section-2');
+  expect(mocks.viewer.showPreview).toBe(true);
+});
+
+it('keeps unsaved Explorer changes when link navigation is cancelled', async () => {
+  const previousConfirm = window.confirm;
+  const confirm = vi.fn(() => false);
+  window.confirm = confirm;
+  try {
+    render(<ExplorerView project={project} />);
+    await open('/a/README.md');
+    await waitFor(() => expect(mocks.viewer.fileLoading).toBe(false));
+    act(() => mocks.viewer.onContentChange('unsaved changes'));
+    act(() => mocks.viewer.onOpenDocument({ path: '/a/src/guide.md', fragment: '' }));
+    expect(confirm).toHaveBeenCalledWith('Discard unsaved changes?');
+    expect(useUi.getState().explorerFile.p).toBe('/a/README.md');
+    expect(mocks.viewer.editedContent).toBe('unsaved changes');
+    confirm.mockReturnValue(true);
+    await act(async () => { mocks.viewer.onOpenDocument({ path: '/a/src/guide.md', fragment: '' }); });
+    expect(useUi.getState().explorerFile.p).toBe('/a/src/guide.md');
+  } finally { window.confirm = previousConfirm; }
 });

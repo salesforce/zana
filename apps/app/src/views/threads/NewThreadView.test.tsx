@@ -22,7 +22,7 @@ describe('NewThreadView', () => {
     expect(view).toContain('initialText={seed.initialText}');
     expect(view).toContain('autoFocus={seed.focusPrompt}');
     expect(view).toContain('PluginNewThreadActions');
-    expect(view).not.toContain('allowLegacyAgent');
+    expect(view).toContain('allowLegacyAgent={Boolean(project)}');
     expect(view).toContain('search.get(\'project\')');
     expect(view).toContain('routeProjectId');
     expect(view).not.toContain('AgentBoardLanes');

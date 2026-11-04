@@ -11,6 +11,8 @@ import {
 } from '@zana-ai/zcc-agent-runtime/test';
 import {
   createAgentRuntimeAdapter,
+  isAutomatedThreadStart,
+  isIsolatedAutomatedStart,
   mapRuntimeThreadEvent,
   mergeSessionTooling,
   resolveRuntimeBridgeLaunch,
@@ -51,6 +53,7 @@ describe('agent runtime thread adapter', () => {
       await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
       finish({ providerThreadId: 'provider-thread' }); await starting;
       expect(status()).toBe('idle');
+      expect(runtimeOptions.additionalWorkspaceWriteRoots).toEqual([join(cwd, 'thread-storage')]);
       const live = vi.spyOn(runtime, 'getLiveThreadIds').mockReturnValue([threadId]);
       expect(status()).toBe('active');
       live.mockReturnValue([]);
@@ -75,6 +78,50 @@ describe('agent runtime thread adapter', () => {
     try {
       await expect(method === 'start' ? adapter.startWork(input) : adapter.resumeWork(input)).rejects.toThrow('launch failed');
       expect(adapter.getRuntimeSnapshot!().threads).toEqual([{ threadId: input.threadId, status: 'error' }]);
+    } finally { adapter.dispose(); }
+  });
+
+  it.each([
+    { reported: true, expected: { sessionRestorable: true } },
+    { reported: false, expected: { sessionRestorable: false } },
+    { reported: undefined, expected: {} }
+  ])('passes through startWork sessionRestorable=$reported only when reported', async ({ reported, expected }) => {
+    const adapter = createAgentRuntimeAdapter({ dataDir: cwd, emit: () => {}, createRuntime: options => {
+      const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+      vi.spyOn(runtime, 'startThread').mockResolvedValue({
+        providerThreadId: 'prov-start', ...(reported === undefined ? {} : { sessionRestorable: reported })
+      } as never);
+      return runtime;
+    } });
+    try {
+      const result = await adapter.startWork({ threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: [], cwd });
+      expect(result).toEqual({ providerThreadId: 'prov-start', ...expected });
+    } finally { adapter.dispose(); }
+  });
+
+  it.each([
+    { name: 'strict and loaded', strict: true, loaded: true, expected: { nativeLoaded: true } },
+    { name: 'strict but runtime does not confirm', strict: true, loaded: undefined, expected: { nativeLoaded: false } },
+    { name: 'strict and not loaded', strict: true, loaded: false, expected: { nativeLoaded: false } },
+    { name: 'ordinary resume ignores a reported load', strict: false, loaded: true, expected: {} }
+  ])('resumeWork $name', async ({ strict, loaded, expected }) => {
+    let resumeThread!: ReturnType<typeof vi.spyOn>;
+    const adapter = createAgentRuntimeAdapter({ dataDir: cwd, emit: () => {}, createRuntime: options => {
+      const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+      resumeThread = vi.spyOn(runtime, 'resumeThread').mockResolvedValue({
+        providerThreadId: 'prov-resume', ...(loaded === undefined ? {} : { nativeLoaded: loaded })
+      } as never);
+      return runtime;
+    } });
+    try {
+      const result = await adapter.resumeWork({
+        threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', providerThreadId: 'prov-resume', cwd,
+        ...(strict ? { requireNativeLoad: true as const } : {})
+      });
+      expect(result).toEqual({ providerThreadId: 'prov-resume', ...expected });
+      const forwarded = resumeThread.mock.calls[0]![0] as { requireNativeLoad?: true };
+      if (strict) expect(forwarded.requireNativeLoad).toBe(true);
+      else expect(forwarded).not.toHaveProperty('requireNativeLoad');
     } finally { adapter.dispose(); }
   });
 
@@ -124,6 +171,25 @@ describe('agent runtime thread adapter', () => {
     expect(events.some((event) => event.threadId === threadId)).toBe(true);
     await adapter.stopWork({ threadId });
     adapter.dispose();
+  });
+
+  it('uses an empty catalog for an unattended start', async () => {
+    const root = join(cwd, 'skills-generated', 'demo');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'SKILL.md'), 'demo');
+    let runtime!: ReturnType<typeof createAgentRuntimeWithAdapters>;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: options => {
+        runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        return runtime;
+      }
+    });
+    try {
+      await adapter.startWork({ threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd, headless: true });
+      expect(runtime.getLiveThreadIds()).toHaveLength(1);
+    } finally { adapter.dispose(); }
   });
 
   it('cancels only the expected live plan and keeps the thread usable', async () => {
@@ -1106,6 +1172,115 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it('uses the current host native binary for ACP health, models, start and resume', async () => {
+    let binary = '/host/bin/opencode';
+    const captured: Record<string, unknown>[] = [];
+    const bridgeLaunch = {
+      pluginId: 'provider-fixture', source: { kind: 'daemon-bundled' as const, id: 'fake' },
+      capabilities: { supportsServiceTier: false, permissionModes: ['full'], supportsThreadArchive: false, supportsThreadRename: false, fork: 'tip' }
+    };
+    const adapter = createAgentRuntimeAdapter({
+      dataDir: cwd, emit: () => {},
+      loadConfig: () => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null,
+        harnesses: { byId: { opencode: { binary } } } }),
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'providerHealth').mockImplementation(async input => { captured.push(input); return { supported: false }; });
+        vi.spyOn(runtime, 'listModels').mockImplementation(async input => { captured.push(input); return { models: [], selectedOnlyModels: [] }; });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => { captured.push(input); return { providerThreadId: 'provider-thread' }; });
+        vi.spyOn(runtime, 'resumeThread').mockImplementation(async input => { captured.push(input); return { providerThreadId: 'provider-resumed' }; });
+        return runtime;
+      }
+    });
+    try {
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      await adapter.listModels({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      await adapter.startWork({ providerId: 'acp-opencode', bridgeLaunch, cwd, threadId: 'thread-one', environmentId: 'env-one', projectId: 'project', input: [] });
+      await adapter.resumeWork({ providerId: 'acp-opencode', bridgeLaunch, cwd, threadId: 'thread-two', environmentId: 'env-one', projectId: 'project', providerThreadId: 'provider-thread' });
+      expect(captured).toHaveLength(4);
+      for (const input of captured) expect(input.acpLaunchSpec).toMatchObject({ command: binary, args: ['acp'] });
+      binary = '/host/updated/opencode';
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      expect(captured.at(-1)?.acpLaunchSpec).toMatchObject({ command: binary });
+      expect(captured[0]?.acpLaunchSpec).toMatchObject({ command: '/host/bin/opencode' });
+      const declaration = { displayName: 'Explicit', command: '/declaration/bin/custom', args: ['serve'], env: { MODE: 'custom' } };
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch: { ...bridgeLaunch, providerOptions: { acpLaunchSpec: declaration } }, cwd });
+      expect(captured.at(-1)?.acpLaunchSpec).toEqual(declaration);
+      const explicit = { ...declaration, command: '/command/bin/custom' };
+      await adapter.startWork({ providerId: 'acp-opencode', bridgeLaunch: { ...bridgeLaunch, providerOptions: { acpLaunchSpec: declaration } },
+        providerOptions: { acpLaunchSpec: explicit }, cwd, threadId: 'thread-three', environmentId: 'env-one', projectId: 'project', input: [] });
+      expect(captured.at(-1)?.acpLaunchSpec).toEqual(explicit);
+    } finally { adapter.dispose(); }
+  });
+
+  it('forwards automated session admission through starts, forks, and resumes', async () => {
+    const captured: Record<string, unknown>[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      dataDir: cwd,
+      emit: () => {},
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+        });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => {
+          captured.push(input);
+          return { providerThreadId: 'provider-thread' };
+        });
+        vi.spyOn(runtime, 'resumeThread').mockImplementation(async input => {
+          captured.push(input);
+          return { providerThreadId: 'provider-resumed' };
+        });
+        return runtime;
+      }
+    });
+    try {
+      const shared = {
+        providerId: 'fake',
+        cwd,
+        environmentId: 'env-one',
+        projectId: 'project'
+      };
+      await adapter.startWork({ ...shared, threadId: 'thread-start', input: [], headless: true });
+      await adapter.startWork({ ...shared, threadId: 'thread-fork', input: [], scheduled: true, providerThreadId: 'source-thread' });
+      await adapter.resumeWork({ ...shared, threadId: 'thread-resume', providerThreadId: 'provider-thread', sessionKind: 'automated' });
+
+      expect(captured).toHaveLength(3);
+      for (const input of captured) expect(input.sessionKind).toBe('automated');
+    } finally {
+      adapter.dispose();
+    }
+  });
+
+  it('omits sessionKind for an automated start that opted out via useUserConfig', async () => {
+    const captured: Record<string, unknown>[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      dataDir: cwd,
+      emit: () => {},
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+        });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => {
+          captured.push(input);
+          return { providerThreadId: 'provider-thread' };
+        });
+        return runtime;
+      }
+    });
+    try {
+      const shared = { providerId: 'fake', cwd, environmentId: 'env-one', projectId: 'project', input: [] };
+      await adapter.startWork({ ...shared, threadId: 'thread-optout', scheduled: true, headless: true, useUserConfig: true });
+      await adapter.startWork({ ...shared, threadId: 'thread-default', scheduled: true, headless: true });
+      expect(captured).toHaveLength(2);
+      expect(captured[0]).not.toHaveProperty('sessionKind');
+      expect(captured[1]!.sessionKind).toBe('automated');
+    } finally {
+      adapter.dispose();
+    }
+  });
+
   it('lists fake provider models through AgentRuntime', async () => {
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
@@ -1133,6 +1308,49 @@ describe('agent runtime thread adapter', () => {
     expect(listed.models.length).toBeGreaterThan(0);
     expect(listed.models[0]?.model).toBeTruthy();
     adapter.dispose();
+  });
+
+  it.each([
+    { healthFails: false, cleanupFails: false },
+    { healthFails: true, cleanupFails: false },
+    { healthFails: false, cleanupFails: true },
+    { healthFails: true, cleanupFails: true }
+  ])('releases one-shot health runtimes without hiding the outcome: %j', async ({ healthFails, cleanupFails }) => {
+    const shutdowns: ReturnType<typeof vi.fn>[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'providerHealth').mockImplementation(async () => {
+          if (healthFails) throw new Error('actionable health failure');
+          return { supported: false };
+        });
+        const shutdown = vi.spyOn(runtime, 'shutdown').mockImplementation(async () => {
+          if (cleanupFails) throw new Error('cleanup failed');
+        });
+        shutdowns.push(shutdown);
+        return runtime;
+      }
+    });
+    const input = {
+      providerId: 'fake', cwd,
+      bridgeLaunch: {
+        pluginId: 'provider-fake', source: { kind: 'daemon-bundled' as const, id: 'fake' },
+        capabilities: { supportsServiceTier: false, permissionModes: ['full'], supportsThreadArchive: false, supportsThreadRename: false, fork: 'checkpoint' }
+      }
+    };
+    try {
+      for (let check = 0; check < 2; check += 1) {
+        if (healthFails) await expect(adapter.providerHealth(input)).rejects.toThrow('actionable health failure');
+        else await expect(adapter.providerHealth(input)).resolves.toEqual({ supported: false });
+      }
+      expect(shutdowns).toHaveLength(2);
+      for (const shutdown of shutdowns) expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(adapter.listLoadedEnvironments()).toEqual([]);
+    } finally { adapter.dispose(); }
+    // Completed health checks are no longer retained in the dispose tracker.
+    for (const shutdown of shutdowns) expect(shutdown).toHaveBeenCalledTimes(1);
   });
 
   it('reports unsupported health for the fake provider through AgentRuntime', async () => {
@@ -1527,5 +1745,31 @@ describe('mapRuntimeThreadEvent', () => {
       status: 'completed'
     } as ThreadEvent;
     expect(mapRuntimeThreadEvent(event).kind).toBe('turn.completed');
+  });
+});
+
+describe('isIsolatedAutomatedStart', () => {
+  it('is isolated for automated starts by default', () => {
+    expect(isIsolatedAutomatedStart({ scheduled: true })).toBe(true);
+    expect(isIsolatedAutomatedStart({ headless: true, useUserConfig: false })).toBe(true);
+  });
+
+  it('opt-out drops isolation; interactive stays non-automated', () => {
+    expect(isIsolatedAutomatedStart({ scheduled: true, useUserConfig: true })).toBe(false);
+    expect(isIsolatedAutomatedStart({ useUserConfig: true })).toBe(false);
+    expect(isIsolatedAutomatedStart({})).toBe(false);
+  });
+});
+
+describe('isAutomatedThreadStart', () => {
+  it('is true for headless, scheduled, or autonomous starts', () => {
+    expect(isAutomatedThreadStart({ headless: true })).toBe(true);
+    expect(isAutomatedThreadStart({ scheduled: true })).toBe(true);
+    expect(isAutomatedThreadStart({ autonomous: true })).toBe(true);
+  });
+
+  it('is false for interactive starts', () => {
+    expect(isAutomatedThreadStart({})).toBe(false);
+    expect(isAutomatedThreadStart({ headless: false, scheduled: false, autonomous: false })).toBe(false);
   });
 });

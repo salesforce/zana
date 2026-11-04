@@ -1,9 +1,12 @@
+import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { passageContext } from '../shared/passage-context.js';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, FileWarning, History, MessageSquare, Bot, PanelLeftOpen, X } from 'lucide-react';
 import type { DesignDocComment, DesignDocDetail, DesignDocRevision } from '../shared/contract.js';
 import { AgentsPane, AskAgentButton, type AskRequest } from './Agents.js';
 import { PublishButton } from './Publish.js';
 import { isMissingDoc, toast } from './api.js';
+import type { DocKind } from './api.js';
 import { CommentsPane, type PendingQuote } from './CommentsPane.js';
 import { DocHeader } from './DocHeader.js';
 import type { EditorState } from './FileEditor.js';
@@ -50,7 +53,8 @@ function Rail({
   selectedRevision,
   onSelectRevision,
   openInPanel,
-  onClose
+  onClose,
+  template = false
 }: {
   doc: DesignDocDetail;
   tab: RailTab;
@@ -66,12 +70,16 @@ function Rail({
   onSelectRevision(revision: DesignDocRevision): void;
   openInPanel: boolean;
   onClose?(): void;
+  template?: boolean;
 }) {
-  const tabs: Array<{ id: RailTab; label: string; icon: typeof MessageSquare; count?: number }> = [
+  const tabs: Array<{ id: RailTab; label: string; icon: typeof MessageSquare; count?: number }> = (template ? [
+    { id: 'history' as RailTab, label: 'History', icon: History }
+  ] : [
     { id: 'comments', label: 'Comments', icon: MessageSquare, count: doc.openComments },
     { id: 'history', label: 'History', icon: History },
     { id: 'agents', label: 'Agents', icon: Bot, count: doc.threads.length }
-  ];
+  ]);
+  const active: RailTab = template ? 'history' : tab;
   return (
     <aside className="dd-rail" aria-label="Comments, history and agents">
       <div className="dd-rail-tabs" role="tablist">
@@ -80,8 +88,8 @@ function Rail({
             key={entry.id}
             type="button"
             role="tab"
-            aria-selected={tab === entry.id}
-            className={`dd-rail-tab${tab === entry.id ? ' on' : ''}`}
+            aria-selected={active === entry.id}
+            className={`dd-rail-tab${active === entry.id ? ' on' : ''}`}
             onClick={() => onTab(entry.id)}
           >
             <entry.icon size={13} aria-hidden />
@@ -96,7 +104,9 @@ function Rail({
           </>
         ) : null}
       </div>
-      {tab === 'comments' ? (
+      {template ? (
+        <HistoryPane doc={doc} activePath={activePath} now={now} selectedId={selectedRevision} onSelect={onSelectRevision} docKind="template" />
+      ) : tab === 'comments' ? (
         <CommentsPane
           doc={doc}
           activePath={activePath}
@@ -170,7 +180,8 @@ export function DocView({
   layout,
   contextProjectId = null,
   onDeleted,
-  headerExtra
+  headerExtra,
+  kind = 'doc'
 }: {
   docId: string;
   path: string | null;
@@ -180,8 +191,9 @@ export function DocView({
   contextProjectId?: string | null;
   onDeleted(): void;
   headerExtra?: ReactNode;
+  kind?: DocKind;
 }) {
-  const doc = useDoc(docId);
+  const doc = useDoc(docId, kind === 'template' ? kind : undefined);
   const projects = useProjects();
   const now = useNow();
   const compact = layout === 'compact';
@@ -198,10 +210,12 @@ export function DocView({
   const [floatingRailOpen, setFloatingRailOpen] = usePersistentState<boolean>('rail-compact', false);
   const railOpen = railInline ? inlineRailOpen : floatingRailOpen;
   const setRailOpen = railInline ? setInlineRailOpen : setFloatingRailOpen;
-  const [tab, setTab] = usePersistentState<RailTab>('rail-tab', 'comments');
+  const [tab, setTab] = usePersistentState<RailTab>('rail-tab', kind === 'template' ? 'history' : 'comments');
   const [pendingQuote, setPendingQuote] = useState<PendingQuote | null>(null);
   // Here rather than in the rail so it survives switching tabs or closing a floating rail.
   const [commentDraft, setCommentDraft] = useState('');
+  const contextNavigate = useZccNavigate();
+  const threadContext = useZccContext();
   const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
   const [revision, setRevision] = useState<DesignDocRevision | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
@@ -352,6 +366,7 @@ export function DocView({
       onSelectRevision={selectRevision}
       openInPanel={!compact}
       onClose={railInline ? undefined : () => setRailOpen(false)}
+      template={kind === 'template'}
     />
   );
 
@@ -363,17 +378,17 @@ export function DocView({
         compact={compact}
         collapsible={narrow}
         onDeleted={onDeleted}
+        template={kind === 'template'}
         actions={
           <>
             {headerExtra}
-            <PublishButton doc={data} compact={compact || narrow} />
-            <AskAgentButton doc={data} activePath={activePath} request={askRequest} contextProjectId={contextProjectId} compact={compact || narrow} />
+            {kind === 'template' ? null : <><PublishButton doc={data} compact={compact || narrow} /><AskAgentButton doc={data} activePath={activePath} request={askRequest} contextProjectId={contextProjectId} compact={compact || narrow} /></>}
           </>
         }
       />
       <div className="dd-doc-body">
         {treeShown ? (
-          <FileTree doc={data} activePath={activePath} onOpen={openPath} onPathChanged={pathChanged} hasDraft={hasDraft} onHide={() => setTreeOpen(false)} />
+          <FileTree doc={data} activePath={activePath} onOpen={openPath} onPathChanged={pathChanged} hasDraft={hasDraft} onHide={() => setTreeOpen(false)} docKind={kind === 'template' ? kind : undefined} />
         ) : null}
         {activePath ? (
           <FilePane
@@ -392,12 +407,16 @@ export function DocView({
               setTab('comments');
               setRailOpen(true);
             }}
-            onAskAbout={(text) => setAskRequest({ prompt: `About this passage in ${activePath}:\n> ${text.replace(/\n/g, '\n> ')}\n\n`, nonce: Date.now() })}
+            onAskAbout={(text) => setAskRequest({ prompt: '', references: [passageContext(docId, activePath!, text)], nonce: Date.now() })}
+            onAddToThread={threadContext.threadId && contextNavigate.addThreadContext ? (text) => {
+              if (!contextNavigate.addThreadContext?.(passageContext(docId, activePath!, text))) toast('Open this document beside a thread to add the selection.', 'error');
+            } : undefined}
             onEditorState={onEditorState}
+            kind={kind === 'template' ? kind : undefined}
             leading={
               treeShown ? null : (
                 <>
-                  {treeInline ? <IconButton icon={PanelLeftOpen} label="Show files" onClick={() => setTreeOpen(true)} /> : null}
+                  {treeInline ? <IconButton icon={PanelLeftOpen} label="Show files" hint="Show the file list" onClick={() => setTreeOpen(true)} /> : null}
                   <FileSwitcher doc={data} activePath={activePath} onOpen={openPath} onPathChanged={pathChanged} hasDraft={hasDraft} />
                 </>
               )

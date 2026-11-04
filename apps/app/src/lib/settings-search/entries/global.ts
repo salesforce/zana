@@ -75,7 +75,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     id: 'global.replay-walkthrough',
     section: 'global',
     label: 'Replay walkthrough',
-    help: 'For new users: starting a conversation, the CLI Agent composer, adding a project, and creating a schedule. Replay',
+    help: 'For new users: a 30-second intro video, then starting a conversation, the CLI Agent composer, adding a project, and creating a schedule. Replay',
     keywords: ['onboarding', 'tutorial', 'tour', 'getting started', 'help'],
     kind: 'action'
   },

@@ -42,6 +42,12 @@ export {
 export {
   getHost,
   listHosts,
+  listAllHosts,
+  listExecutionHosts,
+  listPluginLinkHosts,
+  addHostLinkUse,
+  removeHostLinkUse,
+  HOST_LINK_USES_MAX,
   getPrimaryHost,
   upsertHost,
   markHostSeen,
@@ -53,7 +59,10 @@ export {
   markHostProtocolRejected,
   destroyHost,
   type HostRow,
-  type HostPermissionMode
+  type HostPermissionMode,
+  type HostPurpose,
+  type HostPurposeKind,
+  type HostLinkUse
 } from './data/hosts.js';
 export {
   getActiveSessionForHost,
@@ -125,6 +134,7 @@ export {
   type ApplyConversationThreadLifecycleEventOutcome,
   type ApplyConversationThreadLifecycleEventArgs
 } from './data/conversation-threads.js';
+export { relocateConversationThread } from './data/conversation-threads.js';
 export {
   appendThreadEvent,
   listThreadEvents,
@@ -188,6 +198,7 @@ export {
   retryDeferredThreadMessage,
   postponeDeferredThreadRetry,
   recoverInterruptedDeferredThreadMessages,
+  claimDeferredThreadMessageGroup,
   markDeferredThreadMessageDispatching,
   holdDeferredThreadMessage,
   clearLapsedDeferredEditHolds,

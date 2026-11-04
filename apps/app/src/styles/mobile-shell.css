@@ -503,13 +503,8 @@ body:has(.app-shell[data-mobile='true']) .thread-detail-overflow-menu > button {
   min-width: 0;
   max-width: 100%;
 }
-/* Flip the mention/command typeahead above the new-thread prompt on mobile so the
-   on-screen keyboard doesn't cover it — parity with the follow-up composer, which
-   already flips via `.thread-detail-view .mention-popover`. */
-body:has(.app-shell[data-mobile='true']) .home-agent-composer .mention-popover {
-  top: auto;
-  bottom: calc(100% + 8px);
-}
+/* ComposerTypeaheadMenu places portalled suggestions in the visual viewport,
+   preferring above the mobile home prompt to clear the on-screen keyboard. */
 /* Avoid iOS input zoom while preserving the authored size of editable headings. */
 body:has(.app-shell[data-mobile='true']) :is(input, textarea, [contenteditable='true']:not(h1, h2, h3, h4, h5, h6)) {
   font-size: 16px;

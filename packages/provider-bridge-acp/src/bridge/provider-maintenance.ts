@@ -20,6 +20,7 @@ import {
   resolveExecutablePath,
 } from "@zana-ai/zcc-provider-bridge-protocol/bridge-kit";
 import { z } from "zod";
+import { getAcpLaunchHealth } from "./launch-health.js";
 
 const execFileAsync = promisify(execFile);
 const USAGE_FETCH_TIMEOUT_MS = 15_000;
@@ -29,17 +30,22 @@ const CURSOR_KEYCHAIN_ACCOUNT = "cursor-user";
 const CURSOR_ACCESS_TOKEN_SERVICE = "cursor-access-token";
 const CURSOR_INSTALL_SCRIPT_URL = "https://cursor.com/install";
 
-function cursorAuthFilePath(): string {
+function cursorHomeDir(env: NodeJS.ProcessEnv): string {
+  return (process.platform === "win32" ? env.USERPROFILE ?? env.HOME : env.HOME)
+    ?? os.homedir();
+}
+
+function cursorAuthFilePath(env: NodeJS.ProcessEnv = process.env): string {
   if (process.platform === "win32") {
     const appData =
-      process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
+      env.APPDATA ?? path.join(cursorHomeDir(env), "AppData", "Roaming");
     return path.join(appData, "Cursor", "auth.json");
   }
   if (process.platform === "darwin") {
-    return path.join(os.homedir(), ".cursor", "auth.json");
+    return path.join(cursorHomeDir(env), ".cursor", "auth.json");
   }
   const configHome =
-    process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config");
+    env.XDG_CONFIG_HOME ?? path.join(cursorHomeDir(env), ".config");
   return path.join(configHome, "cursor", "auth.json");
 }
 
@@ -68,12 +74,12 @@ const cursorFileCredentialsSchema = z.object({
   accessToken: z.string().min(1).nullish(),
 });
 
-async function readAccessToken(): Promise<string | null> {
+async function readAccessToken(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   const keychain = await readKeychainAccessToken();
   if (keychain) return keychain;
   try {
     const parsed = cursorFileCredentialsSchema.safeParse(
-      JSON.parse(await fs.readFile(cursorAuthFilePath(), "utf8")),
+      JSON.parse(await fs.readFile(cursorAuthFilePath(env), "utf8")),
     );
     return parsed.success ? (parsed.data.accessToken ?? null) : null;
   } catch {
@@ -81,15 +87,15 @@ async function readAccessToken(): Promise<string | null> {
   }
 }
 
-function cursorStateDatabasePath(): string {
+function cursorStateDatabasePath(env: NodeJS.ProcessEnv = process.env): string {
   if (process.platform === "win32") {
     const appData =
-      process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
+      env.APPDATA ?? path.join(cursorHomeDir(env), "AppData", "Roaming");
     return path.join(appData, "Cursor", "User", "globalStorage", "state.vscdb");
   }
   if (process.platform === "darwin") {
     return path.join(
-      os.homedir(),
+      cursorHomeDir(env),
       "Library",
       "Application Support",
       "Cursor",
@@ -99,7 +105,7 @@ function cursorStateDatabasePath(): string {
     );
   }
   const configHome =
-    process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config");
+    env.XDG_CONFIG_HOME ?? path.join(cursorHomeDir(env), ".config");
   return path.join(
     configHome,
     "Cursor",
@@ -109,8 +115,8 @@ function cursorStateDatabasePath(): string {
   );
 }
 
-function readAccountEmail(): string | null {
-  const databasePath = cursorStateDatabasePath();
+function readAccountEmail(env: NodeJS.ProcessEnv = process.env): string | null {
+  const databasePath = cursorStateDatabasePath(env);
   if (!existsSync(databasePath)) return null;
   let database: DatabaseSync | null = null;
   try {
@@ -131,7 +137,7 @@ function readAccountEmail(): string | null {
 export interface AcpMaintenanceDialect {
   loginCommand: string;
   installer(): { command: string; args: string[]; displayCommand: string };
-  readAccount(): Promise<{ email: string | null } | null>;
+  readAccount(context?: { cwd?: string; env?: Record<string, string> }): Promise<{ email: string | null } | null>;
   readUsage(): Promise<ProviderUsageResult>;
 }
 
@@ -162,6 +168,8 @@ function healthResult(args: {
 export async function getAcpProviderHealth(args: {
   maintenance: AcpMaintenanceDialect | undefined;
   command: string | null;
+  cwd?: string;
+  env?: Record<string, string>;
 }): Promise<ProviderHealthResult> {
   const maintenance = args.maintenance;
   if (args.command === null) {
@@ -171,19 +179,19 @@ export async function getAcpProviderHealth(args: {
       statusMessage: "The ACP provider has no launch command.",
     });
   }
-  if ((await resolveExecutablePath(args.command)) === null) {
-    return healthResult({ maintenance, status: "not_installed" });
-  }
-  const version = await readCliVersion(args.command);
-  if (maintenance === undefined) {
+  const launchHealth = await getAcpLaunchHealth(args);
+  if (!launchHealth.supported) return launchHealth;
+  const version = launchHealth.health.installedVersion;
+  if (launchHealth.health.status !== "ready" || maintenance === undefined) {
     return healthResult({
       maintenance,
-      status: "ready",
+      status: launchHealth.health.status,
+      statusMessage: launchHealth.health.statusMessage,
       installedVersion: version,
     });
   }
   try {
-    const account = await maintenance.readAccount();
+    const account = await maintenance.readAccount({ cwd: args.cwd, env: args.env });
     return healthResult({
       maintenance,
       status: account === null ? "unauthenticated" : "ready",
@@ -389,9 +397,10 @@ export async function getAcpProviderUsage(args: {
 export const CURSOR_ACP_MAINTENANCE: AcpMaintenanceDialect = {
   loginCommand: "cursor-agent login",
   installer: () => downloadedInstallerCommand(CURSOR_INSTALL_SCRIPT_URL),
-  readAccount: async () => {
-    const accessToken = await readAccessToken();
-    return accessToken === null ? null : { email: readAccountEmail() };
+  readAccount: async (context) => {
+    const env = { ...process.env, ...context?.env };
+    const accessToken = await readAccessToken(env);
+    return accessToken === null ? null : { email: readAccountEmail(env) };
   },
   readUsage: readCursorUsage,
 };
@@ -443,5 +452,7 @@ async function readCursorUsage(): Promise<ProviderUsageResult> {
 
 export const __testing = {
   buildProviderInstallationRun: buildAcpProviderInstallationRun,
+  cursorAuthFilePath,
+  cursorStateDatabasePath,
   normalizeUsage,
 };

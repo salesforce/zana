@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test as base, expect } from './fixtures/app.js';
@@ -7,7 +7,9 @@ import { waitForThreadProvider } from './fixtures/thread-providers.js';
 // The production Pi bridge and runtime run in the built app. Only the model
 // process is scripted, speaking Pi RPC and loading the real injected extension.
 const test = base.extend({
-  launchEnv: async ({}, use) => use({
+  launchEnv: async ({ home }, use) => use({
+    FAKE_PI_COMPACTION_RELEASE_FILE: join(home, 'release-compaction'),
+    FAKE_PI_COMMAND_LOG: join(home, 'pi-commands.log'),
     ZCC_PI_BRIDGE_COMMAND: process.execPath,
     ZCC_PI_BRIDGE_ARGS: JSON.stringify([fileURLToPath(new URL('../plugins/provider-pi/src/bridge/fake-pi-rpc.mjs', import.meta.url))])
   })
@@ -87,4 +89,78 @@ test('Pi choices and inputs appear in Need you and return answers through the bu
   await window.getByTestId('nav-agents').click();
   await expect(window.locator('.agent-card.is-thread')).toBeVisible();
   await expect(window.locator('.agent-card.is-thread.lane-blocked')).toHaveCount(0);
+});
+
+
+test('Pi retains a follow-up sent during extension compaction through the built runtime', async ({
+  app,
+}) => {
+  test.setTimeout(120_000);
+  const { window, home } = app;
+  await waitForThreadProvider(window, 'pi');
+  const path = join(home, 'pi-compaction-project');
+  mkdirSync(path);
+  const threadId = await window.evaluate(async (path) => {
+    const project = await window.cc.projects.add(path);
+    if (!project.ok) throw new Error(project.message);
+    const response = await fetch('/api/v1/threads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.value.id,
+        providerId: 'pi',
+        model: 'fake-provider/fake-model',
+        permissionMode: 'full',
+        input: '/compact-on-settle',
+      }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(JSON.stringify(body));
+    return body.thread.id as string;
+  }, path);
+  await window.evaluate((id) => {
+    history.pushState({}, '', `/threads/${id}`);
+    dispatchEvent(new PopStateEvent('popstate'));
+  }, threadId);
+  const timeline = window.getByTestId('thread-timeline');
+  await expect(timeline).toContainText('Response to: /compact-on-settle', {
+    timeout: 30000,
+  });
+  await expect
+    .poll(() =>
+      window.evaluate(
+        async (id) =>
+          (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status,
+        threadId,
+      ),
+    )
+    .toBe('idle');
+  const composer = window.getByTestId('thread-command-input');
+  await composer.fill('sent during extension compaction');
+  await composer.press('Enter');
+  await expect(composer).toHaveText('');
+  await expect(window.getByRole('button', { name: 'Send now', exact: true })).toBeVisible();
+  const promptCount = () =>
+    existsSync(join(home, 'pi-commands.log'))
+      ? readFileSync(join(home, 'pi-commands.log'), 'utf8')
+          .split('\n')
+          .filter((x) => x === 'prompt').length
+      : 0;
+  await expect.poll(promptCount).toBe(1);
+  writeFileSync(join(home, 'release-compaction'), '');
+  await expect(timeline).toContainText(
+    'Response to: sent during extension compaction',
+    { timeout: 30000 },
+  );
+  await expect.poll(promptCount).toBe(2);
+  await expect
+    .poll(() =>
+      window.evaluate(
+        async (id) =>
+          (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status,
+        threadId,
+      ),
+    )
+    .toBe('idle');
+  await expect(timeline).not.toContainText('Cannot submit a prompt');
 });

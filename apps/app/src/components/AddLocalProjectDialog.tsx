@@ -7,6 +7,8 @@ import { product } from '../lib/product-client.js';
 import { Modal } from './Modal.js';
 
 interface AddLocalProjectDialogProps {
+  fixedHostId?: string;
+  fixedMachineName?: string;
   onClose: () => void;
   /** Browse via the native folder picker; null if the user cancels. */
   onBrowse: () => Promise<string | null>;
@@ -20,9 +22,9 @@ interface AddLocalProjectDialogProps {
  * connected, pick the machine first — remote hosts browse via host-rpc
  * instead of the laptop's native picker.
  */
-export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalProjectDialogProps) {
+export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit, fixedHostId, fixedMachineName }: AddLocalProjectDialogProps) {
   const hosts = useHosts();
-  const [hostId, setHostId] = useState<string | undefined>();
+  const [hostId, setHostId] = useState<string | undefined>(fixedHostId);
   const [path, setPath] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,8 +35,8 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
   const remoteBrowse = Boolean(selectedHost && !selectedHost.isPrimary);
 
   useEffect(() => {
-    setHostId(defaultHostId(hosts));
-  }, [hosts]);
+    setHostId(current => fixedHostId ?? current ?? defaultHostId(hosts));
+  }, [hosts, fixedHostId]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -59,19 +61,25 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
   };
 
   const browse = async () => {
+    if (fixedHostId && !selectedHost) { setError('This machine is no longer registered.'); return; }
     if (remoteBrowse) {
       await loadDirectory(path.trim() || undefined);
       return;
     }
-    const picked = await onBrowse();
-    if (picked) {
-      setPath(picked);
-      setError(null);
+    try {
+      const picked = await onBrowse();
+      if (picked) {
+        setPath(picked);
+        setError(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not browse folders');
     }
   };
 
   const submit = async () => {
     if (!canSubmit) return;
+    if (fixedHostId && !selectedHost) { setError('This machine is no longer registered.'); return; }
     setSubmitting(true);
     setError(null);
     try {
@@ -83,6 +91,9 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
         onClose();
         return;
       }
+      setError('Could not add project');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add project');
     } finally {
       setSubmitting(false);
     }
@@ -90,13 +101,13 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
 
   return (
     <Modal
-      title="Add local project"
+      title={fixedMachineName ? `Add project on ${fixedMachineName}` : 'Add local project'}
       onClose={requestClose}
       closeOnBackdrop={!submitting}
       className="local-project-modal"
       header={
         <div className="modal-header">
-          <h3>Add local project</h3>
+          <h3>{fixedMachineName ? `Add project on ${fixedMachineName}` : 'Add local project'}</h3>
           <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={submitting}>
             <X size={14} />
           </button>
@@ -117,7 +128,7 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
             Pick a folder, or type/paste an absolute path (e.g. from a terminal).
           </div>
 
-          <HostMachinePicker hosts={hosts} value={hostId} onChange={setHostId} />
+          {fixedMachineName ? <p className="modal-hint">Machine: <strong>{fixedMachineName}</strong></p> : <HostMachinePicker hosts={hosts} value={hostId} onChange={setHostId} />}
 
           <label className="remote-form-row local-path-row">
             <span>Folder path</span>

@@ -35,7 +35,8 @@ const h = vi.hoisted(() => ({
   projectSettingsGet: vi.fn(async () => ({ worktreeIsolation: h.projectWorktreeIsolation })),
   environmentProps: null as null | { value: { kind: string }; onChange: (next: { kind: string }) => void },
   modelProps: null as null | { onModelChange: (value: string) => void; onSelectedProviderChange: (id: string) => void; onReloadModels?: () => void;
-    selectedProviderId: string; modelLockedLabel?: string; modelIsLoading: boolean; providerOptions: Array<{ value: string }> }
+    selectedProviderId: string; modelLockedLabel?: string; modelIsLoading: boolean; providerOptions: Array<{ value: string }> },
+  picklists: [] as Array<Array<{ value: string; label: string }>>
 }));
 
 vi.mock('../store.js', () => ({
@@ -91,7 +92,10 @@ vi.mock('./EnvironmentPicker.js', () => ({
 }));
 vi.mock('./ComposerProjectPicker.js', () => ({ ComposerProjectPicker: () => null }));
 vi.mock('./RemoteComposerConnection.js', () => ({ RemoteComposerConnection: () => null }));
-vi.mock('./ui/PopoverPicklist.js', () => ({ PopoverPicklist: () => null }));
+vi.mock('./ui/PopoverPicklist.js', () => ({ PopoverPicklist: ({ id, options }: { id?: string; options: Array<{ value: string; label: string }> }) => {
+  h.picklists.push(options);
+  return id ? <div data-testid={`picklist-${id}`} /> : null;
+} }));
 vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: (props: { onRefresh?: () => void }) => (
   props.onRefresh ? <button onClick={props.onRefresh}>Refresh modes</button> : null
 ) }));
@@ -125,6 +129,7 @@ beforeEach(() => {
   h.permissionError = undefined; h.voiceState = 'idle';
   h.worktreeIsolationDefault = false; h.projectWorktreeIsolation = undefined; h.projectSettingsListeners.clear(); h.environmentProps = null;
   h.projectSettingsGet.mockReset().mockImplementation(async () => ({ worktreeIsolation: h.projectWorktreeIsolation }));
+  h.picklists = [];
   h.effectiveDefault.mockReset().mockResolvedValue({ ok: true, profile: 'codex', family: 'codex', source: 'global-default' });
   h.descriptors = [{ id: 'codex', label: 'Codex', defaultProfileId: 'codex', profiles: [], targets: { models: [] } },
     { id: 'claude', label: 'Claude', defaultProfileId: 'claude', profiles: [], targets: { models: [] } }] as unknown as HarnessAdapterDescriptor[];
@@ -368,5 +373,24 @@ describe('CLI Agent retained launch choices', () => {
     render(composer(h.projects[1]));
     expect(await screen.findByTestId('thread-voice-bar')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Launch agent' })).toBeNull();
+  });
+});
+
+describe('CLI Agent persona picker', () => {
+  it('keeps None first and sorts persona display options', async () => {
+    h.personas = [
+      { id: 'z', name: 'Zulu' },
+      { id: 'a', name: 'Alpha' }
+    ];
+    render(composer(h.projects[0]));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch agent' }).hasAttribute('disabled')).toBe(false));
+    fireEvent.click(screen.getByTestId('legacy-agent-customize-launch'));
+    await waitFor(() => expect(h.picklists.some((options) => options[0]?.label === 'None')).toBe(true));
+    const personaPicklist = h.picklists.find((options) => options[0]?.label === 'None');
+    expect(personaPicklist).toEqual([
+      { value: '', label: 'None' },
+      { value: 'a', label: 'Alpha' },
+      { value: 'z', label: 'Zulu' }
+    ]);
   });
 });

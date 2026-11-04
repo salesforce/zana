@@ -396,7 +396,7 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
   });
 
   it('forwards only the main-supplied authorized model pin to ptys.create', () => {
-    const pin = { adapterId: 'opencode', level: 'low' as const, targetId: 'llmgw/gpt-7-luna' };
+    const pin = { adapterId: 'opencode', level: 'low' as const, targetId: 'fixture-provider/gpt-7-luna' };
     const forged = { adapterId: 'opencode', level: 'low', targetId: 'evil/model' };
     // A request-borne field (renderer/CLI input) is never the pin source.
     expect(createTerminalConfined({

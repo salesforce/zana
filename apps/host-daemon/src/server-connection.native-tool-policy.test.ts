@@ -19,7 +19,7 @@ vi.mock('./desktop-browser-broker.js', () => ({ startDesktopBrowserBroker: async
 vi.mock('./workspace-fs-watch.js', () => ({ hostFsWatcher: () => ({}) }));
 vi.mock('./preview-tunnel.js', () => ({ HostPreviewTunnel: class { close() {} setConnected() {} } }));
 vi.mock('./machine-environment.js', () => ({ MachineEnvironment: class { clear() {} } }));
-vi.mock('./command-dispatch.js', () => ({ createCommandRuntime: () => ({ terminals: new Map() }) }));
+vi.mock('./command-dispatch.js', () => ({ createCommandRuntime: () => ({ terminals: new Map(), dataDir: tmpdir() }) }));
 const input = { threadId: 'thread', providerId: 'provider', providerThreadId: 'session', projectId: 'project',
   environmentId: 'environment', callId: 'call', toolName: 'Write', input: {} };
 afterEach(() => { vi.clearAllMocks(); state.socket.connected = false; });

@@ -5,6 +5,7 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -42,7 +43,7 @@ describe("claude skill plugins", () => {
     const skillsPath = stageSkills("a");
     const pluginPath = ensureClaudeSkillPlugin({
       pluginsRoot,
-      root: { id: "global-skills:abc123", path: skillsPath },
+      root: { id: "global-skills:abc123", path: skillsPath, owned: "zana" },
     });
 
     expect(pluginPath.startsWith(pluginsRoot)).toBe(true);
@@ -64,19 +65,75 @@ describe("claude skill plugins", () => {
     const second = stageSkills("b");
     const pluginPath = ensureClaudeSkillPlugin({
       pluginsRoot,
-      root: { id: "r", path: first },
+      root: { id: "r", path: first, owned: "zana" },
     });
     expect(
-      ensureClaudeSkillPlugin({ pluginsRoot, root: { id: "r", path: first } }),
+      ensureClaudeSkillPlugin({ pluginsRoot, root: { id: "r", path: first, owned: "zana" } }),
     ).toBe(pluginPath);
     expect(readlinkSync(join(pluginPath, "skills"))).toBe(first);
 
     const movedPluginPath = ensureClaudeSkillPlugin({
       pluginsRoot,
-      root: { id: "r", path: second },
+      root: { id: "r", path: second, owned: "zana" },
     });
     expect(movedPluginPath).not.toBe(pluginPath);
     expect(readlinkSync(join(movedPluginPath, "skills"))).toBe(second);
+  });
+
+  it("re-points the link without deleting anything in the previous root", () => {
+    const pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
+    const first = stageSkills("a");
+    const pluginPath = ensureClaudeSkillPlugin({
+      pluginsRoot,
+      root: { id: "r", path: first, owned: "zana" },
+    });
+    const skillsLink = join(pluginPath, "skills");
+    rmSync(skillsLink);
+    const elsewhere = stageSkills("elsewhere");
+    symlinkSync(elsewhere, skillsLink, "junction");
+
+    ensureClaudeSkillPlugin({ pluginsRoot, root: { id: "r", path: first, owned: "zana" } });
+
+    expect(readlinkSync(skillsLink)).toBe(first);
+    expect(readFileSync(join(elsewhere, "demo", "SKILL.md"), "utf8")).toContain(
+      "name: demo",
+    );
+  });
+
+  it("replaces a plain file left at the skills path", () => {
+    const pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
+    const first = stageSkills("a");
+    const pluginPath = ensureClaudeSkillPlugin({
+      pluginsRoot,
+      root: { id: "r", path: first, owned: "zana" },
+    });
+    const skillsLink = join(pluginPath, "skills");
+    rmSync(skillsLink);
+    writeFileSync(skillsLink, "stale\n");
+
+    ensureClaudeSkillPlugin({ pluginsRoot, root: { id: "r", path: first, owned: "zana" } });
+
+    expect(readlinkSync(skillsLink)).toBe(first);
+  });
+
+  it("refuses to replace a real skills directory and leaves it intact", () => {
+    const pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
+    const first = stageSkills("a");
+    const pluginPath = ensureClaudeSkillPlugin({
+      pluginsRoot,
+      root: { id: "r", path: first, owned: "zana" },
+    });
+    const skillsLink = join(pluginPath, "skills");
+    rmSync(skillsLink);
+    mkdirSync(join(skillsLink, "mine"), { recursive: true });
+    writeFileSync(join(skillsLink, "mine", "SKILL.md"), "keep me\n");
+
+    expect(() =>
+      ensureClaudeSkillPlugin({ pluginsRoot, root: { id: "r", path: first, owned: "zana" } }),
+    ).toThrow("refusing to replace a real directory");
+    expect(readFileSync(join(skillsLink, "mine", "SKILL.md"), "utf8")).toBe(
+      "keep me\n",
+    );
   });
 
   it("keeps the stable name across catalog changes and suffixes only a colliding second root", () => {
@@ -97,7 +154,7 @@ describe("claude skill plugins", () => {
       nameOf(
         ensureClaudeSkillPlugin({
           pluginsRoot,
-          root: { id: "global-skills:aaaa", path: first },
+          root: { id: "global-skills:aaaa", path: first, owned: "zana" },
         }),
       ),
     ).toBe(CLAUDE_SKILL_PLUGIN_NAME);
@@ -105,7 +162,7 @@ describe("claude skill plugins", () => {
       nameOf(
         ensureClaudeSkillPlugin({
           pluginsRoot,
-          root: { id: "global-skills:bbbb", path: second },
+          root: { id: "global-skills:bbbb", path: second, owned: "zana" },
         }),
       ),
     ).toBe(CLAUDE_SKILL_PLUGIN_NAME);
@@ -113,12 +170,12 @@ describe("claude skill plugins", () => {
     const takenNames = new Map<string, string>();
     const a = ensureClaudeSkillPlugin({
       pluginsRoot,
-      root: { id: "global-skills:aaaa", path: first },
+      root: { id: "global-skills:aaaa", path: first, owned: "zana" },
       takenNames,
     });
     const b = ensureClaudeSkillPlugin({
       pluginsRoot,
-      root: { id: "global-skills:bbbb", path: second },
+      root: { id: "global-skills:bbbb", path: second, owned: "zana" },
       takenNames,
     });
     expect(nameOf(a)).toBe(CLAUDE_SKILL_PLUGIN_NAME);

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import {
   COMPOSER_NEW_PROJECT_LABEL,
   COMPOSER_NEW_PROJECT_VALUE,
@@ -101,47 +100,5 @@ describe('resolveComposerProjectPickerChange', () => {
       type: 'project',
       projectId: 'core-repo'
     });
-  });
-});
-
-describe('ComposerProjectPicker', () => {
-  it('opens the native folder finder on desktop and falls back to the path dialog on web', () => {
-    const source = readFileSync(new URL('./ComposerProjectPicker.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('hasDesktopBridge()');
-    expect(source).toContain('addProject()');
-    expect(source).toContain('AddLocalProjectDialog');
-    expect(source).toContain('product.projects.pickDirectory()');
-    expect(source).toContain('FolderPlus');
-    expect(source).toContain('FolderX');
-    expect(source).toContain('Network');
-    expect(source).toContain('triggerIcon');
-    expect(source).toContain('isRemoteWorkspaceProject');
-    expect(source).toContain('composerProjectRemoteDescription');
-    expect(source).toContain('row.description');
-    expect(source).toContain('row.remote');
-    expect(source).toContain('COMPOSER_NEW_PROJECT_LABEL');
-    expect(source).toContain('COMPOSER_NO_PROJECT_LABEL');
-    expect(source).toContain('emptyHint="No matching projects"');
-    expect(source).toContain('sticky: row.sticky');
-    expect(source).toContain("ariaLabel=\"Project\"");
-    expect(source).toContain('rememberLastProjectId');
-    expect(source).toContain('if (projectId) rememberLastProjectId(projectId)');
-    expect(source).not.toContain('showOpenDialog');
-    expect(source).not.toContain('composer-project-action-start');
-
-    const css = readFileSync(new URL('../styles/global.css', import.meta.url), 'utf8');
-    expect(css).toContain('.composer-project-picker-option');
-    const split = css.slice(
-      css.indexOf('.launch-model-picker-menu--split {'),
-      css.indexOf('.launch-model-picker-search {')
-    );
-    expect(split).toContain('overflow: hidden;');
-    expect(split).toContain('flex-direction: column;');
-    const options = css.slice(
-      css.indexOf('.launch-model-picker-options {'),
-      css.indexOf('.launch-model-picker-footer {')
-    );
-    expect(options).toContain('overflow-y: auto;');
-    expect(options).toContain('min-height: 0;');
   });
 });

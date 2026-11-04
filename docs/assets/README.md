@@ -1,18 +1,32 @@
 # README artwork
 
-The README uses self-contained SVG masters: crisp at any size, editable as
-text or in a vector editor, and independent of external fonts or image hosts.
+The README includes a product tour and supporting artwork.
+The supporting diagrams use self-contained SVG masters: crisp at any size,
+editable as text or in a vector editor, and independent of external fonts or image hosts.
 They follow the [Zana Fairy identity](../../resources/README.md): midnight blue,
 pearl white, blue/lavender wings, and a warm golden spark.
 
 | Asset | Purpose |
 | :--- | :--- |
-| [zana-readme-hero.svg](zana-readme-hero.svg) | README banner. Fairy geometry comes from `resources/icon.svg`. |
-| [zana-architecture.svg](zana-architecture.svg) | Editable architecture master used in the README. |
+| [zana-readme-hero.svg](zana-readme-hero.svg) | Retained banner master. Fairy geometry comes from `resources/icon.svg`. |
+| [zana-architecture.svg](zana-architecture.svg) | Editable architecture master in the README’s expandable architecture section. |
 | [zana-architecture.png](zana-architecture.png) | 2× PNG export for slides, documents, and sharing. |
 | [zana-plugins.svg](zana-plugins.svg) | Editable plugin explainer: package, runtime contributions, agent capabilities, and development loop. |
 | [zana-plugins.png](zana-plugins.png) | 2× plugin explainer export for slides, documents, and sharing. |
-| [product-demo.gif](product-demo.gif) | Existing product tour used in the README. |
+| [product-demo.gif](product-demo.gif) | Previous product animation, retained for existing links. |
+
+## Product tour
+
+The narrated tour is the existing `website/public/media/zana-tour.mp4`, uploaded
+as a public GitHub attachment for native README playback rather than copied
+into Git again. Its attachment URL lives in the README and PR #621. Place the
+bare URL in its own paragraph so GitHub renders a player. Keep a link to
+`https://zana-ide.com/#demo` beside it for captions.
+
+To replace it, attach the new recording to the update PR with `gh pr create`
+or `gh pr edit --attach /path/to/tour.mp4`; copy the resulting
+`https://github.com/user-attachments/assets/...` URL from the PR body. Verify
+playback in the actual GitHub README before removing the previous reference.
 
 ## Architecture scope
 

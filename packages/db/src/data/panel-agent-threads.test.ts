@@ -90,4 +90,18 @@ describe('listPanelAgentThreads', () => {
     expect(revealConversationThread(opened, hidden)?.updatedAt).toBe(stamp);
     expect(revealConversationThread(opened, 'missing')).toBeNull();
   });
+
+  it('filters by project and exact view before applying the limit', () => {
+    const { db: opened, make } = seed();
+    const first = make('tasks', { panelAgent: { panel: 'studio', view: 'force-app/Support.agent' } });
+    const otherProject = make('tasks', { panelAgent: { panel: 'studio', view: 'force-app/Support.agent' } });
+    opened.sqlite.prepare('UPDATE threads SET project_id = ? WHERE id = ?').run('proj-2', otherProject);
+    const otherScript = make('tasks', { panelAgent: { panel: 'studio', view: 'force-app/Quote.agent' } });
+    make('tasks', { panelAgent: { panel: 'studio' } });
+    expect(listPanelAgentThreads(opened, 'tasks', 1, 'studio', { projectId: 'proj-1', view: 'force-app/Support.agent' }).map(row => row.id)).toEqual([first]);
+    expect(listPanelAgentThreads(opened, 'tasks', 20, undefined, { view: 'force-app/Support.agent' }).map(row => row.id)).toEqual([otherProject, first]);
+    expect(listPanelAgentThreads(opened, 'tasks', 20, 'studio', { projectId: 'proj-2' }).map(row => row.id)).toEqual([otherProject]);
+    expect(listPanelAgentThreads(opened, 'tasks', 20, 'studio', { view: 'force-app/Quote.agent' }).map(row => row.id)).toEqual([otherScript]);
+    expect(listPanelAgentThreads(opened, 'tasks', 20, 'studio', { view: "' OR 1=1 --" })).toEqual([]);
+  });
 });

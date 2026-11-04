@@ -44,8 +44,9 @@ import { fileURLToPath } from 'node:url';
 import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry.js';
 import { EventRecorder } from '../sdk/events.js';
 import { linuxCiElectronArgs, linuxCiElectronEnv } from './linux-electron-launch.js';
-import { isolatedClaudePath, writeAppConfig } from './app-config.js';
+import { dropInheritedKeychainEnv, isolatedClaudePath, isolatedKeychainEnv, writeAppConfig } from './app-config.js';
 import { isolateTmuxEnvironment, cleanupTmuxEnvironment } from './tmux-isolation.js';
+import { seedOpenCodeAuthState } from './opencode-auth.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_ENTRY = join(process.env.ZCC_E2E_APP_ROOT || REPO_ROOT, 'out/main/index.js');
@@ -129,65 +130,7 @@ export function seedClaudeAuthState(home: string): boolean {
   return true;
 }
 
-/** Seed real OpenCode config/auth while keeping ZCC state in the sandbox HOME. */
-export function seedOpenCodeAuthState(home: string): boolean {
-  const realHome = homedir();
-  let seeded = false;
-  for (const [source, destination] of [
-    [join(realHome, '.config', 'opencode'), join(home, '.config', 'opencode')],
-    [join(realHome, '.local', 'share', 'opencode'), join(home, '.local', 'share', 'opencode')]
-  ]) {
-    if (!existsSync(source)) continue;
-    try {
-      mkdirSync(join(destination, '..'), { recursive: true });
-      cpSync(source, destination, { recursive: true });
-      seeded = true;
-    } catch {
-      /* best-effort — caller's live test will expose unusable auth */
-    }
-  }
-  for (const name of ['.devbar', '.aisuite']) {
-    const source = join(realHome, name);
-    if (!existsSync(source)) continue;
-    try {
-      if (name === '.aisuite') {
-        cpSync(source, join(home, name), { recursive: true });
-      } else {
-        // Only the live daemon socket is needed (see seedClaudeAuthState) —
-        // never symlink the whole `.devbar` dir into the sandbox.
-        const sock = join(source, 'devbar.sock');
-        if (existsSync(sock)) {
-          mkdirSync(join(home, name), { recursive: true, mode: 0o700 });
-          symlinkSync(sock, join(home, name, 'devbar.sock'));
-        }
-      }
-    } catch {
-      /* best-effort — absent when auth does not use these helpers */
-    }
-  }
-  const gatewayKey = join(realHome, '.config', 'opencode', '.llmgw-key');
-  if (existsSync(gatewayKey)) {
-    try {
-      mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
-      copyFileSync(gatewayKey, join(home, '.config', 'opencode', '.llmgw-key'));
-    } catch {
-      /* best-effort — plugin credential command may remain available */
-    }
-  }
-  // Sandbox uses copied OpenCode's file-backed provider config. Its AI Suite
-  // provider plugin shells to a HOME-scoped credential manager and cannot read
-  // developer auth under isolated HOME, despite the copied key being valid.
-  try {
-    rmSync(join(home, '.config', 'opencode', 'plugins', 'aisuite_provider.js'), { force: true });
-    // Live provider E2E needs developer auth, not developer MCP/tool injection.
-    // Leaving sync enabled floods the model catalog and lets it route a
-    // session-local MCP call through AI Suite's Python proxy instead.
-    rmSync(join(home, '.config', 'opencode', 'plugins', 'aisuite_sync.js'), { force: true });
-  } catch {
-    /* best-effort — absent when OpenCode is not managed by AI Suite */
-  }
-  return seeded;
-}
+export { seedOpenCodeAuthState } from './opencode-auth.js';
 
 /**
  * Pre-accept claude's per-folder "Is this a project you trust?" dialog for `dir`
@@ -294,8 +237,18 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     HOME: preserveHome ? homedir() : home,
     ...(process.platform === 'win32' ? { USERPROFILE: home } : {}),
     ZCC_E2E_HOME: home,
+    // No login keychain in an isolated HOME: keep Salesforce keys in <home>/.sfdx
+    // instead of letting macOS pop a "Keychain Not Found" dialog.
+    ...isolatedKeychainEnv(preserveHome),
     ZCC_DATA_DIR: dataDir,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
+    // Deterministic fake Claude binaries still cross unattended launch admission.
+    // This non-secret fixture token keeps those launches isolated without copying
+    // real authentication into the sandbox.
+    ...(opts.e2e ? { ANTHROPIC_AUTH_TOKEN: 'e2e-fake-agent-auth' } : {}),
+    // Tests opt into fixture catalogs explicitly; do not clone live defaults.
+    ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off',
+    ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off',
     // Electron's unpackaged default is "0.0". The main process uses this only
     // in E2E so the smoke test observes the same version as package.json.
     ...(!packagedExecutable ? { ZCC_E2E_APP_VERSION: PACKAGE_VERSION } : {}),
@@ -314,6 +267,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   if (!opts.env?.ZCC_SERVER_URL) delete env.ZCC_SERVER_URL;
   if (!opts.env?.ZCC_HOST_ENROLL_TOKEN) delete env.ZCC_HOST_ENROLL_TOKEN;
   if (packagedExecutable) delete env.ZCC_E2E_APP_VERSION;
+  dropInheritedKeychainEnv(env, preserveHome, opts.env);
   if (opts.caCertPath) env.NODE_EXTRA_CA_CERTS = opts.caCertPath;
 
   const app = await electron.launch({
@@ -384,7 +338,7 @@ type Fixtures = {
   /** Opt the marketplace channel ON (boots a signed HTTPS registry). */
   useRegistry: boolean;
   /**
-   * Hide first-party bundled plugins from Browse so remote-registry specs can
+   * Hide bundled plugins and default remote feeds so signed-registry specs can
    * assert exact row counts. Default off — production Browse is non-empty.
    */
   isolateBundledCatalog: boolean;
@@ -471,6 +425,9 @@ export const test = base.extend<Fixtures>({
       mkdirSync(empty, { recursive: true });
       env.ZCC_BUNDLED_PLUGINS_DIR = empty;
       env.ZCC_BUNDLED_EXTENSIONS_DIR = empty;
+      // The signed fixture registry is the entire catalog for these tests.
+      env.ZCC_OFFICIAL_MARKETPLACE_URL = 'off';
+      env.ZCC_INTERNAL_MARKETPLACE_SOURCE = 'off';
     }
 
     const handle = await launchApp(home, {
