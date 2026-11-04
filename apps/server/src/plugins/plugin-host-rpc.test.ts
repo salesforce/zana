@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { callPluginHostRpc, disposePluginHostWorkers, validatePluginHostValue } from './plugin-host-rpc.js';
+import { callPluginHostRpc, disposePluginHostWorkers, resolvePluginProjectRoot, validatePluginHostValue } from './plugin-host-rpc.js';
 import { z } from 'zod';
 import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
 const artifact = { path: '/never-sent', generation: 'g1', digest: 'a'.repeat(64), byteLength: 12 };
@@ -60,4 +60,49 @@ it('holds generation admission until success, failure or cancellation has settle
   await expect(callPluginHostRpc(ctx, args)).rejects.toThrow('update in progress'); resume();
   call.mockRejectedValueOnce(new Error('failed')); await expect(callPluginHostRpc(ctx, args)).rejects.toThrow('failed');
   ctx.pluginHostArtifacts.beginUpdate('test')();
+});
+
+it('forwards a daemon-confined root and omits it when absent', async () => {
+  const { ctx, args, call } = fixture();
+  await callPluginHostRpc(ctx, { ...args, daemonConfinedProjectRoot: '/remote/registered' });
+  expect(call.mock.calls[0][0].command).toMatchObject({ daemonConfinedProjectRoot: '/remote/registered' });
+  expect(call.mock.calls[0][0].command).not.toHaveProperty('projectRoot');
+  await callPluginHostRpc(ctx, args);
+  expect(call.mock.calls[1][0].command).not.toHaveProperty('daemonConfinedProjectRoot');
+});
+
+const record = (over: Record<string, unknown> = {}) => ({ id: 'p1', name: 'P', path: '/srv/p1', createdAt: 1, lastActiveAt: 1, ...over }) as any;
+const upper = (path: string) => `real:${path}`;
+const failing = () => { throw new Error('ENOENT'); };
+
+it('confines a project on the server machine with the server realpath', () => {
+  expect(resolvePluginProjectRoot(record(), undefined, 'primary', upper)).toEqual({ hostId: 'primary', projectRoot: 'real:/srv/p1' });
+  expect(resolvePluginProjectRoot(record(), 'primary', 'primary', upper)).toEqual({ hostId: 'primary', projectRoot: 'real:/srv/p1' });
+  expect(resolvePluginProjectRoot(record(), undefined, undefined, upper)).toEqual({ hostId: undefined, projectRoot: 'real:/srv/p1' });
+});
+
+it('reports an unreadable server-side root without leaking the path', () => {
+  expect(() => resolvePluginProjectRoot(record(), undefined, 'primary', failing)).toThrow('project root is unavailable');
+  expect(() => resolvePluginProjectRoot(record(), undefined, undefined, failing)).toThrow('project root is unavailable');
+});
+
+it('sends a remote project registered path for the daemon to confine, and targets that host', () => {
+  const remote = record({ hostId: 'devbox', path: '/home/dev/p1' });
+  expect(resolvePluginProjectRoot(remote, undefined, 'primary', failing)).toEqual({ hostId: 'devbox', daemonConfinedProjectRoot: '/home/dev/p1' });
+  expect(resolvePluginProjectRoot(remote, 'devbox', 'primary', failing)).toEqual({ hostId: 'devbox', daemonConfinedProjectRoot: '/home/dev/p1' });
+});
+
+it('uses the per-machine source path when a local project also lives on another machine', () => {
+  const shared = record({ sources: [{ id: 's1', hostId: 'devbox', path: '/home/dev/p1-copy', createdAt: 2 }] });
+  expect(resolvePluginProjectRoot(shared, 'devbox', 'primary', failing)).toEqual({ hostId: 'devbox', daemonConfinedProjectRoot: '/home/dev/p1-copy' });
+});
+
+it('refuses a host the project has no checkout on, never handing it another machine path', () => {
+  expect(() => resolvePluginProjectRoot(record(), 'devbox', 'primary', upper)).toThrow('project is not available on this host');
+  const remote = record({ hostId: 'devbox', path: '/home/dev/p1' });
+  expect(() => resolvePluginProjectRoot(remote, 'primary', 'primary', upper)).toThrow('project is not available on this host');
+});
+
+it('keeps SSH-backed projects on the server mount behaviour', () => {
+  expect(resolvePluginProjectRoot(record({ remote: { host: 'ssh' } }), undefined, 'primary', upper)).toEqual({ hostId: 'primary', projectRoot: 'real:/srv/p1' });
 });

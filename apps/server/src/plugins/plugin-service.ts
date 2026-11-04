@@ -56,7 +56,7 @@ import {
   splitPluginMentionItemId,
   withDeadline
 } from './plugin-mentions.js';
-import { callPluginHostRpc, disposePluginHostWorkers } from './plugin-host-rpc.js';
+import { callPluginHostRpc, disposePluginHostWorkers, resolvePluginProjectRoot, type PluginProjectRootResolution } from './plugin-host-rpc.js';
 import { parseRemoteEnvironmentNames } from '../services/hosts/remote-environment.js';
 import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
 import { loadPluginHostArtifactSnapshot } from './plugin-host-artifact.js';
@@ -134,6 +134,7 @@ import {
   parsePersistedPluginMetadata
 } from '@zana-ai/zcc-domain/thread-runtime';
 import {
+  getPrimaryHost,
   listThreadPluginMetadataRows
 } from '@zana-ai/zcc-db';
 import { PTY_SESSION_INSTRUCTIONS_MAX_CHARS } from '@zana-ai/zcc-contracts/runtime';
@@ -1726,17 +1727,16 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         // choose an artifact or invoke another plugin's host entry.
         const artifact = hostArtifacts.get(row.id);
         if (!artifact || artifact.generation !== hostArtifact?.generation) throw new Error('Plugin host generation is unavailable');
-         let projectRoot: string | undefined;
+         let projectScope: PluginProjectRootResolution | undefined;
          if (projectId) {
            const project = opts.productContext!.projects.list().find((candidate) => candidate.id === projectId);
            if (!project) throw new Error('unrecognized projectId');
-           try {
-             projectRoot = realpathSync(project.path);
-           } catch {
-             throw new Error('project root is unavailable');
-           }
+           projectScope = resolvePluginProjectRoot(project, hostId, getPrimaryHost(opts.productContext!.db)?.id);
          }
-         return callPluginHostRpc(opts.productContext!, { pluginId: row.id, artifact, method, input, hostId, signal, timeoutMs, projectRoot });
+         return callPluginHostRpc(opts.productContext!, {
+           pluginId: row.id, artifact, method, input, hostId: projectScope ? projectScope.hostId : hostId, signal, timeoutMs,
+           projectRoot: projectScope?.projectRoot, daemonConfinedProjectRoot: projectScope?.daemonConfinedProjectRoot
+         });
       } : undefined,
       dataDir: opts.dataDir,
       onNeedsConfiguration: (message) => {

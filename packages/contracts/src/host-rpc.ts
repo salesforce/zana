@@ -96,7 +96,9 @@ import {
 // 47: bounded directory inspection for remote project registration and availability.
 // 48: durable machine project catalogue publication and bounded registration.
 // 50: exact-name file listing and host-owned listing deadlines.
-export const HOST_RPC_PROTOCOL_VERSION = 50;
+// 51: plugin.host.call may carry daemonConfinedProjectRoot, a registered root the
+// execution host realpath-confines against its own project catalogue.
+export const HOST_RPC_PROTOCOL_VERSION = 51;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -944,8 +946,15 @@ export const PluginHostCallCommandSchema = z.object({
   timeoutMs: z.number().int().positive().max(300_000),
   contributedEnv: z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), value: z.union([z.string(), z.object({ serverPath: z.string().startsWith('/') }).strict()]) }).strict()).max(128).optional(),
   /** Server-realpath-confined project root for a project-bound call. Never re-resolved by the daemon/worker. */
-  projectRoot: PathSchema.optional()
-}).strict();
+  projectRoot: PathSchema.optional(),
+  /**
+   * Registered root of a project that lives on the execution host. The daemon
+   * realpath-confines it against its own project catalogue before the worker
+   * sees it. Mutually exclusive with `projectRoot`.
+   */
+  daemonConfinedProjectRoot: PathSchema.optional()
+}).strict().refine(command => command.projectRoot === undefined || command.daemonConfinedProjectRoot === undefined,
+  { message: 'projectRoot and daemonConfinedProjectRoot are mutually exclusive' });
 export const PluginHostCancelCommandSchema = z.object({ type: z.literal('plugin.host.cancel'), ...pluginHostIdentity, callId: z.string().min(1).max(200) }).strict();
 export const PluginHostDisposeCommandSchema = z.object({ type: z.literal('plugin.host.dispose'), ...pluginHostIdentity }).strict();
 

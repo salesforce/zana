@@ -32,8 +32,13 @@ it('never accepts unregistered project roots for project host calls', async () =
   const callHostOnlineRpc = vi.fn(async () => ({ output: { source: 'host' } }));
   const projectRoot = directory();
   const ctx = {
-    projects: { list: () => [{ id: 'registered', path: projectRoot }, { id: 'unavailable', path: join(projectRoot, 'missing') }] },
-    hostHub: { resolveHostId: () => 'host-1', callHostOnlineRpc }
+    db: { sqlite: { prepare: () => ({ get: () => undefined }) } },
+    projects: { list: () => [
+      { id: 'registered', path: projectRoot },
+      { id: 'unavailable', path: join(projectRoot, 'missing') },
+      { id: 'remote-only', path: '/home/dev/not-on-this-machine', hostId: 'devbox' }
+    ] },
+    hostHub: { resolveHostId: (id?: string) => id ?? 'host-1', callHostOnlineRpc }
   };
   const service = createPluginService({ dataDir: directory(), bundledRoot: directory(), pluginHostArtifacts: hostArtifacts, productContext: ctx as never });
   services.push(service);
@@ -43,6 +48,15 @@ it('never accepts unregistered project roots for project host calls', async () =
   expect(callHostOnlineRpc).not.toHaveBeenCalled();
   await expect(service.callRpc('scoped', 'callProject', { projectId: 'registered', method: 'read' })).resolves.toEqual({ result: { source: 'host' } });
   expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ projectRoot: realpathSync(projectRoot) }) }));
+  // A project that exists only on another machine is routed to that machine's
+  // daemon with its registered path; this server never realpaths it.
+  callHostOnlineRpc.mockClear();
+  await expect(service.callRpc('scoped', 'callProject', { projectId: 'remote-only', method: 'read' })).resolves.toEqual({ result: { source: 'host' } });
+  const remoteCall = callHostOnlineRpc.mock.calls[0] as unknown as [{ hostId: string; command: Record<string, unknown> }];
+  expect(remoteCall[0].hostId).toBe('devbox');
+  expect(remoteCall[0].command).toMatchObject({ daemonConfinedProjectRoot: '/home/dev/not-on-this-machine' });
+  expect(remoteCall[0].command).not.toHaveProperty('projectRoot');
+  await expect(service.callRpc('scoped', 'callProject', { projectId: 'registered', method: 'read', hostId: 'devbox' })).rejects.toThrow('project is not available on this host');
   await expect(service.callRpc('scoped', 'callProject', { projectId: '', method: 'read' })).rejects.toThrow('invalid project host call');
 });
 

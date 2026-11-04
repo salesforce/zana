@@ -150,6 +150,8 @@ export class ProjectCatalogue {
     return this.refreshing ??= (async () => { await this.importLocalProjects(); await this.publishRevision(); })()
       .finally(() => { this.refreshing = undefined; });
   }
+  /** Registered folders only, for confinement checks; never triggers an import. */
+  async roots(): Promise<string[]> { return (await this.read()).map(project => project.path); }
   async page(offset: number, limit: number) {
     await this.refresh();
     const projects = await this.read();

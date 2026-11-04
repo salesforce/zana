@@ -30,6 +30,7 @@ interface HostDaemonLogger {
 }
 import { ensureCachedPluginHostArtifact } from "./plugin-host-artifact-cache.js";
 import { runInSerialLane } from "./serial-lane.js";
+import { confineRegisteredProjectRoot } from "./confine-project-root.js";
 
 type PluginHostCallCommand = Extract<
   HostDaemonOnlineRpcCommand,
@@ -118,6 +119,8 @@ interface PluginHostManagerOptions {
   }) => void;
   shellEnv?: () => NodeJS.ProcessEnv;
   hostWatcher?: Pick<HostWatcher, "watchPathRoot">;
+  /** Folders this machine registered as projects; the only roots a remote call may name. */
+  registeredProjectRoots?: () => Promise<readonly string[]>;
   workerIdleTimeoutMs?: number;
   workerStopGraceMs?: number;
   maxWorkers?: number;
@@ -291,10 +294,21 @@ export class PluginHostManager {
     sweepOrphanTempDirsOnce(options.logger, this.sweepAbort.signal);
   }
 
+  /** Server-confined roots pass through; a daemon-confined root is re-resolved here (rule 2). */
+  private async resolveCallProjectRoot(command: PluginHostCallCommand): Promise<string | undefined> {
+    const requested = command.daemonConfinedProjectRoot;
+    if (requested === undefined) return command.projectRoot;
+    if (command.projectRoot !== undefined) throw new Error("projectRoot and daemonConfinedProjectRoot are mutually exclusive");
+    const roots = this.options.registeredProjectRoots;
+    if (roots === undefined) throw new Error("project root cannot be confined: this host has no project registry");
+    return confineRegisteredProjectRoot(requested, await roots());
+  }
+
   async call(command: PluginHostCallCommand): Promise<PluginHostCallResult> {
     if (this.shuttingDown) {
       throw new Error("host plugin manager is shutting down");
     }
+    const projectRoot = await this.resolveCallProjectRoot(command);
     const { callKey, callState } = this.admitCall(command);
     const deadlineMonotonicMs = performance.now() + command.timeoutMs;
     const workerStartup = this.ensureWorker(command);
@@ -353,7 +367,7 @@ export class PluginHostManager {
               command.contributedEnv ?? [],
               this.options.shellEnv?.() ?? {},
             ),
-            ...(command.projectRoot !== undefined ? { projectRoot: command.projectRoot } : {}),
+            ...(projectRoot !== undefined ? { projectRoot } : {}),
           })
         ) {
           worker.pending.delete(command.callId);
