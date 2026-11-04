@@ -14,13 +14,13 @@ export function summarizePluginHealthDetail(detail: string | null | undefined): 
   }
   if (/cannot find package/i.test(technical) || /cannot find module\s+['"][^'"\n]*[/\\]node_modules[/\\]/i.test(technical)) {
     return {
-      summary: 'A plugin dependency is missing. Rebuild or reinstall this plugin.',
+      summary: 'A plugin dependency is missing. Check the technical details, restore the dependency, then reload.',
       technical
     };
   }
   if (/cannot find module/i.test(technical)) {
     return {
-      summary: 'A required plugin file is missing. Rebuild or reinstall this plugin.',
+      summary: 'A required plugin file is missing. Check the technical details, restore the file, then reload.',
       technical
     };
   }

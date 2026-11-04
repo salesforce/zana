@@ -9,7 +9,7 @@ const slots = vi.hoisted(() => ({
     generation: number;
     component: (props: { pluginId: string; subPath: string }) => unknown;
   }>,
-  modules: [] as Array<{ id: string; title: string }>
+  modules: [] as Array<{ id: string; title: string; loadError?: string }>
 }));
 
 vi.mock('../../plugins/plugin-slots.js', () => ({
@@ -75,5 +75,16 @@ describe('PluginPanelPaneView', () => {
       <PluginPanelPaneView pluginId="missing" panelPath="panel" subPath="" />
     );
     expect(html).toContain('This plugin panel is not available');
+  });
+
+  it('shows recovery for a direct link whose first UI import failed', () => {
+    slots.panels = [];
+    slots.modules = [{ id: 'broken', title: 'Dashboard', loadError: 'Bundle import failed' }];
+    const html = renderToStaticMarkup(<PluginPanelPaneView pluginId="broken" panelPath="main" subPath="" />);
+    expect(html).toContain('Dashboard couldn’t load');
+    expect(html).toContain('Bundle import failed');
+    expect(html).toContain('Reload plugin');
+    expect(html).not.toContain('compiled-module');
+    slots.modules = [];
   });
 });

@@ -4,6 +4,7 @@ import { useMergedModules } from '../../modules/index.js';
 import { listNavPanels, subscribePluginSlots } from '../../plugins/plugin-slots.js';
 import { PluginSlotBoundary } from '../../plugins/PluginSlotBoundary.js';
 import { PluginPanelHostLayout } from './PluginPanelHostLayout.js';
+import { PluginLoadFailure } from '../../plugins/PluginLoadFailure.js';
 
 export function PluginPanelPaneView({
   pluginId,
@@ -35,7 +36,10 @@ export function PluginPanelPaneView({
       </div>
     );
   } else if (modules.some((row) => row.id === pluginId)) {
-    body = <AppModulePanel moduleId={pluginId} />;
+    const module = modules.find((row) => row.id === pluginId)!;
+    body = 'loadError' in module && typeof module.loadError === 'string'
+      ? <PluginLoadFailure pluginId={pluginId} name={module.title} detail={module.loadError} />
+      : <AppModulePanel moduleId={pluginId} />;
   } else {
     body = <div className="split-pane-empty">This plugin panel is not available.</div>;
   }

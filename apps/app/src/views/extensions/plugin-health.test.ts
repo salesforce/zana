@@ -13,7 +13,7 @@ describe('summarizePluginHealthDetail', () => {
     const technical =
       "Cannot find module '/App/plugins/docs/src/library-mentions.js' imported from /App/plugins/docs/server.mjs";
     expect(summarizePluginHealthDetail(technical)).toEqual({
-      summary: 'A required plugin file is missing. Rebuild or reinstall this plugin.',
+      summary: 'A required plugin file is missing. Check the technical details, restore the file, then reload.',
       technical
     });
   });
@@ -23,7 +23,7 @@ describe('summarizePluginHealthDetail', () => {
     "Cannot find package 'some-dependency' imported from /checkout/plugin/server.mjs"
   ])('explains a missing dependency without blaming the app build', (technical) => {
     expect(summarizePluginHealthDetail(technical)).toEqual({
-      summary: 'A plugin dependency is missing. Rebuild or reinstall this plugin.',
+      summary: 'A plugin dependency is missing. Check the technical details, restore the dependency, then reload.',
       technical
     });
   });
