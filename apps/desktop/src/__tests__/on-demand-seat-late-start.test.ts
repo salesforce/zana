@@ -122,17 +122,67 @@ describe('late start of an on-demand seat through the real launch path (#580)', 
     expect((await spawn(record.id, '0:w1:1')).ok).toBe(true);
   });
 
-  it('fails closed: a pre-authorised plan with an on-demand seat is refused before anything is spawned, naming the seat', async () => {
+  const preauthorized = (launchRequestId: string, policy: Record<string, unknown> = {}) => {
+    const tasks = SLOT_IDS.map((slotId) => ({ slotId, initialTask: `task ${slotId}` }));
+    const authorized = authorizeTeamLaunch('owner', 'team1', 'p1', launchRequestId, policy as never, tasks as never, 'structured', 'adm');
+    if (!authorized.ok) throw new Error(authorized.message);
+    return authorized.value.slots;
+  };
+  const launchPreauthorized = (launchRequestId: string, slots: ReturnType<typeof preauthorized>, policy: Record<string, unknown> = {}) => launchTeam('team1', 'p1', {
+    callerPrincipalId: 'owner', launchRequestId, requirePreauthorization: true, admissionDigest: 'adm', coordinationMode: 'structured', policy,
+    slots: slots.map(({ slotId, initialTask, authorizationId }) => ({ slotId, initialTask, authorizationId }))
+  } as never);
+
+  it('gives a waiting seat of a pre-authorised plan a run-length approval with no launch deadline', () => {
+    onDemand(0);
+    const before = Date.now();
+    const slots = preauthorized(reqId(), { deadlineMs: 60_000 });
+    const waiting = h.launchAuthorization().get(slots.find((slot) => slot.slotId === '0:w1:0')!.authorizationId)!;
+    const now = h.launchAuthorization().get(slots.find((slot) => slot.slotId === '1:w2:0')!.authorizationId)!;
+    expect(waiting.expiresAt! - before).toBeGreaterThanOrEqual(24 * 60 * 60 * 1_000 - 1_000);
+    expect(waiting.binding.deadlineAt).toBeUndefined();
+    expect(now.expiresAt! - before).toBeLessThanOrEqual(2 * 60_000 + 1_000);
+    expect(now.binding.deadlineAt).toBeDefined();
+  });
+
+  it('launches a pre-authorised plan with a waiting seat and starts that seat later under its launch approval', async () => {
     onDemand(0);
     const launchRequestId = reqId();
-    const tasks = SLOT_IDS.map((slotId) => ({ slotId, initialTask: `task ${slotId}` }));
-    const authorized = authorizeTeamLaunch('owner', 'team1', 'p1', launchRequestId, {}, tasks as never, 'structured', 'adm');
-    expect(authorized.ok).toBe(true);
-    if (!authorized.ok) return;
-    const slots = authorized.value.slots.map(({ slotId, initialTask, authorizationId }) => ({ slotId, initialTask, authorizationId }));
-    const launched = await launchTeam('team1', 'p1', { callerPrincipalId: 'owner', launchRequestId, requirePreauthorization: true, admissionDigest: 'adm', coordinationMode: 'structured', slots } as never);
-    expect(launched).toMatchObject({ ok: false, code: 'UNSUPPORTED', message: expect.stringMatching(/pre-authorized plan.*turn it off for: w1/) });
-    expect(h.creates).toHaveLength(0);
+    const slots = preauthorized(launchRequestId, { deadlineMs: 60_000 });
+    const launched = await launchPreauthorized(launchRequestId, slots, { deadlineMs: 60_000 });
+    expect(launched).toMatchObject({ ok: true });
+    expect(h.creates.map((c) => c.cohort?.slotId)).not.toContain('0:w1:0');
+    const record = recordFor(launchRequestId);
+    const launchApproval = slots.find((slot) => slot.slotId === '0:w1:0')!.authorizationId;
+    expect(worker(record, '0:w1:0')?.authorizationId).toBe(launchApproval);
+    expect(h.launchAuthorization().get(launchApproval)?.state).toBe('authorized');
+    const started = await spawn(record.id, '0:w1:0');
+    expect(started.ok).toBe(true);
+    expect(h.creates.map((c) => c.cohort?.slotId)).toContain('0:w1:0');
+  });
+
+  it('refuses to start a waiting seat whose launch approval was revoked, and mints nothing new', async () => {
+    onDemand(0);
+    const launchRequestId = reqId();
+    const slots = preauthorized(launchRequestId);
+    expect((await launchPreauthorized(launchRequestId, slots)).ok).toBe(true);
+    const record = recordFor(launchRequestId);
+    h.launchAuthorization().revoke(slots.find((slot) => slot.slotId === '0:w1:0')!.authorizationId);
+    const creates = h.creates.length;
+    const started = await spawn(record.id, '0:w1:0');
+    expect(started).toMatchObject({ ok: false, message: expect.stringMatching(/approval from launch is (revoked|gone)/) });
+    expect(h.creates).toHaveLength(creates);
+  });
+
+  it('withdraws the approvals of seats that never started when the run releases its spawner', async () => {
+    onDemand(0);
+    const launchRequestId = reqId();
+    const slots = preauthorized(launchRequestId);
+    expect((await launchPreauthorized(launchRequestId, slots)).ok).toBe(true);
+    const record = recordFor(launchRequestId);
+    await host.cancelTeamLaunch('owner', launchRequestId);
+    const approval = h.launchAuthorization().get(slots.find((slot) => slot.slotId === '0:w1:0')!.authorizationId);
+    expect(approval === undefined || approval.state === 'revoked').toBe(true);
   });
 
   it('skips an on-demand seat whose persona is unknown, like any other seat', async () => {

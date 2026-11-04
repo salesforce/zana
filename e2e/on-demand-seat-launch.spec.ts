@@ -1,7 +1,8 @@
 /**
- * Squad seat that starts on demand (#580), fail-closed (owner decision): a Squad launch through the real UI is
- * pre-authorized, so a Team with a `startOnDemand` worker row is refused with a plain message and nothing is
- * spawned. Follows job-team-launch-ui.spec.ts (same launcher flow, same fake binary).
+ * Squad seat that starts on demand (#580): a Squad launch through the real UI is pre-authorized. A Team with a
+ * `startOnDemand` worker row launches under that approval: the coordinator starts, and the waiting seats get no
+ * session at launch (they start later under the approval they got at launch). Follows job-team-launch-ui.spec.ts
+ * (same launcher flow, same fake binary).
  */
 import { test, expect } from './fixtures/app.js';
 import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
@@ -17,7 +18,7 @@ test.use({
 
 test.setTimeout(120_000);
 
-test('a pre-authorized Squad launch with a start-on-demand seat is refused before anything is spawned', async ({ app }) => {
+test('a pre-authorized Squad launch with start-on-demand seats starts the coordinator and leaves the waiting seats unstarted', async ({ app }) => {
   const { window } = app;
   const agent = makeJobTeamCoordinatorBinary();
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-on-demand-seat-proj-'));
@@ -62,12 +63,17 @@ test('a pre-authorized Squad launch with a start-on-demand seat is refused befor
     const send = modal.getByTestId('team-command-send');
     await expect(send).toBeEnabled({ timeout: 15_000 });
     await send.click();
-    // Engine launches are pre-authorized, and a seat that starts on demand would be authorized later, outside that
-    // approval, so the launch is refused before anything is spawned and the reason names the seat.
-    await expect(modal.getByText(/Start on demand can't be used with a pre-authorized plan/)).toBeVisible({ timeout: 30_000 });
-    await expect(modal.getByText(/turn it off for: .*e2e-worker/)).toBeVisible();
-    const sessions = await window.evaluate((pid) => window.cc.terminals.list(pid), projectId!);
-    expect(sessions).toHaveLength(0);
+    // Engine launches are pre-authorized; the waiting seats keep their launch approval and start only when needed.
+    await expect(modal.getByText(/Start on demand can't be used/)).toHaveCount(0);
+    await expect.poll(async () => window.evaluate(async (pid) => {
+      const sessions = await window.cc.terminals.list(pid) as Array<{ cohort?: { role?: string } }>;
+      return sessions.map((session) => session.cohort?.role ?? 'none').sort();
+    }, projectId!), { timeout: 60_000, intervals: [500] }).toContain('orchestrator');
+    const roles = await window.evaluate(async (pid) => {
+      const sessions = await window.cc.terminals.list(pid) as Array<{ cohort?: { role?: string } }>;
+      return sessions.map((session) => session.cohort?.role ?? 'none');
+    }, projectId!);
+    expect(roles.filter((role) => role === 'worker')).toHaveLength(0);
   } finally {
     if (projectId) {
       await window.evaluate(async (pid) => {

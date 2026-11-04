@@ -112,3 +112,45 @@ describe('createDeferredSeatRegistry', () => {
     expect(h.start).not.toHaveBeenCalled();
   });
 });
+
+describe('approval of a waiting seat (#580, option A)', () => {
+  it('gives a waiting seat a run-length expiry and no launch deadline, and leaves other seats as launched', async () => {
+    const { seatApprovalWindow, ON_DEMAND_SEAT_APPROVAL_MS } = await import('../on-demand-seat.js');
+    expect(ON_DEMAND_SEAT_APPROVAL_MS).toBe(24 * 60 * 60 * 1_000);
+    expect(seatApprovalWindow(true, 1_000, { expiresAt: 2_000, deadlineAt: 3_000 })).toEqual({ expiresAt: 1_000 + ON_DEMAND_SEAT_APPROVAL_MS });
+    expect(seatApprovalWindow(false, 1_000, { expiresAt: 2_000, deadlineAt: 3_000 })).toEqual({ expiresAt: 2_000, deadlineAt: 3_000 });
+  });
+  it('matches the launch deadline only for seats that start now', async () => {
+    const { preissuedDeadlineMatches } = await import('../on-demand-seat.js');
+    const ttl = 120_000;
+    expect(preissuedDeadlineMatches(true, { expiresAt: 9, deadlineAt: undefined }, 60_000, ttl)).toBe(true);
+    expect(preissuedDeadlineMatches(true, { expiresAt: 9, deadlineAt: 5 }, 60_000, ttl)).toBe(false);
+    expect(preissuedDeadlineMatches(false, { expiresAt: ttl + 10, deadlineAt: 10 + 60_000 }, 60_000, ttl)).toBe(true);
+    expect(preissuedDeadlineMatches(false, { expiresAt: ttl + 10, deadlineAt: 11 }, 60_000, ttl)).toBe(false);
+    expect(preissuedDeadlineMatches(false, { deadlineAt: 10 }, 60_000, ttl)).toBe(false);
+    expect(preissuedDeadlineMatches(false, { expiresAt: 5 }, undefined, ttl)).toBe(true);
+    expect(preissuedDeadlineMatches(false, { expiresAt: 5, deadlineAt: 1 }, undefined, ttl)).toBe(false);
+  });
+  it('refuses a late start when the launch approval is gone, not authorized, or expired', async () => {
+    const { lateSeatApprovalProblem } = await import('../on-demand-seat.js');
+    expect(lateSeatApprovalProblem(undefined, 10)).toMatch(/approval from launch is gone/);
+    expect(lateSeatApprovalProblem({ state: 'revoked', expiresAt: 100 }, 10)).toMatch(/approval from launch is revoked/);
+    expect(lateSeatApprovalProblem({ state: 'authorized', expiresAt: 10 }, 10)).toMatch(/has expired/);
+    expect(lateSeatApprovalProblem({ state: 'authorized', expiresAt: 11 }, 10)).toBeUndefined();
+    expect(lateSeatApprovalProblem({ state: 'authorized' }, 10)).toBeUndefined();
+  });
+  it('withdraws the waiting approvals when the run releases its spawner, and survives a throwing hook', async () => {
+    const { createDeferredSeatRegistry, createDeferredSeatHooks } = await import('../on-demand-seat.js');
+    const revokeWaiting = vi.fn();
+    const hooks = createDeferredSeatHooks({ recordId: 'r', lifecycle: {} as never, startSeat: vi.fn() as never, closeSession: vi.fn() as never, track: vi.fn(), onStarted: vi.fn(), revokeWaiting });
+    const log = vi.fn();
+    const registry = createDeferredSeatRegistry({ log } as never);
+    registry.register('r', ['0:a:0'], hooks);
+    registry.release('r');
+    expect(revokeWaiting).toHaveBeenCalledTimes(1);
+    registry.register('r2', ['0:a:0'], { ...hooks, release: () => { throw new Error('boom'); } });
+    expect(() => registry.release('r2')).not.toThrow();
+    expect(log).toHaveBeenCalled();
+    registry.release('missing');
+  });
+});

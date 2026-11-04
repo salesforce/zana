@@ -112,7 +112,7 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
-import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, deferredSeatsOf, onDemandLaunchProblem } from './on-demand-seat.js';
+import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, deferredSeatsOf, lateSeatApprovalProblem, onDemandLaunchProblem, preissuedDeadlineMatches, seatApprovalWindow } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -5366,8 +5366,11 @@ export function authorizeTeamLaunch(
       return { ok: false, code: 'DENIED', message: `unknown persona: ${expected.personaId}` };
     }
   }
+  // Seats that start on demand keep this approval until they start (see on-demand-seat.ts).
+  const waitingSlotIds = new Set(deferredSeatsOf(team, expectedSlots.map((slot) => ({ ...slot, role: slot.slotId.startsWith('orchestrator:') ? 'orchestrator' as const : 'worker' as const }))).map((slot) => slot.slotId));
   for (const [index, expected] of expectedSlots.entries()) {
     const persona = known.get(expected.personaId)!;
+    const window = seatApprovalWindow(waitingSlotIds.has(expected.slotId), authorizedAt, { expiresAt, deadlineAt });
     const requestedRecovery = nativeRecovery?.find((snapshot) => snapshot.slotId === expected.slotId);
     const projection = slotRecoveryLaunch({
       nativeRecovery: requestedRecovery,
@@ -5383,13 +5386,13 @@ export function authorizeTeamLaunch(
       ...(slots[index].automatedSkillIds === undefined ? {} : { automatedSkillIds: slots[index].automatedSkillIds }),
       scope: launchExecutionScope(project, {}, store.getConfig()),
       storeRevision: launchDigest({ team, personas: personaSnapshot }),
-      projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt
+      projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt: window.expiresAt, deadlineAt: window.deadlineAt
       , admissionDigest
     };
     const decision = launchAuthorization.authorize({
       principal: principalRef, projectId: project.id,
       launchDigest: launchDigest({ principal: principalRef, projectId: project.id, binding }),
-      binding, expiresAt
+      binding, expiresAt: window.expiresAt
     });
     if (decision.decision === 'denied') {
       for (const slot of authorized) launchAuthorization.revoke(slot.authorizationId);
@@ -5808,6 +5811,8 @@ export async function launchTeam(
       workerSessionIds: replay.value.workerSessionIds ?? []
     } };
   }
+  const onDemandSeats = deferredSeatsOf(team, expectedSlots);
+  const waitingSlotIds = new Set(onDemandSeats.map((seat) => seat.slotId));
   if (structured?.requirePreauthorization) {
     const currentStoreRevision = launchDigest({ team, personas: personaSnapshot });
     const currentProjectIdentity = projectIdentityDigest(project);
@@ -5831,9 +5836,7 @@ export async function launchTeam(
         || binding.profileId !== expectedProfile
         || binding.scope !== launchExecutionScope(project, {}, currentConfig)
         || binding.autonomous !== autonomous
-        || (structured.policy?.deadlineMs === undefined
-          ? binding.deadlineAt !== undefined
-          : binding.deadlineAt !== binding.expiresAt - TEAM_AUTHORIZATION_TTL_MS + structured.policy.deadlineMs)
+        || !preissuedDeadlineMatches(waitingSlotIds.has(expected.slotId), binding, structured.policy?.deadlineMs, TEAM_AUTHORIZATION_TTL_MS)
         || binding.initialTaskDigest !== launchDigest(requested.initialTask)
         || launchDigest(binding.automatedSkillIds ?? []) !== launchDigest(requested.automatedSkillIds ?? [])
         || binding.storeRevision !== currentStoreRevision
@@ -5852,14 +5855,15 @@ export async function launchTeam(
         return { ok: false, code: 'DENIED', message: valid.reason };
       }
     }
-    launchDeadlineAt = launchAuthorization.get(structured.slots[0].authorizationId!)?.binding.deadlineAt;
+    // A waiting seat's approval has no launch deadline, so read it from a seat that starts now.
+    const startingNow = structured.slots.find((slot) => !waitingSlotIds.has(slot.slotId)) ?? structured.slots[0];
+    launchDeadlineAt = launchAuthorization.get(startingNow.authorizationId!)?.binding.deadlineAt;
     if (launchDeadlineAt !== undefined && launchDeadlineAt <= Date.now()) {
       revokeRequestAuthorizations();
       return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'team launch deadline elapsed before spawn' };
     }
   }
-  const onDemandSeats = deferredSeatsOf(team, expectedSlots);
-  const onDemandProblem = onDemandLaunchProblem(team, onDemandSeats, { durable: durableCoordination, structured: !!structured, preauthorized: structured?.requirePreauthorization === true });
+  const onDemandProblem = onDemandLaunchProblem(team, onDemandSeats, { durable: durableCoordination, structured: !!structured });
   if (onDemandProblem) {
     revokeRequestAuthorizations();
     return { ok: false, code: 'UNSUPPORTED', message: onDemandProblem };
@@ -5955,9 +5959,10 @@ export async function launchTeam(
     /** MAIN-only spawn extras for the CLI path (Modern ignores them). */
     spawnExtras?: { authoredPlanPaths?: readonly string[] },
     /**
-     * A seat started after launch: its launch-time authorization has expired, so a fresh one is minted.
-     * Only reachable without `requirePreauthorization`: a pre-authorized launch with on-demand seats is refused
-     * up front (onDemandLaunchProblem), so this never mints an authorization outside an approved plan.
+     * A seat started after launch. In a pre-authorized plan it starts under the approval it got at launch
+     * (kept with a run-length expiry, see seatApprovalWindow) and nothing new is minted; when that approval has
+     * expired or was revoked the seat is refused (DENIED). Without pre-authorization a fresh one is minted, as for
+     * every seat of such a launch.
      * The seat is started from `team`, `personaSnapshot`, `project` and `currentConfig` as captured at launch, so a
      * persona or team edited since then does not change a seat that has not started yet; this is deliberate, the
      * run keeps the configuration it was approved with.
@@ -5966,7 +5971,11 @@ export async function launchTeam(
   ): Promise<Result<{ id: string }>> => {
     const { slotId, personaId } = expectedSlot;
     let authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
-    if (!structured?.requirePreauthorization || lateSeat) {
+    const approvalProblem = lateSeat && structured?.requirePreauthorization
+      ? lateSeatApprovalProblem(authorizationId ? launchAuthorization.get(authorizationId) : undefined, Date.now())
+      : undefined;
+    if (approvalProblem) return { ok: false, code: 'DENIED', message: approvalProblem };
+    if (!structured?.requirePreauthorization) {
       const profileId = profileFor(personaId);
       const expiresAt = Date.now() + TEAM_AUTHORIZATION_TTL_MS;
       const principal = bindLaunchPrincipal(teamPrincipalRef, {
@@ -6158,7 +6167,7 @@ export async function launchTeam(
          teamLifecycleIntegration.track(record);
         },
         authorizationId,
-        structured?.requirePreauthorization && !lateSeat
+        structured?.requirePreauthorization
           ? structured.slots.find((slot) => slot.slotId === slotId)?.initialTask
           : undefined,
         launchAuthorization.get(authorizationId!)?.binding.deadlineAt,
@@ -6257,8 +6266,10 @@ export async function launchTeam(
        if (onDemandSeats.includes(expectedSlot)) {
          // Started later by the engine (see deferredSeats); only the lifecycle record and roster know it now.
          deferredSlotIds.push(slotId);
+         // A pre-authorized seat keeps its launch approval id, so it starts under it and the run can withdraw it.
+         const waitingApprovalId = structured?.requirePreauthorization ? structured.slots.find((slot) => slot.slotId === slotId)?.authorizationId : undefined;
          teamLifecycleIntegration.track(await teamLifecycle.addDeferredWorker(claim.record.id, {
-           authorizationId: randomUUID(), cohortId, slotId, personaId, projectId: targetProjectId,
+           authorizationId: waitingApprovalId ?? randomUUID(), cohortId, slotId, personaId, projectId: targetProjectId,
            attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
          }));
          roster.push({ slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label, startsWhenNeeded: true });
@@ -6288,7 +6299,8 @@ export async function launchTeam(
     startSeat: (slotId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true),
     closeSession: terminateSession,
     track: teamLifecycleIntegration.track,
-    onStarted: (sessionId) => teamLaunchSessions.set(sessionId, cohortId)
+    onStarted: (sessionId) => teamLaunchSessions.set(sessionId, cohortId),
+    revokeWaiting: () => revokeWaitingApprovals(deferredSlotIds)
   }));
 
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
@@ -6431,6 +6443,16 @@ export async function launchTeam(
   const lifecycleRecord = await teamLifecycle.get(claim.record.id);
   if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
   return operationResult;
+
+  /** Withdraw the launch approvals still held by seats that never started (run released its spawner). */
+  function revokeWaitingApprovals(slotIds: readonly string[]): void {
+    if (!structured?.requirePreauthorization) return;
+    for (const slot of structured.slots) {
+      if (!slotIds.includes(slot.slotId) || !slot.authorizationId) continue;
+      const authorization = launchAuthorization.get(slot.authorizationId);
+      if (authorization?.state === 'authorized' && authorization.principal.id === teamPrincipalRef.id) launchAuthorization.revoke(slot.authorizationId);
+    }
+  }
 
   function revokeRequestAuthorizations(): void {
     if (!structured) return;

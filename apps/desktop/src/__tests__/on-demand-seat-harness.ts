@@ -27,6 +27,8 @@ const h = vi.hoisted(() => {
     reserveOverride: null as null | ((reservation: any) => any),
     afterModernAck: null as null | ((recordId: string, slotId: string, acknowledged: boolean) => Promise<void>),
     squadOpts: undefined as any,
+    authorizations: undefined as any,
+    launchAuthorization(): any { return this.authorizations; },
     drainOpts: undefined as any,
     runtime: {
       preflightSquadRuntime: vi.fn<(request: SquadRuntimePreflightRequest) => Promise<SquadRuntimePreflightResult>>(),
@@ -131,6 +133,14 @@ vi.mock('@zana-ai/zcc-server/services/launch/team-lifecycle-store', async (impor
   };
 });
 
+// Capture main's launch authorization store so tests can read and revoke approvals.
+vi.mock('@zana-ai/zcc-server/services/launch/authorization', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/launch/authorization')>();
+  const Wrapped = new Proxy(actual.LaunchAuthorizationService, {
+    construct(target, args, newTarget) { const made = Reflect.construct(target, args, newTarget); h.authorizations ??= made; return made; }
+  });
+  return { ...actual, LaunchAuthorizationService: Wrapped };
+});
 // Capture main's wiring callbacks so the Modern delivery/settlement/status seams run directly.
 vi.mock('@zana-ai/zcc-server/services/execution/service', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/execution/service')>();

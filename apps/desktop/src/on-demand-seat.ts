@@ -3,10 +3,17 @@
  *
  * A seat marked `startOnDemand` is recorded at launch (authorized, no session) and started by the
  * engine when it has a first unit for it. This module holds the pure parts: which seats are
- * deferred, the fail-closed message, and the per-run spawner registry with its once-only fence.
+ * deferred, the refusal message, how long a waiting seat's launch approval lasts, and the per-run
+ * spawner registry with its once-only fence.
+ *
+ * Approval: in a pre-authorized plan, every seat is approved at launch, including the seats that wait.
+ * A waiting seat keeps that approval (it is not revoked at launch) with an expiry that covers the run
+ * (`ON_DEMAND_SEAT_APPROVAL_MS`) and no launch deadline, and it starts under it later. Nothing mints a
+ * new approval for it. When the approval has expired or was revoked (the run stopped), the seat does not
+ * start and the engine takes it out of rotation: its unit goes to another seat or to a person.
  */
 
-import { isClaimedDeferredWorker, type TeamWorkerProcessState } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
+import { isClaimedDeferredWorker, MAX_TEAM_LAUNCH_DEADLINE_MS, type TeamWorkerProcessState } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 
 export type DeferredSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string; retryable?: true };
 
@@ -29,15 +36,10 @@ export function deferredSeatsOf<T extends SeatLike>(team: TeamLike, seats: reado
 export function onDemandLaunchProblem(
   team: TeamLike,
   deferred: readonly SeatLike[],
-  launch: { durable: boolean; structured: boolean; preauthorized?: boolean }
+  launch: { durable: boolean; structured: boolean }
 ): string | undefined {
   if (deferred.length === 0) return undefined;
   const names = deferred.map((seat) => seat.label || seat.personaId).join(', ');
-  // Fail closed: a pre-authorized plan fixes who may start, and when, at launch. A seat that starts on demand
-  // would need a new authorization minted hours later, outside that approval, so the launch is refused instead.
-  if (launch.preauthorized) {
-    return `Start on demand can't be used with a pre-authorized plan, because those seats would start without the approval given at launch; turn it off for: ${names}`;
-  }
   if (team.transport === 'MODERN') return `Start on demand isn't available for Modern squads yet; turn it off for: ${names}`;
   if (!launch.durable || !launch.structured) {
     return `Start on demand only works for plan-driven Squads; turn it off for: ${names}`;
@@ -45,6 +47,50 @@ export function onDemandLaunchProblem(
   return undefined;
 }
 
+/**
+ * How long a waiting seat's launch approval lasts: the longest no-progress window a Squad run can be given
+ * (24 hours). A run still going after that with a seat that never started gets the unit back to a person
+ * rather than a seat starting on an approval that old.
+ */
+export const ON_DEMAND_SEAT_APPROVAL_MS = MAX_TEAM_LAUNCH_DEADLINE_MS;
+
+/**
+ * Expiry and launch deadline of one seat's approval, minted at launch. A waiting seat gets the run-length expiry
+ * and no launch deadline (it starts after the launch call has returned); every other seat keeps the launch ones.
+ */
+export function seatApprovalWindow(
+  waiting: boolean,
+  authorizedAt: number,
+  launch: { expiresAt: number; deadlineAt?: number }
+): { expiresAt: number; deadlineAt?: number } {
+  return waiting ? { expiresAt: authorizedAt + ON_DEMAND_SEAT_APPROVAL_MS } : launch;
+}
+
+/**
+ * Whether a pre-issued approval's launch deadline is the one the plan's policy gives it. A waiting seat's approval
+ * carries no launch deadline (it starts after launch); every other seat's is `authorizedAt + deadlineMs`, where
+ * authorizedAt is recovered from the standard approval lifetime.
+ */
+export function preissuedDeadlineMatches(
+  waiting: boolean,
+  binding: { expiresAt?: number; deadlineAt?: number },
+  deadlineMs: number | undefined,
+  approvalTtlMs: number
+): boolean {
+  if (waiting || deadlineMs === undefined) return binding.deadlineAt === undefined;
+  return binding.expiresAt !== undefined && binding.deadlineAt === binding.expiresAt - approvalTtlMs + deadlineMs;
+}
+
+/** Why a waiting seat cannot start under the approval it got at launch, or undefined when it can. */
+export function lateSeatApprovalProblem(
+  approval: { state: string; expiresAt?: number } | undefined,
+  now: number
+): string | undefined {
+  if (!approval) return 'This seat was not started: its approval from launch is gone (the run was stopped or the app restarted).';
+  if (approval.state !== 'authorized') return `This seat was not started: its approval from launch is ${approval.state}.`;
+  if (approval.expiresAt !== undefined && approval.expiresAt <= now) return 'This seat was not started: its approval from launch has expired.';
+  return undefined;
+}
 
 export interface DeferredSeatHooks {
   /** Atomically move a never-started seat to spawning; false when another caller already did. */
@@ -64,6 +110,8 @@ export interface DeferredSeatHooks {
    * no longer active, so the caller can finish the seat instead.
    */
   reopen(slotId: string): Promise<boolean>;
+  /** The run let go of its waiting seats: withdraw the approvals they still hold. */
+  release?(): void;
 }
 
 export interface DeferredSeatRegistryOptions {
@@ -152,9 +200,11 @@ export function createDeferredSeatRegistry(options: DeferredSeatRegistryOptions 
       started.then(() => entry.inflight.delete(slotId), () => entry.inflight.delete(slotId));
       return started;
     },
-    /** Run ended, stopped, dismissed or failed to launch: forget the spawner. */
+    /** Run ended, stopped, dismissed or failed to launch: forget the spawner and withdraw the waiting seats' approvals. */
     release(recordId: string): void {
+      const entry = runs.get(recordId);
       runs.delete(recordId);
+      try { entry?.hooks.release?.(); } catch (error) { log(`on-demand seat approvals of ${recordId} could not be withdrawn`, error); }
     },
     has(recordId: string): boolean {
       return runs.has(recordId);
@@ -198,6 +248,8 @@ interface HooksDeps<R> {
   track(record: R): void;
   /** Called with the session id of a seat that started. */
   onStarted(sessionId: string): void;
+  /** Withdraw the launch approvals of seats that never started. */
+  revokeWaiting?(): void;
 }
 
 /** Why a seat that did not start is recorded as failed. */
@@ -224,6 +276,7 @@ export function createDeferredSeatHooks<R>(deps: HooksDeps<R>): DeferredSeatHook
       const failed = await deps.lifecycle.failDeferredSeat(deps.recordId, slotId, SEAT_NOT_STARTED_REASON);
       if (failed) deps.track(failed);
     },
-    reopen: (slotId) => deps.lifecycle.reopenDeferredSpawn(deps.recordId, slotId)
+    reopen: (slotId) => deps.lifecycle.reopenDeferredSpawn(deps.recordId, slotId),
+    release: () => deps.revokeWaiting?.()
   };
 }
