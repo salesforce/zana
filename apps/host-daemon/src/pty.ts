@@ -65,6 +65,7 @@ import {
 } from './remote-tool-proxy.js';
 import { REMOTE_FS_TOOL_NAMES } from './remote-fs-mcp-tools.js';
 import { terminatePtyProcessTree } from './pty-termination.js';
+import { clearInheritedSessionIdentity, sessionIdentityEnv } from './session-identity-env.js';
 
 // Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
 // module-local resolver distinct so the bundled declarations cannot collide.
@@ -897,6 +898,8 @@ export class PtyManager extends EventEmitter {
     /** Main coordinator-owned identity, allocated before authorization/commit. */
     preallocatedSessionId?: string;
     projectId: string;
+    /** MAIN-only thread binding for this session; never read from renderer input. */
+    threadId?: string;
     profile: LaunchProfileId;
     cwd: string;
     cols: number;
@@ -1774,6 +1777,11 @@ export class PtyManager extends EventEmitter {
       ZCC_SESSION_ID: sessionId,
       ZCC_SESSION_TOKEN: sessionCredential
     };
+    // Project/thread hints come only from the main-authorized spawn context. An
+    // ambient value inherited from a parent session is dropped first so this
+    // session never reports another session's thread.
+    clearInheritedSessionIdentity(env);
+    Object.assign(env, sessionIdentityEnv({ projectId: opts.projectId, threadId: opts.threadId }));
     // Finder/Dock and the electron-vite sandbox omit `~/.local/bin`. node-pty
     // `posix_spawnp` does not always honor env PATH the way `execFile` does,
     // so we also resolve the harness basename against the augmented PATH.
@@ -1995,6 +2003,7 @@ export class PtyManager extends EventEmitter {
         headless: !!opts.headless, hookBase: Boolean(nativeToolUrl || lifecycleBase)
       },
       projectId: opts.projectId,
+      ...(opts.threadId ? { threadId: opts.threadId } : {}),
       // Title tracks the REQUESTED profile (matching the old titleFor(opts.profile)),
       // not the persona's effective baseProfile.
       title: opts.title ?? providerFor(opts.profile).title(opts.profile),
@@ -2432,6 +2441,8 @@ export class PtyManager extends EventEmitter {
     /** Main coordinator-owned identity, allocated before authorization/commit. */
     preallocatedSessionId?: string;
     projectId: string;
+    /** MAIN-only thread binding for this session; never read from renderer input. */
+    threadId?: string;
     profile: LaunchProfileId;
     cwd: string;
     cols: number;
@@ -2814,6 +2825,13 @@ export class PtyManager extends EventEmitter {
       ZCC_SESSION_TOKEN: (this.hostServices.sessionCredential ?? controlCredentialForSession)(sessionId),
       TERM: 'xterm-256color'
     };
+    // Same hints as the local path, set on the local ssh process only. They are
+    // not written into the remote command: the session token is never forwarded
+    // (it would be visible in the remote process list), so a remote process has
+    // no way to use the lookup and remote identity stays in the hook/MCP URL path
+    // segments.
+    clearInheritedSessionIdentity(spawnEnv);
+    Object.assign(spawnEnv, sessionIdentityEnv({ projectId: opts.projectId, threadId: opts.threadId }));
     spawnEnv.PATH = augmentPath(spawnEnv.PATH ?? process.env.PATH);
     stripInheritedSessionCallbacks(spawnEnv);
     ensureInteractiveTerminalEnv(spawnEnv);
@@ -2834,6 +2852,7 @@ export class PtyManager extends EventEmitter {
         headless: !!opts.headless, hookBase: Boolean(remoteHookUrls?.nativeTool)
       },
       projectId: opts.projectId,
+      ...(opts.threadId ? { threadId: opts.threadId } : {}),
       title: opts.title ?? `${remoteProvider.title(opts.profile)} · ${remote.host}`,
       profile: opts.profile,
       cwd: remoteCwd,

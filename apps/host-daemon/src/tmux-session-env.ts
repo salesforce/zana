@@ -53,7 +53,12 @@ export function stripInheritedSessionCallbacks(env: Record<string, string | unde
  * in `ps`); delivered to the pane through a 0600 env file instead, so a 2nd+ pane
  * in a long-lived tmux server cannot inherit the first session's identity.
  */
-export const SESSION_IDENTITY_ENV_KEYS = ['ZCC_SESSION_ID', 'ZCC_SESSION_TOKEN'] as const;
+export const SESSION_IDENTITY_ENV_KEYS = [
+  'ZCC_SESSION_ID',
+  'ZCC_SESSION_TOKEN',
+  'ZCC_PROJECT_ID',
+  'ZCC_THREAD_ID'
+] as const;
 
 let sessionEnvDir: string | undefined;
 

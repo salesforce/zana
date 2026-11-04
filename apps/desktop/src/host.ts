@@ -4241,6 +4241,13 @@ export function createTerminalConfined(
     resume?: boolean;
     /** Coordinator-owned identity. MAIN-only; never read from renderer request. */
     preallocatedSessionId?: string;
+    /**
+     * Thread binding main resolved for this session. MAIN-only; never read from
+     * the renderer request. Absent for a PTY with no bound thread, in which case
+     * the session carries project identity only and resolves the rest through
+     * the authenticated session lookup.
+     */
+    threadId?: string;
     /** Immutable main-owned preflight snapshot. Prevents settings/persona TOCTOU. */
     launchSnapshot?: {
       project: Project;
@@ -4412,6 +4419,7 @@ export function createTerminalConfined(
       nativeToolPolicyRequired,
       preallocatedSessionId: opts?.preallocatedSessionId,
       projectId: req.projectId,
+      ...(opts?.threadId ? { threadId: opts.threadId } : {}),
       profile: selection.profile,
       persona: effectivePersona,
       cwd,

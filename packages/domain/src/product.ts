@@ -1445,6 +1445,8 @@ export interface TerminalSession {
   /** Opaque main-owned capability used to restore/reconnect this launch. */
   restoreCapabilityId?: string;
   projectId: string;
+  /** Main-stamped thread binding, when main resolved one at spawn. */
+  threadId?: string;
   title: string;
   profile: LaunchProfileId;
   cwd: string;

@@ -14,6 +14,8 @@ Local-spawn argv/env assembly lives in `PtyManager.create()` and dispatches thro
 
 4. **`buildRemoteCmd` shares the same pure helpers** (`resolveLaunch`, `computeAutoModeActive`, `resolveEffectiveModel`, `personaArgs_build`, `projectSettingsArgs`, `cleanExtraArgs`, `buildHookSettings`) but assembles its own remote precedence. A change to a shared helper touches both local and remote spawn paths; keep them in lockstep (see `pty.ts createRemote()` remote-parity hot-zone note).
 
+5. **Session identity env is main-authorized.** `ZCC_PROJECT_ID` (and `ZCC_THREAD_ID` only when main supplies a binding) are set from the spawn context in `create()`/`createRemote()`; ambient values inherited from a parent session are cleared first. Both ride the tmux identity env file (`SESSION_IDENTITY_ENV_KEYS`) so a pane never inherits the tmux server snapshot. The env is a hint: `GET /api/v1/sessions/self` authenticates by session credential.
+
 **Why:** Dispatching through providers eliminated duplicate identity logic; precedence order is the observable contract; pure helpers enable remote/local sharing.
 
 **When changing:**

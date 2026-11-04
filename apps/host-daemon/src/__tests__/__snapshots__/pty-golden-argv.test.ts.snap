@@ -62,6 +62,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -97,6 +98,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -140,6 +142,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -179,6 +182,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -196,6 +200,7 @@ exports[`golden argv — auto-mode + overseer variants > no MCP / hooks when mcp
   "command": "claude",
   "sessionEnv": {
     "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -231,6 +236,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
     "ZCC_OVERSEER_URL": "http://127.0.0.1:<PORT>/hook/overseer/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -260,6 +266,7 @@ exports[`golden argv — local create() matrix > afcode · persona · interactiv
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -274,6 +281,7 @@ exports[`golden argv — local create() matrix > afcode · persona · scheduled 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -286,6 +294,7 @@ exports[`golden argv — local create() matrix > afcode · persona+projectSettin
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -300,6 +309,7 @@ exports[`golden argv — local create() matrix > afcode · persona+projectSettin
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -312,6 +322,7 @@ exports[`golden argv — local create() matrix > afcode · plain · interactive 
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -326,6 +337,7 @@ exports[`golden argv — local create() matrix > afcode · plain · scheduled 1`
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -338,6 +350,7 @@ exports[`golden argv — local create() matrix > afcode · projectSettings · in
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -352,6 +365,7 @@ exports[`golden argv — local create() matrix > afcode · projectSettings · sc
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -365,6 +379,7 @@ exports[`golden argv — local create() matrix > afcode-resume · persona · int
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -379,6 +394,7 @@ exports[`golden argv — local create() matrix > afcode-resume · persona · sch
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -392,6 +408,7 @@ exports[`golden argv — local create() matrix > afcode-resume · persona+projec
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -406,6 +423,7 @@ exports[`golden argv — local create() matrix > afcode-resume · persona+projec
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -419,6 +437,7 @@ exports[`golden argv — local create() matrix > afcode-resume · plain · inter
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -433,6 +452,7 @@ exports[`golden argv — local create() matrix > afcode-resume · plain · sched
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -446,6 +466,7 @@ exports[`golden argv — local create() matrix > afcode-resume · projectSetting
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -460,6 +481,7 @@ exports[`golden argv — local create() matrix > afcode-resume · projectSetting
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -473,6 +495,7 @@ exports[`golden argv — local create() matrix > afcode-yolo · persona · inter
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -487,6 +510,7 @@ exports[`golden argv — local create() matrix > afcode-yolo · persona · sched
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -500,6 +524,7 @@ exports[`golden argv — local create() matrix > afcode-yolo · persona+projectS
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -514,6 +539,7 @@ exports[`golden argv — local create() matrix > afcode-yolo · persona+projectS
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -527,6 +553,7 @@ exports[`golden argv — local create() matrix > afcode-yolo · plain · interac
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -541,6 +568,7 @@ exports[`golden argv — local create() matrix > afcode-yolo · plain · schedul
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -554,6 +582,7 @@ exports[`golden argv — local create() matrix > afcode-yolo · projectSettings 
   ],
   "command": "afcode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -568,6 +597,7 @@ exports[`golden argv — local create() matrix > afcode-yolo · projectSettings 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -613,6 +643,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -662,6 +693,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -715,6 +747,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -769,6 +802,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -808,6 +842,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -851,6 +886,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -898,6 +934,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -948,6 +985,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -993,6 +1031,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1046,6 +1085,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1098,6 +1138,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1158,6 +1199,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1196,6 +1238,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1241,6 +1284,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1287,6 +1331,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1341,6 +1386,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1386,6 +1432,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1435,6 +1482,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1485,6 +1533,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1539,6 +1588,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1576,6 +1626,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1619,6 +1670,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1665,6 +1717,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1715,6 +1768,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
     "ZCC_SUBAGENT_URL": "http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>",
   },
@@ -1750,6 +1804,7 @@ exports[`golden argv — local create() matrix > codex · persona · interactive
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -1786,6 +1841,7 @@ exports[`golden argv — local create() matrix > codex · persona · scheduled 1
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -1820,6 +1876,7 @@ exports[`golden argv — local create() matrix > codex · persona+projectSetting
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -1856,6 +1913,7 @@ exports[`golden argv — local create() matrix > codex · persona+projectSetting
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -1888,6 +1946,7 @@ exports[`golden argv — local create() matrix > codex · plain · interactive 1
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -1922,6 +1981,7 @@ exports[`golden argv — local create() matrix > codex · plain · scheduled 1`]
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -1956,6 +2016,7 @@ exports[`golden argv — local create() matrix > codex · projectSettings · int
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -1992,6 +2053,7 @@ exports[`golden argv — local create() matrix > codex · projectSettings · sch
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2028,6 +2090,7 @@ exports[`golden argv — local create() matrix > codex-resume · persona · inte
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2069,6 +2132,7 @@ exports[`golden argv — local create() matrix > codex-resume · persona · sche
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2105,6 +2169,7 @@ exports[`golden argv — local create() matrix > codex-resume · persona+project
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2146,6 +2211,7 @@ exports[`golden argv — local create() matrix > codex-resume · persona+project
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2180,6 +2246,7 @@ exports[`golden argv — local create() matrix > codex-resume · plain · intera
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2219,6 +2286,7 @@ exports[`golden argv — local create() matrix > codex-resume · plain · schedu
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2255,6 +2323,7 @@ exports[`golden argv — local create() matrix > codex-resume · projectSettings
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2296,6 +2365,7 @@ exports[`golden argv — local create() matrix > codex-resume · projectSettings
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2331,6 +2401,7 @@ exports[`golden argv — local create() matrix > codex-yolo · persona · intera
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2367,6 +2438,7 @@ exports[`golden argv — local create() matrix > codex-yolo · persona · schedu
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2402,6 +2474,7 @@ exports[`golden argv — local create() matrix > codex-yolo · persona+projectSe
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2438,6 +2511,7 @@ exports[`golden argv — local create() matrix > codex-yolo · persona+projectSe
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2471,6 +2545,7 @@ exports[`golden argv — local create() matrix > codex-yolo · plain · interact
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2505,6 +2580,7 @@ exports[`golden argv — local create() matrix > codex-yolo · plain · schedule
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2540,6 +2616,7 @@ exports[`golden argv — local create() matrix > codex-yolo · projectSettings �
   ],
   "command": "codex",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2576,6 +2653,7 @@ exports[`golden argv — local create() matrix > codex-yolo · projectSettings �
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2586,6 +2664,7 @@ exports[`golden argv — local create() matrix > cursor · persona · interactiv
   "args": [],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2599,6 +2678,7 @@ exports[`golden argv — local create() matrix > cursor · persona · scheduled 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2609,6 +2689,7 @@ exports[`golden argv — local create() matrix > cursor · persona+projectSettin
   "args": [],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2622,6 +2703,7 @@ exports[`golden argv — local create() matrix > cursor · persona+projectSettin
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2632,6 +2714,7 @@ exports[`golden argv — local create() matrix > cursor · plain · interactive 
   "args": [],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2645,6 +2728,7 @@ exports[`golden argv — local create() matrix > cursor · plain · scheduled 1`
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2655,6 +2739,7 @@ exports[`golden argv — local create() matrix > cursor · projectSettings · in
   "args": [],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2668,6 +2753,7 @@ exports[`golden argv — local create() matrix > cursor · projectSettings · sc
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2680,6 +2766,7 @@ exports[`golden argv — local create() matrix > cursor-resume · persona · int
   ],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2694,6 +2781,7 @@ exports[`golden argv — local create() matrix > cursor-resume · persona · sch
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2706,6 +2794,7 @@ exports[`golden argv — local create() matrix > cursor-resume · persona+projec
   ],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2720,6 +2809,7 @@ exports[`golden argv — local create() matrix > cursor-resume · persona+projec
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2732,6 +2822,7 @@ exports[`golden argv — local create() matrix > cursor-resume · plain · inter
   ],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2746,6 +2837,7 @@ exports[`golden argv — local create() matrix > cursor-resume · plain · sched
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2758,6 +2850,7 @@ exports[`golden argv — local create() matrix > cursor-resume · projectSetting
   ],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2772,6 +2865,7 @@ exports[`golden argv — local create() matrix > cursor-resume · projectSetting
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2784,6 +2878,7 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona · inter
   ],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2797,6 +2892,7 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona · sched
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2809,6 +2905,7 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona+projectS
   ],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2822,6 +2919,7 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona+projectS
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2834,6 +2932,7 @@ exports[`golden argv — local create() matrix > cursor-yolo · plain · interac
   ],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2847,6 +2946,7 @@ exports[`golden argv — local create() matrix > cursor-yolo · plain · schedul
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2859,6 +2959,7 @@ exports[`golden argv — local create() matrix > cursor-yolo · projectSettings 
   ],
   "command": "cursor-agent",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2872,6 +2973,7 @@ exports[`golden argv — local create() matrix > cursor-yolo · projectSettings 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2885,6 +2987,7 @@ exports[`golden argv — local create() matrix > grok · persona · interactive 
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2900,6 +3003,7 @@ exports[`golden argv — local create() matrix > grok · persona · scheduled 1`
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2913,6 +3017,7 @@ exports[`golden argv — local create() matrix > grok · persona+projectSettings
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2928,6 +3033,7 @@ exports[`golden argv — local create() matrix > grok · persona+projectSettings
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2941,6 +3047,7 @@ exports[`golden argv — local create() matrix > grok · plain · interactive 1`
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2956,6 +3063,7 @@ exports[`golden argv — local create() matrix > grok · plain · scheduled 1`] 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2969,6 +3077,7 @@ exports[`golden argv — local create() matrix > grok · projectSettings · inte
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2984,6 +3093,7 @@ exports[`golden argv — local create() matrix > grok · projectSettings · sche
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2996,6 +3106,7 @@ exports[`golden argv — local create() matrix > grok-resume · persona · inter
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3009,6 +3120,7 @@ exports[`golden argv — local create() matrix > grok-resume · persona · sched
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3021,6 +3133,7 @@ exports[`golden argv — local create() matrix > grok-resume · persona+projectS
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3034,6 +3147,7 @@ exports[`golden argv — local create() matrix > grok-resume · persona+projectS
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3046,6 +3160,7 @@ exports[`golden argv — local create() matrix > grok-resume · plain · interac
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3059,6 +3174,7 @@ exports[`golden argv — local create() matrix > grok-resume · plain · schedul
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3071,6 +3187,7 @@ exports[`golden argv — local create() matrix > grok-resume · projectSettings 
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3084,6 +3201,7 @@ exports[`golden argv — local create() matrix > grok-resume · projectSettings 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3098,6 +3216,7 @@ exports[`golden argv — local create() matrix > grok-yolo · persona · interac
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3113,6 +3232,7 @@ exports[`golden argv — local create() matrix > grok-yolo · persona · schedul
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3127,6 +3247,7 @@ exports[`golden argv — local create() matrix > grok-yolo · persona+projectSet
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3142,6 +3263,7 @@ exports[`golden argv — local create() matrix > grok-yolo · persona+projectSet
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3156,6 +3278,7 @@ exports[`golden argv — local create() matrix > grok-yolo · plain · interacti
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3171,6 +3294,7 @@ exports[`golden argv — local create() matrix > grok-yolo · plain · scheduled
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3185,6 +3309,7 @@ exports[`golden argv — local create() matrix > grok-yolo · projectSettings ·
   ],
   "command": "grok",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3200,6 +3325,7 @@ exports[`golden argv — local create() matrix > grok-yolo · projectSettings ·
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3210,6 +3336,7 @@ exports[`golden argv — local create() matrix > mastracode · persona · intera
   "args": [],
   "command": "mastracode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3223,6 +3350,7 @@ exports[`golden argv — local create() matrix > mastracode · persona · schedu
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3233,6 +3361,7 @@ exports[`golden argv — local create() matrix > mastracode · persona+projectSe
   "args": [],
   "command": "mastracode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3246,6 +3375,7 @@ exports[`golden argv — local create() matrix > mastracode · persona+projectSe
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3256,6 +3386,7 @@ exports[`golden argv — local create() matrix > mastracode · plain · interact
   "args": [],
   "command": "mastracode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3269,6 +3400,7 @@ exports[`golden argv — local create() matrix > mastracode · plain · schedule
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3279,6 +3411,7 @@ exports[`golden argv — local create() matrix > mastracode · projectSettings �
   "args": [],
   "command": "mastracode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3292,6 +3425,7 @@ exports[`golden argv — local create() matrix > mastracode · projectSettings �
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3304,6 +3438,7 @@ exports[`golden argv — local create() matrix > mastracode-resume · persona ·
   ],
   "command": "mastracode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3317,6 +3452,7 @@ exports[`golden argv — local create() matrix > mastracode-resume · persona ·
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3329,6 +3465,7 @@ exports[`golden argv — local create() matrix > mastracode-resume · persona+pr
   ],
   "command": "mastracode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3342,6 +3479,7 @@ exports[`golden argv — local create() matrix > mastracode-resume · persona+pr
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3354,6 +3492,7 @@ exports[`golden argv — local create() matrix > mastracode-resume · plain · i
   ],
   "command": "mastracode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3367,6 +3506,7 @@ exports[`golden argv — local create() matrix > mastracode-resume · plain · s
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3379,6 +3519,7 @@ exports[`golden argv — local create() matrix > mastracode-resume · projectSet
   ],
   "command": "mastracode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3392,6 +3533,7 @@ exports[`golden argv — local create() matrix > mastracode-resume · projectSet
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3403,6 +3545,7 @@ exports[`golden argv — local create() matrix > mastracode-yolo · persona · i
   "command": "mastracode",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3416,6 +3559,7 @@ exports[`golden argv — local create() matrix > mastracode-yolo · persona · s
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3427,6 +3571,7 @@ exports[`golden argv — local create() matrix > mastracode-yolo · persona+proj
   "command": "mastracode",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3440,6 +3585,7 @@ exports[`golden argv — local create() matrix > mastracode-yolo · persona+proj
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3451,6 +3597,7 @@ exports[`golden argv — local create() matrix > mastracode-yolo · plain · int
   "command": "mastracode",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3464,6 +3611,7 @@ exports[`golden argv — local create() matrix > mastracode-yolo · plain · sch
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3475,6 +3623,7 @@ exports[`golden argv — local create() matrix > mastracode-yolo · projectSetti
   "command": "mastracode",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3488,6 +3637,7 @@ exports[`golden argv — local create() matrix > mastracode-yolo · projectSetti
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "MASTRACODE_YOLO": "1",
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3498,6 +3648,7 @@ exports[`golden argv — local create() matrix > opencode · persona · interact
   "args": [],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3511,6 +3662,7 @@ exports[`golden argv — local create() matrix > opencode · persona · schedule
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3521,6 +3673,7 @@ exports[`golden argv — local create() matrix > opencode · persona+projectSett
   "args": [],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3534,6 +3687,7 @@ exports[`golden argv — local create() matrix > opencode · persona+projectSett
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3544,6 +3698,7 @@ exports[`golden argv — local create() matrix > opencode · plain · interactiv
   "args": [],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3557,6 +3712,7 @@ exports[`golden argv — local create() matrix > opencode · plain · scheduled 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3567,6 +3723,7 @@ exports[`golden argv — local create() matrix > opencode · projectSettings · 
   "args": [],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3580,6 +3737,7 @@ exports[`golden argv — local create() matrix > opencode · projectSettings · 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3592,6 +3750,7 @@ exports[`golden argv — local create() matrix > opencode-resume · persona · i
   ],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3608,6 +3767,7 @@ exports[`golden argv — local create() matrix > opencode-resume · persona · s
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3620,6 +3780,7 @@ exports[`golden argv — local create() matrix > opencode-resume · persona+proj
   ],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3636,6 +3797,7 @@ exports[`golden argv — local create() matrix > opencode-resume · persona+proj
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3648,6 +3810,7 @@ exports[`golden argv — local create() matrix > opencode-resume · plain · int
   ],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3664,6 +3827,7 @@ exports[`golden argv — local create() matrix > opencode-resume · plain · sch
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3676,6 +3840,7 @@ exports[`golden argv — local create() matrix > opencode-resume · projectSetti
   ],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3692,6 +3857,7 @@ exports[`golden argv — local create() matrix > opencode-resume · projectSetti
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3704,6 +3870,7 @@ exports[`golden argv — local create() matrix > opencode-yolo · persona · int
   ],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3717,6 +3884,7 @@ exports[`golden argv — local create() matrix > opencode-yolo · persona · sch
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3729,6 +3897,7 @@ exports[`golden argv — local create() matrix > opencode-yolo · persona+projec
   ],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3742,6 +3911,7 @@ exports[`golden argv — local create() matrix > opencode-yolo · persona+projec
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3754,6 +3924,7 @@ exports[`golden argv — local create() matrix > opencode-yolo · plain · inter
   ],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3767,6 +3938,7 @@ exports[`golden argv — local create() matrix > opencode-yolo · plain · sched
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3779,6 +3951,7 @@ exports[`golden argv — local create() matrix > opencode-yolo · projectSetting
   ],
   "command": "opencode",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3792,6 +3965,7 @@ exports[`golden argv — local create() matrix > opencode-yolo · projectSetting
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3805,6 +3979,7 @@ exports[`golden argv — local create() matrix > pi · persona · interactive 1`
   ],
   "command": "pi",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3819,6 +3994,7 @@ exports[`golden argv — local create() matrix > pi · persona · scheduled 1`] 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3832,6 +4008,7 @@ exports[`golden argv — local create() matrix > pi · persona+projectSettings �
   ],
   "command": "pi",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3846,6 +4023,7 @@ exports[`golden argv — local create() matrix > pi · persona+projectSettings �
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3859,6 +4037,7 @@ exports[`golden argv — local create() matrix > pi · plain · interactive 1`] 
   ],
   "command": "pi",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3873,6 +4052,7 @@ exports[`golden argv — local create() matrix > pi · plain · scheduled 1`] = 
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3886,6 +4066,7 @@ exports[`golden argv — local create() matrix > pi · projectSettings · intera
   ],
   "command": "pi",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3900,6 +4081,7 @@ exports[`golden argv — local create() matrix > pi · projectSettings · schedu
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3912,6 +4094,7 @@ exports[`golden argv — local create() matrix > pi-resume · persona · interac
   ],
   "command": "pi",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3925,6 +4108,7 @@ exports[`golden argv — local create() matrix > pi-resume · persona · schedul
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3937,6 +4121,7 @@ exports[`golden argv — local create() matrix > pi-resume · persona+projectSet
   ],
   "command": "pi",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3950,6 +4135,7 @@ exports[`golden argv — local create() matrix > pi-resume · persona+projectSet
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3962,6 +4148,7 @@ exports[`golden argv — local create() matrix > pi-resume · plain · interacti
   ],
   "command": "pi",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3975,6 +4162,7 @@ exports[`golden argv — local create() matrix > pi-resume · plain · scheduled
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -3987,6 +4175,7 @@ exports[`golden argv — local create() matrix > pi-resume · projectSettings ·
   ],
   "command": "pi",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4000,6 +4189,7 @@ exports[`golden argv — local create() matrix > pi-resume · projectSettings ·
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4010,6 +4200,7 @@ exports[`golden argv — local create() matrix > shell · persona · interactive
   "args": [],
   "command": "/bin/zsh",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4022,6 +4213,7 @@ exports[`golden argv — local create() matrix > shell · persona · scheduled 1
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4032,6 +4224,7 @@ exports[`golden argv — local create() matrix > shell · persona+projectSetting
   "args": [],
   "command": "/bin/zsh",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4044,6 +4237,7 @@ exports[`golden argv — local create() matrix > shell · persona+projectSetting
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4054,6 +4248,7 @@ exports[`golden argv — local create() matrix > shell · plain · interactive 1
   "args": [],
   "command": "/bin/zsh",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4066,6 +4261,7 @@ exports[`golden argv — local create() matrix > shell · plain · scheduled 1`]
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4076,6 +4272,7 @@ exports[`golden argv — local create() matrix > shell · projectSettings · int
   "args": [],
   "command": "/bin/zsh",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -4088,6 +4285,7 @@ exports[`golden argv — local create() matrix > shell · projectSettings · sch
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "ZCC_PROJECT_ID": "proj1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }

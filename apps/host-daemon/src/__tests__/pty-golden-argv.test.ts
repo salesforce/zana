@@ -152,6 +152,8 @@ const SESSION_ENV_KEYS = [
   'ZCC_OVERSEER_URL',
   'ZCC_CONTENTSCREEN_URL',
   'ZCC_SESSION_ID',
+  'ZCC_PROJECT_ID',
+  'ZCC_THREAD_ID',
   'CLAUDE_CODE_ENABLE_AUTO_MODE',
   'MASTRACODE_YOLO'
   // NODE_OPTIONS deliberately excluded: it inherits the parent (vitest's own
