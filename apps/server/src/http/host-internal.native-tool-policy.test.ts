@@ -39,7 +39,7 @@ describe('authenticated native tool policy route', () => {
     const test = call(); expect(await test.run()).toBe(true);
     expect(test.out).toEqual({ status: 200, body: { action: 'allow' } });
     expect(decideToolPolicy).toHaveBeenCalledWith({ invocationId: expect.stringMatching(/^[a-f0-9]{64}$/),
-      threadId: thread.id, projectId: 'project', providerId: 'provider-exact', toolName: 'Write', input: { path: 'file', token: '[REDACTED]' } });
+      threadId: thread.id, surface: 'modern', projectId: 'project', providerId: 'provider-exact', toolName: 'Write', input: { path: 'file', token: '[REDACTED]' } });
   });
   it.each(['hostId', 'providerId', 'providerThreadId', 'archivedAt', 'status'] as const)('denies mismatched live record %s before plugin dispatch', async field => {
     vi.mocked(getConversationThread).mockReturnValue({ ...thread, [field]: field === 'archivedAt' ? 1 : field === 'status' ? 'stopping' : 'wrong' } as never);

@@ -6382,6 +6382,49 @@ describe("canonical model context-window hint", () => {
     permissionEscalation: null,
   };
 
+  it("keeps the session's ZCC identity when a later turn rebuilds the environment", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-identity-keep";
+      bridge.sendRequest(1, "thread/start", {
+        threadId,
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: {
+          ...canonicalOptions,
+          envVars: { ZCC_THREAD_ID: threadId, ZCC_PROJECT_ID: "proj-1", PLUGIN_ACCESS_TOKEN: "first" },
+        },
+      });
+      const providerThreadId = getProviderThreadIdFromResult(await bridge.waitForResponse(1));
+
+      bridge.sendRequest(2, "turn/start", {
+        threadId,
+        providerThreadId,
+        clientRequestId: "creq_23456789ac",
+        input: [{ type: "text", text: "continue", mentions: [] }],
+        options: {
+          ...canonicalOptions,
+          envVars: { ZCC_THREAD_ID: "other-thread", ZCC_PROJECT_ID: "other-project", PLUGIN_ACCESS_TOKEN: "second" },
+        },
+      });
+      await bridge.flushWork();
+
+      expect(getLatestQueryOptions()).toMatchObject({
+        env: { ZCC_THREAD_ID: threadId, ZCC_PROJECT_ID: "proj-1", PLUGIN_ACCESS_TOKEN: "second" },
+      });
+    } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
+
   it("rebuilds with the same provider session when the turn environment changes", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
     const queries: ControlledClaudeQuery[] = [];

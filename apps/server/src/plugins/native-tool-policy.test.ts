@@ -4,7 +4,7 @@ import { decideMainOwnedToolPolicy, toolPolicyProviderId } from './native-tool-p
 
 const call = {
   invocationId: 'a'.repeat(64),
-  threadId: 'session-1',
+  sessionId: 'session-1',
   projectId: 'project-1',
   profile: 'codex',
   toolName: 'Bash',
@@ -35,11 +35,30 @@ describe('decideMainOwnedToolPolicy', () => {
     expect(service.decideToolPolicy).toHaveBeenCalledWith({
       invocationId: call.invocationId,
       threadId: 'session-1',
+      sessionId: 'session-1',
+      surface: 'pty',
       projectId: 'project-1',
       providerId: 'codex',
       toolName: 'Bash',
       input: { command: 'deploy', nested: { password: '[REDACTED]', apiKey: '[REDACTED]', keep: 'yes' }, blob: '[REDACTED]' }
     });
+  });
+
+  it('reports the bound thread, not the PTY id, when main has a thread binding', async () => {
+    const service = plugins({ action: 'allow' });
+    await decideMainOwnedToolPolicy(service, { ...call, threadId: 'thread-9' });
+    expect(service.decideToolPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: 'thread-9', sessionId: 'session-1', surface: 'pty' })
+    );
+  });
+
+  it('labels a thread-only request as a Modern call without a session id', async () => {
+    const service = plugins({ action: 'allow' });
+    const { sessionId: _pty, ...thread } = call;
+    await decideMainOwnedToolPolicy(service, { ...thread, threadId: 'thread-3' });
+    const sent = service.decideToolPolicy.mock.calls[0]![0];
+    expect(sent).toMatchObject({ threadId: 'thread-3', surface: 'modern' });
+    expect(sent).not.toHaveProperty('sessionId');
   });
 
   it.each([

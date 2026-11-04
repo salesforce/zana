@@ -609,6 +609,19 @@ function configFor(options: CodexSessionOptions) {
   });
 }
 
+describe("buildCodexConfig identity", () => {
+  it("keeps the session thread id when the caller's variables name another", () => {
+    const config = configFor({
+      ...FULL_OPTIONS,
+      envVars: { ZCC_THREAD_ID: "other", ZCC_PROJECT_ID: "proj-1" },
+    });
+    expect(config).toMatchObject({
+      "shell_environment_policy.set.ZCC_THREAD_ID": "bb-thread-1",
+      "shell_environment_policy.set.ZCC_PROJECT_ID": "proj-1",
+    });
+  });
+});
+
 describe("buildCodexConfig", () => {
   it("disables provider user-input requests without overriding web search", () => {
     const config = configFor(FULL_OPTIONS);

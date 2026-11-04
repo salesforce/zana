@@ -14,6 +14,8 @@ export interface NativeToolPolicySession {
   readonly projectId: string;
   readonly profile: string;
   readonly status: string;
+  /** The thread main bound this PTY to, when it has one. */
+  readonly threadId?: string;
 }
 
 export interface NativeToolPolicyHookDeps {
@@ -87,7 +89,8 @@ export function createNativeToolPolicyHook(deps: NativeToolPolicyHookDeps) {
     try {
       reply = await decide({
         invocationId: call.invocationId,
-        threadId: session.id,
+        sessionId: session.id,
+        ...(session.threadId ? { threadId: session.threadId } : {}),
         projectId: session.projectId,
         profile: session.profile,
         toolName: call.toolName,

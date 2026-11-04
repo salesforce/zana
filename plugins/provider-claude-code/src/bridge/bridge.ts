@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { resolveSessionIdentityEnv } from "../identity-env.js";
 import {
   type PendingInteractionGrantedPermissionProfile,
   type PendingInteractionPayload,
@@ -2093,10 +2094,13 @@ function trackSessionUsage(
 function buildSessionEnv(
   envOverrides: Record<string, string>,
   configDir: string | null = null,
+  identityEnv: Readonly<Record<string, string>> = {},
 ): NodeJS.ProcessEnv {
   const sessionEnv: NodeJS.ProcessEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
     ...envOverrides,
+    // Identity is applied after every override so a turn cannot replace it.
+    ...identityEnv,
     CLAUDE_CODE_ENTRYPOINT: "cli",
     // Automated sessions always use their own per-run config dir; a caller
     // supplied CLAUDE_CONFIG_DIR must not re-import the user's cascade.
@@ -2152,6 +2156,7 @@ function applyTurnEnvironment(
   attachment.sessionOptions.env = buildSessionEnv(
     envOverrides,
     attachment.isolation.configDir,
+    resolveSessionIdentityEnv(attachment.sessionOptions.env, envOverrides),
   );
   if (attachment.residentSession) {
     attachment.residentSession.restartBeforeNextTurn = {

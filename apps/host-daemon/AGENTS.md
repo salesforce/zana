@@ -16,6 +16,8 @@ Local-spawn argv/env assembly lives in `PtyManager.create()` and dispatches thro
 
 5. **Session identity env is main-authorized.** `ZCC_PROJECT_ID` (and `ZCC_THREAD_ID` only when main supplies a binding) are set from the spawn context in `create()`/`createRemote()`; ambient values inherited from a parent session are cleared first. Both ride the tmux identity env file (`SESSION_IDENTITY_ENV_KEYS`) so a pane never inherits the tmux server snapshot. The env is a hint: `GET /api/v1/sessions/self` authenticates by session credential.
 
+   Known limit: main-owned local PTYs have no thread binding and are not product-server terminal records, so `ZCC_THREAD_ID` is unset for them and `/sessions/self` answers 404 (the CLI falls back to the spawn-time env). Native tool policy requests from such a PTY carry `sessionId` (the PTY id) and `surface: 'pty'`; the plugin-facing `threadId` then equals the session id and is not a thread record. A PTY main does bind to a thread sends that `threadId`.
+
 **Why:** Dispatching through providers eliminated duplicate identity logic; precedence order is the observable contract; pure helpers enable remote/local sharing.
 
 **When changing:**

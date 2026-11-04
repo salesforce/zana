@@ -166,9 +166,12 @@ export function nativeToolPolicyInputFits(input: Record<string, unknown>): boole
  * identity from its live session record and derives `invocationId`; the
  * server runtime only asks the plugin policy.
  */
-export const NativeToolPolicyRequestSchema = z.object({
+export const NativeToolPolicyRequestFieldsSchema = z.object({
   invocationId: z.string().regex(/^[a-f0-9]{64}$/),
-  threadId: SessionIdSchema.max(256),
+  /** The PTY session id main owns; absent for a Modern thread, which has no PTY. */
+  sessionId: SessionIdSchema.max(256).optional(),
+  /** The thread record the call belongs to; absent for a PTY main has no thread binding for. */
+  threadId: SessionIdSchema.max(256).optional(),
   projectId: ProjectIdSchema.max(256),
   profile: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
   toolName: z.string().min(1).max(512).refine(
@@ -177,6 +180,11 @@ export const NativeToolPolicyRequestSchema = z.object({
   ),
   input: z.record(z.string(), z.unknown()).refine(nativeToolPolicyInputFits, 'tool input exceeds the native tool policy limit')
 }).strict();
+
+export const NativeToolPolicyRequestSchema = NativeToolPolicyRequestFieldsSchema.refine(
+  (request) => request.sessionId !== undefined || request.threadId !== undefined,
+  'a native tool policy request names a session or a thread'
+);
 
 /**
  * The plugin policy's answer for one native tool call. A shape check only:

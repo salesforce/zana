@@ -35,7 +35,11 @@ export async function decideMainOwnedToolPolicy(
   if (!plugins) return { action: 'deny', reason: 'plugin service is unavailable' };
   const decision = await plugins.decideToolPolicy({
     invocationId: request.invocationId,
-    threadId: request.threadId,
+    // A PTY with no bound thread keeps its session id here, as before, so existing
+    // handlers still key on something stable; `surface: "pty"` says it is not a thread.
+    threadId: request.threadId ?? request.sessionId!,
+    ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+    surface: request.sessionId ? 'pty' : 'modern',
     projectId: request.projectId,
     providerId: resolvedProviderId ?? toolPolicyProviderId(request.profile),
     toolName: request.toolName,

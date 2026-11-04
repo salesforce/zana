@@ -283,7 +283,16 @@ export interface PluginHooks {
 /** Host-owned native-tool invocation identity exposed to policy handlers. Input is redacted (secrets stripped) before it ever reaches a plugin. */
 export interface PluginToolPolicyRequest {
   invocationId: string;
+  /**
+   * The thread the call belongs to. For `surface: 'pty'` with no thread binding
+   * this is the PTY session id, which is not a thread record: `getThread` finds
+   * nothing for it. Use `sessionId` and `surface` to tell the cases apart.
+   */
   threadId: string;
+  /** The terminal session id for a `'pty'` call; absent on `'modern'`. */
+  sessionId?: string;
+  /** Which kind of agent session made the call. */
+  surface?: 'pty' | 'modern';
   projectId: string;
   providerId: string;
   toolName: string;

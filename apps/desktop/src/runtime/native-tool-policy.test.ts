@@ -185,7 +185,7 @@ describe('createNativeToolPolicyHook', () => {
     await expect(hook('project-1', 'session-1', forged)).resolves.toEqual({ decision: 'allow', reason: 'allowed' });
     expect(decide).toHaveBeenCalledWith({
       invocationId: sha(['session-1', null, 'toolu_01ABC', 'Bash', { command: 'pwd' }]),
-      threadId: 'session-1',
+      sessionId: 'session-1',
       projectId: 'project-1',
       profile: 'claude',
       toolName: 'Bash',
@@ -230,7 +230,7 @@ describe('createNativeToolPolicyHook', () => {
 
 describe('supervisorToolPolicyDecider', () => {
   const request = {
-    invocationId: 'a'.repeat(64), threadId: 'session-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash', input: { command: 'pwd' }
+    invocationId: 'a'.repeat(64), sessionId: 'session-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash', input: { command: 'pwd' }
   };
 
   it('has no decider while no supervisor runs, so the hook fails closed', () => {

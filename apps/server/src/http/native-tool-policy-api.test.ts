@@ -10,7 +10,7 @@ import { startProductServer, type ProductServer } from './product-server.js';
 const secret = 'c'.repeat(64);
 const request = {
   invocationId: 'b'.repeat(64),
-  threadId: 'session-1',
+  sessionId: 'session-1',
   projectId: 'project-1',
   profile: 'claude-resume',
   toolName: 'Bash',
@@ -52,7 +52,7 @@ describe('POST /api/v1/native-tool-policy (main-owned PTYs without a runtime sup
       status: 200, json: { action: 'deny', reason: 'denied by plugin tool policy' }
     });
     expect(decideToolPolicy).toHaveBeenCalledWith({
-      invocationId: request.invocationId, threadId: 'session-1', projectId: 'project-1',
+      invocationId: request.invocationId, threadId: 'session-1', sessionId: 'session-1', surface: 'pty', projectId: 'project-1',
       providerId: 'claude-code', toolName: 'Bash', input: { command: 'deploy', token: '[REDACTED]' }
     });
   });

@@ -6,6 +6,7 @@ import {
   nativeToolPolicyInputFits,
   NATIVE_TOOL_POLICY_REASON_MAX_CHARS,
   NativeToolPolicyDecisionSchema,
+  NativeToolPolicyRequestSchema,
   PRODUCT_EVENT_ARGS_MAX_CHARS,
   PRODUCT_EVENT_ARGS_MAX_COUNT,
   MenubarThreadsChangedMessageSchema,
@@ -363,5 +364,19 @@ describe('thread-queue-turn runtime contract', () => {
     expect(ThreadQueueTurnResultSchema.safeParse({ ok: false, reason: 'not-live' }).success).toBe(true);
     expect(ThreadQueueTurnResultSchema.safeParse({ ok: 'yes' }).success).toBe(false);
     expect(ThreadQueueTurnResultSchema.safeParse({ ok: true, extra: 1 }).success).toBe(false);
+  });
+});
+
+describe('NativeToolPolicyRequestSchema identity', () => {
+  const base = { invocationId: 'a'.repeat(64), projectId: 'p', profile: 'codex', toolName: 'Bash', input: {} };
+  it.each([
+    ['session only', { sessionId: 's' }],
+    ['thread only', { threadId: 't' }],
+    ['both', { sessionId: 's', threadId: 't' }]
+  ])('accepts %s', (_label, identity) => {
+    expect(NativeToolPolicyRequestSchema.safeParse({ ...base, ...identity }).success).toBe(true);
+  });
+  it('refuses a request that names neither a session nor a thread', () => {
+    expect(NativeToolPolicyRequestSchema.safeParse(base).success).toBe(false);
   });
 });

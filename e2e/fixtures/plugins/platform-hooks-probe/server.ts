@@ -21,6 +21,8 @@ type ToolPolicySelection = 'allow' | 'deny';
 type ToolPolicyEventRow = {
   invocationId: string;
   threadId: string;
+  sessionId?: string;
+  surface?: string;
   projectId: string;
   providerId: string;
   toolName: string;
@@ -255,6 +257,8 @@ export default function plugin(zcc: ZccPluginApi) {
       {
         invocationId: request.invocationId,
         threadId: request.threadId,
+        ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+        ...(request.surface ? { surface: request.surface } : {}),
         projectId: request.projectId,
         providerId: request.providerId,
         toolName: request.toolName,

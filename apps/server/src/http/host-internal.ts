@@ -1,7 +1,7 @@
 import { remoteInteractionSurface } from '../services/threads/interaction-surface.js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
+import { NativeToolPolicyRequestFieldsSchema } from '@zana-ai/zcc-contracts/runtime';
 import { decideMainOwnedToolPolicy } from '../plugins/native-tool-policy.js';
 import { CliCallbackRequestSchema, CLI_CALLBACK_MAX_ACTIVE, CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL, CLI_CALLBACK_MAX_BODY_BYTES, isCliNativeToolPath } from '@zana-ai/zcc-contracts/cli-callbacks';
 import { CliCallbackError } from '../services/launch/cli-callback-authority.js';
@@ -321,7 +321,8 @@ function authenticateHostCall(
   return { hostId };
 }
 
-const hostNativeToolPolicySchema = NativeToolPolicyRequestSchema.pick({ threadId: true, toolName: true, input: true }).extend({
+const hostNativeToolPolicySchema = NativeToolPolicyRequestFieldsSchema.pick({ threadId: true, toolName: true, input: true }).extend({
+  threadId: z.string().min(1).max(256),
   providerThreadId: z.string().min(1).max(256),
   callId: z.string().min(1).max(512),
   sessionId: z.string().min(1).max(256),
@@ -514,6 +515,7 @@ async function handleHostToolCall(
     const policy = await ctx.plugins.decideToolPolicy({
       invocationId: randomUUID(),
       threadId: thread.id,
+      surface: 'modern',
       projectId: thread.projectId,
       providerId: thread.providerId,
       toolName: parsed.data.tool,
