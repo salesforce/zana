@@ -1,0 +1,44 @@
+{
+  "id": "squad-guide-6",
+  "title": "Attach files and run in the right place",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "Attach files, pick where it runs",
+    "subline": "Control what a Squad sees and where it works",
+    "chips": [
+      "Attach sources",
+      "Worktree isolation",
+      "When a run finishes",
+      "Kept worktree"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Attach files and run in the right place."
+      },
+      {
+        "at": 3.4,
+        "text": "Decide what a Squad sees."
+      },
+      {
+        "at": 5.8,
+        "text": "And where it works."
+      }
+    ],
+    "duration": 11,
+    "revealAt": 8.0
+  },
+  "closer": {
+    "headline": "Schedule a Squad",
+    "subline": "Run Squads without being there",
+    "chips": [
+      "Next: Schedule a Squad"
+    ],
+    "line": "Next: schedule a Squad.",
+    "duration": 5
+  }
+}

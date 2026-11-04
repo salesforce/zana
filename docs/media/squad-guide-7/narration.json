@@ -1,0 +1,37 @@
+[
+  {
+    "id": "clock",
+    "caption": "Run a Squad on a schedule",
+    "line": "A schedule starts a Squad on a clock, with no one at the keyboard. Open the Scheduler and press New schedule."
+  },
+  {
+    "id": "runas",
+    "caption": "Run as Squad",
+    "line": "Set Run as to Squad. Then choose the Squad, the Project, and Squad planning."
+  },
+  {
+    "id": "prompt",
+    "caption": "The prompt is the goal and the plan",
+    "line": "The prompt text is the Squad's goal. With Plan provided in goal, put the plan there. Schedules skip Launch approval."
+  },
+  {
+    "id": "cadence",
+    "caption": "Cadence: interval or cron",
+    "line": "Choose the cadence. Use an interval, such as every twenty-four hours, or a cron expression."
+  },
+  {
+    "id": "inbox",
+    "caption": "Inbox notifications",
+    "line": "Then choose how much each run tells your Inbox: Silent, Quiet or Notify."
+  },
+  {
+    "id": "runnow",
+    "caption": "Run now",
+    "line": "Press Run now to try it once. The run appears on the Agents board like any other Squad."
+  },
+  {
+    "id": "close",
+    "caption": "A schedule repeats on a clock",
+    "line": "A schedule repeats the same job on a clock."
+  }
+]

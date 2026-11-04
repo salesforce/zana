@@ -1,0 +1,17 @@
+# Squad guide video 9: transcript
+
+A Persona is one reusable agent profile. Open Settings, Agents and Automation, Personas. Start from a built-in: right-click it and choose Duplicate. Or press New persona to start from scratch.
+
+Open your copy. Give it a name and a one-line description. Leave the harness neutral, so it follows whichever tool you launch with. Set a model level, then add standing instructions in the system prompt. Save it.
+
+A Squad is a group of Personas. The easiest start is a copy of a built-in. Right-click a Squad in Settings, Squads, and choose Duplicate.
+
+Open your copy. Each slot is one Persona and a tab count. Add a slot and choose your new Persona. The crown marks the Orchestrator, which every run needs.
+
+Below the slots are the launch options. Default planning sets the planning mode. Launch approval can require your review before an agent starts the Squad. Worktree isolation and When a run finishes decide what happens to the checkout. Then save.
+
+To have the composer preselect your Squad, right-click it and choose Set as default.
+
+Personas are the parts. A Squad is the group you launch.
+
+That is the Squad guide. Pick a Squad and run it.

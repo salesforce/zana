@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginService } from './plugin-service.js';
 import { createPluginStore, pluginStorePath } from './plugin-store.js';
 import {
@@ -135,6 +135,24 @@ describe('plugin tool policy lifecycle', () => {
       action: 'deny',
       reason: expect.stringContaining(TOOL_POLICY_NOT_READY_REASON)
     });
+  });
+
+  it('does not block native tools when an undeclared plugin fails to activate', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'broken-undeclared'),
+      'broken-undeclared',
+      `export default function plugin() { throw new Error('Cannot find module boom'); }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    services.push(service);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const row = await service.install(pluginDir);
+    expect(row).toMatchObject({ status: 'degraded', toolPolicy: 'unknown' });
+    await expect(service.decideToolPolicy(request())).resolves.toMatchObject({ action: 'allow' });
+    await expect(service.toolPolicyReadiness()).resolves.toEqual({ ready: true, required: [] });
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('broken-undeclared'))).toHaveLength(1);
+    warn.mockRestore();
   });
 
   it('releases obligation after remove', async () => {

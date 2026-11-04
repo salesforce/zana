@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   captureToolPolicyStamp,
+  isUnavailableNonEnforcer,
   classifyDeclaredToolPolicy,
   createToolPolicyInventoryState,
   persistKnownTrueMonotonically,
@@ -147,5 +148,45 @@ describe('tool policy stamps', () => {
     const changed = captureToolPolicyStamp(snapshot, new Map([['need-true', 'gen-2']]));
     expect(sameToolPolicyStamp(first, second)).toBe(true);
     expect(sameToolPolicyStamp(first, changed)).toBe(false);
+  });
+});
+
+describe('terminal activation failure', () => {
+  const snap = (entries: ToolPolicyInventoryEntry[], revision = 1) => ({ revision, source: 'loaded' as const, entries });
+
+  it('drops a degraded unknown plugin from the required set', () => {
+    expect(requiredPolicyPluginIds(snap([entry({ pluginId: 'broken', status: 'degraded' })]))).toEqual([]);
+  });
+
+  it('keeps a degraded true plugin required (fail closed)', () => {
+    expect(requiredPolicyPluginIds(snap([entry({ pluginId: 'enforcer', toolPolicy: 'true', status: 'degraded' })]))).toEqual(['enforcer']);
+  });
+
+  it('keeps a starting or running unknown plugin required', () => {
+    expect(requiredPolicyPluginIds(snap([
+      entry({ pluginId: 'starting', status: 'starting' }),
+      entry({ pluginId: 'running', status: 'running' }),
+      entry({ pluginId: 'no-status' })
+    ]))).toEqual(['starting', 'running', 'no-status']);
+  });
+
+  it('classifies only degraded non-true/non-false as unavailable', () => {
+    expect(isUnavailableNonEnforcer({ toolPolicy: 'unknown', status: 'degraded' })).toBe(true);
+    expect(isUnavailableNonEnforcer({ toolPolicy: 'true', status: 'degraded' })).toBe(false);
+    expect(isUnavailableNonEnforcer({ toolPolicy: 'unknown', status: 'starting' })).toBe(false);
+  });
+
+  it('changes the stamp when a plugin status changes', () => {
+    const ids = new Map([['p', null]]);
+    const starting = captureToolPolicyStamp(snap([entry({ pluginId: 'p', status: 'starting' })]), ids);
+    const running = captureToolPolicyStamp(snap([entry({ pluginId: 'p', status: 'running' })]), ids);
+    const degraded = captureToolPolicyStamp(snap([entry({ pluginId: 'p', status: 'degraded' })], 2), ids);
+    expect(sameToolPolicyStamp(starting, running)).toBe(false);
+    expect(degraded.required).toEqual([]);
+    expect(sameToolPolicyStamp(starting, degraded)).toBe(false);
+  });
+
+  it('never downgrades a stored true on failed activation', () => {
+    expect(persistKnownTrueMonotonically({ existing: 'true', next: 'unknown', enabled: true })).toBe('true');
   });
 });

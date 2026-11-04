@@ -1,0 +1,21 @@
+Start a Squad from a conversation.
+
+Ask an agent to prepare it.
+
+Review it, or run it now.
+
+Any agent can start a Squad for you. Ask it to do the work with a Squad, and point it at your plan.
+
+The agent checks the plan, then prepares a launch. It does not start anything.
+
+The prepared launch arrives as a Squad launch ready card in your Inbox. It names the Squad, the planning mode and the files. Nothing starts until you press Launch.
+
+Review Squad launch opens the composer, already filled in. Check it, then press Launch.
+
+The Squad runs, and its details show the conversation it started from. When it needs an answer, a Squad report goes back to that conversation.
+
+To skip the Inbox, ask the agent to run it now. The Squad starts straight away, with no card to approve.
+
+Run now suits a plan you trust. Otherwise, the Inbox card keeps you in control.
+
+Next: attach files and run in the right place.

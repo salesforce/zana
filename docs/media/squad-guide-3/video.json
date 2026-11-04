@@ -1,0 +1,43 @@
+{
+  "id": "squad-guide-3",
+  "title": "Watch a Squad run",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "Watch a Squad run",
+    "subline": "Find it, answer it, read the result",
+    "chips": [
+      "Agents board",
+      "Squad details",
+      "Inbox"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Watch a Squad run."
+      },
+      {
+        "at": 3.0,
+        "text": "Find it. Answer it."
+      },
+      {
+        "at": 5.8,
+        "text": "Read the result."
+      }
+    ],
+    "duration": 11,
+    "revealAt": 8.0
+  },
+  "closer": {
+    "headline": "Pick the right Squad",
+    "subline": "Match the Squad to the job",
+    "chips": [
+      "Five built-in Squads"
+    ],
+    "line": "Next: pick the right Squad.",
+    "duration": 5
+  }
+}

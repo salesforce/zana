@@ -1,0 +1,43 @@
+1
+00:00:00,600 --> 00:00:01,838
+Build your own Squad.
+
+2
+00:00:03,000 --> 00:00:04,249
+Start from a built-in.
+
+3
+00:00:05,800 --> 00:00:07,123
+Change what you need.
+
+4
+00:00:10,802 --> 00:00:25,271
+A Persona is one reusable agent profile. Open Settings, Agents and Automation, Personas. Start from a built-in: right-click it and choose Duplicate. Or press New persona to start from scratch.
+
+5
+00:00:25,579 --> 00:00:39,666
+Open your copy. Give it a name and a one-line description. Leave the harness neutral, so it follows whichever tool you launch with. Set a model level, then add standing instructions in the system prompt. Save it.
+
+6
+00:00:40,544 --> 00:00:49,673
+A Squad is a group of Personas. The easiest start is a copy of a built-in. Right-click a Squad in Settings, Squads, and choose Duplicate.
+
+7
+00:00:50,261 --> 00:01:01,278
+Open your copy. Each slot is one Persona and a tab count. Add a slot and choose your new Persona. The crown marks the Orchestrator, which every run needs.
+
+8
+00:01:01,586 --> 00:01:18,505
+Below the slots are the launch options. Default planning sets the planning mode. Launch approval can require your review before an agent starts the Squad. Worktree isolation and When a run finishes decide what happens to the checkout. Then save.
+
+9
+00:01:19,357 --> 00:01:24,190
+To have the composer preselect your Squad, right-click it and choose Set as default.
+
+10
+00:01:24,493 --> 00:01:28,920
+Personas are the parts. A Squad is the group you launch.
+
+11
+00:01:29,921 --> 00:01:33,271
+That is the Squad guide. Pick a Squad and run it.

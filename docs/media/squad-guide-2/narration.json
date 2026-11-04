@@ -1,0 +1,47 @@
+[
+  {
+    "id": "setup",
+    "caption": "You need a Project and one signed-in agent tool",
+    "line": "Before you start, you need a Project open in Zana and one signed-in agent tool. Claude is the recommended choice."
+  },
+  {
+    "id": "launcher",
+    "caption": "New agent → Launch mode → Squad",
+    "line": "Click New agent, and under Launch mode, choose Squad."
+  },
+  {
+    "id": "picker",
+    "caption": "Squad picker: Research Squad",
+    "line": "Pick Research Squad. It has two Low-tier investigators, a good fit for comparing options."
+  },
+  {
+    "id": "planning",
+    "caption": "Squad planning → Infer plan from goal",
+    "line": "Leave Squad planning on Infer plan from goal. You describe what you want, and the Orchestrator writes the plan."
+  },
+  {
+    "id": "paste",
+    "caption": "Describe the goal in plain words",
+    "line": "Describe the goal in plain words: what to look at, and what the report should contain. Be specific, and name the files or areas that matter."
+  },
+  {
+    "id": "limit",
+    "caption": "Goal limit: 2,048 characters",
+    "line": "Goals hold up to 2,048 characters. Over that, Launch is disabled, so attach a plan or source instead."
+  },
+  {
+    "id": "launch",
+    "caption": "Check the Project → Launch squad",
+    "line": "Check the Project, add a Title if you like, then press Launch squad."
+  },
+  {
+    "id": "check",
+    "caption": "Zana checks requirements first",
+    "line": "Zana checks the Squad's requirements first. If something is missing, it says what, and no workers start."
+  },
+  {
+    "id": "close",
+    "caption": "A run takes as long as the plan needs",
+    "line": "A run takes as long as the plan needs."
+  }
+]
