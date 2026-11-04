@@ -62,6 +62,7 @@ import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
 import { InstalledPluginCollection } from './InstalledPluginCollection.js';
 import { PluginPacksCollection } from './PluginPacksCollection.js';
 import { summarizePluginHealthDetail } from './plugin-health.js';
+import { PluginLoadFailure } from '../../plugins/PluginLoadFailure.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
@@ -657,7 +658,8 @@ function ExtensionDetail({ row }: { row: HubRow }) {
     <>
       <AboutCard row={row} installation={detailTab === 'installation'} onConfigure={configure} onManage={() => setDetailTab('installation')} />
       {plugin?.description ? <PluginOverviewLead description={plugin.description} /> : null}
-      {module.loadError ? <p className="modal-error" role="alert">{module.loadError}</p> : null}
+      {module.loadError && plugin ? <PluginLoadFailure pluginId={module.id} name={module.title} detail={module.loadError} />
+        : module.loadError ? <p className="modal-error" role="alert">{module.loadError}</p> : null}
       <nav className="ext-plugin-detail-tabs" role="tablist" aria-label="Plugin detail sections" onKeyDown={(event) => {
         const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
         if (!direction && event.key !== 'Home' && event.key !== 'End') return;
