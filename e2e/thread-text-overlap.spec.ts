@@ -9,6 +9,11 @@ test('message content stays behind pinned prompts when scrolling between turns',
   // Electron's renderer zoom makes CDP's clip coordinates differ from DOM
   // coordinates. Capture the compositor with bounds converted to native DIPs.
   const capture = async (clip: { x: number; y: number; width: number; height: number }) => {
+    // capturePage can return the previous compositor frame under Xvfb.
+    // Let style/scroll changes paint before asking the native compositor.
+    await window.evaluate(() => new Promise<void>(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
     const nativeWindow = await app.electron.browserWindow(window);
     try {
       const encoded = await nativeWindow.evaluate(async (win, clip) => {
