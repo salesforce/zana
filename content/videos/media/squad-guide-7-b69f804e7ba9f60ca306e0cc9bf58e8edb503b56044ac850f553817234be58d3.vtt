@@ -1,0 +1,34 @@
+WEBVTT
+
+00:00:00.600 --> 00:00:01.907
+Schedule a Squad.
+
+00:00:03.000 --> 00:00:04.173
+Run it on a clock.
+
+00:00:05.800 --> 00:00:06.923
+Without being there.
+
+00:00:10.802 --> 00:00:18.237
+A schedule starts a Squad on a clock, with no one at the keyboard. Open the Scheduler and press New schedule.
+
+00:00:18.539 --> 00:00:23.886
+Set Run as to Squad. Then choose the Squad, the Project, and Squad planning.
+
+00:00:24.188 --> 00:00:31.964
+The prompt text is the Squad's goal. With Plan provided in goal, put the plan there. Schedules skip Launch approval.
+
+00:00:32.267 --> 00:00:38.360
+Choose the cadence. Use an interval, such as every twenty-four hours, or a cron expression.
+
+00:00:38.661 --> 00:00:44.196
+Then choose how much each run tells your Inbox: Silent, Quiet or Notify.
+
+00:00:44.498 --> 00:00:50.306
+Press Run now to try it once. The run appears on the Agents board like any other Squad.
+
+00:00:50.916 --> 00:00:53.728
+A schedule repeats the same job on a clock.
+
+00:00:54.728 --> 00:00:57.430
+Next: use a Squad to accomplish a Goal.
