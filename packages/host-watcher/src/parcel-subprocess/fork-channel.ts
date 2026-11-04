@@ -81,6 +81,7 @@ export function createForkChannel(): ChildChannel {
   return createChildChannel(
     fork(resolveChildEntry(), [], {
       stdio: ["ignore", "inherit", "inherit", "ipc"],
+      windowsHide: true,
     }),
   );
 }

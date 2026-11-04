@@ -3046,7 +3046,7 @@ export class PtyManager extends EventEmitter {
       'tmux', 'has-session', '-t', r.tmuxName
     ];
     return new Promise<RemoteLiveness>((resolve) => {
-      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (err) => {
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (err) => {
         if (!err) return resolve('alive'); // exit 0 → session exists
         // ssh's own failures (connect refused/timeout, auth) exit 255; a killed
         // (timed-out) probe has err.killed. Both are "can't tell" → transient.
@@ -3232,7 +3232,7 @@ export class PtyManager extends EventEmitter {
         (literal ? ' -l' : '') +
         ` ${shellQuote(keys)}`;
       const args = [...r.probeOpts, '-o', 'BatchMode=yes', r.target, remoteCmd];
-      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (err) => {
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (err) => {
         if (!err) then?.();
       });
     };
@@ -3268,7 +3268,7 @@ export class PtyManager extends EventEmitter {
       'tmux', 'kill-session', '-t', reattach.tmuxName
     ];
     return new Promise((resolve) => {
-      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (error) => {
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (error) => {
         if (!error) {
           const current = this.live.get(id);
           if (current) current.remoteTerminationInFlight = false;
@@ -3286,7 +3286,7 @@ export class PtyManager extends EventEmitter {
           reattach.target,
           'tmux', 'has-session', '-t', reattach.tmuxName
         ];
-        execFile('ssh', probeArgs, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (probeError) => {
+        execFile('ssh', probeArgs, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (probeError) => {
           if (remoteCommandExitCode(probeError) === 1) {
             const current = this.live.get(id);
             if (current) current.remoteTerminationInFlight = false;
@@ -3376,7 +3376,7 @@ export class PtyManager extends EventEmitter {
     }
     const args = [...probeOpts, '-o', 'BatchMode=yes', target, remoteCmd];
     return new Promise((resolve) => {
-      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (error) => resolve(!error));
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS, windowsHide: true }, (error) => resolve(!error));
     });
   }
 

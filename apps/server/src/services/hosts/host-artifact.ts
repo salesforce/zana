@@ -269,7 +269,7 @@ async function tarJoinDir(tarball: string, dir: string): Promise<void> {
   const temporary = `${tarball}.${randomUUID()}.tmp`;
   try {
     await execFileAsync('tar', ['-czf', temporary, '-C', dir, 'package.json', ...PREBUILT_JOIN_FILES], {
-      encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024
+      encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true
     });
     if (!existsSync(temporary)) throw new Error('failed to pack zcc-host artifact');
     chmodSync(temporary, 0o600);
@@ -340,7 +340,7 @@ async function packJoinArtifact(version: string, bundleScript: string): Promise<
     writeJoinPackageJson(dir);
     const outfile = join(dir, 'join.mjs');
     await execFileAsync(process.execPath, [bundleScript, '--outfile', outfile], {
-      encoding: 'utf8', timeout: 120_000, maxBuffer: 1024 * 1024,
+      encoding: 'utf8', timeout: 120_000, maxBuffer: 1024 * 1024, windowsHide: true,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
     });
     const worker = join(dir, 'zcc-provider-bridge-worker.mjs');

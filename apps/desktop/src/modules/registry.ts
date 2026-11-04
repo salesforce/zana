@@ -73,7 +73,7 @@ function builtinExec(req: ExecRequest): Promise<ExecResult> {
     execFile(
       req.bin,
       Array.isArray(req.args) ? req.args : [],
-      { cwd: req.cwd, timeout, maxBuffer: BUILTIN_EXEC_MAX_BUFFER, shell: false },
+      { cwd: req.cwd, timeout, maxBuffer: BUILTIN_EXEC_MAX_BUFFER, shell: false, windowsHide: true },
       (err, stdout, stderr) => {
         if (err) {
           // @types mislabels `code`: numeric exit code on a non-zero exit, but a
