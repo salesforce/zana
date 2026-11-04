@@ -243,6 +243,7 @@ export class CodexProvider extends BaseLaunchProvider {
     resumeSessionId?: string
   ): ResolvedLaunch {
     const command = codexBinary(config);
+    this.launchBinary = command;
     // Resume is a SUBCOMMAND (positional), unlike claude/cursor's leading
     // `--resume` flag — so it must be the FIRST argv element, and the `-c`/`-m`/
     // `-s`/`-a` layers `PtyManager` splices on all come AFTER it (verified:
@@ -368,16 +369,26 @@ export class CodexProvider extends BaseLaunchProvider {
   private hookTrustMode: CodexHookTrustMode = 'bypass';
 
   /** Set by the registration after the per-binary conformance probe. */
-  setHookTrustMode(mode: CodexHookTrustMode): void {
+  setHookTrustMode(mode: CodexHookTrustMode, binary?: string): void {
     this.hookTrustMode = mode;
+    this.verifiedBinary = mode === 'scoped' ? binary : undefined;
   }
+
+  /** Binary the conformance probe verified; scoped trust never applies to any other binary. */
+  private verifiedBinary: string | undefined;
+  /** Binary of the launch currently being assembled (resolveLaunch runs just before hookArgs). */
+  private launchBinary: string | undefined;
 
   get currentHookTrustMode(): CodexHookTrustMode {
     return this.hookTrustMode;
   }
 
   hookArgs(_profile: LaunchProfileId, urls: ProviderHookUrls): string[] {
-    return this.buildHookArgs(urls, this.hookTrustMode === 'scoped');
+    const scoped =
+      this.hookTrustMode === 'scoped' &&
+      this.verifiedBinary !== undefined &&
+      this.verifiedBinary === this.launchBinary;
+    return this.buildHookArgs(urls, scoped);
   }
 
   /**

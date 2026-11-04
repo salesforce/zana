@@ -30,7 +30,7 @@ describe('codex registration hook-trust wiring', () => {
 
   it('falls back to bypass and warns when the probe does not verify', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    provider.setHookTrustMode('scoped');
+    provider.setHookTrustMode('scoped', 'codex');
     probe.mockResolvedValue({ mode: 'bypass', reason: 'hash mismatch' });
     await codexHarness.refreshCatalog!({ binary: '/bin/codex' });
     expect(provider.currentHookTrustMode).toBe('bypass');

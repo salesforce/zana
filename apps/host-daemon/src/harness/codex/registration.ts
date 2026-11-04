@@ -42,7 +42,7 @@ export const codexHarness: HarnessRegistration = {
     const key = `${binary}:${normalizedVersion ?? ''}`;
     const [models, trust] = await Promise.all([discoverCodexModels(binary, key), probeCodexHookTrust(binary, key)]);
     implementation.setDiscoveredModels(models);
-    implementation.setHookTrustMode(trust.mode);
+    implementation.setHookTrustMode(trust.mode, binary);
     if (trust.mode !== 'scoped') {
       console.warn(`[codex] scoped hook trust unavailable (${trust.reason ?? 'unverified'}); using global --dangerously-bypass-hook-trust`);
     }

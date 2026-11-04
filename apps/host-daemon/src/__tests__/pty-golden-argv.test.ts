@@ -552,7 +552,7 @@ describe('golden argv — codex scoped hook trust', () => {
 
   beforeEach(() => {
     spawns.length = 0;
-    codex.setHookTrustMode('scoped');
+    codex.setHookTrustMode('scoped', 'codex');
   });
   afterEach(() => codex.setHookTrustMode('bypass'));
 

@@ -591,9 +591,17 @@ describe('CodexProvider — the three -c bridges (exact argv + TOML escaping)', 
       };
       const scoped = () => {
         const provider = new CodexProvider();
-        provider.setHookTrustMode('scoped');
+        provider.setHookTrustMode('scoped', 'codex');
+        provider.resolveLaunch('codex', {} as never, false);
         return provider;
       };
+
+      it('keeps the bypass flag when the launched binary is not the probe-verified one', () => {
+        const provider = new CodexProvider();
+        provider.setHookTrustMode('scoped', 'codex');
+        provider.resolveLaunch('codex', { codexBinary: '/opt/other/codex' } as never, false);
+        expect(provider.hookArgs('codex', urls)[0]).toBe('--dangerously-bypass-hook-trust');
+      });
 
       it('defaults to the degraded bypass flag until a probe verifies the binary', () => {
         const provider = new CodexProvider();
