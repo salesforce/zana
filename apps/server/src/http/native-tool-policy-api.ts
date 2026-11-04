@@ -1,10 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { DispatchAdmissionMainRequestSchema, NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
+import { DispatchAdmissionMainRequestSchema, PtyLifecycleEventMainRequestSchema, NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
 import { admitMainOwnedDispatch } from '../plugins/dispatch-admission.js';
+import { emitMainOwnedPtyLifecycle } from '../plugins/pty-session-events.js';
 import { decideMainOwnedToolPolicy } from '../plugins/native-tool-policy.js';
 import { headerValue } from './browser-request-guard.js';
 import { sendJson } from './json.js';
-import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, NATIVE_TOOL_POLICY_INVENTORY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER } from './native-tool-policy-proof.js';
+import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, NATIVE_TOOL_POLICY_INVENTORY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER } from './native-tool-policy-proof.js';
 import type { ProductHttpContext } from './product-context.js';
 
 class BodyTooLarge extends Error {}
@@ -132,5 +133,45 @@ export async function handleDispatchAdmissionApi(
     return true;
   }
   sendJson(response, 200, await admitMainOwnedDispatch(ctx, parsed.data));
+  return true;
+}
+
+/**
+ * PTY lifecycle events for when no runtime supervisor carries them (`pnpm dev`).
+ * Same proof as the other main-owned routes; the body is the strict request
+ * main asserted from its live session record.
+ */
+export async function handlePtyLifecycleEventApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  path: string,
+  method: string
+): Promise<boolean> {
+  if (path !== PTY_LIFECYCLE_EVENT_PATH || method !== 'POST') return false;
+  let body: string;
+  try {
+    body = await readBody(request);
+  } catch (error) {
+    if (!(error instanceof BodyTooLarge)) throw error;
+    sendJson(response, 413, { error: 'pty lifecycle event is too large' });
+    return true;
+  }
+  if (!ctx.verifyNativeToolPolicy?.(headerValue(request.headers, NATIVE_TOOL_POLICY_PROOF_HEADER), body)) {
+    sendJson(response, 403, { error: 'pty lifecycle event is not signed by the desktop app' });
+    return true;
+  }
+  let parsed: ReturnType<typeof PtyLifecycleEventMainRequestSchema.safeParse>;
+  try {
+    parsed = PtyLifecycleEventMainRequestSchema.safeParse(JSON.parse(body));
+  } catch {
+    sendJson(response, 400, { error: 'pty lifecycle event is not JSON' });
+    return true;
+  }
+  if (!parsed.success) {
+    sendJson(response, 400, { error: 'invalid pty lifecycle event' });
+    return true;
+  }
+  sendJson(response, 200, emitMainOwnedPtyLifecycle(ctx, parsed.data));
   return true;
 }

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NATIVE_TOOL_POLICY_EVENT_MAX_BYTES } from '@zana-ai/zcc-contracts/runtime';
-import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
+import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
 import type { ProductHttpContext } from './product-context.js';
 import { startProductServer, type ProductServer } from './product-server.js';
 
@@ -155,5 +155,57 @@ describe('POST /api/v1/dispatch-admission (PTY input without a runtime superviso
     await expect(postAdmission(server.url, body, signNativeToolPolicyRequest(secret, body))).resolves.toMatchObject({
       status: 200, json: { action: 'proceed' }
     });
+  });
+});
+
+describe('POST /api/v1/pty-lifecycle-event (PTY lifecycle without a runtime supervisor)', () => {
+  const event = { kind: 'created', projectId: 'project-1', sessionId: 'session-1', profile: 'claude' };
+  const postEvent = async (url: string, body: string, proof?: string) => {
+    const response = await fetch(new URL(PTY_LIFECYCLE_EVENT_PATH, url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(proof ? { [NATIVE_TOOL_POLICY_PROOF_HEADER]: proof } : {}) },
+      body
+    });
+    return { status: response.status, json: await response.json() as unknown };
+  };
+
+  it('delivers a signed event to plugins with pty identity', async () => {
+    const { server } = await boot();
+    const emitThreadEvent = vi.fn(async () => undefined);
+    server.ctx.plugins = { emitThreadEvent } as unknown as ProductHttpContext['plugins'];
+    const body = JSON.stringify(event);
+    await expect(postEvent(server.url, body, signNativeToolPolicyRequest(secret, body))).resolves.toEqual({ status: 200, json: { delivered: true } });
+    expect(emitThreadEvent).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'thread.created', surface: 'pty', sessionId: 'session-1', projectId: 'project-1'
+    }));
+  });
+
+  it('refuses unsigned, mis-signed, malformed and over-specified events without asking plugins', async () => {
+    const { server } = await boot();
+    const emitThreadEvent = vi.fn();
+    server.ctx.plugins = { emitThreadEvent } as unknown as ProductHttpContext['plugins'];
+    const body = JSON.stringify(event);
+    expect((await postEvent(server.url, body)).status).toBe(403);
+    expect((await postEvent(server.url, body, signNativeToolPolicyRequest('x'.repeat(64), body))).status).toBe(403);
+    expect((await postEvent(server.url, 'nope', signNativeToolPolicyRequest(secret, 'nope'))).status).toBe(400);
+    const extra = JSON.stringify({ ...event, thread: 'smuggled' });
+    expect((await postEvent(server.url, extra, signNativeToolPolicyRequest(secret, extra))).status).toBe(400);
+    const badKind = JSON.stringify({ ...event, kind: 'archived' });
+    expect((await postEvent(server.url, badKind, signNativeToolPolicyRequest(secret, badKind))).status).toBe(400);
+    expect(emitThreadEvent).not.toHaveBeenCalled();
+  });
+
+  it('answers not delivered when no plugin host is installed', async () => {
+    const { server } = await boot();
+    server.ctx.plugins = undefined;
+    const body = JSON.stringify(event);
+    await expect(postEvent(server.url, body, signNativeToolPolicyRequest(secret, body))).resolves.toEqual({ status: 200, json: { delivered: false } });
+  });
+
+  it('rejects an oversized body', async () => {
+    const { server } = await boot();
+    const body = JSON.stringify({ ...event, error: 'x'.repeat(NATIVE_TOOL_POLICY_EVENT_MAX_BYTES) });
+    const response = await postEvent(server.url, body, signNativeToolPolicyRequest(secret, body));
+    expect(response.status).toBe(413);
   });
 });

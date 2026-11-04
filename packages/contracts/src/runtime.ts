@@ -226,6 +226,26 @@ export type DispatchAdmissionMainDecision = z.infer<typeof DispatchAdmissionMain
  */
 export const SQUAD_START_REFUSED_PREFIX = 'squad member start refused';
 
+/** The lifecycle moments a PTY session reports to plugins. */
+export const PTY_LIFECYCLE_KINDS = ['created', 'active', 'idle', 'failed', 'deleted'] as const;
+
+/**
+ * One lifecycle moment of a PTY Electron-main owns. Main asserts the identity
+ * from its live session record; the server only fans it out to plugins. A PTY
+ * main has no thread binding for names no thread.
+ */
+export const PtyLifecycleEventMainRequestSchema = z.object({
+  kind: z.enum(PTY_LIFECYCLE_KINDS),
+  sessionId: SessionIdSchema.max(256),
+  /** The thread record the session is bound to; absent for an unbound PTY. */
+  threadId: SessionIdSchema.max(256).optional(),
+  projectId: ProjectIdSchema.max(256),
+  profile: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
+  /** Short failure cause for `failed`; bounded here and redacted again by the server. */
+  error: z.string().max(1024).optional()
+}).strict();
+export type PtyLifecycleEventMainRequest = z.infer<typeof PtyLifecycleEventMainRequestSchema>;
+
 /** Main-attested request for one Modern squad participant. Never renderer input. */
 export const SquadMemberRuntimeRequestSchema = z.object({
   bindingId: z.string().uuid(),
@@ -575,6 +595,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     // Admission for PTY input main owns: the server holds the plugin handlers.
     operation: z.literal('plugins-dispatch-admission'),
     request: DispatchAdmissionMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // Lifecycle moments of PTYs main owns: the server holds the plugin handlers.
+    operation: z.literal('plugins-pty-lifecycle-event'),
+    request: PtyLifecycleEventMainRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     // OBL-018 pre-spawn readiness: main reads the tool-policy inventory before a

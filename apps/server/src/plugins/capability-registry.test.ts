@@ -17,6 +17,20 @@ describe('surface wiring registry', () => {
       if (harness === 'unknown') expect(row).toMatchObject({ reason: expect.stringContaining('not wired') });
     }
   });
+  it.each(['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell'])('delivers PTY lifecycle for %s and says what it omits', harness => {
+    for (const headless of [false, true]) for (const hookBase of [false, true]) {
+      const row = capabilityRegistry.describe({ surface: 'pty', harness, headless, hookBase }).find(item => item.id === 'lifecycle-delivery');
+      expect(row?.available).toBe(true);
+      const turnHooks = !headless && hookBase && ['claude', 'codex'].includes(harness);
+      if (turnHooks) expect(row?.reason).toBeUndefined();
+      else expect(row?.reason).toContain('never reports active or idle');
+      if (headless) expect(row?.reason).toContain('headless');
+    }
+  });
+  it('does not advertise PTY lifecycle for an unwired harness', () => {
+    expect(capabilityRegistry.describe({ surface: 'pty', harness: 'unknown', headless: false, hookBase: true })
+      .find(item => item.id === 'lifecycle-delivery')?.available).toBe(false);
+  });
   // Codex is no longer in this list: p0-modern-codex-veto wires its Modern veto.
   it.each(['pi', 'acp', 'acp-opencode', 'acp-cursor', 'spoofed-claude'])('does not infer Modern native hooks for %s', harness => {
     const rows = capabilityRegistry.describe({ surface: 'modern', harness, headless: false, hookBase: true });

@@ -61,6 +61,10 @@ type LifecycleRow = {
   threadId: string;
   origin: string;
   visibility: string;
+  surface?: string;
+  sessionId?: string;
+  projectId?: string;
+  providerId?: string;
 };
 
 export default function plugin(zcc: ZccPluginApi) {
@@ -434,7 +438,11 @@ export default function plugin(zcc: ZccPluginApi) {
         occurredAt: event.timestamp,
         threadId: event.threadId,
         origin: name,
-        visibility: event.thread?.visibility ?? 'unknown'
+        visibility: event.thread?.visibility ?? 'unknown',
+        ...(event.surface ? { surface: event.surface } : {}),
+        ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+        ...(event.projectId ? { projectId: event.projectId } : {}),
+        ...(event.providerId ? { providerId: event.providerId } : {})
       });
     });
   }

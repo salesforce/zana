@@ -311,6 +311,32 @@ host-generated `id`, a process-local `sequence`, and a `timestamp` — do not
 derive identity from event content, and do not expect a durable replay stream;
 delivery is best-effort.
 
+#### PTY lifecycle events
+
+PTY sessions Zana's desktop app owns emit the same `thread.*` events as Modern
+threads, with `surface: 'pty'` and the PTY's `sessionId`. Modern events carry
+`surface: 'modern'`. `projectId` always comes from the app's own session record,
+never from anything the session reports.
+
+| Moment | Event |
+| --- | --- |
+| Session first seen live | `thread.created` |
+| A turn starts or resumes (hook callback) | `thread.active` |
+| A turn ends (stop hook callback) | `thread.idle` |
+| Process exits with a non-zero code, not by signal | `thread.failed` (`error: 'exited with code N'`), then `thread.deleted` |
+| Any other exit, including a close the app requested | `thread.deleted` |
+
+A PTY the app has not bound to a thread record has no thread: `threadId` equals
+`sessionId`, exactly as in native tool policy requests, and `surface === 'pty'` says
+so. Do not look the id up as a thread. Active and idle come from the harness's
+turn hooks, so only an interactive Claude or Codex session with a hook base reports
+them. A headless session, or one without hooks, delivers `thread.created` and the
+exit-derived `thread.failed` / `thread.deleted` only; the capability descriptor
+`lifecycle-delivery` says so in its `reason`. Delivery is queued, bounded
+(the oldest undelivered events are dropped under sustained overload), ordered, and
+never blocks the terminal. A session that reconnects after an app restart reports
+`thread.created` again.
+
 ### Native tool policy (Claude / Codex only)
 
 A native pre/post tool hook is capability-gated per provider family and only
@@ -392,12 +418,12 @@ package version selected for development dependencies.
 | Modern / acp | unavailable | unavailable | available | available |
 | Modern / acp-opencode | unavailable | unavailable | available | available |
 | Modern / acp-cursor | unavailable | unavailable | available | available |
-| PTY / claude (hook base, visible) | available | unavailable | available | unavailable |
-| PTY / codex (hook base, visible) | available | unavailable | available | unavailable |
-| PTY / opencode | unavailable | unavailable | available | unavailable |
-| PTY / cursor | unavailable | unavailable | available | unavailable |
-| PTY / Claude or Codex (hook base, headless) | available | unavailable | available | unavailable |
-| PTY / missing hook base, or remote headless | unavailable | unavailable | available | unavailable |
+| PTY / claude (hook base, visible) | available | unavailable | available | available |
+| PTY / codex (hook base, visible) | available | unavailable | available | available |
+| PTY / opencode | unavailable | unavailable | available | created and exit only |
+| PTY / cursor | unavailable | unavailable | available | created and exit only |
+| PTY / Claude or Codex (hook base, headless) | available | unavailable | available | created and exit only |
+| PTY / missing hook base, or remote headless | unavailable | unavailable | available | created and exit only |
 
 #### Dispatch admission request
 

@@ -2,7 +2,7 @@ import type { CapabilityDescriptor, CapabilitySurfaceKey } from '@zana-ai/zcc-do
 
 export const SURFACE_CAPABILITIES = ['message-admission', 'lifecycle-delivery', 'tool-before-native', 'tool-after-native', 'interactions'] as const;
 type CapabilityId = typeof SURFACE_CAPABILITIES[number];
-type State = { available: true } | { available: false; reason: string };
+type State = { available: true; reason?: string } | { available: false; reason: string };
 const keyId = (key: CapabilitySurfaceKey) => JSON.stringify([key.surface, key.harness, key.headless, key.hookBase]);
 
 /** Host-owned wiring only. Missing registrations deny availability, never infer from family. */
@@ -49,6 +49,22 @@ for (const harness of ['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell']) 
   for (const headless of [false, true]) {
     for (const hookBase of [false, true]) {
       capabilityRegistry.register({ surface: 'pty', harness, headless, hookBase }, 'message-admission', { available: true });
+    }
+  }
+}
+// PTY lifecycle events: main reports a session's creation and its exit for every
+// PTY, with the exit-derived failure. Active/idle ride the turn hooks, which only an
+// interactive Claude or Codex session with a hook base carries, so the rest say so.
+const PTY_LIFECYCLE_HOOKS = 'Delivers created and exit-derived failed/deleted events';
+for (const harness of ['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell']) {
+  for (const headless of [false, true]) {
+    for (const hookBase of [false, true]) {
+      const turnHooks = !headless && hookBase && (harness === 'claude' || harness === 'codex');
+      capabilityRegistry.register({ surface: 'pty', harness, headless, hookBase }, 'lifecycle-delivery', turnHooks
+        ? { available: true }
+        : { available: true, reason: headless
+          ? `${PTY_LIFECYCLE_HOOKS}; a headless session carries no turn hooks, so it never reports active or idle`
+          : `${PTY_LIFECYCLE_HOOKS}; this session carries no turn hooks, so it never reports active or idle` });
     }
   }
 }

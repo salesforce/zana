@@ -236,8 +236,16 @@ export interface PluginThreadEvent {
   /** Host clock timestamp in epoch milliseconds. */
   timestamp: number;
   name: PluginThreadEventName;
+  /**
+   * The thread record, or for a PTY session main has no thread binding for, the session id
+   * (see `surface`); the same convention as native tool policy requests.
+   */
   threadId: string;
   projectId?: string;
+  /** Which execution surface produced the event: a Modern thread or a PTY terminal session. */
+  surface?: 'modern' | 'pty';
+  /** The PTY session id; present when `surface` is `pty`. */
+  sessionId?: string;
   thread?: PluginSdkThreadSummary;
   lastAssistantText?: string | null;
   error?: string | null;

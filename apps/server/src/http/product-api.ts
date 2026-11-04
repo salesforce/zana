@@ -22,7 +22,7 @@ import { getPrimaryHost, countConversationThreadsForQuit } from '@zana-ai/zcc-db
 import { handleProjectSourcesApi } from './project-sources-api.js';
 import { handleMachineProjectApi, validatedProjectPath } from './machine-project-api.js';
 import { handleNotificationsApi } from './notifications-api.js';
-import { handleDispatchAdmissionApi, handleNativeToolPolicyApi, handleNativeToolPolicyInventoryApi } from './native-tool-policy-api.js';
+import { handleDispatchAdmissionApi, handleNativeToolPolicyApi, handleNativeToolPolicyInventoryApi, handlePtyLifecycleEventApi } from './native-tool-policy-api.js';
 import { handleSessionsSelfApi } from './sessions-self-api.js';
 import { INTERACTION_PROOF_HEADER } from './interaction-proof.js';
 import { resolveProjectHost } from './project-host.js';
@@ -590,6 +590,7 @@ export async function handleProductHttp(
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
     if (await handleNativeToolPolicyInventoryApi(request, response, ctx, path, method)) return true;
     if (await handleDispatchAdmissionApi(request, response, ctx, path, method)) return true;
+    if (await handlePtyLifecycleEventApi(request, response, ctx, path, method)) return true;
     if (await handleSessionsSelfApi(request, response, ctx, path, method)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {

@@ -18,6 +18,7 @@ import {
   dispatchOriginForPrincipal,
   productRouteDispatchAdmissionDecider
 } from './runtime/dispatch-admission.js';
+import { createPtyLifecycleEmitter, productRoutePtyLifecycleSink } from './runtime/pty-lifecycle-events.js';
 import { localMetadataProjects, localProjectPathOptions } from '@zana-ai/zcc-server/services/projects/project-metadata';
 import { invokeSharedProduct } from './ipc/shared-product-registry.js';
 import { createInteractionResponder } from './interaction-proof.js';
@@ -3346,6 +3347,22 @@ export const admitPtyDispatch = createMainDispatchAdmission({
   supervised: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.admitDispatch(request) : null),
   productRoute: () => (process.env.ELECTRON_RENDERER_URL ? productRouteDispatchAdmission : null),
   log: warnNativeToolPolicy
+});
+
+const productRoutePtyLifecycle = productRoutePtyLifecycleSink({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Plugin lifecycle events for the PTYs main owns. Moments are queued and delivered
+ * off the PTY path (bounded, with a per-delivery timeout). Fed once from
+ * {@link wireBridgeListeners} and the lifecycle hooks; disposed in before-quit.
+ */
+export const ptyLifecycle = createPtyLifecycleEmitter({
+  supervised: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.emitPtyLifecycle(request) : null),
+  productRoute: () => (process.env.ELECTRON_RENDERER_URL ? productRoutePtyLifecycle : null),
+  log: (message) => console.warn(`[pty-lifecycle] ${message}`)
 });
 
 /**
@@ -7640,6 +7657,7 @@ function wireBridgeListeners() {
   });
   ptys.on('exit', (sessionId: string, code: number, signal?: number | null, reason?: string | null) => {
     safeSend(IPC.terminals.onExit, sessionId, code);
+    ptyLifecycle.exited(sessionId, code, signal);
     squadProposalNotifier.forget(sessionId);
     const ledgerEntryId = launchLedgerEntriesBySession.get(sessionId);
     launchLedgerEntriesBySession.delete(sessionId);
@@ -7800,6 +7818,7 @@ function wireBridgeListeners() {
     localExtensionWatcher.onSessionExit(sessionId);
   });
   ptys.on('sessionUpdated', (session) => {
+    ptyLifecycle.observe(session);
     refreshRestoreCapability(session);
     captureNativeRecoverySnapshot(session);
     safeSend(IPC.terminals.onUpdated, session);
@@ -9085,7 +9104,8 @@ async function bootstrapNormal() {
     // close so the run logs success rather than a kill-signal error. Non-
     // scheduled sessions (or any we can't match) fall back to a plain expected
     // close so nothing regresses.
-    onStopHook: (_projectId: string, sessionId: string) => {
+    onStopHook: (projectId: string, sessionId: string) => {
+       ptyLifecycle.turnFinished(sessionId, projectId);
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
@@ -9137,6 +9157,7 @@ async function bootstrapNormal() {
         }
         agentStatus.markBlocked(sessionId);
       } else {
+        ptyLifecycle.turnStarted(sessionId, projectId);
         apiErrorResume.cancel(sessionId);
         workerApiErrorRecovery.onTurnStarted(sessionId, agentStatus.get(sessionId));
         agentStatus.turnStarted(sessionId);
@@ -10256,6 +10277,7 @@ app.on('before-quit', (event) => {
   if (!quitGuard.allowQuit(event)) return;
   windowShutdownStarted = true;
   runtimeRecovery.dispose();
+  ptyLifecycle.dispose();
   // Quit can bypass a usable per-window close transition. Clear native maximize
   // state here too, so macOS cannot restore a maximized window on next launch.
   for (const controller of boundsControllers.values()) controller.flushForClose();
