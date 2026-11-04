@@ -23,6 +23,7 @@ describe('siteFiles', () => {
     const files = [file('README.md', '# x', 'markdown'), file('AGENTS.md', 'be careful', 'markdown')];
     expect(siteFiles(files, NO_KIT).map((entry) => entry.path)).toEqual(['README.md']);
     expect(siteFiles([file('AGENTS.md', '<p>x</p>', 'html')], NO_KIT)).toEqual([]);
+    expect(siteFiles([file('agents.md', 'lower case', 'markdown')], NO_KIT)).toEqual([]);
     expect(siteFiles([file('notes/AGENTS.md', 'nested', 'markdown')], NO_KIT).map((entry) => entry.path)).toEqual(['notes/AGENTS.md']);
   });
 

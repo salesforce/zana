@@ -5,7 +5,7 @@
  */
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { STATUS_LABELS, designDocDirective } from '../shared/contract.js';
-import { AGENT_INSTRUCTIONS_PATH } from '../shared/paths.js';
+import { isAgentInstructionsPath } from '../shared/paths.js';
 import { formatFile, formatManifest, truncate } from './format.js';
 import type { ProjectNames } from './project-names.js';
 import type { DesignDocStore } from './store.js';
@@ -84,11 +84,12 @@ export function registerAgentContext(
           ? `${formatFile({ ...entry, content: entry.content.slice(0, MENTION_ENTRY_MAX_CHARS) })}\n(truncated — read the rest with design_doc_read)`
           : formatFile(entry)
         : '';
-      const instructionFile = doc.files.some((file) => file.path === AGENT_INSTRUCTIONS_PATH)
-        ? store.readFile(doc.id, AGENT_INSTRUCTIONS_PATH)
-        : null;
+      const instructionsPath = doc.files.find((file) => isAgentInstructionsPath(file.path))?.path;
+      const instructionFile = instructionsPath ? store.readFile(doc.id, instructionsPath) : null;
       const instructions = instructionFile && instructionFile.encoding === 'utf8'
-        ? formatFile({ ...instructionFile, content: instructionFile.content.slice(0, MENTION_ENTRY_MAX_CHARS) })
+        ? instructionFile.content.length > MENTION_ENTRY_MAX_CHARS
+          ? `${formatFile({ ...instructionFile, content: instructionFile.content.slice(0, MENTION_ENTRY_MAX_CHARS) })}\n(truncated — read the rest with design_doc_read)`
+          : formatFile(instructionFile)
         : '';
       return {
         context: [

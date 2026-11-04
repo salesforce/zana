@@ -87,11 +87,11 @@ export function repairLegacyPeerSyncMigrationIndexes(db: PluginDatabase): void {
   });
 }
 
-/** An agent whose thread has no title yet. Never stored over a real title. */
 /** Built-ins shipped before offered ids were recorded. Frozen: never add to it; new built-ins need only a templates.ts entry. */
 const LEGACY_OFFERED_BUILTINS: readonly string[] = ['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank'];
 const OFFERED_KEY = 'templates.offered';
 
+/** An agent whose thread has no title yet. Never stored over a real title. */
 export const AGENT_FALLBACK_LABEL = 'Agent';
 /** A terminal session (CLI Agent) calling the CLI: there is no thread to link. */
 export const CLI_AGENT_LABEL = 'CLI agent';
@@ -1604,7 +1604,7 @@ export class DesignDocStore {
  * excluded so a renamed copy created by an earlier import is recognised as the same template on re-import.
  */
 export function templateDigest(template: {
-  label: string; description: string; entryPath?: string | undefined; files: ReadonlyArray<{ path: string; content: string; encoding?: string | undefined }>
+  description: string; entryPath?: string | undefined; files: ReadonlyArray<{ path: string; content: string; encoding?: string | undefined }>
 }): string {
   const files = [...template.files].map((file) => ({ path: file.path, encoding: file.encoding === 'base64' ? 'base64' : 'utf8', content: file.content }))
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

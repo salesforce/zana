@@ -76,6 +76,28 @@ describe('addFromTemplate AGENTS.md', () => {
     expect(again.added).toEqual(['alpha-2.md']);
     expect(store.readFile(doc.id, 'AGENTS.md').content.match(/Alpha rules/g)).toHaveLength(1);
   });
+
+  it('merges into an instructions file of a different letter case instead of renaming', () => {
+    const { store, ctx, doc } = setup();
+    store.writeFile(doc.id, { path: 'agents.md', content: 'Mine.\n', baseRevision: 0, baseFileId: null }, agent);
+    const a = rulesTemplate(store, 'alpha', '# Alpha rules\n');
+    const result = addFromTemplate(ctx, { docId: doc.id, templateKey: a }, agent);
+    expect(result.added.sort()).toEqual(['agents.md', 'alpha.md']);
+    expect(store.get(doc.id).files.map((f) => f.path)).not.toContain('AGENTS-2.md');
+    expect(store.readFile(doc.id, 'agents.md').content).toMatch(/^Mine\.\n\n---\n\n# Alpha rules/);
+  });
+
+  it('adds nothing when the instructions merge fails', () => {
+    const { store, ctx, doc } = setup();
+    const a = rulesTemplate(store, 'alpha', '# Alpha rules\n');
+    addFromTemplate(ctx, { docId: doc.id, templateKey: a }, agent);
+    const b = rulesTemplate(store, 'beta', '# Beta rules\n');
+    const before = store.get(doc.id).files.map((f) => f.path).sort();
+    const write = vi.spyOn(store, 'writeFiles').mockImplementation(() => { throw new Error('revision conflict'); });
+    expect(() => addFromTemplate(ctx, { docId: doc.id, templateKey: b }, agent)).toThrow('revision conflict');
+    write.mockRestore();
+    expect(store.get(doc.id).files.map((f) => f.path).sort()).toEqual(before);
+  });
 });
 
 describe('addFromTemplate', () => {

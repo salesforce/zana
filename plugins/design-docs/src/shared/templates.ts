@@ -3,7 +3,7 @@
  * substituted at creation time (escaped in HTML pages). A template opens on
  * its `entryPath`, else on `README.md`.
  */
-import { ISSUE_AGENTS, ISSUE_MD, ISSUE_PLAN_MD, ISSUE_RESEARCH_MD, PRODUCT_AGENTS, PRODUCT_PLAN_MD, RESEARCH_AGENTS, RESEARCH_MD, RESEARCH_PLAN_MD } from './template-docs.js';
+import { ISSUE_AGENTS, ISSUE_MD, ISSUE_RESEARCH_MD, PLAN_MD, PRODUCT_AGENTS, RESEARCH_AGENTS, RESEARCH_MD } from './template-docs.js';
 import { HTML_DESIGN_INDEX, REPORT_INDEX, REPORT_WEEKLY_CSV } from './site-templates.js';
 
 export interface DesignDocTemplate {
@@ -226,7 +226,7 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
     files: [
       { path: 'README.md', content: PRODUCT_README },
       { path: 'mockups/overview.html', content: PRODUCT_MOCKUP },
-      { path: 'plan.md', content: PRODUCT_PLAN_MD },
+      { path: 'plan.md', content: PLAN_MD },
       { path: 'AGENTS.md', content: PRODUCT_AGENTS }
     ]
   },
@@ -243,7 +243,7 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
     entryPath: 'research.md',
     files: [
       { path: 'research.md', content: RESEARCH_MD },
-      { path: 'plan.md', content: RESEARCH_PLAN_MD },
+      { path: 'plan.md', content: PLAN_MD },
       { path: 'AGENTS.md', content: RESEARCH_AGENTS }
     ]
   },
@@ -255,7 +255,7 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
     files: [
       { path: 'issue.md', content: ISSUE_MD },
       { path: 'research.md', content: ISSUE_RESEARCH_MD },
-      { path: 'plan.md', content: ISSUE_PLAN_MD },
+      { path: 'plan.md', content: PLAN_MD },
       { path: 'AGENTS.md', content: ISSUE_AGENTS }
     ]
   },
