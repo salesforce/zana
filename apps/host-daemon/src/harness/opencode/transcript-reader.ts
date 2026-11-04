@@ -518,7 +518,7 @@ export async function readSessionStatsOpenCodeExport(
     execFile(
       opts.binary ?? 'opencode',
       ['export', sessionId],
-      { timeout: EXPORT_TIMEOUT_MS, maxBuffer: EXPORT_MAX_BUFFER },
+      { timeout: EXPORT_TIMEOUT_MS, maxBuffer: EXPORT_MAX_BUFFER, windowsHide: true },
       (error, stdout) => {
         if (error) return resolve(null);
         try {

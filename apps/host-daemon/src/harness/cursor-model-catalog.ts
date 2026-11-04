@@ -49,7 +49,7 @@ export function cursorModelsFromListOutput(stdout: string): readonly HarnessMode
 export async function discoverCursorModels(binary: string, cacheKey = binary): Promise<readonly HarnessModelTarget[]> {
   return cache.discover(cacheKey, async () => {
     const models = await new Promise<readonly HarnessModelTarget[]>((resolve) => {
-      const child = spawn(binary, ['--list-models'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      const child = spawn(binary, ['--list-models'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
       let stdout = '';
       let settled = false;
       const finish = (value: readonly HarnessModelTarget[]) => {

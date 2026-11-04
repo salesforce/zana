@@ -196,6 +196,7 @@ async function runCommand(
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
     let stdout = "";
     let stderr = "";

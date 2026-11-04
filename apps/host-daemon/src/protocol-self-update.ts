@@ -58,7 +58,7 @@ export function validateHostBundle(entry: string, protocol: number): Promise<voi
   return new Promise((resolve, reject) => {
     // Exit status is the protocol probe: no piped CLI output to truncate in Electron.
     const child = spawn(process.execPath, [entry, '--check-protocol', String(protocol)], {
-      cwd: dirname(entry), stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      cwd: dirname(entry), stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true
     });
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Host update validation timed out')); }, TIMEOUT_MS);
     child.once('error', error => { clearTimeout(timer); reject(error); });

@@ -11,7 +11,7 @@ import { createCredentialSource, createGhRunner, loadGithubCredentials } from '.
 const execFileAsync = promisify(execFile);
 
 async function defaultGhJson(args, timeoutMs = 8_000) {
-  const { stdout } = await execFileAsync('gh', args, { timeout: timeoutMs, maxBuffer: 256 * 1024 });
+  const { stdout } = await execFileAsync('gh', args, { timeout: timeoutMs, maxBuffer: 256 * 1024, windowsHide: true });
   return JSON.parse(String(stdout));
 }
 

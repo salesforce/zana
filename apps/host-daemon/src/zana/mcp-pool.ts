@@ -440,7 +440,8 @@ export function spawnStdioServer(def: McpServerDef, workspace: string): StdioChi
     // trusted, user-installed binary (volta shim), so it gets the host's PATH
     // to resolve its Node. It is NOT the untrusted-ext tier.
     env: { ...process.env, ZANA_WORKSPACE: workspace, ZANA_AUTO_INIT: '0' },
-    stdio: ['pipe', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true
   }) as ChildProcessWithoutNullStreams;
 
   const lineListeners: Array<(line: string) => void> = [];
@@ -502,7 +503,10 @@ export function resolveZanaMcpBin(): { bin: string; args: string[] } | null {
   const override = process.env.ZANA_MCP_BIN;
   if (override && override.trim()) return { bin: override.trim(), args: [] };
   try {
-    const found = execFileSync('which', ['zana-mcp-server'], { encoding: 'utf-8' }).trim();
+    // Windows has no native `which`, so this usually throws there and returns null.
+    // Git for Windows can put its MSYS which.exe on PATH, though, and that is a
+    // console program, so the window stays hidden here too.
+    const found = execFileSync('which', ['zana-mcp-server'], { encoding: 'utf-8', windowsHide: true }).trim();
     return found ? { bin: found, args: [] } : null;
   } catch {
     return null;
