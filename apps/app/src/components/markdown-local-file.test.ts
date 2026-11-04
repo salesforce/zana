@@ -144,4 +144,13 @@ describe('isPreviewableConversationPath', () => {
     expect(isPreviewableConversationPath('/etc/a.md')).toBe(false);
     expect(isPreviewableConversationPath('C:/x/a.md', roots)).toBe(false);
   });
+  it('matches Windows drive-letter paths with either separator, ignoring drive case', () => {
+    const win = ['C:\\proj', 'D:/notes/'];
+    for (const p of ['C:\\proj\\notes.md', 'C:/proj/notes.md', 'c:\\PROJ\\a.md', 'D:\\notes\\a.md']) {
+      expect(isPreviewableConversationPath(p, win)).toBe(true);
+    }
+    for (const p of ['C:\\proj-evil\\a.md', 'E:\\proj\\a.md', 'C:\\proj\\..\\x.md']) {
+      expect(isPreviewableConversationPath(p, win)).toBe(false);
+    }
+  });
 });

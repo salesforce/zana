@@ -146,6 +146,15 @@ describe('native preview file location', () => {
       }
     });
 
+    it('ignores a trusted folder that was swapped for a symlink', async () => {
+      const elsewhere = join(base, 'elsewhere');
+      await mkdir(elsewhere);
+      await writeFile(join(elsewhere, 'notes.md'), 'x');
+      await rm(trusted, { recursive: true, force: true });
+      await symlink(elsewhere, trusted);
+      expect((await previewFileLocation(request({ path: file }), deps)).ok).toBe(false);
+    });
+
     it('fails closed when the folder provider throws', async () => {
       const boom = { ...deps, trustedPreviewFolders: () => { throw new Error('x'); } };
       expect((await previewFileLocation(request({ path: file }), boom)).ok).toBe(false);

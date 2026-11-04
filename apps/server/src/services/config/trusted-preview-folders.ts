@@ -1,6 +1,8 @@
 import { isAbsolute, normalize, parse } from 'node:path';
 
-export const TRUSTED_PREVIEW_FOLDERS_MAX = 20;
+import { TRUSTED_PREVIEW_FOLDERS_MAX } from '@zana-ai/zcc-domain/product';
+
+export { TRUSTED_PREVIEW_FOLDERS_MAX };
 export const TRUSTED_PREVIEW_FOLDER_MAX_PATH = 4096;
 
 export class TrustedPreviewFolderError extends Error {

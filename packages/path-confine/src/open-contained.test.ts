@@ -92,4 +92,33 @@ describe('openContainedFile', () => {
     // Replacement happened before open, so the opened inode is the named one: allowed and consistent.
     expect(result).toBe('replacement');
   });
+
+  describe('expectedRoot', () => {
+    it('opens normally while the root is the authorized canonical directory', async () => {
+      const file = await openContainedFile(root, 'dir/a.md', { expectedRoot: root });
+      expect(file).not.toBeNull();
+      await file?.handle.close();
+    });
+
+    it('refuses a root that was swapped for a symlink before resolution', async () => {
+      await rename(root, join(base, 'root-moved'));
+      await symlink(outside, root);
+      expect(await openContainedFile(root, 'a.md', { expectedRoot: root })).toBeNull();
+    });
+
+    it('refuses a root swapped for a symlink between resolution and open', async () => {
+      const result = await openContainedFile(root, 'dir/a.md', {
+        expectedRoot: root,
+        afterResolve: async () => {
+          await rename(root, join(base, 'root-moved'));
+          await symlink(outside, root);
+        }
+      });
+      expect(result).toBeNull();
+    });
+
+    it('refuses a missing root', async () => {
+      expect(await openContainedFile(join(base, 'gone'), 'a.md', { expectedRoot: join(base, 'gone') })).toBeNull();
+    });
+  });
 });

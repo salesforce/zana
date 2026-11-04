@@ -1,10 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FolderPlus, X } from 'lucide-react';
-import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { TRUSTED_PREVIEW_FOLDERS_MAX, type AppConfig } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { Section, SettingsActionRow } from '@/components/settings/FormFields';
-
-export const TRUSTED_PREVIEW_FOLDERS_MAX = 20;
 
 /**
  * Folders the user trusts for read-only file Preview. Only the native chooser
@@ -15,6 +13,8 @@ export function TrustedPreviewFoldersSection({ config }: { config: Pick<AppConfi
   const [folders, setFolders] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Authoritative config updates (another window, a reload) supersede the optimistic local list.
+  useEffect(() => setFolders(null), [config.trustedPreviewFolders]);
   const shown = folders ?? config.trustedPreviewFolders ?? [];
   const atCap = shown.length >= TRUSTED_PREVIEW_FOLDERS_MAX;
 

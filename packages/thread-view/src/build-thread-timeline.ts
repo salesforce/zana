@@ -637,7 +637,7 @@ function buildTimelineOperationDetail(
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
-const ABSOLUTE_PATH_IN_TEXT = /(?:^|[\s`(\[])\/[^\s/]|file:\/\//u;
+const ABSOLUTE_PATH_IN_TEXT = /(?:^|[\s`(\[])(?:\/[^\s/]|[A-Za-z]:[\\/])|file:\/\//u;
 
 function conversationPreviewRoots(
   text: string,

@@ -1,3 +1,4 @@
+import { openContainedFile } from '@zana-ai/zcc-path-confine';
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,7 +131,7 @@ describe('openLocalPreviewFile', () => {
   it('matches a file reached through a symlinked directory on the resolved form', () => {
     const alias = join(base, 'alias');
     symlinkSync(trusted, alias);
-    expect(matchPreviewRoots(roots(), join(alias, 'a.md'))).toEqual([{ root: trusted, rel: 'a.md' }]);
+    expect(matchPreviewRoots(roots(), join(alias, 'a.md'))).toEqual([{ root: trusted, rel: 'a.md', trusted: true }]);
   });
   it('denies a swap of the file for an escaping symlink after the match', async () => {
     const target = join(trusted, 'swap.md');
@@ -140,5 +141,18 @@ describe('openLocalPreviewFile', () => {
     rmSync(target);
     symlinkSync(join(outside, 'secret.md'), target);
     expect((await openLocalPreviewFile(roots(), target)).kind).toBe('missing');
+  });
+  it('refuses a trusted root swapped for a symlink after the match, before the open', async () => {
+    const elsewhere = join(base, 'elsewhere-open');
+    mkdirSync(elsewhere);
+    writeFileSync(join(elsewhere, 'a.md'), 'SECRET');
+    const matched = await matchPreviewRootsAsync(roots(), join(trusted, 'a.md'));
+    expect(matched).toHaveLength(1);
+    rmSync(trusted, { recursive: true });
+    symlinkSync(elsewhere, trusted);
+    // Matching already ran; the open itself must still refuse the swapped root.
+    const result = await openContainedFile(trusted, 'a.md', { expectedRoot: trusted });
+    expect(result).toBeNull();
+    expect((await openLocalPreviewFile(roots(), join(trusted, 'a.md'))).kind).toBe('outside');
   });
 });

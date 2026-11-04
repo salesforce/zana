@@ -70,9 +70,12 @@ export function isPreviewableConversationPath(
   const segments = path.split(/[/\\]/u);
   if (segments.includes('..')) return false;
   if (!path.startsWith('/') && !/^[a-z]:[\\/]/iu.test(path)) return true;
+  const slashed = path.replace(/\\/gu, '/');
+  const windows = /^[a-z]:\//iu.test(slashed);
+  const fold = (value: string) => (windows ? value.toLowerCase() : value);
   return previewRoots.some((root) => {
-    const normalized = root.replace(/\/+$/u, '');
-    return normalized.length > 0 && path.startsWith(`${normalized}/`);
+    const normalized = root.replace(/\\/gu, '/').replace(/\/+$/u, '');
+    return normalized.length > 0 && fold(slashed).startsWith(`${fold(normalized)}/`);
   });
 }
 

@@ -6745,3 +6745,6 @@ export interface ExecutionBoardSnapshot {
 
 /** Stable text main raises when Zana Connect rejects this computer's credential (401/403). Survives IPC serialization. */
 export const CONNECT_ACCESS_REVOKED_MESSAGE = "This computer's access was revoked. Sign in again to reconnect.";
+
+/** Maximum folders a user can trust for file Preview; enforced in main, mirrored by the Settings UI. */
+export const TRUSTED_PREVIEW_FOLDERS_MAX = 20;

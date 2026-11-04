@@ -45,6 +45,8 @@ describe("conversation previewRoots", () => {
     ["bracketed", "[x] /tmp/a.md"],
     ["file URL", "file:///tmp/a.md"],
     ["line start", "/tmp/a.md"],
+    ["Windows backslash", "see C:\\proj\\a.md"],
+    ["Windows forward slash", "open (D:/proj/a.md)"],
   ])("detects %s absolute paths", (_name, text) => {
     for (const row of render(text, { workspaceRoot: WORKSPACE })) expect(new Set(row.previewRoots)).toEqual(new Set([WORKSPACE]));
   });

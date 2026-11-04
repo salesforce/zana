@@ -65,6 +65,8 @@ export async function previewFileLocation(input: Request, deps: PreviewFileLocat
     if (path && (await stat(path)).isFile()) return { ok: true, path };
     if (localScope && input.source === 'workspace' && isAbsolute(input.path)) {
       for (const folder of deps.trustedPreviewFolders?.() ?? []) {
+        // A folder swapped for a symlink since it was trusted no longer anchors anything.
+        if ((await realpath(folder).catch(() => null)) !== folder) continue;
         const candidate = await containedPath(folder, input.path);
         if (candidate && (await stat(candidate)).isFile()) return { ok: true, path: candidate };
       }

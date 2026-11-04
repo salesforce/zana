@@ -67,4 +67,14 @@ describe('TrustedPreviewFoldersSection', () => {
     render(<TrustedPreviewFoldersSection config={{ trustedPreviewFolders: many }} />);
     expect((screen.getByRole('button', { name: /Add folder/ }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('follows authoritative config changes after a local edit', async () => {
+    add.mockResolvedValue({ config: { trustedPreviewFolders: ['/a', '/b'] } });
+    const view = render(<TrustedPreviewFoldersSection config={{ trustedPreviewFolders: ['/a'] }} />);
+    fireEvent.click(screen.getByRole('button', { name: /Add folder/ }));
+    await waitFor(() => expect(screen.getByText('/b')).toBeTruthy());
+    view.rerender(<TrustedPreviewFoldersSection config={{ trustedPreviewFolders: ['/c'] }} />);
+    await waitFor(() => expect(screen.getByText('/c')).toBeTruthy());
+    expect(screen.queryByText('/b')).toBeNull();
+  });
 });

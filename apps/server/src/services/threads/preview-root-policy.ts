@@ -82,6 +82,8 @@ export function effectivePreviewRootsFor(
 
 export interface RootMatch {
   root: string;
+  /** The root came from the user's trusted folders and must stay canonical through the open. */
+  trusted: boolean;
   /** Candidate relative to `root`, already safe. */
   rel: string;
 }
@@ -124,7 +126,7 @@ export function matchPreviewRoots(roots: readonly PreviewRoot[], candidate: stri
       const realCandidate = realOrNull(candidate);
       rel = realCandidate ? relUnder(path, realCandidate) : null;
     }
-    if (rel) matches.push({ root: path, rel });
+    if (rel) matches.push({ root: path, rel, trusted });
   }
   return matches;
 }
@@ -139,7 +141,7 @@ export async function matchPreviewRootsAsync(roots: readonly PreviewRoot[], cand
       const realCandidate = await realOrNullAsync(candidate);
       rel = realCandidate ? relUnder(path, realCandidate) : null;
     }
-    if (rel) matches.push({ root: path, rel });
+    if (rel) matches.push({ root: path, rel, trusted });
   }
   return matches;
 }
@@ -154,8 +156,8 @@ export type LocalPreviewOpen =
 /** Authorize and open (once) a file under the effective roots. The caller closes `file.handle`. */
 export async function openLocalPreviewFile(roots: readonly PreviewRoot[], candidate: string): Promise<LocalPreviewOpen> {
   const matches = await matchPreviewRootsAsync(roots, candidate);
-  for (const { root, rel } of matches) {
-    const file = await openContainedFile(root, rel);
+  for (const { root, rel, trusted } of matches) {
+    const file = await openContainedFile(root, rel, trusted ? { expectedRoot: root } : {});
     if (file) return { kind: 'opened', file, root, rel };
   }
   return matches.length ? { kind: 'missing' } : { kind: 'outside' };

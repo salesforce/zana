@@ -14,6 +14,13 @@ export interface ContainedFile {
 export interface OpenContainedOptions {
   /** Fault-injection seam: runs between path resolution and the open. */
   afterResolve?: (real: string) => void | Promise<void>;
+  /**
+   * Canonical directory the caller authorized. When set, `dir` must still
+   * resolve to exactly this path both before the open and when the descriptor is
+   * revalidated, so a root swapped for a symlink after authorization is refused
+   * instead of becoming the new boundary.
+   */
+  expectedRoot?: string;
 }
 
 /**
@@ -35,6 +42,7 @@ export async function openContainedFile(
   entry: string,
   options: OpenContainedOptions = {}
 ): Promise<ContainedFile | null> {
+  if (options.expectedRoot !== undefined && !(await rootIs(dir, options.expectedRoot))) return null;
   const real = await resolveContainedReal(dir, entry);
   if (!real) return null;
   let handle: FileHandle | undefined;
@@ -45,6 +53,7 @@ export async function openContainedFile(
     const opened = await handle.stat({ bigint: true });
     if (!opened.isFile()) throw new Error('not a regular file');
     const realDir = await realpath(resolve(dir));
+    if (options.expectedRoot !== undefined && realDir !== options.expectedRoot) throw new Error('root changed');
     const again = await realpath(real);
     if (again !== real || !isWithin(again, realDir)) throw new Error('path changed');
     const named = await stat(again, { bigint: true });
@@ -53,5 +62,13 @@ export async function openContainedFile(
   } catch {
     await handle?.close().catch(() => undefined);
     return null;
+  }
+}
+
+async function rootIs(dir: string, expected: string): Promise<boolean> {
+  try {
+    return (await realpath(resolve(dir))) === expected;
+  } catch {
+    return false;
   }
 }

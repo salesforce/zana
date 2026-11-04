@@ -291,8 +291,7 @@ function httpProduct(): Pick<
         error: 'Trusted preview folders can only be changed in the desktop app.'
       }),
       removeTrustedPreviewFolder: async () => {
-        const body = await apiJson<{ config: AppConfig }>('/config');
-        return body.config;
+        throw new Error('Trusted preview folders can only be changed in the desktop app.');
       },
       onChanged: (cb: (config: AppConfig) => void) =>
         subscribeProductEvent<AppConfig>('config:changed', cb)
