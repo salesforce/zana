@@ -637,6 +637,20 @@ function buildTimelineOperationDetail(
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
+const ABSOLUTE_PATH_IN_TEXT = /(?:^|[\s`(\[])(?:\/[^\s/]|[A-Za-z]:[\\/])|file:\/\//u;
+
+function conversationPreviewRoots(
+  text: string,
+  options: { workspaceRoot?: string | null; previewRoots?: readonly string[] },
+): { previewRoots?: string[] } {
+  if (!ABSOLUTE_PATH_IN_TEXT.test(text)) return {};
+  const roots = resolvePreviewRoots({
+    workspaceRoot: options.workspaceRoot ?? null,
+    ...(options.previewRoots ? { previewRoots: options.previewRoots } : {}),
+  });
+  return roots.length > 0 ? { previewRoots: [...roots] } : {};
+}
+
 function convertMessage(
   message: EventProjectionMessage,
   options: BuildTimelineRowsOptions,
@@ -649,6 +663,7 @@ function convertMessage(
           kind: "conversation",
           role: "user",
           text: message.text,
+          ...conversationPreviewRoots(message.text, options),
           mentions: message.mentions,
           ...(message.references ? { references: message.references } : {}),
           attachments: toConversationAttachments(message.attachments),
@@ -666,6 +681,7 @@ function convertMessage(
           kind: "conversation",
           role: "assistant",
           text: message.text,
+          ...conversationPreviewRoots(message.text, options),
           attachments: null,
           turnRequest: null,
         },

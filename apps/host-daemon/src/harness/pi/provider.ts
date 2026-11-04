@@ -42,7 +42,7 @@
  * the interface.
  */
 
-import type { AppConfig, LaunchProfileId, ProjectSettings } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, LaunchProfileId, Persona, ProjectSettings } from '@zana-ai/zcc-domain/product';
 import type {
   RemoteCommandInput,
   RemoteCommandResult,
@@ -150,12 +150,22 @@ export class PiProvider extends BaseLaunchProvider {
     return { command, args: defaults };
   }
 
+  /**
+   * Persona reasoning effort → PI's `--thinking <level>`. Every persona level
+   * (low … max) is a PI thinking level, so it passes through unchanged. It comes
+   * after the launcher-global and project `--thinking`, and PI keeps the last
+   * one, so the persona wins. Absent = no flag.
+   */
+  personaArgs(persona: Persona, _profile: LaunchProfileId): string[] {
+    return persona.reasoningLevel ? ['--thinking', persona.reasoningLevel] : [];
+  }
+
   baseArgsPinSession(profile: LaunchProfileId): boolean {
     // pi-resume's base args carry `--continue`, which pins the session.
     return profile === 'pi-resume';
   }
 
-  // mcpArgs / guidanceArgs / hookArgs / personaArgs / projectSettingsArgs /
+  // mcpArgs / guidanceArgs / hookArgs /
   // authInjection / authKey and computeAutoModeActive all inherit the EMPTY /
   // false / null defaults from BaseLaunchProvider. PI has no launcher-injectable
   // MCP / guidance / hook surface (it's MCP-less and wires hooks via extensions,

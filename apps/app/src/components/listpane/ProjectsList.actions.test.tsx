@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   reorderProjects: vi.fn(),
   updateProject: vi.fn(),
   selectProject: vi.fn(),
+  enterProjectFocus: vi.fn(),
   setLauncherOpen: vi.fn()
 }));
 
@@ -30,7 +31,7 @@ vi.mock('../../store.js', () => ({
   useUi: (select: (state: unknown) => unknown) => select({
     selectedProjectId: null, focusedProjectId: null, selectedTabId: {}, unread: {}, projectExpanded: {},
     hideIdleProjects: false, collapsedSections: {},
-    selectProject: h.selectProject, setLauncherOpen: h.setLauncherOpen
+    selectProject: h.selectProject, enterProjectFocus: h.enterProjectFocus, setLauncherOpen: h.setLauncherOpen
   }),
   sortProjectsForDisplay: (projects: Project[]) => projects,
   sortProjectsAlphabetically: (projects: Project[]) => projects,
@@ -268,7 +269,7 @@ describe('machine project context menu', () => {
     expect(screen.getByRole('button', { name: 'Move down' }).hasAttribute('disabled')).toBe(false);
   });
 
-  it('routes projected Default Project row and New agent to its machine without opening row menu', () => {
+  it('opens Default Project like other projects and keeps New agent on its machine', () => {
     h.hosts = [{ id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
     h.projects = [
       { id: 'default', name: 'Default Project', path: '/tmp/default', quickAgent: true, createdAt: 1, lastActiveAt: 1 }
@@ -284,9 +285,16 @@ describe('machine project context menu', () => {
     expect(document.querySelector('.project-menu')).toBeNull();
 
     fireEvent.click(openDefault);
-    expect(screen.getByTestId('location').textContent).toBe('/threads/new?locationProject=default&host=remote');
+    expect(h.enterProjectFocus).toHaveBeenCalledWith('default');
+    expect(screen.getByTestId('location').textContent).toBe('/');
+    h.enterProjectFocus.mockClear();
+    const localGroup = document.querySelector('[data-machine-id="local"]') as HTMLElement;
+    fireEvent.click(within(localGroup).getByRole('button', { name: 'Open Default Project' }));
+    expect(h.enterProjectFocus).toHaveBeenCalledWith('default');
+    h.enterProjectFocus.mockClear();
     fireEvent.click(within(remoteGroup as HTMLElement).getByRole('button', { name: 'New agent in Default Project' }));
     expect(screen.getByTestId('location').textContent).toBe('/threads/new?locationProject=default&host=remote');
+    expect(h.enterProjectFocus).not.toHaveBeenCalled();
     expect(h.setLauncherOpen).not.toHaveBeenCalled();
   });
 });

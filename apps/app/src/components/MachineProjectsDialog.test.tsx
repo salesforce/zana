@@ -38,7 +38,8 @@ describe('machine overview', () => {
     expect(screen.getByText('Folder missing')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Check folders' }));
     fireEvent.click(screen.getByRole('button', { name: 'Default Project', exact: true }));
-    expect(result.onNewThread).toHaveBeenCalledWith(result.group, scratch);
+    expect(result.onOpenProject).toHaveBeenCalledWith(scratch);
+    expect(result.onNewThread).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'API', exact: true }));
     expect(result.onOpenProject).toHaveBeenCalledWith(result.group.projects[1]);
     fireEvent.click(screen.getAllByRole('button', { name: 'New thread' })[1]);

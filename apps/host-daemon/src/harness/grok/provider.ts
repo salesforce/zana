@@ -7,7 +7,7 @@
  * apply. Rule 6: profile literals live only here + the registration.
  */
 
-import type { AppConfig, LaunchProfileId } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, LaunchProfileId, Persona } from '@zana-ai/zcc-domain/product';
 import type {
   RemoteCommandInput,
   RemoteCommandResult,
@@ -125,6 +125,17 @@ export class GrokProvider extends BaseLaunchProvider {
       return { command, args: ['--always-approve'] };
     }
     return { command, args: [] };
+  }
+
+  /**
+   * Persona reasoning effort → Grok's `--reasoning-effort`. Grok takes low,
+   * medium and high, so xhigh and max map to high (the same mapping the Grok
+   * thread provider uses). Absent = no flag.
+   */
+  personaArgs(persona: Persona, _profile: LaunchProfileId): string[] {
+    const level = persona.reasoningLevel;
+    if (!level) return [];
+    return ['--reasoning-effort', level === 'xhigh' || level === 'max' ? 'high' : level];
   }
 
   baseArgsPinSession(profile: LaunchProfileId): boolean {

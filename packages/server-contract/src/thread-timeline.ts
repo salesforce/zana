@@ -114,6 +114,12 @@ const timelineConversationRowBaseSchema = timelineRowBaseSchema.extend({
   kind: z.literal("conversation"),
   text: z.string(),
   attachments: timelineConversationAttachmentsSchema.nullable(),
+  /**
+   * Absolute roots a Preview control may open files under. Present only when
+   * the message text mentions an absolute path, so the renderer can offer
+   * Preview solely for contained paths.
+   */
+  previewRoots: z.array(z.string()).optional(),
 });
 
 export const timelineUserConversationRowSchema =

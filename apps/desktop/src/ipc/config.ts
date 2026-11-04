@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { dialog } from 'electron';
+import { addPickedTrustedPreviewFolder, removeStoredTrustedPreviewFolder } from '../native/trusted-preview-folders.js';
 import { productHandle, safeProductHandle } from './shared-product-registration.js';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
@@ -28,6 +30,8 @@ export function registerConfigIpc(): void {
         windowMaximized: _windowMaximized,
         pluginViewWindowBounds: _pluginViewWindowBounds,
         threadViewWindowBounds: _threadViewWindowBounds,
+        // Preview trust is granted only by the folder chooser handlers below.
+        trustedPreviewFolders: _trustedPreviewFolders,
         ...safePatch
       } = patch;
       const previous = store.getConfig();
@@ -80,6 +84,38 @@ export function registerConfigIpc(): void {
       ctx.safeSend(IPC.config.onChanged, next);
       return next;
     }
+  );
+
+  // Preview trust is a local-desktop grant. These are plain IPC handlers, not
+  // shared product handlers, so the product server and plugins cannot invoke
+  // them, and the renderer never supplies the path that gets trusted.
+  const broadcast = (next: AppConfig): AppConfig => {
+    const presented = presentAppConfig(next);
+    ctx.safeSend(IPC.config.onChanged, presented);
+    return presented;
+  };
+  ctx.safeHandle(
+    IPC.config.addTrustedPreviewFolder,
+    async () => {
+      const win = ctx.mainWindow();
+      if (!win) return { config: null };
+      const picked = await dialog.showOpenDialog(win, {
+        title: 'Trust a folder for file preview',
+        properties: ['openDirectory']
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { config: null };
+      try {
+        return { config: broadcast(await addPickedTrustedPreviewFolder(picked.filePaths[0], store)) };
+      } catch (error) {
+        return { config: null, error: error instanceof Error ? error.message : 'Could not trust this folder.' };
+      }
+    },
+    () => ({ config: null, error: 'Could not trust this folder.' })
+  );
+  ctx.safeHandle(
+    IPC.config.removeTrustedPreviewFolder,
+    (path: string) => broadcast(removeStoredTrustedPreviewFolder(path, store)),
+    () => presentAppConfig(store.getConfig())
   );
 
   // Recent Overseer decisions for the dry-run review pane. Read-only; bounded by
