@@ -229,6 +229,16 @@ describe('POST peer-link repair', () => {
     expect(resume).not.toHaveBeenCalled();
   });
 
+  it('passes the reconnect outcome through when the owner reports one', async () => {
+    const s = await start();
+    const { link } = seed(s);
+    s.ctx.peerLinkDirectory = { describe: () => undefined, repair: async () => ({ repaired: true as const, connected: false, reason: 'peer-offline' as const }) };
+    const response = await post(`/peer-links/${link.id}/repair`);
+    expect(await response.json()).toEqual({ ok: true, connected: false, reason: 'peer-offline' });
+    s.ctx.peerLinkDirectory = { describe: () => undefined, repair: async () => ({ repaired: true as const, connected: true }) };
+    expect(await (await post(`/peer-links/${link.id}/repair`)).json()).toEqual({ ok: true, connected: true });
+  });
+
   it('404s an unknown host, an execution host and an unclaimed link; 503s on failure', async () => {
     const s = await start();
     const { exec, link } = seed(s);

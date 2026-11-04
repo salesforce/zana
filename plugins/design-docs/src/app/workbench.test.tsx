@@ -3,7 +3,8 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { UI_USER } from '../server/rpc.js';
-import type { DesignDocStore } from '../server/store.js';
+import { DesignDocStore } from '../server/store.js';
+import { createTestDatabase } from '../server/test-db.js';
 import { NavPanel, ProjectTab } from './slots.js';
 import { PEER_STATUS_POLL_MS } from './PeerSettings.js';
 import { projectOptions } from './Workbench.js';
@@ -182,7 +183,7 @@ describe('peers view', () => {
     expect((screen.getByRole('button', { name: 'Syncing' }) as HTMLButtonElement).disabled).toBe(true);
     finish({ attempted: 2, synced: 2, blocked: 0 });
     await screen.findByRole('button', { name: 'Sync' });
-    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2 peers', kind: 'info' });
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced with your other computers', kind: 'info' });
     expect(syncNow).toHaveBeenCalledOnce();
   });
 
@@ -203,7 +204,7 @@ describe('peers view', () => {
     fireEvent.click(busy);
     finish({ attempted: 3, synced: 2, blocked: 1 });
     await within(rail).findByRole('button', { name: /^Sync peers/ });
-    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2/3; 1 blocked', kind: 'info' });
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2. Some changes are waiting for another computer. They will send on their own.', kind: 'info' });
     expect(syncNow).toHaveBeenCalledOnce();
   });
 
@@ -538,6 +539,26 @@ describe('doc list', () => {
     expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
   });
 
+  it('does not offer Move for a peer-received doc', async () => {
+    const db = createTestDatabase();
+    const harness = createHarness({ store: new DesignDocStore(db) });
+    const doc = seed(harness.store, { title: 'Peer owned', projectId: 'p1' });
+    db.prepare('INSERT INTO sync_doc_references VALUES (?, ?, ?)').run(doc.id, '"foreign"', '[]');
+    seed(harness.store, { title: 'Mine', projectId: 'p1' });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    await screen.findByText('Peer owned', { selector: '.dd-doc-row-title' });
+    const rightClick = (title: string) => fireEvent.contextMenu(screen.getByText(title, { selector: '.dd-doc-row-title' }).closest('button')!, { clientX: 40, clientY: 60 });
+    rightClick('Peer owned');
+    expect(screen.queryByRole('menuitem', { name: /Move to project/ })).toBeNull();
+    fireEvent.click(menuItem(/Map to a Project/));
+    expect(await screen.findByRole('dialog', { name: /Map projects from other computers/ })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('dialog', { name: /Map projects from other computers/ })).getByText('Close', { selector: '.btn' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Map projects from other computers/ })).toBeNull());
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    rightClick('Mine');
+    expect((menuItem(/Move to project/) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('downloads a doc as a zip from the right-click menu and the header menu', async () => {
     const harness = createHarness();
     const blobs: Blob[] = [];
@@ -736,6 +757,10 @@ describe('doc header', () => {
     fireEvent.click(menuItem(/Copy chat reference/));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`::design-doc{id="${doc.id}"}`));
     expect(harness.toasts.at(-1)).toEqual({ message: 'Copied reference', kind: 'info' });
+    more();
+    fireEvent.click(menuItem(/Copy doc link/));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`[Lifecycle](doc://${doc.id}/README.md)`));
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Copied doc link', kind: 'info' });
     writeText.mockRejectedValueOnce(new Error('denied'));
     more();
     fireEvent.click(menuItem(/Copy id/));

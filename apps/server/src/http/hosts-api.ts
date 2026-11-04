@@ -112,7 +112,7 @@ export async function handleHostsApi(
     const repairParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/:hostId/repair') : null;
     if (repairParams) {
       const result = await repairPeerLink(ctx, repairParams.hostId!);
-      if (result.status === 'ok') sendJson(response, 200, { ok: true as const });
+      if (result.status === 'ok') sendJson(response, 200, { ok: true as const, ...(result.connected === undefined ? {} : { connected: result.connected }), ...(result.reason ? { reason: result.reason } : {}) });
       else if (result.status === 'not-found') sendJson(response, 404, { error: 'peer link not found' });
       else sendJson(response, 503, { error: 'Could not repair this link right now. Try again.' });
       return true;

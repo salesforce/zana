@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OWNER_PID_MARKER } from "./temp-dir-sweep.js";
 
 /**
  * Where a daemon-spawned plugin process keeps its files.
@@ -49,8 +50,17 @@ export async function ensurePluginProcessDataDir(args: {
 export async function createPluginProcessTempDir(args: {
   pluginId: string;
   prefix: string;
+  /**
+   * The process that owns the directory and removes it; its pid is part of the
+   * name so a later sweep can tell an orphan from a live dir. Defaults to this
+   * process.
+   */
+  ownerPid?: number;
 }): Promise<string> {
   return mkdtemp(
-    join(tmpdir(), `${args.prefix}-${safePluginSegment(args.pluginId)}-`),
+    join(
+      tmpdir(),
+      `${args.prefix}-${args.ownerPid ?? process.pid}${OWNER_PID_MARKER}${safePluginSegment(args.pluginId)}-`,
+    ),
   );
 }

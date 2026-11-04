@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { canonicalPeerHash, type PeerAppliedReceipt, type PeerOperation, type PeerVersion,
   PeerProtocolError, validateDocumentClosure, validatePeerPacket } from '../shared/peer-contract.js';
-import { MAX_PEER_SESSION_OPERATIONS, MAX_PEER_PAGE_OPERATIONS, MAX_PEER_SESSION_BYTES, PEER_PROTOCOL_VERSION, PEER_MIN_PROTOCOL_VERSION, PEER_DELTA_PROTOCOL_VERSION,
+import { MAX_PEER_SESSION_OPERATIONS, MAX_PEER_PAGE_OPERATIONS, MAX_PEER_SESSION_BYTES, PEER_PROTOCOL_VERSION, PEER_MIN_PROTOCOL_VERSION, PEER_DELTA_PROTOCOL_VERSION, MAX_PEER_PROJECT_NAME, MAX_PEER_PROJECT_TAG,
    MAX_PEER_CHUNK_BYTES, MAX_PEER_SESSION_BLOBS, MAX_PEER_TRANSFER_BYTES, MAX_PEER_CLOSURE_BYTES } from '../shared/peer-limits.js';
 
 export interface PeerHandshake {
@@ -14,6 +14,12 @@ export interface PeerHandshake {
  * integrity and merge-base search survive compaction. A stub is never readable content on either side.
  */
 export interface PeerAncestorStubs { stubs?: PeerOperation[] }
+/**
+ * Protocol-4 advisory label for the sender's project of the offered doc. It travels outside every hash (like `manual`),
+ * so older peers never see it and it can never change what is authorized or merged; the receiver only uses it to
+ * suggest a local project. The id is the sender's own project id.
+ */
+export interface PeerProjectHint { id: string; name?: string; tag?: string }
 export interface PeerSessionOffer extends PeerHandshake, PeerAncestorStubs {
   sessionId: string; versions: PeerVersion[]; heads: Record<string, string>; scopeHash: string;
   /**
@@ -23,6 +29,7 @@ export interface PeerSessionOffer extends PeerHandshake, PeerAncestorStubs {
    * (accepted inbound sessions are still gated independently) nor perturb persisted session hashes.
    */
   manual?: boolean;
+  project?: PeerProjectHint;
 }
 export interface PeerTransfer extends PeerHandshake, PeerAncestorStubs {
   sessionId: string; scopeHash: string; heads: Record<string, string>;
@@ -30,6 +37,7 @@ export interface PeerTransfer extends PeerHandshake, PeerAncestorStubs {
   blobs: Array<{ hash: string; bytes: number }>;
   /** See PeerSessionOffer.manual — same receiver-visible private-session marker, excluded from the transfer hash. */
   manual?: boolean;
+  project?: PeerProjectHint;
 }
 /** Older stub ancestry that does not fit one inline page; delivered roots-first before the offer or transfer. */
 export interface PeerAncestryPage extends PeerHandshake { docId: string; stubs: PeerOperation[] }
@@ -49,6 +57,7 @@ export interface PeerSessionExpectation {
   groupId: string; rosterEpoch: number; rosterDigest?: string;
 }
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/);
+const projectHintSchema = z.object({ id, name: z.string().max(MAX_PEER_PROJECT_NAME).optional(), tag: z.string().max(MAX_PEER_PROJECT_TAG).optional() }).strict();
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const handshakeSchema = z.object({ protocolVersion: z.number().int().min(PEER_MIN_PROTOCOL_VERSION).max(PEER_PROTOCOL_VERSION), repoId: id,
   senderReplicaId: id, recipientReplicaId: id, grantEpoch: z.number().int().positive().safe(),
@@ -66,11 +75,11 @@ export function validateManualConsent(input: unknown, expected: PeerSessionExpec
 }
 const offerSchema = handshakeSchema.extend({ sessionId: id, versions: z.array(z.object({
   operation: operationSchema, closure: z.unknown() }).strict()).max(MAX_PEER_SESSION_OPERATIONS),
-  heads: headsSchema, scopeHash: hash, stubs: stubsSchema.optional(), manual: z.boolean().optional() }).strict();
+  heads: headsSchema, scopeHash: hash, stubs: stubsSchema.optional(), manual: z.boolean().optional(), project: projectHintSchema.optional() }).strict();
 const transferSchema = handshakeSchema.extend({ sessionId: id, scopeHash: hash, heads: headsSchema,
   versions: z.array(z.object({ operation: operationSchema, manifestHash: hash }).strict()).min(1).max(MAX_PEER_SESSION_OPERATIONS),
   blobs: z.array(z.object({ hash, bytes: z.number().int().nonnegative().max(MAX_PEER_CLOSURE_BYTES) }).strict()).min(1).max(MAX_PEER_SESSION_BLOBS),
-  stubs: stubsSchema.optional(), manual: z.boolean().optional()
+  stubs: stubsSchema.optional(), manual: z.boolean().optional(), project: projectHintSchema.optional()
 }).strict();
 const ancestrySchema = handshakeSchema.extend({ docId: id, stubs: stubsSchema }).strict();
 const querySchema = handshakeSchema.extend({ sessionId: id, scopeHash: hash }).strict();

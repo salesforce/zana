@@ -6,6 +6,7 @@ import { MAX_SUMMARY_LENGTH, MAX_TAG_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH } from '
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
 import { ActorLabel, IconButton, MenuItem, Popover, StatusPill, TimeAgo } from './ui.js';
 import { PeerConflictView } from './PeerConflictView.js';
+import { SYNC_STATE_HELP, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 
 /** Text that reads as text until clicked, then edits in place (Enter saves, Escape cancels). */
 export function EditableText({
@@ -179,6 +180,33 @@ function StatusMenu({ status, onChange }: { status: DocStatus; onChange(status: 
   );
 }
 
+/** Sync state of this doc against the other computers; renders nothing when sync is not set up. */
+function SyncLine({ docId, refreshKey, onResolve }: { docId: string; refreshKey: unknown; onResolve(): void }) {
+  const status = useDocSyncStatuses(refreshKey, docId).get(docId);
+  const [open, setOpen] = useState(false);
+  if (!status) return null;
+  const { state } = status;
+  return (
+    <Popover
+      open={open}
+      onClose={() => setOpen(false)}
+      className="dd-menu dd-sync-help"
+      anchor={
+        <button type="button" className={`dd-sync-line dd-sync-${state}`} aria-haspopup="dialog" aria-expanded={open}
+          title="Sync status" onClick={() => setOpen(!open)}>
+          <span className="dd-sync-dot" aria-hidden /> {SYNC_STATE_LABEL[state]}
+        </button>
+      }
+    >
+      <div className="dd-sync-help-body" role="dialog" aria-label="Sync status">
+        <strong>{SYNC_STATE_LABEL[state]}</strong>
+        <p>{SYNC_STATE_HELP[state]}</p>
+        {state === 'needs-choice' ? <button type="button" className="btn primary" onClick={() => { setOpen(false); onResolve(); }}>Choose a version</button> : null}
+      </div>
+    </Popover>
+  );
+}
+
 export function DocHeader({
   doc,
   projects,
@@ -262,6 +290,7 @@ export function DocHeader({
         </span>}
         {template || collapsed ? null : <TagEditor tags={doc.tags} onChange={(tags) => void update({ tags }).catch(() => undefined)} />}
         <span className="dd-spacer" />
+        {template ? null : <SyncLine docId={doc.id} refreshKey={doc.head} onResolve={() => setConflicts(true)} />}
         <span className="dd-doc-updated">
           <ActorLabel actor={doc.updatedBy} /> <TimeAgo at={doc.updatedAt} now={Date.now()} />
         </span>

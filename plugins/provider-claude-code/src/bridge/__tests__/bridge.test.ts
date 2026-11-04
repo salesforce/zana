@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -6153,6 +6154,89 @@ describe("canonical skills/configure", () => {
     } finally {
       bridge.sendRequest(99, "skills/configure", { roots: [] });
       queries[0]?.finish();
+      bridge.restore();
+      rmSync(stagedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("copies a native-* root instead of linking it and skips one that cannot be copied (#587)", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const stagedRoot = mkdtempSync(join(tmpdir(), "bb-claude-skill-native-"));
+    const nativeRoot = join(stagedRoot, "home", "skills");
+    mkdirSync(join(nativeRoot, "demo"), { recursive: true });
+    writeFileSync(join(nativeRoot, "demo", "SKILL.md"), "---\nname: demo\n---\n");
+    const missingRoot = join(stagedRoot, "gone", "skills");
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      bridge.sendRequest(1, "skills/configure", {
+        roots: [
+          { id: "native-claude-0", path: nativeRoot, skills: [] },
+          { id: "native-claude-1", path: missingRoot, skills: [] },
+        ],
+      });
+      const configured = await bridge.waitForResponse(1);
+      const lines = stderr.mock.calls.map((call) => String(call[0])).join("");
+      expect(lines).toContain('skipping injected skill root "native-claude-1"');
+      expect(lines).not.toContain('"native-claude-0"');
+      expect(configured).toMatchObject({ result: { ok: true } });
+      bridge.sendRequest(2, "thread/start", {
+        threadId: "thread-native-copy",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(2);
+      const plugins = (getLatestQueryOptions() as { plugins?: { path: string }[] })
+        .plugins;
+      expect(plugins).toHaveLength(1);
+      const skills = join(plugins?.[0]?.path ?? "", "skills");
+      expect(lstatSync(skills).isSymbolicLink()).toBe(false);
+      expect(existsSync(join(skills, "demo", "SKILL.md"))).toBe(true);
+      // A2: a skill added after configure reaches the next thread start.
+      mkdirSync(join(nativeRoot, "added"), { recursive: true });
+      writeFileSync(join(nativeRoot, "added", "SKILL.md"), "---\nname: added\n---\n");
+      // Thread starts refresh at most every 5 s; move the clock past that.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 6_000 });
+      bridge.sendRequest(3, "thread/start", {
+        threadId: "thread-native-copy-2",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(3);
+      expect(existsSync(join(skills, "added", "SKILL.md"))).toBe(true);
+      // A9: a refresh that fails keeps the root's last good copy.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 20_000 });
+      rmSync(nativeRoot, { recursive: true, force: true });
+      bridge.sendRequest(5, "thread/start", {
+        threadId: "thread-native-copy-4",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(5);
+      const kept = (getLatestQueryOptions() as { plugins?: { path: string }[] })
+        .plugins;
+      expect(kept).toHaveLength(1);
+      expect(existsSync(join(kept?.[0]?.path ?? "", "skills", "demo", "SKILL.md"))).toBe(true);
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() - 20_000 + 1_000 });
+      // A thread start inside the interval does not rescan (rate limit).
+      mkdirSync(join(nativeRoot, "too-soon"), { recursive: true });
+      writeFileSync(join(nativeRoot, "too-soon", "SKILL.md"), "x\n");
+      bridge.sendRequest(4, "thread/start", {
+        threadId: "thread-native-copy-3",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions,
+      });
+      await bridge.waitForResponse(4);
+      expect(existsSync(join(skills, "too-soon"))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      stderr.mockRestore();
+      bridge.sendRequest(99, "skills/configure", { roots: [] });
       bridge.restore();
       rmSync(stagedRoot, { recursive: true, force: true });
     }

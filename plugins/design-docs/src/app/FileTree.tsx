@@ -1,12 +1,14 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, LayoutTemplate, Link2, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2, Upload } from 'lucide-react';
 import type { DesignDocDetail, DesignDocFileMeta } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
-import { extensionOf, fileKindOf, isBinaryKind } from '../shared/paths.js';
+import { crossDocMarkdownLink, extensionOf, fileKindOf, isBinaryKind, renameClashingPaths } from '../shared/paths.js';
 import { errorMessage, toast, useApi, type DocKind } from './api.js';
 import { buildTree, type TreeNode } from './content.js';
-import { ConfirmDialog, FileIcon, IconButton, MenuItem, Popover, type ConfirmRequest } from './ui.js';
+import { copyText } from './clipboard.js';
+import { useTemplates } from './hooks.js';
+import { ConfirmDialog, Dialog, FileIcon, IconButton, MenuItem, Popover, type ConfirmRequest } from './ui.js';
 
 /** Why the only file of a doc cannot be deleted; the server enforces the same rule. */
 export const LAST_FILE_REASON = 'A design doc needs at least one file. Delete the doc instead.';
@@ -99,6 +101,63 @@ function PathInput({
   );
 }
 
+/** Pick a template and add its files to this doc. Never overwrites: clashing files get a number (a-2.md). */
+function TemplateDialog({ docId, existing, onClose, onAdded }: { docId: string; existing: readonly string[]; onClose(): void; onAdded(firstPath: string | null): void }) {
+  const api = useApi();
+  const templates = useTemplates();
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const list = templates.data ?? [];
+  const chosen = list.find((template) => template.key === key) ?? null;
+  const renames = chosen ? renameClashingPaths(chosen.files, existing) : new Map<string, string>();
+  const names = chosen ? chosen.files.map((path) => renames.get(path) ?? path) : [];
+  const add = async () => {
+    if (!chosen) return;
+    setBusy(true);
+    try {
+      const result = await api.addFromTemplate(docId, chosen.key, true);
+      toast(`Added ${result.added.length} file${result.added.length === 1 ? '' : 's'} from ${chosen.label}${result.renamed.length ? `; renamed ${result.renamed.map((rename) => `${rename.from} to ${rename.to}`).join(', ')} to keep your existing files` : ''}`);
+      onAdded(result.added[0] ?? null);
+      onClose();
+    } catch (error) {
+      toast(`Could not add the template: ${errorMessage(error)}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      title="Add from template"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn primary" disabled={!chosen || busy} onClick={() => void add()}>Add files</button>
+        </>
+      }
+    >
+      <label className="dd-field">
+        <span className="dd-field-label">Template</span>
+        <select className="dd-input dd-select" value={key} onChange={(event) => setKey(event.target.value)}>
+          <option value="">Choose a template…</option>
+          {list.map((template) => (
+            <option key={template.key} value={template.key}>{template.label}</option>
+          ))}
+        </select>
+      </label>
+      {chosen ? (
+        <p className="dd-muted dd-field-help">
+          {chosen.description ? `${chosen.description} ` : ''}
+          {`Adds ${names.join(', ')}.`}
+          {renames.size ? ` Files already in the doc are kept, so ${[...renames].map(([from, to]) => `${from} is added as ${to}`).join(', ')}.` : ''}
+        </p>
+      ) : (
+        <p className="dd-muted dd-field-help">Adds the template's files to this doc, alongside what is already here.</p>
+      )}
+    </Dialog>
+  );
+}
+
 function FileRow({
   doc,
   file,
@@ -159,6 +218,16 @@ function FileRow({
         }} />}
       >
         <MenuItem
+          icon={Link2}
+          label="Copy link"
+          hint="Paste into any doc"
+          onSelect={() => {
+            setMenu(false);
+            void copyText(crossDocMarkdownLink(menuSnapshot.current.doc, menuSnapshot.current.file.path)).then((ok) =>
+              toast(ok ? 'Copied link' : 'Could not copy link', ok ? 'info' : 'error'));
+          }}
+        />
+        <MenuItem
           icon={Pencil}
           label="Rename or move"
           onSelect={() => {
@@ -215,6 +284,8 @@ export function FileTree({
   const api = useApi();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  const [fromTemplate, setFromTemplate] = useState(false);
+  const [addMenu, setAddMenu] = useState(false);
   const [renaming, setRenaming] = useState<DesignDocFileMeta | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const uploadRef = useRef<HTMLInputElement | null>(null);
@@ -366,9 +437,18 @@ export function FileTree({
         <span className="dd-section-label">Files</span>
         <span className="dd-tree-count">{doc.files.length}</span>
         <span className="dd-spacer" />
-        <IconButton icon={FilePlus2} label="Add files" size={13} disabled={full} onClick={() => uploadRef.current?.click()} />
-        <IconButton icon={Plus} label="New file" size={13} disabled={full} onClick={() => setCreating(true)} />
-        {onHide ? <IconButton icon={PanelLeftClose} label="Hide files" size={13} onClick={onHide} /> : null}
+        <Popover
+          open={addMenu}
+          onClose={() => setAddMenu(false)}
+          className="dd-menu dd-menu-add"
+          align="start"
+          anchor={<IconButton icon={Plus} label="Add to doc" hint="Add a file, template, or upload" size={13} active={addMenu} disabled={full} onClick={() => setAddMenu(!addMenu)} />}
+        >
+          <MenuItem icon={FilePlus2} label="New blank file…" hint="Type a name like notes.md" onSelect={() => { setAddMenu(false); setCreating(true); }} />
+          <MenuItem icon={LayoutTemplate} label="From template…" hint="Add a template's files" onSelect={() => { setAddMenu(false); setFromTemplate(true); }} />
+          <MenuItem icon={Upload} label="Upload files…" hint="From your computer" onSelect={() => { setAddMenu(false); uploadRef.current?.click(); }} />
+        </Popover>
+        {onHide ? <IconButton icon={PanelLeftClose} label="Hide files" hint="Hide the file list" size={13} onClick={onHide} /> : null}
         <input
           ref={uploadRef}
           type="file"
@@ -391,6 +471,7 @@ export function FileTree({
         ) : null}
       </div>
       {confirm ? <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} /> : null}
+      {fromTemplate ? <TemplateDialog docId={doc.id} existing={doc.files.map((file) => file.path)} onClose={() => setFromTemplate(false)} onAdded={(path) => { if (path) onOpen(path); }} /> : null}
     </nav>
   );
 }

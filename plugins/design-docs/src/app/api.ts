@@ -71,6 +71,33 @@ export interface ListArgs {
   projectId?: string;
   query?: string;
   status?: DocStatus | 'active' | 'all';
+  /** Only received docs whose foreign project id is not mapped to a local project. */
+  unassigned?: boolean;
+  /** Drop unassigned received docs; the all-projects view lists them in their own section. */
+  excludeUnassigned?: boolean;
+}
+
+/** An existing peer-to-local Project mapping on this machine. */
+export interface ProjectMapping {
+  foreignProjectId: string;
+  localProjectId: string;
+  docCount: number;
+  sampleTitles: string[];
+  senderName: string | null;
+  senderTag: string | null;
+  localRegistered: boolean;
+}
+
+/** A foreign (peer) project id with docs not yet mapped to a local project. */
+export interface UnassignedProject {
+  foreignProjectId: string;
+  docCount: number;
+  sampleTitles: string[];
+  /** The sender's own project name and tag (advisory), shown instead of the id. */
+  senderName: string | null;
+  senderTag: string | null;
+  /** Advisory only; never applied without the user's confirmation. */
+  suggestion: { projectId: string; name: string; basis: 'tag' | 'name' } | null;
 }
 
 export interface CreateArgs {
@@ -99,7 +126,11 @@ export type HarnessRouting = PluginHarnessOverride;
 export type HarnessDescriptors = HarnessRoutingEditorProps['descriptors'];
 
 export interface DesignDocsApi {
+  /** Resolve a `doc://` link written in `fromDoc`; the server authorizes the target. */
+  resolveCrossDocLink(fromDoc: string, href: string): Promise<{ docId: string; path: string } | { error: 'missing-doc' | 'missing-file' | 'forbidden' }>;
   templates(): Promise<TemplateInfo[]>;
+  /** Add a template's files to an existing doc; never overwrites. */
+  addFromTemplate(docId: string, templateKey: string, renameOnConflict?: boolean): Promise<{ added: string[]; renamed: Array<{ from: string; to: string }> }>;
   templateNew(args: { label: string; description?: string }): Promise<DesignDocDetail>;
   templateDuplicate(template: string): Promise<DesignDocDetail>;
   templateUpdateMeta(template: string, patch: UpdateArgs): Promise<DesignDocSummary>;
@@ -108,6 +139,12 @@ export interface DesignDocsApi {
   templatesExport(keys?: string[]): Promise<{ bundleText: string }>;
   templatesImport(bundleText: string): Promise<DesignDocDetail[]>;
   projects(): Promise<ProjectInfo[]>;
+  /** Deleted projects' last names, already labelled "<name> (project removed)". */
+  removedProjects(): Promise<Array<{ id: string; label: string }>>;
+  listUnassignedProjects(): Promise<UnassignedProject[]>;
+  listProjectMappings(): Promise<ProjectMapping[]>;
+  mapForeignProject(foreignProjectId: string, localProjectId: string): Promise<{ foreignProjectId: string; localProjectId: string }>;
+  unmapForeignProject(foreignProjectId: string): Promise<{ removed: boolean }>;
   /** Harnesses on the project's host, or this computer's when no project is given. */
   harnessDescriptors(projectId?: string): Promise<HarnessDescriptors>;
   /** This plugin's override at one scope, null when it inherits. */
@@ -131,7 +168,10 @@ export interface DesignDocsApi {
   /** Only whether a connected peer's database differs; never names or counts. */
   peersOutOfSync(): Promise<{ outOfSync: boolean }>;
   removePeer(replicaId: string): Promise<GroupStatus>;
-  syncNow(): Promise<{ attempted: number; synced: number; blocked: number }>;
+  /** `blocked` is the total not delivered; the breakdown is absent from older servers. */
+  syncNow(): Promise<SyncSummary>;
+  /** Sync state of every doc (or one) against the other computers; `[]` when sync is not set up. */
+  docSyncStatuses(doc?: string): Promise<DocSyncStatus[]>;
   peerConflicts(doc: string, cursor?: string): Promise<PeerConflictPage>;
   peerConflictReview(doc: string, remoteHead: string): Promise<PeerConflictReview>;
   peerConflictFile(doc: string, remoteHead: string, path: string): Promise<PeerConflictFile>;
@@ -170,6 +210,10 @@ export interface DesignDocsApi {
   publish(doc: string, args: { repo?: string; branch: string; folder: PublishFolder; projectId?: string }): Promise<{ threadId: string; projectId: string }>;
 }
 
+export interface SyncSummary { attempted: number; synced: number; blocked: number; waiting?: number; needsChoice?: number; failed?: number }
+export type DocSyncState = 'up-to-date' | 'unsent' | 'waiting' | 'needs-choice' | 'failed';
+export interface DocSyncStatus { docId: string; state: DocSyncState; computers: number }
+
 export interface PeerStatus {
   configured: boolean;
   repoId?: string;
@@ -192,7 +236,9 @@ export function createApi(call: Call): DesignDocsApi {
     await promise;
   };
   return {
+    resolveCrossDocLink: (fromDoc, href) => typed('resolveCrossDocLink', { fromDoc, href }),
     templates: () => typed('templates'),
+    addFromTemplate: (docId, templateKey, renameOnConflict) => typed('addFromTemplate', { docId, templateKey, ...(renameOnConflict ? { renameOnConflict: true } : {}) }),
     templateNew: (args) => typed('templateNew', args),
     templateDuplicate: (template) => typed('templateDuplicate', { template }),
     templateUpdateMeta: (template, patch) => typed('templateUpdateMeta', { template, ...patch }),
@@ -201,6 +247,11 @@ export function createApi(call: Call): DesignDocsApi {
     templatesExport: (keys) => typed('templatesExport', keys ? { keys } : undefined),
     templatesImport: (bundleText) => typed('templatesImport', { bundleText }),
     projects: () => typed('projects'),
+    removedProjects: () => typed('removedProjects'),
+    listUnassignedProjects: () => typed('listUnassignedProjects'),
+    listProjectMappings: () => typed('listProjectMappings'),
+    mapForeignProject: (foreignProjectId, localProjectId) => typed('mapForeignProject', { foreignProjectId, localProjectId }),
+    unmapForeignProject: (foreignProjectId) => typed('unmapForeignProject', { foreignProjectId }),
     harnessDescriptors: (projectId) => typed('harnessDescriptors', projectId ? { projectId } : undefined),
     harnessRouting: (scope) => typed('harnessRouting', scope),
     setHarnessRouting: (scope, value) => typed('setHarnessRouting', { scope, value }),
@@ -216,6 +267,7 @@ export function createApi(call: Call): DesignDocsApi {
     peersOutOfSync: () => typed('peersOutOfSync'),
     removePeer: (replicaId) => typed('removePeer', { replicaId }),
     syncNow: () => typed('syncNow'),
+    docSyncStatuses: (doc) => typed('docSyncStatuses', doc ? { doc } : undefined),
     peerConflicts: (doc, cursor) => typed('peerConflicts', { doc, cursor }),
     peerConflictReview: (doc, remoteHead) => typed('peerConflictReview', { doc, remoteHead }),
     peerConflictFile: (doc, remoteHead, path) => typed('peerConflictFile', { doc, remoteHead, path }),

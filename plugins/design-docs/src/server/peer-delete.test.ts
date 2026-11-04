@@ -71,7 +71,7 @@ describe('paired whole-document deletion', () => {
     expect(rows(b, doc.id)[3]).toBe(1);
     a.store.remove(doc.id, actor);
     expect(rows(a, doc.id)).toEqual([0, 0, 0, 0, 0]);
-    expect(await a.service.deliverPending(ab)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(ab)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.find(doc.id)).toBeNull();
     expect(rows(b, doc.id)).toEqual([0, 0, 0, 0, 0]);
     expect(b.sync.head('repo', doc.id)).toBe(a.sync.head('repo', doc.id));
@@ -82,7 +82,7 @@ describe('paired whole-document deletion', () => {
     // Replaying the same tombstone version is a no-op.
     const replay = b.sync.version('repo', b.sync.head('repo', doc.id)!)!;
     expect(replay.operation.kind).toBe('delete');
-    expect(await a.service.deliverPending(ab)).toEqual({ attempted: 0, synced: 0, blocked: 0 });
+    expect(await a.service.deliverPending(ab)).toEqual({ attempted: 0, synced: 0, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
   });
 
   it('an offline peer applies the delete when it reconnects', async () => {
@@ -93,12 +93,12 @@ describe('paired whole-document deletion', () => {
     await a.service.deliverPending(ab);
     online = false;
     a.store.remove(doc.id, actor);
-    expect(await a.service.deliverPending(ab)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(await a.service.deliverPending(ab)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     expect(b.store.find(doc.id)).not.toBeNull();
     expect(pendingFor(a, doc.id).n).toBe(1);
     online = true;
     a.advance(24 * 60 * 60 * 1000);
-    expect(await a.service.deliverPending(ab)).toEqual({ attempted: 1, synced: 1, blocked: 0 });
+    expect(await a.service.deliverPending(ab)).toEqual({ attempted: 1, synced: 1, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
     expect(b.store.find(doc.id)).toBeNull();
     expect(tombstone(b, doc.id)).toBe(true);
   });
