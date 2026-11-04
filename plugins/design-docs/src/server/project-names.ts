@@ -10,17 +10,31 @@ export interface ProjectNames {
 }
 
 export function createProjectNames(
-  list: () => Promise<Array<{ id: string; name: string }>>,
-  options: { ttlMs?: number; now?: () => number } = {}
+  list: () => Promise<Array<{ id: string; name: string; tag?: string }>>,
+  options: {
+    ttlMs?: number;
+    now?: () => number;
+    /** After each successful fetch, so stored names and aliases stay current. Must not throw. */
+    onRefresh?: (projects: Array<{ id: string; name: string; tag?: string }>) => void;
+    /** Label for an id absent from the (successfully fetched) list, e.g. "<name> (project removed)". */
+    removedLabel?: (projectId: string) => string | null;
+  } = {}
 ): ProjectNames {
   const ttlMs = options.ttlMs ?? 30_000;
   const now = options.now ?? Date.now;
   let names = new Map<string, string>();
+  let loaded = false;
   let fetchedAt = Number.NEGATIVE_INFINITY;
   let inFlight: Promise<void> | null = null;
 
   return {
-    name: (projectId) => (projectId ? (names.get(projectId) ?? null) : null),
+    name: (projectId) => {
+      if (!projectId) return null;
+      const live = names.get(projectId);
+      if (live !== undefined) return live;
+      if (!loaded || !options.removedLabel) return null;
+      try { return options.removedLabel(projectId); } catch { return null; }
+    },
     refresh() {
       if (inFlight) return inFlight;
       if (now() - fetchedAt < ttlMs) return Promise.resolve();
@@ -28,6 +42,8 @@ export function createProjectNames(
         .then(
           (projects) => {
             names = new Map(projects.filter((project) => project.name).map((project) => [project.id, project.name]));
+            loaded = true;
+            try { options.onRefresh?.(projects); } catch { /* bookkeeping must not break name lookups */ }
           },
           () => {}
         )

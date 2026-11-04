@@ -5164,6 +5164,8 @@ export interface GoalIteration {
   finishedAt?: string;
   /** Set on a spawn/evaluator error so the row explains itself. */
   error?: string;
+  /** The agent conversation this iteration ran in, recorded at spawn. Absent means no Resume. */
+  conversation?: ScheduleRunConversation;
 }
 
 /**

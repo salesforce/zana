@@ -399,6 +399,7 @@ function httpProduct(): Pick<
       delete: goalOwnerUnavailable,
       setStatus: goalOwnerUnavailable,
       runNow: goalOwnerUnavailable,
+      resumeIteration: async (): ReturnType<CcApi['goals']['resumeIteration']> => ({ ok: false, code: 'unavailable', message: 'Resuming a goal run requires the desktop app' }),
       reconcile: async (): ReturnType<CcApi['goals']['reconcile']> => ({ ok: false, code: 'unavailable', message: 'Worker recovery requires the instance owner to be connected' }),
       list: async () => {
         const body = await apiJson<{ goals: Goal[] }>('/goals');

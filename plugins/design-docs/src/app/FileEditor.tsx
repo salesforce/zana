@@ -1,6 +1,7 @@
-import { useCallback, useDeferredValue, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { AlertTriangle, FileWarning, RotateCcw, Save } from 'lucide-react';
 import type { DesignDocFile } from '../shared/contract.js';
+import { localizeDocLink } from '../shared/paths.js';
 import { errorMessage, isConflict, toast, useApi, type DocKind, type WriteResult } from './api.js';
 import { ActorLabel, Spinner } from './ui.js';
 
@@ -120,6 +121,20 @@ export function FileEditor({
     }
   };
 
+  // A link copied from this very doc becomes a relative link, so it also survives export.
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (file.kind !== 'markdown') return;
+    const local = localizeDocLink(event.clipboardData.getData('text/plain'), docId, file.path);
+    if (local === null) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const { selectionStart, selectionEnd, value } = target;
+    setDraft(`${value.slice(0, selectionStart)}${local}${value.slice(selectionEnd)}`);
+    requestAnimationFrame(() => {
+      target.selectionStart = target.selectionEnd = selectionStart + local.length;
+    });
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
@@ -170,6 +185,7 @@ export function FileEditor({
           aria-label={`Edit ${file.path}`}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           autoFocus
         />
         {split ? <div className="dd-editor-preview">{renderPreview(preview)}</div> : null}

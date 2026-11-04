@@ -65,15 +65,16 @@ function milestones(a: Peer, b: Peer) {
 
 describe('protocol negotiation', () => {
   it('negotiates the highest shared version and accepts only supported packet versions', () => {
-    expect(PEER_PROTOCOL_VERSION).toBe(3);
+    expect(PEER_PROTOCOL_VERSION).toBe(4);
     expect(negotiateProtocol({ protocolVersion: 2 })).toBe(2);
     expect(negotiateProtocol({ protocolVersion: 2, maxProtocolVersion: 3 })).toBe(3);
-    expect(negotiateProtocol({ protocolVersion: 2, maxProtocolVersion: 9 })).toBe(3);
+    expect(negotiateProtocol({ protocolVersion: 2, maxProtocolVersion: 4 })).toBe(4);
+    expect(negotiateProtocol({ protocolVersion: 2, maxProtocolVersion: 9 })).toBe(4);
     expect(negotiateProtocol({ protocolVersion: 2, maxProtocolVersion: '3' })).toBe(2);
     expect(negotiateProtocol({ protocolVersion: 2, maxProtocolVersion: 2.5 })).toBe(2);
     expect(negotiateProtocol({ protocolVersion: 3, maxProtocolVersion: 2 })).toBe(3);
-    for (const version of [2, 3]) expect(() => validatePeerPacket({ protocolVersion: version })).not.toThrow();
-    for (const version of [1, 4, 2.5, '3', null]) expect(() => validatePeerPacket({ protocolVersion: version })).toThrow('unsupported peer protocol version');
+    for (const version of [2, 3, 4]) expect(() => validatePeerPacket({ protocolVersion: version })).not.toThrow();
+    for (const version of [1, 5, 2.5, '3', null]) expect(() => validatePeerPacket({ protocolVersion: version })).toThrow('unsupported peer protocol version');
   });
 
   it('appends one migration for the compaction marker and negotiated protocol rows', () => {
@@ -186,7 +187,7 @@ describe('closure-only compaction', () => {
     expect(sync.compactionBlocker()).toBe('member replica-b has not negotiated delta protocol');
     sync.recordPeerProtocol('replica-b', 2);
     expect(sync.compactionBlocker()).toBe('member replica-b has not negotiated delta protocol');
-    for (const invalid of [1, 4, 2.5]) expect(() => sync.recordPeerProtocol('replica-b', invalid)).toThrow('invalid');
+    for (const invalid of [1, 5, 2.5]) expect(() => sync.recordPeerProtocol('replica-b', invalid)).toThrow('invalid');
     sync.recordPeerProtocol('replica-b', 3);
     expect(sync.peerProtocol('replica-b')).toBe(3); expect(sync.peerProtocol('replica-z')).toBeNull();
     expect(sync.compactionBlocker()).toBeNull();

@@ -46,6 +46,8 @@ export interface DesignDocSummary {
   summary: string;
   status: DocStatus;
   projectId: string | null;
+  /** Received doc whose project belongs to the peer: it cannot be moved, only mapped to a local project. */
+  projectLocked?: boolean;
   tags: string[];
   entryPath: string;
   fileCount: number;

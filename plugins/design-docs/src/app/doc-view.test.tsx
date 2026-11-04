@@ -3,7 +3,7 @@
 // @vitest-environment-options { "settings": { "handleDisabledFileLoadingAsSuccess": true } }
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { UI_USER } from '../server/rpc.js';
 import { MAX_BINARY_FILE_BYTES } from '../shared/limits.js';
 import { DocView, type DocLayout } from './DocView.js';
@@ -421,6 +421,154 @@ describe('previewing files', () => {
   });
 });
 
+describe('pasting doc links', () => {
+  const paste = (input: HTMLTextAreaElement, text: string) =>
+    fireEvent.paste(input, { clipboardData: { getData: () => text } });
+
+  it('turns a link to a file of this doc into a relative link, and leaves other text alone', async () => {
+    const harness = createHarness();
+    const doc = harness.store.create(
+      { title: 'Paste', projectId: 'p1', files: [{ path: 'README.md', content: 'Start: ' }, { path: 'diagrams/flow.mmd', content: 'flowchart LR\n  A --> B' }] },
+      UI_USER
+    );
+    const other = simpleDoc(harness);
+    renderDoc(harness, doc.id);
+    await findPane('README.md');
+    fireEvent.click(modeButton('Edit'));
+    const input = editor('README.md');
+    input.setSelectionRange(7, 7);
+
+    paste(input, `[flow.mmd](doc://${doc.id}/diagrams/flow.mmd)`);
+    expect(editor('README.md').value).toBe('Start: [flow.mmd](diagrams/flow.mmd)');
+
+    // Another doc's link stays a cross-doc link: it only works through doc://.
+    const before = editor('README.md').value;
+    paste(editor('README.md'), `[Other](doc://${other.id}/README.md)`);
+    expect(editor('README.md').value).toBe(before);
+  });
+
+  it('does not rewrite a link pasted into a non-Markdown file', async () => {
+    const harness = createHarness();
+    const doc = harness.store.create(
+      { title: 'Paste code', projectId: 'p1', files: [{ path: 'README.md', content: 'x' }, { path: 'data.json', content: '{}' }] },
+      UI_USER
+    );
+    renderDoc(harness, doc.id, { path: 'data.json' });
+    await findPane('data.json');
+    fireEvent.click(modeButton('Edit'));
+    const input = editor('data.json');
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & { clipboardData?: unknown };
+    event.clipboardData = { getData: () => `[x](doc://${doc.id}/README.md)` };
+    input.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(editor('data.json').value).toBe('{}');
+  });
+
+  it('copies a file link from the row menu', async () => {
+    const harness = createHarness();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const doc = simpleDoc(harness);
+    renderDoc(harness, doc.id, { path: 'api.md' });
+    await findPane('api.md');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for api.md' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Copy link/ }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`[api.md](doc://${doc.id}/api.md)`));
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Copied link', kind: 'info' });
+  });
+});
+
+describe('heading anchors', () => {
+  it('scrolls to the heading named by a same-file and a cross-file anchor link', async () => {
+    const harness = createHarness();
+    const scrolled: string[] = [];
+    // The test Markdown stub renders no headings; add one the way the host renderer would.
+    const addHeading = (text: string) => {
+      const heading = document.createElement('h2');
+      heading.textContent = text;
+      document.querySelector('[data-testid="plugin-markdown"]')?.append(heading);
+    };
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value(this: Element) { scrolled.push(this.textContent ?? ''); }
+    });
+    onTestFinished(() => {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
+      else delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    });
+    const doc = harness.store.create(
+      { title: 'Anchors', projectId: 'p1', files: [
+        { path: 'README.md', content: '[jump](#open-questions)\n\n[other](other.md#details)\n\n## Open Questions\n\ntext\n' },
+        { path: 'other.md', content: '# Other\n\n## Details\n\nbody\n' }
+      ] },
+      UI_USER
+    );
+    renderDoc(harness, doc.id);
+    await findPane('README.md');
+    const jump = await screen.findByText('jump');
+    fireEvent.click(jump);
+    addHeading('Open Questions');
+    await waitFor(() => expect(scrolled).toContain('Open Questions'));
+    fireEvent.click(screen.getByText('other'));
+    await findPane('other.md');
+    addHeading('Details');
+    await waitFor(() => expect(scrolled).toContain('Details'));
+  });
+});
+
+describe('adding from a template', () => {
+  it('shows tooltips and adds template files, never overwriting', async () => {
+    const harness = createHarness();
+    const doc = harness.store.create({ title: 'Tpl', projectId: 'p1', files: [{ path: 'notes.md', content: 'x' }] }, UI_USER);
+    renderDoc(harness, doc.id);
+    await findPane('notes.md');
+    expect(screen.getByRole('button', { name: 'Hide files' }).getAttribute('data-tip')).toMatch(/Hide/);
+    const openTemplates = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /^From template/ }));
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    expect(screen.getByRole('menuitem', { name: /^New blank file/ })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /^Upload files/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    openTemplates();
+    const select = await screen.findByRole('combobox');
+    await waitFor(() => expect(select.querySelectorAll('option').length).toBeGreaterThan(1));
+    expect((within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(select, { target: { value: 'technical' } });
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add files' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Added'))).toBe(true));
+
+    // Adding the same template again numbers the files instead of failing.
+    openTemplates();
+    const again = await screen.findByRole('combobox');
+    await waitFor(() => expect(again.querySelectorAll('option').length).toBeGreaterThan(1));
+    fireEvent.change(again, { target: { value: 'technical' } });
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByText(/README\.md is added as README-2\.md/)).toBeTruthy());
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => /renamed README\.md to README-2\.md/.test(toast.message))).toBe(true));
+    expect(harness.store.get(doc.id).files.map((file) => file.path)).toContain('README-2.md');
+  });
+
+  it('keeps an existing README and adds the template under a numbered name', async () => {
+    const harness = createHarness();
+    const doc = harness.store.create({ title: 'Tpl', projectId: 'p1', files: [{ path: 'README.md', content: 'mine' }] }, UI_USER);
+    renderDoc(harness, doc.id);
+    await findPane('README.md');
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^From template/ }));
+    const select = await screen.findByRole('combobox');
+    await waitFor(() => expect(select.querySelectorAll('option').length).toBeGreaterThan(1));
+    fireEvent.change(select, { target: { value: 'technical' } });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => /renamed README\.md to README-2\.md/.test(toast.message))).toBe(true));
+    expect(harness.store.readFile(doc.id, 'README.md').content).toBe('mine');
+  });
+});
+
 describe('editing files', () => {
   it('edits, reverts and saves with the keyboard', async () => {
     const harness = createHarness();
@@ -589,7 +737,8 @@ describe('file tree', () => {
     const { opened } = renderDoc(harness, doc.id);
     await findPane('README.md');
     const newPath = (value: string) => {
-      fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^New blank file/ }));
       const input = screen.getByRole('textbox', { name: 'path/name.md, .mmd, .html…' });
       fireEvent.change(input, { target: { value } });
       fireEvent.submit(input.closest('form')!);
@@ -609,7 +758,8 @@ describe('file tree', () => {
     newPath('extra.md');
     await waitFor(() => expect(harness.toasts).toContainEqual({ message: 'Could not create extra.md: too many files', kind: 'error' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^New blank file/ }));
     const input = screen.getByRole('textbox', { name: 'path/name.md, .mmd, .html…' });
     fireEvent.change(input, { target: { value: 'ignored.md' } });
     fireEvent.keyDown(input, { key: 'Escape' });
@@ -734,7 +884,8 @@ describe('file tree', () => {
     await findPane('README.md');
     const input = tree().querySelector<HTMLInputElement>('input[type="file"]')!;
     const clicked = vi.spyOn(input, 'click').mockImplementation(() => undefined);
-    fireEvent.click(screen.getByRole('button', { name: 'Add files' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Upload files/ }));
     expect(clicked).toHaveBeenCalled();
 
     const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'My Logo.svg', { type: 'image/svg+xml' });

@@ -1,5 +1,6 @@
 import type { Goal, GoalAssignment, GoalDriver, GoalIteration, GoalStatus, GoalVerdict, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
+import { isValidConversationId } from '@zana-ai/zcc-domain/schedule-health';
 const VALID_DRIVERS: GoalDriver[] = ['native', 'zana-autopilot'];
 const VALID_STATUS: GoalStatus[] = [
   'draft',
@@ -54,10 +55,20 @@ function sanitizeCadence(raw: unknown): Goal['cadence'] {
   return { mode: 'continuous' };
 }
 
+function sanitizeConversation(raw: unknown): GoalIteration['conversation'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.profile !== 'string' || !VALID_PROFILES.includes(c.profile as LaunchProfileId)) return undefined;
+  if (typeof c.cwd !== 'string' || typeof c.startedAt !== 'string') return undefined;
+  if (c.id !== undefined && !isValidConversationId(c.id)) return undefined;
+  return { profile: c.profile as LaunchProfileId, ...(c.id !== undefined ? { id: c.id as string } : {}), cwd: c.cwd, startedAt: c.startedAt };
+}
+
 function sanitizeIteration(raw: unknown): GoalIteration | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== 'string' || typeof r.at !== 'string') return null;
+  const conversation = sanitizeConversation(r.conversation);
   return {
     id: r.id,
     at: r.at,
@@ -77,7 +88,8 @@ function sanitizeIteration(raw: unknown): GoalIteration | null {
     report: typeof r.report === 'string' ? r.report : undefined,
     durationMs: typeof r.durationMs === 'number' ? r.durationMs : undefined,
     finishedAt: typeof r.finishedAt === 'string' ? r.finishedAt : undefined,
-    error: typeof r.error === 'string' ? r.error : undefined
+    error: typeof r.error === 'string' ? r.error : undefined,
+    ...(conversation ? { conversation } : {})
   };
 }
 

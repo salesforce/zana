@@ -40,3 +40,12 @@ it('forwards query, retry and dismiss to the shared owner', async () => {
     { method: 'scheduler.retryRuns', args: [[ref]] }
   ]);
 });
+
+it('keeps resuming a goal run desktop-only, with or without a shared owner', async () => {
+  const fetchMock = vi.fn(async (url: string) =>
+    url.endsWith('/system/instance') ? Response.json({ sharedProductServices: true }) : Response.json({ ok: true, value: { ok: true, value: 1 } }));
+  vi.stubGlobal('fetch', fetchMock);
+  const product = await load();
+  await expect(product.goals.resumeIteration({ goalId: 'g', iterationId: 'i' })).resolves.toMatchObject({ ok: false, code: 'unavailable' });
+  expect(fetchMock.mock.calls.some(c => String(c[0]).endsWith('/shared-product'))).toBe(false);
+});

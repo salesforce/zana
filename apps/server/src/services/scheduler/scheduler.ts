@@ -17,18 +17,18 @@ import type {
   ScheduleRunQueryResult,
   ScheduleRunReasonCode,
   ScheduleRunRef,
-  ScheduleRunConversation,
   ScheduleRunTrigger,
   ScheduleUpdateInput
 } from '@zana-ai/zcc-domain/product';
 import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery as parseEveryShared } from '@zana-ai/zcc-domain/parse-every';
 import { nextCronRunAt } from '@zana-ai/zcc-domain/parse-cron';
 import { isCronCadence, previousCronSlots, slotsBetween, validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
-import { collectRunRows, isOpenProblem, isProblemRun, isRecoveryMode, isValidConversationId, runReason, SCHEDULE_REASONS } from '@zana-ai/zcc-domain/schedule-health';
+import { collectRunRows, isOpenProblem, isProblemRun, isRecoveryMode, runReason, SCHEDULE_REASONS } from '@zana-ai/zcc-domain/schedule-health';
 import { normalizeCatchUp, normalizeRequiredMcps, normalizeRetry } from './schedule-validation.js';
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
 import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { buildRunConversation, withDetectedConversationId } from './run-conversation.js';
 import type { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import type { LaunchTerminal } from '../launch/terminal-launcher.js';
 import type { IInboxStore } from '../inbox/inbox-store.js';
@@ -1807,10 +1807,8 @@ export class SchedulerManager extends EventEmitter {
       };
       // A detected-id harness (Codex, OpenCode) has stamped its id on the live
       // session by now; `recordRun` merges, so the rest of `conversation` is kept.
-      if (existingRun?.conversation && !existingRun.conversation.id) {
-        const detectedId = registrationFor(effectiveProfile)?.nativeConversationId?.(session);
-        if (isValidConversationId(detectedId)) finalRun.conversation = { ...existingRun.conversation, id: detectedId };
-      }
+      const detected = withDetectedConversationId(existingRun?.conversation, registrationFor(effectiveProfile), session);
+      if (detected) finalRun.conversation = detected;
       await this.recordRun(id, finalRun);
       if (result === 'success') await this.onFinishedSuccess(id, runId);
       // A failure that just scheduled an auto-retry is not final: one notice per chain.
@@ -1842,17 +1840,7 @@ export class SchedulerManager extends EventEmitter {
     // Record the conversation this run started so it can be reopened after its
     // tab closes. Only for harnesses that can resume one; Squad runs never get here.
     const registration = registrationFor(effectiveProfile);
-    const launchId = registration?.nativeConversationId?.(session);
-    // Offer a resume only when the id is known now or the harness can detect it later; one that
-    // does neither (no mint, no transcript adapter) would record a conversation nothing can fill.
-    const conversation: ScheduleRunConversation | undefined = registration?.nativeConversationResume && (launchId || registration.createTranscriptAdapter)
-      ? {
-          profile: effectiveProfile,
-          id: launchId,
-          cwd: session.cwd,
-          startedAt: Number.isFinite(session.createdAt) ? new Date(session.createdAt).toISOString() : runStartedAt
-        }
-      : undefined;
+    const conversation = buildRunConversation(registration, session, effectiveProfile, runStartedAt);
     await this.recordRun(id, {
       id: runId,
       at: runStartedAt,

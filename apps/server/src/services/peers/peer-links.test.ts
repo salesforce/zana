@@ -1380,8 +1380,16 @@ describe('pause (owner Disconnect) and unpause (Reconnect)', () => {
     expect(await links.directory.repair(randomUUID())).toBeUndefined();
     const ctx = await f.redeemerLinked(links);
     const rotate = vi.spyOn(links, 'rotate');
-    expect(await links.directory.repair(ctx.inboundId)).toEqual({ repaired: true });
+    expect(await links.directory.repair(ctx.inboundId)).toMatchObject({ repaired: true });
     expect(rotate).toHaveBeenCalledWith(ctx.peer.id);
+    // Reports this pairing's own state, and stays silent about it when no view matches.
+    rotate.mockResolvedValueOnce([{ pairingId: 'another-pairing', state: 'connected' } as never]);
+    expect(await links.directory.repair(ctx.inboundId)).toEqual({ repaired: true });
+    const own = (await links.links(ctx.peer.id))[0]!;
+    rotate.mockResolvedValueOnce([{ ...own, state: 'disconnected', reason: 'peer-offline' }]);
+    expect(await links.directory.repair(ctx.inboundId)).toEqual({ repaired: true, connected: false, reason: 'peer-offline' });
+    rotate.mockResolvedValueOnce([{ ...own, state: 'connected', reason: 'something-new' as never }]);
+    expect(await links.directory.repair(ctx.inboundId)).toEqual({ repaired: true, connected: true });
     await links.pause(ctx.peer.id);
     rotate.mockClear();
     expect(await links.directory.repair(ctx.inboundId)).toBeUndefined();

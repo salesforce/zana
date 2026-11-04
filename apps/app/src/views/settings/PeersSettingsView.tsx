@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PeerConnection, PeerLink, PeerLinkHookFailure, PeerLinkState, RemovePeerLinkResult } from '@zana-ai/zcc-server-contract';
+import type { PeerConnection, PeerLink, PeerLinkHookFailure, PeerLinkState, RemovePeerLinkResult, RepairPeerLinkResponse } from '@zana-ai/zcc-server-contract';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { peerConnections, peerLinks, product, type PeerLeftover } from '../../lib/product-client.js';
 import { SearchTarget } from './MachineCard.js';
@@ -60,6 +60,21 @@ function LinkStatuses({ link }: { link: PeerLink }) {
 }
 
 type Pending = { kind: 'use'; hostId: string; pluginId: string; scope: string } | { kind: 'link'; hostId: string };
+
+const REPAIR_REASON: Record<string, string> = {
+  'ssh-down': 'The connection to that computer is down. Check it is on, on the same network, and that its SSH access still works.',
+  'peer-offline': 'That computer is offline or Zana is not running there. Open Zana on it, then try again.',
+  paused: 'This connection is paused. Use Reconnect to resume it.',
+  revoked: 'That computer removed this connection. Remove it here and add the computer again.',
+  expired: 'The pairing expired. Remove this computer and add it again.',
+  fenced: 'The pairing was replaced by a newer one. Remove this computer and add it again.',
+  conflict: 'The two computers disagree about this connection. Remove it on both and add the computer again.',
+  unreachable: 'That computer could not be reached. Check it is on, running Zana, and on the same network.'
+};
+
+function repairFailureText(reason?: string): string {
+  return `Could not reconnect. ${(reason && REPAIR_REASON[reason]) || 'The other computer did not answer. Check it is on, running Zana, and on the same network, then try again.'}`;
+}
 
 function errorText(error: unknown): string {
   return error instanceof Error && error.message ? error.message : 'Request failed';
@@ -211,7 +226,12 @@ export function PeersSettingsView() {
   };
   const pause = (hostId: string) => run(`pause:${hostId}`, () => peerLinks.disconnect(hostId));
   const resume = (hostId: string) => run(`resume:${hostId}`, () => peerLinks.reconnect(hostId));
-  const repair = (hostId: string) => run(`repair:${hostId}`, () => peerLinks.repair(hostId));
+  const repair = async (hostId: string) => {
+    const result = await run(`repair:${hostId}`, () => peerLinks.repair(hostId)) as RepairPeerLinkResponse | undefined;
+    if (disposed.current || !result) return;
+    // The attempt itself succeeded; say whether the computer actually came back and, if not, why.
+    if (result.connected === false) setError(repairFailureText(result.reason));
+  };
 
   return (
     <div id="settings-anchor-peers" data-settings-target="peers.links" className="peers-page">

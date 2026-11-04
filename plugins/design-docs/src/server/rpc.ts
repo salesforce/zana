@@ -3,13 +3,14 @@
  * user and announced on the realtime `changed` channel, exactly like agent
  * writes, so every open view refreshes.
  */
+import { assertRegisteredProject } from './project-guard.js';
 import type { HarnessOverrideScope, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import { buildPublishPrompt, parsePublishTarget, PublishTargetError } from '../shared/publish.js';
-import { asInput, optionalString, requiredString } from './operations.js';
+import { addFromTemplate, asInput, optionalString, readTemplate, requiredString } from './operations.js';
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
 import { siteFiles } from './site-files.js';
@@ -18,6 +19,8 @@ import type { DesignDocPeerService } from './peer-service.js';
 import type { DesignDocPairing } from './pairing.js';
 import type { DesignDocBackups } from './backup.js';
 import { bundlePage } from './page-bundle.js';
+import { resolveCrossDocTarget } from './cross-doc.js';
+import { parseCrossDocLink } from '../shared/paths.js';
 import { MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
 import { fileKindOf } from '../shared/paths.js';
 
@@ -93,13 +96,7 @@ function onlyKeys(raw: unknown, allowed: string[]): Record<string, unknown> {
 export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown) => unknown> {
   const { store, changed } = deps;
   /** A project the renderer picked must be one the host has registered. */
-  const requireProject = async (projectId: string | null | undefined) => {
-    if (!projectId) return;
-    const projects = await deps.sdk.projects.list();
-    if (!projects.some((project) => project.id === projectId)) {
-      throw new DesignDocError('invalid', `unknown project ${projectId}`);
-    }
-  };
+  const requireProject = (projectId: string | null | undefined) => assertRegisteredProject(() => deps.sdk.projects.list(), projectId);
   /** The scope the renderer names for this plugin's harness override; a project must be registered. */
   const harnessScope = async (raw: unknown): Promise<HarnessOverrideScope> => {
     const input = onlyKeys(raw, ['kind', 'projectId']);
@@ -133,6 +130,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       files: files.map((file) => file.path)
     })),
 
+    templateRead: (raw) => readTemplate({ store, changed }, raw),
+    addFromTemplate: (raw) => addFromTemplate({ store, changed }, raw, UI_USER),
     templateNew: (raw) => { const doc = store.templateNew(raw, UI_USER); changed(doc.id); return doc; },
     templateDuplicate: (raw) => { const doc = store.templateDuplicate(requiredString(asInput(raw), 'template'), UI_USER); changed(doc.id); return doc; },
     templateFromDoc: (raw) => { const doc = store.templateFromDoc(requiredString(asInput(raw), 'doc'), UI_USER); changed(doc.id); return doc; },
@@ -152,7 +151,37 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       return docs;
     },
 
-    projects: async () => (await deps.sdk.projects.list()).map(({ id, name, quickAgent }) => ({ id, name, ...(quickAgent ? { quickAgent: true } : {}) })),
+    projects: async () => {
+      const projects = await deps.sdk.projects.list();
+      store.projectRefs.observe(projects);
+      return projects.map(({ id, name, quickAgent }) => ({ id, name, ...(quickAgent ? { quickAgent: true } : {}) }));
+    },
+
+    // Deleted projects' last names, so the UI shows "<name> (project removed)" instead of "Unknown project".
+    removedProjects: async () => {
+      const projects = await deps.sdk.projects.list();
+      store.projectRefs.observe(projects);
+      return store.projectRefs.removedProjects(projects.map((project) => project.id));
+    },
+    // Received docs whose foreign project id is not mapped; suggestions are advisory and never applied.
+    listUnassignedProjects: () => store.projectRefs.listUnassignedForeignProjects(() => deps.sdk.projects.list()),
+    mapForeignProject: async (raw) => {
+      const input = onlyKeys(raw, ['foreignProjectId', 'localProjectId']);
+      const result = await store.projectRefs.mapForeignProject(() => deps.sdk.projects.list(), input.foreignProjectId, input.localProjectId);
+      changed('');
+      return result;
+    },
+    // Existing foreign-to-local mappings, so the UI can unmap them.
+    listProjectMappings: async () => {
+      const projects = await deps.sdk.projects.list();
+      store.projectRefs.observe(projects);
+      return store.projectRefs.listProjectMappings(projects);
+    },
+    unmapForeignProject: (raw) => {
+      const result = store.projectRefs.unmapForeignProject(onlyKeys(raw, ['foreignProjectId']).foreignProjectId);
+      changed('');
+      return result;
+    },
 
     // This plugin's own harness overrides. The host binds the plugin id, validates on write and
     // resolves them above the project/global chain for `harness: 'project-default'` spawns.
@@ -219,6 +248,12 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     removePeer: (raw) => requirePairing(deps).remove(requiredString(onlyKeys(raw, ['replicaId']), 'replicaId')),
 
+    docSyncStatuses: (raw) => {
+      const args = onlyKeys(raw ?? {}, ['doc']);
+      const doc = args.doc === undefined ? undefined : requiredString(args, 'doc');
+      return deps.peerSync?.docSyncStatuses(doc) ?? [];
+    },
+
     syncNow: async () => {
       if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
       const result = await deps.peerSync.syncNow(deps.sdk.peers);
@@ -264,6 +299,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       const projectId = input.projectId;
       return store.list({
         projectId: typeof projectId === 'string' && projectId ? projectId : undefined,
+        ...(input.unassigned === true ? { unassigned: true } : {}),
+        ...(input.excludeUnassigned === true ? { excludeUnassigned: true } : {}),
         query: optionalString(input, 'query'),
         status,
         limit: optionalNumber(input, 'limit') ?? 200
@@ -330,6 +367,14 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       );
       changed(summary.id);
       return summary;
+    },
+
+    /** Resolve a `doc://` link written in `fromDoc`; main re-parses; `fromDoc` is renderer-supplied, so the scope check is UX scoping, not an authorization boundary. */
+    resolveCrossDocLink: (raw) => {
+      const input = onlyKeys(raw, ['fromDoc', 'href']);
+      const link = parseCrossDocLink(requiredString(input, 'href'));
+      if (!link) return { error: 'missing-doc' };
+      return resolveCrossDocTarget(store, link.docRef, link.path, { docId: requiredString(input, 'fromDoc') });
     },
 
     pin: (raw) => {

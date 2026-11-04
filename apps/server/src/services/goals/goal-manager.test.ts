@@ -22,6 +22,12 @@ vi.mock('./goal-store.js', () => ({
     typeof n === 'number' && Number.isFinite(n) ? Math.max(1, Math.min(100, Math.round(n))) : 20
 }));
 
+const registryOverride = vi.hoisted(() => ({ fn: undefined as undefined | ((profile: string) => unknown) }));
+vi.mock('@zana-ai/zcc-host-daemon/harness/registry', async original => {
+  const actual = await original<typeof import('@zana-ai/zcc-host-daemon/harness/registry')>();
+  return { ...actual, registrationFor: (profile: string) => (registryOverride.fn ? registryOverride.fn(profile) : actual.registrationFor(profile as never)) };
+});
+
 import { EventEmitter } from 'node:events';
 import {
   GoalConflictError,
@@ -1682,5 +1688,137 @@ describe('Squad goal launch and continuation paths', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('REQ-1..REQ-3, REQ-6, REQ-12 recording the conversation of an iteration', () => {
+  const iterationOf = (manager: GoalManager, id: string) => current(manager, id).history.iterations[0]!;
+  beforeEach(() => { registryOverride.fn = undefined; });
+
+  it('REQ-1 records profile, id, cwd and startedAt for a harness that mints its id at launch', async () => {
+    const { manager, input } = durableManager();
+    const goal = await manager.create({ ...input, activate: true });
+    expect(iterationOf(manager, goal.id).conversation).toEqual({
+      profile: 'claude-yolo', id: 'claude-1', cwd: project.path, startedAt: expect.any(String)
+    });
+    expect(Number.isNaN(Date.parse(iterationOf(manager, goal.id).conversation!.startedAt))).toBe(false);
+    manager.stopAll();
+  });
+
+  it('REQ-2 records nothing for a harness that cannot resume', async () => {
+    registryOverride.fn = () => ({ id: 'x', nativeConversationId: () => 'claude-1' });
+    const { manager, input } = durableManager();
+    const goal = await manager.create({ ...input, activate: true });
+    expect(iterationOf(manager, goal.id)).toMatchObject({ launchState: 'running' });
+    expect(iterationOf(manager, goal.id).conversation).toBeUndefined();
+    manager.stopAll();
+  });
+
+  it('REQ-2 records nothing when there is neither a minted id nor a way to detect one', async () => {
+    registryOverride.fn = () => ({ id: 'x', nativeConversationResume: (id: string) => ({ profile: 'x', resumeSessionId: id }), nativeConversationId: () => undefined });
+    const { manager, input } = durableManager();
+    const goal = await manager.create({ ...input, activate: true });
+    expect(iterationOf(manager, goal.id).conversation).toBeUndefined();
+    manager.stopAll();
+  });
+
+  describe('REQ-3 a harness that detects its id after launch', () => {
+    const detecting = (state: { id?: string }) => () => ({
+      id: 'x', nativeConversationResume: (id: string) => ({ profile: 'x', resumeSessionId: id }),
+      nativeConversationId: () => state.id, createTranscriptAdapter: () => ({})
+    });
+    it('records the conversation without an id, then fills the detected id when the iteration finishes', async () => {
+      const state: { id?: string } = {}; registryOverride.fn = detecting(state);
+      const { manager, input, ptys } = durableManager();
+      const goal = await manager.create({ ...input, activate: true });
+      expect(iterationOf(manager, goal.id).conversation).toMatchObject({ cwd: project.path });
+      expect(iterationOf(manager, goal.id).conversation!.id).toBeUndefined();
+      state.id = 'detected-7'; const sid = ptys.sessions[0].id; ptys.simulateExit(sid);
+      await manager.onAgentFinished(sid);
+      expect(iterationOf(manager, goal.id).conversation!.id).toBe('detected-7');
+      manager.stopAll();
+    });
+    it('does not store a detected id that is not valid', async () => {
+      const state: { id?: string } = {}; registryOverride.fn = detecting(state);
+      const { manager, input, ptys } = durableManager();
+      const goal = await manager.create({ ...input, activate: true });
+      state.id = '--dangerously-skip-permissions'; const sid = ptys.sessions[0].id; ptys.simulateExit(sid);
+      await manager.onAgentFinished(sid);
+      expect(iterationOf(manager, goal.id).conversation!.id).toBeUndefined();
+      manager.stopAll();
+    });
+    it('fills the detected id from the launch session when the pty is already gone at finish', async () => {
+      const state: { id?: string } = {}; registryOverride.fn = detecting(state);
+      const { manager, input, ptys } = durableManager();
+      const goal = await manager.create({ ...input, activate: true });
+      const sid = ptys.sessions[0].id; state.id = 'detected-9'; ptys.getSession = () => null as never;
+      await manager.onAgentFinished(sid);
+      expect(iterationOf(manager, goal.id).conversation!.id).toBe('detected-9');
+      manager.stopAll();
+    });
+    it('does not overwrite an id recorded at launch', async () => {
+      const { manager, input, ptys } = durableManager();
+      const goal = await manager.create({ ...input, activate: true });
+      const sid = ptys.sessions[0].id; ptys.sessions[0].claudeSessionId = 'something-else'; ptys.simulateExit(sid);
+      await manager.onAgentFinished(sid);
+      expect(iterationOf(manager, goal.id).conversation!.id).toBe('claude-1');
+      manager.stopAll();
+    });
+  });
+
+  it('REQ-6 a Squad iteration records no conversation', async () => {
+    const { manager, deps, input } = durableManager();
+    deps.launchSquad = vi.fn(async () => ({ executionId: 'e1' })) as never; manager.setDeps(deps);
+    const goal = await manager.create({ ...input, assignment: { kind: 'team', teamId: 't1' }, planSource: 'provided', activate: true } as never);
+    const iteration = current(manager, goal.id).history.iterations[0];
+    expect(iteration?.conversation).toBeUndefined();
+    manager.stopAll();
+  });
+
+  it('REQ-12 an iteration loaded from an old file stays without a conversation and finishing adds none', async () => {
+    const { manager, records, ptys } = durableManager();
+    records.set('old', goalFixture({ id: 'old', status: 'paused', history: { retain: 20, iterations: [{ id: 'i-old', at: '2026-01-01T00:00:00.000Z', sessionId: 'old-pty', launchState: 'running' }] } }));
+    await manager.loadAll([project]);
+    expect(current(manager, 'old').history.iterations[0]!.conversation).toBeUndefined();
+    ptys.sessions.push({ id: 'old-pty', projectId: project.id, status: 'exited', cwd: project.path, claudeSessionId: 'claude-9' });
+    await manager.onAgentFinished('old-pty');
+    expect(current(manager, 'old').history.iterations[0]!.conversation).toBeUndefined();
+    manager.stopAll();
+  });
+});
+
+describe('OBL-005 / OBL-006 the shared conversation builder', () => {
+  it('OBL-005 stores startedAt from the launched session creation time', async () => {
+    const { manager, deps, input, ptys } = durableManager();
+    const createdAt = Date.parse('2026-02-03T04:05:06.000Z');
+    vi.mocked(deps.launchTerminal).mockImplementation((async (options: unknown) => {
+      const session = ptys.create(options as Record<string, unknown>) as Record<string, unknown>;
+      session.createdAt = createdAt;
+      return session;
+    }) as never);
+    const goal = await manager.create({ ...input, activate: true });
+    expect(current(manager, goal.id).history.iterations[0]!.conversation).toMatchObject({ startedAt: '2026-02-03T04:05:06.000Z', cwd: project.path, id: 'claude-1' });
+    manager.stopAll();
+  });
+
+  it('OBL-006 buildRunConversation: same condition and fields as the scheduler used', async () => {
+    const { buildRunConversation, withDetectedConversationId } = await import('../scheduler/run-conversation.js');
+    const resumable = { id: 'x', nativeConversationResume: () => undefined, nativeConversationId: (s: { cwd: string }) => (s.cwd === '/known' ? 'minted-1' : undefined) } as never;
+    const withAdapter = { id: 'x', nativeConversationResume: () => undefined, nativeConversationId: () => undefined, createTranscriptAdapter: () => ({}) } as never;
+    const fallback = '2026-01-01T00:00:00.000Z';
+    expect(buildRunConversation(resumable, { cwd: '/known' }, 'claude', fallback)).toEqual({ profile: 'claude', id: 'minted-1', cwd: '/known', startedAt: fallback });
+    expect(buildRunConversation(resumable, { cwd: '/unknown' }, 'claude', fallback)).toBeUndefined();
+    expect(buildRunConversation(withAdapter, { cwd: '/p', createdAt: 0 }, 'codex', fallback)).toEqual({ profile: 'codex', id: undefined, cwd: '/p', startedAt: '1970-01-01T00:00:00.000Z' });
+    expect(buildRunConversation(withAdapter, { cwd: '/p', createdAt: Number.NaN }, 'codex', fallback)!.startedAt).toBe(fallback);
+    expect(buildRunConversation({ id: 'x', nativeConversationId: () => 'a' } as never, { cwd: '/p' }, 'claude', fallback)).toBeUndefined();
+    expect(buildRunConversation(undefined, { cwd: '/p' }, 'claude', fallback)).toBeUndefined();
+
+    const base = { profile: 'codex', cwd: '/p', startedAt: fallback } as const;
+    const detecting = (id: string | undefined) => ({ id: 'x', nativeConversationId: () => id }) as never;
+    expect(withDetectedConversationId(base as never, detecting('d-1'), { cwd: '/p' })).toEqual({ ...base, id: 'd-1' });
+    expect(withDetectedConversationId(base as never, detecting('--x'), { cwd: '/p' })).toBeUndefined();
+    expect(withDetectedConversationId(base as never, detecting('d-1'), undefined)).toBeUndefined();
+    expect(withDetectedConversationId({ ...base, id: 'kept' } as never, detecting('d-1'), { cwd: '/p' })).toBeUndefined();
+    expect(withDetectedConversationId(undefined, detecting('d-1'), { cwd: '/p' })).toBeUndefined();
   });
 });
