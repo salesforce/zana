@@ -503,6 +503,9 @@ export function resolveZanaMcpBin(): { bin: string; args: string[] } | null {
   const override = process.env.ZANA_MCP_BIN;
   if (override && override.trim()) return { bin: override.trim(), args: [] };
   try {
+    // Windows has no native `which`, so this usually throws there and returns null.
+    // Git for Windows can put its MSYS which.exe on PATH, though, and that is a
+    // console program, so the window stays hidden here too.
     const found = execFileSync('which', ['zana-mcp-server'], { encoding: 'utf-8', windowsHide: true }).trim();
     return found ? { bin: found, args: [] } : null;
   } catch {
