@@ -2,7 +2,7 @@
 
 TinyNod is an optional, local-only AI review of your committed changes, run automatically by `git push`. It is for authorized internal developers only. It is advisory: findings print and never change the push's exit code, and public CI never runs it (CI has no TinyNod job). No desktop app, Postgres, or Electron is required.
 
-Contents: [Quick start](#quick-start) · [Set up TinyNod](#set-up-tinynod) · [Opt in and out](#opt-in-and-out) · [Read the results](#read-the-results) · [Have an AI fix the findings](#have-an-ai-fix-the-findings) · [Troubleshooting](#troubleshooting) · [Agents](#agents) · [Data policy](#data-policy)
+Contents: [Quick start](#quick-start) · [Set up TinyNod](#set-up-tinynod) · [Opt in and out](#opt-in-and-out) · [Read the results](#read-the-results) · [Have an AI fix the findings](#have-an-ai-fix-the-findings) · [Gateway health check](#gateway-health-check-and-endpoint) · [Troubleshooting](#troubleshooting) · [Test the hook without pushing](#test-the-hook-without-pushing) · [Agents](#agents) · [Data policy](#data-policy)
 
 ## Quick start
 
@@ -58,7 +58,7 @@ tinynod config show        # redacted; confirm a key is present and the model is
 Notes:
 
 - The minted token can be short-lived. If reviews start reporting auth errors, run the first command again.
-- If you ever run `tinynod config import --from-claude`, re-check `ai.model` afterwards: it can overwrite it with an alias such as `opus`, which the gateway rejects (see [Troubleshooting](#troubleshooting)).
+- `tinynod config import --from-claude` rewrites `ai.model` to a Claude Code alias such as `opus`, which the gateway rejects with 403. Repair: `tinynod config set ai.model claude-opus-5-5`. Re-check `ai.model` after any import (see [Troubleshooting](#troubleshooting)).
 
 #### Path B: no DevBar / AI Suite
 
@@ -68,7 +68,7 @@ Use whichever applies:
 - **Direct**: `tinynod config set ai.apiKey <key>` and `tinynod config set ai.model <full-model-id>`.
 - **From Claude settings**: if your `~/.claude/settings.json` has a raw `env.ANTHROPIC_AUTH_TOKEN`, `tinynod config import --from-claude` copies it. Then check `ai.model` (see above).
 
-Get a gateway key and the list of allowed model ids from your team's AI gateway onboarding (the same access CodeNod uses). `tinynod models` lists models the gateway offers.
+Get a gateway key and the list of allowed model ids from your team's AI gateway onboarding (the same access CodeNod uses). `tinynod models` lists models the gateway offers (it can fail on a healthy gateway; the pre-push adapter does not rely on it).
 
 An existing `ai.apiKey` is kept over an imported one, so a stale key needs an explicit `config set`.
 
@@ -141,12 +141,21 @@ Tips:
 - An agent should report honestly: a skipped, failed, or timed-out review is a warning, never "reviewed by TinyNod". See [Agents](#agents).
 - To reuse a review the hook already ran, point the agent at the newest `*-review.json` / `*-comments.json` under `~/.tinynod/history/`.
 
+## Gateway health check and endpoint
+
+Before a review starts, the pre-push adapter checks the gateway with `GET /v1/models` and your stored `ai.apiKey`. It does not use `tinynod models`, which exits 1 on a healthy gateway whose `/v1/model/info` is empty.
+
+- **The gateway** is the internal AI server TinyNod sends the diff to. TinyNod has its address built in and does not print it.
+- **Turning the health check on.** The check runs only when `SALESFORCE_CLAUDE_ENDPOINT` is set; when it is unset the check is skipped and the review runs, reporting any gateway error itself. Without the check there is also no automatic DevBar token repair before review, so a long-lived session can hit an auth error from the review; the hook prints a `pre-push:` hint when this happens. Zana does not guess the address, because the key is sent to it. If you use Claude Code through the same gateway, your shell's `ANTHROPIC_BASE_URL` is normally that address: `export SALESFORCE_CLAUDE_ENDPOINT="$ANTHROPIC_BASE_URL"`. The address is a URL, not a secret.
+- **Reading the result.** A skipped review always names its reason (see the first Troubleshooting row). `unreachable` or `HTTP 404` usually means a wrong `SALESFORCE_CLAUDE_ENDPOINT`.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 | :--- | :--- |
 | `no AI API key configured` | No `ai.apiKey` in the config TinyNod is reading. Set one (Path A/B above). Also check `TINYNOD_HOME`: if set, config lives in `$TINYNOD_HOME/config.json`, otherwise `~/.tinynod/config.json`; make sure the `git push` environment sees the same value as your shell. `--from-app` and, for DevBar/AI Suite users, `--from-claude` store no key. |
 | `Access denied. You may need additional permissions or VPN` | Most often a wrong model, not the network. `ai.model` set to an alias such as `opus` is rejected by the gateway: run `tinynod config set ai.model claude-opus-5-5` (or another full id from `tinynod models`). If the model is fine, check VPN and that your key is current. |
+| Review skipped: `TinyNod gateway ...` / `model X not allowed for this key` | The pre-push adapter probes the gateway itself (`GET /v1/models` with your stored key), not `tinynod models`, which exits 1 on a healthy gateway whose `/v1/model/info` is empty. Reasons are specific: `rejected the stored key (HTTP 401/403)` (a DevBar refresh runs once, only for this case), `unreachable: connection failed`, `unreachable: TLS error`, `timed out`, `returned an empty model list`, `response was not recognizable` (not JSON, or no `data` array), `returned HTTP <n>`, `key lacks access even after a DevBar refresh`, and (opt-in) `model <id> not allowed for this key`. The gateway is probed only when `SALESFORCE_CLAUDE_ENDPOINT` is set; otherwise the probe is skipped and the review runs, reporting any gateway error itself. The configured-model chat probe sends one 1-token request, so it is opt-in: `ZANA_TINYNOD_PROBE_MODEL=1` or `git config zana.tinynod.probeModel true`. A refresh runs at most once per push and stores the key with `tinynod config set ai.apiKey <value>`, which briefly exposes it in the process list. |
 | Auth/401 errors after previously working | A minted token expired. DevBar/AI Suite: re-run the `config set ai.apiKey "$(devbar auth claude)"` command. |
 | `tinynod` not found / `spawn_error` | Not on `PATH` for the hook. `command -v tinynod`; for the curl install, add `~/.local/bin` to `PATH` (in a shell startup file, since git hooks use your login environment). |
 | Review skipped: version | `tinynod --version` is below 2.5.0. Upgrade. |
@@ -160,9 +169,31 @@ Handy checks: `command -v tinynod`, `tinynod --version`, `tinynod config show` (
 
 Try it with no key and no cost: `TINYNOD_HOME=$(mktemp -d) tinynod config set ai.mode mock` then run the hook with that `TINYNOD_HOME` exported. Mock mode returns canned `MOCK:` findings and is for testing the plumbing only.
 
+## Test the hook without pushing
+
+Use this to check a change to the pre-push hook or the TinyNod adapter before opening a PR. Nothing is pushed and no remote ref is created.
+
+1. Commit the change locally on a feature branch (the hook reviews commits, not working-tree edits).
+2. Feed the hook a simulated push for a non-protected ref and your real `origin` URL:
+
+```sh
+OID=$(git rev-parse HEAD)
+printf 'refs/heads/%s %s refs/heads/%s 0000000000000000000000000000000000000000\n' \
+  "$(git branch --show-current)" "$OID" "$(git branch --show-current)" |
+  ZANA_TINYNOD_REVIEW=1 SALESFORCE_CLAUDE_ENDPOINT="$ANTHROPIC_BASE_URL" \
+  node scripts/pre-push-verification.mjs origin "$(git remote get-url origin)"
+```
+
+3. Read the `pre-push:` lines. They give the review reason or skip reason, base, head, and the checks that ran (Zana verification, then TinyNod). A review counts as a TinyNod review only when the log says `tinynod review (advisory) ...` with a result. Any `skipped`, `failed`, `timed out`, or non-JSON line is a warning, not a clean review.
+4. To see a specific skip reason, set `SALESFORCE_CLAUDE_ENDPOINT` to a wrong host (for example `https://localhost:1`) and rerun.
+
+The run sends the commit's diff to the gateway, like a real opted-in push. In a git worktree, run `pnpm install` there first so the hook's snapshot can resolve dependencies.
+
+Agents: this procedure needs no secrets from you. The hook reads the TinyNod config itself; never read, print, or curl with `ai.apiKey` yourself, and report only the `pre-push:` lines. A sandbox or classifier denial on a command that would handle the key is not a reason to stop testing: run the hook as above instead.
+
 ## Agents
 
-See the TinyNod section in [`AGENTS.md`](../AGENTS.md). In short: report the skip/review reason, base, head, and which Zana checks ran; never claim a review happened when it was skipped; never use `TINYNOD_SKIP_HOOK` to hide findings.
+See the TinyNod section in [`AGENTS.md`](../AGENTS.md). In short: report the skip/review reason, base, head, and which Zana checks ran; never claim a review happened when it was skipped; never use `TINYNOD_SKIP_HOOK` to hide findings. To exercise the hook or adapter without pushing, follow [Test the hook without pushing](#test-the-hook-without-pushing); do not handle the key directly.
 
 ## Data policy
 
