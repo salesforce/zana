@@ -508,6 +508,11 @@ describe('ConversationRow preview buttons', () => {
     expect(buttons()).toHaveLength(1);
   });
 
+  it('offers Preview for a Windows drive-letter path inside a row preview root', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('C:\\proj\\notes.md', { previewRoots: ['C:\\proj'] })} />);
+    expect(buttons()).toHaveLength(1);
+  });
+
   it('does not accept a sibling directory sharing the root prefix', () => {
     render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('/Users/x/project-evil/notes.md', { previewRoots: ['/Users/x/project'] })} />);
     expect(buttons()).toHaveLength(0);

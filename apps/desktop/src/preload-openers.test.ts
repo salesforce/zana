@@ -20,6 +20,19 @@ it('forwards the opener target, path and project root to main', async () => {
   expect(electron.invoke.mock.calls).toEqual([[IPC.openers.fileLocation, input], [IPC.openers.revealFile, input]]);
 });
 
+it('forwards trusted preview folder changes to main without a renderer-supplied add path', async () => {
+  await import('./preload.js');
+  const api = electron.expose.mock.calls.find(([name]) => name === 'cc')![1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({ config: null });
+  await api.config.addTrustedPreviewFolder();
+  await api.config.removeTrustedPreviewFolder('/trusted');
+  expect(electron.invoke.mock.calls).toEqual([
+    [IPC.config.addTrustedPreviewFolder],
+    [IPC.config.removeTrustedPreviewFolder, '/trusted']
+  ]);
+});
+
 it('forwards bulk plugin updates to main and returns the result', async () => {
   await import('./preload.js');
   const api = electron.expose.mock.calls.find(([name]) => name === 'cc')![1];

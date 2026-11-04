@@ -9,7 +9,7 @@ vi.mock('../native/preview-file-location.js', () => ({ previewFileLocation: h.lo
 vi.mock('@zana-ai/zcc-server/electron-data-dir', () => ({ electronZccDataDir: () => '/data' }));
 vi.mock('@zana-ai/zcc-host-daemon/identity', () => ({ readPersistedHostId: () => 'local' }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
-  store: { listProjects: () => [], getConfig: () => ({ editorCodeBinary: 'my-code', terminalApp: 'pwsh' }) },
+  store: { listProjects: () => [], getConfig: () => ({ editorCodeBinary: 'my-code', terminalApp: 'pwsh', trustedPreviewFolders: ['/trusted'] }) },
   worktreeRoot: () => '/unused'
 }));
 import { registerFsIpc } from './fs.js';
@@ -28,6 +28,12 @@ it('confines again when revealing and never calls the OS opener for unavailable 
   h.openIn.mockClear(); h.locate.mockResolvedValueOnce({ ok: false, message: 'Unavailable' });
   await expect(handlers.get(IPC.openers.revealFile)!(input)).resolves.toEqual({ ok: false, message: 'Unavailable' });
   expect(h.openIn).not.toHaveBeenCalled();
+});
+
+it('hands the trusted preview folders from main config to the location resolver', async () => {
+  h.locate.mockResolvedValue({ ok: false });
+  await handlers.get(IPC.openers.fileLocation)!({ path: 'a.md', source: 'workspace' });
+  expect(h.locate.mock.calls[0][1].trustedPreviewFolders()).toEqual(['/trusted']);
 });
 
 it('reads authoritative thread scope from the server and refuses server failures', async () => {
