@@ -185,8 +185,17 @@ async function parseFrontmatter(
     const block = content
       .trimStart()
       .match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
-    const parsed =
-      block === undefined ? {} : yaml.load(block, { schema: yaml.JSON_SCHEMA });
+    let parsed: unknown;
+    try {
+      parsed =
+        block === undefined
+          ? {}
+          : yaml.load(block, { schema: yaml.JSON_SCHEMA });
+    } catch (strictError) {
+      const recovered = block === undefined ? null : recoverQuotedFrontmatter(block);
+      if (!recovered) throw strictError;
+      parsed = recovered;
+    }
     data =
       parsed && typeof parsed === "object" && !Array.isArray(parsed)
         ? (parsed as Record<string, unknown>)
@@ -215,6 +224,44 @@ async function parseFrontmatter(
         ? data["allowed-tools"].split(",").map((v) => v.trim())
         : undefined,
   };
+}
+
+const QUOTABLE_FRONTMATTER_KEYS = new Set(["name", "description", "argument-hint"]);
+const NON_PLAIN_SCALAR_START = /^["'>|\[{&*!]/;
+
+/**
+ * Re-emit top-level `name` / `description` / `argument-hint` values that are plain
+ * single-line scalars as YAML double-quoted scalars. Other lines are untouched.
+ * Plain scalars containing `: ` are invalid strict YAML but tolerated by Claude Code.
+ */
+export function quotePlainScalars(block: string): string {
+  const lines = block.split(/\r?\n/);
+  return lines
+    .map((line, index) => {
+      const match = line.match(/^([A-Za-z][\w-]*):[ \t]+(\S.*?)[ \t]*$/);
+      if (!match || !QUOTABLE_FRONTMATTER_KEYS.has(match[1])) return line;
+      const value = match[2];
+      if (NON_PLAIN_SCALAR_START.test(value)) return line;
+      const next = lines[index + 1];
+      if (next !== undefined && /^[ \t]+\S/.test(next)) return line;
+      const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return `${match[1]}: "${escaped}"`;
+    })
+    .join("\n");
+}
+
+/** Retry strict parse after quoting plain scalars; null when it cannot recover. */
+function recoverQuotedFrontmatter(block: string): Record<string, unknown> | null {
+  const quoted = quotePlainScalars(block);
+  if (quoted === block) return null;
+  try {
+    const parsed = yaml.load(quoted, { schema: yaml.JSON_SCHEMA });
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const name = (parsed as Record<string, unknown>).name;
+    return typeof name === "string" && name.trim() ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 function canFollowSkillSymlink(root: CommandScanRoot): boolean {

@@ -18838,6 +18838,39 @@ body.resizing-col .explorer-resizer::after {
   z-index: 50;
 }
 
+.skills-discovery-notes {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 12px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.skills-discovery-notes-list {
+  margin: 0;
+  padding-left: 16px;
+  overflow-wrap: anywhere;
+}
+
+.skills-discovery-notes-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.skills-discovery-notes-actions button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-blue);
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .skills-source-plugin {
   background: rgba(47, 129, 247, 0.15);
   color: var(--accent-blue);

@@ -20,6 +20,7 @@ import type {
   SkillState
 } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '@/store';
+import { dedupeDiscoveryNotes } from './discovery-notes.js';
 import { fileManagerName } from '@/lib/file-manager';
 import {
   filterSkills,
@@ -97,6 +98,11 @@ export function SkillsBody({
   const [editingBundle, setEditingBundle] = useState<SkillBundle | 'new' | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
   const [applyNote, setApplyNote] = useState<string | null>(null);
+  const [dismissedNoteKeys, setDismissedNoteKeys] = useState<Set<string>>(() => new Set());
+  const [notesExpanded, setNotesExpanded] = useState(false);
+  const dedupedNotes = useMemo(() => dedupeDiscoveryNotes(discoveryNotes), [discoveryNotes]);
+  const showDiscoveryNotes = dedupedNotes.some((n) => !dismissedNoteKeys.has(n.key));
+  const visibleNotes = notesExpanded ? dedupedNotes : dedupedNotes.slice(0, 3);
   const [pluginBannerDismissed, setPluginBannerDismissed] = useState(() => {
     try {
       return localStorage.getItem('zcc.skills.pluginBannerDismissed') === '1';
@@ -323,8 +329,25 @@ export function SkillsBody({
           </aside>
         )}
 
-        {discoveryNotes.length > 0 && (
-          <div role="status" className="skills-apply-note">{discoveryNotes.join(' ')}</div>
+        {showDiscoveryNotes && (
+          <div role="status" className="skills-discovery-notes">
+            <ul className="skills-discovery-notes-list">
+              {visibleNotes.map((n) => <li key={n.key}>{n.text}</li>)}
+            </ul>
+            <div className="skills-discovery-notes-actions">
+              {!notesExpanded && dedupedNotes.length > 3 && (
+                <button type="button" onClick={() => setNotesExpanded(true)}>
+                  {dedupedNotes.length - 3} more
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setDismissedNoteKeys(new Set(dedupedNotes.map((n) => n.key)))}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
         )}
         <div className="skills-layout">
           <section className="skills-left">
