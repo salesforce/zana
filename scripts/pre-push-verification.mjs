@@ -683,7 +683,8 @@ export function prepareTinynodReview({ tuples, selection, root, env = process.en
       log(`pre-push: tinynod review skipped: ${version.reason}`);
       return null;
     }
-    const gateway = a.ensureTinynodGateway({ env });
+    const probeModel = a.resolveProbeModel({ env, readConfig: () => a.readGitConfigFlag(root, 'zana.tinynod.probeModel', { env }) });
+    const gateway = a.ensureTinynodGateway({ env, probeModel });
     if (!gateway.ok) {
       log(`pre-push: tinynod review skipped: ${gateway.reason}`);
       return null;

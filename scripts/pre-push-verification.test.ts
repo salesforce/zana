@@ -903,6 +903,8 @@ function fakeAdapter(overrides: Record<string, unknown> = {}) {
     deriveReviewTarget: vi.fn(() => ({ oid: OID, base: BASE })),
     checkTinynodVersion: vi.fn(() => ({ ok: true, version: '2.5.0' })),
     ensureTinynodGateway: vi.fn(() => ({ ok: true, refreshed: false })),
+    resolveProbeModel: vi.fn(() => false),
+    readGitConfigFlag: vi.fn(() => null),
     acquireReviewLock: vi.fn(() => lock),
     installAbortCleanup: vi.fn(() => cleanup),
     withRepoIdentityEnv: vi.fn((env: object) => ({ ...env, LOG_LEVEL: 'warn' })),
@@ -984,6 +986,13 @@ describe('prepareTinynodReview', () => {
     const context = base(adapter);
     expect(prepareTinynodReview(context as never)).toBeNull();
     expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review skipped: gateway unavailable');
+  });
+
+  it('passes the opt-in configured-model probe flag to the gateway check', () => {
+    const ensure = vi.fn(() => ({ ok: true, refreshed: false }));
+    const { adapter } = fakeAdapter({ ensureTinynodGateway: ensure, resolveProbeModel: () => true });
+    prepareTinynodReview(base(adapter) as never);
+    expect(ensure).toHaveBeenCalledWith(expect.objectContaining({ probeModel: true }));
   });
 
   it('never throws', () => {

@@ -14,6 +14,7 @@ const ZERO_OID = /^0+$/;
 const MIN_VERSION = [2, 5, 0];
 const VERSION_TIMEOUT_MS = 5_000;
 const GATEWAY_TIMEOUT_MS = 15_000;
+const GATEWAY_BUDGET_MS = 40_000;
 const REVIEW_BUDGET_MS = 300_000;
 const KILL_GRACE_MS = 10_000;
 const POLL_MS = 100;
@@ -30,6 +31,9 @@ const ABANDONED_MS = 60_000;
 const FOREIGN_LOCK_MS = 24 * 60 * 60_000;
 const ABORT_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 const GIT_ROUTING = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX'];
+// The gateway is probed only when SALESFORCE_CLAUDE_ENDPOINT names it; core
+// carries no vendor URL. Otherwise the review itself reports gateway errors.
+const DEFAULT_GATEWAY_ENDPOINT = '';
 const DEVBAR = '/Applications/devbar.app/Contents/MacOS/devbar';
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
@@ -65,12 +69,28 @@ export function resolveEnablement({ env = process.env, readConfig = () => null }
   return { enabled: false, source: 'default' };
 }
 
-/** Read `zana.tinynod.enabled` from the developer's repository, or null when unset. */
-export function readGitEnablement(root, { run = spawnSync, env = process.env } = {}) {
+/** Read one boolean-ish git config key from the developer's repository, or null when unset. */
+export function readGitConfigFlag(root, name, { run = spawnSync, env = process.env } = {}) {
   const clean = { ...env };
   for (const key of GIT_ROUTING) delete clean[key];
-  const result = run('git', ['config', '--get', 'zana.tinynod.enabled'], { cwd: root, encoding: 'utf8', env: clean });
+  const result = run('git', ['config', '--get', name], { cwd: root, encoding: 'utf8', env: clean });
   return result?.status === 0 ? result.stdout.trim() : null;
+}
+
+/** Read `zana.tinynod.enabled` from the developer's repository, or null when unset. */
+export function readGitEnablement(root, options = {}) {
+  return readGitConfigFlag(root, 'zana.tinynod.enabled', options);
+}
+
+/**
+ * The configured-model chat probe costs a request, so it is opt-in:
+ * `ZANA_TINYNOD_PROBE_MODEL=1` or `git config zana.tinynod.probeModel true`.
+ * An unrecognized value leaves it off.
+ */
+export function resolveProbeModel({ env = process.env, readConfig = () => null } = {}) {
+  const fromEnv = String(env.ZANA_TINYNOD_PROBE_MODEL ?? '').trim();
+  const value = fromEnv !== '' ? fromEnv : readConfig();
+  return value === null || value === undefined ? false : parseBool(value) === true;
 }
 
 /**
@@ -281,23 +301,130 @@ function commandSucceeded(result) {
   return result?.status === 0 && !result?.error;
 }
 
+const TLS_CURL_CODES = new Set([35, 51, 58, 59, 60, 77, 82, 83, 90, 91]);
+const CONNECT_CURL_CODES = new Set([5, 6, 7, 52, 56]);
+
+function readTinynodConfig({ env, fs }) {
+  const home = env.TINYNOD_HOME || join(homedir(), '.tinynod');
+  try {
+    const config = JSON.parse(fs.readFileSync(join(home, 'config.json'), 'utf8'));
+    return { key: config?.ai?.apiKey, model: config?.ai?.model };
+  } catch {
+    return { key: undefined, model: undefined };
+  }
+}
+
 /**
- * TinyNod cannot execute Claude's apiKeyHelper. When opted in, repair an
- * expired DevBar-minted token before review, then prove gateway access once.
+ * One authenticated gateway request through curl. The bearer key goes through a
+ * curl config on stdin so it never appears in argv. Returns a classified
+ * outcome; the key and response bodies are never copied into it.
  */
-export function ensureTinynodGateway({ run = spawnSync, command = 'tinynod', devbar = DEVBAR, env = process.env } = {}) {
+const SAFE_TOKEN = /^[A-Za-z0-9._-]+$/;
+
+function gatewayRequest({ run, baseUrl, path, key, body, timeoutMs }) {
+  if (!SAFE_TOKEN.test(String(key ?? ''))) return { kind: 'badkey' };
+  const config = [`header = "Authorization: Bearer ${key}"`];
+  if (body) config.push('header = "Content-Type: application/json"', `data = ${JSON.stringify(JSON.stringify(body))}`);
+  const args = ['-sS', '-K', '-', '--max-time', String(Math.ceil(timeoutMs / 1000)), '-w', '\n%{http_code}', `${baseUrl.replace(/\/+$/, '')}${path}`];
+  const result = run('curl', args, { encoding: 'utf8', input: `${config.join('\n')}\n`, timeout: timeoutMs + 2_000 });
+  if (result?.error?.code === 'ENOENT') return { kind: 'connect', detail: 'curl not found' };
+  if (result?.error?.code === 'ETIMEDOUT') return { kind: 'timeout' };
+  if (result?.status !== 0) {
+    if (result?.status === 28) return { kind: 'timeout' };
+    if (TLS_CURL_CODES.has(result?.status)) return { kind: 'tls' };
+    if (CONNECT_CURL_CODES.has(result?.status)) return { kind: 'connect' };
+    return { kind: 'connect', detail: `curl exit ${result?.status}` };
+  }
+  const out = String(result.stdout ?? '');
+  const cut = out.lastIndexOf('\n');
+  const status = Number.parseInt(out.slice(cut + 1), 10);
+  if (!Number.isInteger(status)) return { kind: 'malformed' };
+  return { kind: 'http', status, body: out.slice(0, Math.max(cut, 0)) };
+}
+
+/** Health probe: `GET /v1/models` with the stored key. Classified, never throws. */
+export function probeGatewayModels({ run = spawnSync, baseUrl, key, timeoutMs = GATEWAY_TIMEOUT_MS }) {
+  const response = gatewayRequest({ run, baseUrl, path: '/v1/models', key, timeoutMs });
+  if (response.kind !== 'http') return { ok: false, kind: response.kind, detail: response.detail };
+  if (response.status === 401 || response.status === 403) return { ok: false, kind: 'auth', status: response.status };
+  if (response.status < 200 || response.status >= 300) return { ok: false, kind: 'http', status: response.status };
+  let count = 0;
+  try { count = JSON.parse(response.body)?.data?.length ?? 0; } catch { count = 0; }
+  return count > 0 ? { ok: true } : { ok: false, kind: 'empty', status: response.status };
+}
+
+/** One-token chat request for the configured model. 403 means the key cannot use that model. */
+export function probeConfiguredModel({ run = spawnSync, baseUrl, key, model, timeoutMs = GATEWAY_TIMEOUT_MS }) {
+  const response = gatewayRequest({
+    run, baseUrl, path: '/v1/chat/completions', key, timeoutMs,
+    body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] },
+  });
+  if (response.kind !== 'http') return { ok: false, kind: response.kind, detail: response.detail };
+  if (response.status === 403) return { ok: false, kind: 'model', status: 403 };
+  if (response.status === 401) return { ok: false, kind: 'auth', status: 401 };
+  if (response.status < 200 || response.status >= 300) return { ok: false, kind: 'http', status: response.status };
+  return { ok: true };
+}
+
+const GATEWAY_REASONS = {
+  auth: (r) => `TinyNod gateway rejected the stored key (HTTP ${r.status})`,
+  connect: (r) => `TinyNod gateway unreachable: connection failed${r.detail ? ` (${r.detail})` : ''}`,
+  tls: () => 'TinyNod gateway unreachable: TLS error',
+  timeout: () => 'TinyNod gateway timed out',
+  empty: () => 'TinyNod gateway returned an empty model list',
+  http: (r) => `TinyNod gateway returned HTTP ${r.status}`,
+  model: (r) => `model ${r.model} not allowed for this key`,
+  badkey: () => 'TinyNod gateway key has unexpected characters; not sent',
+  malformed: () => 'TinyNod gateway response was not recognizable',
+  missing: () => 'TinyNod has no ai.apiKey configured and DevBar did not supply one',
+  denied: (r) => `TinyNod gateway key lacks access even after a DevBar refresh (HTTP ${r.status})`,
+  budget: () => 'TinyNod gateway checks exceeded the time budget',
+  refresh: () => 'DevBar token refresh failed',
+  store: () => 'refreshed DevBar token could not be stored in TinyNod config',
+};
+const gatewayFailure = (kind, extra = {}) => ({ ok: false, kind, reason: GATEWAY_REASONS[kind](extra) });
+
+/**
+ * TinyNod cannot execute Claude's apiKeyHelper. When opted in, probe the
+ * gateway with `GET /v1/models` (not `tinynod models`, which exits 1 on a
+ * healthy gateway whose `/v1/model/info` is empty). A DevBar token refresh runs
+ * only when the gateway rejects the key, then the probe repeats once. A
+ * configured model the key cannot use is reported separately (only when `probeModel` is set).
+ */
+export function ensureTinynodGateway({
+  run = spawnSync, command = 'tinynod', devbar = DEVBAR, env = process.env, fs = nodeFs, now = Date.now,
+  baseUrl = env.SALESFORCE_CLAUDE_ENDPOINT || DEFAULT_GATEWAY_ENDPOINT, probeModel = false,
+} = {}) {
   const options = { encoding: 'utf8', timeout: GATEWAY_TIMEOUT_MS, env };
-  if (commandSucceeded(run(command, ['models'], options))) return { ok: true, refreshed: false };
-  const token = run(devbar, ['auth', 'claude'], options);
-  const value = String(token?.stdout ?? '').trim();
-  if (!commandSucceeded(token) || !value) return { ok: false, reason: 'TinyNod gateway unavailable and DevBar token refresh failed' };
-  if (!commandSucceeded(run(command, ['config', 'set', 'ai.apiKey', value], options))) {
-    return { ok: false, reason: 'TinyNod gateway unavailable and refreshed token could not be stored' };
+  // Without a known endpoint nothing can be probed; the review itself reports any gateway error.
+  if (!baseUrl) return { ok: true, refreshed: false, probed: false };
+  const deadline = now() + GATEWAY_BUDGET_MS;
+  const left = () => Math.max(1_000, Math.min(GATEWAY_TIMEOUT_MS, deadline - now()));
+  const overBudget = () => now() >= deadline;
+  let { key, model } = readTinynodConfig({ env, fs });
+  let refreshed = false;
+  const hadKey = Boolean(key);
+  let probe = hadKey ? probeGatewayModels({ run, baseUrl, key, timeoutMs: left() }) : { ok: false, kind: 'auth', status: 0 };
+  if (!probe.ok && probe.kind === 'auth') {
+    if (overBudget()) return gatewayFailure('budget');
+    const token = run(devbar, ['auth', 'claude'], options);
+    const value = String(token?.stdout ?? '').split('\n')[0].trim();
+    if (!commandSucceeded(token) || !value) return gatewayFailure(hadKey ? 'refresh' : 'missing');
+    if (!SAFE_TOKEN.test(value)) return gatewayFailure('badkey');
+    // `tinynod config set` takes the value only as an argument; it is briefly visible in `ps`.
+    if (!commandSucceeded(run(command, ['config', 'set', 'ai.apiKey', value], options))) return gatewayFailure('store');
+    key = value;
+    refreshed = true;
+    probe = probeGatewayModels({ run, baseUrl, key, timeoutMs: left() });
+    if (!probe.ok && probe.kind === 'auth') return gatewayFailure('denied', probe);
   }
-  if (!commandSucceeded(run(command, ['models'], options))) {
-    return { ok: false, reason: 'TinyNod gateway unavailable after token refresh' };
+  if (!probe.ok) return gatewayFailure(probe.kind, probe);
+  if (probeModel && model) {
+    if (overBudget()) return gatewayFailure('budget');
+    const chat = probeConfiguredModel({ run, baseUrl, key, model, timeoutMs: left() });
+    if (!chat.ok) return gatewayFailure(chat.kind, { ...chat, model });
   }
-  return { ok: true, refreshed: true };
+  return { ok: true, refreshed };
 }
 
 /**
