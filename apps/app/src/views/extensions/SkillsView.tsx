@@ -30,6 +30,8 @@ import {
   type StateFilter
 } from './skills-filter.js';
 
+const MAX_COLLAPSED_DISCOVERY_NOTES = 3;
+
 const SOURCE_FILTERS: Array<{ id: 'all' | SkillSource; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'user', label: 'User' },
@@ -102,7 +104,7 @@ export function SkillsBody({
   const [notesExpanded, setNotesExpanded] = useState(false);
   const dedupedNotes = useMemo(() => dedupeDiscoveryNotes(discoveryNotes), [discoveryNotes]);
   const showDiscoveryNotes = dedupedNotes.some((n) => !dismissedNoteKeys.has(n.key));
-  const visibleNotes = notesExpanded ? dedupedNotes : dedupedNotes.slice(0, 3);
+  const visibleNotes = notesExpanded ? dedupedNotes : dedupedNotes.slice(0, MAX_COLLAPSED_DISCOVERY_NOTES);
   const [pluginBannerDismissed, setPluginBannerDismissed] = useState(() => {
     try {
       return localStorage.getItem('zcc.skills.pluginBannerDismissed') === '1';
@@ -335,9 +337,9 @@ export function SkillsBody({
               {visibleNotes.map((n) => <li key={n.key}>{n.text}</li>)}
             </ul>
             <div className="skills-discovery-notes-actions">
-              {!notesExpanded && dedupedNotes.length > 3 && (
+              {!notesExpanded && dedupedNotes.length > MAX_COLLAPSED_DISCOVERY_NOTES && (
                 <button type="button" onClick={() => setNotesExpanded(true)}>
-                  {dedupedNotes.length - 3} more
+                  {dedupedNotes.length - MAX_COLLAPSED_DISCOVERY_NOTES} more
                 </button>
               )}
               <button

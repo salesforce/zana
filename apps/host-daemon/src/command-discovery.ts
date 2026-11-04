@@ -240,8 +240,9 @@ export function quotePlainScalars(block: string): string {
     .map((line, index) => {
       const match = line.match(/^([A-Za-z][\w-]*):[ \t]+(\S.*?)[ \t]*$/);
       if (!match || !QUOTABLE_FRONTMATTER_KEYS.has(match[1])) return line;
-      const value = match[2];
-      if (NON_PLAIN_SCALAR_START.test(value)) return line;
+      // A `#` at the start of the value, or after whitespace, begins a YAML comment.
+      const value = match[2].replace(/[ \t]+#.*$/, "");
+      if (value.startsWith("#") || NON_PLAIN_SCALAR_START.test(value)) return line;
       const next = lines[index + 1];
       if (next !== undefined && /^[ \t]+\S/.test(next)) return line;
       const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');

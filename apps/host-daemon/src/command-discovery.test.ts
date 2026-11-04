@@ -1272,6 +1272,21 @@ describe('lenient frontmatter recovery', () => {
   expect(diagnostics).toHaveLength(1);
  });
 
+ it('keeps YAML comment semantics when recovering', async () => {
+  const ok = await scan('lenient-comment', { c: '---\nname: review # legacy\ndescription: a: b # note\n---\n' });
+  expect(ok.diagnostics).toEqual([]);
+  expect(ok.records[0]).toMatchObject({ name: 'review', description: 'a: b' });
+  const empty = await scan('lenient-comment-empty', { e: '---\nname: # intentionally empty\ndescription: a: b\n---\n' });
+  expect(empty.records).toEqual([]);
+  expect(empty.diagnostics).toHaveLength(1);
+ });
+
+ it('recovers CRLF frontmatter', async () => {
+  const { records, diagnostics } = await scan('lenient-crlf', { r: '---\r\nname: r\r\ndescription: a: b\r\n---\r\nBody' });
+  expect(diagnostics).toEqual([]);
+  expect(records[0]).toMatchObject({ name: 'r', description: 'a: b' });
+ });
+
  it('quotePlainScalars rewrites only plain single-line target keys', () => {
   expect(quotePlainScalars('name: x\nother: a: b\ndescription: *anchor\nargument-hint: {a}')).toBe('name: "x"\nother: a: b\ndescription: *anchor\nargument-hint: {a}');
  });
