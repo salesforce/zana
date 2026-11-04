@@ -17,7 +17,10 @@ Handed to `export default function plugin(zcc)`.
 | `background.service` / `schedule` | Long-running work |
 | `remoteEnvironment.provide` / `refresh` | Environment variables for sessions on non-primary machines (manifest allowlist `zcc.extra.remoteEnvironment`; held in memory, never stored) |
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata`. For a PTY launch (Claude, Codex, OpenCode) it runs once per session with `surface: 'pty'`, the real `sessionId`, `threadId`, `projectId` and `provider.id`; `instructions` (and `contributeInstructions`) are delivered as Claude `--append-system-prompt`, folded into Codex `developer_instructions`, or listed as a private per-session file in OpenCode's config `instructions`. Each contribution is capped at 4096 characters and the total at 16000; a throwing `configure` is written to the plugin log and other plugins still contribute. Cursor PTYs receive no instructions (see the Cursor notes below the parity matrix). Remote PTYs are not covered; `tools` do not apply to a PTY |
-| `ui.requestInput` | Host prompt |
+| `ui.requestInput` | Host prompt. `threadId` may be a PTY session id for a session shown in the Agents monitor (see Actor-attributed request input) |
+| `ui.registerMentionProvider` | `@` / `#` / `$` / `!` / `~` typeahead source; `search` and `resolve` run in the plugin server, so never trust renderer-supplied context |
+| `hooks.on` / `hooks.onToolPolicy` | Dispatch admission and native tool policy handlers, one each per plugin (see Platform hooks) |
+| `host.projectCall` | Project-bound host RPC routed to the project's machine (see Platform hooks) |
 | `ui.requestToolApproval` / `ui.consumeApproval` | Await main's approval sheet in an active server tool; verify and burn its scoped proof (see `approvals`) |
 | `status.needsConfiguration` / `configured` | Mark the plugin "Needs configuration" in the Plugins hub (e.g. until the user signs in), and clear it once set up; both apply live without a reload |
 | `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
@@ -306,6 +309,20 @@ authority; a plugin only ever supplies identifiers and bounded JSON.
 | `zcc.ui.registerProjectTabAvailability({ tabId, evaluate })` | `evaluate({ projectId })` returns `{ available, reason? }` for a `projectTab` registered by the same plugin. An unavailable tab stays visible, disabled, with the bounded `reason` shown to the user — it never silently disappears. A throwing/erroring `evaluate` degrades to unavailable rather than crashing the tab. |
 | `zcc.agents.registerPersonas(personas)` / `registerTeams(teams)` | Namespaced persona/team contributions (`ext:<pluginId>:<slug>` ids), host-stamped provenance. Replaces this plugin's own prior generation wholesale on each call; cannot override a user or built-in record. Cleared automatically on uninstall, disable, or crash. |
 
+#### Project calls on another machine
+
+`zcc.host.projectCall({ projectId, hostId?, method, input? })` runs on
+`hostId ?? the project's machine ?? the primary machine`; with several machines
+connected there is no ambient default. A project on the primary machine is
+confined by the server (`realpath` of its registered path). A project registered
+on another machine is sent with its registered path as `daemonConfinedProjectRoot`
+(host protocol 51; mutually exclusive with the server-confined `projectRoot`), and
+that machine's daemon `realpath`-confines it against its own project catalogue
+before the worker sees it: a path outside the catalogued root, a symlink escape,
+or a missing root is refused. SSH-backed projects keep server-side confinement.
+Known limit: a second checkout added through `POST /projects/:id/sources` is
+refused for remote calls unless that machine's own catalogue holds it.
+
 Lifecycle events (`PluginThreadEvent` from `zcc.events.on`) now always carry a
 host-generated `id`, a process-local `sequence`, and a `timestamp` — do not
 derive identity from event content, and do not expect a durable replay stream;
@@ -339,11 +356,12 @@ never blocks the terminal. A session that reconnects after an app restart report
 
 ### Native tool policy (Claude / Codex only)
 
-A native pre/post tool hook is capability-gated per provider family and only
-exists for Claude and Codex today (`zcc.sdk.capabilities.forThread` reports
-`tool-before-native` / `tool-after-native` availability per thread). Every
-other provider reports those two capabilities unavailable — there is no
-native hook to register against. The lifecycle for an intercepted invocation
+A native pre-tool hook is capability-gated per surface and harness, from the
+host's own wiring (`zcc.sdk.capabilities.forThread` reports
+`tool-before-native` / `tool-after-native` per thread; see the matrix below).
+Claude and Codex (PTY and Modern), OpenCode and Cursor (PTY only) can veto; every
+other surface reports `tool-before-native` unavailable with a reason, and no
+surface delivers `tool-after-native`. The lifecycle for an intercepted invocation
 is strictly ordered and exactly-once-terminal:
 
 ```
@@ -371,6 +389,33 @@ prompt", and Codex rejects a bare hook `allow` as invalid output).
 A `deny` reason is shown to the agent. A blank or ill-formed reason (empty
 after trimming, control characters, unpaired surrogates) is replaced, and
 reasons are capped at 1024 characters.
+
+#### The `ask` decision
+
+A handler may answer `{ action: 'ask', prompt, timeoutMs? }`. The host, not the
+plugin, opens a human approval card showing `prompt` (plain text, capped at 2000
+characters) and a bounded preview of the tool input, in the Agents monitor for a
+PTY session or the thread for a Modern thread. Only an explicit human allow lets
+the call continue, and the provider's own permission flow still decides after it.
+A deny, cancel, timeout, session end, missing UI (headless, web), a transport or
+handler error, and any answer that is not from a human all deny. The plugin
+cannot answer its own ask: the card's renderer id is host-only. `timeoutMs` is
+clamped to 10-120 s and defaults to 60 s. Asks are serialised per thread or
+session, and time spent queued behind another ask counts against the budget, so a
+held agent can wait the full ceiling; use `ask` sparingly.
+
+Every transport time bound derives from one budget:
+
+| Bound | Value |
+| --- | --- |
+| Decision phase (all plugin handlers together) | 9 s |
+| Approval phase (`ask` only) | 10-120 s, default 60 s |
+| Margin the decider keeps | 1 s |
+| Main ceiling per call | 10 s without an ask (9 s + 1 s); 20-130 s with one (9 s + approval + 1 s) |
+| Relay backstop (relay curl, bridge awaits, product route) | 134 s |
+| Claude hook timeout | 140 s |
+
+Every expiry denies; a transport timeout only ever bounds a hung decider.
 
 Each `invocationId` is deduplicated at the server boundary, so a retried
 request with the same id replays the same decision rather than re-deciding. If
@@ -410,21 +455,34 @@ Scaffolded plugins declare `engines.zccPluginSdk: >=0.1.0`, the public host
 compatibility baseline. This range is intentionally independent from the SDK
 package version selected for development dependencies.
 
-| Surface / Harness | Native Before | Native After | Admission | Lifecycle |
-| --- | --- | --- | --- | --- |
-| Modern / claude-code | unavailable | unavailable | available | available |
-| Modern / codex | unavailable | unavailable | available | available |
-| Modern / pi | unavailable | unavailable | available | available |
-| Modern / acp | unavailable | unavailable | available | available |
-| Modern / acp-opencode | unavailable | unavailable | available | available |
-| Modern / acp-cursor | unavailable | unavailable | available | available |
-| PTY / claude (hook base, visible) | available | unavailable | available | available |
-| PTY / codex (hook base, visible) | available | unavailable | available | available |
-| PTY / opencode (hook base) | available | unavailable | available | created and exit only |
-| PTY / cursor (hook base) | available | unavailable | available | created and exit only |
-| PTY / opencode, cursor (missing hook base) | unavailable | unavailable | available | created and exit only |
-| PTY / Claude or Codex (hook base, headless) | available | unavailable | available | created and exit only |
-| PTY / missing hook base, or remote headless | unavailable | unavailable | available | created and exit only |
+The matrix below is checked against the host's capability registry. `Headless`
+and `Hook base` say which session shape a row covers (`any` covers both; Modern
+sessions always have a hook base). Native After is not delivered anywhere.
+
+| Surface | Harness | Headless | Hook base | Admission | Lifecycle | Native Before | Native After | Interactions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| modern | claude-code, codex | no | any | available | available | available | unavailable | available |
+| modern | claude-code, codex | yes | any | available | available | available | unavailable | unavailable |
+| modern | pi, acp, acp-opencode, acp-cursor | no | any | available | available | unavailable | unavailable | available |
+| modern | pi, acp, acp-opencode, acp-cursor | yes | any | available | available | unavailable | unavailable | unavailable |
+| pty | claude, codex | no | yes | available | available | available | unavailable | available |
+| pty | claude, codex | no | no | available | created and exit only | unavailable | unavailable | available |
+| pty | claude, codex | yes | yes | available | created and exit only | available | unavailable | unavailable |
+| pty | claude, codex | yes | no | available | created and exit only | unavailable | unavailable | unavailable |
+| pty | opencode, cursor | no | yes | available | created and exit only | available | unavailable | available |
+| pty | opencode, cursor | no | no | available | created and exit only | unavailable | unavailable | available |
+| pty | opencode, cursor | yes | yes | available | created and exit only | available | unavailable | unavailable |
+| pty | opencode, cursor | yes | no | available | created and exit only | unavailable | unavailable | unavailable |
+| pty | pi, shell | no | any | available | created and exit only | unavailable | unavailable | available |
+| pty | pi, shell | yes | any | available | created and exit only | unavailable | unavailable | unavailable |
+| pty | unknown | any | any | unavailable | unavailable | unavailable | unavailable | unavailable |
+
+Remote (SSH) PTYs: a remote headless session reports Native Before unavailable
+because remote hook forwarding is not wired, and a remote launch carries no
+OpenCode or Cursor veto and no plugin instructions. The matrix describes local
+sessions. Modern native veto covers the tools the provider raises for approval:
+Codex web search and MCP tool calls raise none and stay outside it. Modern
+OpenCode in ACP full mode is not gated.
 
 Cursor notes (cursor-agent 2026.08.11 source; the hook loading itself is unverified-live, because no logged-in cursor-agent was available):
 
@@ -451,10 +509,11 @@ nothing is recorded or created. Admission failure or timeout always rejects.
 
 Admitted: Modern create and send, Modern fork, PTY opening prompts (interactive
 launch, CLI Agent spawn, control-plane launch), CLI Agent and inbox/menu-bar
-reply, and Job Team dispatch. Not admitted: raw keystrokes (`term.write`), because
+reply, and Job Team dispatch (entry `job-team-dispatch`). Not admitted: raw keystrokes (`term.write`), because
 terminal input is not a message; Stop and background-task stop; Zana's own PTY
-recovery nudges and agent-to-agent mesh messages; squad member start (its own
-entry, `squad-member-start`, is reserved).
+recovery nudges and agent-to-agent mesh messages. A Modern squad member start is
+admitted with entry `squad-member-start`; a refusal releases the member's slot.
+Raw `term.write` input and restores of an existing session are not admitted.
 
 A registered agent tool (`agents.registerTool`) is reachable from Modern
 Claude/Codex threads; `zcc.mcpServers` is the matching path for Claude/Codex
@@ -482,3 +541,37 @@ and orchestrator callers remain `agent` and receive 403 for human-required gates
 Known limit: a same-uid process that reads the shared control token and omits its
 session fields is classified `operator`. CLI human proof is best-effort; desktop
 UI proof is the strong path. Non-desktop HTTP cannot satisfy human-required gates.
+
+#### Request input on a PTY session
+
+`ui.requestInput` also accepts a PTY session id as `threadId`. The prompt appears
+as a banner on the session in the Agents monitor and is answered through the same
+verified main-window path, with a proof bound to the session id (a separate
+signing domain from thread proofs). The `interactions` capability reports it:
+available for a PTY shown in the monitor once its `thread.created` event has been
+delivered, unavailable for a headless session, which has nothing to present it.
+A timeout, a session that ends (`thread-stopped`) or a server restart resolves `cancelled` with that reason.
+
+### Known limits
+
+Stated plainly so a plugin does not assume more than the host wires:
+
+- Cursor: loading of the per-session `preToolUse` hook and Cursor's ACP permission
+  coverage are unverified against a logged-in cursor-agent. A Cursor PTY gets no
+  `zcc-inbox` MCP server and no plugin instructions.
+- OpenCode in ACP full mode is not gated by native tool policy. The OpenCode and
+  Cursor PTY vetoes do not cover a command the user types into the TUI.
+- Codex: hook trust is scoped to the generated hooks only for a local binary the
+  host has verified; otherwise the launch uses `--dangerously-bypass-hook-trust`
+  (see above).
+- Remote PTYs receive no plugin instructions, and Native Before is unavailable for
+  some harnesses (remote headless, OpenCode, Cursor).
+- An unbound PTY is not a thread: `threadId` equals `sessionId`, `GET
+  /api/v1/sessions/self` returns 404 for it, and the CLI falls back to its
+  environment identity.
+- Admission does not cover raw `term.write` input or restored sessions.
+- Modern lifecycle events carry no `sessionId`; only PTY events do.
+- The menu bar shows `ended` as the reason when a dispatch is refused.
+- A second project checkout added through `POST /projects/:id/sources` is refused
+  for remote project calls unless catalogued on the target machine. This is an
+  open product decision.

@@ -180,8 +180,9 @@ Migrate to them when a plugin currently works around a missing generic hook:
   Move to the registered agent tool (`agents.registerTool`) for Modern
   threads and `zcc.mcpServers` for PTY/CLI Agent sessions — see
   [Platform hooks](./extensions-sdk-reference.md#platform-hooks) for the
-  full conformance matrix. Other providers (Cursor, OpenCode) have no native
-  hook; `zcc.sdk.capabilities.forThread` reports that honestly rather than a
+  full conformance matrix. Claude, Codex, OpenCode and Cursor PTYs and the
+  Modern Claude and Codex threads carry a native veto; the other surfaces do
+  not, and `zcc.sdk.capabilities.forThread` reports that honestly rather than a
   plugin assuming parity.
 - A `projectTab` that can be unavailable for some projects should register
   `ui.registerProjectTabAvailability` instead of hiding the tab outright —
@@ -194,6 +195,14 @@ Migrate to them when a plugin currently works around a missing generic hook:
   a user's or project's enabled Codex hooks for the session — see
   [Native tool policy](./extensions-sdk-reference.md#native-tool-policy-claude--codex-only).
   Do not rely on the fallback as a security boundary.
+- A tool policy can answer `ask` to have the user decide a single call. The
+  host draws the card, the call waits (10-120 s, 60 s by default) and anything
+  but an explicit human allow denies, so use it sparingly. A PTY has no thread
+  unless main bound one: its `threadId` is the session id, so branch on
+  `surface` and `sessionId` before looking up a thread.
+- `zcc.ui.requestInput` can target a PTY session id shown in the Agents monitor.
+  `zcc.host.projectCall` runs on the project's own machine; a project that
+  exists only on another machine is confined on that machine.
 
 ## Marketplace
 

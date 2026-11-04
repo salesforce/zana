@@ -101,9 +101,7 @@ describe('surface wiring registry', () => {
   });
   it('documents registry native availability without overclaiming post-tool', () => {
     const doc = readFileSync(new URL('../../../../docs/extensions-sdk-reference.md', import.meta.url), 'utf8');
-    for (const harness of ['codex', 'pi', 'acp', 'acp-opencode', 'acp-cursor']) {
-      expect(doc).toContain(`| Modern / ${harness} | unavailable | unavailable | available | available |`);
-    }
+    // The per-surface matrix itself is checked cell by cell in capability-matrix-doc.guard.test.ts.
     expect(doc).toContain('same-uid process');
     expect(doc).toContain('`hooks.onToolPolicy` is public and stable');
   });
