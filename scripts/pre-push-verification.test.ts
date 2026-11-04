@@ -988,6 +988,19 @@ describe('prepareTinynodReview', () => {
     expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review skipped: gateway unavailable');
   });
 
+  it('tells the user how to enable the gateway check when it was skipped', () => {
+    const { adapter } = fakeAdapter({ ensureTinynodGateway: () => ({ ok: true, refreshed: false, probed: false }) });
+    const context = base(adapter);
+    expect(prepareTinynodReview(context as never)).not.toBeNull();
+    expect(context.log).toHaveBeenCalledWith(expect.stringContaining('set SALESFORCE_CLAUDE_ENDPOINT'));
+  });
+
+  it('does not show the hint when the gateway was probed', () => {
+    const context = base(fakeAdapter({ ensureTinynodGateway: () => ({ ok: true, refreshed: false, probed: true }) }).adapter);
+    prepareTinynodReview(context as never);
+    expect(context.log).not.toHaveBeenCalledWith(expect.stringContaining('SALESFORCE_CLAUDE_ENDPOINT'));
+  });
+
   it('passes the opt-in configured-model probe flag to the gateway check', () => {
     const ensure = vi.fn(() => ({ ok: true, refreshed: false }));
     const { adapter } = fakeAdapter({ ensureTinynodGateway: ensure, resolveProbeModel: () => true });

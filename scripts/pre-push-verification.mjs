@@ -690,6 +690,7 @@ export function prepareTinynodReview({ tuples, selection, root, env = process.en
       return null;
     }
     if (gateway.refreshed) log('pre-push: tinynod review: refreshed DevBar gateway token');
+    if (gateway.probed === false) log('pre-push: tinynod gateway check skipped: set SALESFORCE_CLAUDE_ENDPOINT to check the gateway and repair an expired DevBar token before review');
     const common = gitOk(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: root, env: withoutGitRouting(env) });
     if (!common) {
       log('pre-push: tinynod review skipped: no git common directory');

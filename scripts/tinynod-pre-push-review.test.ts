@@ -443,7 +443,7 @@ describe('ensureTinynodGateway', () => {
 
   it('probes /v1/models only, never tinynod models or model/info', () => {
     const run = router({ '/v1/models': [goodModels] });
-    expect(gateway(run)).toEqual({ ok: true, refreshed: false });
+    expect(gateway(run)).toEqual({ ok: true, refreshed: false, probed: true });
     expect(run.mock.calls.some(([cmd, args]) => cmd === 'tinynod' || String(args).includes('model/info'))).toBe(false);
     expect(run.mock.calls.every(([, args]) => !args.join(' ').includes('old-key'))).toBe(true);
     expect(run.mock.calls.every(([, args]) => !args.includes('-L'))).toBe(true);
@@ -465,7 +465,7 @@ describe('ensureTinynodGateway', () => {
 
   it('refreshes only on 401/403, stores the token, and re-probes once', () => {
     const run = router({ '/v1/models': [http(401), goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] });
-    expect(gateway(run)).toEqual({ ok: true, refreshed: true });
+    expect(gateway(run)).toEqual({ ok: true, refreshed: true, probed: true });
     expect(run).toHaveBeenCalledWith('tinynod', ['config', 'set', 'ai.apiKey', 'new-token'], expect.any(Object));
   });
 
@@ -477,7 +477,7 @@ describe('ensureTinynodGateway', () => {
 
   it('refreshes when no key is stored, and says so if devbar supplies none', () => {
     const unreadable = { readFileSync: () => { throw new Error('ENOENT'); } } as never;
-    expect(gateway(router({ '/v1/models': [goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] }), { fs: unreadable })).toEqual({ ok: true, refreshed: true });
+    expect(gateway(router({ '/v1/models': [goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] }), { fs: unreadable })).toEqual({ ok: true, refreshed: true, probed: true });
     expect(gateway(router({ devbar: [{ status: 1 }] }), { fs: unreadable })).toMatchObject({ kind: 'missing', reason: 'TinyNod has no ai.apiKey configured and DevBar did not supply one' });
   });
 
@@ -510,6 +510,41 @@ describe('ensureTinynodGateway', () => {
     }
   });
 
+  it('disables curl default configuration before any other argument', () => {
+    const run = router({ '/v1/models': [goodModels] });
+    gateway(run);
+    expect(run.mock.calls[0][0]).toBe('curl');
+    expect(run.mock.calls[0][1][0]).toBe('--disable');
+  });
+
+  it('stops between refresh steps when the budget runs out, and rejects a result that finishes late', () => {
+    const scenario = (spendAfter: string, routes: Record<string, unknown[]>) => {
+      let t = 0;
+      const inner = router(routes);
+      const run = vi.fn((cmd: string, args: string[], opts: { timeout?: number }) => {
+        const out = (inner as never as (...a: unknown[]) => unknown)(cmd, args, opts);
+        if (cmd === spendAfter || (cmd === 'curl' && spendAfter === 'curl')) t += 41_000;
+        return out;
+      });
+      return { run, result: gateway(run, { now: () => t }) };
+    };
+    expect(scenario('devbar', { '/v1/models': [http(401)], devbar: [devbarOk], tinynod: [{ status: 0 }] }).result).toMatchObject({ kind: 'budget' });
+    expect(scenario('tinynod', { '/v1/models': [http(401), goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] }).result).toMatchObject({ kind: 'budget' });
+    expect(scenario('curl', { '/v1/models': [goodModels] }).result).toMatchObject({ kind: 'budget' });
+  });
+
+  it('caps each subprocess timeout to the remaining budget', () => {
+    let t = 0;
+    const inner = router({ '/v1/models': [http(401), goodModels], devbar: [devbarOk], tinynod: [{ status: 0 }] });
+    const run = vi.fn((cmd: string, args: string[], opts: { timeout?: number }) => {
+      if (cmd === 'curl') t += 30_000;
+      return (inner as never as (...a: unknown[]) => unknown)(cmd, args, opts);
+    });
+    gateway(run, { now: () => t });
+    const devbarCall = run.mock.calls.find(([cmd]) => cmd === 'devbar')!;
+    expect(devbarCall[2].timeout).toBe(10_000);
+  });
+
   it.each([
     ['timeout (curl 28)', { status: 28 }, 'timeout', 'TinyNod gateway timed out'],
     ['timeout (spawn)', { status: null, error: { code: 'ETIMEDOUT' } }, 'timeout', 'TinyNod gateway timed out'],
@@ -518,7 +553,9 @@ describe('ensureTinynodGateway', () => {
     ['curl missing', { status: null, error: { code: 'ENOENT' } }, 'connect', 'TinyNod gateway unreachable: connection failed (curl not found)'],
     ['other curl exit', { status: 3 }, 'connect', 'TinyNod gateway unreachable: connection failed (curl exit 3)'],
     ['empty list', http(200, '{"data":[]}'), 'empty', 'TinyNod gateway returned an empty model list'],
-    ['unparseable body', http(200, 'not json'), 'empty', 'TinyNod gateway returned an empty model list'],
+    ['unparseable body', http(200, '<html>portal</html>'), 'malformed', 'TinyNod gateway response was not recognizable'],
+    ['data is not an array', http(200, '{"data":"error"}'), 'malformed', 'TinyNod gateway response was not recognizable'],
+    ['no data field', http(200, '{}'), 'malformed', 'TinyNod gateway response was not recognizable'],
     ['server error', http(502), 'http', 'TinyNod gateway returned HTTP 502'],
     ['no status line', { status: 0, stdout: 'garbage' }, 'malformed', 'TinyNod gateway response was not recognizable'],
   ])('%s never triggers a refresh', (_name, response, kind, reason) => {
@@ -535,8 +572,8 @@ describe('ensureTinynodGateway', () => {
     });
 
     it('passes on 200 and skips when no model is configured', () => {
-      expect(gateway(router({ '/v1/models': [goodModels], '/v1/chat/completions': [http(200)] }), { probeModel: true })).toEqual({ ok: true, refreshed: false });
-      expect(gateway(router({ '/v1/models': [goodModels] }), { probeModel: true, fs: fsWith({ ai: { apiKey: 'k' } }) })).toEqual({ ok: true, refreshed: false });
+      expect(gateway(router({ '/v1/models': [goodModels], '/v1/chat/completions': [http(200)] }), { probeModel: true })).toEqual({ ok: true, refreshed: false, probed: true });
+      expect(gateway(router({ '/v1/models': [goodModels] }), { probeModel: true, fs: fsWith({ ai: { apiKey: 'k' } }) })).toEqual({ ok: true, refreshed: false, probed: true });
     });
 
     it('names the model when the key cannot use it, without a refresh', () => {

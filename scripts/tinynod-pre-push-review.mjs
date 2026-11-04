@@ -325,7 +325,7 @@ function gatewayRequest({ run, baseUrl, path, key, body, timeoutMs }) {
   if (!SAFE_TOKEN.test(String(key ?? ''))) return { kind: 'badkey' };
   const config = [`header = "Authorization: Bearer ${key}"`];
   if (body) config.push('header = "Content-Type: application/json"', `data = ${JSON.stringify(JSON.stringify(body))}`);
-  const args = ['-sS', '-K', '-', '--max-time', String(Math.ceil(timeoutMs / 1000)), '-w', '\n%{http_code}', `${baseUrl.replace(/\/+$/, '')}${path}`];
+  const args = ['--disable', '-sS', '-K', '-', '--max-time', String(Math.ceil(timeoutMs / 1000)), '-w', '\n%{http_code}', `${baseUrl.replace(/\/+$/, '')}${path}`];
   const result = run('curl', args, { encoding: 'utf8', input: `${config.join('\n')}\n`, timeout: timeoutMs + 2_000 });
   if (result?.error?.code === 'ENOENT') return { kind: 'connect', detail: 'curl not found' };
   if (result?.error?.code === 'ETIMEDOUT') return { kind: 'timeout' };
@@ -348,9 +348,10 @@ export function probeGatewayModels({ run = spawnSync, baseUrl, key, timeoutMs = 
   if (response.kind !== 'http') return { ok: false, kind: response.kind, detail: response.detail };
   if (response.status === 401 || response.status === 403) return { ok: false, kind: 'auth', status: response.status };
   if (response.status < 200 || response.status >= 300) return { ok: false, kind: 'http', status: response.status };
-  let count = 0;
-  try { count = JSON.parse(response.body)?.data?.length ?? 0; } catch { count = 0; }
-  return count > 0 ? { ok: true } : { ok: false, kind: 'empty', status: response.status };
+  let data;
+  try { data = JSON.parse(response.body)?.data; } catch { return { ok: false, kind: 'malformed' }; }
+  if (!Array.isArray(data)) return { ok: false, kind: 'malformed' };
+  return data.length > 0 ? { ok: true } : { ok: false, kind: 'empty', status: response.status };
 }
 
 /** One-token chat request for the configured model. 403 means the key cannot use that model. */
@@ -395,36 +396,40 @@ export function ensureTinynodGateway({
   run = spawnSync, command = 'tinynod', devbar = DEVBAR, env = process.env, fs = nodeFs, now = Date.now,
   baseUrl = env.SALESFORCE_CLAUDE_ENDPOINT || DEFAULT_GATEWAY_ENDPOINT, probeModel = false,
 } = {}) {
-  const options = { encoding: 'utf8', timeout: GATEWAY_TIMEOUT_MS, env };
   // Without a known endpoint nothing can be probed; the review itself reports any gateway error.
   if (!baseUrl) return { ok: true, refreshed: false, probed: false };
   const deadline = now() + GATEWAY_BUDGET_MS;
-  const left = () => Math.max(1_000, Math.min(GATEWAY_TIMEOUT_MS, deadline - now()));
-  const overBudget = () => now() >= deadline;
+  // Remaining budget, capped per subprocess. Zero or less means the budget is spent.
+  const left = () => Math.min(GATEWAY_TIMEOUT_MS, deadline - now());
+  const options = () => ({ encoding: 'utf8', timeout: left(), env });
   let { key, model } = readTinynodConfig({ env, fs });
   let refreshed = false;
   const hadKey = Boolean(key);
+  if (left() <= 0) return gatewayFailure('budget');
   let probe = hadKey ? probeGatewayModels({ run, baseUrl, key, timeoutMs: left() }) : { ok: false, kind: 'auth', status: 0 };
   if (!probe.ok && probe.kind === 'auth') {
-    if (overBudget()) return gatewayFailure('budget');
-    const token = run(devbar, ['auth', 'claude'], options);
+    if (left() <= 0) return gatewayFailure('budget');
+    const token = run(devbar, ['auth', 'claude'], options());
     const value = String(token?.stdout ?? '').split('\n')[0].trim();
     if (!commandSucceeded(token) || !value) return gatewayFailure(hadKey ? 'refresh' : 'missing');
     if (!SAFE_TOKEN.test(value)) return gatewayFailure('badkey');
+    if (left() <= 0) return gatewayFailure('budget');
     // `tinynod config set` takes the value only as an argument; it is briefly visible in `ps`.
-    if (!commandSucceeded(run(command, ['config', 'set', 'ai.apiKey', value], options))) return gatewayFailure('store');
+    if (!commandSucceeded(run(command, ['config', 'set', 'ai.apiKey', value], options()))) return gatewayFailure('store');
     key = value;
     refreshed = true;
+    if (left() <= 0) return gatewayFailure('budget');
     probe = probeGatewayModels({ run, baseUrl, key, timeoutMs: left() });
     if (!probe.ok && probe.kind === 'auth') return gatewayFailure('denied', probe);
   }
   if (!probe.ok) return gatewayFailure(probe.kind, probe);
   if (probeModel && model) {
-    if (overBudget()) return gatewayFailure('budget');
+    if (left() <= 0) return gatewayFailure('budget');
     const chat = probeConfiguredModel({ run, baseUrl, key, model, timeoutMs: left() });
     if (!chat.ok) return gatewayFailure(chat.kind, { ...chat, model });
   }
-  return { ok: true, refreshed };
+  if (left() <= 0) return gatewayFailure('budget');
+  return { ok: true, refreshed, probed: true };
 }
 
 /**
