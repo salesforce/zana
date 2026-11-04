@@ -57,6 +57,7 @@ import type {
   ResolvedLaunch
 } from '../launch-provider.js';
 import { BaseLaunchProvider } from '../base-provider.js';
+import { mergeOpenCodeGatePlugin, openCodeNativeToolGateSource } from './native-tool-gate.js';
 import type {
   HarnessRoleTarget,
   HarnessModelTarget,
@@ -551,6 +552,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   // OpenCode's config takes an `instructions` list of file paths it adds to the
   // system prompt; plugin instructions travel that way, in the per-session file.
   readonly pluginInstructionsViaConfigFile = true;
+  // The native tool veto is a plugin module OpenCode's config names; local launches only.
+  readonly nativeToolGateViaConfigFile = true;
   // OpenCode's remote pane runs a nameable agent binary (opencode/node), distinct
   // from the `bash -lic` wrapper shell that survives when the agent exits — so
   // PtyManager can tell a live agent from a zombie. See classifyPaneCommand.
@@ -734,6 +737,14 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    */
   mcpConfigFile(_profile: LaunchProfileId, mcpUrl: string): { envVar: string; contents: string } {
     return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl)) };
+  }
+
+  nativeToolGatePluginSource(_profile: LaunchProfileId, nativeToolUrl: string): string {
+    return openCodeNativeToolGateSource(nativeToolUrl);
+  }
+
+  mergeNativeToolGateConfig(_profile: LaunchProfileId, configJson: string, gatePath: string): string {
+    return mergeOpenCodeGatePlugin(configJson, gatePath);
   }
 
   mergePluginInstructionsConfig(_profile: LaunchProfileId, configJson: string, instructionsPath: string): string {

@@ -559,6 +559,18 @@ function callDynamicToolBridge(args: {
   });
 }
 
+/** Wait for the bridge's native tool policy question and answer it. */
+async function answerPolicy(
+  decision: { action: "allow" } | { action: "deny"; reason: string },
+): Promise<Record<string, unknown>> {
+  const asked = await waitFor(
+    () => output.messages.find((message) => message.method === "tool/policy/decide" && message.id !== undefined),
+    "native tool policy request",
+  );
+  handleLine(JSON.stringify({ jsonrpc: "2.0", id: asked.id, result: decision }));
+  return asked.params as Record<string, unknown>;
+}
+
 beforeEach(() => {
   workspaceDir = mkdtempSync(join(tmpdir(), "bb-acp-bridge-test-"));
   output = captureBridgeJsonRpcOutput();
@@ -3020,14 +3032,58 @@ describe("acp bridge", () => {
       input: [{ type: "text", text: "request-permission", mentions: [] }],
     });
     await waitForResponse(turnId);
+    const asked = await answerPolicy({ action: "allow" });
     await waitForTurnCompleted();
 
+    expect(asked).toMatchObject({
+      threadId: expect.any(String),
+      providerThreadId,
+      callId: "perm-tool-1",
+      toolName: "acp.execute",
+      input: { kind: "execute", title: "Run rm", command: "rm -rf /tmp/scratch" },
+    });
     expect(
       output.messages.filter(
         (message) => message.method === "interaction/request",
       ),
     ).toHaveLength(0);
     expect(agentMessageTexts()).toContain("permission:yes");
+  });
+
+  it.each(["full", "accept-edits"] as const)(
+    "refuses a permission request the policy denies in %s mode, without asking a human",
+    async (permissionMode) => {
+      const { providerThreadId } = await startThread({
+        permissionMode,
+        permissionEscalation: "ask",
+      });
+      const turnId = sendTurnRequest("turn/start", providerThreadId, {
+        input: [{ type: "text", text: "request-permission", mentions: [] }],
+      });
+      await waitForResponse(turnId);
+      await answerPolicy({ action: "deny", reason: "no shell" });
+      await waitForTurnCompleted();
+
+      expect(agentMessageTexts()).toContain("permission:no");
+      expect(
+        output.messages.filter((message) => message.method === "interaction/request"),
+      ).toHaveLength(0);
+    },
+  );
+
+  it("refuses a permission request when the policy answer is invalid", async () => {
+    const { providerThreadId } = await startThread({ permissionMode: "full" });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "request-permission", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    const asked = await waitFor(
+      () => output.messages.find((message) => message.method === "tool/policy/decide" && message.id !== undefined),
+      "native tool policy request",
+    );
+    handleLine(JSON.stringify({ jsonrpc: "2.0", id: asked.id, result: { action: "maybe" } }));
+    await waitForTurnCompleted();
+    expect(agentMessageTexts()).toContain("permission:no");
   });
 
   it("forwards permission requests to the runtime in ask mode", async () => {
@@ -3039,6 +3095,7 @@ describe("acp bridge", () => {
       input: [{ type: "text", text: "request-permission", mentions: [] }],
     });
     await waitForResponse(turnId);
+    await answerPolicy({ action: "allow" });
 
     const forwarded = await waitFor(
       () =>
@@ -3084,6 +3141,7 @@ describe("acp bridge", () => {
       input: [{ type: "text", text: "request-permission", mentions: [] }],
     });
     await waitForResponse(turnId);
+    await answerPolicy({ action: "allow" });
     const forwarded = await waitFor(
       () =>
         output.messages.find(

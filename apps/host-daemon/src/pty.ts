@@ -138,7 +138,7 @@ function sweepStaleSessionMcpConfigs(dir: string): void {
   void (async () => {
     try {
       for (const name of await readdirAsync(dir)) {
-        if (!name.endsWith('.json') && !name.endsWith('.instructions.md')) continue;
+        if (!name.endsWith('.json') && !name.endsWith('.instructions.md') && !name.endsWith('.native-tool-gate.mjs')) continue;
         const path = join(dir, name);
         try {
           if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await unlinkAsync(path);
@@ -535,6 +535,8 @@ export class PtyManager extends EventEmitter {
   private sessionMcpConfigFiles = new Map<string, string>();
   /** Per-session plugin instruction files (OpenCode); unlinked in {@link finalizeExit}. */
   private sessionInstructionFiles = new Map<string, string>();
+  /** Per-session native tool gate modules (OpenCode); unlinked in {@link finalizeExit}. */
+  private sessionNativeToolGateFiles = new Map<string, string>();
   /** Tmux identity env files not yet consumed by the pane; unlinked on exit (the pane normally deletes it first). */
   private sessionEnvFiles = new Map<string, string>();
   /** Per-run isolated CLAUDE_CONFIG_DIR of unattended Claude sessions, by session id; removed in {@link finalizeExit}. */
@@ -875,6 +877,34 @@ export class PtyManager extends EventEmitter {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[pty] writeSessionMcpConfigFile(${sessionId}) failed:`, err);
+      return null;
+    }
+  }
+
+  /** Unlink every per-session launch file written so far for a spawn that is being refused. */
+  private releaseSessionLaunchFiles(sessionId: string): void {
+    for (const files of [this.sessionNativeToolGateFiles, this.sessionInstructionFiles, this.sessionMcpConfigFiles]) {
+      const path = files.get(sessionId);
+      if (!path) continue;
+      files.delete(sessionId);
+      try { unlinkSync(path); } catch { /* best-effort */ }
+    }
+  }
+
+  /**
+   * Write a session's native tool gate module to a host-owned `0600` file and
+   * return its path (null on failure). Unlinked on session exit ({@link finalizeExit}).
+   */
+  private writeSessionNativeToolGateFile(sessionId: string, source: string): string | null {
+    try {
+      mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
+      const path = join(SESSION_MCP_CONFIG_DIR, `${sessionId}.native-tool-gate.mjs`);
+      writeFileSync(path, source, { mode: 0o600 });
+      this.sessionNativeToolGateFiles.set(sessionId, path);
+      return path;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] writeSessionNativeToolGateFile(${sessionId}) failed:`, err);
       return null;
     }
   }
@@ -1463,22 +1493,49 @@ export class PtyManager extends EventEmitter {
     const mcpConfigFileEnvVar = providerIntegration.mcpConfigFile?.envVar;
     // A provider that reads plugin instructions from a file named in its config
     // gets them in a host-owned `0600` file, listed in the same config document.
+    // A provider that vetoes through a module its config names gets one per
+    // session. When a tool policy is required and the gate cannot be put in
+    // place, the spawn is refused rather than started without its veto.
+    const nativeToolGateSource = provider.nativeToolGateViaConfigFile && providerIntegration.mcpConfigFile && providerHookUrls.nativeTool
+      ? provider.nativeToolGatePluginSource(effectiveProfile, providerHookUrls.nativeTool)
+      : null;
+    const nativeToolGatePath = nativeToolGateSource
+      ? this.writeSessionNativeToolGateFile(sessionId, nativeToolGateSource)
+      : null;
+    if (provider.nativeToolGateViaConfigFile && !nativeToolGatePath && nativeToolPolicyRequired) {
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but the native tool gate could not be installed for this launch'
+      );
+    }
     const pluginInstructionsPath =
       pluginInstructionText && provider.pluginInstructionsViaConfigFile && providerIntegration.mcpConfigFile
         ? this.writeSessionInstructionsFile(sessionId, pluginInstructionText)
         : null;
+    const withGate = (contents: string) => nativeToolGatePath
+      ? provider.mergeNativeToolGateConfig(effectiveProfile, contents, nativeToolGatePath)
+      : contents;
     const mcpConfigFilePath = providerIntegration.mcpConfigFile
       ? this.writeSessionMcpConfigFile(
           sessionId,
-          pluginInstructionsPath
+          withGate(pluginInstructionsPath
             ? provider.mergePluginInstructionsConfig(
                 effectiveProfile,
                 providerIntegration.mcpConfigFile.contents,
                 pluginInstructionsPath
               )
-            : providerIntegration.mcpConfigFile.contents
+            : providerIntegration.mcpConfigFile.contents)
         )
       : null;
+    // The gate only governs the session if the config naming it landed.
+    const nativeToolGateWired = Boolean(nativeToolGatePath && mcpConfigFilePath);
+    if (provider.nativeToolGateViaConfigFile && !nativeToolGateWired && nativeToolPolicyRequired) {
+      this.releaseSessionLaunchFiles(sessionId);
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but the native tool gate config could not be written for this launch'
+      );
+    }
     // Persona flags: inserted AFTER claudeMcpArgs so the persona's
     // append-system-prompt layers on TOP of the inbox guidance (personas can
     // build on the baseline inbox behavior), and BEFORE projectSettings so
@@ -2049,7 +2106,7 @@ export class PtyManager extends EventEmitter {
         // tracks NATIVE-TOOL reachability (headless-independent), not just lifecycle:
         // codex rides nativeToolUrl, claude rides lifecycleBase's nativeTool hook.
         surface: 'pty', harness: registrationFor(effectiveProfile)?.id ?? effectiveProfile,
-        headless: !!opts.headless, hookBase: Boolean(nativeToolUrl || lifecycleBase)
+        headless: !!opts.headless, hookBase: provider.nativeToolGateViaConfigFile ? nativeToolGateWired : Boolean(nativeToolUrl || lifecycleBase)
       },
       projectId: opts.projectId,
       ...(opts.threadId ? { threadId: opts.threadId } : {}),
@@ -2411,6 +2468,15 @@ export class PtyManager extends EventEmitter {
       this.sessionInstructionFiles.delete(sessionId);
       try {
         unlinkSync(instructionsFile);
+      } catch {
+        /* best-effort — already gone or swept */
+      }
+    }
+    const gateFile = this.sessionNativeToolGateFiles.get(sessionId);
+    if (gateFile) {
+      this.sessionNativeToolGateFiles.delete(sessionId);
+      try {
+        unlinkSync(gateFile);
       } catch {
         /* best-effort — already gone or swept */
       }
@@ -2907,7 +2973,8 @@ export class PtyManager extends EventEmitter {
       id: sessionId,
       capabilitySurface: {
         surface: 'pty', harness: remoteRegistration.id,
-        headless: !!opts.headless, hookBase: Boolean(remoteHookUrls?.nativeTool)
+        headless: !!opts.headless, // A config-file gate names a host-local module, so a remote launch carries no veto.
+        hookBase: Boolean(remoteHookUrls?.nativeTool) && !remoteProvider.nativeToolGateViaConfigFile
       },
       projectId: opts.projectId,
       ...(opts.threadId ? { threadId: opts.threadId } : {}),

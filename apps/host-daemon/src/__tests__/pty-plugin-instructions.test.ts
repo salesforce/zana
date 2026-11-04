@@ -1,5 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+let failGateWrite = false;
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    writeFileSync: ((path: unknown, ...rest: unknown[]) => {
+      if (failGateWrite && String(path).endsWith('.native-tool-gate.mjs')) throw new Error('disk full');
+      return (actual.writeFileSync as (...a: unknown[]) => void)(path, ...rest);
+    }) as typeof actual.writeFileSync
+  };
+});
 
 /**
  * Per-session plugin instructions on PTY launches: the MAIN-only
@@ -127,5 +140,56 @@ describe('PTY plugin instructions', () => {
     const call = launch('opencode');
     const cfg = JSON.parse(readFileSync(call.env.OPENCODE_CONFIG, 'utf8'));
     expect((cfg.instructions ?? []).some((p: string) => p.endsWith('.instructions.md'))).toBe(false);
+  });
+});
+
+describe('PTY native tool gate (OpenCode)', () => {
+  beforeEach(() => {
+    spawns.length = 0;
+    vi.stubEnv('OPENCODE_CONFIG', undefined);
+    vi.stubEnv('OPENCODE_CONFIG_CONTENT', undefined);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('names a 0600 gate module in the config, advertises the veto, and unlinks it on exit', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    const session = mgr.create({ projectId: 'proj1', profile: 'opencode' as never, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG });
+    const call = spawns[spawns.length - 1]!;
+    const cfg = JSON.parse(readFileSync(call.env.OPENCODE_CONFIG, 'utf8'));
+    expect(cfg.plugin).toHaveLength(1);
+    const file = fileURLToPath(cfg.plugin[0]);
+    expect(file.endsWith('.native-tool-gate.mjs')).toBe(true);
+    expect(readFileSync(file, 'utf8')).toContain(`${MCP_BASE}/hook/nativetool/proj1/${session.id}`);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(session.capabilitySurface).toMatchObject({ harness: 'opencode', hookBase: true });
+    call.fireExit();
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it('adds no gate when no policy transport exists and none is required', () => {
+    const mgr = new PtyManager();
+    const session = mgr.create({ projectId: 'proj1', profile: 'opencode' as never, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG, nativeToolPolicyRequired: false });
+    const call = spawns[spawns.length - 1]!;
+    expect(call.env.OPENCODE_CONFIG).toBeUndefined();
+    expect(session.capabilitySurface).toMatchObject({ hookBase: false });
+  });
+
+  it('refuses the spawn when a policy is required and the gate cannot be written', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    failGateWrite = true;
+    try {
+      expect(() => mgr.create({ projectId: 'proj1', profile: 'opencode' as never, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG }))
+        .toThrow(/native tool gate/);
+      expect(spawns).toHaveLength(0);
+      // Not required: the launch proceeds, honestly advertising no veto.
+      const session = mgr.create({ projectId: 'proj1', profile: 'opencode' as never, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG, nativeToolPolicyRequired: false });
+      expect(session.capabilitySurface).toMatchObject({ hookBase: false });
+      const cfg = JSON.parse(readFileSync(spawns[0]!.env.OPENCODE_CONFIG, 'utf8'));
+      expect(cfg.plugin).toBeUndefined();
+    } finally {
+      failGateWrite = false;
+    }
   });
 });

@@ -68,10 +68,16 @@ for (const harness of ['claude', 'codex', 'opencode', 'cursor', 'pi', 'shell']) 
     }
   }
 }
-for (const harness of ['claude', 'codex']) {
+// OpenCode's veto is a per-session plugin module its config names (its pre-tool
+// hook runs ahead of every tool and is independent of permission rules, so an
+// allow-all permission setting does not bypass it). It exists only on a local
+// launch that wrote the module (hookBase), covers tools the agent runs, and
+// does not gate a command the user types into the TUI.
+const OPENCODE_PTY_VETO = 'Vetoes tools the agent runs through OpenCode\'s plugin pre-tool hook; a command the user types into the TUI is not gated, and a remote launch carries no veto';
+for (const harness of ['claude', 'codex', 'opencode']) {
   for (const headless of [false, true]) {
     const key: CapabilitySurfaceKey = { surface: 'pty', harness, headless, hookBase: true };
-    capabilityRegistry.register(key, 'tool-before-native', { available: true });
+    capabilityRegistry.register(key, 'tool-before-native', harness === 'opencode' ? { available: true, reason: OPENCODE_PTY_VETO } : { available: true });
     capabilityRegistry.register(key, 'tool-after-native', { available: false, reason: 'Native tool completion is not delivered to plugins' });
   }
 }

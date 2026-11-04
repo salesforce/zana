@@ -485,6 +485,21 @@ export interface LaunchProvider {
   mergePluginInstructionsConfig(profile: LaunchProfileId, configJson: string, instructionsPath: string): string;
 
   /**
+   * True when this provider vetoes native tool calls through a plugin module its
+   * config names (OpenCode's `plugin` list), not through argv or env. `PtyManager`
+   * then writes {@link nativeToolGatePluginSource} to a host-owned `0600` file and
+   * calls {@link mergeNativeToolGateConfig}. The gate is local-only: a remote
+   * launch has no host-local file to name, so it carries no veto.
+   */
+  readonly nativeToolGateViaConfigFile?: boolean;
+
+  /** Module source whose pre-tool hook asks `nativeToolUrl` and blocks anything but an exact allow. */
+  nativeToolGatePluginSource(profile: LaunchProfileId, nativeToolUrl: string): string | null;
+
+  /** Add the gate module path to a provider config document; identity when unsupported. */
+  mergeNativeToolGateConfig(profile: LaunchProfileId, configJson: string, gatePath: string): string;
+
+  /**
    * Argv fragment that wires the launcher's lifecycle hooks into a provider whose
    * CLI carries hook config as command-line ARGS, given the fully-resolved,
    * identity-bearing callback URLs in {@link ProviderHookUrls} — the SAME `/hook/*`

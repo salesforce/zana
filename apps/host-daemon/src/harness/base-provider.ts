@@ -184,6 +184,16 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     return configJson;
   }
 
+  readonly nativeToolGateViaConfigFile: boolean = false;
+
+  nativeToolGatePluginSource(_profile: LaunchProfileId, _nativeToolUrl: string): string | null {
+    return null;
+  }
+
+  mergeNativeToolGateConfig(_profile: LaunchProfileId, configJson: string, _gatePath: string): string {
+    return configJson;
+  }
+
   hookArgs(_profile: LaunchProfileId, _urls: ProviderHookUrls): string[] {
     return [];
   }
