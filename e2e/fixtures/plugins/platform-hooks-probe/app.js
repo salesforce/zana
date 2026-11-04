@@ -31,7 +31,7 @@ var useSyncExternalStore = React.useSyncExternalStore;
 var useTransition = React.useTransition;
 var version = React.version;
 
-// ../../../../../../../../../../../private/var/folders/3n/g41ptzpd60n1x3thcm1czjpw0000gn/T/zcc-electron-test-ToDjLI/packages/cli/dist/runtime/plugin-sdk-app.js
+// ../../../../../../../../../../../private/var/folders/3n/g41ptzpd60n1x3thcm1czjpw0000gn/T/zcc-electron-test-8DpuM6/packages/cli/dist/runtime/plugin-sdk-app.js
 function pluginHost() {
   const host = globalThis.__ZCC_PLUGIN_HOST__;
   if (!host) throw new Error("plugin host is not available");
