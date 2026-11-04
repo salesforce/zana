@@ -56,7 +56,7 @@ describe('Design Docs RPC', () => {
       await expect(Promise.resolve().then(() => call(name, { doc: copy.id, ...args }))).rejects.toThrow('not found');
     }
     const key = store.requireTemplate(copy.id).template_key!;
-    expect(call('templatesImport', call('templatesExport', { keys: [key] }))).toHaveLength(1);
+    expect(call('templatesImport', call('templatesExport', { keys: [key] }))).toMatchObject({ imported: [], skipped: 1 });
     call('templateDelete', { template: copy.id });
     expect(() => store.requireTemplate(copy.id)).toThrow('not found');
     expect(call('templatesRestoreBuiltins')).toBeInstanceOf(Array);

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { ALIAS_LIVE, DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT } from './project-refs.js';
 import type { PluginDatabase, PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
 import {
@@ -387,6 +387,15 @@ export class DesignDocStore {
   }
 
   templatesImport(text: unknown, actor: DocActor): DesignDocDetail[] {
+    return this.templatesImportReport(text, actor).imported;
+  }
+
+  /**
+   * Templates are identified by content, not key or label: an incoming template whose content digest matches an existing
+   * template (or an earlier bundle entry) is skipped, so export-then-import is a no-op. Different content under a taken key
+   * is added as a renamed copy.
+   */
+  templatesImportReport(text: unknown, actor: DocActor): { imported: DesignDocDetail[]; skipped: number } {
     if (typeof text !== 'string') throw new DesignDocError('invalid', 'bundleText must be a string');
     if (Buffer.byteLength(text) > MAX_TEMPLATE_BUNDLE_BYTES) throw new DesignDocError('limit', 'template bundle is too large');
     let value: unknown;
@@ -394,10 +403,19 @@ export class DesignDocStore {
     const parsed = templateBundleSchema.safeParse(value);
     if (!parsed.success) throw new DesignDocError('invalid', parsed.error.message);
     const templates = parsed.data.templates.map(sanitizeTemplateInput);
-    return this.db.transaction(() => templates.map((template) => {
-      if (this.templateByKey(template.key)) template = { ...template, key: this.randomId('custom_'), label: this.uniqueCopyName(template.label) };
-      return this.insertTemplate(template, actor);
-    }));
+    return this.db.transaction(() => {
+      const known = new Set(this.listTemplates().map(templateDigest));
+      const imported: DesignDocDetail[] = [];
+      let skipped = 0;
+      for (let template of templates) {
+        const digest = templateDigest(template);
+        if (known.has(digest)) { skipped++; continue; }
+        known.add(digest);
+        if (this.templateByKey(template.key)) template = { ...template, key: this.randomId('custom_'), label: this.uniqueCopyName(template.label) };
+        imported.push(this.insertTemplate(template, actor));
+      }
+      return { imported, skipped };
+    });
   }
 
   purgeTemplates(expectedBundle: string): void {
@@ -1566,6 +1584,18 @@ export class DesignDocStore {
 }
 
 // ── Pure helpers ────────────────────────────────────────────────────────
+
+/**
+ * Content identity of a template: description, entry path and every file's path, encoding and bytes. Key and label are
+ * excluded so a renamed copy created by an earlier import is recognised as the same template on re-import.
+ */
+export function templateDigest(template: {
+  label: string; description: string; entryPath?: string | undefined; files: ReadonlyArray<{ path: string; content: string; encoding?: string | undefined }>
+}): string {
+  const files = [...template.files].map((file) => ({ path: file.path, encoding: file.encoding === 'base64' ? 'base64' : 'utf8', content: file.content }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return createHash('sha256').update(JSON.stringify([template.description, template.entryPath ?? null, files])).digest('hex');
+}
 
 export function sanitizeTemplateInput(value: unknown): Omit<TemplateInput, 'files'> & {
   files: Array<{ path: string; content: string; encoding: string; size: number }>

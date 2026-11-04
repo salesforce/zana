@@ -53,6 +53,13 @@ const STATUS_OPTIONS: PopoverPicklistOption<StatusFilter>[] = [
   { value: 'all', label: 'All statuses' }
 ];
 
+export function importSummary(imported: number, skipped: number): string {
+  const noun = (n: number) => `${n} template${n === 1 ? '' : 's'}`;
+  if (imported === 0 && skipped === 0) return 'No templates found in that file.';
+  if (imported === 0) return `Nothing imported: ${skipped === 1 ? 'that template is' : `all ${noun(skipped)} are`} already here.`;
+  return `Imported ${noun(imported)}${skipped ? `; skipped ${skipped} already here` : ''}.`;
+}
+
 function countedOption(value: string, label: string, count: number): PopoverPicklistOption<string> {
   return {
     value,
@@ -651,8 +658,9 @@ function TemplateManager({ templates, onNew, onEdit, onChanged }: { templates: T
   const importTemplates = async (file: File | null) => {
     if (!file) return;
     try {
-      await api.templatesImport(await file.text());
+      const { imported, skipped } = await api.templatesImport(await file.text());
       onChanged();
+      toast(importSummary(imported.length, skipped));
     } catch (error) {
       toast(`Could not import templates: ${errorMessage(error)}`, 'error');
     } finally {

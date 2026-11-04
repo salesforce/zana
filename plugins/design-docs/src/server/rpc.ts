@@ -146,9 +146,9 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     templatesRestoreBuiltins: () => { const templates = store.templatesRestoreBuiltins(); changed(''); return templates; },
     templatesExport: (raw) => ({ bundleText: store.templatesExport(optionalStrings(asInput(raw), 'keys')) }),
     templatesImport: (raw) => {
-      const docs = store.templatesImport(requiredString(asInput(raw), 'bundleText'), UI_USER);
-      for (const doc of docs) changed(doc.id);
-      return docs;
+      const report = store.templatesImportReport(requiredString(asInput(raw), 'bundleText'), UI_USER);
+      for (const doc of report.imported) changed(doc.id);
+      return report;
     },
 
     projects: async () => {

@@ -80,7 +80,10 @@ describe('template kind isolation', () => {
     expect(() => store.templateUpdateMeta(copy.id, { entryPath: 'missing.md' }, user)).toThrow('entryPath');
     expect(mutations).toEqual([]);
     const bundle = store.templatesExport([store.requireTemplate(template.id).template_key!]);
-    const imported = store.templatesImport(bundle, user)[0]!;
+    expect(store.templatesImport(bundle, user)).toEqual([]);
+    const changed = JSON.parse(bundle) as { templates: Array<{ description: string }> };
+    changed.templates[0]!.description = 'different content';
+    const imported = store.templatesImport(JSON.stringify(changed), user)[0]!;
     expect(imported.title).toBe('Custom (copy)');
     expect(store.readFile(imported.id, 'image.png', 'template').content).toBe('AAEC');
     expect(store.requireTemplate(imported.id).template_key).not.toBe(store.requireTemplate(template.id).template_key);
@@ -103,6 +106,31 @@ describe('template kind isolation', () => {
     expect(store.get(doc.id).title).toBe('Source');
     const only = store.templateNew({}, user);
     expect(() => store.templateDelete(only.id)).toThrow('last template');
+  });
+
+  it('identifies templates by content: full export then import is a no-op', () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const before = store.templatesExport();
+    expect(store.templatesImportReport(before, user)).toMatchObject({ imported: [], skipped: store.listTemplates().length });
+    expect(store.templatesExport()).toBe(before);
+  });
+
+  it('skips same content under another key or label-less duplicate entries and copies different content', () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const entry = (key: string, content: string, label = 'Same') => ({ key, label, description: 'd', entryPath: 'README.md', files: [{ path: 'README.md', content }] });
+    const bundle = (templates: unknown[]) => JSON.stringify({ kind: 'zcc-design-doc-templates', version: 1, templates });
+    const first = store.templatesImportReport(bundle([entry('a', 'one'), entry('b', 'one')]), user);
+    expect(first.imported).toHaveLength(1);
+    expect(first.skipped).toBe(1);
+    const again = store.templatesImportReport(bundle([entry('c', 'one')]), user);
+    expect(again).toMatchObject({ imported: [], skipped: 1 });
+    const clash = store.templatesImportReport(bundle([entry('a', 'two')]), user);
+    expect(clash.imported.map((doc) => doc.title)).toEqual(['Same (copy)']);
+    expect(store.templateByKey('a')!.files[0]!.content).toBe('one');
+    expect(store.templatesImportReport(bundle([entry('a', 'two')]), user)).toMatchObject({ imported: [], skipped: 1 });
+    const binary = { ...entry('p', ''), files: [{ path: 'README.md', content: 'x' }, { path: 'pic.png', content: 'AAEC', encoding: 'base64' }] };
+    expect(store.templatesImportReport(bundle([binary, { ...binary, key: 'q', files: [...binary.files].reverse() }]), user))
+      .toMatchObject({ skipped: 1 });
   });
 
   it('rolls back an entire import when inserting any template fails', () => {
