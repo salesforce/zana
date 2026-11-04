@@ -998,6 +998,11 @@ export class PtyManager extends EventEmitter {
      */
     cohort?: SessionCohort;
     /**
+     * MAIN-only (#675): this launch is a Squad seat, so its harness must carry the
+     * persona's contract. Set by the Squad spawn paths; never from a renderer request.
+     */
+    squadSeat?: true;
+    /**
      * Wake-from-sleep reconnect (REMOTE only): the original session id whose
      * dead `ssh` proxy we're replacing. Re-attaches the live `cc-<id>` tmux
      * session on the box. See {@link createRemote}. Ignored on local spawns.

@@ -38,7 +38,8 @@ import type {
   ProviderHookUrls,
   RemoteCommandInput,
   RemoteCommandResult,
-  ResolvedLaunch
+  ResolvedLaunch,
+  SquadSeatCapability
 } from './launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
@@ -53,6 +54,14 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
   /** Stable provider id — set by the concrete subclass (Rule 6). */
   abstract readonly id: string;
   abstract readonly adapter: TrustedHarnessAdapter;
+
+  /** Squad seat contract (#675): a provider supports nothing until it declares otherwise. */
+  readonly squadSeat: SquadSeatCapability = {
+    instructions: false,
+    commandDeny: 'none',
+    executionTools: false,
+    foldPersonaIntoGuidance: false
+  };
 
   /** Compatibility bridge while native encoders move into harness-local adapters. */
   readonly integration: HarnessIntegrationAdapter = {

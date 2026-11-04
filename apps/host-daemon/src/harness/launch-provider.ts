@@ -229,6 +229,22 @@ export interface RemoteCommandResult {
 }
 
 /**
+ * What a Squad seat needs from its harness (#675, D1): carry the persona's
+ * system prompt, enforce its command denylist, and reach the zcc-inbox
+ * execution tools. Core reads these flags generically (Rule 6).
+ */
+export interface SquadSeatCapability {
+  /** The harness can carry the persona's `appendSystemPrompt`. */
+  readonly instructions: boolean;
+  /** How the persona's command denylist is enforced: by the harness itself, by a Zana PATH shim, or not at all. */
+  readonly commandDeny: 'native' | 'shim' | 'none';
+  /** The harness can reach the zcc-inbox execution tools. */
+  readonly executionTools: boolean;
+  /** Persona text rides inside the composed guidance value (one `developer_instructions`-style override). */
+  readonly foldPersonaIntoGuidance: boolean;
+}
+
+/**
  * A launch provider. Registered per-profile (see `registry.ts`); one provider
  * may serve several profiles (the Claude-Code provider serves `claude`,
  * `claude-resume`, `claude-yolo`), so every method takes the concrete profile
@@ -249,6 +265,9 @@ export interface LaunchProvider {
    * The host owns endpoint construction, credentials, and final merge order.
    */
   readonly integration: HarnessIntegrationAdapter;
+
+  /** Squad seat contract support (#675). Absent means nothing is supported. */
+  readonly squadSeat?: SquadSeatCapability;
 
   /** Build safe provider-declared metadata from trusted launch resolution. */
   launchMetadata(input: {
