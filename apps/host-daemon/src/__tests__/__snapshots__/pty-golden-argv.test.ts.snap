@@ -237,6 +237,22 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 }
 `;
 
+exports[`golden argv — codex scoped hook trust > local codex: bypass flag gone, one hooks.state override trusts only the generated handlers 1`] = `
+{
+  "hooks": [
+    "hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]",
+    "hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]",
+    "hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]",
+    "hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]",
+    "hooks.PreToolUse=[{matcher="*",hooks=[{type="command",command="OUT=$(curl --fail -s -m 5 -X POST --data-binary @- 'http://127.0.0.1:<PORT>/hook/nativetool/proj1/<UUID>'); STATUS=$?; KIND=bad; if [ \\"$STATUS\\" -eq 0 ]; then case \\"$OUT\\" in '{\\"hookSpecificOutput\\":{\\"hookEventName\\":\\"PreToolUse\\",\\"permissionDecision\\":\\"allow\\",\\"permissionDecisionReason\\":'*'\\"}}') KIND=allow;; '{\\"hookSpecificOutput\\":{\\"hookEventName\\":\\"PreToolUse\\",\\"permissionDecision\\":\\"deny\\",\\"permissionDecisionReason\\":'*'\\"}}') KIND=deny;; esac; fi; case \\"$KIND\\" in allow) ;; deny) printf '%s' \\"$OUT\\";; *) echo '{\\"hookSpecificOutput\\":{\\"hookEventName\\":\\"PreToolUse\\",\\"permissionDecision\\":\\"deny\\",\\"permissionDecisionReason\\":\\"native tool policy unreachable\\"}}';; esac; exit 0"}]},{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]",
+    "hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]",
+    "hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]",
+    "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
+    "hooks.state={"/<session-flags>/config.toml:stop:0:0"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:permission_request:0:0"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:post_tool_use:0:0"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:interrupt:0:0"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:pre_tool_use:0:0"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:pre_tool_use:1:0"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:user_prompt_submit:0:0"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:user_prompt_submit:0:1"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:subagent_start:0:0"={trusted_hash="sha256:<HASH>"},"/<session-flags>/config.toml:subagent_stop:0:0"={trusted_hash="sha256:<HASH>"}}",
+  ],
+}
+`;
+
 exports[`golden argv — local create() matrix > afcode · persona · interactive 1`] = `
 {
   "args": [

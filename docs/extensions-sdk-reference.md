@@ -370,12 +370,15 @@ hooks to Codex PTY sessions as config overrides in Codex's session-flags layer
 (no file is written to the user's `~/.codex/config.toml`). Codex discovers hooks
 per config layer and appends them, so the user's and project's hooks still run
 alongside the host's. A session-injected hook is untrusted by Codex until its
-content hash is trusted; to make its own hooks run, the host passes
-`--dangerously-bypass-hook-trust`. At the pinned Codex version that flag is
-global, so it also skips the trust prompt for any enabled user or project hook in
-a host-launched Codex session. Codex Modern (app-server) sessions pass no such
-flag. Scoped trust — trusting only the host's own hook hashes and removing the
-bypass flag — is a planned follow-up.
+content hash is trusted. For a local Codex binary the host has verified (a
+once-per-binary-and-version conformance probe confirms Codex computes the same
+hook hashes the host does), it passes one `hooks.state` config override carrying
+the trusted hash of exactly the handlers it generates, so user and project hooks
+keep their normal trust state. When the probe has not completed, fails, or
+mismatches, and for every remote (SSH) Codex launch, the host falls back to the
+global `--dangerously-bypass-hook-trust` flag instead; that degraded mode also
+skips the trust prompt for any enabled user or project hook in the launched
+session. Codex Modern (app-server) sessions pass no such flag.
 
 Scaffolded plugins declare `engines.zccPluginSdk: >=0.1.0`, the public host
 compatibility baseline. This range is intentionally independent from the SDK

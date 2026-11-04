@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 
@@ -108,6 +108,8 @@ vi.mock('../harness/claude/binary-identity.js', () => ({
 }));
 
 import { PtyManager, applyHeapCeiling } from '../pty.js';
+import { codexHarness } from '../harness/codex/registration.js';
+import type { CodexProvider } from '../harness/codex/provider.js';
 import { join } from 'node:path';
 import type {
   AppConfig,
@@ -541,6 +543,41 @@ describe('golden argv — auto-mode + overseer variants', () => {
     expect(disallowedIdx).toHaveLength(1);
     const values = call.args[disallowedIdx[0] + 1].split(',');
     expect(values.filter((v) => v === 'AskUserQuestion')).toHaveLength(1);
+  });
+});
+
+describe('golden argv — codex scoped hook trust', () => {
+  const codex = codexHarness.implementation as CodexProvider;
+  const hashesMasked = (args: string[]) => args.map((arg) => arg.replace(/sha256:[0-9a-f]{64}/g, 'sha256:<HASH>'));
+
+  beforeEach(() => {
+    spawns.length = 0;
+    codex.setHookTrustMode('scoped');
+  });
+  afterEach(() => codex.setHookTrustMode('bypass'));
+
+  it('local codex: bypass flag gone, one hooks.state override trusts only the generated handlers', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({ projectId: 'proj1', profile: 'codex', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG });
+    const args = spawns[0]!.args;
+    expect(args).not.toContain('--dangerously-bypass-hook-trust');
+    const hookArgs = args.filter((arg) => arg.startsWith('hooks.'));
+    expect(hookArgs.filter((arg) => arg.startsWith('hooks.state=')).length).toBe(1);
+    expect(normalize({ hooks: hashesMasked(hookArgs) })).toMatchSnapshot();
+  });
+
+  it('remote codex keeps the degraded global flag even in scoped mode', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({
+      projectId: 'proj1', profile: 'codex', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG,
+      remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' },
+      nativeToolPolicyRequired: false
+    });
+    const remoteCmd = spawns[0]!.args.join(' ');
+    expect(remoteCmd).toContain('--dangerously-bypass-hook-trust');
+    expect(remoteCmd).not.toContain('hooks.state');
   });
 });
 

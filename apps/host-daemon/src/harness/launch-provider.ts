@@ -476,10 +476,12 @@ export interface LaunchProvider {
    * present url — `Stop` (turn end → auto-close/scheduler/goal-loop),
    * `PermissionRequest`+`UserPromptSubmit` (blocked/unblocked status),
    * `UserPromptSubmit` (first-prompt tab naming, forwards stdin), and
-   * `SubagentStart`+`SubagentStop` (live sub-agent count) — PLUS the single global
-   * `--dangerously-bypass-hook-trust` flag (a `-c`-injected hook is untrusted and
-   * won't RUN without it; every hook command is OUR curl to 127.0.0.1, never
-   * agent- or user-supplied). codex delivers each hook's event JSON on the
+   * `SubagentStart`+`SubagentStop` (live sub-agent count) — PLUS hook trust: a
+   * `-c`-injected hook is untrusted and won't RUN without it. When the binary was
+   * probed and verified, one scoped `-c hooks.state={…}` override trusts only the
+   * hooks generated here; otherwise (probe pending/failed, remote launch) the
+   * degraded global `--dangerously-bypass-hook-trust` flag is used. Every hook
+   * command is OUR curl to 127.0.0.1, never agent- or user-supplied. codex delivers each hook's event JSON on the
    * command's STDIN (verified — the binary logs `failed to write hook stdin`), so
    * the first-prompt hook pipes stdin through to the callback exactly like the
    * claude `--data-binary @-` command. That Stop callback is what `PtyManager`'s

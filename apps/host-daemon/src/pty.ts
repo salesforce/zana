@@ -1337,8 +1337,9 @@ export class PtyManager extends EventEmitter {
       ...(rulesText ? [rulesText] : [])
     ].filter((part) => part.length > 0).join('\n\n');
     // HOOK wiring for providers whose CLI carries lifecycle hooks as ARGS (codex
-    // takes `-c hooks.<Event>=[…]` + the global `--dangerously-bypass-hook-trust`
-    // flag). The lifecycle counterpart to providerMcpArgs/providerGuidanceArgs: it
+    // takes `-c hooks.<Event>=[…]` + either a scoped `hooks.state` trust
+    // override or, as the degraded fallback, the global
+    // `--dangerously-bypass-hook-trust` flag). The lifecycle counterpart to providerMcpArgs/providerGuidanceArgs: it
     // registers `command` hooks that curl the SAME identity-baked `/hook/*` URLs
     // the claude path bakes into its `ZCC_*_URL` env, so codex's signals land on
     // the same provider-AGNOSTIC handlers (onStopHook / onNotifyHook /

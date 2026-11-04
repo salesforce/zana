@@ -18,10 +18,12 @@ checks the host’s installed provider CLIs.
 
 ZCC injects its lifecycle hooks into Codex's session-flags config layer (no file is written
 to `~/.codex/config.toml`). Codex appends hooks per config layer, so user and project hooks
-still run alongside ZCC's. To make its own session-injected hooks run, ZCC passes
-`--dangerously-bypass-hook-trust`; at the pinned Codex version this flag is global, so it also
-skips the trust prompt for enabled user/project hooks during a ZCC-launched session. Scoped
-trust (trusting only ZCC's hooks and dropping the bypass flag) is a planned follow-up.
+still run alongside ZCC's. For a local Codex binary ZCC has verified (a one-time probe per
+path and version confirms Codex computes the same hook hashes), ZCC passes a `hooks.state`
+override trusting only its own hooks, so user/project hooks keep their normal trust state. If
+the probe is pending, fails or mismatches, and for every remote (SSH) launch, ZCC falls back to
+the global `--dangerously-bypass-hook-trust`, which also skips the trust prompt for enabled
+user/project hooks in that session.
 
 Use the core CLI skill for command syntax and official Codex guidance for
 upstream product behavior.

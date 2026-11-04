@@ -3,6 +3,7 @@ import type { HarnessRegistration } from '../registration.js';
 import { CodexProvider } from './provider.js';
 import { discoverCodexModels, invalidateCodexModels } from '../codex-model-catalog.js';
 import { CodexTranscriptAdapter } from './session.js';
+import { probeCodexHookTrust } from './hook-trust.js';
 
 const implementation = new CodexProvider();
 
@@ -38,6 +39,12 @@ export const codexHarness: HarnessRegistration = {
     versionArgs: ['--version']
   },
   async refreshCatalog({ binary, normalizedVersion }) {
-    implementation.setDiscoveredModels(await discoverCodexModels(binary, `${binary}:${normalizedVersion ?? ''}`));
+    const key = `${binary}:${normalizedVersion ?? ''}`;
+    const [models, trust] = await Promise.all([discoverCodexModels(binary, key), probeCodexHookTrust(binary, key)]);
+    implementation.setDiscoveredModels(models);
+    implementation.setHookTrustMode(trust.mode);
+    if (trust.mode !== 'scoped') {
+      console.warn(`[codex] scoped hook trust unavailable (${trust.reason ?? 'unverified'}); using global --dangerously-bypass-hook-trust`);
+    }
   }
 };

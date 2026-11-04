@@ -24,11 +24,15 @@ and any managed/enterprise layers) and runs them together; ZCC's hooks are added
 yours, never in place of them.
 
 Because a session-injected hook is untrusted by Codex until its content hash is trusted,
-ZCC currently launches Codex with `--dangerously-bypass-hook-trust` so its own hooks run.
-Be aware this flag is global for that launch: it also skips Codex's trust prompt for any
-enabled hook in your user or project config during a ZCC-launched session. If you keep
-untrusted hooks in those files, they will run in ZCC Codex sessions. Scoped trust — where
-ZCC trusts only its own hooks and this bypass flag is removed — is planned.
+ZCC checks your local Codex binary once (per path and version) to confirm Codex computes the
+same hook hashes ZCC does. When it does, ZCC trusts only its own hooks, and the hooks in your
+user and project config keep their normal trust state and prompts.
+
+If that check has not finished, fails, or does not match, and always for Codex on a remote
+(SSH) machine, ZCC falls back to launching with `--dangerously-bypass-hook-trust`. That
+fallback is global for the launch: it also skips Codex's trust prompt for any enabled hook in
+your user or project config, so untrusted hooks in those files will run in that session. ZCC
+logs a warning when it falls back locally.
 
 ## Requirements
 
