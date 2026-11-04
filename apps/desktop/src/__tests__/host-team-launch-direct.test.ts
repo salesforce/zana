@@ -196,10 +196,10 @@ beforeEach(() => {
   threadProviderHandles = [
     registerThreadProvider('test', { id: 'claude-code', displayName: 'Claude Code',
       capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
-        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'] }, composerActions: [] }),
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'], reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }, composerActions: [] }),
     registerThreadProvider('test', { id: 'acp-opencode', displayName: 'OpenCode',
       capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
-        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'] }, composerActions: [] })
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'], reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }, composerActions: [] })
   ];
   seq += 1;
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
@@ -661,6 +661,40 @@ describe('launchTeam Modern structured path', () => {
       h.modernStopped.add(correlationKey({ bindingId, projectId, generation }));
       return true;
     });
+  });
+
+  it('passes a persona reasoning effort to its Modern squad seats and leaves other seats unset (#584)', async () => {
+    h.personas[1] = persona('w1', { reasoningLevel: 'high' });
+    const req = structuredReq();
+    const result = await launchTeam('team1', 'p1', req);
+    expect(result).toMatchObject({ ok: true, value: { failedSlots: [] } });
+    if (!result.ok) return;
+    const creates = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const effortBySlot = new Map(result.value.workers.map((worker) => [worker.slotId,
+      creates.find((request) => request.bindingId === worker.sessionId)?.reasoningLevel]));
+    // Both seats of the persona that sets an effort carry it; the seats of the personas that do not stay unset.
+    expect(effortBySlot.get('0:w1:0')).toBe('high');
+    expect(effortBySlot.get('0:w1:1')).toBe('high');
+    expect(effortBySlot.get('1:w2:0')).toBeUndefined();
+    expect(creates.find((request) => request.role === 'orchestrator')?.reasoningLevel).toBeUndefined();
+    // The effort is also recorded in the durable persona snapshot, so a resumed seat keeps it.
+    const record = lifecycle(req.launchRequestId);
+    const snapshotEffort = (slotId: string) => record.workers.find((worker) => worker.slotId === slotId)?.modernContext?.personaSnapshot.reasoningLevel;
+    expect(snapshotEffort('0:w1:0')).toBe('high');
+    expect(snapshotEffort('0:w1:1')).toBe('high');
+    expect(snapshotEffort('1:w2:0')).toBeUndefined();
+  });
+
+  it('passes a persona reasoning effort to a non-Claude Modern seat whose provider declares it (#584)', async () => {
+    h.personas[1] = persona('w1', { baseProfile: 'opencode', reasoningLevel: 'high' });
+    const req = structuredReq();
+    const result = await launchTeam('team1', 'p1', req);
+    expect(result).toMatchObject({ ok: true, value: { failedSlots: [] } });
+    const creates = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const opencode = creates.filter((request) => request.providerId === 'acp-opencode');
+    expect(opencode.length).toBeGreaterThan(0);
+    expect(opencode.every((request) => request.reasoningLevel === 'high')).toBe(true);
+    expect(creates.filter((request) => request.providerId === 'claude-code').every((request) => request.reasoningLevel === undefined)).toBe(true);
   });
 
   it.each([
