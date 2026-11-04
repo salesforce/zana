@@ -110,7 +110,8 @@ test('message content stays behind pinned prompts when scrolling between turns',
             const pane = node.closest('[data-testid="thread-timeline"]')!.getBoundingClientRect();
             const rect = node.getBoundingClientRect();
             const y = Math.max(rect.top, pane.top);
-            return { x: rect.left, y, width: rect.width, height: Math.min(rect.bottom, pane.bottom) - y };
+            // Overlay scrollbars can fade independently between captures.
+            return { x: rect.left, y, width: rect.width - 16, height: Math.min(rect.bottom, pane.bottom) - y };
           });
           if (clip.height > 0) {
             const before = await capture(clip);
