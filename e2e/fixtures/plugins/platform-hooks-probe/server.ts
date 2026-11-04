@@ -405,6 +405,31 @@ export default function plugin(zcc: ZccPluginApi) {
     }
   });
 
+  // Per-session guidance: configure() runs for every Modern turn and every PTY
+  // launch. Each call is recorded so a spec can prove the context it received.
+  // The tool list is returned explicitly so enabling configure() never narrows
+  // the Modern tool surface.
+  let sessionInstructionText = '';
+  const configureSeen: Array<{ surface: string; sessionId: string; threadId: string; projectId: string; providerId: string }> = [];
+  zcc.agents.configure((ctx) => {
+    configureSeen.push({
+      surface: ctx.surface ?? 'modern',
+      sessionId: ctx.sessionId ?? '',
+      threadId: ctx.threadId,
+      projectId: ctx.projectId,
+      providerId: ctx.provider?.id ?? ''
+    });
+    if (configureSeen.length > 50) configureSeen.shift();
+    return { tools: ['platform_hooks_probe_marker'], ...(sessionInstructionText ? { instructions: sessionInstructionText } : {}) };
+  });
+  zcc.rpc.method('sessionInstructionsSet', (args) => {
+    const text = (args as { text?: unknown } | undefined)?.text;
+    sessionInstructionText = typeof text === 'string' ? text : '';
+    configureSeen.length = 0;
+    return { ok: true };
+  });
+  zcc.rpc.method('sessionInstructionsSeen', () => configureSeen);
+
   zcc.rpc.method('capabilitiesForThread', async (args) => {
     const threadId = typeof (args as { threadId?: unknown } | undefined)?.threadId === 'string'
       ? (args as { threadId: string }).threadId

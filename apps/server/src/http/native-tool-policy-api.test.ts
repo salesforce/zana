@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NATIVE_TOOL_POLICY_EVENT_MAX_BYTES } from '@zana-ai/zcc-contracts/runtime';
-import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
+import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, PTY_SESSION_INSTRUCTIONS_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
 import type { ProductHttpContext } from './product-context.js';
 import { startProductServer, type ProductServer } from './product-server.js';
 
@@ -207,5 +207,57 @@ describe('POST /api/v1/pty-lifecycle-event (PTY lifecycle without a runtime supe
     const body = JSON.stringify({ ...event, error: 'x'.repeat(NATIVE_TOOL_POLICY_EVENT_MAX_BYTES) });
     const response = await postEvent(server.url, body, signNativeToolPolicyRequest(secret, body));
     expect(response.status).toBe(413);
+  });
+});
+
+describe('POST /api/v1/pty-session-instructions (PTY plugin guidance without a runtime supervisor)', () => {
+  const req = { sessionId: 'session-1', projectId: 'project-1', profile: 'claude' };
+  const postInstr = async (url: string, body: string, proof?: string) => {
+    const response = await fetch(new URL(PTY_SESSION_INSTRUCTIONS_PATH, url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(proof ? { [NATIVE_TOOL_POLICY_PROOF_HEADER]: proof } : {}) },
+      body
+    });
+    return { status: response.status, json: await response.json() as unknown };
+  };
+
+  it('answers a signed request with the plugin guidance for that session', async () => {
+    const { server } = await boot();
+    const sessionInstructions = vi.fn(async () => 'be kind');
+    server.ctx.plugins = { sessionInstructions } as unknown as ProductHttpContext['plugins'];
+    const body = JSON.stringify(req);
+    await expect(postInstr(server.url, body, signNativeToolPolicyRequest(secret, body))).resolves.toEqual({ status: 200, json: { instructions: 'be kind' } });
+    expect(sessionInstructions).toHaveBeenCalledWith({
+      surface: 'pty', sessionId: 'session-1', threadId: 'session-1', projectId: 'project-1', harness: 'claude-code'
+    });
+  });
+
+  it('refuses unsigned, mis-signed, malformed and over-specified requests', async () => {
+    const { server } = await boot();
+    const sessionInstructions = vi.fn();
+    server.ctx.plugins = { sessionInstructions } as unknown as ProductHttpContext['plugins'];
+    const body = JSON.stringify(req);
+    expect((await postInstr(server.url, body)).status).toBe(403);
+    expect((await postInstr(server.url, body, signNativeToolPolicyRequest('x'.repeat(64), body))).status).toBe(403);
+    expect((await postInstr(server.url, 'nope', signNativeToolPolicyRequest(secret, 'nope'))).status).toBe(400);
+    const extra = JSON.stringify({ ...req, extra: 1 });
+    expect((await postInstr(server.url, extra, signNativeToolPolicyRequest(secret, extra))).status).toBe(400);
+    expect(sessionInstructions).not.toHaveBeenCalled();
+  });
+
+  it('answers empty without a plugin host and on a plugin failure', async () => {
+    const { server } = await boot();
+    const body = JSON.stringify(req);
+    server.ctx.plugins = undefined;
+    await expect(postInstr(server.url, body, signNativeToolPolicyRequest(secret, body))).resolves.toEqual({ status: 200, json: { instructions: '' } });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    server.ctx.plugins = { sessionInstructions: vi.fn(async () => { throw new Error('boom'); }) } as unknown as ProductHttpContext['plugins'];
+    await expect(postInstr(server.url, body, signNativeToolPolicyRequest(secret, body))).resolves.toEqual({ status: 200, json: { instructions: '' } });
+  });
+
+  it('rejects an oversized body', async () => {
+    const { server } = await boot();
+    const body = JSON.stringify({ ...req, sessionId: 'x'.repeat(NATIVE_TOOL_POLICY_EVENT_MAX_BYTES) });
+    expect((await postInstr(server.url, body, signNativeToolPolicyRequest(secret, body))).status).toBe(413);
   });
 });

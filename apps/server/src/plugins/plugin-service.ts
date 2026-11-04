@@ -71,7 +71,7 @@ import {
   isRetiredFirstPartyPluginId
 } from './builtin-registry.js';
 import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
-import { readPluginLogTail } from './plugin-log.js';
+import { appendPluginLogLine, readPluginLogTail } from './plugin-log.js';
 import {
   classifyInstalledToolPolicy,
   classifyActivatedToolPolicy,
@@ -126,8 +126,10 @@ import {
 import {
   listThreadPluginMetadataRows
 } from '@zana-ai/zcc-db';
+import { PTY_SESSION_INSTRUCTIONS_MAX_CHARS } from '@zana-ai/zcc-contracts/runtime';
 import {
   invokePluginAgentTool,
+  LIVE_INSTRUCTION_MAX,
   resolvePluginSessionTools,
   type PluginAgentToolSource,
   type PluginSessionTools
@@ -158,6 +160,15 @@ export interface PluginUpdateRow {
   current: string;
   available: string;
   marketplace: string;
+}
+
+export interface PluginSessionInstructionsArgs {
+  surface: 'pty';
+  sessionId: string;
+  threadId: string;
+  projectId: string;
+  /** The harness family id the session runs, as plugins see it on lifecycle events. */
+  harness: string;
 }
 
 export interface PluginService {
@@ -227,6 +238,13 @@ export interface PluginService {
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   dispatchPeer(pluginId: string, method: string, request: import('@zana-ai/zcc-plugin-sdk/server').PluginPeerRequest): Promise<unknown>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
+  /**
+   * The standing instructions the live plugins want in one session, evaluated
+   * now with that session's own context. `configure()` runs with real ids, an
+   * error is logged to that plugin's log and the other plugins still
+   * contribute, and the text is bounded. Never rejects.
+   */
+  sessionInstructions(args: PluginSessionInstructionsArgs): Promise<string>;
   admitDispatch(request: PluginDispatchAdmissionRequest): Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>;
   decideToolPolicy(request: PluginToolPolicyRequest): Promise<PluginToolPolicyDecision>;
   /**
@@ -1257,11 +1275,66 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         tools: current.handle!.agentTools,
         configurers: current.handle!.agentConfigurers,
         extraInstructions: current.handle!.extraInstructions,
-        extraInstructionProviders: current.handle!.extraInstructionProviders
+        extraInstructionProviders: current.handle!.extraInstructionProviders,
+        onConfigureError: (error: unknown) => logPluginFailure(pluginId, 'configure failed for a session', error)
       }));
     // Host source first so its tool names win the dedupe in
     // resolvePluginSessionTools over any collision from a plugin.
     return opts.hostAgentToolSource ? [opts.hostAgentToolSource, ...pluginSources] : pluginSources;
+  }
+
+  function logPluginFailure(pluginId: string, message: string, error: unknown): void {
+    appendPluginLogLine(
+      opts.dataDir,
+      pluginId,
+      'error',
+      `${message}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  async function assembleSessionInstructions(args: PluginSessionInstructionsArgs): Promise<string> {
+    const blocks: string[] = [];
+    const add = (pluginId: string, raw: unknown) => {
+      const text = typeof raw === 'string' ? raw.trim().slice(0, LIVE_INSTRUCTION_MAX) : '';
+      if (text) blocks.push(`Instructions from the ZCC plugin "${pluginId}":\n${text}`);
+    };
+    const ids = [...live.keys()].sort((left, right) => left.localeCompare(right));
+    for (const pluginId of ids) {
+      const handle = live.get(pluginId)?.handle;
+      if (!handle) continue;
+      for (const text of handle.extraInstructions) add(pluginId, text);
+      for (const provider of handle.extraInstructionProviders) {
+        try {
+          add(pluginId, await provider({ threadId: args.threadId, projectId: args.projectId }));
+        } catch (error) {
+          logPluginFailure(pluginId, 'contributeInstructions failed for a PTY session', error);
+        }
+      }
+      for (const configure of handle.agentConfigurers) {
+        try {
+          const result = await configure({
+            threadId: args.threadId,
+            projectId: args.projectId,
+            surface: args.surface,
+            sessionId: args.sessionId,
+            project: { id: args.projectId },
+            provider: { id: args.harness },
+            pluginMetadata: deepFreezePluginMetadata({})
+          });
+          add(pluginId, result?.instructions);
+        } catch (error) {
+          logPluginFailure(pluginId, 'configure failed for a PTY session', error);
+        }
+      }
+    }
+    const joined = blocks.join('\n\n');
+    if (joined.length <= PTY_SESSION_INSTRUCTIONS_MAX_CHARS) return joined;
+    appendLogForAll(ids, `plugin instructions for a PTY session exceeded ${PTY_SESSION_INSTRUCTIONS_MAX_CHARS} characters and were truncated`);
+    return joined.slice(0, PTY_SESSION_INSTRUCTIONS_MAX_CHARS);
+  }
+
+  function appendLogForAll(ids: string[], message: string): void {
+    for (const pluginId of ids) appendPluginLogLine(opts.dataDir, pluginId, 'warn', message);
   }
 
   async function configuredInstructions(): Promise<Array<{ pluginId: string; text: string }>> {
@@ -1272,8 +1345,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           const result = await provider({});
           const text = result?.instructions?.trim();
           if (text) out.push({ pluginId, text });
-        } catch {
-          /* one misbehaving configure() must not block the rest */
+        } catch (error) {
+          // One misbehaving configure() must not block the rest.
+          logPluginFailure(pluginId, 'configure failed for the machine-wide instructions skill', error);
         }
       }
     }
@@ -2983,6 +3057,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await Promise.all(
         [...live.values()].map((current) => current.handle?.emitThreadEvent(event) ?? Promise.resolve())
       );
+    },
+    async sessionInstructions(args) {
+      return assembleSessionInstructions(args);
     },
     async admitDispatch(request) {
       const reviews = [...live.values()].flatMap((current) =>

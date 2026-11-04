@@ -1162,6 +1162,10 @@ export interface PluginPtyHarnessDeclaration {
 
 export interface PluginAgentConfigureContext {
   desktopPresentation?: boolean;
+  /** Which surface the session runs on; absent on Modern threads. */
+  surface?: 'pty';
+  /** The PTY session id when `surface` is `pty`; then `threadId` equals it and is not a thread record. */
+  sessionId?: string;
   threadId?: string;
   projectId?: string;
   origin?: { kind?: 'fork' | null; pluginId?: string | null };

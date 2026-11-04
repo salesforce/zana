@@ -291,6 +291,31 @@ describe('golden argv — local create() matrix', () => {
   }
 });
 
+describe('golden argv — per-session plugin instructions', () => {
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  for (const profile of ['claude', 'codex'] as const) {
+    it(`${profile} · plugin instructions · interactive`, () => {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl(MCP_BASE);
+      mgr.create({
+        projectId: 'proj1', profile, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG,
+        pluginInstructions: 'Instructions from the ZCC plugin "demo":\nbe polite'
+      });
+      const call = spawns[0];
+      expect(
+        normalize({
+          command: snapshotCommand(call.command),
+          args: snapshotSpawnArgs(call.command, call.args),
+          sessionEnv: pickSessionEnv(call.env)
+        })
+      ).toMatchSnapshot();
+    });
+  }
+});
+
 describe('preallocated launch identity', () => {
   it.each([false, true])('records actual local/remote hook-base evidence (headless=%s)', (headless) => {
     for (const hookBase of [false, true]) {

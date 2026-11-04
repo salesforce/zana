@@ -548,6 +548,9 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   // session / exit 64) when the configured agent uses a different model.
   // A resolved native role therefore suppresses the injected model.
   readonly nativeRolePinsModel = true;
+  // OpenCode's config takes an `instructions` list of file paths it adds to the
+  // system prompt; plugin instructions travel that way, in the per-session file.
+  readonly pluginInstructionsViaConfigFile = true;
   // OpenCode's remote pane runs a nameable agent binary (opencode/node), distinct
   // from the `bash -lic` wrapper shell that survives when the agent exits — so
   // PtyManager can tell a live agent from a zombie. See classifyPaneCommand.
@@ -731,6 +734,16 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    */
   mcpConfigFile(_profile: LaunchProfileId, mcpUrl: string): { envVar: string; contents: string } {
     return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl)) };
+  }
+
+  mergePluginInstructionsConfig(_profile: LaunchProfileId, configJson: string, instructionsPath: string): string {
+    try {
+      const parsed = JSON.parse(configJson) as Record<string, unknown>;
+      const existing = Array.isArray(parsed.instructions) ? parsed.instructions : [];
+      return JSON.stringify({ ...parsed, instructions: [...existing, instructionsPath] });
+    } catch {
+      return configJson;
+    }
   }
 
   /** The zcc-inbox `mcp` config block — shared by the env and file channels. */

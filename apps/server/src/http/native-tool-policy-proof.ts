@@ -16,6 +16,8 @@ export const NATIVE_TOOL_POLICY_INVENTORY_PATH = '/api/v1/native-tool-policy-inv
 export const DISPATCH_ADMISSION_PATH = '/api/v1/dispatch-admission';
 /** PTY lifecycle event route (same proof scheme); main posts the strict request. */
 export const PTY_LIFECYCLE_EVENT_PATH = '/api/v1/pty-lifecycle-event';
+/** PTY session instructions route (same proof scheme); main posts the strict request. */
+export const PTY_SESSION_INSTRUCTIONS_PATH = '/api/v1/pty-session-instructions';
 /** Covers main's 4 s request timeout with margin; a proof is never reused. */
 export const NATIVE_TOOL_POLICY_PROOF_TTL_MS = 10_000;
 const MAX_USED = 1024;

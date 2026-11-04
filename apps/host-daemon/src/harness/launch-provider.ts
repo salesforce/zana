@@ -465,6 +465,26 @@ export interface LaunchProvider {
   guidanceArgs(profile: LaunchProfileId, guidance: string): string[];
 
   /**
+   * Argv fragment that delivers per-session PLUGIN instructions as their own
+   * system-prompt layer. Claude returns an additive `--append-system-prompt`.
+   * Codex returns `[]`: it has one `developer_instructions` value, so the text is
+   * folded into the guidance {@link guidanceArgs} receives. OpenCode returns `[]`
+   * and carries them through its config file ({@link mergePluginInstructionsConfig}).
+   * Cursor and shell have no channel and return `[]`.
+   */
+  pluginInstructionArgs(profile: LaunchProfileId, text: string): string[];
+
+  /**
+   * True when this provider reads plugin instructions from a file named in its
+   * config (OpenCode's `instructions` list). `PtyManager` then writes the text to
+   * a host-owned `0600` file and calls {@link mergePluginInstructionsConfig}.
+   */
+  readonly pluginInstructionsViaConfigFile?: boolean;
+
+  /** Add the instruction file path to a provider config document; identity when unsupported. */
+  mergePluginInstructionsConfig(profile: LaunchProfileId, configJson: string, instructionsPath: string): string;
+
+  /**
    * Argv fragment that wires the launcher's lifecycle hooks into a provider whose
    * CLI carries hook config as command-line ARGS, given the fully-resolved,
    * identity-bearing callback URLs in {@link ProviderHookUrls} — the SAME `/hook/*`

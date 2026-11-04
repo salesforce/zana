@@ -174,6 +174,16 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     return [];
   }
 
+  pluginInstructionArgs(_profile: LaunchProfileId, _text: string): string[] {
+    return [];
+  }
+
+  readonly pluginInstructionsViaConfigFile: boolean = false;
+
+  mergePluginInstructionsConfig(_profile: LaunchProfileId, configJson: string, _instructionsPath: string): string {
+    return configJson;
+  }
+
   hookArgs(_profile: LaunchProfileId, _urls: ProviderHookUrls): string[] {
     return [];
   }

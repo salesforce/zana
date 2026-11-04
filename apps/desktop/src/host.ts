@@ -18,6 +18,7 @@ import {
   dispatchOriginForPrincipal,
   productRouteDispatchAdmissionDecider
 } from './runtime/dispatch-admission.js';
+import { createPtySessionInstructionsResolver, productRoutePtySessionInstructions } from './runtime/pty-session-instructions.js';
 import { createPtyLifecycleEmitter, productRoutePtyLifecycleSink } from './runtime/pty-lifecycle-events.js';
 import { localMetadataProjects, localProjectPathOptions } from '@zana-ai/zcc-server/services/projects/project-metadata';
 import { invokeSharedProduct } from './ipc/shared-product-registry.js';
@@ -3365,6 +3366,21 @@ export const ptyLifecycle = createPtyLifecycleEmitter({
   log: (message) => console.warn(`[pty-lifecycle] ${message}`)
 });
 
+const productRoutePtySessionInstructionsSource = productRoutePtySessionInstructions({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Standing plugin instructions for a PTY about to spawn, evaluated per session by
+ * the plugin host. Additive: any failure launches the session without them.
+ */
+export const resolvePtyPluginInstructions = createPtySessionInstructionsResolver({
+  supervised: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.ptySessionInstructions(request) : null),
+  productRoute: () => (process.env.ELECTRON_RENDERER_URL ? productRoutePtySessionInstructionsSource : null),
+  log: (message) => console.warn(`[pty-instructions] ${message}`)
+});
+
 /**
  * Whether the native-tool veto must be reachable for a provider spawn (OBL-018).
  * Reads the same inventory shape the squad preflight uses: a non-empty `required`
@@ -4292,6 +4308,11 @@ export function createTerminalConfined(
      * the authenticated session lookup.
      */
     threadId?: string;
+    /**
+     * Per-session plugin guidance main resolved from the plugin host. MAIN-only;
+     * never read from the renderer request.
+     */
+    pluginInstructions?: string;
     /** Immutable main-owned preflight snapshot. Prevents settings/persona TOCTOU. */
     launchSnapshot?: {
       project: Project;
@@ -4462,6 +4483,7 @@ export function createTerminalConfined(
     const session = ptys.create({
       nativeToolPolicyRequired,
       preallocatedSessionId: opts?.preallocatedSessionId,
+      ...(opts?.pluginInstructions ? { pluginInstructions: opts.pluginInstructions } : {}),
       projectId: req.projectId,
       ...(opts?.threadId ? { threadId: opts.threadId } : {}),
       profile: selection.profile,
@@ -4785,9 +4807,19 @@ async function launchAuthorizedTerminal(
       // owns tool policy, and the pty layer fails closed on the flag.
       const nativeToolPolicyRequired =
         request.profile !== 'shell' && (await resolveNativeToolPolicyRequired());
+      const pluginInstructions = request.profile === 'shell'
+        ? ''
+        : await resolvePtyPluginInstructions({
+            sessionId: authorizedPlan.sessionId,
+            ...(spawnOpts?.threadId ? { threadId: spawnOpts.threadId } : {}),
+            projectId: request.projectId,
+            profile: request.profile
+          });
       const result = createTerminalConfined(request, {
         ...spawnOpts,
         nativeToolPolicyRequired,
+        // Main-resolved only; overrides any caller-supplied field.
+        pluginInstructions: pluginInstructions || undefined,
         preallocatedSessionId: authorizedPlan.sessionId,
         launchSnapshot: {
           project: authorizedPlan.resolved.project,
@@ -5072,9 +5104,19 @@ async function launchBackgroundTerminal(
         spawnLaunch.cwd,
         authorizedPlan.resolved.config
       );
+      const pluginInstructions = request.profile === 'shell'
+        ? ''
+        : await resolvePtyPluginInstructions({
+            sessionId: authorizedPlan.sessionId,
+            ...(request.threadId ? { threadId: request.threadId } : {}),
+            projectId: request.projectId,
+            profile: request.profile
+          });
       spawnAttempted = true;
       const session = createTerminalFromAuthorizedPlan({
         ...request,
+        // Main-resolved only; never carried over from the request.
+        pluginInstructions: pluginInstructions || undefined,
         cwd: spawnLaunch.cwd,
         projectSettings: authorizedPlan.resolved.projectSettings,
         preallocatedSessionId: authorizedPlan.sessionId,

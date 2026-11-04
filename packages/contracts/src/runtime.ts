@@ -246,6 +246,28 @@ export const PtyLifecycleEventMainRequestSchema = z.object({
 }).strict();
 export type PtyLifecycleEventMainRequest = z.infer<typeof PtyLifecycleEventMainRequestSchema>;
 
+/** Ceiling for the plugin guidance text one PTY launch carries on its argv. */
+export const PTY_SESSION_INSTRUCTIONS_MAX_CHARS = 16_000;
+
+/**
+ * Ask the plugins for the standing instructions of a PTY main is about to spawn.
+ * Main asserts the identity from its own launch plan, never from the renderer.
+ * The session is not live yet, so the id is the one main allocated for it.
+ */
+export const PtySessionInstructionsMainRequestSchema = z.object({
+  sessionId: SessionIdSchema.max(256),
+  /** The thread record the session will be bound to; absent for an unbound PTY. */
+  threadId: SessionIdSchema.max(256).optional(),
+  projectId: ProjectIdSchema.max(256),
+  profile: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/)
+}).strict();
+export type PtySessionInstructionsMainRequest = z.infer<typeof PtySessionInstructionsMainRequestSchema>;
+
+export const PtySessionInstructionsReplySchema = z.object({
+  instructions: z.string().max(PTY_SESSION_INSTRUCTIONS_MAX_CHARS)
+}).strict();
+export type PtySessionInstructionsReply = z.infer<typeof PtySessionInstructionsReplySchema>;
+
 /** Main-attested request for one Modern squad participant. Never renderer input. */
 export const SquadMemberRuntimeRequestSchema = z.object({
   bindingId: z.string().uuid(),
@@ -600,6 +622,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     // Lifecycle moments of PTYs main owns: the server holds the plugin handlers.
     operation: z.literal('plugins-pty-lifecycle-event'),
     request: PtyLifecycleEventMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // Plugin guidance for a PTY main is about to spawn: the server holds the plugin handlers.
+    operation: z.literal('plugins-pty-session-instructions'),
+    request: PtySessionInstructionsMainRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     // OBL-018 pre-spawn readiness: main reads the tool-policy inventory before a

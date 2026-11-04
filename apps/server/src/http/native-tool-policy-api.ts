@@ -1,11 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { DispatchAdmissionMainRequestSchema, PtyLifecycleEventMainRequestSchema, NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
+import { DispatchAdmissionMainRequestSchema, PtyLifecycleEventMainRequestSchema, PtySessionInstructionsMainRequestSchema, NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
 import { admitMainOwnedDispatch } from '../plugins/dispatch-admission.js';
+import { resolveMainOwnedPtyInstructions } from '../plugins/pty-session-instructions.js';
 import { emitMainOwnedPtyLifecycle } from '../plugins/pty-session-events.js';
 import { decideMainOwnedToolPolicy } from '../plugins/native-tool-policy.js';
 import { headerValue } from './browser-request-guard.js';
 import { sendJson } from './json.js';
-import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, NATIVE_TOOL_POLICY_INVENTORY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER } from './native-tool-policy-proof.js';
+import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, PTY_SESSION_INSTRUCTIONS_PATH, NATIVE_TOOL_POLICY_INVENTORY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER } from './native-tool-policy-proof.js';
 import type { ProductHttpContext } from './product-context.js';
 
 class BodyTooLarge extends Error {}
@@ -173,5 +174,45 @@ export async function handlePtyLifecycleEventApi(
     return true;
   }
   sendJson(response, 200, emitMainOwnedPtyLifecycle(ctx, parsed.data));
+  return true;
+}
+
+/**
+ * Plugin guidance for a PTY main is about to spawn, for when no runtime
+ * supervisor carries it (`pnpm dev`). Same proof as the other main-owned
+ * routes; the body is the strict request main built from its launch plan.
+ */
+export async function handlePtySessionInstructionsApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  path: string,
+  method: string
+): Promise<boolean> {
+  if (path !== PTY_SESSION_INSTRUCTIONS_PATH || method !== 'POST') return false;
+  let body: string;
+  try {
+    body = await readBody(request);
+  } catch (error) {
+    if (!(error instanceof BodyTooLarge)) throw error;
+    sendJson(response, 413, { error: 'pty session instructions request is too large' });
+    return true;
+  }
+  if (!ctx.verifyNativeToolPolicy?.(headerValue(request.headers, NATIVE_TOOL_POLICY_PROOF_HEADER), body)) {
+    sendJson(response, 403, { error: 'pty session instructions request is not signed by the desktop app' });
+    return true;
+  }
+  let parsed: ReturnType<typeof PtySessionInstructionsMainRequestSchema.safeParse>;
+  try {
+    parsed = PtySessionInstructionsMainRequestSchema.safeParse(JSON.parse(body));
+  } catch {
+    sendJson(response, 400, { error: 'pty session instructions request is not JSON' });
+    return true;
+  }
+  if (!parsed.success) {
+    sendJson(response, 400, { error: 'invalid pty session instructions request' });
+    return true;
+  }
+  sendJson(response, 200, await resolveMainOwnedPtyInstructions(ctx.plugins, parsed.data));
   return true;
 }

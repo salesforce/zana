@@ -48,6 +48,7 @@ import {
 } from './harness/claude/automated-isolation.js';
 import { resolveZccDataDir } from './host-config.js';
 import { shellQuote } from './harness/shell-quote.js';
+import { PTY_SESSION_INSTRUCTIONS_MAX_CHARS } from '@zana-ai/zcc-contracts/runtime';
 import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from './harness/argv-utils.js';
 import {
   buildWorktreeGuidance,
@@ -137,7 +138,7 @@ function sweepStaleSessionMcpConfigs(dir: string): void {
   void (async () => {
     try {
       for (const name of await readdirAsync(dir)) {
-        if (!name.endsWith('.json')) continue;
+        if (!name.endsWith('.json') && !name.endsWith('.instructions.md')) continue;
         const path = join(dir, name);
         try {
           if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await unlinkAsync(path);
@@ -532,6 +533,8 @@ export class PtyManager extends EventEmitter {
    *  written on spawn and unlinked in {@link finalizeExit}. Absent for providers
    *  that carry MCP another way (claude file-arg, codex `-c`, shell none). */
   private sessionMcpConfigFiles = new Map<string, string>();
+  /** Per-session plugin instruction files (OpenCode); unlinked in {@link finalizeExit}. */
+  private sessionInstructionFiles = new Map<string, string>();
   /** Tmux identity env files not yet consumed by the pane; unlinked on exit (the pane normally deletes it first). */
   private sessionEnvFiles = new Map<string, string>();
   /** Per-run isolated CLAUDE_CONFIG_DIR of unattended Claude sessions, by session id; removed in {@link finalizeExit}. */
@@ -877,6 +880,25 @@ export class PtyManager extends EventEmitter {
   }
 
   /**
+   * Write a session's plugin instructions to a host-owned `0600` file next to its
+   * MCP config and return the path (null on failure: the session then starts
+   * without them). Unlinked on session exit ({@link finalizeExit}).
+   */
+  private writeSessionInstructionsFile(sessionId: string, text: string): string | null {
+    try {
+      mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
+      const path = join(SESSION_MCP_CONFIG_DIR, `${sessionId}.instructions.md`);
+      writeFileSync(path, text, { mode: 0o600 });
+      this.sessionInstructionFiles.set(sessionId, path);
+      return path;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] writeSessionInstructionsFile(${sessionId}) failed:`, err);
+      return null;
+    }
+  }
+
+  /**
    * Spawn a local session. A throw before the PTY exists never reaches
    * {@link finalizeExit}, so any automated config dir registered during the
    * failed call is released here instead of leaking for the process lifetime.
@@ -900,6 +922,11 @@ export class PtyManager extends EventEmitter {
     projectId: string;
     /** MAIN-only thread binding for this session; never read from renderer input. */
     threadId?: string;
+    /**
+     * MAIN-only: standing plugin instructions the plugin host evaluated for this
+     * session. Bounded again here; delivered through the provider's own channel.
+     */
+    pluginInstructions?: string;
     profile: LaunchProfileId;
     cwd: string;
     cols: number;
@@ -1334,10 +1361,16 @@ export class PtyManager extends EventEmitter {
     // worktree → rules) so a codex tab reads the identical standing instructions
     // as a claude tab. Both extras are absent on a normal launch, so the composed
     // string collapses to `guidanceText` (byte-identical argv, golden-argv net).
+    // Plugin instructions come last so a plugin's standing guidance reads as the
+    // latest word, and are bounded here whatever the caller sent.
+    const pluginInstructionText = (opts.pluginInstructions ?? '')
+      .trim()
+      .slice(0, PTY_SESSION_INSTRUCTIONS_MAX_CHARS);
     const composedGuidanceText = [
       guidanceText,
       ...(opts.worktree ? [buildWorktreeGuidance(opts.worktree)] : []),
-      ...(rulesText ? [rulesText] : [])
+      ...(rulesText ? [rulesText] : []),
+      ...(pluginInstructionText ? [pluginInstructionText] : [])
     ].filter((part) => part.length > 0).join('\n\n');
     // HOOK wiring for providers whose CLI carries lifecycle hooks as ARGS (codex
     // takes `-c hooks.<Event>=[…]` + either a scoped `hooks.state` trust
@@ -1428,8 +1461,23 @@ export class PtyManager extends EventEmitter {
     // returns no `mcpConfigFile`). Rule 6: the concrete env-var name lives only in
     // the provider — core reads it generically off the contribution.
     const mcpConfigFileEnvVar = providerIntegration.mcpConfigFile?.envVar;
+    // A provider that reads plugin instructions from a file named in its config
+    // gets them in a host-owned `0600` file, listed in the same config document.
+    const pluginInstructionsPath =
+      pluginInstructionText && provider.pluginInstructionsViaConfigFile && providerIntegration.mcpConfigFile
+        ? this.writeSessionInstructionsFile(sessionId, pluginInstructionText)
+        : null;
     const mcpConfigFilePath = providerIntegration.mcpConfigFile
-      ? this.writeSessionMcpConfigFile(sessionId, providerIntegration.mcpConfigFile.contents)
+      ? this.writeSessionMcpConfigFile(
+          sessionId,
+          pluginInstructionsPath
+            ? provider.mergePluginInstructionsConfig(
+                effectiveProfile,
+                providerIntegration.mcpConfigFile.contents,
+                pluginInstructionsPath
+              )
+            : providerIntegration.mcpConfigFile.contents
+        )
       : null;
     // Persona flags: inserted AFTER claudeMcpArgs so the persona's
     // append-system-prompt layers on TOP of the inbox guidance (personas can
@@ -1746,6 +1794,7 @@ export class PtyManager extends EventEmitter {
           ...sessionIdArgs,
           ...nativeMintArgs,
           ...claudeMcpArgs,
+          ...(pluginInstructionText ? provider.pluginInstructionArgs(effectiveProfile, pluginInstructionText) : []),
            ...(providerIntegration.mcpArgs ?? []),
           ...mcpApprovalArgs,
            ...(providerIntegration.guidanceArgs ?? []),
@@ -2353,6 +2402,15 @@ export class PtyManager extends EventEmitter {
       this.sessionMcpConfigFiles.delete(sessionId);
       try {
         unlinkSync(mcpConfigFile);
+      } catch {
+        /* best-effort — already gone or swept */
+      }
+    }
+    const instructionsFile = this.sessionInstructionFiles.get(sessionId);
+    if (instructionsFile) {
+      this.sessionInstructionFiles.delete(sessionId);
+      try {
+        unlinkSync(instructionsFile);
       } catch {
         /* best-effort — already gone or swept */
       }
