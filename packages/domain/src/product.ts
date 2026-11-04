@@ -2549,6 +2549,13 @@ export interface AppConfig {
    */
   inAppAgentTerminalsEnabled?: boolean;
   /**
+   * Local folders the user has trusted for read-only file preview. Global and
+   * device-local: used only for local desktop threads, never for remote
+   * threads or machines. Written only by the desktop Settings folder chooser;
+   * renderer config patches cannot set it. At most 20 canonical absolute paths.
+   */
+  trustedPreviewFolders?: string[];
+  /**
    * Automatically open the thread secondary panel on the Plan pin when Plan
    * mode is active (native ACP Plan, `/plan`, or a durable plan artifact).
    * EXPERIMENTAL; default OFF. Plan-approval prompts still open the panel
@@ -6756,3 +6763,6 @@ export interface ExecutionBoardSnapshot {
 
 /** Stable text main raises when Zana Connect rejects this computer's credential (401/403). Survives IPC serialization. */
 export const CONNECT_ACCESS_REVOKED_MESSAGE = "This computer's access was revoked. Sign in again to reconnect.";
+
+/** Maximum folders a user can trust for file Preview; enforced in main, mirrored by the Settings UI. */
+export const TRUSTED_PREVIEW_FOLDERS_MAX = 20;

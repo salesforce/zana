@@ -739,6 +739,8 @@ const api: CcApi = {
   config: {
     get: () => ipcRenderer.invoke(IPC.config.get),
     set: (patch) => ipcRenderer.invoke(IPC.config.set, patch),
+    addTrustedPreviewFolder: () => ipcRenderer.invoke(IPC.config.addTrustedPreviewFolder),
+    removeTrustedPreviewFolder: (path) => ipcRenderer.invoke(IPC.config.removeTrustedPreviewFolder, path),
     onChanged: (cb) => {
       const handler = (_e: unknown, config: AppConfig) => cb(config);
       ipcRenderer.on(IPC.config.onChanged, handler);

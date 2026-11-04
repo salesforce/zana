@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   conversationFilePreviewPaths,
+  isPreviewableConversationPath,
   parseInlineFileCodePath,
   parseLocalFileMarkdownHref,
   resolveThreadFilePreviewPath
@@ -123,5 +124,33 @@ describe('thread mention split', () => {
       { type: 'text', value: ' later' }
     ]);
     expect(parseThreadMentionHref('zcc-thread:abc_1')).toBe('abc_1');
+  });
+});
+
+describe('isPreviewableConversationPath', () => {
+  const roots = ['/home/u/.notes/'];
+  it('keeps relative safe paths', () => {
+    expect(isPreviewableConversationPath('docs/a.md')).toBe(true);
+  });
+  it('rejects home, shell-dynamic, backtick, traversal and NUL paths', () => {
+    for (const p of ['~/a.md', '$HOME/a.md', '`x`/a.md', '../a.md', 'a/../b.md', '/home/u/.notes/../x.md', 'a\0.md', '']) {
+      expect(isPreviewableConversationPath(p, roots)).toBe(false);
+    }
+  });
+  it('accepts absolute paths only inside a root on a path boundary', () => {
+    expect(isPreviewableConversationPath('/home/u/.notes/a.md', roots)).toBe(true);
+    expect(isPreviewableConversationPath('/home/u/.notes-evil/a.md', roots)).toBe(false);
+    expect(isPreviewableConversationPath('/etc/a.md', roots)).toBe(false);
+    expect(isPreviewableConversationPath('/etc/a.md')).toBe(false);
+    expect(isPreviewableConversationPath('C:/x/a.md', roots)).toBe(false);
+  });
+  it('matches Windows drive-letter paths with either separator, ignoring drive case', () => {
+    const win = ['C:\\proj', 'D:/notes/'];
+    for (const p of ['C:\\proj\\notes.md', 'C:/proj/notes.md', 'c:\\PROJ\\a.md', 'D:\\notes\\a.md']) {
+      expect(isPreviewableConversationPath(p, win)).toBe(true);
+    }
+    for (const p of ['C:\\proj-evil\\a.md', 'E:\\proj\\a.md', 'C:\\proj\\..\\x.md']) {
+      expect(isPreviewableConversationPath(p, win)).toBe(false);
+    }
   });
 });

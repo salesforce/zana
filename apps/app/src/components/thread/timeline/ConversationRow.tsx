@@ -27,7 +27,7 @@ import { resolveIcon } from '../../../lib/resolveIcon.js';
 import { product } from '../../../lib/product-client.js';
 import { readTrimmedSelection } from '../secondary-panel/SecondaryPanelSelectionActions.js';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
-import { conversationFilePreviewPaths } from '../../markdown-local-file.js';
+import { conversationFilePreviewPaths, isPreviewableConversationPath } from '../../markdown-local-file.js';
 import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSignal.js';
 import { ThreadOpenFilePreviewButton } from './TimelineTitleView.js';
 import { ThreadImageLightbox } from './ThreadImageLightbox.js';
@@ -133,9 +133,11 @@ export const ConversationRow = memo(function ConversationRow({
     return items;
   }, [imageRefs, projectId]);
   const fileNames = row.role === 'user' ? (row.attachments?.localFilePaths ?? []) : [];
+  const previewRoots = row.previewRoots;
   const previewPaths = useMemo(
-    () => conversationFilePreviewPaths(row.text ?? '', fileNames),
-    [fileNames, row.text]
+    () => conversationFilePreviewPaths(row.text ?? '', fileNames)
+      .filter((path) => fileNames.includes(path) || isPreviewableConversationPath(path, previewRoots)),
+    [fileNames, previewRoots, row.text]
   );
   const actions = useSyncExternalStore(subscribePluginSlots, listMessageActions, listMessageActions);
   const streamingSplit = useMemo(

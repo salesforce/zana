@@ -72,7 +72,7 @@ async function sendHtmlDocument(
   if (request.headers['sec-fetch-site'] === 'cross-site') {
     throw new ProjectFsError(403, 'foreign-origin', 'HTML preview must be opened from the app');
   }
-  const read = previewFileReader(ctx, params);
+  const read = await previewFileReader(ctx, params);
   const size = await previewFileSize(read, 'html');
   if (size > HTML_PREVIEW_MAX_BYTES) {
     throw new ProjectFsError(413, 'html-too-large', 'HTML file is too large to preview');

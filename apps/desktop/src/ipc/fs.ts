@@ -31,6 +31,7 @@ export function registerFsIpc(): void {
       localHostId: ctx.runtimeSupervisor?.hostId ?? readPersistedHostId(electronZccDataDir()) ?? undefined,
       projects: ctx.localProjects(),
       trustedRoot: trustedProjectRoot,
+      trustedPreviewFolders: () => store.getConfig().trustedPreviewFolders ?? [],
       thread: async (id) => {
         const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(id)}`, productServerUrl()), {
           signal: AbortSignal.timeout(2000)

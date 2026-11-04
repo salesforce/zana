@@ -285,6 +285,14 @@ function httpProduct(): Pick<
         });
         return body.config;
       },
+      // Folder trust is granted only through the desktop chooser.
+      addTrustedPreviewFolder: async () => ({
+        config: null,
+        error: 'Trusted preview folders can only be changed in the desktop app.'
+      }),
+      removeTrustedPreviewFolder: async () => {
+        throw new Error('Trusted preview folders can only be changed in the desktop app.');
+      },
       onChanged: (cb: (config: AppConfig) => void) =>
         subscribeProductEvent<AppConfig>('config:changed', cb)
     } as CcApi['config'],
