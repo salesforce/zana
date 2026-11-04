@@ -149,6 +149,8 @@ describe('standalone pages', () => {
     const files = store.readAllFiles(doc.id);
     expect(Object.keys(packFiles(files, page))).toEqual(['data.json', 'runs/r1.md', 'big.png']);
     expect(Object.keys(packFiles(files, page, 40))).toEqual(['data.json']);
+    const withRules = [...files, { ...files[0]!, path: 'AGENTS.md', kind: 'markdown' as const, encoding: 'utf8' as const, content: 'private' }];
+    expect(Object.keys(packFiles(withRules, page))).not.toContain('AGENTS.md');
   });
 
   it('embeds config, pack and runtime ahead of the page, unable to end their scripts', () => {

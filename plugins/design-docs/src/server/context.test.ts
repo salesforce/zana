@@ -28,6 +28,12 @@ describe('agent instructions', () => {
     expect(text).toMatch(/no design docs for this project yet\.$/);
   });
 
+  it('tells agents to read a doc\'s AGENTS.md first', () => {
+    const text = buildInstructions(new DesignDocStore(createTestDatabase()), 'p1');
+    expect(text).toContain('`AGENTS.md`');
+    expect(text).toContain('never published');
+  });
+
   it('keeps doc creation opt-in instead of offering docs for brainstorming', () => {
     const text = buildInstructions(new DesignDocStore(createTestDatabase()), 'p1');
     expect(text).toContain('only when the user explicitly asks for one');
@@ -84,6 +90,26 @@ describe('@ mentions', () => {
     expect(context).toMatch(new RegExp(`^The user referenced design doc ${doc.id}`));
     expect(context).toContain('<file path="README.md"');
     expect(context).not.toContain('truncated');
+  });
+
+  it('hands a mentioned doc its AGENTS.md instructions', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const doc = store.create({ title: 'Ruled', files: [{ path: 'README.md', content: '# r' }, { path: 'AGENTS.md', content: 'Always cite sources.' }] }, user);
+    const { mention } = capture(store);
+    const { context } = await mention.resolve(doc.id);
+    expect(context).toContain('Agent instructions for this doc (follow them)');
+    expect(context).toContain('Always cite sources.');
+    const plain = store.create({ title: 'Plain', template: 'blank' }, user);
+    expect((await mention.resolve(plain.id)).context).not.toContain('Agent instructions');
+  });
+
+  it('says so when the AGENTS.md instructions are cut', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const doc = store.create({ title: 'Long rules', files: [{ path: 'README.md', content: '# r' }, { path: 'AGENTS.md', content: 'x'.repeat(30_000) }] }, user);
+    const { mention } = capture(store);
+    const { context } = await mention.resolve(doc.id);
+    expect(context).toContain('Agent instructions for this doc (follow them)');
+    expect(context).toContain('(truncated — read the rest with design_doc_read)');
   });
 
   it('truncates a very large entry file', async () => {
