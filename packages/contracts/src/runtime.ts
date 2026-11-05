@@ -112,6 +112,8 @@ export const ServerRuntimeStartSchema = z.object({
     instanceId: z.string().uuid()
   }).strict(),
   bundledPluginsRoot: z.string().min(1).optional(),
+  /** Desktop UI-signing secret. Sent over the start message, never env: `ps eww` shows a child's initial env to same-uid processes. */
+  productServerCredential: z.string().min(32).optional(),
   version: z.string()
 }).strict();
 

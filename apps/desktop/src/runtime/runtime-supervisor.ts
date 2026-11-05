@@ -239,6 +239,8 @@ export interface StartRuntimeSupervisorOptions {
   version?: string;
   /** Env vars for the product-server utility only — never the host-daemon, never process.env. */
   extraEnv?: Record<string, string>;
+  /** Delivered to the product-server utility over its start message, never through env. */
+  productServerCredential?: string;
   onUnexpectedExit?: (service: string) => void;
   /** Trusted local activity snapshot; includes hidden workers, excludes remote work. */
   onLocalThreadWork?: (working: boolean) => void;
@@ -716,6 +718,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
         hostSigningKey: options.signingKey,
         hostBinding: { hostId: host.hostId, instanceId: host.instanceId },
         bundledPluginsRoot: defaultBundledRoot(),
+        ...(options.productServerCredential ? { productServerCredential: options.productServerCredential } : {}),
         version: options.version ?? ''
       }, peerEnv, peerKey);
     } finally { peerKey?.fill(0); }

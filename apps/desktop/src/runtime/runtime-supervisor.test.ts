@@ -144,7 +144,9 @@ describe('runtime supervisor', () => {
     const source = readFileSync(new URL('../host.ts', import.meta.url), 'utf8');
     expect(source).toContain('ZCC_PRODUCT_SERVER_CREDENTIAL');
     expect(source).not.toMatch(/process\.env\.ZCC_PRODUCT_SERVER_CREDENTIAL\s*=/);
-    expect(source).toContain('extraEnv');
+    // Delivered over the start message: a child's initial env stays readable by same-uid `ps eww`.
+    expect(source).toContain('productServerCredential: ensureProductServerCredential()');
+    expect(source).not.toMatch(/extraEnv:\s*\{\s*ZCC_PRODUCT_SERVER_CREDENTIAL/);
     expect(source).toContain('delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL');
   });
 });

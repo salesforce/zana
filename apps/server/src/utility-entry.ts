@@ -64,7 +64,8 @@ interface ParentPortLike {
 const utilityParentPort = (process as unknown as { parentPort?: ParentPortLike }).parentPort;
 if (!utilityParentPort) throw new Error('server utility entry requires an Electron utility process');
 const parentPort: ParentPortLike = utilityParentPort;
-const uiSendSecret = process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
+// Legacy/dev launchers may still supply it via env; the desktop sends it in the start message instead.
+let uiSendSecret = process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
 retainProductServerCredential(uiSendSecret);
 delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
 const peerKeyProvider = consumePeerBootKey();
@@ -104,6 +105,10 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
   if (message.type === 'start' && message.rendererRoot && !close) {
     let releaseProviderStartup: (() => void) | null = null;
     try {
+      if (message.productServerCredential) {
+        uiSendSecret = message.productServerCredential;
+        retainProductServerCredential(uiSendSecret);
+      }
       installRuntimeLog(message.dataDir, 'server', import.meta.url);
       diagnostics.start();
       version = message.version ?? '';
