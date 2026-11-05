@@ -563,7 +563,8 @@ export async function dispatchOp(
     case 'interaction.respond': {
       if (!deps.respondInteraction) return { ok: false, code: 'UNAVAILABLE', message: 'Interaction responder unavailable' };
       try {
-        const actor = caller.class === 'operator' ? 'human' : 'agent';
+        // Control socket is reachable by any same-uid process, so it never speaks as a human.
+        const actor = caller.class === 'operator' ? 'cli' : 'agent';
         return { ok: true, value: await deps.respondInteraction(args, actor, `control:${caller.class}`) };
       } catch (error) {
         return { ok: false, code: 'INTERACTION_REFUSED', message: error instanceof Error ? error.message : 'Interaction refused' };

@@ -57,7 +57,9 @@ export function createInteractionProofVerifier(secret: string, now: () => number
     let proof: ActorProof;
     try { proof = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')); }
     catch { return null; }
+    // A human claim is only believable from a surface main itself draws.
     if (!proof || !['human', 'cli', 'agent', 'unknown'].includes(proof.actor)
+      || (proof.actor === 'human' && !/^(window|sheet):/.test(String(proof.source)))
       || typeof proof.source !== 'string' || proof.source.length > 256
       || !/^[a-f0-9]{32}$/.test(proof.nonce) || !Number.isSafeInteger(proof.expiresAt)) return null;
     const at = now();

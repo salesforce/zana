@@ -14,7 +14,9 @@ it('uses authenticated caller class, ignores actor spoofing, and exposes only bo
     expect(await dispatchOp('interaction.respond', args, deps, { class: 'agent' })).toMatchObject({ ok: false, code: 'INTERACTION_REFUSED', message: 'Human proof required' });
   }
   expect(await dispatchOp('interaction.respond', args, deps, { class: 'orchestrator' })).toMatchObject({ ok: false });
-  expect(await dispatchOp('interaction.respond', args, deps)).toEqual({ ok: true, value: { resolution: { actor: 'human' } } });
+  // An operator-class (same-uid) control caller is the CLI, never a human.
+  expect(await dispatchOp('interaction.respond', args, deps)).toMatchObject({ ok: false, code: 'INTERACTION_REFUSED', message: 'Human proof required' });
+  expect(respondInteraction).toHaveBeenLastCalledWith(args, 'cli', 'control:operator');
   expect(await dispatchOp('interaction.respond', args, {} as ControlPlaneDeps)).toMatchObject({ ok: false, code: 'UNAVAILABLE' });
   expect(classifyCaller(undefined, undefined, 'agent-token')).toBe('agent');
 });

@@ -17,12 +17,12 @@ describe('main interaction responder', () => {
   });
   it.each([null, {}, { ...input, value: undefined }, { ...input, threadId: '' }, { ...input, interactionId: 'x'.repeat(257) }, { ...input, value: 'x'.repeat(65 * 1024) }])('rejects malformed or oversized response %#', async input => {
     const fetchImpl = vi.fn();
-    await expect(createInteractionResponder({ serverUrl: () => 'http://127.0.0.1/', secret: () => secret, fetch: fetchImpl })(input, 'human', 'window')).rejects.toThrow();
+    await expect(createInteractionResponder({ serverUrl: () => 'http://127.0.0.1/', secret: () => secret, fetch: fetchImpl })(input, 'human', 'window:7')).rejects.toThrow();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
   it('rejects remote endpoints, server refusal and missing signer', async () => {
-    await expect(createInteractionResponder({ serverUrl: () => 'https://example.com/', secret: () => secret })(input, 'human', 'window')).rejects.toThrow('loopback');
-    await expect(createInteractionResponder({ serverUrl: () => 'http://localhost/', secret: () => '' })(input, 'human', 'window')).rejects.toThrow('unavailable');
+    await expect(createInteractionResponder({ serverUrl: () => 'https://example.com/', secret: () => secret })(input, 'human', 'window:7')).rejects.toThrow('loopback');
+    await expect(createInteractionResponder({ serverUrl: () => 'http://localhost/', secret: () => '' })(input, 'human', 'window:7')).rejects.toThrow('unavailable');
     const respond = createInteractionResponder({ serverUrl: () => 'http://localhost/', secret: () => secret, fetch: async () => Response.json({ message: 'Human proof required' }, { status: 403 }) });
     await expect(respond(input, 'agent', 'control:agent')).rejects.toThrow('Human proof required');
   });
@@ -54,7 +54,7 @@ describe('main interaction responder', () => {
     { threadId: 7, interactionId: 'i', value: true }
   ])('rejects an ambiguous or malformed owner %#', async bad => {
     const fetchImpl = vi.fn();
-    await expect(createInteractionResponder({ serverUrl: () => 'http://127.0.0.1/', secret: () => secret, fetch: fetchImpl })(bad, 'human', 'window')).rejects.toThrow('Invalid interaction response');
+    await expect(createInteractionResponder({ serverUrl: () => 'http://127.0.0.1/', secret: () => secret, fetch: fetchImpl })(bad, 'human', 'window:7')).rejects.toThrow('Invalid interaction response');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

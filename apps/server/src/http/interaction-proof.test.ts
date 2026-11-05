@@ -25,23 +25,31 @@ describe('interaction actor proof', () => {
     for (const invalid of [null, '', 'bad', 'eA.' + '0'.repeat(64), 'x'.repeat(1025)]) expect(verify(invalid, binding)).toBeNull();
     expect(verify(token, binding)).toBe('human');
     expect(() => createInteractionProofVerifier('short')).toThrow();
-    expect(() => signInteractionProof('short', binding, 'human', 'window')).toThrow();
+    expect(() => signInteractionProof('short', binding, 'human', 'window:7')).toThrow();
+  });
+  it('refuses a human claim whose source is not a main-drawn surface', () => {
+    const verify = createInteractionProofVerifier(secret, () => at);
+    for (const source of ['control:operator', 'window', '', 'cli']) {
+      expect(verify(signInteractionProof(secret, binding, 'human', source, at), binding)).toBeNull();
+    }
+    expect(verify(signInteractionProof(secret, binding, 'human', 'sheet:1', at), binding)).toBe('human');
+    expect(verify(signInteractionProof(secret, binding, 'cli', 'control:operator', at), binding)).toBe('cli');
   });
   it('rejects expired and future proofs', () => {
-    const token = signInteractionProof(secret, binding, 'human', 'window', at);
+    const token = signInteractionProof(secret, binding, 'human', 'window:7', at);
     expect(createInteractionProofVerifier(secret, () => at - 1)(token, binding)).toBeNull();
     expect(createInteractionProofVerifier(secret, () => at + INTERACTION_PROOF_TTL_MS)(token, binding)).toBeNull();
   });
   it('fails closed at replay retention cap, then prunes only expired entries', () => {
     let now = at;
     const verify = createInteractionProofVerifier(secret, () => now);
-    const first = signInteractionProof(secret, binding, 'human', 'window', now);
+    const first = signInteractionProof(secret, binding, 'human', 'window:7', now);
     expect(verify(first, binding)).toBe('human');
-    for (let i = 1; i < 4096; i++) expect(verify(signInteractionProof(secret, binding, 'human', 'window', now), binding)).toBe('human');
-    expect(verify(signInteractionProof(secret, binding, 'human', 'window', now), binding)).toBeNull();
+    for (let i = 1; i < 4096; i++) expect(verify(signInteractionProof(secret, binding, 'human', 'window:7', now), binding)).toBe('human');
+    expect(verify(signInteractionProof(secret, binding, 'human', 'window:7', now), binding)).toBeNull();
     expect(verify(first, binding)).toBeNull();
     now += INTERACTION_PROOF_TTL_MS;
-    expect(verify(signInteractionProof(secret, binding, 'human', 'window', now), binding)).toBe('human');
+    expect(verify(signInteractionProof(secret, binding, 'human', 'window:7', now), binding)).toBe('human');
   });
   describe('PTY session binding', () => {
     const session = { sessionId: 'pty-1', interactionId: 'interaction', body: '{"value":true}' };
