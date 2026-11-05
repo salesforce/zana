@@ -68,6 +68,28 @@ describe('utility-backed runtime supervisor', () => {
       vi.unstubAllEnvs();
     }
   });
+  it('forwards a valid plugin capability message to the host daemon process as well as the main listener', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-caps-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    const server = h.children.find(child => child.entry.endsWith('server-runtime.js'));
+    const host = h.children.find(child => child.entry.endsWith('host-daemon.js') || (child !== server && child.entry !== server.entry));
+    const listener = vi.fn();
+    runtime.onPluginCapabilitiesChanged(listener);
+    try {
+      const message = { type: 'plugin-capabilities', protocolVersion: h.pv, contributors: [{ id: 'p', enabled: true, rootDir: '/p', skillsRootPaths: [], skillNames: [], mcpServers: [{ name: 's', type: 'stdio', command: 'node', alwaysOn: true }] }] };
+      server.emit('message', message);
+      expect(listener).toHaveBeenCalledWith(message.contributors);
+      expect(host.postMessage).toHaveBeenCalledWith(message);
+      host.postMessage.mockClear(); listener.mockClear();
+      server.emit('message', { ...message, contributors: [{ id: 'p' }] });
+      expect(listener).not.toHaveBeenCalled();
+      expect(host.postMessage).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+      vi.unstubAllEnvs();
+    }
+  });
   it('routes plugin pack operations to the server utility with reviewed identities and plans', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-packs-'));
     vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));

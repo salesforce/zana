@@ -815,6 +815,9 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
       return;
     }
     if (parsed.data.type === 'plugin-capabilities') {
+      // The host daemon runs in its own utility process, so its in-memory plugin MCP registry (read when a
+      // Modern session starts) is only populated if the same, already-validated message is forwarded to it.
+      host.child.postMessage(parsed.data);
       for (const listener of pluginCapabilitiesListeners) listener(parsed.data.contributors);
       return;
     }

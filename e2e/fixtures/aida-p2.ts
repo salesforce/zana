@@ -227,7 +227,9 @@ export function writeHomeConfig(home: string, extra: Record<string, unknown>): v
  * `requestLog`, so a spec can read the `thread/start` config the product built.
  */
 export function prepareScriptedCodex(home: string, requestLog: string): Record<string, unknown> {
-  const bin = join(home, 'p2-codex-bin');
+  // The Modern Codex bridge resolves `codex` from PATH, so the shim lives in the dir prepareScriptedClaude
+  // already put on PATH (and in the shell rc files).
+  const bin = join(home, 'p2-claude-bin');
   mkdirSync(bin, { recursive: true });
   const script = join(home, 'p2-codex-script.json');
   writeFileSync(script, JSON.stringify({ modelId: 'p2-codex', messageText: 'P2 Codex ready', requestLogPath: requestLog }));
