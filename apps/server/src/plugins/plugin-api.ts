@@ -1908,7 +1908,9 @@ export function createPluginApi(
         assertLive();
         const { pid, exited } = await processTracker.spawn(command, args, spawnOptions);
         // The exit promise stays off the wire (a Promise does not cross the worker bridge); the worker rebuilds it from wait().
-        const handle = { pid, wait: () => exited };
+        // wait() must be an async function: the bridge ships a non-async host function as a synchronous call, which would
+        // block the worker thread (and the spawn reply) until the child exits.
+        const handle = { pid, wait: async () => exited };
         Object.defineProperty(handle, 'exited', { value: exited, enumerable: false });
         return handle as typeof handle & { exited: Promise<number | null> };
       }

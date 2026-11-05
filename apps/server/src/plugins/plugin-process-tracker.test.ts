@@ -136,4 +136,11 @@ describe('plugin api process wiring', () => {
     expect(await spawned.wait()).toBe(7);
     await handle.dispose();
   });
+
+  it('ships wait() as an async function so the worker bridge never calls it synchronously', async () => {
+    const handle = createPluginApi('proc-async-wait', dir);
+    const spawned = await handle.api.process.spawn(process.execPath, ['-e', 'process.exit(0)']) as unknown as { wait: () => Promise<number | null> };
+    expect(spawned.wait.constructor.name).toBe('AsyncFunction');
+    await handle.dispose();
+  });
 });
