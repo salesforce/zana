@@ -60,6 +60,7 @@ vi.mock('../harness/claude/binary-identity.js', () => ({
 }));
 
 import { PtyManager } from '../pty.js';
+import { providerFor } from '../harness/registry.js';
 import type { AppConfig, Persona } from '@zana-ai/zcc-domain/product';
 
 const MCP_BASE = 'http://127.0.0.1:39999';
@@ -71,6 +72,18 @@ const personaFor = (baseProfile: string, over: Partial<Persona> = {}): Persona =
   ({ id: 'p1', name: 'Reviewer', baseProfile, ...over }) as Persona;
 
 type SeatOpts = { squadSeat?: true };
+
+/**
+ * Decision B (owner, 5 Nov; qa-test-change-1): OpenCode's denylist is 'none', so a real OpenCode seat
+ * gets no shim directory. These cases test the shim path itself, so the seat is given a 'shim'
+ * capability by overriding the provider's declaration for the test, and the override is undone after.
+ */
+function declareShimCapability(profile: string): () => void {
+  const provider = providerFor(profile as never) as unknown as { squadSeat: object };
+  const original = Object.getOwnPropertyDescriptor(provider, 'squadSeat')!;
+  Object.defineProperty(provider, 'squadSeat', { ...original, value: { ...(original.value as object), commandDeny: 'shim' } });
+  return () => Object.defineProperty(provider, 'squadSeat', original);
+}
 function create(
   mgr: PtyManager,
   profile: string,
@@ -173,6 +186,21 @@ describe('Squad seat contract in PtyManager', () => {
 
   describe('REQ-3 shim directory', () => {
     const denied = ['Bash(gh:*)', 'Bash(git push --force:*)'];
+    let undeclare: () => void;
+    beforeEach(() => { undeclare = declareShimCapability('opencode'); });
+    afterEach(() => undeclare());
+
+    it('decision B: a real OpenCode seat makes no shim directory and lists the denies as advisory lines', () => {
+      undeclare();
+      create(mgr, 'opencode', personaFor('opencode', { deniedTools: denied }));
+      const call = spawns[0]!;
+      expect(call.env.PATH ?? '').not.toContain('zcc-seat-');
+      const file = JSON.parse(call.env.OPENCODE_CONFIG_CONTENT).instructions[0] as string;
+      const text = readFileSync(file, 'utf8');
+      expect(text).toContain('not mechanically enforced');
+      for (const entry of denied) expect(text).toContain(entry);
+      undeclare = declareShimCapability('opencode');
+    });
 
     it('puts a 0700 per-session shim directory first on PATH with executable 0700 shims', () => {
       create(mgr, 'opencode', personaFor('opencode', { deniedTools: denied }));
@@ -257,7 +285,38 @@ describe('Squad seat contract in PtyManager', () => {
     });
   });
 
+  describe('contract delivery failures (A2, A6)', () => {
+    it('fails the spawn instead of dropping the persona when the MCP server is not up (A2)', () => {
+      const early = new PtyManager();
+      expect(() => create(early, 'codex', personaFor('codex', { appendSystemPrompt: PERSONA_TEXT }))).toThrow(/MCP server is not available/);
+      expect(() => create(early, 'opencode', personaFor('opencode', { appendSystemPrompt: PERSONA_TEXT }))).toThrow(/MCP server is not available/);
+      expect(spawns).toHaveLength(0);
+    });
+
+    it('still launches a seat with no contract text while the MCP server is not up (existing behaviour)', () => {
+      const early = new PtyManager();
+      expect(() => create(early, 'codex', personaFor('codex'))).not.toThrow();
+    });
+
+    it('fails the spawn when a seat with contract text targets a non-local execution environment (A6)', () => {
+      expect(() => create(mgr, 'codex', personaFor('codex', { appendSystemPrompt: PERSONA_TEXT }), { environment: 'sandbox' })).toThrow(/execution environment/);
+      expect(spawns).toHaveLength(0);
+    });
+
+    it('fails closed when a harness that can never be a Squad seat reaches the spawn (Q3)', () => {
+      expect(() => create(mgr, 'cursor', personaFor('cursor', { appendSystemPrompt: PERSONA_TEXT }))).toThrow(/cannot run as a Squad seat/);
+    });
+
+    it('fails closed when the persona has text the harness cannot carry, as after an edit before a restore (A1)', () => {
+      expect(() => create(mgr, 'shell', personaFor('shell', { deniedTools: ['Bash(gh:*)'] }))).toThrow(/cannot carry/);
+    });
+  });
+
   describe('REQ-10 cleanup', () => {
+    let undeclare: () => void;
+    beforeEach(() => { undeclare = declareShimCapability('opencode'); });
+    afterEach(() => undeclare());
+
     it('removes the shim directory when the session exits', () => {
       create(mgr, 'opencode', personaFor('opencode', { deniedTools: ['Bash(gh:*)'] }));
       const dir = shimDirOf(spawns[0]!);
@@ -275,6 +334,21 @@ describe('Squad seat contract in PtyManager', () => {
       call.fireExit();
       expect(existsSync(dir)).toBe(false);
       expect(existsSync(file)).toBe(false);
+    });
+
+    it('removes the OpenCode session MCP config file when the spawn fails (Q7)', async () => {
+      const pty = await import('node-pty');
+      const original = pty.spawn;
+      const dir = `${tmpdir()}/zcc-session-mcp`;
+      const files = () => (existsSync(dir) ? readdirSync(dir) : []);
+      const before = new Set(files());
+      (pty as unknown as { spawn: unknown }).spawn = () => { throw new Error('spawn failed'); };
+      try {
+        expect(() => create(mgr, 'opencode', personaFor('opencode'))).toThrow('spawn failed');
+      } finally {
+        (pty as unknown as { spawn: unknown }).spawn = original;
+      }
+      expect(files().filter((name) => !before.has(name))).toEqual([]);
     });
 
     it('cleans up when the spawn itself fails and leaves no seat files behind', async () => {

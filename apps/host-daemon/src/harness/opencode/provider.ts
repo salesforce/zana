@@ -54,7 +54,8 @@ import type {
   AgentLiveness,
   RemoteCommandInput,
   RemoteCommandResult,
-  ResolvedLaunch
+  ResolvedLaunch,
+  SquadSeatCapability
 } from '../launch-provider.js';
 import { BaseLaunchProvider } from '../base-provider.js';
 import type {
@@ -503,7 +504,7 @@ export function classifyOpenCodePaneCommand(command: string): AgentLiveness {
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
   /** Squad seat contract (#675, D1). Persona text rides an instructions file. Denylist stays none until the pane-side PATH delivery is built and re-proven (u-spike: shim-wins: no). */
-  readonly squadSeat: import('../launch-provider.js').SquadSeatCapability = {
+  readonly squadSeat: SquadSeatCapability = {
     instructions: true,
     commandDeny: 'none',
     executionTools: true,

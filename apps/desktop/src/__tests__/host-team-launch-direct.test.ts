@@ -1457,11 +1457,20 @@ describe('launchTeam Squad seat preflight and marker (#675)', () => {
     expect(h.creates).toHaveLength(0);
   });
 
-  it('refuses a Codex seat with shimmable denies while its denylist is unproven (REQ-6)', async () => {
+  // Decision B (owner, 5 Nov): a Codex seat's shimmable denies are listed as advisory lines in its instructions and the seat launches.
+  it('launches a Codex seat with shimmable denies, which ride its persona as advisory lines (REQ-6, decision B)', async () => {
     h.personas = [persona('orch'), persona('w1', { baseProfile: 'codex', deniedTools: ['Bash(gh:*)'] }), persona('w2')];
     const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
-    expect(result.ok).toBe(false);
-    expect(h.creates).toHaveLength(0);
+    expect(result.ok).toBe(true);
+    expect(h.creates.length).toBeGreaterThan(0);
+    expect(h.creates.every((create) => create.squadSeat === true)).toBe(true);
+  });
+
+  it('launches a pre-#675 Codex persona holding Bash(gh:*) that launched before (existing users unaffected, F1)', async () => {
+    h.personas = [persona('orch'), persona('w1', { baseProfile: 'codex', appendSystemPrompt: 'Review only.', deniedTools: ['Bash(gh:*)', 'Edit(/etc/*)'] }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq('job-team') as never);
+    expect(result.ok).toBe(true);
+    expect(h.creates).toHaveLength(4);
   });
 
   it('refuses a Codex seat with persona instructions on a remote project (REQ-6)', async () => {
@@ -1480,14 +1489,14 @@ describe('launchTeam Squad seat preflight and marker (#675)', () => {
     expect(h.creates).toHaveLength(0);
   });
 
-  it('refuses an OpenCode seat with shimmable denies on Windows (REQ-6)', async () => {
+  it('launches an OpenCode seat with shimmable denies on Windows, since they are advisory (REQ-6, decision B)', async () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     try {
       h.personas = [persona('orch'), persona('w1', { baseProfile: 'opencode', deniedTools: ['Bash(gh:*)'] }), persona('w2')];
       const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
-      expect(result.ok).toBe(false);
-      expect(h.creates).toHaveLength(0);
+      // OpenCode's denylist is 'none' (decision B): the deny is advisory, so Windows no longer refuses it.
+      expect(result.ok).toBe(true);
     } finally {
       Object.defineProperty(process, 'platform', platform);
     }
@@ -1512,6 +1521,17 @@ describe('launchTeam Squad seat preflight and marker (#675)', () => {
     const { launchFollowUpTerminal } = host as unknown as { launchFollowUpTerminal?: unknown };
     void launchFollowUpTerminal;
     expect(h.creates.every((create) => create.squadSeat === undefined)).toBe(true);
+  });
+});
+
+describe('Squad seat marker stays off a non-Squad launch (#675, REQ-8, F4)', () => {
+  it('launches a real single CLI agent through the host path with no squadSeat marker', async () => {
+    h.personas = [persona('solo', { baseProfile: 'codex' })];
+    h.creates.length = 0;
+    const result = await host.createInteractiveTerminal({ projectId: 'p1', profile: 'codex', personaId: 'solo', cols: 80, rows: 24 } as never);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(h.creates).toHaveLength(1);
+    expect(h.creates[0].squadSeat).toBeUndefined();
   });
 });
 

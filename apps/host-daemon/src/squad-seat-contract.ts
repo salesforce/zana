@@ -34,6 +34,11 @@ export interface SeatContractInput {
   readonly persona: Pick<Persona, 'appendSystemPrompt' | 'deniedTools'>;
   /** Harness command names the shim must never shadow. */
   readonly reservedCommands?: readonly string[];
+  /**
+   * The harness's denylist is enforced by shims (default). When false, shimmable
+   * entries become advisory lines and no shim file is planned (decision B).
+   */
+  readonly enforceShims?: boolean;
 }
 
 export interface SeatShimFile {
@@ -49,7 +54,9 @@ export interface SeatContractPlan {
   readonly advisoryLines: readonly string[];
 }
 
-const SAFE_COMMAND = /^[A-Za-z0-9._+-]+$/;
+/** Commands Zana's own wiring (Codex lifecycle hooks, the shim script) calls through PATH; a shim must never shadow them. */
+export const ALWAYS_RESERVED_COMMANDS: readonly string[] = ['curl', 'sh', 'dash', 'bash', 'zsh', 'dirname', 'pwd', 'cd', 'printf', 'exec'];
+const SAFE_COMMAND =/^[A-Za-z0-9._+-]+$/;
 /** Commands that run another command; a shim for them would not cover what they launch. */
 const WRAPPER_COMMANDS = new Set(['env']);
 const BASH_ENTRY = /^Bash\((.*):\*\)$/s;
@@ -96,7 +103,8 @@ export function buildShimScript(command: string, prefixes: readonly (readonly st
     const label = [command, ...prefix].join(' ');
     const tests = [`[ "$#" -ge ${prefix.length} ]`];
     prefix.forEach((word, index) => {
-      const arg = `"$${index + 1}"`;
+      // Braces: `$10` is `${1}0` in sh, so positions past 9 need `${10}`.
+      const arg = `"\${${index + 1}}"`;
       tests.push(word.includes('~')
         ? `{ [ ${arg} = ${shQuote(word)} ] || [ ${arg} = ${wordExpression(word)} ]; }`
         : `[ ${arg} = ${shQuote(word)} ]`);
@@ -112,7 +120,9 @@ export function buildShimScript(command: string, prefixes: readonly (readonly st
     '#!/bin/sh',
     '# Squad policy shim (guardrail, not a sandbox). Generated; do not edit.',
     ...checks,
-    'self_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)',
+    // No PATH-resolved tool runs before the real binary is found: a shim named dirname or pwd would call itself.
+    'case "$0" in */*) self_dir=${0%/*};; *) self_dir=.;; esac',
+    'self_dir=$(cd "$self_dir" 2>/dev/null && pwd -P) || self_dir=${0%/*}',
     'real=',
     'old_ifs=$IFS',
     'IFS=:',
@@ -132,12 +142,17 @@ export function buildShimScript(command: string, prefixes: readonly (readonly st
 /** Everything a seat needs from its persona: instructions text, shim files and advisory lines (D3, D4). */
 export function planSeatContract(input: SeatContractInput): SeatContractPlan {
   const parsed = parseDeniedEntries(input.persona.deniedTools);
-  const reserved = new Set(input.reservedCommands ?? []);
+  const reserved = new Set([...ALWAYS_RESERVED_COMMANDS, ...(input.reservedCommands ?? [])]);
+  const enforceShims = input.enforceShims !== false;
   const advisory: AdvisoryEntry[] = [...parsed.advisory];
   const byCommand = new Map<string, string[][]>();
   for (const item of parsed.shimmable) {
+    if (!enforceShims) {
+      advisory.push({ entry: item.entry, reason: 'command denylist is not enforced on this harness' });
+      continue;
+    }
     if (reserved.has(item.command)) {
-      advisory.push({ entry: item.entry, reason: 'would shadow the harness command' });
+      advisory.push({ entry: item.entry, reason: 'would shadow a command the harness or the shim needs' });
       continue;
     }
     const list = byCommand.get(item.command) ?? [];

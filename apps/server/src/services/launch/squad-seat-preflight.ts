@@ -15,10 +15,12 @@ export interface SquadSeatCheckSeat {
   readonly harnessLabel: string;
   /** The harness's declared seat capability; absent means nothing is supported. */
   readonly capability?: SquadSeatCapability;
-  /** The persona has an `appendSystemPrompt`. */
+  /** The seat has text to deliver: an `appendSystemPrompt`, or advisory lines for denies the harness cannot enforce. */
   readonly hasInstructions: boolean;
   /** The persona has denylist entries a PATH shim can enforce. */
   readonly hasShimmableDenies: boolean;
+  /** The harness can never be a Squad seat (Cursor, Grok): refused whatever the coordination mode (D7). */
+  readonly refusedForSquads?: boolean;
   /** The harness delivers no guidance on a remote project (Codex today). */
   readonly remoteGuidanceUnavailable?: boolean;
 }
@@ -49,7 +51,8 @@ const DURABLE_MODES = new Set<string>(['job-team', 'structured', 'freeform']);
 function missingCapabilities(seat: SquadSeatCheckSeat, input: SquadSeatCheckInput): string[] {
   const capability = seat.capability ?? NOTHING;
   const missing: string[] = [];
-  if (input.coordinationMode !== undefined && DURABLE_MODES.has(input.coordinationMode) && !capability.executionTools) {
+  if (seat.refusedForSquads
+    || (input.coordinationMode !== undefined && DURABLE_MODES.has(input.coordinationMode) && !capability.executionTools)) {
     missing.push('it cannot reach the execution tools');
   }
   if (seat.hasInstructions) {
@@ -58,9 +61,9 @@ function missingCapabilities(seat: SquadSeatCheckSeat, input: SquadSeatCheckInpu
       missing.push('it cannot carry the persona instructions on a remote project');
     }
   }
+  // A 'none' harness lists shimmable denies as advisory lines in the instructions (decision B); only a shim needs POSIX and a local box.
   if (seat.hasShimmableDenies) {
-    if (capability.commandDeny === 'none') missing.push('its command denylist cannot be enforced');
-    else if (capability.commandDeny === 'shim' && (input.remoteProject || input.platform === 'win32')) {
+    if (capability.commandDeny === 'shim' && (input.remoteProject || input.platform === 'win32')) {
       missing.push(`its command denylist cannot be enforced ${input.remoteProject ? 'on a remote project' : 'on Windows'}`);
     }
   }

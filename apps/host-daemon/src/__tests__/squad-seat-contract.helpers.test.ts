@@ -43,3 +43,21 @@ describe('OpenCode instructionsFile', () => {
     expect(JSON.parse(plain.mcpEnv!.OPENCODE_CONFIG_CONTENT!).instructions).toBeUndefined();
   });
 });
+
+describe('planSeatContract reserved commands and advisory mode (A1, A4)', () => {
+  it.each(['curl', 'sh', 'dirname', 'pwd', 'printf'])('never shims %s, which Zana hooks or the shim script call through PATH', async (command) => {
+    const { planSeatContract } = await import('../squad-seat-contract.js');
+    const plan = planSeatContract({ persona: { deniedTools: [`Bash(${command}:*)`] } });
+    expect(plan.shimFiles).toEqual([]);
+    expect(plan.advisoryLines.join('\n')).toContain(`Bash(${command}:*)`);
+  });
+
+  it('lists every shimmable deny as advisory and plans no shim when the harness does not shim', async () => {
+    const { planSeatContract } = await import('../squad-seat-contract.js');
+    const plan = planSeatContract({ persona: { appendSystemPrompt: 'ROLE', deniedTools: ['Bash(gh:*)'] }, enforceShims: false });
+    expect(plan.shimFiles).toEqual([]);
+    expect(plan.instructionsText).toContain('ROLE');
+    expect(plan.instructionsText).toContain('Denied by Squad policy, not mechanically enforced on this harness:');
+    expect(plan.instructionsText).toContain('Bash(gh:*)');
+  });
+});

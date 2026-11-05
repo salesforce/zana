@@ -11,7 +11,8 @@ import type { AppConfig, LaunchProfileId, Persona } from '@zana-ai/zcc-domain/pr
 import type {
   RemoteCommandInput,
   RemoteCommandResult,
-  ResolvedLaunch
+  ResolvedLaunch,
+  SquadSeatCapability
 } from '../launch-provider.js';
 import { BaseLaunchProvider } from '../base-provider.js';
 import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
@@ -93,8 +94,9 @@ function grokBinary(config: AppConfig): string {
 export class GrokProvider extends BaseLaunchProvider {
   readonly id = 'grok';
   readonly adapter = GROK_ADAPTER;
-  /** Squad seat contract (#675, D1). MCP through the config overlay is unproven, so no execution tools; seats are refused. */
-  readonly squadSeat: import('../launch-provider.js').SquadSeatCapability = {
+  /** Squad seat contract (#675, D1). MCP through the config overlay is unproven, so no execution tools; seats are refused in every Squad launch (D7), durable or not. */
+  readonly refusedForSquads = true;
+  readonly squadSeat: SquadSeatCapability = {
     instructions: false,
     commandDeny: 'none',
     executionTools: false,

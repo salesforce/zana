@@ -53,7 +53,8 @@ import type {
   RemoteCommandInput,
   McpToolApproval,
   RemoteCommandResult,
-  ResolvedLaunch
+  ResolvedLaunch,
+  SquadSeatCapability
 } from '../launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
 import { BaseLaunchProvider } from '../base-provider.js';
@@ -206,7 +207,7 @@ function codexHookOverrideMulti(event: string, entries: ReadonlyArray<{ matcher:
 export class CodexProvider extends BaseLaunchProvider {
   readonly id = 'codex';
   /** Squad seat contract (#675, D1). Persona text folds into the single developer_instructions value. No denylist: u-spike showed a PATH shim loses to the login shell path_helper (shim-wins: no). */
-  readonly squadSeat: import('../launch-provider.js').SquadSeatCapability = {
+  readonly squadSeat: SquadSeatCapability = {
     instructions: true,
     commandDeny: 'none',
     executionTools: true,

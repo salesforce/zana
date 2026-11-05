@@ -79,3 +79,27 @@ describe('squadSeatMarkerFor and restoreSpawnOptions', () => {
     expect(restoreSpawnOptions(undefined, {})).toBeUndefined();
   });
 });
+
+describe('squadSeatRefusal decision B and D7 (F1, Q3, Q4)', () => {
+  it('lets a pre-#675 Codex persona with a Bash deny launch (existing users unaffected)', () => {
+    const { input, revoke } = base({
+      personas: [persona('a', { baseProfile: 'codex', appendSystemPrompt: 'Review only.', deniedTools: ['Bash(gh:*)'] })],
+      profileFor: () => 'codex'
+    });
+    expect(squadSeatRefusal(input as never)).toBeUndefined();
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it.each(['cursor', 'grok'])('refuses a %s seat even when the launch is not durable (D7)', (profile) => {
+    const { input } = base({ profileFor: () => profile, coordinationMode: 'interactive-team' });
+    expect(squadSeatRefusal(input as never)?.message).toMatch(/can't run on/);
+  });
+
+  it('counts advisory-only denies as instructions, so a harness that cannot carry them refuses (Q4)', () => {
+    const { input } = base({
+      personas: [persona('a', { baseProfile: 'pi', deniedTools: ['Bash(/usr/bin/gh:*)'] })],
+      profileFor: () => 'pi', coordinationMode: 'interactive-team'
+    });
+    expect(squadSeatRefusal(input as never)?.message).toMatch(/instructions/);
+  });
+});

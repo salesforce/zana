@@ -268,6 +268,8 @@ export interface LaunchProvider {
 
   /** Squad seat contract support (#675). Absent means nothing is supported. */
   readonly squadSeat?: SquadSeatCapability;
+  /** The harness can never be a Squad seat, durable or not (D7); the Squad preflight refuses it in every launch. */
+  readonly refusedForSquads?: boolean;
 
   /** Build safe provider-declared metadata from trusted launch resolution. */
   launchMetadata(input: {

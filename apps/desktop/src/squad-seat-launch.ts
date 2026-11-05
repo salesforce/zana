@@ -1,6 +1,6 @@
 import type { CreateTerminalRequest, LaunchProfileId, Persona, Project } from '@zana-ai/zcc-domain/product';
 import { providerFor } from '@zana-ai/zcc-host-daemon/harness/registry';
-import { parseDeniedEntries } from '@zana-ai/zcc-host-daemon/squad-seat-contract';
+import { parseDeniedEntries, planSeatContract } from '@zana-ai/zcc-host-daemon/squad-seat-contract';
 import { checkSquadSeats, type SquadSeatCheckSeat } from '@zana-ai/zcc-server/services/launch/squad-seat-preflight';
 
 /**
@@ -47,7 +47,10 @@ export function squadSeatRefusal(input: SquadSeatPreflightInput): SquadSeatRefus
       label: input.personaName(slot.personaId),
       harnessLabel: provider.title(profile),
       capability,
-      hasInstructions: Boolean(persona?.appendSystemPrompt?.trim()),
+      refusedForSquads: provider.refusedForSquads === true,
+      // Advisory lines count as instructions, so a harness that cannot carry text refuses rather than drops them.
+      hasInstructions: persona !== undefined
+        && planSeatContract({ persona, enforceShims: capability?.commandDeny === 'shim' }).instructionsText.length > 0,
       hasShimmableDenies: parseDeniedEntries(persona?.deniedTools).shimmable.length > 0,
       // Only a harness that carries the persona natively in its argv delivers it to a remote box;
       // a folded guidance value or a host-local instructions file does not travel.

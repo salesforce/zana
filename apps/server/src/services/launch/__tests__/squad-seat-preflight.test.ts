@@ -55,14 +55,19 @@ describe('checkSquadSeats', () => {
     if (!result.ok) expect(result.message).toMatch(/instructions/i);
   });
 
-  it('refuses shimmable denies when the harness denylist is unproven (REQ-6)', () => {
-    const result = run([seat({ slotId: 'a', label: 'Dev', harnessLabel: 'Codex', capability: CODEX_UNPROVEN, hasShimmableDenies: true })]);
+  // Decision B (owner, 5 Nov): on a harness whose denylist is unproven the denies become advisory lines and the seat launches.
+  it('launches a seat with shimmable denies on a harness whose denylist is unproven, as advisory lines (REQ-6, decision B)', () => {
+    expect(run([seat({ slotId: 'a', label: 'Dev', harnessLabel: 'Codex', capability: CODEX_UNPROVEN, hasInstructions: true, hasShimmableDenies: true })])).toEqual({ ok: true });
+  });
+
+  it('refuses advisory lines on a harness that cannot carry instructions at all', () => {
+    const result = run([seat({ slotId: 'a', label: 'Dev', harnessLabel: 'Pi', capability: { ...NOTHING, executionTools: true }, hasInstructions: true, hasShimmableDenies: true })], { coordinationMode: 'interactive-team' });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.refusedSlotIds).toEqual(['a']);
-      expect(result.message).toContain('Dev');
-      expect(result.message).toContain('Codex');
-    }
+  });
+
+  it.each(['job-team', 'interactive-team', undefined])('refuses a refusedForSquads seat in %s coordination (Q3, D7)', (mode) => {
+    const result = run([seat({ slotId: 'c', label: 'Cursor Dev', harnessLabel: 'Cursor', capability: { ...NOTHING, executionTools: true }, refusedForSquads: true })], { coordinationMode: mode });
+    expect(result.ok).toBe(false);
   });
 
   it('accepts shimmable denies on a harness whose shim is proven (REQ-3)', () => {
@@ -96,12 +101,11 @@ describe('checkSquadSeats', () => {
       seat({ slotId: 'ok', label: 'Fine' }),
       seat({ slotId: 'c', label: 'Cursor Dev', harnessLabel: 'Cursor', capability: NOTHING }),
       seat({ slotId: 'g', label: 'Grok Dev', harnessLabel: 'Grok', capability: NOTHING }),
-      seat({ slotId: 'x', label: 'Codex Dev', harnessLabel: 'Codex', capability: CODEX_UNPROVEN, hasShimmableDenies: true })
     ]);
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.refusedSlotIds).toEqual(['c', 'g', 'x']);
-    for (const name of ['Cursor Dev', 'Grok Dev', 'Codex Dev']) expect(result.message).toContain(name);
+    expect(result.refusedSlotIds).toEqual(['c', 'g']);
+    for (const name of ['Cursor Dev', 'Grok Dev']) expect(result.message).toContain(name);
     expect(result.message).not.toContain('Fine');
     expect(result.message).toContain("can't run on");
   });

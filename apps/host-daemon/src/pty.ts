@@ -1391,9 +1391,15 @@ export class PtyManager extends EventEmitter {
     // Squad seat (#675): only a launch that carries the main-owned marker gets the
     // persona's contract. Without it `seat` is undefined and nothing below changes.
     const seat = opts.squadSeat
-      ? prepareSeatSpawn({ capability: provider.squadSeat, persona: spawnPersona, harnessCommand: command })
+      ? prepareSeatSpawn({ capability: provider.squadSeat, persona: spawnPersona, harnessCommand: command, refusedForSquads: provider.refusedForSquads })
       : undefined;
     if (seat) this.seatSpawns.set(sessionId, seat);
+    // Both Codex's folded guidance and OpenCode's instructions file ride the MCP integration,
+    // so with no MCP URL (server not up yet, or failed to start) the contract would vanish silently.
+    // Fail the spawn instead; create() releases the seat files.
+    if (seat && seat.instructionsText.length > 0 && !mcpServerUrl) {
+      throw new Error("Squad seat contract can't be delivered: the MCP server is not available yet. Retry once it is up.");
+    }
     const seatGuidanceText = seat?.foldIntoGuidance
       ? [composedGuidanceText, seat.instructionsText].filter((part) => part.length > 0).join('\n\n')
       : composedGuidanceText;
@@ -1918,6 +1924,10 @@ export class PtyManager extends EventEmitter {
       && !wantsTmux
       && !opts.remote
       && (requestedEnvironment === undefined || requestedEnvironment === 'local');
+    // Seat files are host-local paths; a sandbox, container or microVM cannot see them.
+    if (seat && requestedEnvironment !== undefined && requestedEnvironment !== 'local') {
+      throw new Error("Squad seat contract can't be delivered in this execution environment. Run the seat locally.");
+    }
     const execEnv = environmentFor(useRuntimeHost ? 'runtime-host' : requestedEnvironment);
     const envCtx: ExecEnvContext = {
       sessionId,
