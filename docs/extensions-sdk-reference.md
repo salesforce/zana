@@ -16,7 +16,7 @@ Handed to `export default function plugin(zcc)`.
 | `realtime.publish` | Events |
 | `background.service` / `schedule` | Long-running work |
 | `remoteEnvironment.provide` / `refresh` | Environment variables for sessions on non-primary machines (manifest allowlist `zcc.extra.remoteEnvironment`; held in memory, never stored) |
-| `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata`. For a PTY launch (Claude, Codex, OpenCode) it runs once per session with `surface: 'pty'`, the real `sessionId`, `threadId`, `projectId` and `provider.id`; `instructions` (and `contributeInstructions`) are delivered as Claude `--append-system-prompt`, folded into Codex `developer_instructions`, or listed as a private per-session file in OpenCode's config `instructions`. Each contribution is capped at 4096 characters and the total at 16000; a throwing `configure` is written to the plugin log and other plugins still contribute. Cursor PTYs receive no instructions (see the Cursor notes below the parity matrix). Remote PTYs are not covered; `tools` do not apply to a PTY |
+| `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata`. For a PTY launch (Claude, Codex, OpenCode) it runs once per session with `surface: 'pty'`, the real `sessionId`, `threadId`, `projectId` and `provider.id`; `instructions` (and `contributeInstructions`) are delivered as Claude `--append-system-prompt`, folded into Codex `developer_instructions`, or listed as a private per-session file in OpenCode's config `instructions`. Each contribution is capped at 4096 characters and the total at 16000; a throwing `configure` is written to the plugin log and other plugins still contribute. Cursor PTYs receive no instructions (see the Cursor notes below the parity matrix). Remote PTYs are not covered. Local Claude, Codex and OpenCode PTYs also receive the plugin's `registerTool` tools (see below) |
 | `ui.requestInput` | Host prompt. `threadId` may be a PTY session id for a session shown in the Agents monitor (see Actor-attributed request input) |
 | `ui.registerMentionProvider` | `@` / `#` / `$` / `!` / `~` typeahead source; `search` and `resolve` run in the plugin server, so never trust renderer-supplied context |
 | `hooks.on` / `hooks.onToolPolicy` | Dispatch admission and native tool policy handlers, one each per plugin (see Platform hooks) |
@@ -287,7 +287,7 @@ host chrome, not a plugin.
 | `extra` | Opaque JSON object (≤32 keys, ≤8 KiB). Displayed on install; never synced as skills/MCP. |
 | `requires` | Other plugin ids this plugin consumes via `zcc.services.use`. Host topo-sorts load order. A missing required plugin marks the consumer `needs-configuration`. |
 
-Durable skills belong in `zcc.skills`. `agents.contributeSkills` is a runtime extra. There is no `registerMcpServer`. `registerTool` (`parameters`: Zod or JSON Schema) is the conversation-thread tool path; `zcc.mcpServers` is the Claude CLI / PTY path.
+Durable skills belong in `zcc.skills`. `agents.contributeSkills` is a runtime extra. There is no `registerMcpServer`. `registerTool` (`parameters`: Zod or JSON Schema) is the conversation-thread tool path and also reaches local PTY sessions through the per-session zcc-inbox MCP server; `zcc.mcpServers` adds your own MCP servers to PTYs.
 
 Do not put secrets in `extra`. Env values on `mcpServers` are written to `.mcp.json` only — the hub sees `envKeys`.
 
@@ -578,7 +578,7 @@ A registered agent tool (`agents.registerTool`) is reachable from Modern
 Claude/Codex threads; `zcc.mcpServers` is the matching path for Claude, Codex and
 OpenCode PTY and CLI Agent sessions. Declare both if a tool must work on every
 surface supported above — Threads do not read `zcc.mcpServers`, and
-PTY/CLI sessions do not read `agents.registerTool`.
+PTY/CLI sessions read `agents.registerTool` over the session's zcc-inbox MCP server. Main-owned tool policy (`surface: 'pty'`) runs before every call and fails closed; `configure()` selection (`tools`) applies per session; only plugins enabled for the project are listed; results are size-capped and a call times out after 4 minutes. A tool whose bare name equals a built-in zcc-inbox tool is dropped (the built-in wins). Thread-route and member-fenced sessions do not receive plugin tools.
 
 ### Actor-attributed request input
 

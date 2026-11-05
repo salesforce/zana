@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NATIVE_TOOL_POLICY_EVENT_MAX_BYTES } from '@zana-ai/zcc-contracts/runtime';
-import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, PTY_SESSION_INSTRUCTIONS_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
+import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, PTY_SESSION_INSTRUCTIONS_PATH, PTY_SESSION_TOOLS_PATH, PTY_SESSION_TOOL_CALL_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
 import type { ProductHttpContext } from './product-context.js';
 import { startProductServer, type ProductServer } from './product-server.js';
 
@@ -259,5 +259,71 @@ describe('POST /api/v1/pty-session-instructions (PTY plugin guidance without a r
     const { server } = await boot();
     const body = JSON.stringify({ ...req, sessionId: 'x'.repeat(NATIVE_TOOL_POLICY_EVENT_MAX_BYTES) });
     expect((await postInstr(server.url, body, signNativeToolPolicyRequest(secret, body))).status).toBe(413);
+  });
+});
+
+describe('POST /api/v1/pty-session-tools and /pty-session-tool-call (PTY plugin tools without a runtime supervisor)', () => {
+  const listReq = { sessionId: 'session-1', projectId: 'project-1', profile: 'claude' };
+  const callReq = { ...listReq, invocationId: '3f2b8c1e-6d4a-4b0f-9a7e-1c2d3e4f5a6b', name: 'do_thing', arguments: { a: 1 } };
+  const postTo = async (path: string, url: string, body: string, proof?: string) => {
+    const response = await fetch(new URL(path, url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(proof ? { [NATIVE_TOOL_POLICY_PROOF_HEADER]: proof } : {}) },
+      body
+    });
+    return { status: response.status, json: await response.json() as unknown };
+  };
+  const plugins = () => ({
+    ptySessionTools: vi.fn(async () => ({ tools: [{ name: 'do_thing', description: 'd', inputSchema: { type: 'object' } }] })),
+    decideToolPolicy: vi.fn(async () => ({ action: 'allow' })),
+    invokePtySessionTool: vi.fn(async () => ({ success: true, contentItems: [{ type: 'inputText', text: 'done' }] }))
+  });
+
+  it('lists and calls for a signed request', async () => {
+    const { server } = await boot();
+    const p = plugins();
+    server.ctx.plugins = p as unknown as ProductHttpContext['plugins'];
+    const listBody = JSON.stringify(listReq);
+    await expect(postTo(PTY_SESSION_TOOLS_PATH, server.url, listBody, signNativeToolPolicyRequest(secret, listBody))).resolves.toEqual({
+      status: 200, json: { tools: [{ name: 'do_thing', description: 'd', inputSchema: { type: 'object' } }] }
+    });
+    const callBody = JSON.stringify(callReq);
+    await expect(postTo(PTY_SESSION_TOOL_CALL_PATH, server.url, callBody, signNativeToolPolicyRequest(secret, callBody))).resolves.toEqual({
+      status: 200, json: { success: true, contentItems: [{ type: 'inputText', text: 'done' }] }
+    });
+    expect(p.decideToolPolicy).toHaveBeenCalledWith(expect.objectContaining({ surface: 'pty', toolName: 'do_thing' }));
+  });
+
+  it('refuses unsigned, mis-signed, malformed and over-specified requests without asking plugins', async () => {
+    const { server } = await boot();
+    const p = plugins();
+    server.ctx.plugins = p as unknown as ProductHttpContext['plugins'];
+    for (const [path, req] of [[PTY_SESSION_TOOLS_PATH, listReq], [PTY_SESSION_TOOL_CALL_PATH, callReq]] as const) {
+      const body = JSON.stringify(req);
+      expect((await postTo(path, server.url, body)).status).toBe(403);
+      expect((await postTo(path, server.url, body, signNativeToolPolicyRequest('x'.repeat(64), body))).status).toBe(403);
+      expect((await postTo(path, server.url, 'nope', signNativeToolPolicyRequest(secret, 'nope'))).status).toBe(400);
+      const extra = JSON.stringify({ ...req, extra: 1 });
+      expect((await postTo(path, server.url, extra, signNativeToolPolicyRequest(secret, extra))).status).toBe(400);
+    }
+    expect(p.ptySessionTools).not.toHaveBeenCalled();
+    expect(p.decideToolPolicy).not.toHaveBeenCalled();
+  });
+
+  it('answers none and a denial without a plugin host', async () => {
+    const { server } = await boot();
+    server.ctx.plugins = undefined;
+    const listBody = JSON.stringify(listReq);
+    await expect(postTo(PTY_SESSION_TOOLS_PATH, server.url, listBody, signNativeToolPolicyRequest(secret, listBody))).resolves.toEqual({ status: 200, json: { tools: [] } });
+    const callBody = JSON.stringify(callReq);
+    const denied = await postTo(PTY_SESSION_TOOL_CALL_PATH, server.url, callBody, signNativeToolPolicyRequest(secret, callBody));
+    expect(denied.status).toBe(200);
+    expect(denied.json).toMatchObject({ success: false });
+  });
+
+  it('rejects an oversized body', async () => {
+    const { server } = await boot();
+    const body = JSON.stringify({ ...callReq, name: 'x'.repeat(NATIVE_TOOL_POLICY_EVENT_MAX_BYTES) });
+    expect((await postTo(PTY_SESSION_TOOL_CALL_PATH, server.url, body, signNativeToolPolicyRequest(secret, body))).status).toBe(413);
   });
 });

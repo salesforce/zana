@@ -44,6 +44,7 @@ import { admitMainOwnedDispatch } from './plugins/dispatch-admission.js';
 import { emitMainOwnedPtyLifecycle } from './plugins/pty-session-events.js';
 import { emitMainOwnedToolSettled } from './plugins/tool-settled.js';
 import { resolveMainOwnedPtyInstructions } from './plugins/pty-session-instructions.js';
+import { callMainOwnedPtyTool, listMainOwnedPtyTools } from './plugins/pty-session-tools.js';
 import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
 import { hasLocalThreadWork } from './services/threads/local-thread-work.js';
 import { holdThreadProviderStartup } from './services/threads/thread-provider-catalog.js';
@@ -695,6 +696,22 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
         id: message.id,
         value: await resolveMainOwnedPtyInstructions(productContext?.plugins, message.request)
+      });
+    }
+    if (message.operation === 'plugins-pty-session-tools') {
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await listMainOwnedPtyTools(productContext?.plugins, message.request)
+      });
+    }
+    if (message.operation === 'plugins-pty-session-tool-call') {
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await callMainOwnedPtyTool(productContext?.plugins, message.request)
       });
     }
     if (message.operation === 'plugins-tool-policy-inventory') {

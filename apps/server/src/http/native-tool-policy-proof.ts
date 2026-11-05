@@ -18,6 +18,10 @@ export const DISPATCH_ADMISSION_PATH = '/api/v1/dispatch-admission';
 export const PTY_LIFECYCLE_EVENT_PATH = '/api/v1/pty-lifecycle-event';
 /** PTY session instructions route (same proof scheme); main posts the strict request. */
 export const PTY_SESSION_INSTRUCTIONS_PATH = '/api/v1/pty-session-instructions';
+/** PTY session plugin tool list route (same proof scheme); main posts the strict request. */
+export const PTY_SESSION_TOOLS_PATH = '/api/v1/pty-session-tools';
+/** PTY session plugin tool call route (same proof scheme); main posts the strict request. */
+export const PTY_SESSION_TOOL_CALL_PATH = '/api/v1/pty-session-tool-call';
 /** Checked once, when the server receives the request, never across the decision wait (a human may take minutes on an `ask`). A proof is never reused. */
 export const NATIVE_TOOL_POLICY_PROOF_TTL_MS = 10_000;
 const MAX_USED = 1024;

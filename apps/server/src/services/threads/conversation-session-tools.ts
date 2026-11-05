@@ -10,7 +10,7 @@ import { listThreadProviders, THREAD_PROVIDER_STARTUP_WAIT_MS, waitForPluginStar
  * Plugin tools plus host SHARE DynamicTools. Conversation threads do not
  * inherit the PTY inbox MCP server — do not attach that URL here.
  * Pack host tools (preview_file, browser_*, inbox_*, …) instead.
- * CLI Agent / PTY is the other path: launcher MCP catalogue, not registerTool.
+ * CLI Agent / PTY is the other path: zcc-inbox MCP, which serves plugin registerTool tools per session.
  */
 export async function packConversationSessionTooling(
   ctx: ProductHttpContext,

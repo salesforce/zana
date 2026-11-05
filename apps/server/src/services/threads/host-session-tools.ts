@@ -11,7 +11,7 @@ import { SHARE_PREVIEW_TOOL, invokeSharePreview } from './host-share-preview-too
  * Do not attach a zcc-inbox MCP URL to ACP/SDK/Codex/Pi.
  *
  * CLI Agent / PTY keeps `zcc-inbox` + plugin `zcc.mcpServers` instead of
- * these DynamicTools. `registerTool` does not reach PTY sessions.
+ * these DynamicTools. PTY sessions get plugin `registerTool` tools through the zcc-inbox MCP server instead (see services/mcp/pty-plugin-tools.ts).
  */
 
 import type { DynamicTool, ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';

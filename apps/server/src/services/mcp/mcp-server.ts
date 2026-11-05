@@ -44,6 +44,7 @@ import { resolveDoc } from '../projects/fs.js';
 import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
 import { registerPreviewFileTool } from '../threads/preview-file-mcp-tool.js';
+import { registerPtyPluginTools, type PtyPluginTools } from './pty-plugin-tools.js';
 import { registerRunInTerminalTool } from '../threads/run-in-terminal-mcp-tool.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
 import {
@@ -563,6 +564,12 @@ export interface McpServerOptions {
   }) => Promise<{ delivered: number; command: string | null; title: string | null }>;
   /** Boolean or live getter so a Settings toggle applies to the next MCP request. */
   inAppAgentTerminalsEnabled?: boolean | (() => boolean);
+  /**
+   * Plugin-contributed tools for the PTY sessions main owns, listed and called
+   * on the per-session route only (never a thread route or a fenced member).
+   * Policy runs behind `call`. Absent ⇒ no plugin tools.
+   */
+  ptyPluginTools?: PtyPluginTools;
 }
 
 export interface McpServerHandle {
@@ -651,6 +658,7 @@ async function buildProjectMcpServer(opts: {
   previewFile?: McpServerOptions['previewFile'];
   runInTerminal?: McpServerOptions['runInTerminal'];
   inAppAgentTerminalsEnabled?: McpServerOptions['inAppAgentTerminalsEnabled'];
+  ptyPluginTools?: McpServerOptions['ptyPluginTools'];
 }): Promise<McpServer> {
   const mcp = new McpServer({ name: 'zcc-inbox', version: '0.1.0' });
   // Member routes are bound by main before this per-request server exists. The
@@ -1041,6 +1049,17 @@ async function buildProjectMcpServer(opts: {
       projectId: opts.projectId,
       sessionId: opts.sessionId,
       followupAgentApi: opts.followupAgentApi
+    });
+  }
+  // Plugin tools of a PTY session come last so a built-in name always wins. A
+  // thread route (Modern has its own plugin tool path) and a fenced automated
+  // member (host-attested catalogue only) never get them.
+  if (opts.sessionId && opts.routeKind !== 'thread' && !opts.memberFence && opts.ptyPluginTools) {
+    await registerPtyPluginTools(mcp, {
+      projectId: opts.projectId,
+      sessionId: opts.sessionId,
+      pluginTools: opts.ptyPluginTools,
+      log: opts.log
     });
   }
   return mcp;
@@ -2170,7 +2189,8 @@ async function handleRequest(
     scheduleAgentApi: opts.scheduleAgentApi,
     previewFile: opts.previewFile,
     runInTerminal: opts.runInTerminal,
-    inAppAgentTerminalsEnabled: opts.inAppAgentTerminalsEnabled
+    inAppAgentTerminalsEnabled: opts.inAppAgentTerminalsEnabled,
+    ptyPluginTools: opts.ptyPluginTools
   });
 
   // Ensure transport + mcp tear down once the response finishes, even on

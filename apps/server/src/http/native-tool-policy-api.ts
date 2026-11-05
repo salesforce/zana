@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { DispatchAdmissionMainRequestSchema, PtyLifecycleEventMainRequestSchema, PtySessionInstructionsMainRequestSchema, NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
+import { DispatchAdmissionMainRequestSchema, PtyLifecycleEventMainRequestSchema, PtySessionInstructionsMainRequestSchema, PtySessionToolCallMainRequestSchema, PtySessionToolsMainRequestSchema, NATIVE_TOOL_POLICY_EVENT_MAX_BYTES, NativeToolPolicyRequestSchema } from '@zana-ai/zcc-contracts/runtime';
 import { admitMainOwnedDispatch } from '../plugins/dispatch-admission.js';
 import { resolveMainOwnedPtyInstructions } from '../plugins/pty-session-instructions.js';
+import { callMainOwnedPtyTool, listMainOwnedPtyTools } from '../plugins/pty-session-tools.js';
 import { emitMainOwnedPtyLifecycle } from '../plugins/pty-session-events.js';
 import { decideMainOwnedToolPolicy } from '../plugins/native-tool-policy.js';
 import { headerValue } from './browser-request-guard.js';
 import { sendJson } from './json.js';
-import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, PTY_SESSION_INSTRUCTIONS_PATH, NATIVE_TOOL_POLICY_INVENTORY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER } from './native-tool-policy-proof.js';
+import { DISPATCH_ADMISSION_PATH, NATIVE_TOOL_POLICY_PATH, PTY_LIFECYCLE_EVENT_PATH, PTY_SESSION_INSTRUCTIONS_PATH, PTY_SESSION_TOOLS_PATH, PTY_SESSION_TOOL_CALL_PATH, NATIVE_TOOL_POLICY_INVENTORY_PATH, NATIVE_TOOL_POLICY_PROOF_HEADER } from './native-tool-policy-proof.js';
 import type { ProductHttpContext } from './product-context.js';
 
 class BodyTooLarge extends Error {}
@@ -214,5 +215,56 @@ export async function handlePtySessionInstructionsApi(
     return true;
   }
   sendJson(response, 200, await resolveMainOwnedPtyInstructions(ctx.plugins, parsed.data));
+  return true;
+}
+
+/**
+ * Plugin tool list and call for a live PTY session, for when no runtime
+ * supervisor carries them (`pnpm dev`). Same proof as the other main-owned
+ * routes; the body is the strict request main built from its live session.
+ */
+export async function handlePtySessionToolsApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  path: string,
+  method: string
+): Promise<boolean> {
+  if ((path !== PTY_SESSION_TOOLS_PATH && path !== PTY_SESSION_TOOL_CALL_PATH) || method !== 'POST') return false;
+  const isCall = path === PTY_SESSION_TOOL_CALL_PATH;
+  let body: string;
+  try {
+    body = await readBody(request);
+  } catch (error) {
+    if (!(error instanceof BodyTooLarge)) throw error;
+    sendJson(response, 413, { error: 'pty session tools request is too large' });
+    return true;
+  }
+  if (!ctx.verifyNativeToolPolicy?.(headerValue(request.headers, NATIVE_TOOL_POLICY_PROOF_HEADER), body)) {
+    sendJson(response, 403, { error: 'pty session tools request is not signed by the desktop app' });
+    return true;
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    sendJson(response, 400, { error: 'pty session tools request is not JSON' });
+    return true;
+  }
+  if (isCall) {
+    const parsed = PtySessionToolCallMainRequestSchema.safeParse(json);
+    if (!parsed.success) {
+      sendJson(response, 400, { error: 'invalid pty session tool call' });
+      return true;
+    }
+    sendJson(response, 200, await callMainOwnedPtyTool(ctx.plugins, parsed.data));
+    return true;
+  }
+  const parsed = PtySessionToolsMainRequestSchema.safeParse(json);
+  if (!parsed.success) {
+    sendJson(response, 400, { error: 'invalid pty session tools request' });
+    return true;
+  }
+  sendJson(response, 200, await listMainOwnedPtyTools(ctx.plugins, parsed.data));
   return true;
 }

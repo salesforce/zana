@@ -21,6 +21,7 @@ import {
   productRouteDispatchAdmissionDecider
 } from './runtime/dispatch-admission.js';
 import { createPtySessionInstructionsResolver, productRoutePtySessionInstructions } from './runtime/pty-session-instructions.js';
+import { createPtySessionTools, productRoutePtySessionToolCall, productRoutePtySessionTools } from './runtime/pty-session-tools.js';
 import { createPtyLifecycleEmitter, productRoutePtyLifecycleSink } from './runtime/pty-lifecycle-events.js';
 import { localMetadataProjects, localProjectPathOptions } from '@zana-ai/zcc-server/services/projects/project-metadata';
 import { invokeSharedProduct } from './ipc/shared-product-registry.js';
@@ -3397,6 +3398,31 @@ export const resolvePtyPluginInstructions = createPtySessionInstructionsResolver
   supervised: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.ptySessionInstructions(request) : null),
   productRoute: () => (process.env.ELECTRON_RENDERER_URL ? productRoutePtySessionInstructionsSource : null),
   log: (message) => console.warn(`[pty-instructions] ${message}`)
+});
+
+const productRoutePtySessionToolsSource = productRoutePtySessionTools({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+const productRoutePtySessionToolCallSource = productRoutePtySessionToolCall({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Plugin tools for the live PTYs, served on each session's zcc-inbox route.
+ * Identity comes from the live PTY record; the plugin host applies the
+ * main-owned tool policy before it runs a tool. Same decider order as
+ * {@link nativeToolPolicyHook}: the supervised channel, then the signed product
+ * route in electron-vite dev.
+ */
+export const ptyPluginTools = createPtySessionTools({
+  getSession: (id) => ptys.getSession(id),
+  listSource: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.ptySessionTools(request)
+    : process.env.ELECTRON_RENDERER_URL ? productRoutePtySessionToolsSource : null),
+  callSource: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.ptySessionToolCall(request)
+    : process.env.ELECTRON_RENDERER_URL ? productRoutePtySessionToolCallSource : null),
+  log: (message) => console.warn(`[pty-plugin-tools] ${message}`)
 });
 
 /**
@@ -9328,6 +9354,7 @@ async function bootstrapNormal() {
     // terminals. Dev has no supervisor, so there it asks the dev product
     // server's signed native-tool-policy route instead.
     onNativeToolPolicyHook: nativeToolPolicyHook,
+    ptyPluginTools,
     onNativeToolSettledHook: nativeToolSettledHook,
     // Upper bound on the whole exchange; mcp-server.ts fails CLOSED (deny) if
     // this elapses, the inverse of overseerDecisionTimeoutMs's fail-open guard.

@@ -2014,6 +2014,42 @@ describe('host agent-tool source', () => {
   });
 });
 
+describe('PTY session plugin tools', () => {
+  it('offers live plugin tools only, honours configure(), and runs only those tools', async () => {
+    const { createModernTeamLaunchSource } = await import('../services/agents/modern-team-launch-tools.js');
+    const pluginDir = writePlugin(
+      join(root(), 'pty-tools'),
+      'pty-tools',
+      `export default function plugin(zcc) {
+        zcc.agents.registerTool({ name: 'echo_tool', description: 'Echo', parameters: { type: 'object' }, execute: async (input) => ({ ok: true, input }) });
+        zcc.agents.registerTool({ name: 'hidden_tool', description: 'Hidden', parameters: { type: 'object' }, execute: async () => ({ ok: true }) });
+        zcc.agents.configure(({ surface, projectId }) => (projectId === 'skip' ? {} : { tools: surface === 'pty' ? ['echo_tool'] : ['echo_tool', 'hidden_tool'] }));
+      }\n`
+    );
+    const service = createPluginService({
+      dataDir: root(),
+      bundledRoot: root(),
+      hostAgentToolSource: createModernTeamLaunchSource({
+        getConfig: () => ({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: false, teamJobLaunchEnabled: true }),
+        callMcpTool: async () => ({ ok: true, text: '{}' })
+      })
+    });
+    await service.install(pluginDir);
+    const pty = await service.ptySessionTools({ surface: 'pty', sessionId: 's1', threadId: 's1', projectId: 'proj-1' });
+    expect(pty.tools.map((row) => row.name)).toEqual(['echo_tool']);
+    expect((await service.sessionTools({ threadId: 't', projectId: 'proj-1' })).tools.map((row) => row.name)).toContain('execution_start');
+    expect((await service.ptySessionTools({ surface: 'pty', sessionId: 's1', threadId: 's1', projectId: 'skip' })).tools).toEqual([]);
+    const ctx = { threadId: 's1', projectId: 'proj-1', signal: new AbortController().signal };
+    const ran = await service.invokePtySessionTool({ name: 'echo_tool', input: { a: 1 }, ctx });
+    expect(ran.success).toBe(true);
+    const hostTool = await service.invokePtySessionTool({ name: 'execution_start', input: {}, ctx });
+    expect(hostTool).toMatchObject({ success: false, contentItems: [{ text: 'Unsupported tool: execution_start' }] });
+    await service.disable('pty-tools');
+    expect((await service.ptySessionTools({ surface: 'pty', sessionId: 's1', threadId: 's1', projectId: 'proj-1' })).tools).toEqual([]);
+    service.stop();
+  });
+});
+
 describe('installBundledPlugin', () => {
   it('retains unavailable provider identity, blocks launch, recovers and cleans up on disable', async () => {
     const bundled = root();

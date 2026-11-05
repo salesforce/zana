@@ -218,6 +218,18 @@ export interface PluginService {
     input: unknown;
     ctx: PluginAgentToolContext;
   }): Promise<ToolCallResponse>;
+  /**
+   * The tools of the live plugins for one PTY session, with each plugin's
+   * `configure()` selection applied. Plugin tools only: host-contributed
+   * sources (the Modern team-launch forwarder) are not offered to a PTY.
+   */
+  ptySessionTools(ctx: PluginAgentConfigureContext): Promise<PluginSessionTools>;
+  /** Invoke one live plugin's tool for a PTY session. Plugin tools only; policy is the caller's. */
+  invokePtySessionTool(args: {
+    name: string;
+    input: unknown;
+    ctx: PluginAgentToolContext;
+  }): Promise<ToolCallResponse>;
   callRpc(pluginId: string, method: string, args: unknown): Promise<unknown>;
   getSettings(pluginId: string): {
     descriptors: Record<string, import('@zana-ai/zcc-plugin-sdk/server').PluginSettingDescriptor>;
@@ -1365,7 +1377,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   function agentToolSources(): PluginAgentToolSource[] {
-    const pluginSources = [...live.entries()]
+    const pluginSources = livePluginToolSources();
+    // Host source first so its tool names win the dedupe in
+    // resolvePluginSessionTools over any collision from a plugin.
+    return opts.hostAgentToolSource ? [opts.hostAgentToolSource, ...pluginSources] : pluginSources;
+  }
+
+  function livePluginToolSources(): PluginAgentToolSource[] {
+    return [...live.entries()]
       .filter(([, current]) => current.handle)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([pluginId, current]) => ({
@@ -1378,9 +1397,6 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         extraInstructionProviders: current.handle!.extraInstructionProviders,
         onConfigureError: (error: unknown) => logPluginFailure(pluginId, 'configure failed for a session', error)
       }));
-    // Host source first so its tool names win the dedupe in
-    // resolvePluginSessionTools over any collision from a plugin.
-    return opts.hostAgentToolSource ? [opts.hostAgentToolSource, ...pluginSources] : pluginSources;
   }
 
   function logPluginFailure(pluginId: string, message: string, error: unknown): void {
@@ -3126,6 +3142,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     },
     invokeAgentTool(args) {
       return invokePluginAgentTool(agentToolSources(), args.name, args.input, args.ctx);
+    },
+    ptySessionTools(ctx) {
+      return resolvePluginSessionTools(livePluginToolSources(), ctx);
+    },
+    invokePtySessionTool(args) {
+      return invokePluginAgentTool(livePluginToolSources(), args.name, args.input, args.ctx);
     },
     cliContributions,
     mentionProviders,

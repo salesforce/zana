@@ -303,6 +303,48 @@ export const PtySessionInstructionsReplySchema = z.object({
 }).strict();
 export type PtySessionInstructionsReply = z.infer<typeof PtySessionInstructionsReplySchema>;
 
+/** Ceilings for plugin tools one PTY session lists and calls over zcc-inbox. */
+export const PTY_SESSION_TOOLS_MAX = 128;
+export const PTY_SESSION_TOOL_NAME_MAX_CHARS = 128;
+export const PTY_SESSION_TOOL_DESCRIPTION_MAX_CHARS = 4_096;
+export const PTY_SESSION_TOOL_RESULT_MAX_CHARS = 256 * 1024;
+export const PTY_SESSION_TOOL_IMAGES_MAX = 8;
+
+/**
+ * Ask the plugins which tools one live PTY session may use. Main asserts the
+ * identity from its live session record, never from the agent or renderer.
+ */
+export const PtySessionToolsMainRequestSchema = PtySessionInstructionsMainRequestSchema;
+export type PtySessionToolsMainRequest = z.infer<typeof PtySessionToolsMainRequestSchema>;
+
+const PtySessionToolNameSchema = z.string().min(1).max(PTY_SESSION_TOOL_NAME_MAX_CHARS).regex(/^[A-Za-z0-9_.-]+$/);
+
+export const PtySessionToolsReplySchema = z.object({
+  tools: z.array(z.object({
+    name: PtySessionToolNameSchema,
+    description: z.string().max(PTY_SESSION_TOOL_DESCRIPTION_MAX_CHARS),
+    inputSchema: z.record(z.string(), z.unknown())
+  }).strict()).max(PTY_SESSION_TOOLS_MAX)
+}).strict();
+export type PtySessionToolsReply = z.infer<typeof PtySessionToolsReplySchema>;
+
+/** One plugin tool call from a live PTY session; policy and the plugin both run behind this. */
+export const PtySessionToolCallMainRequestSchema = PtySessionInstructionsMainRequestSchema.extend({
+  invocationId: z.string().uuid(),
+  name: PtySessionToolNameSchema,
+  arguments: z.record(z.string(), z.unknown()).refine(nativeToolPolicyInputFits, 'tool input exceeds the native tool policy limit')
+}).strict();
+export type PtySessionToolCallMainRequest = z.infer<typeof PtySessionToolCallMainRequestSchema>;
+
+export const PtySessionToolCallReplySchema = z.object({
+  success: z.boolean(),
+  contentItems: z.array(z.discriminatedUnion('type', [
+    z.object({ type: z.literal('inputText'), text: z.string().max(PTY_SESSION_TOOL_RESULT_MAX_CHARS) }).strict(),
+    z.object({ type: z.literal('inputImage'), imageUrl: z.string().max(8 * 1024 * 1024) }).strict()
+  ])).max(1 + PTY_SESSION_TOOL_IMAGES_MAX)
+}).strict();
+export type PtySessionToolCallReply = z.infer<typeof PtySessionToolCallReplySchema>;
+
 /** Main-attested request for one Modern squad participant. Never renderer input. */
 export const SquadMemberRuntimeRequestSchema = z.object({
   bindingId: z.string().uuid(),
@@ -667,6 +709,16 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     // Plugin guidance for a PTY main is about to spawn: the server holds the plugin handlers.
     operation: z.literal('plugins-pty-session-instructions'),
     request: PtySessionInstructionsMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // Plugin tools one live PTY session may list: the server holds the plugin handlers.
+    operation: z.literal('plugins-pty-session-tools'),
+    request: PtySessionToolsMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // One plugin tool call from a live PTY session: tool policy, then the plugin.
+    operation: z.literal('plugins-pty-session-tool-call'),
+    request: PtySessionToolCallMainRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     // OBL-018 pre-spawn readiness: main reads the tool-policy inventory before a
