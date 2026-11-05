@@ -40,7 +40,9 @@ export function writeAppConfig(
   // Relaunches retain settings changed by the test, including explicit fake CLIs.
   const config: Record<string, unknown> = exists
     ? JSON.parse(readFileSync(configPath, 'utf8'))
-    : { walkthroughCompleted: true, setupDismissed: true, ...initialConfig };
+    : { walkthroughCompleted: true, setupDismissed: true,
+      onboarding: { version: 1, profileId: 'salesforce-employees', audience: 'general', step: 'complete' },
+      ...initialConfig };
   if (!allowLiveClaude && config.claudeBinary === undefined) {
     config.claudeBinary = DISABLED_CLAUDE_BINARY;
     writeFileSync(configPath, JSON.stringify(config, null, 2));

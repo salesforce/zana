@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./onboarding": "./src/onboarding.ts",
     "./computer-label": "./src/computer-label.ts",
     "./cli-host-guard": "./src/cli-host-guard.ts",
     ".": {

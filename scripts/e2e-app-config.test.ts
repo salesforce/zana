@@ -36,11 +36,20 @@ describe('E2E Claude isolation', () => {
   it('blocks real Claude in a fresh UI test home', () => {
     const path = home();
     writeAppConfig(path, { sponsorPromptDismissed: true });
-    expect(read(path)).toEqual({ walkthroughCompleted: true, setupDismissed: true, sponsorPromptDismissed: true, claudeBinary: DISABLED_CLAUDE_BINARY });
+    expect(read(path)).toEqual({ walkthroughCompleted: true, setupDismissed: true, sponsorPromptDismissed: true,
+      onboarding: { version: 1, profileId: 'salesforce-employees', audience: 'general', step: 'complete' },
+      claudeBinary: DISABLED_CLAUDE_BINARY });
     const result = spawnSync(DISABLED_CLAUDE_BINARY, ['--print', '--model', 'haiku', '--', 'Name this test'], { env: { ...process.env, HOME: path }, encoding: 'utf8' });
     expect(result.status).toBe(78);
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('Real Claude is disabled in deterministic E2E tests');
+  });
+
+  it('allows onboarding specs to request a fresh first-run state', () => {
+    const path = home();
+    writeAppConfig(path, { onboarding: undefined });
+    expect(read(path)).not.toHaveProperty('onboarding');
+    expect(read(path).claudeBinary).toBe(DISABLED_CLAUDE_BINARY);
   });
 
   it('preserves an explicitly supplied fake CLI', () => {

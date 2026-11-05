@@ -42,3 +42,8 @@
   .ext-pack-review .modal-footer { flex-wrap: wrap; }
   .ext-pack-review-summary { flex-basis: 100%; }
 }
+
+.ext-pack-inline { margin-bottom: 24px; }
+.ext-pack-inline h2 { margin: 0 0 6px; font-size: 17px; color: var(--text-primary); }
+.ext-pack-inline-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.ext-pack-inline-footer > button { margin-left: auto; }
