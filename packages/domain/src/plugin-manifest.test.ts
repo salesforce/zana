@@ -178,6 +178,17 @@ describe('readPluginManifest', () => {
     expect(readPluginManifest(baseZcc({ toolPolicy: false })).toolPolicy).toBe(false);
   });
 
+  it('clamps zcc.toolPolicyTimeoutMs to [1000, 9000] with a 5000 default', () => {
+    expect(readPluginManifest(baseZcc()).toolPolicyTimeoutMs).toBe(5_000);
+    expect(readPluginManifest(baseZcc({ toolPolicyTimeoutMs: 1 })).toolPolicyTimeoutMs).toBe(1_000);
+    expect(readPluginManifest(baseZcc({ toolPolicyTimeoutMs: 2_500.7 })).toolPolicyTimeoutMs).toBe(2_500);
+    expect(readPluginManifest(baseZcc({ toolPolicyTimeoutMs: 60_000 })).toolPolicyTimeoutMs).toBe(9_000);
+  });
+
+  it('rejects a non-numeric zcc.toolPolicyTimeoutMs', () => {
+    expect(() => readPluginManifest(baseZcc({ toolPolicyTimeoutMs: '5s' }))).toThrow();
+  });
+
   it('rejects zcc.toolPolicy true without a server', () => {
     expect(() =>
       readPluginManifest({

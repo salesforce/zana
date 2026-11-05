@@ -397,6 +397,16 @@ period or automatic disable: disable or uninstall a failed plugin to release
 only that plugin's obligation. A healthy reload keeps its prior sealed handler
 authoritative until replacement succeeds.
 
+Each handler's decision deadline is `zcc.toolPolicyTimeoutMs` in the manifest,
+clamped to 1000-9000 ms (default 5000; a non-number fails manifest validation).
+It is read at activation, so an on-disk edit applies at the next activation, and
+plugin details show the effective value. Handlers run serially under one
+9000 ms decision budget per call: each gets the lesser of its clamp and the
+time left, and an exhausted budget denies. Expiry always denies. A human `ask`
+wait is a separate approval phase and does not draw on this budget, so the
+main ceiling stays `mainCeilingMs(9000, approvalMs)` whatever the number of
+plugins or their clamps, below the relay backstop.
+
 `allow` means no plugin objected; it is never an approval. The provider's own
 permission flow still decides: both PTY hooks stay silent on `allow` instead
 of auto-approving (Claude reads a hook `allow` as "skip the permission

@@ -13,6 +13,15 @@
 /** Whole decision phase for one call: all plugin handlers together. */
 export const DECISION_PHASE_MAX_MS = 9_000;
 
+/** Per-plugin handler deadline inside the decision phase. The max equals the whole phase. */
+export const TOOL_POLICY_HANDLER_MS = { min: 1_000, max: DECISION_PHASE_MAX_MS, default: 5_000 } as const;
+
+/** Clamp a plugin-declared handler deadline into the host range; absent or invalid is the default. */
+export function clampToolPolicyHandlerMs(requested: unknown): number {
+  if (typeof requested !== 'number' || !Number.isFinite(requested)) return TOOL_POLICY_HANDLER_MS.default;
+  return Math.min(TOOL_POLICY_HANDLER_MS.max, Math.max(TOOL_POLICY_HANDLER_MS.min, Math.floor(requested)));
+}
+
 /** Approval phase bounds for an `ask` decision. */
 export const ASK_APPROVAL_MS = { min: 10_000, max: 120_000, default: 60_000 } as const;
 

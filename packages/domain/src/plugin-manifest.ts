@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { derivePluginId, isPluginId } from './plugin-id.js';
+import { clampToolPolicyHandlerMs } from './native-tool-policy-budget.js';
 import { PLUGIN_REQUIRES_MAX, parsePluginRequires } from './plugin-requires.js';
 
 const requiredManifestString = z.string().trim().min(1).max(256);
@@ -145,6 +146,7 @@ export const pluginZccManifestSchema = z
     extra: pluginExtraSchema.optional(),
     requires: z.array(requiredManifestString).max(PLUGIN_REQUIRES_MAX).optional(),
     toolPolicy: z.boolean().optional(),
+    toolPolicyTimeoutMs: z.number().finite().optional(),
     projectTab: pluginProjectTabSchema.optional(),
     peers: z.boolean().optional(),
     promptAccess: z.boolean().optional(),
@@ -215,6 +217,8 @@ export interface PluginManifest {
   extra: PluginExtra;
   requires: string[];
   toolPolicy: boolean | undefined;
+  /** `zcc.toolPolicyTimeoutMs` clamped to [1000, 9000] ms; default 5000. */
+  toolPolicyTimeoutMs: number;
   projectTab: PluginZccManifest['projectTab'];
   /** Declares the peer SDK (links to other installs); gates the core Peers settings page. */
   peers: boolean;
@@ -252,6 +256,7 @@ export function readPluginManifest(packageJson: unknown): PluginManifest {
     extra: parsed.zcc.extra ?? {},
     requires: parsePluginRequires(parsed.zcc.requires),
     toolPolicy: parsed.zcc.toolPolicy,
+    toolPolicyTimeoutMs: clampToolPolicyHandlerMs(parsed.zcc.toolPolicyTimeoutMs),
     projectTab: parsed.zcc.projectTab,
     peers: parsed.zcc.peers === true,
     promptAccess: parsed.zcc.promptAccess === true,

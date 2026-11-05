@@ -150,3 +150,10 @@ it('offers source recovery instead of reloading a missing folder', async () => {
   expect(inspector().getByRole('button', { name: 'Switch to official distribution…' })).toBeTruthy();
   expect(inspector().queryByRole('button', { name: 'Reload', exact: true })).toBeNull();
 });
+it('shows the tool policy timeout only for plugins that report one', async () => {
+  api.apps = [plugin({ toolPolicyTimeoutMs: 7_500 })];
+  const view = setup(); await screen.findByRole('region', { name: 'Installed plugin' });
+  expect(screen.getByTestId('plugin-tool-policy-timeout').textContent).toContain('7.5 s');
+  view.unmount(); api.apps = [plugin()]; setup(); await screen.findByRole('region', { name: 'Installed plugin' });
+  expect(screen.queryByTestId('plugin-tool-policy-timeout')).toBeNull();
+});

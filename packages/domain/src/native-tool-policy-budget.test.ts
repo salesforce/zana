@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ASK_APPROVAL_MS,
   DECISION_PHASE_MAX_MS,
+  TOOL_POLICY_HANDLER_MS,
+  clampToolPolicyHandlerMs,
   HOOK_TIMEOUT_SEC,
   MAX_MAIN_CEILING_MS,
   RELAY_BACKSTOP_MS,
@@ -35,6 +37,19 @@ describe('native tool policy budget', () => {
     [9e9, 120_000]
   ])('clamps %s to %s', (requested, expected) => {
     expect(clampAskApprovalMs(requested)).toBe(expected);
+  });
+
+  it.each([
+    [undefined, 5_000], ['x', 5_000], [Number.NaN, 5_000], [Infinity, 5_000],
+    [0, 1_000], [999, 1_000], [1_000, 1_000], [4_321.9, 4_321], [9_000, 9_000], [9_001, 9_000], [9e9, 9_000]
+  ])('clamps handler timeout %s to %s', (requested, expected) => {
+    expect(clampToolPolicyHandlerMs(requested)).toBe(expected);
+  });
+
+  it('keeps the handler clamp inside the decision phase and the ordering intact', () => {
+    expect(TOOL_POLICY_HANDLER_MS.max).toBe(DECISION_PHASE_MAX_MS);
+    expect(mainCeilingMs(TOOL_POLICY_HANDLER_MS.max)).toBe(10_000);
+    expect(mainCeilingMs(TOOL_POLICY_HANDLER_MS.max, ASK_APPROVAL_MS.max)).toBeLessThan(RELAY_BACKSTOP_MS);
   });
 
   it('adds both phases and the margin to the ceiling', () => {

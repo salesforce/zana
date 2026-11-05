@@ -5807,6 +5807,8 @@ export interface PluginAppEntry {
   availableVersion?: string;
   /** Plugin declares `zcc.peers: true` (it links to other installs). */
   peers?: boolean;
+  /** Tool-policy decision deadline (ms, clamped 1000-9000) for plugins that declare `zcc.toolPolicy`. */
+  toolPolicyTimeoutMs?: number;
   updateCheck?: PluginUpdateStatus;
   updatePolicy?: PluginUpdatePolicy;
   projectTab?: {

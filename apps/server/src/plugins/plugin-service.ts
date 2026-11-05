@@ -126,6 +126,7 @@ import {
   TOOL_POLICY_ASK_PROMPT_MAX_CHARS,
   TOOL_POLICY_ASK_RENDERER_ID,
   clampAskApprovalMs,
+  clampToolPolicyHandlerMs,
   isToolPolicyAskAllow,
   sanitizeToolPolicyAskText
 } from '@zana-ai/zcc-domain/native-tool-policy-budget';
@@ -326,6 +327,8 @@ export interface PluginUiSnapshot {
   source: string;
   projectTab: PluginManifest['projectTab'];
   peers: boolean;
+  /** Clamped decision deadline, present only for plugins that declare a tool policy. */
+  toolPolicyTimeoutMs?: number;
   skillNames: string[];
   mcpServers: PluginUiMcpServer[];
   extra: Record<string, unknown>;
@@ -368,6 +371,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     ...(row.availableVersion ? { availableVersion: row.availableVersion } : {}),
     projectTab: row.projectTab,
     ...(row.peers ? { peers: true } : {}),
+    ...(row.toolPolicyTimeoutMs !== undefined ? { toolPolicyTimeoutMs: row.toolPolicyTimeoutMs } : {}),
     skillNames: row.skillNames,
     mcpServers: row.mcpServers.map((server) => ({
       name: server.name,
@@ -561,6 +565,8 @@ interface LivePlugin {
   pluginStatus?: string | null;
   /** `zcc.promptAccess` as read at this generation's activation; an on-disk edit applies at the next activation. */
   promptAccess?: boolean;
+  /** `zcc.toolPolicyTimeoutMs` (clamped) as read at this generation's activation. */
+  toolPolicyTimeoutMs?: number;
   /** `zcc.toolResults` as read at this generation's activation; an on-disk edit applies at the next activation. */
   toolResults?: 'preview';
 }
@@ -1677,10 +1683,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     let serverEntry = row.serverEntry;
     let remoteEnvironmentNames: string[] = [];
     let promptAccess = false;
+    let toolPolicyTimeoutMs = clampToolPolicyHandlerMs(undefined);
     let toolResults: 'preview' | undefined;
     try {
       const manifest = loadManifestFromDir(row.rootDir);
       promptAccess = manifest.promptAccess;
+      toolPolicyTimeoutMs = manifest.toolPolicyTimeoutMs;
       toolResults = manifest.toolResults;
       hostEntry = manifest.hostEntry;
       if (manifest.serverEntry) serverEntry = manifest.serverEntry;
@@ -1902,7 +1910,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (activationFailure) throw activationFailure;
       toolPolicySealed.add(row.id);
       pendingToolPolicy.delete(row.id);
-      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage, promptAccess, toolResults });
+      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage, promptAccess, toolPolicyTimeoutMs, toolResults });
       refreshToolPolicyInventory();
       cancelRecovery(row.id);
       if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
@@ -2448,6 +2456,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       let extra: Record<string, unknown> = {};
       let projectTab: PluginManifest['projectTab'];
       let peers = false;
+      let toolPolicyTimeoutMs: number | undefined;
       let themes: PluginThemeSnapshot[] = [];
       let name = row.name;
       let description = row.description;
@@ -2461,6 +2470,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         extra = manifest.extra;
         projectTab = manifest.projectTab;
         peers = manifest.peers;
+        if (manifest.toolPolicy === true) toolPolicyTimeoutMs = manifest.toolPolicyTimeoutMs;
         mcpServers = manifest.mcpServers.map((server) => ({
           name: server.name,
           type: server.type,
@@ -2489,6 +2499,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       } catch {
         projectTab = undefined;
         peers = false;
+        toolPolicyTimeoutMs = undefined;
       }
       return {
         id: row.id,
@@ -2507,6 +2518,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         source: row.source,
         projectTab,
         peers,
+        ...(toolPolicyTimeoutMs !== undefined ? { toolPolicyTimeoutMs } : {}),
         skillNames,
         mcpServers,
         extra,
@@ -3274,7 +3286,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
               const startedAt = Date.now();
               const decision: unknown = await withDeadline(
                 Promise.resolve().then(() => handler(request)),
-                Math.min(PLUGIN_MENTION_RESOLVE_TIMEOUT_MS, remainingMs),
+                Math.min(current.toolPolicyTimeoutMs ?? clampToolPolicyHandlerMs(undefined), remainingMs),
                 `tool policy ${current.row.id}`
               );
               decisionSpentMs += Date.now() - startedAt;
