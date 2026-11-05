@@ -66,6 +66,24 @@ afterEach(async () => {
 });
 
 describe('product HTTP', () => {
+  it('serves host-owned onboarding metadata through the product API origin guard', async () => {
+    const profile = { id: 'employees', organization: 'Example', question: 'Employee?', prerequisite: 'Connect first.', marketplaceSource: 'path:/fixture' };
+    vi.stubEnv('ZCC_ONBOARDING_PROFILE', JSON.stringify(profile));
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-onboarding-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const url = `${server.url}api/v1/onboarding/profile`;
+
+    const response = await fetch(url, { headers: { Origin: 'http://127.0.0.1:5173' } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
+    expect(await response.json()).toEqual({ profile });
+
+    const blocked = await fetch(url, { headers: { Origin: 'https://evil.example' } });
+    expect(blocked.status).toBe(403);
+    expect(blocked.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
   it('validates project moves and preserves status codes at the HTTP boundary', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-move-'));
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [
