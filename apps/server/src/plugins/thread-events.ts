@@ -32,6 +32,8 @@ export interface DispatchOverrideAuditEvent {
 }
 
 export const PLUGIN_LIFECYCLE_TEXT_MAX_CHARS = 4_096;
+/** Generated once per server process: lets plugins detect a restart, since `sequence` resets with it. */
+const BOOT_ID = randomUUID();
 let lifecycleSequence = 0;
 
 export function threadSummary(row: ConversationThreadRow): PluginSdkThreadSummary {
@@ -178,6 +180,7 @@ export function emitHardenedLifecycle(event: PluginThreadEventInput): PluginThre
   return {
     id: randomUUID(),
     schemaVersion: PLUGIN_THREAD_EVENT_SCHEMA_VERSION,
+    bootId: BOOT_ID,
     sequence: lifecycleSequence,
     timestamp: Date.now(),
     name: event.name,

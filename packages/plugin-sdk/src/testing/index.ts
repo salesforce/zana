@@ -1123,6 +1123,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       const event: import('../server.js').PluginThreadEvent = {
         id: `test-event-${Date.now()}`,
         schemaVersion: 1,
+        bootId: 'test-boot',
         sequence: 1,
         timestamp: Date.now(),
         name,

@@ -193,3 +193,17 @@ describe('emitDispatchOverrideAudit', () => {
     expect(emit).not.toHaveBeenCalled();
   });
 });
+
+describe('lifecycle bootId', () => {
+  it('is stable within a process and changes across a simulated restart', async () => {
+    const a = emitHardenedLifecycle({ name: 'thread.idle', threadId: 't1' });
+    const b = emitHardenedLifecycle({ name: 'thread.idle', threadId: 't2' });
+    expect(a.bootId).toEqual(expect.any(String));
+    expect(a.bootId).toBe(b.bootId);
+    vi.resetModules();
+    const fresh = await import('./thread-events.js');
+    const c = fresh.emitHardenedLifecycle({ name: 'thread.idle', threadId: 't3' });
+    expect(c.bootId).not.toBe(a.bootId);
+    expect(c.sequence).toBe(1);
+  });
+});

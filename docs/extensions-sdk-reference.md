@@ -341,9 +341,12 @@ Known limit: a second checkout added through `POST /projects/:id/sources` is
 refused for remote calls unless that machine's own catalogue holds it.
 
 Lifecycle events (`PluginThreadEvent` from `zcc.events.on`) now always carry a
-host-generated `id`, a process-local `sequence`, and a `timestamp` — do not
+host-generated `id`, a process-local `sequence`, a `bootId`, and a `timestamp` — do not
 derive identity from event content, and do not expect a durable replay stream;
-delivery is best-effort.
+delivery is best-effort. `bootId` is generated once per server process: dedupe
+by `id`, compare `sequence` only between events with the same `bootId`, and
+treat a changed `bootId` as a restart with no continuity (reset any
+sequence-based state).
 
 #### PTY lifecycle events
 

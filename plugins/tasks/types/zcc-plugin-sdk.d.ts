@@ -329,6 +329,8 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     /** Host-generated event id. Do not derive identity from event content. */
     id: string;
     schemaVersion: number;
+    /** Host-generated id for this server process, constant until restart. `sequence` is only comparable within one `bootId`; there is no continuity across a change. */
+    bootId: string;
     /** Host-assigned, process-local ordering sequence. */
     sequence: number;
     /** Host clock timestamp in epoch milliseconds. */
