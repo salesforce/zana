@@ -5,6 +5,7 @@ import {
   type JsonValue
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
+import { humanGateRefusal, type RequireHuman } from './human-gate.js';
 import type { PluginInteractionCancelReason, PluginInteractionResult } from './pending-interactions.js';
 
 /**
@@ -26,7 +27,7 @@ export interface PtyInteractionView {
   projectId: string;
   status: 'pending';
   origin: { kind: 'plugin'; pluginId: string; rendererId: string };
-  payload: { kind: 'plugin'; title: string; data: JsonValue; requireHuman: boolean };
+  payload: { kind: 'plugin'; title: string; data: JsonValue; requireHuman: RequireHuman };
   createdAt: number;
   expiresAt: number;
 }
@@ -109,7 +110,7 @@ export class PtyInteractionStore {
     title: string;
     payload: JsonValue;
     timeoutMs: number;
-    requireHuman?: boolean;
+    requireHuman?: RequireHuman;
     signal?: AbortSignal;
   }): Promise<PluginInteractionResult> {
     const session = this.sessions.get(args.sessionId);
@@ -156,15 +157,16 @@ export class PtyInteractionStore {
     return entry ? [entry.view] : [];
   }
 
-  respond(args: { sessionId: string; interactionId: string; value: JsonValue; actor?: InteractionActor }): PtyInteractionView {
+  respond(args: { sessionId: string; interactionId: string; value: JsonValue; actor?: InteractionActor; attestation?: 'window' | 'sheet' }): PtyInteractionView {
     if (Buffer.byteLength(JSON.stringify(args.value) ?? 'null', 'utf8') > PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES) {
       throw new ThreadCreateError(400, 'invalid_request', 'Interaction response exceeds 64 KiB');
     }
     const entry = this.require(args);
     const actor = args.actor ?? 'unknown';
-    if (entry.view.payload.requireHuman && actor !== 'human') {
-      throw new ThreadCreateError(403, 'human-proof-required', 'Human proof required');
-    }
+    const refusal = humanGateRefusal(entry.view.payload.requireHuman, actor, args.attestation, {
+      title: entry.view.payload.title, pluginId: entry.view.origin.pluginId
+    });
+    if (refusal) throw refusal;
     this.settle(entry.view.id, { outcome: 'submitted', value: args.value, actor });
     return entry.view;
   }

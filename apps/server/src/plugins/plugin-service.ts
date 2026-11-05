@@ -423,7 +423,7 @@ export interface PluginServiceOptions {
     title: string;
     payload: import('@zana-ai/zcc-domain/thread-runtime').JsonValue;
     timeoutMs: number;
-    requireHuman?: boolean;
+    requireHuman?: boolean | 'native-sheet';
     signal?: AbortSignal;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
   interruptPluginInteractions?: (pluginId: string) => void;

@@ -481,8 +481,12 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     title: string;
     payload: unknown;
     timeoutMs?: number;
-    /** Default false. True requires a single-use response proof verified by main. */
-    requireHuman?: boolean;
+    /**
+     * Default false. `true` requires a single-use response proof from a human in
+     * the Zana window or on a native sheet. `'native-sheet'` requires a sheet
+     * drawn by the desktop main process itself.
+     */
+    requireHuman?: boolean | 'native-sheet';
   }
 
   export interface PluginApprovalBinding {

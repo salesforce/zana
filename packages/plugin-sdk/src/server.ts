@@ -1322,8 +1322,14 @@ export interface PluginInteractionRequest {
   title: string;
   payload: JsonValue;
   timeoutMs?: number;
-  /** Default false. True requires a single-use response proof verified by main. */
-  requireHuman?: boolean;
+  /**
+   * Default false. `true` requires a single-use response proof from a human
+   * acting in the Zana window or on a native sheet. `'native-sheet'` is
+   * stricter: the answer must come from a confirmation sheet the desktop main
+   * process draws itself, so renderer code (and any process that can call
+   * `zcc interaction respond`) cannot satisfy it. The workflow decides when to ask.
+   */
+  requireHuman?: boolean | 'native-sheet';
 }
 
 export interface PluginMentionSuggestion {

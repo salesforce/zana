@@ -65,7 +65,7 @@ import { ProviderModelCatalogStore } from '../services/threads/provider-model-ca
 import { createUiSendVerifier } from './ui-send-proof.js';
 import { capturePluginToolApprovalIdentity, createPluginApprovalVerifier, signPluginApproval, isPluginToolApprovalScopeLive, requestPluginToolApprovalViaControl, type PluginToolApprovalScope } from './plugin-approval-proof.js';
 import { createNativeToolPolicyVerifier } from './native-tool-policy-proof.js';
-import { createInteractionProofVerifier, type InteractionProofBinding } from './interaction-proof.js';
+import { createDetailedInteractionProofVerifier, type InteractionProofBinding } from './interaction-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import { createDbTunnelHostStore, createTunnelHostReopener, type TunnelHostStore } from '../services/hosts/tunnel-hosts.js';
 import { reconcileRemoteProjectBindings, repairHost, tunnelLocalPort } from '../services/hosts/host-bootstrap.js';
@@ -190,7 +190,7 @@ export interface ProductHttpContext {
   requestPluginToolApproval?: (input: PluginToolApprovalScope) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginApprovalResult>;
   /** Consumes main's proof on a native tool policy request (native-tool-policy-proof.ts). Absent or secretless servers refuse every one. */
   verifyNativeToolPolicy?: (token: unknown, body: string) => boolean;
-  verifyInteractionProof?: (token: unknown, binding: InteractionProofBinding) => import('@zana-ai/zcc-domain').InteractionActor | null;
+  verifyInteractionProof?: (token: unknown, binding: InteractionProofBinding) => import('./interaction-proof.js').VerifiedInteractionProof | null;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void | Promise<void>;
@@ -511,7 +511,7 @@ export function createProductHttpContext(
     const approvalSecret = options.uiSendSecret;
     mintCoreApproval = binding => signPluginApproval(approvalSecret, CORE_APPROVAL_PRINCIPAL, binding as never);
     verifyNativeToolPolicy = createNativeToolPolicyVerifier(options.uiSendSecret);
-    verifyInteractionProof = createInteractionProofVerifier(options.uiSendSecret);
+    verifyInteractionProof = createDetailedInteractionProofVerifier(options.uiSendSecret);
   }
 
   const keyProvider = options.peerKeyProvider ?? { getKey: async () => null };

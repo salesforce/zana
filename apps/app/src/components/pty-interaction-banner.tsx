@@ -15,7 +15,7 @@ export interface PtySessionInteraction {
   projectId: string;
   status: 'pending';
   origin: { kind: 'plugin'; pluginId: string; rendererId: string };
-  payload: { kind: 'plugin'; title: string; data: JsonValue; requireHuman: boolean };
+  payload: { kind: 'plugin'; title: string; data: JsonValue; requireHuman: boolean | 'native-sheet' };
   createdAt: number;
   expiresAt: number;
 }

@@ -46,10 +46,19 @@ export function signInteractionProof(
   return `${Buffer.from(JSON.stringify(proof)).toString('base64url')}.${mac(secret, binding, proof).toString('hex')}`;
 }
 
+/** Which main-drawn surface vouched for a human actor. */
+export type InteractionAttestation = 'window' | 'sheet';
+export interface VerifiedInteractionProof { actor: InteractionActor; attestation?: InteractionAttestation }
+
 export function createInteractionProofVerifier(secret: string, now: () => number = Date.now) {
+  const detailed = createDetailedInteractionProofVerifier(secret, now);
+  return (token: unknown, binding: InteractionProofBinding): InteractionActor | null => detailed(token, binding)?.actor ?? null;
+}
+
+export function createDetailedInteractionProofVerifier(secret: string, now: () => number = Date.now) {
   if (secret.length < 32) throw new Error('Invalid interaction signing secret');
   const used = new Map<string, number>();
-  return (token: unknown, binding: InteractionProofBinding): InteractionActor | null => {
+  return (token: unknown, binding: InteractionProofBinding): VerifiedInteractionProof | null => {
     if (typeof token !== 'string' || token.length > 1024) return null;
     if ((typeof binding.threadId === 'string') === (typeof binding.sessionId === 'string')) return null;
     const parts = /^([A-Za-z0-9_-]+)\.([a-f0-9]{64})$/.exec(token);
@@ -69,6 +78,7 @@ export function createInteractionProofVerifier(secret: string, now: () => number
     // Never evict live nonces: doing so would let a previously used proof replay.
     if (used.size >= MAX_USED) return null;
     used.set(proof.nonce, proof.expiresAt);
-    return proof.actor;
+    const attestation = proof.actor !== 'human' ? undefined : proof.source.startsWith('sheet:') ? 'sheet' : 'window';
+    return attestation ? { actor: proof.actor, attestation } : { actor: proof.actor };
   };
 }

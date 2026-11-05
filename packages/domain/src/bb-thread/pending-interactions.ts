@@ -358,7 +358,7 @@ const pluginPendingInteractionPayloadSchema = z.object({
   kind: z.literal("plugin"),
   title: z.string().trim().min(1).max(PLUGIN_INTERACTION_MAX_TITLE_LENGTH),
   data: jsonValueSchema,
-  requireHuman: z.boolean().optional(),
+  requireHuman: z.union([z.boolean(), z.literal("native-sheet")]).optional(),
 });
 type PluginPendingInteractionPayload = z.infer<
   typeof pluginPendingInteractionPayloadSchema

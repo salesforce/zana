@@ -80,3 +80,52 @@ it('enforces human proof bound to the PTY session at the HTTP boundary', async (
     expect((await fetch(url('missing', 'interactions'))).status).toBe(200);
   } finally { await server.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+it('demands a main-drawn sheet for native-sheet and tells main what to show', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'native-sheet-proof-'));
+  const secret = 's'.repeat(32);
+  const server = await startProductServer({ dataDir: dir, origins: { serverPort: 0, devAppPort: 5173 }, uiSendSecret: secret });
+  try {
+    const host = upsertHost(server.ctx.db, { id: 'h', name: 'host', hostKeyHash: 'hash' });
+    const thread = createConversationThread(server.ctx.db, { projectId: 'p', hostId: host.id, providerId: 'codex' });
+    const pending = server.ctx.pendingInteractions.requestPluginInteraction({ pluginId: 'fixture', threadId: thread.id, rendererId: 'form', title: 'Approve plan', payload: {}, requireHuman: 'native-sheet', timeoutMs: 5000 });
+    const id = server.ctx.pendingInteractions.listPendingThreadInteractions(thread.id)[0]!.id;
+    const body = '{"value":true}';
+    const post = (actor: 'human' | 'cli', source: string) => fetch(new URL(`api/v1/threads/${thread.id}/interactions/${id}/respond`, server.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [INTERACTION_PROOF_HEADER]: signInteractionProof(secret, { threadId: thread.id, interactionId: id, body }, actor, source) },
+      body
+    });
+    // The control socket (cli) and the renderer window are both insufficient.
+    expect((await post('cli', 'control:operator')).status).toBe(403);
+    const windowOnly = await post('human', 'window:7');
+    expect(windowOnly.status).toBe(403);
+    expect(await windowOnly.json()).toMatchObject({ error: 'native-sheet-required', title: 'Approve plan', pluginId: 'fixture' });
+    const sheet = await post('human', 'sheet:7');
+    expect(sheet.status).toBe(200);
+    await expect(pending).resolves.toEqual({ outcome: 'submitted', value: true, actor: 'human' });
+  } finally { await server.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('applies the same native-sheet rule to PTY sessions', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pty-native-sheet-'));
+  const secret = 's'.repeat(32);
+  const server = await startProductServer({ dataDir: dir, origins: { serverPort: 0, devAppPort: 5173 }, uiSendSecret: secret });
+  try {
+    const store = server.ctx.ptyInteractions;
+    store.noteSession({ sessionId: 'pty-1', projectId: 'p' });
+    const pending = store.request({ pluginId: 'fixture', sessionId: 'pty-1', rendererId: 'form', title: 'Approve plan', payload: {}, requireHuman: 'native-sheet', timeoutMs: 5000 });
+    const id = store.list('pty-1')[0]!.id;
+    const body = '{"value":true}';
+    const post = (source: string) => fetch(new URL(`api/v1/pty-sessions/pty-1/interactions/${id}/respond`, server.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [INTERACTION_PROOF_HEADER]: signInteractionProof(secret, { sessionId: 'pty-1', interactionId: id, body }, 'human', source) },
+      body
+    });
+    const windowOnly = await post('window:7');
+    expect(windowOnly.status).toBe(403);
+    expect(await windowOnly.json()).toMatchObject({ error: 'native-sheet-required', title: 'Approve plan' });
+    expect((await post('sheet:7')).status).toBe(200);
+    await expect(pending).resolves.toEqual({ outcome: 'submitted', value: true, actor: 'human' });
+  } finally { await server.close(); rmSync(dir, { recursive: true, force: true }); }
+});

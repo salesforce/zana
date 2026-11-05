@@ -33,6 +33,7 @@ import type { InteractionActor } from '@zana-ai/zcc-domain';
 import { HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHub } from '../../http/product-hub.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
+import { humanGateRefusal, type RequireHuman } from './human-gate.js';
 import { toPendingInteraction } from './pending-interaction-serialization.js';
 import { snapshotApprovedPlan } from '../threads/conversation-plan.js';
 import { appendPendingInteractionTimelineEvent } from './pending-interaction-timeline.js';
@@ -249,7 +250,7 @@ export class PendingInteractionLifecycle {
     title: string;
     payload: JsonValue;
     timeoutMs: number;
-    requireHuman?: boolean;
+    requireHuman?: RequireHuman;
     signal?: AbortSignal;
   }): Promise<PluginInteractionResult> {
     const thread = getConversationThread(this.deps.db, args.threadId);
@@ -338,6 +339,7 @@ export class PendingInteractionLifecycle {
     threadId: string;
     value: JsonValue;
     actor?: InteractionActor;
+    attestation?: 'window' | 'sheet';
   }): PendingInteraction {
     if (jsonByteLength(args.value) > PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES) {
       throw new ThreadCreateError(400, 'invalid_request', 'Interaction response exceeds 64 KiB');
@@ -348,9 +350,10 @@ export class PendingInteractionLifecycle {
     }
     if (current.status !== 'pending') throw conflict(current);
     const actor = args.actor ?? 'unknown';
-    if (current.payload.requireHuman && actor !== 'human') {
-      throw new ThreadCreateError(403, 'human-proof-required', 'Human proof required');
-    }
+    const refusal = humanGateRefusal(current.payload.requireHuman, actor, args.attestation, {
+      title: current.payload.title, pluginId: current.origin.pluginId
+    });
+    if (refusal) throw refusal;
     const updated = setPendingInteractionResolved(this.deps.db, {
       id: current.id,
       resolution: JSON.stringify({ kind: 'plugin_submitted', actor })

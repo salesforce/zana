@@ -39,6 +39,7 @@ describe('plugin requestInput validation', () => {
     const base = { threadId: 't', rendererId: 'form', title: 'Confirm', payload: null };
     expect(validatePluginRequestInput(base).requireHuman).toBe(false);
     expect(validatePluginRequestInput({ ...base, requireHuman: true }).requireHuman).toBe(true);
+    expect(validatePluginRequestInput({ ...base, requireHuman: 'native-sheet' }).requireHuman).toBe('native-sheet');
     expect(() => validatePluginRequestInput({ ...base, requireHuman: 'true' } as never)).toThrow('requireHuman must be boolean');
   });
   it('accepts a well-formed request and trims the title', () => {

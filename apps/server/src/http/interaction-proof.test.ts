@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInteractionProofVerifier, signInteractionProof, INTERACTION_PROOF_TTL_MS } from './interaction-proof.js';
+import { createDetailedInteractionProofVerifier, createInteractionProofVerifier, signInteractionProof, INTERACTION_PROOF_TTL_MS } from './interaction-proof.js';
 
 const secret = 's'.repeat(32);
 const binding = { threadId: 'thread', interactionId: 'interaction', body: '{"value":true}' };
@@ -34,6 +34,12 @@ describe('interaction actor proof', () => {
     }
     expect(verify(signInteractionProof(secret, binding, 'human', 'sheet:1', at), binding)).toBe('human');
     expect(verify(signInteractionProof(secret, binding, 'cli', 'control:operator', at), binding)).toBe('cli');
+  });
+  it('reports which main-drawn surface vouched for a human', () => {
+    const verify = createDetailedInteractionProofVerifier(secret, () => at);
+    expect(verify(signInteractionProof(secret, binding, 'human', 'window:7', at), binding)).toEqual({ actor: 'human', attestation: 'window' });
+    expect(verify(signInteractionProof(secret, binding, 'human', 'sheet:7', at), binding)).toEqual({ actor: 'human', attestation: 'sheet' });
+    expect(verify(signInteractionProof(secret, binding, 'cli', 'control:operator', at), binding)).toEqual({ actor: 'cli' });
   });
   it('rejects expired and future proofs', () => {
     const token = signInteractionProof(secret, binding, 'human', 'window:7', at);

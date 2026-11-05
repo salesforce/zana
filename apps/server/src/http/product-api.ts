@@ -2505,16 +2505,16 @@ export async function handleProductHttp(
           return true;
         }
         const proof = headerValue(request.headers, INTERACTION_PROOF_HEADER);
-        const verifiedActor = proof ? ctx.verifyInteractionProof?.(proof, {
+        const verified = proof ? ctx.verifyInteractionProof?.(proof, {
           threadId: threadInteractionRespond.id,
           interactionId: threadInteractionRespond.interactionId,
           body: JSON.stringify(body)
         }) : null;
-        if (proof && !verifiedActor) {
+        if (proof && !verified) {
           throw new ThreadCreateError(403, 'invalid-proof', 'Invalid interaction proof');
         }
         // Caller markers can only lower trust. HTTP alone never establishes human authority.
-        const actor = verifiedActor ?? (headerValue(request.headers, 'authorization')
+        const actor = verified?.actor ?? (headerValue(request.headers, 'authorization')
           || headerValue(request.headers, 'x-zcc-session-token')
           || headerValue(request.headers, 'x-zcc-caller-credential')
           || headerValue(request.headers, 'x-zcc-caller-session-id') ? 'agent' : 'unknown');
@@ -2522,12 +2522,13 @@ export async function handleProductHttp(
           threadId: threadInteractionRespond.id,
           interactionId: threadInteractionRespond.interactionId,
           value: parsed.data,
-          actor
+          actor,
+          attestation: verified?.attestation
         });
         sendJson(response, 200, interaction);
       } catch (error) {
         if (error instanceof ThreadCreateError) {
-          sendJson(response, error.status, { error: error.code, message: error.message });
+          sendJson(response, error.status, { ...error.details, error: error.code, message: error.message });
           return true;
         }
         sendHostFailure(response, error);
@@ -2545,15 +2546,15 @@ export async function handleProductHttp(
           return true;
         }
         const proof = headerValue(request.headers, INTERACTION_PROOF_HEADER);
-        const verifiedActor = proof ? ctx.verifyInteractionProof?.(proof, {
+        const verified = proof ? ctx.verifyInteractionProof?.(proof, {
           sessionId: ptyInteractionRespond.id,
           interactionId: ptyInteractionRespond.interactionId,
           body: JSON.stringify(body)
         }) : null;
-        if (proof && !verifiedActor) {
+        if (proof && !verified) {
           throw new ThreadCreateError(403, 'invalid-proof', 'Invalid interaction proof');
         }
-        const actor = verifiedActor ?? (headerValue(request.headers, 'authorization')
+        const actor = verified?.actor ?? (headerValue(request.headers, 'authorization')
           || headerValue(request.headers, 'x-zcc-session-token')
           || headerValue(request.headers, 'x-zcc-caller-credential')
           || headerValue(request.headers, 'x-zcc-caller-session-id') ? 'agent' : 'unknown');
@@ -2561,11 +2562,12 @@ export async function handleProductHttp(
           sessionId: ptyInteractionRespond.id,
           interactionId: ptyInteractionRespond.interactionId,
           value: parsed.data,
-          actor
+          actor,
+          attestation: verified?.attestation
         }));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
-          sendJson(response, error.status, { error: error.code, message: error.message });
+          sendJson(response, error.status, { ...error.details, error: error.code, message: error.message });
           return true;
         }
         sendHostFailure(response, error);

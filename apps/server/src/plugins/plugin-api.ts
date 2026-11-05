@@ -289,7 +289,7 @@ export function createPluginApi(
       title: string;
       payload: JsonValue;
       timeoutMs: number;
-      requireHuman?: boolean;
+      requireHuman?: boolean | 'native-sheet';
       signal?: AbortSignal;
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
@@ -2327,7 +2327,7 @@ export function validatePluginRequestInput(request: PluginInteractionRequest): {
   title: string;
   payload: JsonValue;
   timeoutMs: number;
-  requireHuman: boolean;
+  requireHuman: boolean | 'native-sheet';
 } {
   if (!request || typeof request !== 'object') {
     throw new Error('ui.requestInput requires an options object');
@@ -2358,8 +2358,8 @@ export function validatePluginRequestInput(request: PluginInteractionRequest): {
     throw new Error('ui.requestInput payload must be JSON-serializable');
   }
   const timeoutMs = request.timeoutMs ?? 10 * 60 * 1000;
-  if (request.requireHuman !== undefined && typeof request.requireHuman !== 'boolean') {
-    throw new Error('ui.requestInput requireHuman must be boolean');
+  if (request.requireHuman !== undefined && typeof request.requireHuman !== 'boolean' && request.requireHuman !== 'native-sheet') {
+    throw new Error("ui.requestInput requireHuman must be boolean or 'native-sheet'");
   }
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > PLUGIN_INTERACTION_MAX_TIMEOUT_MS) {
     throw new Error(`ui.requestInput timeoutMs must be between 1 and ${PLUGIN_INTERACTION_MAX_TIMEOUT_MS}`);
