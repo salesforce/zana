@@ -615,13 +615,25 @@ surface supported above; PTY/CLI sessions read `agents.registerTool` over the se
 `ui.requestInput({ threadId, rendererId, title, payload, timeoutMs?, requireHuman? })`
 defaults `requireHuman` to `false`. Submitted results include `actor`:
 `human | cli | agent | unknown`; the actor is also persisted in the resolution.
-Only `requireHuman: true` rejects unproven/agent answers. Bare HTTP is `unknown`,
-never human; session-marked HTTP is `agent`. Invalid, forged, expired, mismatched,
+Only `requireHuman: true` or `'native-sheet'` rejects unproven/agent answers. Bare
+HTTP is `unknown`, never human; session-marked HTTP is `agent`; a response over the
+desktop control socket (`zcc interaction respond`) is `cli`, never `human`, because
+any same-user process can reach that socket. Invalid, forged, expired, mismatched,
 or reused proofs return 403. Responses without the opt-in remain usable by agents.
+
+- `requireHuman: true` — a human acted in the Zana window or on a native sheet.
+- `requireHuman: 'native-sheet'` — stricter. The window's Submit is not enough:
+  the desktop main process draws its own confirmation sheet (plugin name, your
+  `title`, and a preview of the answer) and only that sheet's Approve settles the
+  request. Cancelling the sheet leaves the request pending. Use it when your
+  workflow decides a step needs a person who cannot be impersonated by renderer
+  code; Zana never decides that for you.
 
 Desktop responses pass through verified main-window IPC. Main sends a short-lived,
 single-use MAC proof directly to the product server, bound to thread, interaction,
-response body, actor, window/control source and expiry. Proofs never reach plugin
+response body, actor, window/sheet/control source and expiry. A `human` actor is
+only accepted from a `window:` or `sheet:` source; the signing secret reaches the
+server over its start message, never through process environment. Proofs never reach plugin
 processes, renderer storage, or agent environment.
 
 `zcc thread interactions <threadId> respond <interactionId> --value '<JSON>'`

@@ -3,7 +3,10 @@
  * boundary. A stub CLI stands in for Claude, the probe plugin raises a
  * human-required request against the session id, and the Agents monitor shows
  * it as a banner. The page cannot answer it over HTTP; the banner's Submit goes
- * through Electron main, which signs the human proof the server checks.
+ * through Electron main, which signs the human proof the server checks. A
+ * `requireHuman: 'native-sheet'` request goes further: the window's Submit is not
+ * enough, main draws its own approval sheet and only that sheet's Approve
+ * settles it. The UI-signing secret must not be readable from process listings.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -12,7 +15,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import type { Page } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
+import { answerApprovalSheet } from './fixtures/core-peer-use.js';
 import { buildPluginHost } from '../packages/plugin-build/src/build-plugin-host.js';
 import { runtimeShimPlugin } from '../packages/plugin-build/src/build-plugin-app.js';
 import { cleanupTmuxEnvironment } from './fixtures/tmux-isolation.js';
@@ -119,6 +124,29 @@ test('a PTY session shows a plugin request in the Agents monitor and only a huma
     await expect.poll(result, { timeout: 30_000 }).toMatchObject({ outcome: 'submitted', actor: 'human' });
     await expect(banner).toHaveCount(0);
     expect(await (await fetch(`${origin}/api/v1/pty-sessions/${sessionId}/interactions`)).json()).toEqual([]);
+
+    // The signing secret is not in any process's initial environment (`ps eww` shows that to same-uid processes).
+    const listing = execFileSync('ps', ['eww', '-ax', '-o', 'command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    // Only this run's processes: other Zana instances on the machine are not ours to judge.
+    const ours = listing.split('\n').filter((line) => line.includes(home));
+    expect(ours.length).toBeGreaterThan(0);
+    expect(ours.filter((line) => line.includes('ZCC_PRODUCT_SERVER_CREDENTIAL='))).toEqual([]);
+
+    // 'native-sheet': the window Submit opens main's own sheet; Cancel leaves it pending, Approve settles it.
+    await win.evaluate(({ id, sessionId }) => {
+      (window as any).__ptyResult = undefined;
+      void window.cc.pluginApps.callRpc(id, 'requestPendingInteraction', { threadId: sessionId, requireHuman: 'native-sheet' })
+        .then((value) => { (window as any).__ptyResult = value; }, (error) => { (window as any).__ptyResult = { error: String(error) }; });
+    }, { id: PLUGIN_ID, sessionId });
+    await expect(banner).toBeVisible({ timeout: 30_000 });
+    await banner.getByRole('button', { name: 'Submit', exact: true }).click();
+    await answerApprovalSheet(app, 'Platform Hooks Probe: confirm action', 'deny');
+    expect(await result()).toBeUndefined();
+    expect((await (await fetch(`${origin}/api/v1/pty-sessions/${sessionId}/interactions`)).json())).toHaveLength(1);
+    await banner.getByRole('button', { name: 'Submit', exact: true }).click();
+    await answerApprovalSheet(app, 'Platform Hooks Probe: confirm action', 'approve');
+    await expect.poll(result, { timeout: 30_000 }).toMatchObject({ outcome: 'submitted', actor: 'human' });
+    await expect(banner).toHaveCount(0);
   } finally {
     try { await closeApp(app.electron); } finally {
       await cleanupTmuxEnvironment(home);
