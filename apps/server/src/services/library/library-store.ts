@@ -17,7 +17,7 @@
  * template-store.ts). EventEmitter + onChanged full-list pattern (like saved).
  */
 
-import { app, shell } from 'electron';
+import { shell } from 'electron';
 import { EventEmitter } from 'node:events';
 import {
   existsSync,
