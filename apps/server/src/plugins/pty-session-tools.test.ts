@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PtySessionToolCallMainRequestSchema,
   PtySessionToolCallReplySchema,
@@ -7,6 +7,7 @@ import {
   PTY_SESSION_TOOL_RESULT_MAX_CHARS
 } from '@zana-ai/zcc-contracts/runtime';
 import { callMainOwnedPtyTool, listMainOwnedPtyTools } from './pty-session-tools.js';
+import { decideMainOwnedToolPolicy, resetNativeAllowsForTest } from './native-tool-policy.js';
 
 const listReq = { sessionId: 's1', projectId: 'p1', profile: 'codex-yolo' } as const;
 const callReq = {
@@ -52,6 +53,7 @@ describe('listMainOwnedPtyTools', () => {
 });
 
 describe('callMainOwnedPtyTool', () => {
+  beforeEach(() => resetNativeAllowsForTest());
   const plugins = (over: Record<string, unknown> = {}) => ({
     ptySessionTools: vi.fn().mockResolvedValue({ tools: [tool('do_thing')] }),
     decideToolPolicy: vi.fn().mockResolvedValue({ action: 'allow' }),
@@ -59,6 +61,27 @@ describe('callMainOwnedPtyTool', () => {
     ...over
   });
   const asService = (p: ReturnType<typeof plugins>) => p as unknown as Parameters<typeof callMainOwnedPtyTool>[0];
+
+  it('skips the second policy evaluation once, only when the native hook already allowed the same call', async () => {
+    resetNativeAllowsForTest();
+    const p = plugins();
+    const native = { invocationId: 'n'.repeat(64), sessionId: callReq.sessionId, projectId: callReq.projectId, profile: callReq.profile };
+    await decideMainOwnedToolPolicy(p, { ...native, toolName: `mcp__zcc-inbox__${callReq.name}`, input: callReq.arguments });
+    expect(p.decideToolPolicy).toHaveBeenCalledTimes(1);
+    expect((await callMainOwnedPtyTool(asService(p), callReq)).success).toBe(true);
+    expect(p.decideToolPolicy).toHaveBeenCalledTimes(1);
+    // one-shot: a repeat call is evaluated again
+    await callMainOwnedPtyTool(asService(p), callReq);
+    expect(p.decideToolPolicy).toHaveBeenCalledTimes(2);
+    // different input or a denied native call never leaves an allow behind
+    await decideMainOwnedToolPolicy(p, { ...native, toolName: callReq.name, input: { other: 1 } });
+    await callMainOwnedPtyTool(asService(p), callReq);
+    expect(p.decideToolPolicy).toHaveBeenCalledTimes(4);
+    const denying = plugins({ decideToolPolicy: vi.fn().mockResolvedValue({ action: 'deny', reason: 'no' }) });
+    await decideMainOwnedToolPolicy(denying, { ...native, toolName: callReq.name, input: callReq.arguments });
+    expect((await callMainOwnedPtyTool(asService(denying), callReq)).success).toBe(false);
+    expect(denying.decideToolPolicy).toHaveBeenCalledTimes(2);
+  });
 
   it('denies without a plugin service', async () => {
     const reply = await callMainOwnedPtyTool(undefined, callReq);

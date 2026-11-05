@@ -13,7 +13,7 @@ import {
 } from '@zana-ai/zcc-contracts/runtime';
 import type { PluginAgentConfigureContext } from '@zana-ai/zcc-plugin-sdk/server';
 import type { PluginService } from './plugin-service.js';
-import { decideMainOwnedToolPolicy, toolPolicyProviderId } from './native-tool-policy.js';
+import { consumeNativeAllow, decideMainOwnedToolPolicy, toolPolicyProviderId } from './native-tool-policy.js';
 
 /** Ceiling on the plugin's own run after policy allowed it; the caller's channel budget is larger. */
 export const PTY_SESSION_TOOL_EXECUTE_TIMEOUT_MS = 240_000;
@@ -108,7 +108,8 @@ export async function callMainOwnedPtyTool(
   try {
     const session = await plugins.ptySessionTools(configureContext(request));
     if (!session.tools.some((tool) => tool.name === request.name)) return failure(`Unsupported tool: ${request.name}`);
-    const decision = await decideMainOwnedToolPolicy(plugins, {
+    // The native hook already allowed this exact call: do not evaluate (or ask) twice.
+    const decision = consumeNativeAllow(request.sessionId, request.name, request.arguments) ? { action: 'allow' as const } : await decideMainOwnedToolPolicy(plugins, {
       invocationId: createHash('sha256').update(JSON.stringify([request.sessionId, request.invocationId, request.name])).digest('hex'),
       sessionId: request.sessionId,
       ...(request.threadId ? { threadId: request.threadId } : {}),
@@ -116,7 +117,7 @@ export async function callMainOwnedPtyTool(
       profile: request.profile,
       toolName: request.name,
       input: request.arguments
-    });
+    }, undefined, { recordAllow: false });
     if (decision.action === 'deny') return failure(`Tool "${request.name}" denied: ${decision.reason}`);
   } catch {
     return failure(`Tool "${request.name}" denied: tool policy unavailable`);

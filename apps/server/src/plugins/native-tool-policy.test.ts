@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginToolPolicyDecision, PluginToolPolicyRequest } from '@zana-ai/zcc-plugin-sdk';
-import { decideMainOwnedToolPolicy, toolPolicyProviderId } from './native-tool-policy.js';
+import { NATIVE_ALLOW_TTL_MS, consumeNativeAllow, decideMainOwnedToolPolicy, resetNativeAllowsForTest, toolPolicyProviderId } from './native-tool-policy.js';
 
 const call = {
   invocationId: 'a'.repeat(64),
@@ -104,5 +104,19 @@ describe('toolPolicyProviderId', () => {
     ['unknown-x', 'unknown-x']
   ])('maps %s to %s', (profile, providerId) => {
     expect(toolPolicyProviderId(profile)).toBe(providerId);
+  });
+});
+
+describe('native allow record', () => {
+  it('expires, is one-shot, and is bounded', async () => {
+    resetNativeAllowsForTest();
+    await decideMainOwnedToolPolicy(plugins({ action: 'allow' }), call);
+    expect(consumeNativeAllow('session-1', 'Bash', call.input, Date.now() + NATIVE_ALLOW_TTL_MS + 1)).toBe(false);
+    await decideMainOwnedToolPolicy(plugins({ action: 'allow' }), call);
+    expect(consumeNativeAllow('session-1', 'Bash', call.input)).toBe(true);
+    expect(consumeNativeAllow('session-1', 'Bash', call.input)).toBe(false);
+    for (let i = 0; i < 300; i++) await decideMainOwnedToolPolicy(plugins({ action: 'allow' }), { ...call, input: { i } });
+    expect(consumeNativeAllow('session-1', 'Bash', { i: 0 })).toBe(false);
+    expect(consumeNativeAllow('session-1', 'Bash', { i: 299 })).toBe(true);
   });
 });

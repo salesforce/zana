@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import {
   normalizeNativeToolPolicyReason,
@@ -20,6 +21,41 @@ export function toolPolicyProviderId(profile: string): string {
 }
 
 /**
+ * A native hook allow, remembered briefly so the same call arriving again
+ * through the main-owned PTY tool route is not policy-evaluated twice (a
+ * second pass could re-ask the human). One-shot, keyed on session + tool name
+ * without the `mcp__<server>__` prefix + redacted input hash. Absent record
+ * means the caller evaluates normally, so Codex (whose hook cannot see MCP
+ * calls) still gets its single evaluation.
+ */
+export const NATIVE_ALLOW_TTL_MS = 15_000;
+const NATIVE_ALLOW_MAX = 256;
+const nativeAllows = new Map<string, number>();
+
+function nativeAllowKey(sessionId: string, toolName: string, input: unknown): string {
+  const bare = toolName.replace(/^mcp__.+?__/, '');
+  const digest = createHash('sha256').update(JSON.stringify(redactToolInput(input)) ?? '').digest('hex');
+  return `${sessionId}\u0000${bare}\u0000${digest}`;
+}
+
+function recordNativeAllow(sessionId: string, toolName: string, input: unknown, now = Date.now()): void {
+  for (const [key, expires] of nativeAllows) if (expires <= now) nativeAllows.delete(key);
+  if (nativeAllows.size >= NATIVE_ALLOW_MAX) nativeAllows.delete(nativeAllows.keys().next().value as string);
+  nativeAllows.set(nativeAllowKey(sessionId, toolName, input), now + NATIVE_ALLOW_TTL_MS);
+}
+
+/** True once per recorded native allow; consumes it. */
+export function consumeNativeAllow(sessionId: string, toolName: string, input: unknown, now = Date.now()): boolean {
+  const key = nativeAllowKey(sessionId, toolName, input);
+  const expires = nativeAllows.get(key);
+  if (expires === undefined) return false;
+  nativeAllows.delete(key);
+  return expires > now;
+}
+
+export function resetNativeAllowsForTest(): void { nativeAllows.clear(); }
+
+/**
  * Decide one native tool call (OBL-004) from a PTY Electron-main owns. Main
  * asserted the identity from its live session record; this only asks the
  * plugins, with the input redacted, and returns a decision whose deny reason
@@ -30,7 +66,9 @@ export function toolPolicyProviderId(profile: string): string {
 export async function decideMainOwnedToolPolicy(
   plugins: Pick<PluginService, 'decideToolPolicy'> | undefined,
   request: NativeToolPolicyRequest,
-  resolvedProviderId?: string
+  resolvedProviderId?: string,
+  /** The PTY tool route consumes records; it must never leave one behind. */
+  options: { recordAllow?: boolean } = {}
 ): Promise<NativeToolPolicyDecision> {
   if (!plugins) return { action: 'deny', reason: 'plugin service is unavailable' };
   const decision = await plugins.decideToolPolicy({
@@ -46,7 +84,10 @@ export async function decideMainOwnedToolPolicy(
     input: redactToolInput(request.input)
   });
   const parsed = NativeToolPolicyDecisionSchema.safeParse(decision);
-  if (parsed.success && parsed.data.action === 'allow') return parsed.data;
+  if (parsed.success && parsed.data.action === 'allow') {
+    if (request.sessionId && options.recordAllow !== false) recordNativeAllow(request.sessionId, request.toolName, request.input);
+    return parsed.data;
+  }
   if (decision?.action === 'deny') return {
     action: 'deny', reason: normalizeNativeToolPolicyReason(decision.reason, 'denied by plugin tool policy')
   };
