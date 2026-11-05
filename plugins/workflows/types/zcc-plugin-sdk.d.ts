@@ -599,6 +599,19 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       service(name: string, start: () => void | (() => void) | Promise<void | (() => void)>): void;
       schedule(cron: string, job: () => void | Promise<void>): void;
     };
+    /**
+     * Host-tracked child processes. Each child runs in its own process group with output discarded and no shell.
+     * The host stops every live child (SIGTERM, a short wait, then SIGKILL of the group) when the plugin is disposed,
+     * deactivated, or its worker crashes. At most 8 children per plugin may be live. On Windows there are no process
+     * groups, so only the direct child is stopped. A raw `node:child_process` spawn is NOT tracked and is never reaped.
+     */
+    readonly process: {
+      spawn(
+        command: string,
+        args: string[],
+        options?: { cwd?: string; env?: Record<string, string> }
+      ): Promise<{ readonly pid: number; readonly exited: Promise<number | null> }>;
+    };
     /** Environment for sessions on non-primary machines. Needs `zcc.extra.remoteEnvironment` in the manifest. */
     readonly remoteEnvironment: {
       provide(

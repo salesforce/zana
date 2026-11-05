@@ -2046,6 +2046,11 @@ function createFakePluginHostInternal(
     rpc,
     realtime,
     background,
+    process: {
+      async spawn() {
+        throw new Error("process.spawn is not available in the fake plugin host");
+      },
+    },
     cli,
     agents,
     providers,

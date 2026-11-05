@@ -1081,6 +1081,29 @@ function isHighSurrogate(codeUnit: number): boolean {
   return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
 }
 
+export interface PluginProcessSpawnOptions {
+  /** Absolute working directory. */
+  cwd?: string;
+  /** Extra environment, merged over the server's. */
+  env?: Record<string, string>;
+}
+
+export interface PluginProcessHandle {
+  readonly pid: number;
+  /** Exit code, or `null` when the child was killed by a signal, failed after start, or the plugin stopped. */
+  readonly exited: Promise<number | null>;
+}
+
+/**
+ * Host-tracked child processes. Each child runs in its own process group with output discarded and no shell.
+ * The host stops every live child (SIGTERM, a short wait, then SIGKILL of the group) when the plugin is disposed,
+ * deactivated, or its worker crashes. At most 8 children per plugin may be live. On Windows there are no process
+ * groups, so only the direct child is stopped. A raw `node:child_process` spawn is NOT tracked and is never reaped.
+ */
+export interface PluginProcess {
+  spawn(command: string, args: string[], options?: PluginProcessSpawnOptions): Promise<PluginProcessHandle>;
+}
+
 export interface PluginBackground {
   service(name: string, start: () => void | (() => void) | Promise<void | (() => void)>): void;
   schedule(cron: string, job: () => void | Promise<void>): void;
@@ -1390,6 +1413,8 @@ export interface ZccPluginApi {
   readonly realtime: PluginRealtime;
   readonly storage: PluginStorage;
   readonly background: PluginBackground;
+  /** Host-tracked child processes that are reaped when the plugin stops. */
+  readonly process: PluginProcess;
   /** Environment for sessions on non-primary machines. Needs `zcc.extra.remoteEnvironment` in the manifest. */
   readonly remoteEnvironment: PluginRemoteEnvironment;
   readonly cli: PluginCli;

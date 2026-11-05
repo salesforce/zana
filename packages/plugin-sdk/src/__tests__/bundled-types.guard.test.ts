@@ -32,7 +32,8 @@ const SURFACES: Array<[interfaceName: string, prefix: string]> = [
   ['PluginUi', 'zcc.ui.'],
   ['PluginAgents', 'zcc.agents.'],
   ['PluginEvents', 'zcc.events.'],
-  ['PluginHostApi', 'zcc.host.']
+  ['PluginHostApi', 'zcc.host.'],
+  ['PluginProcess', 'zcc.process.']
 ];
 
 describe('bundled SDK types and reference doc cover the public API', () => {

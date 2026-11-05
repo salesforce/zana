@@ -126,6 +126,7 @@ import {
 } from '@zana-ai/zcc-plugin-sdk/server';
 import { appendPluginLogLine } from './plugin-log.js';
 import { withDeadline } from './plugin-mentions.js';
+import { createPluginProcessTracker } from './plugin-process-tracker.js';
 import {
   listLibraryDocs,
   readLibraryDoc,
@@ -578,6 +579,9 @@ export function createPluginApi(
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
   const kv = openAsyncJsonStore(kvPath);
   quiesceHooks.push(() => kv.dispose({ drain: true }));
+  // Children spawned through process.spawn die with this plugin generation (dispose, deactivate or worker crash).
+  const processTracker = createPluginProcessTracker({ pluginId, log: (level, message) => emitLog(level, message) });
+  disposeHooks.push(() => processTracker.reapAll());
   // Plugin link notes are in memory and plugin-reported: they die with this plugin generation (stop, reload, uninstall).
   disposeHooks.push(() => options?.productContext?.peerLinkNotes?.clearPlugin(pluginId));
   disposeHooks.push(() => options?.productContext?.peerConnections?.clearPlugin(pluginId));
@@ -1897,6 +1901,16 @@ export function createPluginApi(
         // Realtime payloads cross only from trusted plugin server code to the
         // renderer; renderer listeners receive no authority from this signal.
         options?.productContext?.hub.emit('plugin-signal', { pluginId, channel: event, payload: payload ?? null });
+      }
+    },
+    process: {
+      spawn: async (command, args, spawnOptions) => {
+        assertLive();
+        const { pid, exited } = await processTracker.spawn(command, args, spawnOptions);
+        // The exit promise stays off the wire (a Promise does not cross the worker bridge); the worker rebuilds it from wait().
+        const handle = { pid, wait: () => exited };
+        Object.defineProperty(handle, 'exited', { value: exited, enumerable: false });
+        return handle as typeof handle & { exited: Promise<number | null> };
       }
     },
     background: {

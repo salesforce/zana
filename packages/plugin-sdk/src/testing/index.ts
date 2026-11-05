@@ -847,6 +847,11 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         published.push({ event, payload });
       }
     },
+    process: {
+      async spawn() {
+        throw new Error('process.spawn is not available in the testing host');
+      }
+    },
     background: {
       service(_name, start) {
         void Promise.resolve(start()).then((stop) => {
