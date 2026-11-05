@@ -452,9 +452,19 @@ test('a rejecting dispatch plugin refuses Modern squad member start without crea
       serverEntry: './server.ts', appEntry: null, installedAt: Date.now(), updatedAt: Date.now()
     });
     writeFileSync(storePath, JSON.stringify(store));
+    // The running service does not notice a hand-written store row; without an explicit reload the
+    // plugin stays unloaded unless something else happens to reactivate it.
+    await probe.page.evaluate(() => window.cc.pluginApps.reload('platform-hooks-probe'));
     await expect.poll(() => probe.page.evaluate(async () =>
       (await window.cc.pluginApps.list()).find(row => row.id === 'platform-hooks-probe')?.status
     ), { timeout: 45_000 }).toBe('running');
+    // Loading seals the plugin's tool policy, which can restart its worker and drop in-memory state.
+    // Set the dispatch selection only after the sealed row is persisted.
+    await expect.poll(() => {
+      const row = (JSON.parse(readFileSync(storePath, 'utf8')) as { plugins: Array<{ id: string; toolPolicy?: unknown }> })
+        .plugins.find(candidate => candidate.id === 'platform-hooks-probe');
+      return row?.toolPolicy === 'true' || row?.toolPolicy === 'false';
+    }, { timeout: 30_000 }).toBe(true);
     const rpc = <T,>(method: string, args?: unknown) => probe.page.evaluate(
       ({ method, args }) => window.cc.pluginApps.callRpc('platform-hooks-probe', method, args), { method, args }) as Promise<T>;
     await rpc('setDispatchSelection', { kind: 'reject', message: 'squad-start-blocked' });
