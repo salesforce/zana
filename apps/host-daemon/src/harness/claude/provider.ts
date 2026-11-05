@@ -297,6 +297,13 @@ function withLayerModel(args: string[], model: string | undefined, trailingArgs 
 export class ClaudeCodeProvider extends BaseLaunchProvider {
   readonly id = 'claude-code';
   readonly adapter = CLAUDE_ADAPTER;
+  /** Squad seat contract (#675, D1). Persona prompt and denylist are native argv flags. */
+  readonly squadSeat: import('../launch-provider.js').SquadSeatCapability = {
+    instructions: true,
+    commandDeny: 'native',
+    executionTools: true,
+    foldPersonaIntoGuidance: false
+  };
   readonly acceptsUnlistedModelTargets = true;
 
   launchMetadata(_input: {

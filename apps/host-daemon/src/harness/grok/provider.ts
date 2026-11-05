@@ -93,6 +93,13 @@ function grokBinary(config: AppConfig): string {
 export class GrokProvider extends BaseLaunchProvider {
   readonly id = 'grok';
   readonly adapter = GROK_ADAPTER;
+  /** Squad seat contract (#675, D1). MCP through the config overlay is unproven, so no execution tools; seats are refused. */
+  readonly squadSeat: import('../launch-provider.js').SquadSeatCapability = {
+    instructions: false,
+    commandDeny: 'none',
+    executionTools: false,
+    foldPersonaIntoGuidance: false
+  };
   readonly acceptsUnlistedModelTargets = true;
 
   modelContribution(targetId: string, _level?: ModelLevel) {

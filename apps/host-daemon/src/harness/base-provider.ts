@@ -65,7 +65,7 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
 
   /** Compatibility bridge while native encoders move into harness-local adapters. */
   readonly integration: HarnessIntegrationAdapter = {
-    configure: ({ profile, mcp, guidance, lifecycle, auth }) => {
+    configure: ({ profile, mcp, guidance, instructionsFile, lifecycle, auth }) => {
       const hookUrls: ProviderHookUrls = lifecycle ? {
         stop: lifecycle.stop,
         notify: lifecycle.blocked?.replace(/\/blocked$/, ''),
@@ -82,9 +82,9 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
         hookArgs: lifecycle ? this.hookArgs(profile as LaunchProfileId, hookUrls) : [],
         authArgs: injection.args ?? [],
         authEnv: injection.env,
-        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url) : {},
+        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url, instructionsFile) : {},
         mcpConfigFile: mcp
-          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url) ?? undefined)
+          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url, instructionsFile) ?? undefined)
           : undefined
       };
     }
@@ -158,7 +158,8 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    */
   mcpEnv(
     _profile: LaunchProfileId,
-    _mcpUrl: string
+    _mcpUrl: string,
+    _instructionsFile?: string
   ): Record<string, string> {
     return {};
   }
@@ -174,7 +175,8 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    */
   mcpConfigFile(
     _profile: LaunchProfileId,
-    _mcpUrl: string
+    _mcpUrl: string,
+    _instructionsFile?: string
   ): { envVar: string; contents: string } | null {
     return null;
   }

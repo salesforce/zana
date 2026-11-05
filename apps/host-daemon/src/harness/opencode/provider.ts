@@ -502,6 +502,13 @@ export function classifyOpenCodePaneCommand(command: string): AgentLiveness {
 
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
+  /** Squad seat contract (#675, D1). Persona text rides an instructions file. Denylist stays none until the pane-side PATH delivery is built and re-proven (u-spike: shim-wins: no). */
+  readonly squadSeat: import('../launch-provider.js').SquadSeatCapability = {
+    instructions: true,
+    commandDeny: 'none',
+    executionTools: true,
+    foldPersonaIntoGuidance: false
+  };
 
   /**
    * The shared (registry singleton) adapter has no installation-specific models.
@@ -709,8 +716,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * "remote"` + `url` is OpenCode's `StreamableHTTPClientTransport` server shape,
    * matching the zcc-inbox streamable-http server the claude path points at.
    */
-  mcpEnv(_profile: LaunchProfileId, mcpUrl: string): Record<string, string> {
-    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(this.zccInboxConfig(mcpUrl)) };
+  mcpEnv(_profile: LaunchProfileId, mcpUrl: string, instructionsFile?: string): Record<string, string> {
+    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(this.zccInboxConfig(mcpUrl, instructionsFile)) };
   }
 
   /**
@@ -729,12 +736,12 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * Local spawns only — the remote path carries MCP in its own inline env
    * (buildRemoteCommand), where a host-local file wouldn't exist.
    */
-  mcpConfigFile(_profile: LaunchProfileId, mcpUrl: string): { envVar: string; contents: string } {
-    return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl)) };
+  mcpConfigFile(_profile: LaunchProfileId, mcpUrl: string, instructionsFile?: string): { envVar: string; contents: string } {
+    return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl, instructionsFile)) };
   }
 
   /** The zcc-inbox `mcp` config block — shared by the env and file channels. */
-  private zccInboxConfig(mcpUrl: string) {
+  private zccInboxConfig(mcpUrl: string, instructionsFile?: string) {
     return {
       mcp: {
         'zcc-inbox': {
@@ -742,7 +749,10 @@ export class OpenCodeProvider extends BaseLaunchProvider {
           url: mcpUrl,
           enabled: true
         }
-      }
+      },
+      // A Squad seat's persona text (#675): OpenCode's `instructions` key takes file
+      // paths. Both config channels carry it, like the MCP block. Absent otherwise.
+      ...(instructionsFile ? { instructions: [instructionsFile] } : {})
     };
   }
 

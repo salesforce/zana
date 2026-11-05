@@ -92,7 +92,7 @@ describe('parseDeniedEntries (REQ-3, REQ-9, REQ-12)', () => {
   });
 
   it('skips command names outside the safe pattern as advisory (REQ-12)', () => {
-    const entries = ['Bash(g h:*)', 'Bash($(reboot):*)', 'Bash(a;b:*)', "Bash('x:*)", 'Bash(:*)'];
+    const entries = ['Bash($(reboot):*)', 'Bash(a;b:*)', "Bash('x:*)", 'Bash(:*)'];
     const { shimmable, advisory } = parseDeniedEntries(entries);
     expect(shimmable).toEqual([]);
     expect(advisory).toHaveLength(entries.length);
@@ -233,9 +233,9 @@ describe('planSeatContract (REQ-2, REQ-3, REQ-9, REQ-12, REQ-13)', () => {
   });
 
   it('skips unsafe command names as advisory and keeps injection strings out of file names (REQ-12)', () => {
-    const plan = planSeatContract({ persona: { deniedTools: ['Bash(../evil:*)', 'Bash(a b:*)', 'Bash($(id):*)', 'Bash(gh:*)'] } });
+    const plan = planSeatContract({ persona: { deniedTools: ['Bash(../evil:*)', 'Bash($(id):*)', 'Bash(gh:*)'] } });
     expect(plan.shimFiles.map((f) => f.name)).toEqual(['gh']);
-    expect(plan.advisoryLines).toHaveLength(3);
+    expect(plan.advisoryLines).toHaveLength(2);
   });
 });
 

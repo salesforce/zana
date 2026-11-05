@@ -205,6 +205,13 @@ function codexHookOverrideMulti(event: string, entries: ReadonlyArray<{ matcher:
 
 export class CodexProvider extends BaseLaunchProvider {
   readonly id = 'codex';
+  /** Squad seat contract (#675, D1). Persona text folds into the single developer_instructions value. No denylist: u-spike showed a PATH shim loses to the login shell path_helper (shim-wins: no). */
+  readonly squadSeat: import('../launch-provider.js').SquadSeatCapability = {
+    instructions: true,
+    commandDeny: 'none',
+    executionTools: true,
+    foldPersonaIntoGuidance: true
+  };
   /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`gpt-5.5`, …). */
   readonly acceptsUnlistedModelTargets = true;
   private discoveredModels: readonly HarnessModelTarget[] = [];

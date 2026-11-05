@@ -127,6 +127,13 @@ function cursorBinary(config: AppConfig): string {
 
 export class CursorProvider extends BaseLaunchProvider {
   readonly id = 'cursor-agent';
+  /** Squad seat contract (#675, D1). No per-session MCP flag or env, so no execution tools; seats are refused. */
+  readonly squadSeat: import('../launch-provider.js').SquadSeatCapability = {
+    instructions: false,
+    commandDeny: 'none',
+    executionTools: false,
+    foldPersonaIntoGuidance: false
+  };
   /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`default`, `grok-4.6`). */
   readonly acceptsUnlistedModelTargets = true;
   private discoveredModels: readonly HarnessModelTarget[] = [];
