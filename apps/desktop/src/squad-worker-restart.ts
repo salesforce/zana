@@ -1,3 +1,4 @@
+import { squadSeatMarkerFor } from './squad-seat-launch.js';
 import { realpathSync } from 'node:fs';
 import type {
   CreateTerminalRequest,
@@ -130,6 +131,7 @@ async function launchWithTeamOptions(
   const coordinationMode = record?.coordinationMode ?? session.cohort?.coordinationMode ?? 'interactive-team';
   const spawnOpts = {
     ...input.spawnOpts,
+    ...squadSeatMarkerFor(input.request),
     coordinationMode,
     autonomous: squadWorkerAutonomous(coordinationMode, deps.teamLaunchEnabled()),
     suppressPersonaInitialPrompt: squadWorkerDurableCoordination(coordinationMode),

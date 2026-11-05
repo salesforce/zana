@@ -579,8 +579,10 @@ describe('launchTeam non-claude recovery, orchestrator binding failure and orche
       expect(partial.value.failedSlots.map((s) => s.reason).join()).toContain('cannot bind initial task');
     }
     const durable = await launchTeam('team1', 'p1', { callerPrincipalId: 'owner', launchRequestId: reqId(), coordinationMode: 'structured', slots } as never);
-    expect(durable).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
-    expect(durable.ok ? '' : durable.message).toContain('cannot bind initial task');
+    // #675: a durable launch whose orchestrator harness has no execution tools is now refused
+    // by the seat preflight before any seat spawns (it used to fail later, at task binding).
+    expect(durable).toMatchObject({ ok: false, code: 'UNSUPPORTED' });
+    expect(durable.ok ? '' : durable.message).toMatch(/execution tools/i);
   });
 
   it('launches an orchestrator-less team and skips the orchestrator step', async () => {

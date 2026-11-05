@@ -1,5 +1,6 @@
 import type { CreateTerminalRequest, Result, TerminalSession } from '@zana-ai/zcc-domain/product';
 import type { RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
+import { restoreSpawnOptions } from './squad-seat-launch.js';
 import {
   releaseSquadWorktreeFollowUp,
   squadWorktreeFollowUpExecution,
@@ -106,9 +107,12 @@ export function restoreCapabilityLaunch(opts: RestoreLaunchOptions): Promise<Res
     return opts.launch({
       request: resolved.value,
       principal: opts.restorePrincipal(capability),
-      spawnOpts: capability.sessionId
-        ? { preallocatedSessionId: capability.sessionId, retainWorktree: Boolean(capability.followUpExecutionId) }
-        : undefined,
+      spawnOpts: restoreSpawnOptions(
+        capability.sessionId
+          ? { preallocatedSessionId: capability.sessionId, retainWorktree: Boolean(capability.followUpExecutionId) }
+          : undefined,
+        resolved.value
+      ),
       teamId: capability.request.cohort?.teamId,
       legacyPersonaFacetCompatibility: opts.isTeamWorkerRestore(capability.request),
       followUpExecutionId: capability.followUpExecutionId
