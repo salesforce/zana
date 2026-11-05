@@ -26,10 +26,11 @@ describe('CursorProvider model routing', () => {
     expect(provider.modelContribution('grok-4.6')).toEqual({ args: ['--model', 'grok-4.6'] });
     expect(provider.adapter.descriptor.targets?.modelLevelMapping).toEqual({
       low: undefined,
-      medium: 'gpt-5.6-terra-medium',
-      high: 'gpt-5.6-sol-medium',
+      medium: undefined,
+      high: undefined,
       'extra-high': undefined
     });
+    expect(provider.adapter.descriptor.targets?.defaultModelTierRules?.high).toContain('high');
   });
 
   it('overlays live --list-models families when discovery succeeds', () => {

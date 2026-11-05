@@ -38,14 +38,16 @@ function readLedger(filePath: string, now: () => number): Snapshot {
   return empty();
 }
 
-/** Drop the oldest finished records beyond the cap; pending ones are never evicted. */
-function prune(state: StateFile, maxRecords: number): void {
+/** Drop the oldest finished records beyond the cap (pending and staging ones are never evicted) and return them. */
+function prune(state: StateFile, maxRecords: number): SquadProposalRecord[] {
   const excess = state.records.length - maxRecords;
-  if (excess <= 0) return;
+  if (excess <= 0) return [];
   const doomed = new Set(
-    state.records.filter((r) => r.state !== 'pending').sort((a, b) => a.createdAt - b.createdAt).slice(0, excess).map((r) => r.id)
+    state.records.filter((r) => r.state !== 'pending' && r.state !== 'staging').sort((a, b) => a.createdAt - b.createdAt).slice(0, excess).map((r) => r.id)
   );
+  const pruned = state.records.filter((r) => doomed.has(r.id));
   state.records = state.records.filter((r) => !doomed.has(r.id));
+  return clone(pruned);
 }
 
 async function persist(filePath: string, snapshot: Snapshot): Promise<void> {
@@ -69,15 +71,20 @@ export function createSquadProposalStore(options: SquadProposalStoreOptions) {
   const read = () => readLedger(options.filePath, now);
 
   return {
-    async create(record: SquadProposalRecord): Promise<SquadProposalRecord> {
+    /** Store a record; `pruned` are the finished records evicted to stay under the cap, so their private files can be removed. */
+    async create(record: SquadProposalRecord): Promise<{ record: SquadProposalRecord; pruned: SquadProposalRecord[] }> {
       return queue.run(async () => {
         assertValidRecord(record);
         const snapshot = read();
         snapshot.state.records.push(clone(record));
-        prune(snapshot.state, maxRecords);
+        const pruned = prune(snapshot.state, maxRecords);
         await persist(options.filePath, snapshot);
-        return clone(record);
+        return { record: clone(record), pruned };
       });
+    },
+    /** Every record, for the staged-files sweep. */
+    async list(): Promise<SquadProposalRecord[]> {
+      return queue.run(async () => clone(read().state.records));
     },
     async get(id: string): Promise<SquadProposalRecord | undefined> {
       return queue.run(async () => {

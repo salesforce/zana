@@ -89,6 +89,12 @@ describe('sourcePathRefusal', () => {
     expect(sourcePathRefusal('/Users/me/.zcc/worktrees/w/a.md', policy)).toBeUndefined();
   });
 
+  it('keeps staged proposal attachments readable', () => {
+    expect(READABLE_DATA_DIRS).toContain('squad-proposals');
+    expect(sourcePathRefusal('/Users/me/.zcc/squad-proposals/staged/p1/plan.md', policy)).toBeUndefined();
+    expect(sourcePathRefusal('/Users/me/.zcc/squad-proposals.json', policy)).toBe('sensitive');
+  });
+
   it('keeps a Project cloned into a data folder readable (the host daemon\'s default clone path)', () => {
     expect(READABLE_DATA_DIRS).toContain('checkouts');
     expect(sourcePathRefusal('/Users/me/.zcc/checkouts/app/docs/plan.md', { ...policy, roots: ['/Users/me/.zcc/checkouts/app', home] })).toBeUndefined();

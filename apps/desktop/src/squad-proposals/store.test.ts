@@ -99,7 +99,9 @@ describe('squad proposal store', () => {
     await store.create(rec('old-pending', { createdAt: 1 }));
     await store.create(rec('done1', { createdAt: 2, state: 'dismissed' }));
     await store.create(rec('done2', { createdAt: 3, state: 'launched', executionId: 'e2' }));
-    await store.create(rec('new', { createdAt: 4 }));
+    const { record, pruned } = await store.create(rec('new', { createdAt: 4 }));
+    expect(record.id).toBe('new');
+    expect(pruned.map((r) => r.id)).toEqual(['done1']);
     expect(await store.get('done1')).toBeUndefined();
     expect(await store.get('old-pending')).toBeDefined();
     await store.create(rec('p3', { createdAt: 5 }));
@@ -107,6 +109,15 @@ describe('squad proposal store', () => {
     // Only pending records remain: nothing may be evicted even above the cap.
     expect(await store.get('old-pending')).toBeDefined();
     expect((await store.listPending('p1')).length).toBe(4);
+  });
+
+  it('never evicts a staging record and lists every record', async () => {
+    const store = createSquadProposalStore({ filePath: join(dir(), 's.json'), maxRecords: 1 });
+    await store.create(rec('stage', { createdAt: 1, state: 'staging', staged: { bytes: 5 } }));
+    const { pruned } = await store.create(rec('pend', { createdAt: 2 }));
+    expect(pruned).toEqual([]);
+    expect((await store.list()).map((r) => r.id)).toEqual(['stage', 'pend']);
+    expect((await store.listPending('p1')).map((r) => r.id)).toEqual(['pend']);
   });
 
   it('expires due pending records only', async () => {

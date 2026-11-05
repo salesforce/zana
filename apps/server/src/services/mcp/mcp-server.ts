@@ -1394,6 +1394,9 @@ function listenLoopback(server: Server, port: number): Promise<void> {
   });
 }
 
+/** Loopback, credential-gated route; tools bound their own inputs. 64 MiB covers the 16 MiB attachment budget JSON-escaped. */
+const MCP_MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
+
 export async function startMcpServer(opts: McpServerOptions): Promise<McpServerHandle> {
   const log = opts.log ?? ((m) => console.log(m));
 
@@ -2026,7 +2029,10 @@ async function handleRequest(
   // integration tests + the execution-waiting-delivery E2E).
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
-    enableJsonResponse: true
+    enableJsonResponse: true,
+    // The SDK default is 4 MiB. Squad attachments are passed by value (16 MiB of text across
+    // items, more once JSON-escaped), so a tools/call body must be readable up to that.
+    maxRequestBodySize: MCP_MAX_REQUEST_BODY_BYTES
   });
 
   const mcp = await buildProjectMcpServer({

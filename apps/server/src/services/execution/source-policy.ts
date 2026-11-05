@@ -69,7 +69,9 @@ export const READABLE_DATA_DIRS: readonly string[] = [
   'worktrees',
   // A Project cloned by the host daemon lives in <dataDir>/checkouts: PROJECT_CHECKOUTS_DIR_NAME, see packages/host-workspace/src/workspace.ts.
   'checkouts',
-  'personal-workspaces'
+  'personal-workspaces',
+  // Private copies of attachments kept for a pending Squad proposal: SQUAD_STAGING_PARENT_DIR_NAME, see apps/desktop/src/squad-proposals/staging.ts.
+  'squad-proposals'
 ];
 
 /** The bases a policy actually allows, named for a refusal message ("the project, your home folder and the clone root"). */

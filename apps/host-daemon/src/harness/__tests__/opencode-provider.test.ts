@@ -862,8 +862,12 @@ describe('OpenCode portable model levels', () => {
     const view = withLiveModelTargets(new OpenCodeProvider(), ['provider-a/fast', 'provider-b/large']);
     const input = { config: CONFIG, profile: 'opencode' as const, extraArgs: [], scope: 'local' as const };
     expect(resolveModelTarget(view, input).targetId).toBeUndefined();
-    expect(() => resolveModelTarget(view, { ...input, persona: { id: 'p', name: 'P', modelLevel: 'low' } }))
+    const low = { ...input, persona: { id: 'p', name: 'P', modelLevel: 'low' as const } };
+    // No seeded rule matches this inventory: strict callers fail, others use the harness default.
+    expect(() => resolveModelTarget(view, { ...low, strictTier: true }))
       .toThrow('OpenCode does not support low model level.');
+    expect(resolveModelTarget(view, low)).toMatchObject({ tierFallback: 'low', contribution: {} });
+    expect(resolveModelTarget(view, low).targetId).toBeUndefined();
     expect(resolveModelTarget(view, { ...input, persona: { id: 'p', name: 'P', modelLevel: 'low' },
       authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'provider-a/fast' } }).targetId)
       .toBe('provider-a/fast');
@@ -901,8 +905,8 @@ describe('OpenCode launch-scoped live model view (OC1)', () => {
       authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'custom/gpt-7-luna' } });
     const b = render({ profile: 'opencode', config: CONFIG, remote, persona,
       authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'custom/gpt-8-luna' } });
-    expect(() => render({ profile: 'opencode', config: CONFIG, remote, persona }))
-      .toThrow('OpenCode does not support low model level.');
+    // Without a pin or a live inventory the tier falls back to the harness default model.
+    expect(render({ profile: 'opencode', config: CONFIG, remote, persona }).cmd).not.toContain('--model');
     expect(a.cmd).toContain('custom/gpt-7-luna');
     expect(b.cmd).toContain('custom/gpt-8-luna');
     expect(b.cmd).not.toContain('gpt-7-luna');

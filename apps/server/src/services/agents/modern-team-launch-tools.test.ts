@@ -427,7 +427,13 @@ describe('Modern owner execution catalog', () => {
       'squad_plan_check',
       'list_teams'
     ]);
-    expect(session.tools[0]?.inputSchema).toEqual(getExecutionToolDescriptors().find((descriptor) => descriptor.name === 'execution.start')!.inputSchema);
+    // execution.start is a union schema; MCP clients (OpenCode) reject a tool list
+    // whose schema lacks a top-level object type, which hid every host tool.
+    expect(session.tools[0]?.inputSchema).toEqual({
+      type: 'object',
+      ...getExecutionToolDescriptors().find((descriptor) => descriptor.name === 'execution.start')!.inputSchema
+    });
+    for (const row of session.tools) expect((row.inputSchema as { type?: unknown }).type).toBe('object');
   });
 });
 

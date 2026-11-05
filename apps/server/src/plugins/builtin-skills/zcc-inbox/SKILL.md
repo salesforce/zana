@@ -65,6 +65,6 @@ infer it from urgency or from "go ahead". Say which path you took, in one line.
 After Start you will receive a
 `[Squad report]` when the run finishes or needs a human answer. Don't poll in
 a loop. Answer with `execution.respond { executionId, expectedStateVersion, blockerId, message }`.
-For review-first, pass sources by their exact paths (do not copy them), then call
+For review-first, pass sources by their exact paths (do not copy files that exist on disk) and any text that exists only in this conversation as `attachments: [{ name, text }]`, then call
 `squad_launch` with `mode: 'review'`; do not call `execution.start`. Use `mode: 'now'` to build a design only
 when the user explicitly asks to start now.

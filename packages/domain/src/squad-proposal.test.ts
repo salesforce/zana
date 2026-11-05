@@ -57,6 +57,8 @@ describe('SQUAD_PROPOSAL_LIMITS', () => {
       planTextBytes: 1_048_576,
       maxPendingPerProject: 20,
       maxRecords: 200,
+      maxStagedBytes: 67_108_864,
+      stagingTimeoutMs: 600_000,
       ttlMs: 604_800_000,
       reportChars: 2048,
       ptyQuietMs: 30_000,
