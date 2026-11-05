@@ -28,8 +28,20 @@ const coordinatorPersona = 'e2e-modern-member-coordinator';
 const commandPrefix = 'SQUAD_FIXTURE:';
 const marker = 'MODERN_MEMBER_ASSIGNMENT_REACHED_PROVIDER';
 
-const test = base.extend({
-  launchEnv: async ({ home }, use) => {
+const test = base.extend<{ preinstallProbe: boolean }>({
+  preinstallProbe: [false, { option: true }],
+  launchEnv: async ({ home, preinstallProbe }, use) => {
+    if (preinstallProbe) {
+      // Installed before launch so the plugin loads once at boot; a row written into a running
+      // service is never noticed, and reloading it restarts the worker.
+      await buildPluginHost(probePluginDir, '1.0.0');
+      mkdirSync(join(home, '.zcc', 'plugins'), { recursive: true });
+      writeFileSync(join(home, '.zcc', 'plugins', 'installed.json'), JSON.stringify({ version: 1, plugins: [{
+        id: 'platform-hooks-probe', version: '0.1.0', name: 'Platform Hooks Probe', enabled: true, status: 'running',
+        provenance: 'direct', sourceKind: 'path', source: `path:${probePluginDir}`, rootDir: probePluginDir,
+        serverEntry: './server.ts', appEntry: null, installedAt: Date.now(), updatedAt: Date.now()
+      }] }));
+    }
     const bin = join(home, 'modern-member-bin');
     mkdirSync(bin);
     // Observe the real fixture's request boundary, not a later polling snapshot.
@@ -438,33 +450,17 @@ test('Modern member Job Team delivers assigned work through ACP, fences role and
   } finally { await probe.cleanup(); }
 });
 
+test.describe('preinstalled dispatch probe plugin', () => {
+  test.use({ preinstallProbe: true });
+
 test('a rejecting dispatch plugin refuses Modern squad member start without creating a member, then allows it', async ({ app }) => {
   test.setTimeout(180_000);
-  await buildPluginHost(probePluginDir, '1.0.0');
   const probe = await setup(app);
   const { home } = app;
   try {
-    const storePath = join(home, '.zcc', 'plugins', 'installed.json');
-    const store = JSON.parse(readFileSync(storePath, 'utf8')) as { plugins: unknown[] };
-    store.plugins.push({
-      id: 'platform-hooks-probe', version: '0.1.0', name: 'Platform Hooks Probe', enabled: true, status: 'running',
-      provenance: 'direct', sourceKind: 'path', source: `path:${probePluginDir}`, rootDir: probePluginDir,
-      serverEntry: './server.ts', appEntry: null, installedAt: Date.now(), updatedAt: Date.now()
-    });
-    writeFileSync(storePath, JSON.stringify(store));
-    // The running service does not notice a hand-written store row; without an explicit reload the
-    // plugin stays unloaded unless something else happens to reactivate it.
-    await probe.page.evaluate(() => window.cc.pluginApps.reload('platform-hooks-probe'));
     await expect.poll(() => probe.page.evaluate(async () =>
       (await window.cc.pluginApps.list()).find(row => row.id === 'platform-hooks-probe')?.status
     ), { timeout: 45_000 }).toBe('running');
-    // Loading seals the plugin's tool policy, which can restart its worker and drop in-memory state.
-    // Set the dispatch selection only after the sealed row is persisted.
-    await expect.poll(() => {
-      const row = (JSON.parse(readFileSync(storePath, 'utf8')) as { plugins: Array<{ id: string; toolPolicy?: unknown }> })
-        .plugins.find(candidate => candidate.id === 'platform-hooks-probe');
-      return row?.toolPolicy === 'true' || row?.toolPolicy === 'false';
-    }, { timeout: 30_000 }).toBe(true);
     const rpc = <T,>(method: string, args?: unknown) => probe.page.evaluate(
       ({ method, args }) => window.cc.pluginApps.callRpc('platform-hooks-probe', method, args), { method, args }) as Promise<T>;
     await rpc('setDispatchSelection', { kind: 'reject', message: 'squad-start-blocked' });
@@ -500,6 +496,7 @@ test('a rejecting dispatch plugin refuses Modern squad member start without crea
     const admitted = await rpc<Array<{ entry?: string; decision: { action: string } }>>('dispatchEventsList');
     expect(admitted.filter(event => event.entry === 'squad-member-start' && event.decision.action === 'proceed')).toHaveLength(2);
   } finally { await probe.cleanup(); }
+});
 });
 
 test('stopping a Modern member Job Team cancels active ACP turns and rejects late member outcomes', async ({ app }) => {
