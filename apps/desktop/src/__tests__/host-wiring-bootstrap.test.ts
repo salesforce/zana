@@ -507,7 +507,7 @@ describe('host bootstrap wiring', () => {
       const { result, spawn } = await launchAndCapture({ profile: 'shell', prompt: 'do the thing' });
       expect(result).toMatchObject({ ok: true });
       expect(spawn).toBeDefined();
-      expect(h.admission).toHaveBeenCalledWith({ projectId: project.id, entry: 'initial', origin: 'user' });
+      expect(h.admission).toHaveBeenCalledWith({ projectId: project.id, entry: 'initial', origin: 'user', promptText: 'do the thing' });
     });
 
     it('refuses the launch with the plugin code and spawns nothing when admission refuses', async () => {
@@ -532,7 +532,7 @@ describe('host bootstrap wiring', () => {
         { projectId: project.id, profile: 'shell', cols: 80, rows: 24, prompt: 'task' },
         { kind: 'team', id: 'team:t1' }
       );
-      expect(h.admission).toHaveBeenCalledWith({ projectId: project.id, entry: 'job-team-dispatch', origin: 'system' });
+      expect(h.admission).toHaveBeenCalledWith({ projectId: project.id, entry: 'job-team-dispatch', origin: 'system', promptText: 'task' });
     });
 
     it('admits a control-plane reply against the session main holds and reports a refusal', async () => {
@@ -543,7 +543,7 @@ describe('host bootstrap wiring', () => {
       const replyTerminal = h.controlPlaneDeps.replyTerminal;
       h.admission.mockResolvedValue({ code: 'DISPATCH_WAITING', message: 'busy' });
       await expect(replyTerminal(sessionId, 'hi')).resolves.toEqual({ refused: { code: 'DISPATCH_WAITING', message: 'busy' } });
-      expect(h.admission).toHaveBeenCalledWith({ sessionId, projectId: project.id, entry: 'reply', origin: 'user' });
+      expect(h.admission).toHaveBeenCalledWith({ sessionId, projectId: project.id, entry: 'reply', origin: 'user', promptText: 'hi' });
       h.admission.mockResolvedValue(null);
       expect(await replyTerminal('ghost', 'hi')).toBeFalsy();
       expect(h.admission).toHaveBeenCalledTimes(1);
