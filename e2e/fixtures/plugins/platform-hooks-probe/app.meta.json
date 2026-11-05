@@ -1,0 +1,11 @@
+{
+  "sdkMajor": 1,
+  "sdkVersion": "0.1.0",
+  "artifactFormatVersion": 1,
+  "pluginId": "platform-hooks-probe",
+  "pluginVersion": "0.1.0",
+  "builtWith": {
+    "zccVersion": "2.5.1",
+    "pluginSdkVersion": "0.1.0"
+  }
+}
