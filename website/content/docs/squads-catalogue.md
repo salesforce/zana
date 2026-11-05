@@ -59,19 +59,18 @@ A tier is a portable level, so a Persona can ask for "Low" or "High" without nam
 |---|---|
 | Claude | Fixed: Low is haiku, Medium sonnet, High opus, Extra-high fable. |
 | OpenCode, Codex, Cursor | Ordered rules matched against the models installed on your machine. Zana ships a starting rule set, and the latest installed version wins (for example, the newest `terra` model for Medium). |
-| Other harnesses | No built-in rules. Tiers run on the harness's default model until you add rules. |
+| Other harnesses | No model list to choose from, so tiers run on the harness's default model. |
 
 If no rule matches an installed model, the worker runs on the harness's own default model. A launch is not refused.
 
 #### Change the mapping
 
-Open **Settings → AI Harness → CLI Agent** and expand a harness. **Model tiers** lists Low, Medium, High, and Extra-high with the model each currently resolves to and a **Default** or **Custom** tag.
+Open **Settings → AI Harness → CLI Agent** and expand a harness that lists models. **Model tiers** shows Low, Medium, High, and Extra-high, each with a model picker.
 
-1. Select **Edit** on a tier.
-2. Add rules in the order to try them. A rule is either an exact model ID or a name term such as `terra`. A term picks the newest installed model whose name contains it.
-3. Select **Save**. Select **Reset to default** to return that tier to Zana's rules.
+1. Open the picker for a tier.
+2. Choose a specific model to pin that tier to it, or choose **Default** to follow Zana's rule (the newest matching installed model).
 
-Rules are stored per harness in `harnessRouting.byAdapter.<harness>.modelTierRules`. A tier can hold up to 8 rules of up to 128 characters.
+A pinned model that is no longer installed stays listed as "not installed" until you pick another or return to **Default**. Choices are stored per harness in `harnessRouting.byAdapter.<harness>.modelTierRules`.
 
 afcode picks its own models. This guide makes no claim about launching Squads on afcode.
 

@@ -153,6 +153,7 @@ const STAGING_RETRIES = 5;
 
 const fail = <C extends SquadLaunchNowErrorCode = SquadProposalErrorCode>(code: C, message: string): { ok: false; code: C; message: string } => ({ ok: false, code, message });
 const ok = <T>(value: T): { ok: true; value: T } => ({ ok: true, value });
+const noStagingStore = () => fail('INVALID', 'Attached content cannot be kept for review here. Start the Squad now instead, or pass files in sources.');
 const tooManyProposals = () => fail('TOO_MANY_PROPOSALS',
   `This project already has ${SQUAD_PROPOSAL_LIMITS.maxPendingPerProject} pending Squad launch proposals. Dismiss some in the Inbox first.`);
 
@@ -567,7 +568,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
       return ok(true as const);
     }
     const staging = deps.staging;
-    if (!staging) return fail('INVALID', 'Attached content cannot be kept for review here. Start the Squad now instead, or pass files in sources.');
+    if (!staging) return noStagingStore();
     const used = await staging.usedBytes();
     if (used + record.staged.bytes > SQUAD_PROPOSAL_LIMITS.maxStagedBytes) {
       return fail('TOO_MANY_PROPOSALS',
@@ -615,9 +616,12 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         await store.update(record.id, (r) => { if (r.state === 'staging') r.state = 'dismissed'; });
       }
     }
+    // Scan the disk first, then read records: a proposal that finishes staging mid-scan is
+    // already stored (or still in flight) by the time its folder is judged.
+    const found = await staging.entries();
     const records = new Map((await store.list()).map((r) => [r.id, r]));
     let removed = 0;
-    for (const entry of await staging.entries()) {
+    for (const entry of found) {
       if (entry.id && stagingInFlight.has(entry.id)) continue;
       if (entry.id) {
         const record = records.get(entry.id);
@@ -700,7 +704,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         const files: StagedFile[] = prepared.value.attachments.map(({ name, text }) => ({ name, text }));
         let staged: Parameters<typeof newRecord>[5];
         if (files.length) {
-          if (!deps.staging) return fail('INVALID', 'Attached content cannot be kept for review here. Start the Squad now instead, or pass files in sources.');
+          if (!deps.staging) return noStagingStore();
           const root = await deps.staging.prepareRoot();
           const id = deps.newId();
           staged = {

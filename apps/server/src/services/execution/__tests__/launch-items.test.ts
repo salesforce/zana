@@ -92,6 +92,10 @@ describe('validateLaunchItems', () => {
     expect(used([src('a.md', 'x'), src('a.md', 'y'), src('.hidden', 'z')]).kept.map((k) => k.name)).toEqual(['a.md', 'a.md', '.hidden']);
   });
 
+  it.each(['a:b.md', 'a*.md', 'a?.md', 'a"b.md', 'a<b.md', 'a>b.md', 'a|b.md'])('rejects the Windows-invalid name %s', (name) => {
+    expect(validateLaunchItems([att(name)])).toMatchObject({ ok: false, code: 'INVALID_NAME' });
+  });
+
   it('rejects an unsafe attachment name instead of rewriting it', () => {
     expect(validateLaunchItems([att('../x.md')])).toMatchObject({ ok: false, code: 'INVALID_NAME' });
   });

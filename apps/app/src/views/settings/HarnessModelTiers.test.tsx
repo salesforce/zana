@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
@@ -126,5 +126,27 @@ describe('HarnessModelTiers', () => {
   it('disables the pickers when the harness is unavailable', () => {
     setup({ d: descriptor({}, false) });
     expect((trigger('Low') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows an error when saving a tier fails, then clears it on the next success', async () => {
+    const onUpdate = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
+    render(<HarnessModelTiers family="opencode" label="OpenCode" descriptor={descriptor()} config={{} as AppConfig} onUpdate={onUpdate} />);
+    pick('Low', 'Luna 1');
+    expect((await screen.findByRole('alert')).textContent).toContain('disk full');
+    pick('Low', 'Terra 1');
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('reports a synchronous update failure too', async () => {
+    const onUpdate = vi.fn(() => { throw 'nope'; });
+    render(<HarnessModelTiers family="opencode" label="OpenCode" descriptor={descriptor()} config={{} as AppConfig} onUpdate={onUpdate} />);
+    pick('Low', 'Luna 1');
+    expect((await screen.findByRole('alert')).textContent).toContain('nope');
+  });
+
+  it('keeps a stored rule that matches no installed model visible as not installed', () => {
+    setup({ config: { harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTierRules: { low: ['gone/model'] } } } } } as unknown as Partial<AppConfig> });
+    expect(trigger('Low').textContent).toContain('gone/model (not installed)');
+    expect(screen.getByText(/not installed\. Choose Default/)).toBeTruthy();
   });
 });

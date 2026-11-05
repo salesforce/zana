@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { AppConfig, HarnessFamily } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { resolveTierFromRules } from '@zana-ai/zcc-domain/tier-rules';
@@ -10,6 +11,8 @@ type Tier = 'low' | 'medium' | 'high' | 'extra-high';
 export const MODEL_TIERS: readonly Tier[] = ['low', 'medium', 'high', 'extra-high'];
 
 const TIER_LABEL: Record<Tier, string> = { low: 'Low', medium: 'Medium', high: 'High', 'extra-high': 'Extra-high' };
+
+const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** True when the harness lists models, so each tier can be pointed at one. */
 export function usesTierRules(descriptor?: HarnessAdapterDescriptor): boolean {
@@ -30,6 +33,7 @@ export function HarnessModelTiers({
   config: AppConfig;
   onUpdate: (patch: Partial<AppConfig>) => Promise<void> | void;
 }) {
+  const [saveError, setSaveError] = useState<string>();
   if (!descriptor || !usesTierRules(descriptor)) return null;
   const models = descriptor.targets?.models ?? [];
   const liveIds = models.map((m) => m.id);
@@ -49,7 +53,12 @@ export function HarnessModelTiers({
     const next = Object.keys(tiers).length ? { ...rest, modelTierRules: tiers } : rest;
     if (Object.keys(next).length) byAdapter[family] = next;
     else delete byAdapter[family];
-    void onUpdate({ harnessRouting: Object.keys(byAdapter).length ? { schemaVersion: 1, byAdapter } : undefined });
+    const patch = { harnessRouting: Object.keys(byAdapter).length ? { schemaVersion: 1 as const, byAdapter } : undefined };
+    try {
+      Promise.resolve(onUpdate(patch)).then(() => setSaveError(undefined), (error: unknown) => setSaveError(describe(error)));
+    } catch (error) {
+      setSaveError(describe(error));
+    }
   };
 
   return (
@@ -64,14 +73,17 @@ export function HarnessModelTiers({
         const defaultId = resolveTierFromRules(seeds[tier], liveIds) ?? fixed[tier];
         const defaultName = nameOf(defaultId) ?? 'Harness default model';
         // A custom rule may be a name term rather than an id; show the model it resolves to.
-        const selected = custom ? (resolveTierFromRules(user, liveIds) ?? '') : '';
+        const resolved = custom ? resolveTierFromRules(user, liveIds) : undefined;
+        // A stored rule that matches nothing installed still overrides the tier; keep it visible.
+        const stale = custom && !resolved ? user![0]! : undefined;
+        const selected = resolved ?? stale ?? '';
         return (
           <Field
             key={tier}
             searchId={`${harnessRowPrefix(family)}model-tier-${tier}`}
             label={TIER_LABEL[tier]}
             layout="row"
-            help={custom ? 'Custom model. Choose Default to follow the latest.' : 'Default. Follows the latest matching model.'}
+            help={stale ? 'Custom model is not installed. Choose Default to follow the latest.' : custom ? 'Custom model. Choose Default to follow the latest.' : 'Default. Follows the latest matching model.'}
           >
             <span data-testid={`harness-tier-${tier}`}>
               <PopoverPicklist
@@ -82,6 +94,7 @@ export function HarnessModelTiers({
                 title={disabled ? descriptor.availability.reason ?? 'Harness unavailable' : undefined}
                 options={[
                   { value: '', label: `Default (${defaultName})` },
+                  ...(stale ? [{ value: stale, label: `${stale} (not installed)` }] : []),
                   ...models.map((m) => ({ value: m.id, label: m.label }))
                 ]}
               />
@@ -89,6 +102,7 @@ export function HarnessModelTiers({
           </Field>
         );
       })}
+      {saveError && <p role="alert" className="harness-settings-error">Could not save the model tier: {saveError}</p>}
     </HarnessOptionsGroup>
   );
 }

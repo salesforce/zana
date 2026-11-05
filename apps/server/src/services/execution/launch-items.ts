@@ -36,6 +36,8 @@ export type LaunchItemsResult =
 
 export const sha256Hex = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
+/** Characters Windows rejects in a file name; `:` also opens an alternate data stream. */
+const WINDOWS_INVALID = /[<>:"|?*]/;
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
@@ -49,6 +51,7 @@ export function attachmentNameProblem(name: string): string | undefined {
   if (name.includes('\0')) return 'contains a NUL character';
   if (CONTROL_CHARS.test(name)) return 'contains a control character';
   if (name.includes('/') || name.includes('\\')) return 'contains a path separator';
+  if (WINDOWS_INVALID.test(name)) return 'contains a character Windows does not allow (< > : " | ? *)';
   if (name.startsWith('.')) return 'starts with a dot';
   if (name.endsWith('.') || name.endsWith(' ')) return 'ends with a dot or space';
   if (WINDOWS_RESERVED.test(name.split('.')[0]!)) return 'is a reserved name';

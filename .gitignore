@@ -74,3 +74,8 @@ resources/scheduled-supervisor
 docker/remote-machine/.env
 docker/remote-machine/.proxy-state
 docker/remote-machine/.proxy.pid
+
+# Built by the app at launch from app.tsx; never commit
+e2e/fixtures/plugins/platform-hooks-probe/app.js
+e2e/fixtures/plugins/platform-hooks-probe/app.js.map
+e2e/fixtures/plugins/platform-hooks-probe/app.meta.json

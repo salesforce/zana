@@ -65,6 +65,20 @@ describe('execution source registry issueFromBytes', () => {
       .toMatchObject({ code: 'TOO_MANY_SOURCES' });
   }));
 
+  it('counts only the capabilities a launch would add against the outstanding limit', () => fixture(async (dir, clock) => {
+    const r = make(dir, clock);
+    for (let batch = 0; batch < 8; batch += 1) {
+      const items = Array.from({ length: 16 }, (_v, i) => ({ name: `f${batch}-${i}.md`, bytes: bytes(`${batch}:${i}`) }));
+      await r.issueFromBytes({ binding: A, projectId: P, items });
+    }
+    // At the limit, an attachment folded into an identical path source issues nothing, so it is allowed.
+    const existing = [{ name: 'same.md', byteSize: 4, sha256: sha256Hex(bytes('same')) }];
+    const folded = await r.issueFromBytes({ binding: A, projectId: P, existing, items: [{ name: 'same.md', bytes: bytes('same') }] });
+    expect(folded.views).toEqual([]);
+    expect(await failure(r.issueFromBytes({ binding: A, projectId: P, items: [{ name: 'new.md', bytes: bytes('new') }] })))
+      .toMatchObject({ code: 'TOO_MANY_SOURCES' });
+  }));
+
   it('refuses unsafe names, oversize items and too many items without issuing anything', () => fixture(async (dir, clock) => {
     const r = make(dir, clock);
     expect(await failure(r.issueFromBytes({ binding: A, projectId: P, items: [{ name: '../x.md', bytes: bytes('x') }] })))

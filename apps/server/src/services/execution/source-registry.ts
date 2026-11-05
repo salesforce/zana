@@ -550,7 +550,8 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
       ...input.items.map((item) => ({ kind: 'attachment' as const, name: item.name, byteSize: item.bytes.byteLength, sha256: sha256Hex(item.bytes) }))
     ]);
     if (!checked.ok) throw new ExecutionSourceError(sourceErrorFor(checked.code), checked.message);
-    if (capabilities.size + input.items.length > limits.maxOutstandingCapabilities) {
+    const issuing = checked.kept.filter(({ index }) => index >= existing.length).length;
+    if (capabilities.size + issuing > limits.maxOutstandingCapabilities) {
       throw new ExecutionSourceError('TOO_MANY_SOURCES', 'Too many outstanding execution source capabilities');
     }
     const views: ExecutionSourceCapabilityView[] = [];

@@ -101,7 +101,14 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
         { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION }
       ],
       modelLevelMapping: { low: undefined, medium: undefined, high: undefined, 'extra-high': undefined },
-      defaultModelTierRules: { low: ['luna', 'mini'], medium: ['terra'], high: ['sol'], 'extra-high': ['sol'] },
+      // Name terms first (they track new releases); exact catalog ids last so a harness with no live
+      // inventory still lands on a sensible model ('mini' alone would rank o1-mini above gpt-4o-mini).
+      defaultModelTierRules: {
+        low: ['luna', 'gpt-4o-mini', 'mini'],
+        medium: ['terra', 'gpt-4o'],
+        high: ['sol', 'gpt-5.5'],
+        'extra-high': ['sol', 'gpt-5.5']
+      },
       executionStateMapping: {
         plan: 'read-only + on-request',
         interactive: 'workspace-write + on-request',

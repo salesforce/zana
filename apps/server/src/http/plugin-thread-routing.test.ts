@@ -113,9 +113,10 @@ describe('resolvePluginThreadRouting — resolver failures', () => {
   });
 
   it('falls back to the harness default when no installed model matches the tier', async () => {
-    await expect(resolvePluginThreadRouting(input({
+    const routed = await resolvePluginThreadRouting(input({
       family: 'cursor', projectSettings: proj(routing('cursor', { modelLevel: 'low' }))
-    }))).resolves.toBeDefined();
+    }));
+    expect(JSON.stringify(routed)).not.toMatch(/--model/);
   });
 
   it('wraps a non-Error throw via String()', async () => {
