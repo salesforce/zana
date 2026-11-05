@@ -74,6 +74,12 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** Authenticated plugin scripts/install preparation may take several minutes. */
 const PLUGIN_CLI_TIMEOUT_MS = 300_000;
 /**
+ * An authenticated `term.create` may run launch preflight first, which can
+ * include a cold per-cwd native-agent discovery (several CLI invocations).
+ * The handshake ceiling would cut that off, so it gets its own finite deadline.
+ */
+const TERM_CREATE_TIMEOUT_MS = 45_000;
+/**
  * Ceiling on simultaneous in-flight connections (CLAUDE.md #5 — bound unbounded
  * work on the main event loop). The CLI is one-request-per-connection and short;
  * a same-uid process opening thousands of sockets is the only way to exceed
@@ -1124,6 +1130,10 @@ async function handleConnection(
     if (['plugin.cli', 'plugin.install', 'plugin.update', 'plugin.outdated'].includes(authd.op)) {
       clearTimeout(timer);
       timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT', message: 'plugin command timed out' }), PLUGIN_CLI_TIMEOUT_MS);
+    }
+    if (authd.op === 'term.create') {
+      clearTimeout(timer);
+      timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT', message: 'terminal launch timed out' }), TERM_CREATE_TIMEOUT_MS);
     }
     if (authd.op === 'plugin.toolApproval.request' && authd.caller === 'product-server') {
       const request = parsePluginToolApprovalRequest(authd.args);
