@@ -4,6 +4,7 @@ import { normalizePortableAttachments } from '../services/projects/portable-atta
 import { withoutSecretValues } from '../plugins/plugin-settings-redaction.js';
 import { handlePreviewsApi } from './previews-api.js';
 import { handlePluginPacksApi } from './product-plugin-packs.js';
+import { handleOnboardingApi } from './product-onboarding.js';
 import { libraryDocumentOperation } from '../services/library/library-documents.js';
 import { classifyExpectedRpcError } from '@zana-ai/zcc-contracts/rpc-error';
 import { LibraryDocumentRequestSchema, LIBRARY_DOCUMENT_BODY_LIMIT } from '@zana-ai/zcc-contracts/library-documents';
@@ -530,6 +531,7 @@ export async function handleProductHttp(
   }
 
   try {
+    if (handleOnboardingApi(response, path, method)) return true;
     if (await handleHelpVideosApi(request, response, ctx.helpVideos, path, method)) return true;
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;
     if (await handlePluginPacksApi(request, response, ctx.plugins?.pluginPacks, path, method)) return true;

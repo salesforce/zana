@@ -1,5 +1,6 @@
 import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
 import { isAgentsViewId } from '@zana-ai/zcc-domain/product';
+import { onboardingProgressSchema } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { isNotificationLevel, isOwnNotificationLevel, isProjectIcon } from '@zana-ai/zcc-domain';
 import { app } from 'electron';
@@ -971,6 +972,8 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   ) {
     normalized.lastSeenVersion = input.lastSeenVersion.trim();
   }
+  const onboarding = onboardingProgressSchema.safeParse(input.onboarding);
+  if (onboarding.success) normalized.onboarding = onboarding.data;
   if (typeof input.walkthroughCompleted === 'boolean') {
     normalized.walkthroughCompleted = input.walkthroughCompleted;
   }

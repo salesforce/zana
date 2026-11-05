@@ -1177,3 +1177,22 @@ describe('normalizeConfig — automatedUseUserConfig', () => {
     expect(normalizeConfig({ automatedUseUserConfig: 1 as never }).automatedUseUserConfig).toBeUndefined();
   });
 });
+
+
+describe('normalizeConfig — onboarding', () => {
+  it('preserves bounded progress across unrelated config writes', () => {
+    const onboarding = { version: 1, profileId: 'employees', audience: 'organization', step: 'connections',
+      marketplaceSource: 'path:/fixture', packId: 'starter', pluginIds: ['fixture-tool'] } as const;
+    expect(normalizeConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } }).onboarding).toEqual(onboarding);
+    store.setConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig().onboarding).toEqual(onboarding);
+  });
+  it.each([null, {}, { version: 2 }, { version: 1, profileId: 'employees', audience: 'general', step: 'bundles' }])(
+    'drops malformed or inconsistent progress %j', onboarding => {
+      expect(normalizeConfig({ onboarding: onboarding as never }).onboarding).toBeUndefined();
+    });
+  it('leaves legacy installations eligible for onboarding', () => {
+    expect(normalizeConfig({ walkthroughCompleted: true }).onboarding).toBeUndefined();
+  });
+});

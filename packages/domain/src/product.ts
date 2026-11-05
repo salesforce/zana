@@ -2211,6 +2211,8 @@ export interface AppConfig {
    * clearing this flag.
    */
   walkthroughCompleted?: boolean;
+  /** Remembered setup audience and resumable progress, independent of app updates. */
+  onboarding?: import('./onboarding.js').OnboardingProgress;
   /**
    * Whether the first-run setup checklist (the dependency doctor) has been
    * completed or dismissed. Absent / false ⇒ the checklist auto-opens once on
