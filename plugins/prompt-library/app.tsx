@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { definePluginApp, useComposer, useRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import type { SavedPrompt } from './server.js';
 
-const STYLE_TAG_ID = 'prompt-library-plugin-styles';
+export const STYLE_TAG_ID = 'prompt-library-plugin-styles';
 
-const PROMPT_LIBRARY_STYLES = `
+export const PROMPT_LIBRARY_STYLES = `
 .pl-trigger-btn {
   display: inline-flex;
   align-items: center;
@@ -49,8 +49,8 @@ const PROMPT_LIBRARY_STYLES = `
 .pl-dialog {
   width: min(680px, 100%);
   max-height: min(640px, 82vh);
-  background: var(--bg-panel, var(--bg, #18181b));
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--bg-panel, var(--bg-elevated, var(--bg, #181818)));
+  border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
   display: flex;
@@ -81,7 +81,7 @@ const PROMPT_LIBRARY_STYLES = `
 }
 
 .pl-title-icon {
-  color: var(--accent, #4c8bf5);
+  color: var(--accent, currentColor);
   display: inline-flex;
 }
 
@@ -98,7 +98,7 @@ const PROMPT_LIBRARY_STYLES = `
   padding: 0 10px;
   border-radius: 7px;
   border: 1px solid var(--border);
-  background: var(--bg, #121215);
+  background: var(--bg-input, var(--bg-panel, var(--bg, transparent)));
   color: var(--text-primary);
   font: inherit;
   font-size: 12.5px;
@@ -106,7 +106,7 @@ const PROMPT_LIBRARY_STYLES = `
   outline: none;
 }
 .pl-select:focus {
-  border-color: var(--accent, #4c8bf5);
+  border-color: var(--accent);
 }
 
 .pl-search-wrap {
@@ -129,7 +129,7 @@ const PROMPT_LIBRARY_STYLES = `
   padding: 0 12px 0 32px;
   border-radius: 7px;
   border: 1px solid var(--border);
-  background: var(--bg, #121215);
+  background: var(--bg-input, var(--bg-panel, var(--bg, transparent)));
   color: var(--text-primary);
   font: inherit;
   font-size: 13px;
@@ -139,7 +139,7 @@ const PROMPT_LIBRARY_STYLES = `
   color: var(--text-muted);
 }
 .pl-search-input:focus {
-  border-color: var(--accent, #4c8bf5);
+  border-color: var(--accent);
 }
 
 .pl-close-btn {
@@ -176,9 +176,9 @@ const PROMPT_LIBRARY_STYLES = `
   margin: 0;
   padding: 10px 12px;
   border-radius: 8px;
-  background: color-mix(in srgb, #ef4444 14%, transparent);
-  border: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 35%, transparent);
+  color: var(--danger-text, var(--danger, #ef4444));
   font-size: 12.5px;
 }
 
@@ -203,11 +203,11 @@ const PROMPT_LIBRARY_STYLES = `
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg, rgba(255, 255, 255, 0.02));
+  background: var(--bg-surface, var(--bg-panel, var(--bg, transparent)));
   transition: border-color 120ms ease;
 }
 .pl-card:hover {
-  border-color: var(--border-strong, rgba(255, 255, 255, 0.22));
+  border-color: var(--border-strong, var(--border));
 }
 
 .pl-card-text {
@@ -245,9 +245,9 @@ const PROMPT_LIBRARY_STYLES = `
 }
 
 .pl-btn-primary {
-  background: var(--accent, #4c8bf5);
-  border: 1px solid transparent;
-  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent, transparent);
+  color: var(--accent-contrast, #fff);
 }
 .pl-btn-primary:hover {
   filter: brightness(1.08);
@@ -280,11 +280,22 @@ const PROMPT_LIBRARY_STYLES = `
 }
 `;
 
+export function BookMarkedIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 2v8l3-3 3 3V2" />
+      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+    </svg>
+  );
+}
+
 export function injectStyles(): void {
   if (typeof document === 'undefined') return;
   const existing = document.getElementById(STYLE_TAG_ID);
   if (existing instanceof HTMLStyleElement) {
-    existing.textContent = PROMPT_LIBRARY_STYLES;
+    if (existing.textContent !== PROMPT_LIBRARY_STYLES) {
+      existing.textContent = PROMPT_LIBRARY_STYLES;
+    }
     return;
   }
   const tag = document.createElement('style');
@@ -293,66 +304,80 @@ export function injectStyles(): void {
   document.head.appendChild(tag);
 }
 
-export function PromptLibrary() {
-  useEffect(() => {
-    injectStyles();
-  }, []);
-  const composer = useComposer();
-  const rpc = useRpc();
-  const generation = useRef(0);
-  const dialog = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
-  const [scope, setScope] = useState('starred');
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<{ scope: string; entries: SavedPrompt[] }>({ scope: 'starred', entries: [] });
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  // Rows stay on screen while the next search loads or fails, but only within the scope that produced them:
-  // another scope's rows would carry the wrong Star/Unstar action.
-  const entries = results.scope === scope ? results.entries : [];
-  const updateEntries = (update: (rows: SavedPrompt[]) => SavedPrompt[]) => setResults(current => ({ ...current, entries: update(current.entries) }));
-  const context = composer.scope;
-  const threadId = 'threadId' in context ? context.threadId : undefined;
-  const projectId = 'projectId' in context ? context.projectId : undefined;
-  useEffect(() => {
-    if (!open) return;
-    const version = ++generation.current;
-    let cancelled = false;
-    setLoading(true); setError(''); setCursor(null);
-    const timer = setTimeout(() => {
-      void rpc.call(scope === 'starred' ? 'list' : 'history', { scope, threadId, projectId, query }).then(result => {
-        if (cancelled || version !== generation.current) return;
-        const page = result as { entries: SavedPrompt[]; nextCursor?: string };
-        setResults({ scope, entries: page.entries }); setCursor(page.nextCursor ?? null);
-      }).catch(reason => { if (!cancelled) setError(String(reason)); }).finally(() => { if (!cancelled) setLoading(false); });
-    }, 150);
-    return () => { cancelled = true; generation.current++; clearTimeout(timer); };
-  }, [open, scope, query, threadId, projectId, rpc]);
-  const more = async () => {
-    const version = generation.current;
-    setLoading(true);
-    try {
-      const page = await rpc.call('history', { scope, threadId, projectId, query, cursor }) as { entries: SavedPrompt[]; nextCursor?: string };
-      if (version !== generation.current) return;
-      updateEntries(rows => [...rows, ...page.entries]); setCursor(page.nextCursor ?? null);
-    } catch (reason) { if (version === generation.current) setError(String(reason)); } finally { if (version === generation.current) setLoading(false); }
-  };
-  const textOf = (row: SavedPrompt) => row.input.filter(part => part.type === 'text').map(part => part.text).join('\n');
-  const filteredEntries = entries.filter(row => scope !== 'starred' || textOf(row).toLowerCase().includes(query.toLowerCase()));
-  return <>
-    <button type="button" className="pl-trigger-btn" onClick={() => setOpen(true)}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M10 2v8l3-3 3 3V2" />
-        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
-      </svg>
+const textOf = (row: SavedPrompt) => row.input.filter(part => part.type === 'text').map(part => part.text).join('\n');
+
+function PromptTrigger({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" className="pl-trigger-btn" onClick={onClick}>
+      <BookMarkedIcon size={14} />
       <span>Prompt Library</span>
     </button>
-    {open && <div className="pl-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setOpen(false); }}>
-      <div ref={dialog} className="pl-dialog" role="dialog" aria-modal="true" aria-label="Prompt Library" onKeyDown={e => {
-        if (e.key === 'Escape') setOpen(false);
+  );
+}
+
+function PromptCard({
+  row,
+  scope,
+  onUse,
+  onToggleStar,
+}: {
+  row: SavedPrompt;
+  scope: string;
+  onUse: (row: SavedPrompt) => void;
+  onToggleStar: (row: SavedPrompt) => void;
+}) {
+  return (
+    <article className="pl-card">
+      <p className="pl-card-text">{textOf(row).slice(0, 800) || 'Attachments'}</p>
+      <div className="pl-card-actions">
+        <button type="button" className="pl-btn-primary" onClick={() => onUse(row)}>Use prompt</button>
+        <button type="button" className="pl-btn-secondary" onClick={() => onToggleStar(row)}>
+          {scope === 'starred' ? 'Unstar' : 'Star'}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function PromptDialog({
+  dialogRef,
+  scope,
+  setScope,
+  threadId,
+  projectId,
+  query,
+  setQuery,
+  error,
+  loading,
+  filteredEntries,
+  cursor,
+  onClose,
+  onUse,
+  onToggleStar,
+  onMore,
+}: {
+  dialogRef: React.RefObject<HTMLDivElement | null>;
+  scope: string;
+  setScope: (scope: string) => void;
+  threadId?: string | null;
+  projectId?: string | null;
+  query: string;
+  setQuery: (query: string) => void;
+  error: string;
+  loading: boolean;
+  filteredEntries: SavedPrompt[];
+  cursor: string | null;
+  onClose: () => void;
+  onUse: (row: SavedPrompt) => void;
+  onToggleStar: (row: SavedPrompt) => void;
+  onMore: () => void;
+}) {
+  return (
+    <div className="pl-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={dialogRef} className="pl-dialog" role="dialog" aria-modal="true" aria-label="Prompt Library" onKeyDown={e => {
+        if (e.key === 'Escape') onClose();
         if (e.key === 'Tab') {
-          const elements = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input, select') ?? [])];
+          const elements = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input, select') ?? [])];
           const first = elements[0], last = elements.at(-1);
           if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
           else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
@@ -361,10 +386,7 @@ export function PromptLibrary() {
         <div className="pl-header">
           <div className="pl-title-group">
             <span className="pl-title-icon" aria-hidden="true">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10 2v8l3-3 3 3V2" />
-                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
-              </svg>
+              <BookMarkedIcon size={16} />
             </span>
             <h2>Prompt Library</h2>
           </div>
@@ -381,29 +403,105 @@ export function PromptLibrary() {
             </svg>
             <input autoFocus className="pl-search-input" type="search" aria-label="Search prompts" placeholder="Search prompts…" value={query} onChange={e => setQuery(e.target.value)} />
           </div>
-          <button type="button" className="pl-close-btn" onClick={() => setOpen(false)}>Close</button>
+          <button type="button" className="pl-close-btn" onClick={onClose}>Close</button>
         </div>
         <div className="pl-body">
           {error && <p className="pl-alert" role="alert">{error}</p>}
           {loading && <p className="pl-status" role="status">Loading…</p>}
-          {filteredEntries.map(row => <article key={row.id} className="pl-card">
-            <p className="pl-card-text">{textOf(row).slice(0, 800) || 'Attachments'}</p>
-            <div className="pl-card-actions">
-              <button type="button" className="pl-btn-primary" onClick={() => {
-                if (composer.experimental_replacePrompt) composer.experimental_replacePrompt(row.input, row.threadId);
-                else composer.setText(textOf(row));
-                composer.focus(); setOpen(false);
-              }}>Use prompt</button>
-              <button type="button" className="pl-btn-secondary" onClick={() => { void rpc.call(scope === 'starred' ? 'remove' : 'star', row).then(() => { if (scope === 'starred') updateEntries(rows => rows.filter(item => item.id !== row.id)); }).catch(reason => setError(String(reason))); }}>{scope === 'starred' ? 'Unstar' : 'Star'}</button>
-            </div>
-          </article>)}
+          {filteredEntries.map(row => (
+            <PromptCard key={row.id} row={row} scope={scope} onUse={onUse} onToggleStar={onToggleStar} />
+          ))}
           {!loading && !error && !filteredEntries.length && <p className="pl-empty">No prompts found.</p>}
-          {cursor && <button type="button" className="pl-btn-more" disabled={loading} onClick={() => void more()}>Load more</button>}
+          {cursor && <button type="button" className="pl-btn-more" disabled={loading} onClick={onMore}>Load more</button>}
         </div>
       </div>
-    </div>}
+    </div>
+  );
+}
+
+export function PromptLibrary() {
+  const composer = useComposer();
+  const rpc = useRpc();
+  const generation = useRef(0);
+  const dialog = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [scope, setScope] = useState('starred');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<{ scope: string; entries: SavedPrompt[] }>({ scope: 'starred', entries: [] });
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  // Rows stay on screen while the next search loads or fails, but only within the scope that produced them:
+  // another scope's rows would carry the wrong Star/Unstar action.
+  const entries = results.scope === scope ? results.entries : [];
+  const updateEntries = (update: (rows: SavedPrompt[]) => SavedPrompt[]) => setResults(current => ({ ...current, entries: update(current.entries) }));
+  const context = composer.scope;
+  const threadId = 'threadId' in context ? context.threadId : undefined;
+  const projectId = 'projectId' in context ? context.projectId : undefined;
+
+  useEffect(() => {
+    if (!open) return;
+    const version = ++generation.current;
+    let cancelled = false;
+    setLoading(true); setError(''); setCursor(null);
+    const timer = setTimeout(() => {
+      void rpc.call(scope === 'starred' ? 'list' : 'history', { scope, threadId, projectId, query }).then(result => {
+        if (cancelled || version !== generation.current) return;
+        const page = result as { entries: SavedPrompt[]; nextCursor?: string };
+        setResults({ scope, entries: page.entries }); setCursor(page.nextCursor ?? null);
+      }).catch(reason => { if (!cancelled) setError(String(reason)); }).finally(() => { if (!cancelled) setLoading(false); });
+    }, 150);
+    return () => { cancelled = true; generation.current++; clearTimeout(timer); };
+  }, [open, scope, query, threadId, projectId, rpc]);
+
+  const more = async () => {
+    const version = generation.current;
+    setLoading(true);
+    try {
+      const page = await rpc.call('history', { scope, threadId, projectId, query, cursor }) as { entries: SavedPrompt[]; nextCursor?: string };
+      if (version !== generation.current) return;
+      updateEntries(rows => [...rows, ...page.entries]); setCursor(page.nextCursor ?? null);
+    } catch (reason) { if (version === generation.current) setError(String(reason)); } finally { if (version === generation.current) setLoading(false); }
+  };
+
+  const handleUse = (row: SavedPrompt) => {
+    if (composer.experimental_replacePrompt) composer.experimental_replacePrompt(row.input, row.threadId);
+    else composer.setText(textOf(row));
+    composer.focus();
+    setOpen(false);
+  };
+
+  const handleToggleStar = (row: SavedPrompt) => {
+    void rpc.call(scope === 'starred' ? 'remove' : 'star', row).then(() => {
+      if (scope === 'starred') updateEntries(rows => rows.filter(item => item.id !== row.id));
+    }).catch(reason => setError(String(reason)));
+  };
+
+  const filteredEntries = entries.filter(row => scope !== 'starred' || textOf(row).toLowerCase().includes(query.toLowerCase()));
+
+  return <>
+    <PromptTrigger onClick={() => setOpen(true)} />
+    {open && <PromptDialog
+      dialogRef={dialog}
+      scope={scope}
+      setScope={setScope}
+      threadId={threadId}
+      projectId={projectId}
+      query={query}
+      setQuery={setQuery}
+      error={error}
+      loading={loading}
+      filteredEntries={filteredEntries}
+      cursor={cursor}
+      onClose={() => setOpen(false)}
+      onUse={handleUse}
+      onToggleStar={handleToggleStar}
+      onMore={() => void more()}
+    />}
   </>;
 }
+
 export default definePluginApp(app => {
   injectStyles();
   app.composer.customize({ id: 'library', scopes: ['thread', 'new-thread'], actions: [{ id: 'open', component: PromptLibrary }] });
