@@ -28,6 +28,7 @@ import {
   withBlankedSessionCallbacks,
   writeSessionEnvFile
 } from './tmux-session-env.js';
+import { prepareSeatSpawn, shimFirstPath, type SeatSpawnPlan } from './squad-seat-spawn.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
@@ -515,6 +516,8 @@ export class PtyManager extends EventEmitter {
    *  written on spawn and unlinked in {@link finalizeExit}. Absent for providers
    *  that carry MCP another way (claude file-arg, codex `-c`, shell none). */
   private sessionMcpConfigFiles = new Map<string, string>();
+  /** Squad seat files (#675) by session id: shim directory + instructions file; removed in {@link finalizeExit}. */
+  private seatSpawns = new Map<string, SeatSpawnPlan>();
   /** Tmux identity env files not yet consumed by the pane; unlinked on exit (the pane normally deletes it first). */
   private sessionEnvFiles = new Map<string, string>();
   /** Per-run isolated CLAUDE_CONFIG_DIR of unattended Claude sessions, by session id; removed in {@link finalizeExit}. */
@@ -859,6 +862,26 @@ export class PtyManager extends EventEmitter {
     }
   }
 
+  /** Remove a session's Squad seat files (#675) and forget the entry. */
+  private releaseSeatSpawn(sessionId: string): void {
+    const plan = this.seatSpawns.get(sessionId);
+    if (!plan) return;
+    this.seatSpawns.delete(sessionId);
+    plan.release();
+  }
+
+  /** Unlink a session's provider MCP config file and forget the entry. */
+  private releaseSessionMcpConfigFile(sessionId: string): void {
+    const file = this.sessionMcpConfigFiles.get(sessionId);
+    if (!file) return;
+    this.sessionMcpConfigFiles.delete(sessionId);
+    try {
+      unlinkSync(file);
+    } catch {
+      /* best-effort — already gone or swept */
+    }
+  }
+
   /**
    * Spawn a local session. A throw before the PTY exists never reaches
    * {@link finalizeExit}, so any automated config dir registered during the
@@ -866,11 +889,19 @@ export class PtyManager extends EventEmitter {
    */
   create(opts: Parameters<PtyManager['createUnguarded']>[0]): TerminalSession {
     const before = new Set(this.automatedConfigDirs.keys());
+    const beforeSeats = new Set(this.seatSpawns.keys());
+    const beforeMcpFiles = new Set(this.sessionMcpConfigFiles.keys());
     try {
       return this.createUnguarded(opts);
     } catch (error) {
       for (const id of [...this.automatedConfigDirs.keys()]) {
         if (!before.has(id) && !this.live.has(id)) this.releaseAutomatedConfigDir(id);
+      }
+      for (const id of [...this.seatSpawns.keys()]) {
+        if (!beforeSeats.has(id) && !this.live.has(id)) this.releaseSeatSpawn(id);
+      }
+      for (const id of [...this.sessionMcpConfigFiles.keys()]) {
+        if (!beforeMcpFiles.has(id) && !this.live.has(id)) this.releaseSessionMcpConfigFile(id);
       }
       throw error;
     }
@@ -1357,9 +1388,19 @@ export class PtyManager extends EventEmitter {
     // byte-identical (guarded by the golden-argv net). `env` is merged into the
     // child env below; `args` splice into fullArgs alongside the other `-c` args.
     const authFamily = provider.authKey(effectiveProfile);
+    // Squad seat (#675): only a launch that carries the main-owned marker gets the
+    // persona's contract. Without it `seat` is undefined and nothing below changes.
+    const seat = opts.squadSeat
+      ? prepareSeatSpawn({ capability: provider.squadSeat, persona: spawnPersona, harnessCommand: command })
+      : undefined;
+    if (seat) this.seatSpawns.set(sessionId, seat);
+    const seatGuidanceText = seat?.foldIntoGuidance
+      ? [composedGuidanceText, seat.instructionsText].filter((part) => part.length > 0).join('\n\n')
+      : composedGuidanceText;
     const providerIntegration = provider.integration.configure({
       profile: effectiveProfile,
-      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl }, guidance: composedGuidanceText } : {}),
+      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl }, guidance: seatGuidanceText } : {}),
+      ...(seat?.instructionsFile ? { instructionsFile: seat.instructionsFile } : {}),
       ...(providerHookBase ? {
         lifecycle: {
           stop: providerHookUrls.stop,
@@ -1739,6 +1780,8 @@ export class PtyManager extends EventEmitter {
     // `posix_spawnp` does not always honor env PATH the way `execFile` does,
     // so we also resolve the harness basename against the augmented PATH.
     env.PATH = augmentPath(env.PATH ?? process.env.PATH);
+    // Squad seat shims (#675) go first, so a denied command resolves to its shim.
+    if (seat?.shimDir) env.PATH = shimFirstPath(seat.shimDir, env.PATH);
     // Drop Claude Code's own nested-session markers before they reach a claude
     // WE spawn. When ZCC itself runs inside a Claude session (e.g. `npm run dev`
     // from a Claude shell), `...process.env` above carries CLAUDECODE /
@@ -1842,7 +1885,9 @@ export class PtyManager extends EventEmitter {
       OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT,
       // A tmux pane inherits the server's env, not this client's: hand the
       // isolated config dir over explicitly (omitted for every other launch).
-      ...(automatedClaude ? automatedClaude.env : {})
+      ...(automatedClaude ? automatedClaude.env : {}),
+      // A tmux pane takes its PATH from the tmux server, so a Squad seat's shim-first PATH is handed over here.
+      ...(seat?.shimDir ? { PATH: env.PATH } : {})
     };
     // The provider MCP-config-file env var (OpenCode's `OPENCODE_CONFIG`) is
     // session-scoped exactly like the vars above — its file carries this session's
@@ -2051,7 +2096,11 @@ export class PtyManager extends EventEmitter {
       try {
         writeSessionEnvFile(
           sessionId,
-          Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]]))
+          {
+            ...Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]])),
+            // tmux ignores `-e PATH` for the pane (proved on tmux 3.8), so the pane also sources the seat PATH from this file.
+            ...(seat?.shimDir ? { PATH: env.PATH } : {})
+          }
         );
         this.sessionEnvFiles.set(sessionId, identityEnvFile);
       } catch (err) {
@@ -2293,15 +2342,8 @@ export class PtyManager extends EventEmitter {
     this.releaseAutomatedConfigDir(sessionId);
     // Unlink this session's provider MCP config file (OpenCode's `OPENCODE_CONFIG`),
     // if we wrote one. Best-effort; a crash orphan is swept by age on next write.
-    const mcpConfigFile = this.sessionMcpConfigFiles.get(sessionId);
-    if (mcpConfigFile) {
-      this.sessionMcpConfigFiles.delete(sessionId);
-      try {
-        unlinkSync(mcpConfigFile);
-      } catch {
-        /* best-effort — already gone or swept */
-      }
-    }
+    this.releaseSessionMcpConfigFile(sessionId);
+    this.releaseSeatSpawn(sessionId);
     if (!live) return;
     if (live.session.status === 'running') this.startupFailures.delete(sessionId);
     live.session.status = 'exited';

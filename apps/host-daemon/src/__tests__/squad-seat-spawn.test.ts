@@ -117,7 +117,11 @@ describe('Squad seat contract in PtyManager', () => {
     mgr = new PtyManager();
     mgr.setMcpBaseUrl(MCP_BASE);
   });
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    // End every session this test started, so each one's finalizeExit removes its seat files.
+    spawns.forEach((call) => call.fireExit());
+    vi.unstubAllEnvs();
+  });
 
   describe('REQ-1 Codex instructions', () => {
     it('spawns with exactly one developer_instructions: product guidance, then the persona text', () => {
@@ -223,10 +227,12 @@ describe('Squad seat contract in PtyManager', () => {
     it('a Claude seat with the marker deep-equals the same call without it (REQ-7)', () => {
       const persona = personaFor('claude', { appendSystemPrompt: PERSONA_TEXT, deniedTools: ['Bash(gh:*)'], allowedTools: ['Read'] } as never);
       const before = readdirSync(tmpdir()).length;
+      const seatNames = () => readdirSync(tmpdir()).filter((n) => /shim|zcc-seat/i.test(n));
+      const seatNamesBefore = new Set(seatNames());
       create(mgr, 'claude', persona, {}, false);
       create(mgr, 'claude', persona, {}, true);
       expect(stable(spawns[1]!)).toEqual(stable(spawns[0]!));
-      expect(readdirSync(tmpdir()).filter((n) => /shim|zcc-seat/i.test(n))).toEqual([]);
+      expect(seatNames().filter((n) => !seatNamesBefore.has(n))).toEqual([]);
       expect(readdirSync(tmpdir()).length - before).toBeLessThanOrEqual(readdirSync(tmpdir()).length);
     });
 
