@@ -95,6 +95,7 @@ import {
   recordThreadExecutionMode
 } from './conversation-plan.js';
 import { applyLoggedConversationLifecycleEvent } from './conversation-lifecycle-outcome.js';
+import { admissionPromptFromInput } from '../../plugins/admission-prompt.js';
 import { admissionRefusal, admitDispatch } from './dispatch-service.js';
 import type { DispatchOrigin } from '@zana-ai/zcc-domain';
 import { findOpenConversationTurn } from './conversation-host-recovery.js';
@@ -161,7 +162,8 @@ async function sendConversationTurnWithLease(
       projectId: live.projectId,
       surface: 'modern',
       entry: 'reply',
-      origin: options.origin ?? 'user'
+      origin: options.origin ?? 'user',
+      prompt: admissionPromptFromInput(input)
     }, () => {
       lease.assertCurrent();
       const current = getConversationThread(ctx.db, threadId);

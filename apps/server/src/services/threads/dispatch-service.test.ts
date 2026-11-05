@@ -30,6 +30,30 @@ function fixture() {
   };
 }
 
+describe('admitDispatch prompt', () => {
+  it('hands plugins a redacted, capped prompt and never the raw field', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockResolvedValue({ action: 'proceed' });
+      await admitDispatch(f.ctx(admit), { ...f.request, prompt: { text: 'password=abc go', attachmentCount: 1 } });
+      expect(admit.mock.calls[0]![0].prompt).toEqual({ text: 'password=[REDACTED] go', truncated: false, attachmentCount: 1 });
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  it('passes no prompt when the caller has no text', async () => {
+    const f = fixture();
+    try {
+      const admit = vi.fn().mockResolvedValue({ action: 'proceed' });
+      await admitDispatch(f.ctx(admit), f.request);
+      expect('prompt' in admit.mock.calls[0]![0]).toBe(false);
+    } finally {
+      f.cleanup();
+    }
+  });
+});
+
 describe('admitDispatch', () => {
   it.each(['wait', 'proceed', 'reject', 'error'])('does not mutate admission state after cancellation during a late %s', async action => {
     const f = fixture();

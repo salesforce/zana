@@ -2388,7 +2388,8 @@ describe('dispatch admission override (OBL-003)', () => {
     const context = { ...ctx(vi.fn().mockResolvedValue({ threadId: thread.id, accepted: true })), plugins: { admitDispatch: admit, emitThreadEvent: vi.fn().mockResolvedValue(undefined) } } as unknown as ProductHttpContext;
     await sendConversationTurn(context, thread.id, 'hello', 'auto', undefined, { origin: 'system' });
     expect(admit).toHaveBeenCalledWith(expect.objectContaining({
-      threadId: thread.id, projectId: thread.projectId, surface: 'modern', entry: 'reply', origin: 'system'
+      threadId: thread.id, projectId: thread.projectId, surface: 'modern', entry: 'reply', origin: 'system',
+      prompt: { text: 'hello', truncated: false, attachmentCount: 0 }
     }));
   });
 

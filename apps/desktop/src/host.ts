@@ -3300,7 +3300,7 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
 async function replyToSquadMember(sessionId: string, text: string, correlation?: { assignmentId: string; idempotencyKey: string }): Promise<boolean> {
   const session = ptys.getSession(sessionId);
   if (session) {
-    const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'job-team-dispatch', origin: 'system' });
+    const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'job-team-dispatch', origin: 'system', promptText: text });
     if (refusal) return false;
     return ptys.reply(sessionId, text);
   }
@@ -4619,7 +4619,8 @@ async function launchAuthorizedTerminal(
     const refusal = await admitPtyDispatch({
       projectId: project.id,
       entry: dispatchEntryForPrincipal(principal),
-      origin: dispatchOriginForPrincipal(principal)
+      origin: dispatchOriginForPrincipal(principal),
+      promptText: preissuedInitialTask ?? req.prompt
     });
     if (refusal) return { ok: false, code: refusal.code, message: refusal.message };
   }
@@ -10149,7 +10150,7 @@ async function bootstrapNormal() {
     replyTerminal: async (sessionId, text) => {
       const session = ptys.getSession(sessionId);
       if (!session) return ptys.reply(sessionId, text);
-      const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'reply', origin: 'user' });
+      const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'reply', origin: 'user', promptText: text });
       return refusal ? { refused: refusal } : ptys.reply(sessionId, text);
     },
     getAgentStatus: (sessionId) => agentStatus.get(sessionId),

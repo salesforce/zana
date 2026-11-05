@@ -64,6 +64,18 @@ export type DispatchEntry = 'initial' | 'reply' | 'fork' | 'squad-member-start' 
 export type DispatchOrigin = 'user' | 'agent' | 'system';
 
 /**
+ * Opt-in prompt content of a dispatch. Present only for a plugin that declares
+ * `zcc.promptAccess: true`; the text is redacted and capped, never the raw prompt.
+ */
+export interface DispatchAdmissionPrompt {
+  text: string;
+  /** True when the text was cut to the byte cap. */
+  truncated: boolean;
+  /** Attachments on the dispatch; their content is never provided. */
+  attachmentCount: number;
+}
+
+/**
  * Host-owned identity for one dispatch. Names a thread (Modern) or a session
  * (PTY); a PTY dispatch carries no `threadId` because an unbound PTY is not a
  * thread, and an initial dispatch may name neither before the target exists.
@@ -77,6 +89,8 @@ export interface DispatchAdmissionContract {
   surface: DispatchSurface;
   entry: DispatchEntry;
   origin: DispatchOrigin;
+  /** Only for plugins that declare `zcc.promptAccess: true`; absent otherwise and for entries with no text (fork). */
+  prompt?: DispatchAdmissionPrompt;
 }
 
 export interface LifecycleEventContract {

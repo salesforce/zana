@@ -104,6 +104,7 @@ describe('trusted Modern member runtime', () => {
     const admit = vi.mocked(ctx.plugins!.admitDispatch);
     expect(admit).toHaveBeenCalledTimes(1);
     expect(admit.mock.calls[0]![0]).toMatchObject({ projectId: member.projectId, surface: 'modern', entry: 'squad-member-start', origin: 'system' });
+    expect(admit.mock.calls[0]![0].prompt).toEqual({ text: 'Do work', truncated: false, attachmentCount: 0 });
     await expect(createSquadMemberConversation(ctx, { ...member, worktreePath })).resolves.toEqual({ threadId: bindingId });
     await activateSquadMemberConversation(ctx, { ...member, worktreePath });
     expect(admit).toHaveBeenCalledTimes(1);

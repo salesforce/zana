@@ -147,6 +147,7 @@ export const pluginZccManifestSchema = z
     toolPolicy: z.boolean().optional(),
     projectTab: pluginProjectTabSchema.optional(),
     peers: z.boolean().optional(),
+    promptAccess: z.boolean().optional(),
     themes: z
       .array(
         z
@@ -216,6 +217,8 @@ export interface PluginManifest {
   projectTab: PluginZccManifest['projectTab'];
   /** Declares the peer SDK (links to other installs); gates the core Peers settings page. */
   peers: boolean;
+  /** Declares `zcc.promptAccess: true`: dispatch admission handlers receive redacted, capped prompt text. */
+  promptAccess: boolean;
   themes: NonNullable<PluginZccManifest['themes']>;
   engines: { zcc?: string; zccPluginSdk?: string };
 }
@@ -248,6 +251,7 @@ export function readPluginManifest(packageJson: unknown): PluginManifest {
     toolPolicy: parsed.zcc.toolPolicy,
     projectTab: parsed.zcc.projectTab,
     peers: parsed.zcc.peers === true,
+    promptAccess: parsed.zcc.promptAccess === true,
     themes: parsed.zcc.themes ?? [],
     engines: {
       zcc: parsed.engines?.zcc,

@@ -20,7 +20,8 @@ export async function admitMainOwnedDispatch(
       ...(request.sessionId ? { sessionId: request.sessionId } : {}),
       surface: 'pty',
       entry: request.entry,
-      origin: request.origin
+      origin: request.origin,
+      ...(request.prompt ? { prompt: { text: request.prompt.text, truncated: request.prompt.truncated } } : {})
     });
     const refusal = admissionRefusal(outcome);
     if (!refusal) return { action: 'proceed' };

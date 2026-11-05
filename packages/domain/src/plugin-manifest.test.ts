@@ -41,6 +41,13 @@ describe('readPluginManifest', () => {
     expect(() => readPluginManifest(baseZcc({ peers: 'yes' }))).toThrow();
   });
 
+  it('reads the optional promptAccess data grant, off unless true', () => {
+    expect(readPluginManifest(baseZcc()).promptAccess).toBe(false);
+    expect(readPluginManifest(baseZcc({ promptAccess: false })).promptAccess).toBe(false);
+    expect(readPluginManifest(baseZcc({ promptAccess: true })).promptAccess).toBe(true);
+    expect(() => readPluginManifest(baseZcc({ promptAccess: 'yes' }))).toThrow();
+  });
+
   it('parses optional host and pty entries', () => {
     const manifest = readPluginManifest(baseZcc({ host: './host.ts', pty: './pty.ts' }));
     expect(manifest.hostEntry).toBe('./host.ts');

@@ -203,11 +203,19 @@ export type NativeToolPolicyDecision = z.infer<typeof NativeToolPolicyDecisionSc
  * about to forward. Main asserts the identity; an unbound PTY has no thread, and
  * a launch has no session until it spawns, so neither id is required.
  */
+/** Characters of prompt text main sends for admission; the plugin-facing cap is applied in core. */
+export const DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS = 32 * 1024;
+
 export const DispatchAdmissionMainRequestSchema = z.object({
   sessionId: SessionIdSchema.max(256).optional(),
   projectId: ProjectIdSchema.max(256),
   entry: z.enum(['initial', 'reply', 'job-team-dispatch']),
-  origin: z.enum(['user', 'agent', 'system'])
+  origin: z.enum(['user', 'agent', 'system']),
+  /** Opening or reply text, already bounded by main; core redacts and caps it again before any plugin sees it. */
+  prompt: z.object({
+    text: z.string().max(DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS),
+    truncated: z.boolean().optional()
+  }).strict().optional()
 }).strict();
 export type DispatchAdmissionMainRequest = z.infer<typeof DispatchAdmissionMainRequestSchema>;
 

@@ -538,6 +538,8 @@ interface LivePlugin {
   isBusy?: () => boolean;
   /** Latest `zcc.status` message from this load; null once the plugin calls `configured()`. */
   pluginStatus?: string | null;
+  /** `zcc.promptAccess` as read at this generation's activation; an on-disk edit applies at the next activation. */
+  promptAccess?: boolean;
 }
 
 function readJson(path: string): unknown {
@@ -1647,8 +1649,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     let hostEntry: string | null = null;
     let serverEntry = row.serverEntry;
     let remoteEnvironmentNames: string[] = [];
+    let promptAccess = false;
     try {
       const manifest = loadManifestFromDir(row.rootDir);
+      promptAccess = manifest.promptAccess;
       hostEntry = manifest.hostEntry;
       if (manifest.serverEntry) serverEntry = manifest.serverEntry;
       remoteEnvironmentNames = parseRemoteEnvironmentNames(manifest.extra);
@@ -1869,7 +1873,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (activationFailure) throw activationFailure;
       toolPolicySealed.add(row.id);
       pendingToolPolicy.delete(row.id);
-      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage });
+      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage, promptAccess });
       refreshToolPolicyInventory();
       cancelRecovery(row.id);
       if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
@@ -3152,7 +3156,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const reviews = [...live.values()].flatMap((current) =>
         (current.handle?.dispatchAdmissionHandlers ?? []).map(async (handler) => {
           try {
-            const decision: unknown = await handler(request);
+            // Prompt content is a data grant: only a plugin that declared it gets the field.
+            const { prompt: _prompt, ...identity } = request;
+            const decision: unknown = await handler(current.promptAccess && request.prompt ? request : identity);
             if (!decision || typeof decision !== 'object') throw new Error('invalid dispatch admission decision');
             const result = decision as Record<string, unknown>;
             if (result.action === 'reject' && typeof result.message === 'string') {

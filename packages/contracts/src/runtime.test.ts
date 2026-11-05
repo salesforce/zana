@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS,
+  DispatchAdmissionMainRequestSchema,
   MenubarAgentSchema,
   NATIVE_TOOL_POLICY_EVENT_MAX_BYTES,
   NATIVE_TOOL_POLICY_INPUT_MAX_CHARS,
@@ -378,5 +380,15 @@ describe('NativeToolPolicyRequestSchema identity', () => {
   });
   it('refuses a request that names neither a session nor a thread', () => {
     expect(NativeToolPolicyRequestSchema.safeParse(base).success).toBe(false);
+  });
+});
+
+describe('DispatchAdmissionMainRequestSchema prompt', () => {
+  const base = { projectId: 'p1', entry: 'reply', origin: 'user' } as const;
+  it('accepts bounded text and rejects oversized or unknown keys', () => {
+    expect(DispatchAdmissionMainRequestSchema.safeParse(base).success).toBe(true);
+    expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'hi', truncated: true } }).success).toBe(true);
+    expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'x'.repeat(DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS + 1) } }).success).toBe(false);
+    expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'hi', extra: 1 } }).success).toBe(false);
   });
 });

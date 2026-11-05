@@ -235,7 +235,7 @@ export function registerTerminalsIpc(): void {
       const session = ctx.ptys.getSession(id);
       if (!session) return ctx.ptys.reply(id, text);
       // Main admits against its own session record; the renderer only names the session.
-      const refusal = await ctx.admitPtyDispatch({ sessionId: id, projectId: session.projectId, entry: 'reply', origin: 'user' });
+      const refusal = await ctx.admitPtyDispatch({ sessionId: id, projectId: session.projectId, entry: 'reply', origin: 'user', promptText: text });
       return refusal ? false : ctx.ptys.reply(id, text);
     },
     () => false
@@ -468,7 +468,7 @@ export function registerTerminalsIpc(): void {
       // and cap the length so the write path can't be flooded from the menu bar.
       const clean = text.replace(/[\r\n]+/g, ' ').trim().slice(0, ctx.MENUBAR_REPLY_MAX_CHARS);
       if (!clean) return { ok: false, reason: 'empty' };
-      const refusal = await ctx.admitPtyDispatch({ sessionId, projectId: s.projectId, entry: 'reply', origin: 'user' });
+      const refusal = await ctx.admitPtyDispatch({ sessionId, projectId: s.projectId, entry: 'reply', origin: 'user', promptText: clean });
       if (refusal) return { ok: false, reason: 'ended' };
       const ok = ctx.ptys.reply(sessionId, clean);
       if (ok) ctx.menubar?.refresh();

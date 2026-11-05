@@ -77,6 +77,7 @@ import {
 } from './conversation-execution-mode.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import { recordThreadExecutionMode } from './conversation-plan.js';
+import { admissionPromptFromInput } from '../../plugins/admission-prompt.js';
 import { admissionRefusal, admitDispatch } from './dispatch-service.js';
 import type { DispatchOrigin } from '@zana-ai/zcc-domain';
 import { persistConversationPluginMetadataSeed } from './conversation-plugin-metadata.js';
@@ -376,7 +377,8 @@ export async function createConversationFromRequest(
       projectId: project.id,
       surface: 'modern',
       entry: 'initial',
-      origin: input.origin ?? 'user'
+      origin: input.origin ?? 'user',
+      prompt: { text: promptSource.join('\n'), attachmentCount: admissionPromptFromInput(pluginResolvedPromptInput).attachmentCount }
     }));
     if (refusal) throw new ThreadCreateError(409, refusal.code, refusal.message);
   }

@@ -268,7 +268,12 @@ export interface PluginEvents {
   on(name: PluginThreadEventName, handler: (event: PluginThreadEvent) => void | Promise<void>): void;
 }
 
-/** Host-owned dispatch identity exposed to admission handlers. Never includes prompt content. */
+/**
+ * Host-owned dispatch identity exposed to admission handlers. Prompt content is
+ * absent unless the plugin declares `zcc.promptAccess: true`; then `prompt`
+ * carries redacted text capped at 32 KiB, a truncation flag, and the attachment
+ * count (attachment content is never provided).
+ */
 export type PluginDispatchAdmissionRequest = DispatchAdmissionContract;
 
 export interface PluginHooks {

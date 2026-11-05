@@ -501,6 +501,28 @@ describe('PluginService', () => {
     ).resolves.toEqual({ action: 'reject', message: 'blocked', pluginId: 'rejecter' });
   });
 
+  it.each([
+    [true, '{"p":{"text":"hello","truncated":false,"attachmentCount":1}}'],
+    [false, '{"p":null}']
+  ])('admitDispatch: prompt text reaches a handler only with promptAccess=%s', async (granted, expected) => {
+    const dir = writePlugin(
+      join(root(), 'peeker'),
+      'peeker',
+      `export default function plugin(zcc) {
+        zcc.hooks.on((request) => ({ action: 'reject', message: JSON.stringify({ p: request.prompt ?? null }) }));
+      }\n`,
+      granted ? { promptAccess: true } : undefined
+    );
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(dir);
+    await expect(
+      service.admitDispatch({
+        dispatchId: 'd1', projectId: 'p1', generation: 1, surface: 'modern', entry: 'initial', origin: 'user',
+        prompt: { text: 'hello', truncated: false, attachmentCount: 1 }
+      })
+    ).resolves.toEqual({ action: 'reject', message: expected, pluginId: 'peeker' });
+  });
+
   it('admitDispatch: failure rejects even when other plugins proceed or wait', async () => {
     const dataDir = root();
     const sources = [

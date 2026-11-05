@@ -23,6 +23,18 @@ describe('admitMainOwnedDispatch', () => {
     expect('sessionId' in admit.mock.calls[0]![0]).toBe(false);
   });
 
+  it('forwards bounded prompt text from main for core to redact and cap', async () => {
+    const admit = vi.fn().mockResolvedValue({ action: 'proceed' });
+    await admitMainOwnedDispatch(ctx(admit), { ...request, prompt: { text: 'hi', truncated: true } });
+    expect(admit.mock.calls[0]![0].prompt).toEqual({ text: 'hi', truncated: true, attachmentCount: 0 });
+  });
+
+  it('sends no prompt key when main sent none', async () => {
+    const admit = vi.fn().mockResolvedValue({ action: 'proceed' });
+    await admitMainOwnedDispatch(ctx(admit), request);
+    expect('prompt' in admit.mock.calls[0]![0]).toBe(false);
+  });
+
   it('forwards a reject with its message, bounded', async () => {
     const admit = vi.fn().mockResolvedValue({ action: 'reject', message: 'x'.repeat(5000) });
     const decision = await admitMainOwnedDispatch(ctx(admit), request);

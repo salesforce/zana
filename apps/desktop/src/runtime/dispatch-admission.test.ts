@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createNativeToolPolicyVerifier } from '@zana-ai/zcc-server/http/native-tool-policy-proof';
+import { DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS } from '@zana-ai/zcc-contracts/runtime';
 import {
+  boundedAdmissionPrompt,
   createMainDispatchAdmission,
   dispatchEntryForPrincipal,
   dispatchOriginForPrincipal,
@@ -18,6 +20,32 @@ function admission(over: { supervised?: any; productRoute?: any } = {}) {
   });
   return { admit, log };
 }
+
+describe('prompt text for admission', () => {
+  it('bounds the text main sends and flags the cut', () => {
+    expect(boundedAdmissionPrompt(undefined)).toBeUndefined();
+    expect(boundedAdmissionPrompt('')).toBeUndefined();
+    expect(boundedAdmissionPrompt('hi')).toEqual({ text: 'hi' });
+    const cut = boundedAdmissionPrompt('a'.repeat(DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS + 5))!;
+    expect(cut.text).toHaveLength(DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS);
+    expect(cut.truncated).toBe(true);
+  });
+
+  it('sends the bounded text with the request and never logs it', async () => {
+    const decide = vi.fn(async () => ({ action: 'reject', message: 'no' }));
+    const { admit, log } = admission({ supervised: decide });
+    await admit({ ...request, promptText: 'SECRET-MARKER' });
+    expect(decide).toHaveBeenCalledWith({ ...request, prompt: { text: 'SECRET-MARKER' } });
+    expect(decide.mock.calls[0]![0]).not.toHaveProperty('promptText');
+    expect(JSON.stringify(log.mock.calls)).not.toContain('SECRET-MARKER');
+  });
+
+  it('omits the prompt for a dispatch with no text', async () => {
+    const decide = vi.fn(async () => ({ action: 'proceed' }));
+    await admission({ supervised: decide }).admit(request);
+    expect(decide).toHaveBeenCalledWith(request);
+  });
+});
 
 describe('createMainDispatchAdmission', () => {
   it('proceeds on a proceed decision', async () => {

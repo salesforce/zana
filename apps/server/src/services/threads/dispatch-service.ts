@@ -4,6 +4,7 @@ import {
   getDispatchAdmissionGeneration,
   recordDispatchAdmissionWait
 } from '@zana-ai/zcc-db';
+import { buildAdmissionPrompt, type RawAdmissionPrompt } from '../../plugins/admission-prompt.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import type { DispatchAdmissionContract, DispatchAdmissionDecision } from '@zana-ai/zcc-domain';
 
@@ -17,7 +18,13 @@ export interface DispatchAdmissionOutcome {
 }
 
 /** Host-resolved identity of one dispatch; core adds the id and generation. */
-export type DispatchAdmissionRequest = Omit<DispatchAdmissionContract, 'dispatchId' | 'generation'>;
+export type DispatchAdmissionRequest = Omit<DispatchAdmissionContract, 'dispatchId' | 'generation' | 'prompt'> & {
+  /**
+   * Raw text of the dispatch. Core redacts and caps it before any plugin sees
+   * it, and only plugins that declare `zcc.promptAccess` receive it at all.
+   */
+  prompt?: RawAdmissionPrompt;
+};
 
 /**
  * Fold an outcome for a caller that cannot hold the send for later (a create,
@@ -44,8 +51,14 @@ export async function admitDispatch(
   const generation = current?.generation ?? 1;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const { prompt: rawPrompt, ...identity } = request;
     const decision = await Promise.race([
-      ctx.plugins.admitDispatch({ ...request, generation, dispatchId: randomUUID() }),
+      ctx.plugins.admitDispatch({
+        ...identity,
+        ...(rawPrompt ? { prompt: buildAdmissionPrompt(rawPrompt) } : {}),
+        generation,
+        dispatchId: randomUUID()
+      }),
       new Promise<DispatchAdmissionDecision>((resolve) => {
         timer = setTimeout(() => resolve({ action: 'reject', message: 'Plugin dispatch admission timed out' }), DISPATCH_ADMISSION_TIMEOUT_MS);
       })

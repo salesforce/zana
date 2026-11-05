@@ -1,4 +1,5 @@
 import {
+  DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS,
   DispatchAdmissionMainDecisionSchema,
   type DispatchAdmissionMainDecision,
   type DispatchAdmissionMainRequest
@@ -38,6 +39,16 @@ export interface MainDispatchAdmissionDeps {
   log(message: string): void;
 }
 
+/** What a main caller asks to admit: identity plus the raw text about to be forwarded. */
+export type PtyDispatchAdmissionInput = Omit<DispatchAdmissionMainRequest, 'prompt'> & { promptText?: string };
+
+/** Bound the text main hands to admission. The text is never logged. */
+export function boundedAdmissionPrompt(text: string | undefined): DispatchAdmissionMainRequest['prompt'] {
+  if (!text) return undefined;
+  const truncated = text.length > DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS;
+  return { text: truncated ? text.slice(0, DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS) : text, ...(truncated ? { truncated } : {}) };
+}
+
 export type MainDispatchRefusal = { code: 'DISPATCH_REJECTED' | 'DISPATCH_WAITING'; message: string };
 
 /**
@@ -47,7 +58,10 @@ export type MainDispatchRefusal = { code: 'DISPATCH_REJECTED' | 'DISPATCH_WAITIN
  * override, so a wait refuses too.
  */
 export function createMainDispatchAdmission(deps: MainDispatchAdmissionDeps) {
-  return async (request: DispatchAdmissionMainRequest): Promise<MainDispatchRefusal | null> => {
+  return async (input: PtyDispatchAdmissionInput): Promise<MainDispatchRefusal | null> => {
+    const { promptText, ...identity } = input;
+    const prompt = boundedAdmissionPrompt(promptText);
+    const request: DispatchAdmissionMainRequest = { ...identity, ...(prompt ? { prompt } : {}) };
     const decide = deps.supervised() ?? deps.productRoute();
     if (!decide) return { code: 'DISPATCH_REJECTED', message: 'Plugin dispatch admission unavailable' };
     let decision: DispatchAdmissionMainDecision;

@@ -141,6 +141,7 @@ export type {
   CapabilityIntrospectionContract,
   DispatchAdmissionContract,
   DispatchAdmissionDecision,
+  DispatchAdmissionPrompt,
   DispatchEntry,
   DispatchOrigin,
   DispatchSurface,

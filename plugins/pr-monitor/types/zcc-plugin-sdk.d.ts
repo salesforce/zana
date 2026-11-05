@@ -368,7 +368,8 @@ export type PluginSdkInbox = PluginSdk['inbox'];
   export type DispatchOrigin = 'user' | 'agent' | 'system';
 
   /**
-   * Host-owned identity for one dispatch; never includes prompt content. A PTY
+   * Host-owned identity for one dispatch. Prompt content is absent unless the
+   * plugin declares `zcc.promptAccess: true`. A PTY
    * dispatch carries no `threadId` (an unbound PTY is not a thread), and an
    * initial dispatch may name neither before the target exists.
    */
@@ -381,6 +382,16 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     surface: DispatchSurface;
     entry: DispatchEntry;
     origin: DispatchOrigin;
+    /** Only with `zcc.promptAccess: true`, and only where the dispatch carries text (not a fork). */
+    prompt?: DispatchAdmissionPrompt;
+  }
+
+  /** Redacted, capped prompt text of a dispatch. Attachment content is never provided. */
+  export interface DispatchAdmissionPrompt {
+    /** Secret-shaped spans replaced with `[REDACTED]`, then cut to 32 KiB of UTF-8. */
+    text: string;
+    truncated: boolean;
+    attachmentCount: number;
   }
 
   export type DispatchAdmissionDecision =

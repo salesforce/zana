@@ -507,6 +507,24 @@ the human Send-now action. Create, fork, and every PTY dispatch cannot be held, 
 a `wait` is a refusal (error code `dispatch_waiting` or `DISPATCH_WAITING`) and
 nothing is recorded or created. Admission failure or timeout always rejects.
 
+##### Prompt text (opt-in)
+
+By default the request carries no prompt content. A plugin that declares
+`zcc.promptAccess: true` in its `zcc` manifest block also receives
+`prompt: { text, truncated, attachmentCount }` on dispatches that carry text:
+Modern create, Modern send, squad member start, and PTY opening prompts, replies,
+and Job Team dispatches. A fork carries no text, so it has no `prompt`.
+`text` is redacted first (values of token, secret, password, key, and credential
+assignments, bearer tokens, well-known API key shapes, and private key blocks are
+replaced with `[REDACTED]`), then cut to 32 KiB of UTF-8; `truncated` is true when
+anything was cut. `attachmentCount` counts attachments; their content is never
+provided. The field is absent for a plugin without the declaration. The host
+reads the declaration when it activates the plugin, so a change on disk applies at
+the next activation. Redaction is best-effort pattern matching: do not treat the
+text as free of sensitive content. Core does not store prompt text in admission
+records and does not log it. The 9 s admission deadline and its timeout and
+failure semantics are unchanged.
+
 Admitted: Modern create and send, Modern fork, PTY opening prompts (interactive
 launch, CLI Agent spawn, control-plane launch), CLI Agent and inbox/menu-bar
 reply, and Job Team dispatch (entry `job-team-dispatch`). Not admitted: raw keystrokes (`term.write`), because

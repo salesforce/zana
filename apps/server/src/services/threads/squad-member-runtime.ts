@@ -233,7 +233,8 @@ export async function createSquadMemberConversation(
     // start here, once, before any thread or environment exists. A prepared member cannot
     // be held for later, so a wait is a refusal; an admission failure also refuses.
     const refusal = admissionRefusal(await admitDispatch(ctx, {
-      projectId: request.projectId, surface: 'modern', entry: 'squad-member-start', origin: 'system'
+      projectId: request.projectId, surface: 'modern', entry: 'squad-member-start', origin: 'system',
+      prompt: { text: request.prompt }
     }));
     if (refusal) throw new Error(`${SQUAD_START_REFUSED_PREFIX} (${refusal.code}): ${refusal.message}`.slice(0, 1024));
     const thread = await createConversationFromRequest(ctx, {

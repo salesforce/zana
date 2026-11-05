@@ -80,6 +80,12 @@ describe('admission of a thread create', () => {
     expect(admit().mock.calls[0]![0].threadId).toBeUndefined();
   });
 
+  it('hands admission the opening text and attachment count', async () => {
+    await create(threadId, { input: ['go', 'now'], promptInput: [{ type: 'text', text: 'go', mentions: [] }, { type: 'localFile', path: '/tmp/a.txt', name: 'a.txt' }] });
+    const prompt = admit().mock.calls[0]![0].prompt;
+    expect(prompt).toEqual({ text: expect.stringContaining('go'), truncated: false, attachmentCount: 1 });
+  });
+
   it('carries a system origin for plugin and automated creates', async () => {
     await create(threadId, { origin: 'system' });
     expect(admit()).toHaveBeenCalledWith(expect.objectContaining({ entry: 'initial', origin: 'system' }));

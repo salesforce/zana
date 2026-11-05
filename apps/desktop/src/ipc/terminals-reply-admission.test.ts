@@ -35,7 +35,7 @@ describe('terminals.reply admission', () => {
 
   it('admits against the session record main holds, never renderer-supplied identity, then delivers', async () => {
     await expect(reply('s1', 'hi')).resolves.toBe(true);
-    expect(admitPtyDispatch).toHaveBeenCalledWith({ sessionId: 's1', projectId: 'p1', entry: 'reply', origin: 'user' });
+    expect(admitPtyDispatch).toHaveBeenCalledWith({ sessionId: 's1', projectId: 'p1', entry: 'reply', origin: 'user', promptText: 'hi' });
     expect(ptys.reply).toHaveBeenCalledWith('s1', 'hi');
   });
 
@@ -58,7 +58,7 @@ describe('menubar.reply admission', () => {
   it('admits the sanitized reply and delivers it', async () => {
     const result = await reply('s1', 'hello');
     expect(result.ok).toBe(true);
-    expect(admitPtyDispatch).toHaveBeenCalledWith({ sessionId: 's1', projectId: 'p1', entry: 'reply', origin: 'user' });
+    expect(admitPtyDispatch).toHaveBeenCalledWith({ sessionId: 's1', projectId: 'p1', entry: 'reply', origin: 'user', promptText: 'hello' });
   });
 
   it('does not deliver when admission refuses', async () => {
