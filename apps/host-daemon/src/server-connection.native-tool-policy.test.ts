@@ -12,7 +12,7 @@ vi.mock('./runtime-manager.js', () => ({ createRuntimeManager: (options: unknown
 vi.mock('./server-socket.js', () => ({ createHostServerSocket: (options: unknown) => { state.socketOptions = options; return state.socket; } }));
 vi.mock('./event-sink.js', () => ({ createEventSink: () => ({ emit: vi.fn(), flush: state.flush, dispose: vi.fn(async () => {}) }) }));
 vi.mock('./event-delivery.js', () => ({ createEventDelivery: () => ({ cancel: vi.fn() }) }));
-vi.mock('./native-tool-policy-client.js', () => ({ createNativeToolPolicyHttpClient: () => state.policy }));
+vi.mock('./native-tool-policy-client.js', () => ({ createNativeToolPolicyHttpClient: () => state.policy, createNativeToolSettledHttpClient: () => ({ report: vi.fn(async () => {}) }) }));
 vi.mock('./plugin-host-manager.js', () => ({ PluginHostManager: class { shutdown = vi.fn(async () => {}); } }));
 vi.mock('./enrolled-pty.js', () => ({ createEnrolledPty: () => ({ dispose: vi.fn() }) }));
 vi.mock('./desktop-browser-broker.js', () => ({ startDesktopBrowserBroker: async () => null }));

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginService, toPluginAppSnapshot } from './plugin-service.js';
+import { DECISION_PHASE_MAX_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 
 const roots: string[] = [];
 const services: ReturnType<typeof createPluginService>[] = [];
@@ -114,7 +115,7 @@ describe('per-plugin tool policy timeout', () => {
     // Real timers for the handlers; only Date jumps, so a regression that measures the
     // approval inside a handler's spent time would leave `plain` with no budget and deny.
     const approval = vi.fn(async () => {
-      vi.setSystemTime(Date.now() + 30_000);
+      vi.setSystemTime(Date.now() + DECISION_PHASE_MAX_MS + 1_000);
       return { outcome: 'submitted', actor: 'human', value: { decision: 'allow' } };
     });
     const service = await setup([
