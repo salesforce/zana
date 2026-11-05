@@ -2,6 +2,25 @@ import semver from 'semver';
 import { createHash } from 'node:crypto';
 import { parsePluginSource, type ParsedPluginSource } from '@zana-ai/zcc-domain';
 import type { InstalledPluginRow } from './plugin-store.js';
+import { runPluginSourceCommand } from './plugin-source-command.js';
+
+export const GIT_REFS_TIMEOUT_MS = 15_000;
+export const GIT_REFS_MAX_TAGS = 2_000;
+
+type SourceCommandRunner = typeof runPluginSourceCommand;
+
+/** Bounded `git ls-remote`: fails loudly on timeout or tag overflow rather than resolving from a partial list. */
+export async function listBoundedGitRefs(url: string, cwd: string, signal?: AbortSignal, runner: SourceCommandRunner = runPluginSourceCommand): Promise<string> {
+  const result = await runner('git', ['ls-remote', '--', url, 'HEAD', 'refs/heads/*', 'refs/tags/*'], cwd, { signal, timeoutMs: GIT_REFS_TIMEOUT_MS });
+  if (result.code !== 0) throw new Error('Git source is unavailable');
+  let tags = 0;
+  for (const line of result.stdout.split('\n')) {
+    if (/\trefs\/tags\/(?!.*\^\{\}$)/.test(line) && ++tags > GIT_REFS_MAX_TAGS) {
+      throw new Error(`Git source has more than ${GIT_REFS_MAX_TAGS} tags; narrow it with a tag prefix or pin a ref`);
+    }
+  }
+  return result.stdout;
+}
 
 export type PluginSourceIntent =
   | { kind: 'npm'; name: string; spec: string; specKind: 'default' | 'exact' | 'tag' | 'range'; registry?: string }

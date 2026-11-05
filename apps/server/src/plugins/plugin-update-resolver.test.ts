@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { installedSourceIntent, parseRemoteGitRefs, pluginEngineProblems, pluginUpdateFingerprint, remoteGitRef, resolvePluginUpdate, type PluginSourceIntent, type PluginUpdateResolver } from './plugin-update-resolver.js';
+import { GIT_REFS_MAX_TAGS, GIT_REFS_TIMEOUT_MS, listBoundedGitRefs, installedSourceIntent, parseRemoteGitRefs, pluginEngineProblems, pluginUpdateFingerprint, remoteGitRef, resolvePluginUpdate, type PluginSourceIntent, type PluginUpdateResolver } from './plugin-update-resolver.js';
 import type { InstalledPluginRow } from './plugin-store.js';
 
 const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40);
@@ -147,5 +147,23 @@ describe('independent plugin update resolution', () => {
     expect(installedSourceIntent(row({ sourceIntent: undefined, sourceKind: 'path', source: '/local' }))).toBeUndefined();
     expect(pluginUpdateFingerprint(row(), '1', '1')).not.toBe(pluginUpdateFingerprint(row(), '2', '1'));
     expect(pluginUpdateFingerprint(row(), '1', '1')).not.toBe(pluginUpdateFingerprint(row({ rootDir: '/new' }), '1', '1'));
+  });
+});
+
+describe('listBoundedGitRefs', () => {
+  const tagLines = (n: number) => Array.from({ length: n }, (_, i) => `${a}\trefs/tags/v1.0.${i}`).join('\n');
+  it('passes the timeout and returns output within the cap (peeled tags not counted)', async () => {
+    const out = `${tagLines(GIT_REFS_MAX_TAGS)}\n${a}\trefs/tags/v1.0.0^{}\n`;
+    const runner = vi.fn().mockResolvedValue({ code: 0, stdout: out, stderr: '' });
+    await expect(listBoundedGitRefs('https://x.test/r', '/d', undefined, runner)).resolves.toBe(out);
+    expect(runner.mock.calls[0]![3]).toMatchObject({ timeoutMs: GIT_REFS_TIMEOUT_MS });
+  });
+  it('rejects instead of truncating when tags exceed the cap', async () => {
+    const runner = vi.fn().mockResolvedValue({ code: 0, stdout: tagLines(GIT_REFS_MAX_TAGS + 1), stderr: '' });
+    await expect(listBoundedGitRefs('https://x.test/r', '/d', undefined, runner)).rejects.toThrow(/more than 2000 tags/);
+  });
+  it('propagates timeout and reports non-zero exit', async () => {
+    await expect(listBoundedGitRefs('u', '/d', undefined, vi.fn().mockRejectedValue(new Error('Plugin source command timed out')))).rejects.toThrow(/timed out/);
+    await expect(listBoundedGitRefs('u', '/d', undefined, vi.fn().mockResolvedValue({ code: 128, stdout: '', stderr: '' }))).rejects.toThrow('Git source is unavailable');
   });
 });
