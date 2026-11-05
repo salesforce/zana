@@ -6,6 +6,7 @@ import {
   HOST_SESSION_INSTRUCTIONS_MAX,
   HOST_SESSION_TOOLS_MAX,
   invokePluginAgentTool,
+  mcpInputSchema,
   LIVE_INSTRUCTION_MAX,
   panelAgentGrounding,
   packHostSessionTooling,
@@ -539,4 +540,27 @@ it('hides desktop-only tools and rejects stale calls while retaining non-UI acti
   for (const desktopOnly of [42, {}, [''], Array(65).fill('action')]) {
     expect(() => normalizeRegisteredAgentTool({ pluginId: 'fixture', tool: { name: 'invalid', description: 'test', desktopOnly, execute } })).toThrow('desktopOnly');
   }
+});
+
+describe('mcpInputSchema', () => {
+  it('declares type object on a union schema so strict MCP clients accept the tool list', () => {
+    const union = { anyOf: [{ type: 'object', properties: { a: { type: 'string' } } }, { type: 'object', properties: { b: { type: 'string' } } }] };
+    expect(mcpInputSchema(union)).toEqual({ type: 'object', ...union });
+  });
+
+  it('keeps an object schema untouched', () => {
+    const schema = { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] };
+    expect(mcpInputSchema(schema)).toBe(schema);
+  });
+
+  it('replaces a missing, non-object, or non-object-typed schema with an empty object schema', () => {
+    for (const bad of [undefined, null, 'x', [], { type: 'string' }]) {
+      expect(mcpInputSchema(bad)).toEqual({ type: 'object', properties: {} });
+    }
+  });
+
+  it('applies to every dynamic tool built from a registration', () => {
+    const dynamic = toDynamicTool({ name: 'u', description: 'd', inputSchema: { oneOf: [{ type: 'object' }] } } as never);
+    expect(dynamic.inputSchema).toEqual({ type: 'object', oneOf: [{ type: 'object' }] });
+  });
 });

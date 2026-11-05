@@ -1,6 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
+import { SQUAD_ATTACHMENT_FROZEN_NOTE } from '@zana-ai/zcc-domain/squad-proposal';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -235,6 +236,20 @@ describe('TeamComposer prefill', () => {
     expect(chips.textContent).toContain('plan.md');
     expect(chips.querySelectorAll('.launch-attachment-outside')).toHaveLength(1);
     expect(chips.querySelector('li[title="~/vault/design.md"]')).not.toBeNull();
+  });
+
+  it('marks an attached chip and shows the frozen-content note only when one is present', () => {
+    const { unmount } = render(<TeamComposer prefill={{ ...prefill, sources: [
+      { id: 'c1', name: 'notes.md', byteSize: 10, expiresAt: Date.now() + 60_000, attachment: true },
+      { id: 'c2', name: 'plan.md', byteSize: 20, expiresAt: Date.now() + 60_000 }
+    ] }} />);
+    const chips = screen.getByLabelText('Attached sources');
+    expect(chips.textContent).toContain('notes.mdattached');
+    expect(chips.querySelectorAll('.launch-attachment-outside')).toHaveLength(1);
+    expect(screen.getByTestId('team-composer-attachment-note').textContent).toBe(SQUAD_ATTACHMENT_FROZEN_NOTE);
+    unmount();
+    render(<TeamComposer prefill={prefill} />);
+    expect(screen.queryByTestId('team-composer-attachment-note')).toBeNull();
   });
 
   it('removing a chip removes its id from the launch', async () => {

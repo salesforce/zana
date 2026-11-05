@@ -13,6 +13,10 @@ import {
   type SourceRefusal
 } from '@zana-ai/zcc-server/services/execution/source-policy';
 
+/** The per-launch item budget and name rules have one owner; the desktop imports them from here. */
+export { LAUNCH_ITEM_LIMITS, attachmentNameProblem, sha256Hex, validateLaunchItems } from '@zana-ai/zcc-server/services/execution/launch-items';
+export type { LaunchItemInput, LaunchItemMapping, LaunchItemsResult } from '@zana-ai/zcc-server/services/execution/launch-items';
+
 export const FILE_MAX_BYTES = 4 * 1024 * 1024;
 export const TOTAL_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -52,7 +56,8 @@ export interface SquadSourceBases {
 
 /** The project root's realpath plus the policy every source of one proposal is checked against. */
 export interface SquadSourceScope {
-  projectRoot: string;
+  /** Absent for a remote Project: its local path is a placeholder, so nothing is inside it. */
+  projectRoot?: string;
   policy: SourcePolicy;
 }
 
@@ -70,7 +75,8 @@ function insideRoot(root: string, real: string): string | undefined {
 }
 
 /** The project and the shared source policy, resolved once per check. Undefined when the project folder is gone. */
-export async function sourceScope(fs: SquadProposalFs, projectRoot: string, bases: SquadSourceBases): Promise<SquadSourceScope | undefined> {
+export async function sourceScope(fs: SquadProposalFs, projectRoot: string, bases: SquadSourceBases, options: { remote?: boolean } = {}): Promise<SquadSourceScope | undefined> {
+  if (options.remote) return { policy: await resolveSourcePolicy(fs.realpath, { ...bases }) };
   let root: string;
   try { root = await fs.realpath(projectRoot); } catch { return undefined; }
   return { projectRoot: root, policy: await resolveSourcePolicy(fs.realpath, { projectRoot: root, ...bases }) };
@@ -90,7 +96,8 @@ function refusedMessage(rawPath: string, refusal: SourceRefusal, policy: SourceP
  * source policy allows. Symlinks are resolved first, so a link can't reach a refused file.
  */
 export async function confineSource(fs: SquadProposalFs, scope: SquadSourceScope, rawPath: string): Promise<Confined> {
-  const candidate = isAbsolute(rawPath) ? rawPath : resolve(scope.projectRoot, rawPath);
+  if (!isAbsolute(rawPath) && !scope.projectRoot) return fail('SOURCE_NOT_ALLOWED', `${rawPath} is relative, and this Project's files are not readable from here. Attach a file under the data folders by absolute path.`);
+  const candidate = isAbsolute(rawPath) ? rawPath : resolve(scope.projectRoot!, rawPath);
   let real: string;
   try { real = await fs.realpath(candidate); } catch { return fail('SOURCE_NOT_FILE', `${rawPath} does not exist or is not a file.`); }
   const refusal = await sourceRefusal(candidate, real, scope.policy, linkFsOf(fs));
@@ -99,7 +106,7 @@ export async function confineSource(fs: SquadProposalFs, scope: SquadSourceScope
   try { stat = await fs.lstat(real); } catch { return fail('SOURCE_NOT_FILE', `${rawPath} does not exist or is not a file.`); }
   if (!stat.isFile()) return fail('SOURCE_NOT_FILE', `${rawPath} is not a regular file.`);
   if (stat.nlink > 1) return fail('SOURCE_NOT_ALLOWED', `${rawPath} is a hard-linked file, so it can't be attached (it may be a second name for a protected file).`);
-  const rel = insideRoot(scope.projectRoot, real);
+  const rel = scope.projectRoot ? insideRoot(scope.projectRoot, real) : undefined;
   const source: SquadProposalSource = rel === undefined
     ? { path: real, relPath: displaySourcePath(real, scope.policy.home), bytes: stat.size, outsideProject: true }
     : { path: real, relPath: rel, bytes: stat.size };
@@ -165,7 +172,7 @@ export async function goalPathNotAllowed(
       try { stat = await fs.lstat(real); } catch { break; }
       if (!stat.isFile()) break;
       if (await sourceRefusal(candidate, real, scope.policy, linkFsOf(fs))) return { path: cleaned, reason: 'policy' };
-      if (insideRoot(scope.projectRoot, real) === undefined && !listedOutside.has(real)) return { path: cleaned, reason: 'outside-project' };
+      if ((scope.projectRoot ? insideRoot(scope.projectRoot, real) : undefined) === undefined && !listedOutside.has(real)) return { path: cleaned, reason: 'outside-project' };
       if (stat.nlink > 1) return { path: cleaned, reason: 'hard-linked' };
       break;
     }

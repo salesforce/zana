@@ -163,9 +163,21 @@ Each message is followed by a short description of what a source may be.
 
 For agent launches, a file named in the goal that sits outside the Project must also be listed in the proposal's sources. Otherwise the launch is refused with `SOURCE_NOT_ALLOWED`. When the agent started the Squad itself, the message reads: "The goal names `<path>`, which is outside this project and was not listed in sources. List it in `sources`, or remove it from the goal." When it comes from a reviewed proposal, the message says the file "was not listed in the proposal's sources, so the card did not show it". The agent fixes this by listing the file in `sources` or removing it from the goal. On a reviewed proposal, the card shows the file before you press Launch.
 
+## Attachments from agents
+
+An agent can pass text that is not on disk as attachments (`attachments: [{ name, text }]` on `squad_propose` and `squad_launch`). Attachments and sources share one budget: 16 items, 4 MiB each, 16 MiB in total. Names are plain file names of at most 128 UTF-8 bytes.
+
+- Names are NFC-normalised and compared without regard to case.
+- The same name with identical content is folded into one (deduplicated).
+- The same name with different content gets a " (n)" suffix, such as "plan (1).md". A numbered name over 128 bytes is refused with `NAME_TOO_LONG`.
+- The result lists each attachment as `{ given, used, deduplicated? }`.
+- A plan is limited to 1 MiB.
+
+When a launch is reviewed, Zana keeps attachments as private copies (owner-only, 0700 folders and 0600 files, not encrypted) in its data folder until the launch is started, dismissed or expired. Together they are capped at 64 MiB. When that is full, dismiss old proposals or start the Squad now. The review card shows: "Attached content was captured when this launch was prepared. Anything changed after that is not included, and the Squad will use only the captured version."
+
 ## Remote and SSH Projects
 
-A Project bound to an SSH remote can launch Squads. In the composer, files you attach are uploaded to the remote host first, and a toast says "Uploaded `<name>` to `<host>`".
+A Project bound to an SSH remote can launch Squads, and attachments work there too. Relative path sources are not readable for remote Projects; only absolute paths under allowed locations are. The coordinator reads attached content through the `execution.source` tools, so no handoff file is written to the remote host.
 
 A Project on a secondary machine without a remote cannot. The launch is refused with this message.
 

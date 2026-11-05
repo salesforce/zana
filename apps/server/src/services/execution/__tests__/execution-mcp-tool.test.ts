@@ -5,7 +5,6 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { registerExecutionTools as registerExecutionToolsUnderTest, EXECUTION_MEMBER_TOOL_NAMES, getExecutionToolDescriptors, type RegisterExecutionToolOptions } from '../execution-mcp-tool.js';
 import { createExecutionHandoffStore } from '../handoff-store.js';
@@ -497,9 +496,13 @@ describe('execution MCP tools', () => {
     const execution = service();
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
-    const directory = join(homedir(), '.zcc', 'execution-requests');
+    // An isolated data dir: the request root follows ZCC_DATA_DIR, so no real ~/.zcc or ~/.zcc-dev is touched.
+    const dataDir = await mkdtemp(join(tmpdir(), 'zcc-execution-requests-'));
+    vi.stubEnv('ZCC_DATA_DIR', dataDir);
+    const directory = join(dataDir, 'execution-requests');
     await mkdir(directory, { recursive: true });
     const file = join(directory, `${randomUUID()}.json`);
+    try {
     await writeFile(file, JSON.stringify({
       version: 1,
       teamId: 'team-1',
@@ -513,6 +516,10 @@ describe('execution MCP tools', () => {
       teamId: 'team-1',
       workUnits: [{ id: 'preplanned', title: 'Preplanned', task: 'Use request file plan', dependencies: [], readOnly: true }]
     }), undefined);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 
   it('rejects request files outside user home without reading them', async () => {

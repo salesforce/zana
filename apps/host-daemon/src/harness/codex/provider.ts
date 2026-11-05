@@ -100,7 +100,8 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
         { id: 'o1-mini', label: 'o1 Mini', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
         { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION }
       ],
-      modelLevelMapping: { low: 'gpt-4o-mini', medium: 'gpt-4o', high: 'gpt-4o', 'extra-high': 'o1' },
+      modelLevelMapping: { low: undefined, medium: undefined, high: undefined, 'extra-high': undefined },
+      defaultModelTierRules: { low: ['luna', 'mini'], medium: ['terra'], high: ['sol'], 'extra-high': ['sol'] },
       executionStateMapping: {
         plan: 'read-only + on-request',
         interactive: 'workspace-write + on-request',
@@ -217,7 +218,6 @@ export class CodexProvider extends BaseLaunchProvider {
       CODEX_EVIDENCE_VERSION,
       (id, scope) => codexEvidence(id, scope, 'Live Codex model/list catalog and -m contribution verified.')
     );
-    const defaultModel = models[0]?.id;
     return {
       ...CODEX_ADAPTER,
       evidence,
@@ -226,12 +226,6 @@ export class CodexProvider extends BaseLaunchProvider {
         targets: {
           ...CODEX_ADAPTER.descriptor.targets!,
           models,
-          modelLevelMapping: {
-            low: models.find((model) => /mini/i.test(model.id))?.id ?? defaultModel,
-            medium: defaultModel,
-            high: defaultModel,
-            'extra-high': defaultModel
-          }
         }
       }
     };

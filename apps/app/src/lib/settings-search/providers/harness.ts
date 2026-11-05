@@ -145,6 +145,17 @@ function launchDefaultEntries(family: HarnessFamily, label: string): SettingsSea
       keywords: ['model', 'cli agent']
     });
   }
+  // Every harness that lists models gets a Model tiers group (one picker per tier).
+  const hasTiers = descriptor ? (descriptor.targets?.models?.length ?? 0) > 0 : true;
+  if (hasTiers) {
+    out.push({
+      ...base,
+      id: `harness.${family}.model-tiers`,
+      label: `${label} model tiers`,
+      help: 'Which model each portable tier (Low, Medium, High, Extra-high) uses. Pick a model per tier, or keep the default that follows the latest.',
+      keywords: ['model tiers', 'low medium high', 'extra-high', 'cli agent']
+    });
+  }
   if (hasExecution && family !== 'codex') {
     out.push({
       ...base,

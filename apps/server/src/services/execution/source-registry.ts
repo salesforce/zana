@@ -4,6 +4,7 @@ import { mkdir, open, realpath, readdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue } from '../harness-routing/storage.js';
 import { allowedLocationsText, sourceRefusal, type SourcePolicy } from './source-policy.js';
+import { sha256Hex, validateLaunchItems, type LaunchItemErrorCode, type LaunchItemMapping } from './launch-items.js';
 import type { ExecutionSourceCapabilityView, ExecutionSourceSnapshot } from '@zana-ai/zcc-domain/product';
 
 export const EXECUTION_SOURCE_LIMITS = Object.freeze({
@@ -29,6 +30,15 @@ type SourceErrorCode = 'TOO_MANY_SOURCES' | 'DUPLICATE_SOURCE' | 'SOURCE_TOO_LAR
   | 'SOURCE_CHANGED' | 'NOT_REGULAR_FILE' | 'INVALID_ENCODING' | 'BINARY_UNSUPPORTED'
   | 'MALFORMED_SOURCE' | 'UNSUPPORTED_SOURCE' | 'EXTRACTION_TIMEOUT' | 'INVALID_CONTENT_REF' | 'SOURCE_NOT_FOUND'
   | 'SERIALIZED_SNAPSHOT_TOO_LARGE';
+
+const LAUNCH_ITEM_ERRORS: Record<LaunchItemErrorCode, SourceErrorCode> = {
+  INVALID_NAME: 'UNSUPPORTED_SOURCE',
+  NAME_TOO_LONG: 'UNSUPPORTED_SOURCE',
+  TOO_MANY_ITEMS: 'TOO_MANY_SOURCES',
+  ITEM_TOO_LARGE: 'SOURCE_TOO_LARGE',
+  TOTAL_TOO_LARGE: 'TOTAL_SOURCE_TOO_LARGE'
+};
+const sourceErrorFor = (code: LaunchItemErrorCode): SourceErrorCode => LAUNCH_ITEM_ERRORS[code];
 
 export class ExecutionSourceError extends Error {
   constructor(readonly code: SourceErrorCode, message: string) {
@@ -89,6 +99,8 @@ interface Capability {
   used: boolean;
   /** Issued under a source policy: a renewal keeps refusing hard-linked files. */
   policy: boolean;
+  /** Content the caller handed over (an attachment): `resolve` snapshots these bytes, never a path. */
+  inline?: Buffer;
 }
 
 interface RetiredCapability {
@@ -517,6 +529,46 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     }
   }
 
+  /**
+   * Issue capabilities for content the caller supplies (attachments), through the same
+   * validation as every launch item: names, the item budget, digests. Clashing names are
+   * deduplicated or suffixed, never an error; `mapping` says what each given name became.
+   * Session bindings only (an agent's launch); the bytes live in memory until `resolve`.
+   */
+  async function issueFromBytes(input: ExecutionSourceBindingInput & {
+    projectId: string;
+    items: ReadonlyArray<{ name: string; bytes: Uint8Array }>;
+    /** Items already in the launch (path sources) that share the budget and reserve names. */
+    existing?: ReadonlyArray<{ name: string; byteSize: number; sha256: string }>;
+  }): Promise<{ views: ExecutionSourceCapabilityView[]; mapping: LaunchItemMapping[] }> {
+    const binding = requireBinding(input);
+    if (binding.kind !== 'session') throw new ExecutionSourceError('INVALID_CAPABILITY', 'Attachments are only issued to an agent session');
+    pruneCapabilities();
+    const existing = input.existing ?? [];
+    const checked = validateLaunchItems([
+      ...existing.map((item) => ({ kind: 'source' as const, ...item })),
+      ...input.items.map((item) => ({ kind: 'attachment' as const, name: item.name, byteSize: item.bytes.byteLength, sha256: sha256Hex(item.bytes) }))
+    ]);
+    if (!checked.ok) throw new ExecutionSourceError(sourceErrorFor(checked.code), checked.message);
+    if (capabilities.size + input.items.length > limits.maxOutstandingCapabilities) {
+      throw new ExecutionSourceError('TOO_MANY_SOURCES', 'Too many outstanding execution source capabilities');
+    }
+    const views: ExecutionSourceCapabilityView[] = [];
+    const issuedAt = now();
+    for (const { index, name } of checked.kept) {
+      if (index < existing.length) continue;
+      const bytes = Buffer.from(input.items[index - existing.length]!.bytes);
+      const capability: Capability = {
+        id: id(), binding, projectId: input.projectId, path: `attachment:${name}`, exactPath: `attachment:${name}`,
+        representations: [], name, byteSize: bytes.byteLength, digest: digest(bytes), issuedAt, expiresAt: issuedAt + ttlMs,
+        used: false, policy: true, inline: bytes
+      };
+      capabilities.set(capability.id, capability);
+      views.push(viewOf(capability));
+    }
+    return { views, mapping: checked.mapping.map((entry) => ({ ...entry, index: entry.index - existing.length })) };
+  }
+
   function viewOf(capability: Capability): ExecutionSourceCapabilityView {
     return { id: capability.id, name: capability.name, byteSize: capability.byteSize, expiresAt: capability.expiresAt };
   }
@@ -621,12 +673,17 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     let total = 0;
     let extracted = 0;
     try { for (const capability of selected) {
-      let currentPath: string;
-      try { currentPath = await realpath(capability.path); } catch { throw new ExecutionSourceError('SOURCE_CHANGED', `${capability.name} moved or disappeared`); }
-      if (currentPath !== capability.path) throw new ExecutionSourceError('SOURCE_CHANGED', `${capability.name} moved after selection`);
-      const info = await stat(currentPath);
-      if (!info.isFile() || info.size !== capability.byteSize) throw new ExecutionSourceError('SOURCE_CHANGED', `${capability.name} changed after selection`);
-      const bytes = await boundedRead(currentPath);
+      let bytes: Buffer;
+      if (capability.inline) {
+        bytes = capability.inline;
+      } else {
+        let currentPath: string;
+        try { currentPath = await realpath(capability.path); } catch { throw new ExecutionSourceError('SOURCE_CHANGED', `${capability.name} moved or disappeared`); }
+        if (currentPath !== capability.path) throw new ExecutionSourceError('SOURCE_CHANGED', `${capability.name} moved after selection`);
+        const info = await stat(currentPath);
+        if (!info.isFile() || info.size !== capability.byteSize) throw new ExecutionSourceError('SOURCE_CHANGED', `${capability.name} changed after selection`);
+        bytes = await boundedRead(currentPath);
+      }
       if (digest(bytes) !== capability.digest) throw new ExecutionSourceError('SOURCE_CHANGED', `${capability.name} changed after selection`);
       total += bytes.byteLength;
       if (bytes.byteLength > limits.maxFileBytes) throw new ExecutionSourceError('SOURCE_TOO_LARGE', `${capability.name} exceeds per-file limit`);
@@ -780,5 +837,5 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     await rm(join(target, '..'), { recursive: true, force: true });
   }
 
-  return { issue, reissue, discardRetired, resolve, list, read, pruneSnapshots, removeSnapshot };
+  return { issue, issueFromBytes, reissue, discardRetired, resolve, list, read, pruneSnapshots, removeSnapshot };
 }

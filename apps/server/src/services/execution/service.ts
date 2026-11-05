@@ -713,7 +713,9 @@ export class ExecutionService {
       resolvedModels = (await this.withResolvedRouteFacts(projectId, request)).resolvedModels ?? [];
     } catch (error) {
       this.deps.logError?.(`Team route facts failed for ${projectId}:${request.launchRequestId}`, error);
-      return { ok: false, code: 'ADMISSION_FAILED', message: 'Team route facts could not be evaluated' };
+      // Only an error that declares fixed user-safe text is shown; anything else may carry detail.
+      const safe = (error as { safeMessage?: unknown } | null)?.safeMessage;
+      return { ok: false, code: 'ADMISSION_FAILED', message: typeof safe === 'string' && safe ? safe : 'Team route facts could not be evaluated' };
     }
     if (!hasUniqueModelSlots(resolvedModels)) return { ok: false, code: 'INVALID', message: 'duplicate resolved model slot' };
     const resolvedRequest = { ...request, resolvedModels };

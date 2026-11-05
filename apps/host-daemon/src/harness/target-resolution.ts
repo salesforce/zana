@@ -5,6 +5,21 @@ import { harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import { ACP_DEFAULT_MODEL_ID } from '@zana-ai/zcc-domain/thread-runtime';
 import { hasNativeOption, type HarnessNativeContribution } from './adapter-contract.js';
 import { executionTargetFor } from './evidence-registry.js';
+import { resolveTierFromRules } from './tier-rules.js';
+
+/**
+ * A harness has no model for a tier. `safeMessage` is fixed text naming only the
+ * harness label and tier, so callers may show it to the user without leaking
+ * other error detail.
+ */
+export class UnsupportedModelLevelError extends Error {
+  readonly safeMessage: string;
+  constructor(label: string, level: string) {
+    super(`${label} does not support ${level} model level.`);
+    this.name = 'UnsupportedModelLevelError';
+    this.safeMessage = `${label} has no model for the ${level} tier, so this Squad cannot run on it. Switch the Project to a harness that maps model tiers (such as Claude), or use a Squad whose personas set no model tier.`;
+  }
+}
 
 export interface TargetResolutionInput {
   config: AppConfig;
@@ -24,6 +39,12 @@ export interface TargetResolutionInput {
    * from renderer input.
    */
   authorizedModel?: AuthorizedModelTarget;
+  /**
+   * Throw {@link UnsupportedModelLevelError} when a tier resolves to no model, instead of
+   * falling back to the harness's own default model. Callers that can retry against a
+   * live inventory set this on their first attempt.
+   */
+  strictTier?: boolean;
 }
 
 /** A launch's main-resolved level → concrete model id (see {@link TargetResolutionInput.authorizedModel}). */
@@ -41,6 +62,8 @@ export interface ModelResolution {
   structuredSelected: boolean;
   /** A trailing raw model flag may override config-derived launch selection. */
   rawOverride?: boolean;
+  /** The tier resolved to no model, so the harness's own default model is used. */
+  tierFallback?: ModelLevel;
   contribution: HarnessNativeContribution;
 }
 
@@ -267,11 +290,26 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
 
   if (!targetId && level) {
     const authorized = input.authorizedModel;
-    targetId = authorized && authorized.adapterId === adapterId && authorized.level === level
-      ? authorized.targetId
-      : provider.adapter.descriptor.targets?.modelLevelMapping?.[level];
+    if (authorized && authorized.adapterId === adapterId && authorized.level === level) {
+      targetId = authorized.targetId;
+    } else {
+      // Order: the user's tier rules, then the adapter's seeded rules (both matched
+      // against the live inventory), then the built-in static mapping.
+      const catalog = provider.adapter.descriptor.targets;
+      const liveIds = catalog?.models.map(({ id }) => id) ?? [];
+      targetId = resolveTierFromRules(
+        input.config.harnessRouting?.byAdapter?.[adapterId as HarnessFamily]?.modelTierRules?.[level],
+        liveIds
+      )
+        ?? resolveTierFromRules(catalog?.defaultModelTierRules?.[level], liveIds)
+        ?? catalog?.modelLevelMapping?.[level];
+    }
     if (!targetId) {
-      throw new Error(`${provider.adapter.descriptor.label} does not support ${level} model level.`);
+      if (input.strictTier) {
+        throw new UnsupportedModelLevelError(provider.adapter.descriptor.label, level);
+      }
+      // No model for this tier: launch on the harness's own default model.
+      return { source, level, structuredSelected: false, rawOverride: hasRawModel, tierFallback: level, contribution: {} };
     }
   }
 
