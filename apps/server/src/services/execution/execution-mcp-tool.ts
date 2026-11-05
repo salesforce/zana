@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { isAbsolute, join } from 'node:path';
 import { MAX_BLOCKER_ANSWER_BYTES, type ExecutionCohortBinding, type ExecutionRequestV1, type ExecutionService } from './service.js';
 import type { ExecutionRecord } from './store.js';
@@ -283,7 +283,7 @@ function hasBoundedWorkUnits(workUnits: unknown): boolean {
 /** Read and consume an ephemeral request from main's dedicated execution directory. */
 export async function readStartRequestFile(
   requestPath: string,
-  trustedRoot = join(homedir(), '.zcc', 'execution-requests'),
+  trustedRoot = join(resolveZccDataDir(), 'execution-requests'),
   fileOps = { lstat, open, realpath, rename, unlink }
 ): Promise<z.infer<typeof executionStartSchema>> {
   if (!isAbsolute(requestPath)) throw new Error('requestPath must be absolute');

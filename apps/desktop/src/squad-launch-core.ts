@@ -7,6 +7,7 @@ import { ExecutionSourceError, type createExecutionSourceRegistry, type Executio
 import { resolveSourcePolicy, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { ExecutionRecord, ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
 import { squadGoalTooLongMessage, squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
+import type { LaunchItemMapping } from './squad-proposals/sources.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { gateInvalidProvidedPlan, splitProposedGoalSources, teamJobFailureResponse, type ProvidedPlanGateDeps } from './team-launch-support.js';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
@@ -34,10 +35,15 @@ export interface SquadSourceSnapshotArgs {
   sourcePaths: readonly string[];
   goalSourceDescriptors: ExecutionSourcePathDescriptor[];
   policy: SourcePolicy;
+  /** Agent-supplied text snapshotted as sources; session providers only. */
+  attachments?: readonly SquadLaunchAttachment[];
 }
 
+/** Content an agent hands over by value instead of by path. */
+export interface SquadLaunchAttachment { name: string; text: string }
+
 export type SquadSourceSnapshotResult =
-  | { ok: true; sourceBundle?: SquadSourceBundle }
+  | { ok: true; sourceBundle?: SquadSourceBundle; attachmentMapping?: LaunchItemMapping[] }
   | { ok: false; code: string; message: string };
 
 export type SnapshotSquadSources = (
@@ -79,9 +85,13 @@ export interface SquadLaunchInput {
   reviewedSourcePaths?: readonly string[];
   /** User-selected existing execution target; validated here, resolved and revalidated by main. */
   target?: SquadExecutionTargetSelector;
+  /** Text the launching agent supplied by value; snapshotted as sources. Agent sessions only. */
+  attachments?: readonly SquadLaunchAttachment[];
 }
 
 export interface SquadLaunchContext {
+  /** Receives how each attachment was named (suffixed or folded) once the snapshot succeeds. */
+  onAttachmentMapping?(mapping: LaunchItemMapping[]): void;
   sources?: SquadSourceProvider;
   owner: SquadLaunchOwner;
 }
@@ -91,16 +101,17 @@ export interface SquadLaunchContext {
  * them. Each provider kind resolves only capabilities issued to that same provider.
  */
 export function createSquadSourceSnapshotter(
-  registry: Pick<ExecutionSourceRegistry, 'issue' | 'resolve'>
+  registry: Pick<ExecutionSourceRegistry, 'issue' | 'issueFromBytes' | 'resolve'>
 ): SnapshotSquadSources {
   return async (provider, args) => {
-    if (!args.sourceCapabilityIds.length && !args.sourcePaths.length && !args.goalSourceDescriptors.length) return { ok: true };
+    if (!args.sourceCapabilityIds.length && !args.sourcePaths.length && !args.goalSourceDescriptors.length && !args.attachments?.length) return { ok: true };
     try {
       switch (provider?.kind) {
         case 'window':
+          if (args.attachments?.length) return { ok: false, code: 'INVALID_CAPABILITY', message: 'Attachments require an agent session' };
           return { ok: true, sourceBundle: await snapshotWindowSources(registry, provider.windowId, args) };
         case 'session':
-          return { ok: true, sourceBundle: await snapshotSessionSources(registry, provider.sessionId, args) };
+          return { ok: true, ...(await snapshotSessionSources(registry, provider.sessionId, args)) };
         default:
           return { ok: false, code: 'INVALID_CAPABILITY', message: 'Execution sources require a trusted window' };
       }
@@ -114,7 +125,7 @@ export function createSquadSourceSnapshotter(
 
 /** Issue capabilities for the goal-named paths, then snapshot every source of the launch. */
 async function snapshotWindowSources(
-  registry: Pick<ExecutionSourceRegistry, 'issue' | 'resolve'>,
+  registry: Pick<ExecutionSourceRegistry, 'issue' | 'issueFromBytes' | 'resolve'>,
   windowId: number,
   args: SquadSourceSnapshotArgs
 ): Promise<SquadSourceBundle | undefined> {
@@ -135,10 +146,10 @@ async function snapshotWindowSources(
  * session never presents capability ids, and nothing is renewed: issue and resolve are one step.
  */
 async function snapshotSessionSources(
-  registry: Pick<ExecutionSourceRegistry, 'issue' | 'resolve'>,
+  registry: Pick<ExecutionSourceRegistry, 'issue' | 'issueFromBytes' | 'resolve'>,
   sessionId: string,
   args: SquadSourceSnapshotArgs
-): Promise<SquadSourceBundle | undefined> {
+): Promise<{ sourceBundle?: SquadSourceBundle; attachmentMapping?: LaunchItemMapping[] }> {
   if (args.sourceCapabilityIds.length) {
     throw new ExecutionSourceError('INVALID_CAPABILITY', 'Agent sessions cannot present execution source capabilities');
   }
@@ -148,9 +159,20 @@ async function snapshotSessionSources(
   // Two issues, as a goal may name a listed source: the registry hands back the same capability for it.
   const listed = await issue(args.sourcePaths);
   const named = await issue(args.goalSourceDescriptors.map(({ exactPath }) => exactPath));
-  const capabilityIds = [...new Set([...listed, ...named].map(({ id }) => id))];
-  if (!capabilityIds.length) return undefined;
-  return registry.resolve({ binding, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_') });
+  const pathViews = [...new Map([...listed, ...named].map((view) => [view.id, view])).values()];
+  // Attachments share the item budget and name space with the path sources; a path source is
+  // never content-identical to an attachment here, so a clash is always suffixed, never folded.
+  const attached = args.attachments?.length
+    ? await registry.issueFromBytes({
+      binding, projectId,
+      existing: pathViews.map((view) => ({ name: view.name, byteSize: view.byteSize, sha256: `capability:${view.id}` })),
+      items: args.attachments.map(({ name, text }) => ({ name, bytes: Buffer.from(text, 'utf8') }))
+    })
+    : undefined;
+  const capabilityIds = [...pathViews.map(({ id }) => id), ...(attached?.views.map(({ id }) => id) ?? [])];
+  if (!capabilityIds.length) return {};
+  const sourceBundle = await registry.resolve({ binding, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_') });
+  return { sourceBundle, ...(attached ? { attachmentMapping: attached.mapping } : {}) };
 }
 
 /**
@@ -196,10 +218,12 @@ export async function launchSquad(
   const snapshot = await deps.snapshotSources(ctx.sources, {
     projectId: project.id, launchRequestId, sourceCapabilityIds: input.sourceCapabilityIds, sourcePaths, goalSourceDescriptors,
     // Re-checked against the realpath issue() takes, so a symlink swapped in after discovery can't escape.
-    policy: await resolveSourcePolicy(deps.realpath, { projectRoot: project.path, ...deps.sourceBases() })
+    policy: await resolveSourcePolicy(deps.realpath, { projectRoot: project.path, ...deps.sourceBases() }),
+    ...(input.attachments?.length ? { attachments: input.attachments } : {})
   });
   if (!snapshot.ok) return snapshot;
   const { sourceBundle } = snapshot;
+  if (snapshot.attachmentMapping) ctx.onAttachmentMapping?.(snapshot.attachmentMapping);
   let started = false;
   try {
     const built = await buildSquadStartRequest(deps, {

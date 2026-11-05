@@ -158,6 +158,12 @@ export interface HarnessTargetCatalog {
   providerModelRelationship?: ProviderModelRelationship;
   models: readonly HarnessModelTarget[];
   modelLevelMapping: Readonly<Record<ModelLevel, string | undefined>>;
+  /**
+   * Seeded tier rules for harnesses whose model ids carry no portable tier. Ordered terms
+   * or exact ids matched against the live inventory (see `resolveTierFromRules`); the
+   * user's own rules in `harnessRouting` take precedence.
+   */
+  defaultModelTierRules?: Readonly<Partial<Record<ModelLevel, readonly string[]>>>;
   /** Portable execution states supported by this adapter and their native policy labels. */
   executionStateMapping?: Readonly<Partial<Record<ExecutionState, string>>>;
   executionTargets?: readonly HarnessExecutionTarget[];

@@ -100,7 +100,15 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
         { id: 'o1-mini', label: 'o1 Mini', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
         { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION }
       ],
-      modelLevelMapping: { low: 'gpt-4o-mini', medium: 'gpt-4o', high: 'gpt-4o', 'extra-high': 'o1' },
+      modelLevelMapping: { low: undefined, medium: undefined, high: undefined, 'extra-high': undefined },
+      // Name terms first (they track new releases); exact catalog ids last so a harness with no live
+      // inventory still lands on a sensible model ('mini' alone would rank o1-mini above gpt-4o-mini).
+      defaultModelTierRules: {
+        low: ['luna', 'gpt-4o-mini', 'mini'],
+        medium: ['terra', 'gpt-4o'],
+        high: ['sol', 'gpt-5.5'],
+        'extra-high': ['sol', 'gpt-5.5']
+      },
       executionStateMapping: {
         plan: 'read-only + on-request',
         interactive: 'workspace-write + on-request',
@@ -217,7 +225,6 @@ export class CodexProvider extends BaseLaunchProvider {
       CODEX_EVIDENCE_VERSION,
       (id, scope) => codexEvidence(id, scope, 'Live Codex model/list catalog and -m contribution verified.')
     );
-    const defaultModel = models[0]?.id;
     return {
       ...CODEX_ADAPTER,
       evidence,
@@ -226,12 +233,6 @@ export class CodexProvider extends BaseLaunchProvider {
         targets: {
           ...CODEX_ADAPTER.descriptor.targets!,
           models,
-          modelLevelMapping: {
-            low: models.find((model) => /mini/i.test(model.id))?.id ?? defaultModel,
-            medium: defaultModel,
-            high: defaultModel,
-            'extra-high': defaultModel
-          }
         }
       }
     };

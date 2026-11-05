@@ -63,12 +63,26 @@ export async function safePackPluginSession(
   }
 }
 
+/**
+ * MCP requires every tool `inputSchema` to be a JSON Schema with
+ * `type: "object"`. A union (`anyOf`/`oneOf`) schema has no top-level type, and
+ * strict MCP clients (OpenCode) reject the whole `tools/list` over one such
+ * tool, so the agent sees none of the host tools. Declare the type; keep the rest.
+ */
+export function mcpInputSchema(schema: unknown): Record<string, unknown> {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return { type: 'object', properties: {} };
+  const record = schema as Record<string, unknown>;
+  if (record.type === 'object') return record;
+  if (record.type !== undefined) return { type: 'object', properties: {} };
+  return { type: 'object', ...record };
+}
+
 export function toDynamicTool(registration: PluginAgentToolRecord): DynamicTool {
   const declared = registration.presentation;
   return {
     name: registration.name,
     description: registration.description,
-    inputSchema: registration.inputSchema ?? { type: 'object', properties: {} },
+    inputSchema: mcpInputSchema(registration.inputSchema),
     presentation: {
       label: declared?.label ?? {
         pending: `Running ${registration.name}`,

@@ -30,7 +30,7 @@ These points apply to every Squad on this page.
 
 - **You need a Project and one signed-in harness.** Claude is the recommended harness.
 - **Each worker has a tier: Low, Medium, or High.** Low is the cheapest and fastest. High is for the hardest reasoning. The Orchestrator is Medium in every Squad.
-- **The harness must have a model for every tier the Squad uses.** If it does not, the launch is refused. See [Harness support](#harness-support).
+- **Every tier maps to a model.** Zana picks the model for each tier from your harness, and you can change the mapping. If a tier matches no installed model, the worker runs on the harness's own default model. See [Harness support](#harness-support).
 - **No built-in Squad restricts what its workers can do.** Role and scope come from the task text, so say plainly in your goal what the workers may and may not change.
 - **Goals have a limit.** The goal is capped at 2,048 characters. A counter appears near the limit. If the goal is too long, Zana shows: "The goal is too long for a Squad (N of 2,048 characters). Move details into an attached plan or source."
 - **Read results in Squad details.** The final output appears under **Assembled result**. Usage appears in the same place with the label "provider-reported cost".
@@ -49,18 +49,30 @@ Each Squad needs these tiers from your harness:
 | Delivery Squad | Medium, High |
 | Review Squad | Medium, High |
 
-What Zana maps each tier to depends on the harness:
+#### What Low, Medium, and High mean
 
-| Harness | Low | Medium | High |
-|---|---|---|---|
-| Claude | haiku | sonnet | opus |
-| Codex | gpt-4o-mini | gpt-4o | gpt-4o |
+A tier is a portable level, so a Persona can ask for "Low" or "High" without naming a model. Low is the cheapest and fastest, Medium is the balanced default, High is for the hardest reasoning, and Extra-high is deeper still. Tiers are used wherever a model level is set: Personas, Squad workers, a Project, and your global **Settings → AI Harness → CLI Agent** defaults. A choice made closer to the work wins: Agent, then Persona, then Project, then Global.
 
-Codex medium and high use the same model, so a High-tier worker on Codex uses the same model as a Medium one. Codex can also report its own model list, and Zana then uses that list. Treat the table as the built-in default.
+#### How a tier becomes a model
 
-Some harnesses have no tier-to-model mapping, so they cannot run these Squads. **pi, grok, and mastracode** have an empty mapping. A launch on one of them is refused. The composer shows "Squad launch failed: Team route facts could not be evaluated" (code `ADMISSION_FAILED`). That message does not name the harness or the tier, and it can have other causes. Zana writes the model-level cause, "<Harness> does not support <level> model level.", to its error log. If you hit this, switch the Project to Claude.
+| Harness | How the tier is mapped |
+|---|---|
+| Claude | Fixed: Low is haiku, Medium sonnet, High opus, Extra-high fable. |
+| OpenCode, Codex, Cursor | Ordered rules matched against the models installed on your machine. Zana ships a starting rule set, and the latest installed version wins (for example, the newest `terra` model for Medium). |
+| Other harnesses | No model list to choose from, so tiers run on the harness's default model. |
 
-afcode picks its own models and has an empty mapping too. This guide makes no claim about launching Squads on afcode.
+If no rule matches an installed model, the worker runs on the harness's own default model. A launch is not refused.
+
+#### Change the mapping
+
+Open **Settings → AI Harness → CLI Agent** and expand a harness that lists models. **Model tiers** shows Low, Medium, High, and Extra-high, each with a model picker.
+
+1. Open the picker for a tier.
+2. Choose a specific model to pin that tier to it, or choose **Default** to follow Zana's rule (the newest matching installed model).
+
+A pinned model that is no longer installed stays listed as "not installed" until you pick another or return to **Default**. Choices are stored per harness in `harnessRouting.byAdapter.<harness>.modelTierRules`.
+
+afcode picks its own models. This guide makes no claim about launching Squads on afcode.
 
 This guide does not claim that every harness Zana lists works with Squads. Claude is the harness this guide is written for.
 

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { providerFor } from '../registry.js';
+import { CursorProvider } from '../cursor/provider.js';
 import { withLiveModelTargets } from '../launch-provider.js';
-import { isLiveListedModelTargetId, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
+import { isLiveListedModelTargetId, resolveModelTarget, resolveRoleTarget, UnsupportedModelLevelError } from '../target-resolution.js';
 
 const config = (): AppConfig => ({
   version: 1,
@@ -392,7 +393,6 @@ describe('target-resolution main authorization', () => {
 
   it.each([
     ['cursor', 'low'],
-    ['cursor', 'extra-high'],
     ['opencode', 'extra-high'],
     ['opencode', 'low'],
     ['opencode', 'medium'],
@@ -410,8 +410,71 @@ describe('target-resolution main authorization', () => {
         schemaVersion: 1,
         byAdapter: { [profile]: { modelLevel } }
       },
-      scope: 'local'
+      scope: 'local',
+      strictTier: true
     })).toThrow(`does not support ${modelLevel} model level`);
+  });
+
+  it('maps a tier through the user rules over the live inventory, and still fails closed without a match', () => {
+    const live = withLiveModelTargets(providerFor('opencode'), ['gw/alpha-9-terra', 'gw/alpha-10-terra', 'gw/beta-1-sol']);
+    const routing = (rules: string[]) => ({ ...config(), harnessRouting: { schemaVersion: 1 as const, byAdapter: { opencode: { modelTierRules: { medium: rules } } } } });
+    const base = { profile: 'opencode' as const, extraArgs: [], scope: 'local' as const, persona: { id: 'p', name: 'P', modelLevel: 'medium' as const } };
+    expect(resolveModelTarget(live, { ...base, config: routing(['terra']) }).targetId).toBe('gw/alpha-10-terra');
+    expect(resolveModelTarget(live, { ...base, config: routing(['missing', 'sol']) }).targetId).toBe('gw/beta-1-sol');
+    expect(() => resolveModelTarget(live, { ...base, strictTier: true, config: routing(['missing']), persona: { ...base.persona, modelLevel: 'low' as const } })).toThrow(UnsupportedModelLevelError);
+    // The shared provider has no live inventory, so rules alone cannot resolve.
+    expect(() => resolveModelTarget(providerFor('opencode'), { ...base, strictTier: true, config: routing(['terra']) })).toThrow(UnsupportedModelLevelError);
+  });
+
+  it('falls back to the harness default model when a tier matches nothing and the caller is not strict', () => {
+    const resolved = resolveModelTarget(providerFor('opencode'), {
+      config: config(), profile: 'opencode', extraArgs: [], scope: 'local',
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelLevel: 'medium' } } }
+    });
+    expect(resolved).toMatchObject({ tierFallback: 'medium', structuredSelected: false, contribution: {} });
+    expect(resolved.targetId).toBeUndefined();
+  });
+
+  it('resolves each tier from the seeded rules, and the user rules take precedence over them', () => {
+    const live = withLiveModelTargets(providerFor('opencode'), ['gw/a-1-luna', 'gw/a-2-terra', 'gw/a-3-terra', 'gw/a-1-sol', 'gw/zeta-1']);
+    const base = { profile: 'opencode' as const, extraArgs: [], scope: 'local' as const };
+    const at = (modelLevel: 'low' | 'medium' | 'high' | 'extra-high', cfg = config()) => resolveModelTarget(live, {
+      ...base, config: cfg, perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelLevel } } }
+    });
+    expect(at('low').targetId).toBe('gw/a-1-luna');
+    expect(at('medium').targetId).toBe('gw/a-3-terra');
+    expect(at('high').targetId).toBe('gw/a-1-sol');
+    expect(at('extra-high').targetId).toBe('gw/a-1-sol');
+    const custom = { ...config(), harnessRouting: { schemaVersion: 1 as const, byAdapter: { opencode: { modelTierRules: { medium: ['zeta'] } } } } };
+    expect(at('medium', custom).targetId).toBe('gw/zeta-1');
+  });
+
+  it('maps Cursor tiers by the tier written in the model id, never high to a low model', () => {
+    const live = new CursorProvider();
+    live.setDiscoveredModels([
+      'auto', 'cursor-grok-4.5-high', 'cursor-grok-4.6-low', 'cursor-grok-4.6-medium', 'cursor-grok-4.6-high', 'cursor-grok-4.6-xhigh'
+    ].map((id) => ({ id, label: id, scope: ['local'], evidenceVersion: 'test' })) as never);
+    const at = (modelLevel: 'low' | 'medium' | 'high' | 'extra-high') => resolveModelTarget(live, {
+      config: config(), profile: 'cursor', extraArgs: [], scope: 'local',
+      perTabRouting: { schemaVersion: 1, byAdapter: { cursor: { modelLevel } } }
+    }).targetId;
+    expect(at('low')).toBe('cursor-grok-4.6-low');
+    expect(at('medium')).toBe('cursor-grok-4.6-medium');
+    expect(at('high')).toBe('cursor-grok-4.6-high');
+    expect(at('extra-high')).toBe('cursor-grok-4.6-xhigh');
+  });
+
+  it('throws a typed error whose safe text names only the harness and the tier', () => {
+    let caught: unknown;
+    try {
+      resolveModelTarget(providerFor('opencode'), {
+        config: config(), profile: 'opencode', extraArgs: [], scope: 'local', strictTier: true,
+        perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelLevel: 'medium' } } }
+      });
+    } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(UnsupportedModelLevelError);
+    expect((caught as UnsupportedModelLevelError).message).toBe('OpenCode does not support medium model level.');
+    expect((caught as UnsupportedModelLevelError).safeMessage).toMatch(/^OpenCode has no model for the medium tier/);
   });
 
   it('prefers harness-specific project model over interim generic project level', () => {

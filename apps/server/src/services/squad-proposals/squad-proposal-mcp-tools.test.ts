@@ -128,6 +128,22 @@ describe('registerSquadProposalTools', () => {
     expect(SQUAD_LAUNCH_DESCRIPTION).toContain("mode 'review'");
   });
 
+  it('passes attachments to review and now launches and returns the name mapping', async () => {
+    const attachments = [{ name: 'plan.md', text: '# plan' }];
+    const mapping = [{ given: 'plan.md', used: 'plan.md' }];
+    const { tools, propose, launchSquadNow } = setup();
+    propose.mockResolvedValueOnce({ ok: true, value: { ...okValue, attachments: mapping } } as never);
+    const reviewed = await tools.get('squad_launch')!({ teamId: 't', goal: 'g', mode: 'review', attachments });
+    expect(propose).toHaveBeenCalledWith({ projectId: 'p', sessionId: 's1' }, expect.objectContaining({ attachments }));
+    expect(JSON.parse(reviewed.content[0]!.text).attachments).toEqual(mapping);
+    launchSquadNow.mockResolvedValueOnce({ ok: true, value: { ...nowValue, attachments: mapping } } as never);
+    const now = await tools.get('squad_launch')!({ teamId: 't', goal: 'g', mode: 'now', attachments });
+    expect(launchSquadNow).toHaveBeenCalledWith({ projectId: 'p', sessionId: 's1' }, expect.objectContaining({ attachments }));
+    expect(JSON.parse(now.content[0]!.text).attachments).toEqual(mapping);
+    await tools.get('squad_propose')!({ teamId: 't', goal: 'g', attachments });
+    expect(propose).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ attachments }));
+  });
+
   it('squad_launch review returns the same result as squad_propose and never starts', async () => {
     const { tools, propose, launchSquadNow } = setup();
     const viaPropose = await tools.get('squad_propose')!({ teamId: 't', goal: 'g' });
@@ -279,6 +295,17 @@ describe('registerSquadProposalTools', () => {
     expect(big.content[0].text).toContain('INVALID');
     expect(checkPlan).not.toHaveBeenCalled();
   });
+
+  it('squad_plan_check accepts text of exactly the 1 MiB plan limit and refuses one byte more', async () => {
+    const { tools, checkPlan } = setup();
+    const exact = await tools.get('squad_plan_check')!({ text: 'a'.repeat(1_048_576) });
+    expect(exact.isError).toBeFalsy();
+    expect(checkPlan).toHaveBeenCalledTimes(1);
+    const over = await tools.get('squad_plan_check')!({ text: 'a'.repeat(1_048_577) });
+    expect(over.isError).toBe(true);
+    expect(over.content[0].text).toContain('INVALID');
+    expect(checkPlan).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('squad_launch input schema', () => {
@@ -311,6 +338,15 @@ describe('input schemas', () => {
     expect(propose.safeParse({ teamId: 't', goal: 'x'.repeat(2049) }).success).toBe(true);
     expect(propose.safeParse({ teamId: 't', goal: 'g', sources: Array(17).fill('a') }).success).toBe(true);
     expect(propose.safeParse({ teamId: 't', goal: 'g', title: 'x'.repeat(257), summary: 'x'.repeat(2049) }).success).toBe(true);
+  });
+  it('accepts attachments and bounds them loosely so the service can name the limit', () => {
+    const att = (n: number) => Array.from({ length: n }, (_v, i) => ({ name: `f${i}.md`, text: 'x' }));
+    expect(propose.safeParse({ teamId: 't', goal: 'g', attachments: att(1) }).success).toBe(true);
+    expect(propose.safeParse({ teamId: 't', goal: 'g', attachments: att(17) }).success).toBe(true);
+    expect(propose.safeParse({ teamId: 't', goal: 'g', attachments: att(65) }).success).toBe(false);
+    expect(propose.safeParse({ teamId: 't', goal: 'g', attachments: [{ name: 'a.md', text: 'x'.repeat(4 * 1024 * 1024 + 1) }] }).success).toBe(true);
+    expect(propose.safeParse({ teamId: 't', goal: 'g', attachments: [{ name: '', text: 'x' }] }).success).toBe(false);
+    expect(propose.safeParse({ teamId: 't', goal: 'g', attachments: [{ name: 'a.md' }] }).success).toBe(false);
   });
   it('plan check path is bounded', () => {
     const check = z.object(squadPlanCheckInputSchema);

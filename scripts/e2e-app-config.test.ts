@@ -19,12 +19,26 @@ describe('E2E Claude isolation', () => {
     const path = home();
     const marker = join(path, 'real-cli-called');
     writeFileSync(join(path, 'claude'), `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o700 });
-    const result = spawnSync('claude', ['doctor'], {
-      env: { ...process.env, PATH: isolatedClaudePath(`${path}:${process.env.PATH}`) }, encoding: 'utf8',
-    });
-    expect(result.status).toBe(78);
-    expect(result.stderr).toContain('Real Claude is disabled in deterministic E2E tests');
-    expect(() => readFileSync(marker)).toThrow();
+    // A real CLI comes from the PATH the test runner inherited, not from a directory a spec prepends.
+    const inherited = process.env.PATH;
+    process.env.PATH = `${path}:${inherited}`;
+    try {
+      const result = spawnSync('claude', ['doctor'], {
+        env: { ...process.env, PATH: isolatedClaudePath(process.env.PATH) }, encoding: 'utf8',
+      });
+      expect(result.status).toBe(78);
+      expect(result.stderr).toContain('Real Claude is disabled in deterministic E2E tests');
+      expect(() => readFileSync(marker)).toThrow();
+    } finally {
+      process.env.PATH = inherited;
+    }
+  });
+
+  it('keeps directories a spec prepends ahead of the guard, and the inherited PATH behind it', () => {
+    const guard = join(DISABLED_CLAUDE_BINARY, '..');
+    const inherited = process.env.PATH ?? '';
+    expect(isolatedClaudePath(`/spec/fake-bin:/spec/more:${inherited}`)).toBe(['/spec/fake-bin:/spec/more', guard, inherited].filter(Boolean).join(':'));
+    expect(isolatedClaudePath('/unrelated/path')).toBe(`${guard}:/unrelated/path`);
   });
 
   it('handles missing PATH and preserves live-test CLI discovery', () => {

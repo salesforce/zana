@@ -177,7 +177,12 @@
       "source": "./src/machine-pairing.ts",
       "default": "./src/machine-pairing.ts"
     },
-    "./harness-config-compatibility": "./src/harness-config-compatibility.ts"
+    "./harness-config-compatibility": "./src/harness-config-compatibility.ts",
+    "./tier-rules": {
+      "types": "./src/tier-rules.ts",
+      "source": "./src/tier-rules.ts",
+      "default": "./src/tier-rules.ts"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
