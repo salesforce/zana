@@ -8260,7 +8260,10 @@ const pluginApprovalHandler = createPluginApprovalHandler({
 });
 
 function registerIpc() {
-  registerInteractionResponseIpc(safeHandleFromWindow, createInteractionResponder({ serverUrl: productServerUrl, secret: ensureProductServerCredential }));
+  registerInteractionResponseIpc(safeHandleFromWindow, createInteractionResponder({ serverUrl: productServerUrl, secret: ensureProductServerCredential }), {
+    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
+    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options))
+  });
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */

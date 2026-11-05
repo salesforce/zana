@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createInteractionProofVerifier, INTERACTION_PROOF_HEADER } from '@zana-ai/zcc-server/http/interaction-proof';
-import { createInteractionResponder } from './interaction-proof.js';
+import { createInteractionResponder, NativeSheetRequiredError } from './interaction-proof.js';
 
 const secret = 's'.repeat(32);
 const input = { threadId: 'thread/1', interactionId: 'interaction', value: true };
@@ -56,5 +56,15 @@ describe('main interaction responder', () => {
     const fetchImpl = vi.fn();
     await expect(createInteractionResponder({ serverUrl: () => 'http://127.0.0.1/', secret: () => secret, fetch: fetchImpl })(bad, 'human', 'window:7')).rejects.toThrow('Invalid interaction response');
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it('turns a native-sheet-required refusal into a typed error carrying what to show', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ error: 'native-sheet-required', message: 'x', title: 'Approve plan', pluginId: 'p' }, { status: 403 }));
+    const respond = createInteractionResponder({ serverUrl: () => 'http://127.0.0.1/', secret: () => secret, fetch: fetchImpl });
+    const error = await respond(input, 'human', 'window:7').catch(e => e);
+    expect(error).toBeInstanceOf(NativeSheetRequiredError);
+    expect(error).toMatchObject({ title: 'Approve plan', pluginId: 'p' });
+    // A malformed refusal is an ordinary failure, not a sheet prompt.
+    const bad = vi.fn<typeof fetch>(async () => Response.json({ error: 'native-sheet-required', message: 'nope' }, { status: 403 }));
+    await expect(createInteractionResponder({ serverUrl: () => 'http://127.0.0.1/', secret: () => secret, fetch: bad })(input, 'human', 'window:7')).rejects.toThrow('nope');
   });
 });

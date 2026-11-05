@@ -2,6 +2,14 @@ import type { InteractionActor } from '@zana-ai/zcc-domain';
 import { jsonValueSchema, PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
 import { INTERACTION_PROOF_HEADER, signInteractionProof } from '@zana-ai/zcc-server/http/interaction-proof';
 
+/** The server wants a confirmation sheet main draws itself; `title` and `pluginId` are server-supplied. */
+export class NativeSheetRequiredError extends Error {
+  constructor(readonly title: string, readonly pluginId: string) {
+    super('Native approval sheet required');
+    this.name = 'NativeSheetRequiredError';
+  }
+}
+
 export function createInteractionResponder(deps: {
   serverUrl(): string;
   secret(): string;
@@ -31,7 +39,11 @@ export function createInteractionResponder(deps: {
       `api/v1/${'sessionId' in owner ? 'pty-sessions' : 'threads'}/${encodeURIComponent(owner.sessionId ?? owner.threadId)}/interactions/${encodeURIComponent(input.interactionId)}/respond`, base
     ), { method: 'POST', headers: { 'content-type': 'application/json', [INTERACTION_PROOF_HEADER]: proof }, body,
       redirect: 'error', signal: AbortSignal.timeout(5000) });
-    const result = await response.json() as { message?: string; error?: string };
+    const result = await response.json() as { message?: string; error?: string; title?: unknown; pluginId?: unknown };
+    if (response.status === 403 && result.error === 'native-sheet-required'
+      && typeof result.title === 'string' && typeof result.pluginId === 'string') {
+      throw new NativeSheetRequiredError(result.title, result.pluginId);
+    }
     if (!response.ok) throw new Error(result.message ?? result.error ?? `HTTP ${response.status}`);
     return result;
   };
