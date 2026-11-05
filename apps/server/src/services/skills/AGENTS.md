@@ -18,6 +18,8 @@ Both best-effort + never throw (one malformed contributor doesn't block rest). C
 
 When changing: Sync both `rebuildExtensionServers` and `syncExtensionSkills` at same choke points; verify consent screen shows concrete names, not tokens; ensure env values never reach renderer.
 
+Plugin skills for PTY harnesses that read `~/.agents/skills` (Codex, OpenCode, Pi, Cursor): `applyPluginAgentCapabilities` (`services/extensions/plugin-agent-sync.ts`) also calls `reconcilePluginAgentsSkills` (`apps/host-daemon/src/plugin-agents-skills.ts`) with the skills of ENABLED plugins. Entries are `plugin-<id>-<skill>/` with a `.zana-plugin-skill` marker; reconcile is a full sweep that removes owned entries not desired (disable, uninstall, boot), serialized and link-safe. Entries without the marker (or symlinks) are never modified or removed.
+
 ## Bundled skills + per-project MCP config
 
 Invariants:
