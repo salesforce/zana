@@ -1,0 +1,45 @@
+{
+  "id": "squad-guide-4",
+  "title": "Pick the right Squad",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "Pick the right Squad",
+    "subline": "Built-in Squads, ready to use",
+    "chips": [
+      "Research",
+      "Design",
+      "Debug",
+      "Delivery",
+      "Review"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Pick the right Squad."
+      },
+      {
+        "at": 3.0,
+        "text": "Five that come with Zana."
+      },
+      {
+        "at": 5.8,
+        "text": "Choose by the job."
+      }
+    ],
+    "duration": 11,
+    "revealAt": 8.0
+  },
+  "closer": {
+    "headline": "Start from a conversation",
+    "subline": "Ask an agent to propose a Squad",
+    "chips": [
+      "Squad launch ready"
+    ],
+    "line": "Next: start a Squad from a conversation.",
+    "duration": 5
+  }
+}

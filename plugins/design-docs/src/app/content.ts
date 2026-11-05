@@ -5,9 +5,9 @@
  */
 import type { DesignDocFile } from '../shared/contract.js';
 import { prependToHead } from '../shared/html-scan.js';
-import { codeLanguageOf, comparePaths, imageMediaTypeOf, resolveDocLink } from '../shared/paths.js';
+import { codeLanguageOf, comparePaths, imageMediaTypeOf, isCrossDocScheme, parseCrossDocLink, resolveDocLink } from '../shared/paths.js';
 
-export { resolveDocLink };
+export { isCrossDocScheme, parseCrossDocLink, resolveDocLink };
 
 export interface DocLocation {
   docId: string | null;

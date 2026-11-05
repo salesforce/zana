@@ -174,6 +174,33 @@ describe('api client', () => {
     delete (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__;
   });
 
+  it('maps the project-mapping, sync-status and template methods, omitting unset options', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const api = createApi(async (method, args) => { calls.push([method, args]); return []; });
+    await api.docSyncStatuses();
+    await api.docSyncStatuses('d');
+    await api.addFromTemplate('d', 'blank');
+    await api.addFromTemplate('d', 'blank', true);
+    await api.resolveCrossDocLink('d', 'doc:x');
+    await api.removedProjects();
+    await api.listUnassignedProjects();
+    await api.listProjectMappings();
+    await api.mapForeignProject('f', 'l');
+    await api.unmapForeignProject('f');
+    expect(calls).toEqual([
+      ['docSyncStatuses', undefined],
+      ['docSyncStatuses', { doc: 'd' }],
+      ['addFromTemplate', { docId: 'd', templateKey: 'blank' }],
+      ['addFromTemplate', { docId: 'd', templateKey: 'blank', renameOnConflict: true }],
+      ['resolveCrossDocLink', { fromDoc: 'd', href: 'doc:x' }],
+      ['removedProjects', undefined],
+      ['listUnassignedProjects', undefined],
+      ['listProjectMappings', undefined],
+      ['mapForeignProject', { foreignProjectId: 'f', localProjectId: 'l' }],
+      ['unmapForeignProject', { foreignProjectId: 'f' }]
+    ]);
+  });
+
   it('maps every method to its RPC with plain JSON arguments', async () => {
     const calls: Array<[string, unknown]> = [];
     const api = createApi(async (method, args) => {

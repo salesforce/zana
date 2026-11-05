@@ -11,7 +11,7 @@ export const DEFAULT_INTERNAL_MARKETPLACE_SOURCE =
   'git:https://git.soma.salesforce.com/chatbots/zana-internal-marketplace.git';
 
 /** Cap on the background Git clone so discovery cannot stall boot. */
-export const DEFAULT_MARKETPLACE_SEED_TIMEOUT_MS = 8_000;
+export const DEFAULT_MARKETPLACE_SEED_TIMEOUT_MS = 60_000;
 
 function envFlag(raw: string | undefined): 'off' | string | null {
   const trimmed = raw?.trim();

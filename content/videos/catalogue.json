@@ -127,6 +127,240 @@
         "sha256": "0a9bbd3ad946e2f8d8694a8ad4bfaa089e0ab723151d2a5fb07ce95e25eeb8ea",
         "bytes": 1797
       }
+    },
+    {
+      "id": "squad-guide-1",
+      "group": "Squads",
+      "title": "What is a Squad?",
+      "description": "A Squad is a small team of AI agents working on one goal. The words you need and how a run fits together.",
+      "duration": "1:30",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-1.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-1-8d55149f6e2e9a10a48a8065d171404038b7f93802ddc19d5d91ee88c2e7d74c.mp4",
+        "sha256": "8d55149f6e2e9a10a48a8065d171404038b7f93802ddc19d5d91ee88c2e7d74c",
+        "bytes": 8517390
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-1-eb8710088a55aa8f2d5899fbd0844e6896233e3d4fcba05d6bee9e61488e73b8.jpg",
+        "sha256": "eb8710088a55aa8f2d5899fbd0844e6896233e3d4fcba05d6bee9e61488e73b8",
+        "bytes": 137546
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-1-88f7410711c8cae10b20b04ed72bbd058616ec638ab1f3005bdcecaf5900fdd1.vtt",
+        "sha256": "88f7410711c8cae10b20b04ed72bbd058616ec638ab1f3005bdcecaf5900fdd1",
+        "bytes": 1539
+      },
+      "minAppVersion": "2.5.1"
+    },
+    {
+      "id": "squad-guide-2",
+      "group": "Squads",
+      "title": "Your first Squad run",
+      "description": "Launch the built-in Research Squad with a plan in the goal and see it start.",
+      "duration": "1:13",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-2.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-2-0ada356319c26d06e7e9f703b2c3302a50ebbf3acc7aebf3f84d0b017301cf72.mp4",
+        "sha256": "0ada356319c26d06e7e9f703b2c3302a50ebbf3acc7aebf3f84d0b017301cf72",
+        "bytes": 6441134
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-2-489ccf2747fc81004e6649bd9ffb65427ae4a8db9eed32526b8934ef981785e9.jpg",
+        "sha256": "489ccf2747fc81004e6649bd9ffb65427ae4a8db9eed32526b8934ef981785e9",
+        "bytes": 94849
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-2-52aa6e31fb1b6503a84ff9ca11dd78c5cc8391c004684830b0ee1078b48abff7.vtt",
+        "sha256": "52aa6e31fb1b6503a84ff9ca11dd78c5cc8391c004684830b0ee1078b48abff7",
+        "bytes": 1328
+      },
+      "minAppVersion": "2.5.1"
+    },
+    {
+      "id": "squad-guide-3",
+      "group": "Squads",
+      "title": "Watch a Squad run",
+      "description": "Find a running Squad on the Agents board, answer its question in the Inbox and read the result.",
+      "duration": "1:04",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-3.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-3-6db64052188cf17b00104acab790d02763f08b9ae29961037f98f958436bb6d3.mp4",
+        "sha256": "6db64052188cf17b00104acab790d02763f08b9ae29961037f98f958436bb6d3",
+        "bytes": 6086509
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-3-0105ce73dabbf92472044c216a3ddb8e4ab9019f65524295c82f4f46194584d2.jpg",
+        "sha256": "0105ce73dabbf92472044c216a3ddb8e4ab9019f65524295c82f4f46194584d2",
+        "bytes": 94372
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-3-76defa94bc81fb3e0b494cd3c283a401d9afc6d9a13a078b81a6001da3abe31b.vtt",
+        "sha256": "76defa94bc81fb3e0b494cd3c283a401d9afc6d9a13a078b81a6001da3abe31b",
+        "bytes": 1140
+      },
+      "minAppVersion": "2.5.1"
+    },
+    {
+      "id": "squad-guide-4",
+      "group": "Squads",
+      "title": "Pick the right Squad",
+      "description": "Tour the built-in Squads and pick the right one for the job.",
+      "duration": "0:54",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-4.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-4-19616949661bf5dd49f775a9710f85d25a90123b83c6eb2b4b285c062911a6fe.mp4",
+        "sha256": "19616949661bf5dd49f775a9710f85d25a90123b83c6eb2b4b285c062911a6fe",
+        "bytes": 9819452
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-4-562ba1000a3b06f8bd4d2c49ca174570565148b90f6619804a11d19f28e46d9a.jpg",
+        "sha256": "562ba1000a3b06f8bd4d2c49ca174570565148b90f6619804a11d19f28e46d9a",
+        "bytes": 153752
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-4-363e8de3dd2cce472ecd41df5ac43ffa5d340044ef68fcced14b1e430cd33fe2.vtt",
+        "sha256": "363e8de3dd2cce472ecd41df5ac43ffa5d340044ef68fcced14b1e430cd33fe2",
+        "bytes": 928
+      },
+      "minAppVersion": "2.5.1"
+    },
+    {
+      "id": "squad-guide-5",
+      "group": "Squads",
+      "title": "Start a Squad from a conversation",
+      "description": "Ask an agent to start a Squad, then review the launch or run it now.",
+      "duration": "1:11",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-5.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-5-ccecea0424d4eeca7c12296991fe31e409be4806ca19c25accbcd3efca5a02f9.mp4",
+        "sha256": "ccecea0424d4eeca7c12296991fe31e409be4806ca19c25accbcd3efca5a02f9",
+        "bytes": 6510195
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-5-2f83f9d4c00f67b449a6ff40ea1a3d70c24601168fe3d80ab20d366ffc27cbd1.jpg",
+        "sha256": "2f83f9d4c00f67b449a6ff40ea1a3d70c24601168fe3d80ab20d366ffc27cbd1",
+        "bytes": 72416
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-5-441db1d32d1c38cd12c0fc3c416ecbd1cdb71ec89607845be026420c508f67f4.vtt",
+        "sha256": "441db1d32d1c38cd12c0fc3c416ecbd1cdb71ec89607845be026420c508f67f4",
+        "bytes": 1243
+      },
+      "minAppVersion": "2.5.1"
+    },
+    {
+      "id": "squad-guide-6",
+      "group": "Squads",
+      "title": "Attach files and run in the right place",
+      "description": "Attach files as sources and choose where the Squad works.",
+      "duration": "1:28",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-6.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-6-5366302680dd2ff63dc3fd38681793022089b52d9605825d1d6b133031cba336.mp4",
+        "sha256": "5366302680dd2ff63dc3fd38681793022089b52d9605825d1d6b133031cba336",
+        "bytes": 8306988
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-6-d501499110e284856632b774729a4db297f857a09db53f6a6248b151ed9ec1c8.jpg",
+        "sha256": "d501499110e284856632b774729a4db297f857a09db53f6a6248b151ed9ec1c8",
+        "bytes": 82173
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-6-6be4a4d9f98511720268f05ee25f50f769aa5281c09042aa428bc42438d42c88.vtt",
+        "sha256": "6be4a4d9f98511720268f05ee25f50f769aa5281c09042aa428bc42438d42c88",
+        "bytes": 1406
+      },
+      "minAppVersion": "2.5.1"
+    },
+    {
+      "id": "squad-guide-7",
+      "group": "Squads",
+      "title": "Schedule a Squad",
+      "description": "Run a Squad on a clock from the Scheduler, with no one at the keyboard.",
+      "duration": "0:58",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-7.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-7-bc7179fadad4f0d09c6996d66552db453212ec93dd5406e47b8b5fe02c2ed715.mp4",
+        "sha256": "bc7179fadad4f0d09c6996d66552db453212ec93dd5406e47b8b5fe02c2ed715",
+        "bytes": 6009000
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-7-212f1272b8ccaf4da0797afa03f88f89d6aed488d2dbfa4cf945d7f770adf34a.jpg",
+        "sha256": "212f1272b8ccaf4da0797afa03f88f89d6aed488d2dbfa4cf945d7f770adf34a",
+        "bytes": 89903
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-7-b69f804e7ba9f60ca306e0cc9bf58e8edb503b56044ac850f553817234be58d3.vtt",
+        "sha256": "b69f804e7ba9f60ca306e0cc9bf58e8edb503b56044ac850f553817234be58d3",
+        "bytes": 1047
+      },
+      "minAppVersion": "2.5.1"
+    },
+    {
+      "id": "squad-guide-8",
+      "group": "Squads",
+      "title": "Use a Squad to accomplish a Goal",
+      "description": "Turn on Goals, then give a Squad an aim it works toward until it is met.",
+      "duration": "1:08",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-8.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-8-aa81c2a04c353e0d1a774011d172fdb2d64c9b71f905e0c4995ebf5a6cfeeccc.mp4",
+        "sha256": "aa81c2a04c353e0d1a774011d172fdb2d64c9b71f905e0c4995ebf5a6cfeeccc",
+        "bytes": 7313409
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-8-7863160b6e8bbdf449d89d4d2afc192184883494571bfa0dfb0f57c23279b534.jpg",
+        "sha256": "7863160b6e8bbdf449d89d4d2afc192184883494571bfa0dfb0f57c23279b534",
+        "bytes": 98424
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-8-1e4643804817742e2e72935abf103b92046413d6eb7652ba8431bc67b3a10959.vtt",
+        "sha256": "1e4643804817742e2e72935abf103b92046413d6eb7652ba8431bc67b3a10959",
+        "bytes": 1180
+      },
+      "minAppVersion": "2.5.1"
+    },
+    {
+      "id": "squad-guide-9",
+      "group": "Squads",
+      "title": "Build your own Persona and Squad",
+      "description": "Create a Persona and a Squad of your own, grouped your way.",
+      "duration": "1:34",
+      "details": "English voiceover and captions",
+      "fileName": "zana-squad-guide-9.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/squad-guide-9-84a737645fd711c95517d5246854c727bab30fed30c030e1a44abe050ef413a6.mp4",
+        "sha256": "84a737645fd711c95517d5246854c727bab30fed30c030e1a44abe050ef413a6",
+        "bytes": 11080491
+      },
+      "poster": {
+        "path": "content/videos/media/squad-guide-9-795ec993281e0892dd4231d4a3d40fa1d8fab41f4cd93422b12d7f2480fe8012.jpg",
+        "sha256": "795ec993281e0892dd4231d4a3d40fa1d8fab41f4cd93422b12d7f2480fe8012",
+        "bytes": 147032
+      },
+      "captions": {
+        "path": "content/videos/media/squad-guide-9-d8994912cda942c2e69be1659d87fd0c5076168d7a892eb3b67d5e39cbbd1861.vtt",
+        "sha256": "d8994912cda942c2e69be1659d87fd0c5076168d7a892eb3b67d5e39cbbd1861",
+        "bytes": 1552
+      },
+      "minAppVersion": "2.5.1"
     }
   ]
 }

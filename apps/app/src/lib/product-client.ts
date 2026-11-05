@@ -285,6 +285,14 @@ function httpProduct(): Pick<
         });
         return body.config;
       },
+      // Folder trust is granted only through the desktop chooser.
+      addTrustedPreviewFolder: async () => ({
+        config: null,
+        error: 'Trusted preview folders can only be changed in the desktop app.'
+      }),
+      removeTrustedPreviewFolder: async () => {
+        throw new Error('Trusted preview folders can only be changed in the desktop app.');
+      },
       onChanged: (cb: (config: AppConfig) => void) =>
         subscribeProductEvent<AppConfig>('config:changed', cb)
     } as CcApi['config'],
@@ -399,6 +407,7 @@ function httpProduct(): Pick<
       delete: goalOwnerUnavailable,
       setStatus: goalOwnerUnavailable,
       runNow: goalOwnerUnavailable,
+      resumeIteration: async (): ReturnType<CcApi['goals']['resumeIteration']> => ({ ok: false, code: 'unavailable', message: 'Resuming a goal run requires the desktop app' }),
       reconcile: async (): ReturnType<CcApi['goals']['reconcile']> => ({ ok: false, code: 'unavailable', message: 'Worker recovery requires the instance owner to be connected' }),
       list: async () => {
         const body = await apiJson<{ goals: Goal[] }>('/goals');

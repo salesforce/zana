@@ -28,12 +28,14 @@ import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } fr
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
-import { defaultAgentProject, errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
+import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, type ProjectInfo, type TemplateInfo } from './api.js';
+import { needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
 import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
-import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
+import { useDocs, useNow, usePersistentState, useProjects, useRemovedProjects, useTemplates, useUnassignedDocs, useUnassignedProjects } from './hooks.js';
+import { UNASSIGNED_LABEL, UnassignedProjectsDialog } from './UnassignedProjects.js';
 import { SyncButton, usePeerSync, type PeerSync } from './PeerSettings.js';
 import { SettingsToggle, SettingsView } from './Settings.js';
 import { markSeen, parseSeen, unseenAgentEdit } from './seen.js';
@@ -50,6 +52,13 @@ const STATUS_OPTIONS: PopoverPicklistOption<StatusFilter>[] = [
   ...DOC_STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] })),
   { value: 'all', label: 'All statuses' }
 ];
+
+export function importSummary(imported: number, skipped: number): string {
+  const noun = (n: number) => `${n} template${n === 1 ? '' : 's'}`;
+  if (imported === 0 && skipped === 0) return 'No templates found in that file.';
+  if (imported === 0) return `Nothing imported: ${skipped === 1 ? 'that template is' : `all ${noun(skipped)} are`} already here.`;
+  return `Imported ${noun(imported)}${skipped ? `; skipped ${skipped} already here` : ''}.`;
+}
 
 function countedOption(value: string, label: string, count: number): PopoverPicklistOption<string> {
   return {
@@ -104,6 +113,7 @@ function DocRow({
   alternative = false,
   projectName,
   unseen,
+  syncState,
   now,
   menuOpen,
   onSelect,
@@ -116,6 +126,8 @@ function DocRow({
   projectName: string | null;
   /** An agent edited it since the user last opened it. */
   unseen: boolean;
+  /** Only passed for states worth a mark. */
+  syncState?: DocSyncState;
   now: number;
   menuOpen: boolean;
   onSelect(): void;
@@ -139,6 +151,9 @@ function DocRow({
     >
       <span className="dd-doc-row-top">
         <span className="dd-doc-row-title">{doc.title}</span>
+        {syncState ? (
+          <span className={`dd-sync-dot dd-sync-${syncState}`} role="img" title={SYNC_STATE_LABEL[syncState]} aria-label={SYNC_STATE_LABEL[syncState]} />
+        ) : null}
         {alternative ? (
           <span className="dd-doc-row-badge" title="An alternative to the doc above">
             Alt
@@ -239,8 +254,19 @@ function DocList({
   const docActions = useDocActions(projects);
   const debounced = useDebounced(query.trim(), 200);
   const now = useNow();
-  const docs = useDocs({ ...(projectId ? { projectId } : {}), ...(debounced ? { query: debounced } : {}), status });
-  const names = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
+  const docs = useDocs({ ...(projectId ? { projectId } : showProjects ? { excludeUnassigned: true } : {}), ...(debounced ? { query: debounced } : {}), status });
+  const removed = useRemovedProjects();
+  const names = useMemo(() => {
+    const map = new Map((removed.data ?? []).map((item) => [item.id, item.label]));
+    for (const project of projects) map.set(project.id, project.name);
+    return map;
+  }, [projects, removed.data]);
+  const inUnassignedScope = showProjects && !projectFilter;
+  const unassignedDocs = useUnassignedDocs(inUnassignedScope, { ...(debounced ? { query: debounced } : {}), status });
+  const unassignedProjects = useUnassignedProjects(showProjects);
+  const [mapping, setMapping] = useState(false);
+  const unassignedList = inUnassignedScope ? unassignedDocs.data ?? [] : [];
+  const unassignedOpen = !(debounced ? new Set<string>() : parseCollapsed(collapsedRaw)).has('unassigned');
   const visible = useMemo(() => {
     const all = docs.data ?? [];
     if (!showProjects || !projectFilter) return all;
@@ -274,6 +300,7 @@ function DocList({
     if (showProjects) return doc.projectId ? names.get(doc.projectId) ?? 'Unknown project' : 'Global';
     return doc.projectId ? null : 'Global';
   };
+  const syncStates = useDocSyncStatuses(docs.data);
   const row = (doc: DesignDocSummary, section: ListSection, alternative: boolean) => (
     <DocRow
       key={doc.id}
@@ -282,6 +309,7 @@ function DocList({
       alternative={alternative}
       projectName={alternative ? null : projectLabel(doc, section)}
       unseen={doc.id !== activeId && unseenAgentEdit(doc, seen)}
+      syncState={needsAttention(syncStates.get(doc.id)?.state) ? syncStates.get(doc.id)?.state : undefined}
       now={now}
       menuOpen={menu?.doc.id === doc.id}
       onSelect={() => onSelect(doc.id)}
@@ -377,7 +405,37 @@ function DocList({
             </section>
           );
         })}
+        {unassignedList.length ? (
+          <section className="dd-list-group dd-list-unassigned" aria-label={UNASSIGNED_LABEL}>
+            <SectionHead
+              section={{ key: 'unassigned', kind: 'recent', label: UNASSIGNED_LABEL, entries: [], count: unassignedList.length }}
+              open={unassignedOpen}
+              onToggle={() => setCollapsedRaw(toggleCollapsed(collapsedRaw, 'unassigned'))}
+            />
+            {unassignedOpen ? (
+              <>
+                {unassignedList.map((doc) => row(doc, { key: 'unassigned', kind: 'project', label: UNASSIGNED_LABEL, entries: [], count: 0 }, false))}
+                <div className="dd-list-actions">
+                  <button type="button" className="btn dd-head-btn" onClick={() => setMapping(true)}>
+                    <FolderOpen size={12} aria-hidden /> Map to a Project…
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </section>
+        ) : null}
       </div>
+      {mapping ? (
+        <UnassignedProjectsDialog
+          unassigned={unassignedProjects.data ?? []}
+          projects={projects}
+          onClose={() => setMapping(false)}
+          onChanged={() => {
+            unassignedProjects.reload();
+            unassignedDocs.reload();
+          }}
+        />
+      ) : null}
       {menu ? (
         <ContextMenu key={`${menu.doc.id}@${menu.at.x},${menu.at.y}`} at={menu.at} label={`Actions for ${menu.doc.title}`} onClose={() => setMenu(null)}>
           {docActions.items(
@@ -599,8 +657,9 @@ function TemplateManager({ templates, onNew, onEdit, onChanged }: { templates: T
   const importTemplates = async (file: File | null) => {
     if (!file) return;
     try {
-      await api.templatesImport(await file.text());
+      const { imported, skipped } = await api.templatesImport(await file.text());
       onChanged();
+      toast(importSummary(imported.length, skipped));
     } catch (error) {
       toast(`Could not import templates: ${errorMessage(error)}`, 'error');
     } finally {

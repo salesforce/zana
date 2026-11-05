@@ -45,10 +45,12 @@ there, and do not create a doc or offer to write one.
 | --- | --- |
 | `design_doc_list` | Find docs. Defaults to active docs of this project plus global docs. `query` searches titles, summaries, tags and contents. |
 | `design_doc_read` | Without `path`: manifest, open comments and the entry file. With `path`: one file and its revision. `includeAll: true` returns every text file. For HTML pages it adds the page check and what the panel saw when it last ran the page. |
-| `design_doc_create` | New doc from `files` or a `template` key returned by `design_doc_templates_list`. `entryPath` picks the file it opens on. |
+| `design_doc_create` | New doc from `files` or a `template`. Omit both `projectId` and `global` to use the current thread's project; pass `projectId` for another Project or `global: true` for every project. |
 | `design_doc_write` | Change one file: `edits` (preferred), `content` (whole file, creates it), `delete`, or `renameTo`. Writing an HTML page returns its page check. |
-| `design_doc_update` | Title, summary, status, tags, entry file, `alternativeTo` (the doc this one is a competing proposal to; `""` detaches it). |
+| `design_doc_update` | Title, summary, status, tags, entry file, `alternativeTo` (compete with another doc), or `projectId`/`global: true` to move between scopes. |
 | `design_doc_comment` | Add a comment, reply in one's thread (`replyTo`), or `resolve` / `reopen` one by id (`body` becomes a reply). |
+| `design_doc_template_read` | Read a template by key. |
+| `design_doc_add_from_template` | Add a template's files to an existing doc. Never overwrites: clashing files get a numbered name. |
 
 The same operations exist on the CLI for shells and scripts. Run
 `zcc design-docs --help` to see them, for example `zcc design-docs show <doc>`,
@@ -57,10 +59,24 @@ The same operations exist on the CLI for shells and scripts. Run
 `zcc design-docs reply <doc> <comment-id> "…"`. `import` brings a folder of
 files into a doc and `export --out` writes a doc out as a site (see
 [Publishing](#publishing-to-github-pages)). `write --file`, `import` and
-`export --out` work only inside your thread's project folder.
+`export --out` work only inside your thread's project folder. 
+
+CLI `create` and `update` accept `--project <id> | --global` to assign or move
+docs; unknown id returns the list of valid Projects. `template-read` and
+`add-from-template` read templates and add a template's files to an existing doc on the CLI.
 
 A doc reference is its id or its slug. A slug only names a doc of this project
-or a global one; use the id to reach another project's doc.
+or a global one; use the id to reach another project's doc. Cross-doc links use
+`doc://<ref>/<path>#anchor` (shorthand `doc:<ref>/<path>`); exports show plain
+text.
+
+## Reach
+
+Plugin tools reach Modern Claude and Codex threads only. CLI (`zcc design-docs`)
+works in shells and scripts; Claude/Codex PTY/CLI sessions need `zcc.mcpServers`
+(not configured). Cursor and OpenCode are unsupported. Squad members may face
+control socket access (`~/.zcc/control.sock`) if the Bash sandbox blocks EPERM —
+unverified live.
 
 ## Templates
 
@@ -70,12 +86,24 @@ this machine, shared across projects, and never peer-synced. The user manages
 them from **Templates** in the Design Docs workbench: create, edit, duplicate,
 export, import, delete, and restore built-ins.
 
+New tools `design_doc_template_read` and `design_doc_add_from_template` let
+agents read templates and add a template's files to an existing doc (CLI: `template-read`,
+`add-from-template`).
+
 An export is a JSON template bundle. Import accepts that bundle only. Templates
 are not design docs: agents do not list or receive them as project context.
+
+## Peer docs
+
+When syncing peer docs whose Project is not mapped locally, they appear under
+'Unassigned from peers' until you map them to a local Project. Deleted Projects
+show '<name> (project removed)' in the doc list.
 
 ## Workflow
 
 1. **Read first.** Call `design_doc_read` and note each file's `revision`.
+   If the doc has an `AGENTS.md`, read it and follow it: it holds instructions
+   for working on that doc and is never published.
    When the user `@`-mentions a doc, its manifest and entry file are already
    in your context.
 2. **Edit surgically.** Use `edits` with exact `oldText` for changes. Rewrite a

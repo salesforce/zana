@@ -131,7 +131,8 @@ describe('FileTree edge cases', () => {
     const harness = createHarness();
     const onOpen = vi.fn();
     tree(harness, makeDoc(harness), onOpen);
-    fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^New blank file/ }));
     const input = screen.getByPlaceholderText(/path\/name/);
     fireEvent.change(input, { target: { value: 'notes' } });
     fireEvent.keyDown(input, { key: 'a' });
@@ -141,7 +142,8 @@ describe('FileTree edge cases', () => {
     });
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith('notes.md'));
     expect(writes(harness)).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^New blank file/ }));
     fireEvent.keyDown(screen.getByPlaceholderText(/path\/name/), { key: 'Escape' });
     expect(screen.queryByPlaceholderText(/path\/name/)).toBeNull();
   });

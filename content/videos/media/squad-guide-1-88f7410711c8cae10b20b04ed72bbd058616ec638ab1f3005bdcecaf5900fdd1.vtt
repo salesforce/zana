@@ -1,0 +1,46 @@
+WEBVTT
+
+00:00:00.600 --> 00:00:01.585
+Meet the Squad.
+
+00:00:03.000 --> 00:00:05.422
+A small team of AI agents.
+
+00:00:05.800 --> 00:00:06.912
+One shared goal.
+
+00:00:09.802 --> 00:00:14.881
+A Squad is a small team of AI agents working on one goal together.
+
+00:00:15.182 --> 00:00:20.803
+A Persona is one agent profile: a role, a model tier, and instructions.
+
+00:00:21.396 --> 00:00:28.866
+A Squad is a named group of Personas. Each Persona fills a slot, and each slot becomes a worker in the run.
+
+00:00:29.167 --> 00:00:36.162
+One of them, the Orchestrator, plans the work and keeps it moving. The others are workers that each take steps.
+
+00:00:36.740 --> 00:00:40.955
+Zana ships five built-in Squads, so you can start without building anything.
+
+00:00:41.259 --> 00:00:50.240
+Reach for a Squad when the work splits into pieces that can run side by side. For small, step-by-step tasks, a single agent is simpler.
+
+00:00:51.481 --> 00:01:00.578
+While a Squad runs, Flow view shows each agent, its status, and how work is handed off. Here, the run is waiting on you.
+
+00:01:01.488 --> 00:01:05.058
+When a Squad needs a decision, it asks in your Inbox.
+
+00:01:09.375 --> 00:01:15.513
+Answer it, and the Squad carries on. When it finishes, the result is posted to the Inbox too.
+
+00:01:16.127 --> 00:01:18.886
+Open Squad details to see what each agent did.
+
+00:01:19.189 --> 00:01:25.852
+A finished run isn't a guarantee. A person reviews the result, so always read it yourself.
+
+00:01:26.852 --> 00:01:28.778
+Next: your first Squad run.

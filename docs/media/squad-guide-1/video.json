@@ -1,0 +1,44 @@
+{
+  "id": "squad-guide-1",
+  "title": "What is a Squad?",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "What is a Squad?",
+    "subline": "A small team of AI agents working on one goal",
+    "chips": [
+      "Persona",
+      "Squad",
+      "Orchestrator",
+      "Inbox"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Meet the Squad."
+      },
+      {
+        "at": 3.0,
+        "text": "A small team of AI agents."
+      },
+      {
+        "at": 5.8,
+        "text": "One shared goal."
+      }
+    ],
+    "duration": 10,
+    "revealAt": 7.2
+  },
+  "closer": {
+    "headline": "Read the result yourself",
+    "subline": "A person reviews the result",
+    "chips": [
+      "Next: Your first Squad run"
+    ],
+    "line": "Next: your first Squad run.",
+    "duration": 5
+  }
+}

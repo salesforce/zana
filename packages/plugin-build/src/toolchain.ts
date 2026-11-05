@@ -232,6 +232,7 @@ async function resolveCachedToolchain(dir: string, options?: ToolchainOptions): 
       {
         maxBuffer: 2 * 1024 * 1024,
         timeout: options?.timeoutMs ?? FETCH_TIMEOUT_MS,
+        windowsHide: true,
         env: {
           ...omitNpmScriptPolicyEnv(process.env),
           ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})

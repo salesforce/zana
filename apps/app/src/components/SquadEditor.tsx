@@ -161,6 +161,7 @@ function TeamDetail({
                       ×{Math.max(1, Math.min(TEAM_SLOT_MAX, slot.quantity ?? 1))}
                     </span>
                   )}
+                  {!isOrch && slot.startOnDemand === true && <span className="scheduler-pill">Starts when needed</span>}
                 </li>
               );
             })}
@@ -218,6 +219,8 @@ interface SlotDraft {
   personaId: string;
   quantity: number;
   label: string;
+  /** Keep this seat closed until the engine has a first unit for it. */
+  startOnDemand: boolean;
 }
 
 /** The create/edit form. */
@@ -269,7 +272,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     const base = (team?.slots ?? []).map((s) => ({
       personaId: s.personaId,
       quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)),
-      label: s.label ?? ''
+      label: s.label ?? '',
+      startOnDemand: s.startOnDemand === true
     }));
     // A squad may name its orchestrator as a persona that is NOT among the
     // worker slots (launch gives the orchestrator its own tab regardless — see
@@ -278,7 +282,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     // form. Saving folds it into `slots`; expansion dedupes it back out.
     const orchId = team?.orchestratorPersonaId;
     if (orchId && !base.some((s) => s.personaId === orchId)) {
-      base.unshift({ personaId: orchId, quantity: 1, label: '' });
+      base.unshift({ personaId: orchId, quantity: 1, label: '', startOnDemand: false });
     }
     return base;
   });
@@ -293,7 +297,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       personas.find((p) => !slots.some((s) => s.personaId === p.id))?.id ??
       personas[0]?.id ??
       '';
-    setSlots((prev) => [...prev, { personaId: firstUnused, quantity: 1, label: '' }]);
+    setSlots((prev) => [...prev, { personaId: firstUnused, quantity: 1, label: '', startOnDemand: false }]);
   };
 
   const updateSlot = (idx: number, patch: Partial<SlotDraft>) => {
@@ -332,7 +336,9 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       .map((s) => ({
         personaId: s.personaId.trim(),
         quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity || 1)),
-        ...(s.label.trim() ? { label: s.label.trim() } : {})
+        ...(s.label.trim() ? { label: s.label.trim() } : {}),
+        // On-demand seats need the engine of a plan-driven CLI squad; never store the flag otherwise.
+        ...(s.startOnDemand && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {})
       }));
     // Keep orchestrator only if it's still one of the slots.
     const orch =
@@ -547,6 +553,16 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                         aria-label="Tab count"
                       />
                     </span>
+                    {transport !== 'MODERN' && orchestratorPersonaId !== slot.personaId && (
+                      <label className="team-slot-on-demand">
+                        <input
+                          type="checkbox"
+                          checked={slot.startOnDemand}
+                          onChange={(e) => updateSlot(idx, { startOnDemand: e.target.checked })}
+                        />
+                        Start only when its first unit is ready
+                      </label>
+                    )}
                     <button
                       type="button"
                       className={`icon-button team-slot-orch-toggle composer-control-tooltip ${orchestratorPersonaId === slot.personaId ? 'is-active' : ''}`}
@@ -574,6 +590,11 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                 );
               })}
             </ul>
+          )}
+          {transport !== 'MODERN' && slots.length > 0 && (
+            <p className="settings-help">
+              The seat stays closed until the engine has work for it, so a late review or QA seat doesn't use a session while it waits. Plan-driven Squads only.
+            </p>
           )}
         </div>
 

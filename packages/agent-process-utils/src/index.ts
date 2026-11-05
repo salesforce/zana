@@ -1,5 +1,10 @@
 export * from "./plugin-process-paths.js";
-export * from "./remove-tree.js";
+export {
+  removeTreeWithoutFollowingLinks,
+  removeTreeWithoutFollowingLinksAsync,
+  removeUnlessRealDirectory,
+} from "./remove-tree.js";
+export * from "./temp-dir-sweep.js";
 import type { ChildProcess, StdioOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";

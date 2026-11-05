@@ -6,6 +6,13 @@ import {
   rmdirSync,
   unlinkSync,
 } from "node:fs";
+import {
+  lstat,
+  readdir,
+  realpath,
+  rmdir,
+  unlink,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 /**
@@ -62,21 +69,35 @@ function removeUnlessDirectoryAt(
 ): boolean {
   const stat = lstatOrNull(path);
   if (stat === null) return true;
-  if (stat.isSymbolicLink()) {
-    removeLink(path);
-    return true;
-  }
-  if (!stat.isDirectory()) {
-    unlinkSync(path);
-    return true;
-  }
-  // `null` is a junction whose target is gone: still a link, never a folder.
-  const realPath = realPathOrNull(path);
-  if (realPath === null || !samePath(realPath, expectedRealPath)) {
-    removeLink(path);
-    return true;
-  }
-  return false;
+  const kind = classifyEntry(
+    stat,
+    () => realPathOrNull(path),
+    expectedRealPath,
+  );
+  if (kind === "directory") return false;
+  if (kind === "link") removeLink(path);
+  else unlinkSync(path);
+  return true;
+}
+
+type EntryKind = "link" | "file" | "directory";
+
+/**
+ * The one rule both walks share: what an entry is. A symlink is a link, a
+ * non-directory is a file, and a directory is entered only when its real path
+ * (`null` is a junction whose target is gone) is the path walked to; anything
+ * else is a link the runtime did not report as one.
+ */
+function classifyEntry(
+  stat: Pick<Stats, "isSymbolicLink" | "isDirectory">,
+  realPathOf: () => string | null,
+  expectedRealPath: string,
+): EntryKind {
+  if (stat.isSymbolicLink()) return "link";
+  if (!stat.isDirectory()) return "file";
+  const realPath = realPathOf();
+  if (realPath === null || !samePath(realPath, expectedRealPath)) return "link";
+  return "directory";
 }
 
 /**
@@ -121,4 +142,149 @@ function samePath(left: string, right: string): boolean {
   return process.platform === "win32"
     ? left.toLowerCase() === right.toLowerCase()
     : left === right;
+}
+
+const YIELD_EVERY_ENTRIES = 8;
+
+/**
+ * Async twin of `removeTreeWithoutFollowingLinks`, with the same safety rules
+ * (`classifyEntry` is shared) and the same stop-at-first-failure behaviour.
+ * Entries are removed one at a time and the event loop is yielded to every few
+ * entries, so a large tree never blocks the process for the whole walk.
+ */
+export async function removeTreeWithoutFollowingLinksAsync(root: string): Promise<void> {
+  await removeTreeAsyncWithHooks(root, undefined);
+}
+
+/**
+ * @internal Not part of the package API (`index.ts` does not re-export it).
+ * The same walk with a test seam, so a test can swap a directory for a link at
+ * the exact moment between the check and the removal.
+ */
+export async function removeTreeAsyncWithHooks(
+  root: string,
+  hooks: RemoveTreeAsyncHooks | undefined,
+): Promise<void> {
+  const path = resolve(root);
+  if ((await lstatOrNullAsync(path)) === null) return;
+  const walk: AsyncWalk = { entries: 0, hooks };
+  await removeEntryAsync(path, await canonicalPathAsync(path), walk);
+}
+
+/** @internal Test seam: runs just before each child of a directory is removed, so a test can swap the directory for a link at that exact moment. */
+export interface RemoveTreeAsyncHooks {
+  beforeChild?: (directory: string, child: string) => Promise<void> | void;
+}
+
+interface AsyncWalk {
+  entries: number;
+  hooks: RemoveTreeAsyncHooks | undefined;
+}
+
+async function removeEntryAsync(
+  path: string,
+  expectedRealPath: string,
+  walk: AsyncWalk,
+): Promise<void> {
+  walk.entries += 1;
+  if (walk.entries % YIELD_EVERY_ENTRIES === 0) {
+    await new Promise<void>((done) => setImmediate(done));
+  }
+  const stat = await lstatOrNullAsync(path);
+  if (stat === null) return;
+  const realPath = stat.isDirectory() && !stat.isSymbolicLink()
+    ? await realPathOrNullAsync(path)
+    : null;
+  const kind = classifyEntry(stat, () => realPath, expectedRealPath);
+  if (kind === "file") {
+    await ignoreMissing(() => unlink(path));
+    return;
+  }
+  if (kind === "link") {
+    await ignoreMissing(() => removeLinkAsync(path));
+    return;
+  }
+  const names = await ignoreMissing(() => readdir(path));
+  if (names === undefined) return;
+  for (const name of names) {
+    await walk.hooks?.beforeChild?.(path, name);
+    // The directory was checked before it was listed. Another process (a plugin
+    // owns its temp dir) could have swapped it for a link since, and a child
+    // path would then resolve through that link. Check again right before each
+    // removal and stop, leaving the rest on disk, if it is no longer the
+    // directory this walk entered. This narrows the window to the gap between
+    // this check and the unlink; it cannot close it without directory handles.
+    const state = await directoryState(path, expectedRealPath);
+    // Gone: an overlapping cleaner finished first, which is the goal reached.
+    if (state === "gone") return;
+    if (state === "changed") {
+      throw new Error(`temp dir changed while it was being removed: ${path}`);
+    }
+    await removeEntryAsync(join(path, name), join(expectedRealPath, name), walk);
+  }
+  await ignoreMissing(() => rmdir(path));
+}
+
+/**
+ * `same` while `path` is still a real directory (not a link) at the real path
+ * the walk entered; `gone` when it no longer exists (removed by someone else);
+ * `changed` when it became a link, a file, or a different real path.
+ */
+async function directoryState(
+  path: string,
+  expectedRealPath: string,
+): Promise<"same" | "gone" | "changed"> {
+  const stat = await lstatOrNullAsync(path);
+  if (stat === null) return "gone";
+  if (stat.isSymbolicLink() || !stat.isDirectory()) return "changed";
+  const real = await realPathOrNullAsync(path);
+  if (real === null) return "gone";
+  return samePath(real, expectedRealPath) ? "same" : "changed";
+}
+
+/**
+ * An entry that vanished mid-walk is gone, which is what the walk wants (the
+ * old `rm(..., { force: true })` said the same). Two removals of one tree can
+ * overlap, and a concurrent cleaner must not turn that into a failure. Every
+ * other error still stops the walk.
+ */
+async function ignoreMissing<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await action();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function canonicalPathAsync(path: string): Promise<string> {
+  return join(await realpath(dirname(path)), basename(path));
+}
+
+async function removeLinkAsync(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "EISDIR") throw error;
+    await rmdir(path);
+  }
+}
+
+async function lstatOrNullAsync(path: string): Promise<Stats | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function realPathOrNullAsync(path: string): Promise<string | null> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }

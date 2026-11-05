@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Archive, ArchiveRestore, Copy, Download, FolderInput, FolderOpen, GitFork, Hash, Pin, PinOff, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Copy, Download, FolderInput, FolderOpen, GitFork, Hash, Link2, Pin, PinOff, Trash2 } from 'lucide-react';
 import { designDocDirective, type DesignDocSummary } from '../shared/contract.js';
+import { crossDocMarkdownLink } from '../shared/paths.js';
 import { copyText } from './clipboard.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
 import { saveBytes, siteZip } from './download.js';
-import { useDocs } from './hooks.js';
+import { useDocs, useUnassignedProjects } from './hooks.js';
+import { UnassignedProjectsDialog } from './UnassignedProjects.js';
 import { ConfirmDialog, Dialog, MenuItem, Spinner, type ConfirmRequest } from './ui.js';
 
 function MoveDialog({
@@ -160,6 +162,8 @@ export function useDocActions(projects: ProjectInfo[]): {
   const api = useApi();
   const [moving, setMoving] = useState<DesignDocSummary | null>(null);
   const [linking, setLinking] = useState<DesignDocSummary | null>(null);
+  const [mapping, setMapping] = useState(false);
+  const unassigned = useUnassignedProjects(mapping);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
 
   const update = async (doc: DesignDocSummary, patch: UpdateArgs) => {
@@ -204,9 +208,14 @@ export function useDocActions(projects: ProjectInfo[]): {
           <MenuItem icon={Pin} label="Pin to top" onSelect={run(() => void pin(doc, true))} />
         )}
         <MenuItem icon={Copy} label="Copy chat reference" hint="Paste into any thread" onSelect={run(() => void copy(designDocDirective(doc.id), 'reference'))} />
-        <MenuItem icon={Hash} label="Copy id" hint={doc.slug} onSelect={run(() => void copy(doc.id, 'id'))} />
+        <MenuItem icon={Link2} label="Copy doc link" hint="Paste into another doc" onSelect={run(() => void copy(crossDocMarkdownLink(doc), 'doc link'))} />
+        <MenuItem icon={Hash} label="Copy id" hint={doc.id} onSelect={run(() => void copy(doc.id, 'id'))} />
         <MenuItem icon={Download} label="Download .zip" hint={`${doc.slug}.zip`} onSelect={run(() => void download(doc))} />
-        <MenuItem icon={FolderInput} label="Move to project…" onSelect={run(() => setMoving(doc))} />
+        {doc.projectLocked ? (
+          <MenuItem icon={FolderInput} label="Map to a Project…" hint="Peer-owned" onSelect={run(() => setMapping(true))} />
+        ) : (
+          <MenuItem icon={FolderInput} label="Move to project…" onSelect={run(() => setMoving(doc))} />
+        )}
         <MenuItem
           icon={GitFork}
           label="Alternative to…"
@@ -253,6 +262,9 @@ export function useDocActions(projects: ProjectInfo[]): {
       ) : null}
       {linking ? (
         <AlternativeDialog doc={linking} onClose={() => setLinking(null)} onPick={(alternativeTo) => update(linking, { alternativeTo })} />
+      ) : null}
+      {mapping ? (
+        <UnassignedProjectsDialog unassigned={unassigned.data ?? []} projects={projects} onClose={() => setMapping(false)} onChanged={() => unassigned.reload()} />
       ) : null}
       {confirm ? <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} /> : null}
     </>

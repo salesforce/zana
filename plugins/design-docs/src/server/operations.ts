@@ -5,7 +5,8 @@
  */
 import { DOC_STATUSES, isDocStatus, type DesignDocDetail, type DocActor, type DocStatus, type TextEdit } from '../shared/contract.js';
 import { pageText } from '../shared/html-scan.js';
-import { fileKindOf, imageMediaTypeOf } from '../shared/paths.js';
+import { fileKindOf, isAgentInstructionsPath, imageMediaTypeOf, relativeDocPath, renameClashingPaths, resolveDocLink } from '../shared/paths.js';
+import { renderTemplateFiles } from '../shared/templates.js';
 import {
   commentLine,
   formatBundle,
@@ -20,6 +21,7 @@ import {
 } from './format.js';
 import { NO_KIT, renderPage, type KitReader } from './pages.js';
 import type { RenderReports } from './render-reports.js';
+import { resolveNamedProject, type ProjectLister } from './project-guard.js';
 import { DesignDocError, type DesignDocStore } from './store.js';
 
 export interface OperationContext {
@@ -28,6 +30,8 @@ export interface OperationContext {
   changed(docId: string): void;
   /** The calling thread's project, when there is one. */
   projectId?: string | null;
+  /** Registered projects, for verifying a named projectId. Without it a named project is refused. */
+  listProjects?: ProjectLister;
   /** A project's display name, when known. */
   projectName?(projectId: string | null): string | null;
   /** The plugin's site kit, which pages load from `zcc-kit/`. */
@@ -185,9 +189,12 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
   }
   const hasEntry = detail.files.some((file) => file.path === detail.entryPath);
   const entry = hasEntry ? formatFile(ctx.store.readFile(detail.id, detail.entryPath)) : '';
+  const instructionsPath = detail.files.find((file) => isAgentInstructionsPath(file.path))?.path;
+  const instructions = instructionsPath ? formatFile(ctx.store.readFile(detail.id, instructionsPath)) : '';
   return [
     formatManifest(detail, manifestOptions(ctx, detail)),
     `Metadata CAS: expectedHead=${JSON.stringify(detail.head)} (required when paired; re-read before updating).`,
+    instructions ? `## Agent instructions (follow these)\n${instructions}` : '',
     entry ? `## Entry file\n${entry}` : '',
     ...(hasEntry ? pageNotes(ctx, detail, detail.entryPath) : []),
     reportedPages(ctx, detail) ?? '',
@@ -198,7 +205,7 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
     .join('\n\n');
 }
 
-export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor): string {
+export async function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor): Promise<string> {
   const input = asInput(raw);
   // Origin is trusted callsite state, never agent/renderer-controlled JSON.
   if (input.origin !== undefined) throw new DesignDocError('invalid', 'origin is not an authoring parameter');
@@ -211,7 +218,7 @@ export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
   }
   const files = input.files;
   if (files !== undefined && !Array.isArray(files)) throw new DesignDocError('invalid', 'files must be an array');
-  const global = input.global === true || input.global === 'true';
+  const named = await resolveNamedProject(ctx.listProjects, input);
   const detail = ctx.store.create(
     {
       title: requiredString(input, 'title'),
@@ -228,7 +235,7 @@ export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
         return { path: entry.path, content: entry.content, encoding };
       }),
       entryPath: optionalString(input, 'entryPath'),
-      projectId: global ? null : (ctx.projectId ?? null)
+      projectId: named === undefined ? (ctx.projectId ?? null) : named
     },
     actor
   );
@@ -294,9 +301,10 @@ function writtenPageNotes(ctx: OperationContext, docId: string, path: string): s
   return notes;
 }
 
-export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor): string {
+export async function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor): Promise<string> {
   const input = asInput(raw);
   const ref = docRef(ctx, requiredString(input, 'doc'));
+  const moveTo = await resolveNamedProject(ctx.listProjects, input);
   const alternativeTo = optionalString(input, 'alternativeTo');
   const summary = ctx.store.update(
     ref,
@@ -307,7 +315,8 @@ export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
       tags: optionalStringArray(input, 'tags'),
       entryPath: optionalString(input, 'entryPath'),
       alternativeTo: alternativeTo === undefined ? undefined : alternativeTo.trim() ? docRef(ctx, alternativeTo) : null,
-      expectedHead: input.expectedHead === null ? null : optionalString(input, 'expectedHead')
+      expectedHead: input.expectedHead === null ? null : optionalString(input, 'expectedHead'),
+      projectId: moveTo
     },
     actor
   );
@@ -389,4 +398,86 @@ export function docHistory(ctx: OperationContext, raw: unknown): string {
   return formatHistory(
     ctx.store.history(ref, { path: optionalString(input, 'path'), limit: optionalInteger(input, 'limit') })
   );
+}
+
+// ── Templates ───────────────────────────────────────────────────────────
+
+export interface TemplateReadResult {
+  key: string;
+  files: Array<{ path: string; content: string; encoding: 'utf8' | 'base64' }>;
+}
+
+/** A template's files exactly as stored: placeholders and AI-instruction comments intact. */
+export function readTemplate(ctx: OperationContext, raw: unknown): TemplateReadResult {
+  const key = requiredString(asInput(raw), 'key');
+  const template = ctx.store.templateByKey(key);
+  if (!template) throw new DesignDocError('not_found', `unknown template ${JSON.stringify(key)}; call design_doc_templates_list for valid keys`);
+  return {
+    key: template.id,
+    files: template.files.map((file) => ({ path: file.path, content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' }))
+  };
+}
+
+/** Markdown `](target` or html `="target"` / `='target'`; the target must end at the delimiter, so prefixes never match. */
+const LINK_TARGET = /\]\(([^)\s]*)(?=[)\s])|=(["'])([^"']*)\2/g;
+
+/**
+ * Writes a template's files into an existing doc as one atomic change. Never
+ * overwrites: a path the doc already has (any letter case) fails the whole call,
+ * unless `renameOnConflict` is true, which numbers the clashing files (`a-2.md`).
+ * Size and count limits are the store's, as for any other write.
+ */
+
+export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocActor): { added: string[]; renamed: Array<{ from: string; to: string }> } {
+  const input = asInput(raw);
+  const renameOnConflict = input.renameOnConflict === true;
+  const ref = docRef(ctx, requiredString(input, 'docId'));
+  const templateKey = requiredString(input, 'templateKey');
+  const template = ctx.store.templateByKey(templateKey);
+  if (!template) throw new DesignDocError('not_found', `unknown template ${JSON.stringify(templateKey)}; call design_doc_templates_list for valid keys`);
+  const doc = ctx.store.get(ref);
+  const title = optionalString(input, 'title') ?? doc.title;
+  const summary = optionalString(input, 'summary') ?? doc.summary;
+  const renderedAll = renderTemplateFiles(template, { title, summary });
+  // A doc has one AGENTS.md: a template's instructions join it instead of clashing or becoming a stray AGENTS-2.md.
+  const rulesPath = doc.files.find((file) => isAgentInstructionsPath(file.path))?.path;
+  const incomingRules = rulesPath ? renderedAll.find((file) => isAgentInstructionsPath(file.path) && file.encoding !== 'base64') : undefined;
+  const rendered = incomingRules ? renderedAll.filter((file) => file !== incomingRules) : renderedAll;
+  const existing = new Set(doc.files.map((file) => file.path.toLowerCase()));
+  const clashes = rendered.filter((file) => existing.has(file.path.toLowerCase()));
+  if (clashes.length && !renameOnConflict) {
+    throw new DesignDocError('conflict', `${clashes[0]!.path} already exists in ${doc.id}; add_from_template never overwrites. Rename or delete it first.`);
+  }
+  const renames = renameClashingPaths(rendered.map((file) => file.path), doc.files.map((file) => file.path));
+  const files = rendered.map((file) => {
+    const path = renames.get(file.path) ?? file.path;
+    if (!renames.size || file.encoding === 'base64' || typeof file.content !== 'string') return { ...file, path };
+    // Keep links between the added files pointing at each other, not at the doc's older copies.
+    const content = file.content.replace(LINK_TARGET, (match, mdTarget: string | undefined, quote: string | undefined, attrTarget: string | undefined) => {
+      const target = mdTarget ?? attrTarget ?? '';
+      const cut = target.search(/[?#]/);
+      const bare = cut < 0 ? target : target.slice(0, cut);
+      const suffix = cut < 0 ? '' : target.slice(cut);
+      const resolved = resolveDocLink(file.path, bare);
+      const renamed = resolved === null ? undefined : renames.get(resolved);
+      if (renamed === undefined) return match;
+      const next = relativeDocPath(path, renamed) + suffix;
+      return mdTarget !== undefined ? `](${next}` : `=${quote}${next}${quote}`;
+    });
+    return { ...file, path, content };
+  });
+  const writes = files.map((file) => ({ ...file, baseRevision: 0, baseFileId: null as string | null, note: `Added from template ${template.id}` }));
+  // The instructions merge joins the same batch, so a failed merge rolls the added files back too.
+  if (rulesPath && incomingRules && typeof incomingRules.content === 'string') {
+    const current = ctx.store.readFile(doc.id, rulesPath);
+    if (current.encoding === 'utf8' && !current.content.includes(incomingRules.content.trim())) {
+      writes.push({
+        path: rulesPath, content: `${current.content.trimEnd()}\n\n---\n\n${incomingRules.content}`,
+        baseRevision: current.revision, baseFileId: current.fileId, note: `Added instructions from template ${template.id}`
+      } as (typeof writes)[number]);
+    }
+  }
+  const results = ctx.store.writeFiles(doc.id, writes, actor);
+  ctx.changed(doc.id);
+  return { added: results.map((result) => result.path), renamed: [...renames].map(([from, to]) => ({ from, to })) };
 }

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
-import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
+import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { passageContext } from '../shared/passage-context.js';
 import { Markdown } from '@zana-ai/zcc-plugin-sdk/app';
 import { MessageSquarePlus, Sparkles } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
-import type { FileKind } from '../shared/paths.js';
+import { isCrossDocScheme, parseCrossDocLink, shieldCrossDocLinks, unshieldCrossDocHref, type FileKind } from '../shared/paths.js';
 import { toast, useApi, type DocKind } from './api.js';
-import { codeFence, fenced, fileDataUrl, inlineImages, referencedImages, resolveDocLink } from './content.js';
+import { codeFence, fenced, fileDataUrl, formatSubPath, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
 import { PageFrame } from './PageFrame.js';
+import { findHeading, onAnchorRequest, requestAnchor, takeAnchor } from './anchors.js';
 
 export interface PreviewFile {
   path: string;
@@ -22,6 +23,14 @@ export interface PreviewHandle {
   /** Scroll to and flash a quoted passage; false when it is not on screen. */
   focusQuote(quote: string): boolean;
 }
+
+/** The nav panel's route segment; mirrors NAV_PATH in slots.tsx (which imports this module's tree). */
+const DOCS_PANEL = 'design-docs';
+const CROSS_DOC_ERRORS = {
+  'missing-doc': 'That design doc does not exist (or was removed)',
+  'missing-file': 'That file does not exist in the linked design doc',
+  forbidden: 'That doc came from a paired computer and is not mapped to a project yet. Map it to a project (doc menu, Map to a Project) and the link will open'
+} as const;
 
 const MAX_INLINE_IMAGES = 24;
 const ASSET_CACHE_LIMIT = 64;
@@ -117,6 +126,8 @@ export function FilePreview({
   draft?: boolean;
   kind?: DocKind;
 }) {
+  const api = useApi();
+  const navigate = useZccNavigate();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const owner = useRef({});
@@ -130,7 +141,7 @@ export function FilePreview({
   const known = useMemo(() => new Set(files.map((entry) => entry.path)), [files]);
 
   const markdown = useMemo(() => {
-    if (file.kind === 'markdown') return inlineImages(file.path, file.content, assets);
+    if (file.kind === 'markdown') return shieldCrossDocLinks(inlineImages(file.path, file.content, assets));
     if (file.kind === 'mermaid') return fenced(file.content, 'mermaid');
     if (file.kind === 'code') return codeFence(file.path, file.content);
     return null;
@@ -158,6 +169,32 @@ export function FilePreview({
     };
   }, [quoteKey, markdown, file.kind, file.content]);
 
+  // Scroll to the heading a link named (`file.md#section`), once the host renderer has produced it.
+  useEffect(() => {
+    if (file.kind !== 'markdown') return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    const go = () => {
+      const anchor = takeAnchor(docId, file.path);
+      if (!anchor) return;
+      let tries = 0;
+      const attempt = () => {
+        if (cancelled) return;
+        const heading = contentRef.current ? findHeading(contentRef.current, anchor) : null;
+        if (heading) heading.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+        else if ((tries += 1) < 10) timer = setTimeout(attempt, 80);
+      };
+      attempt();
+    };
+    go();
+    const off = onAnchorRequest(go);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      off();
+    };
+  }, [docId, file.path, file.kind, markdown]);
+
   // For HTML pages the page frame sets the handle; this effect runs after the frame's.
   const ownsHandle = file.kind !== 'html';
   useEffect(() => {
@@ -182,10 +219,32 @@ export function FilePreview({
   const onClickCapture = (event: ReactMouseEvent) => {
     const anchor = (event.target as Element | null)?.closest?.('a');
     if (!anchor) return;
-    const href = anchor.getAttribute('href') ?? '';
+    const href = unshieldCrossDocHref(anchor.getAttribute('href') ?? '');
     if (href.startsWith('#')) {
       event.preventDefault();
       event.stopPropagation();
+      let anchorName = href.slice(1);
+      try { anchorName = decodeURIComponent(anchorName); } catch { /* keep raw text */ }
+      requestAnchor(docId, file.path, anchorName);
+      return;
+    }
+    if (isCrossDocScheme(href)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const link = parseCrossDocLink(href);
+      if (!link) {
+        toast('This doc link is not valid', 'error');
+        return;
+      }
+      void api.resolveCrossDocLink(docId, href).then(
+        (result) => {
+          if ('error' in result) { toast(CROSS_DOC_ERRORS[result.error], 'error'); return; }
+          requestAnchor(result.docId, result.path, link.anchor);
+          if (result.docId === docId) onOpenPath?.(result.path);
+          else navigate.toPluginPanel(DOCS_PANEL, { subPath: formatSubPath({ docId: result.docId, path: result.path }) });
+        },
+        () => toast(CROSS_DOC_ERRORS['missing-doc'], 'error')
+      );
       return;
     }
     const target = resolveDocLink(file.path, href);
@@ -193,8 +252,13 @@ export function FilePreview({
     event.preventDefault();
     event.stopPropagation();
     const folderEntry = [...known].find((path) => path.startsWith(`${target}/`));
-    if (known.has(target)) onOpenPath?.(target);
-    else if (folderEntry) onOpenPath?.(folderEntry);
+    const hash = href.indexOf('#');
+    let relAnchor = hash >= 0 ? href.slice(hash + 1) : '';
+    try { relAnchor = decodeURIComponent(relAnchor); } catch { /* keep raw text */ }
+    if (known.has(target)) {
+      requestAnchor(docId, target, relAnchor);
+      onOpenPath?.(target);
+    } else if (folderEntry) onOpenPath?.(folderEntry);
     else toast(`${target} is not a file in this design doc`, 'error');
   };
 

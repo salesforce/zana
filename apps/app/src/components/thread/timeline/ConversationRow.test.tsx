@@ -480,3 +480,65 @@ it('retains unchanged snapshots when editing surrounding text and when expanding
   view.unmount();
   vi.restoreAllMocks();
 });
+
+describe('ConversationRow preview buttons', () => {
+  afterEach(() => cleanup());
+  const assistant = (text: string, extra: Record<string, unknown> = {}) => ({
+    ...userRow, id: 'a-1', role: 'assistant' as const, text, ...extra
+  });
+  const buttons = () => screen.queryAllByTestId('thread-open-file-preview');
+
+  it('offers Preview for workspace-relative paths', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('docs/notes.md')} />);
+    expect(buttons()).toHaveLength(1);
+  });
+
+  it('hides Preview for an absolute path outside the row preview roots', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('/Users/x/secret/notes.md', { previewRoots: ['/Users/x/project'] })} />);
+    expect(buttons()).toHaveLength(0);
+  });
+
+  it('hides Preview for an absolute path when the row has no roots', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('/Users/x/secret/notes.md')} />);
+    expect(buttons()).toHaveLength(0);
+  });
+
+  it('offers Preview for an absolute path inside a row preview root', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('/Users/x/project/notes.md', { previewRoots: ['/Users/x/project'] })} />);
+    expect(buttons()).toHaveLength(1);
+  });
+
+  it('offers Preview for a Windows drive-letter path inside a row preview root', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('C:\\proj\\notes.md', { previewRoots: ['C:\\proj'] })} />);
+    expect(buttons()).toHaveLength(1);
+  });
+
+  it('renders a row without text and without roots without offering Preview', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('', { text: undefined })} />);
+    expect(buttons()).toHaveLength(0);
+  });
+
+  it('does not accept a sibling directory sharing the root prefix', () => {
+    render(<ConversationRow threadId="t1" onCopy={() => undefined} row={assistant('/Users/x/project-evil/notes.md', { previewRoots: ['/Users/x/project'] })} />);
+    expect(buttons()).toHaveLength(0);
+  });
+
+  it('exempts user attachments even when outside the preview roots', () => {
+    render(
+      <ConversationRow
+        threadId="t1"
+        onCopy={() => undefined}
+        row={{
+          ...userRow,
+          text: '',
+          previewRoots: ['/Users/x/project'],
+          attachments: {
+            webImages: 0, localImages: 0, localFiles: 1, imageUrls: [], localImagePaths: [],
+            localFilePaths: ['/Users/x/.zcc/attachments/p1/report.md']
+          }
+        }}
+      />
+    );
+    expect(buttons()).toHaveLength(1);
+  });
+});

@@ -1,3 +1,4 @@
+import { removeTreeWithoutFollowingLinksAsync } from '@zana-ai/zcc-agent-process-utils';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, rename, rm, symlink, readlink, lstat, copyFile, readdir } from 'node:fs/promises';
@@ -57,7 +58,7 @@ export function validateHostBundle(entry: string, protocol: number): Promise<voi
   return new Promise((resolve, reject) => {
     // Exit status is the protocol probe: no piped CLI output to truncate in Electron.
     const child = spawn(process.execPath, [entry, '--check-protocol', String(protocol)], {
-      cwd: dirname(entry), stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      cwd: dirname(entry), stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true
     });
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Host update validation timed out')); }, TIMEOUT_MS);
     child.once('error', error => { clearTimeout(timer); reject(error); });
@@ -138,7 +139,7 @@ async function update(options: Options): Promise<ProtocolSelfUpdateResult> {
     if (!promoted) {
       if (pendingWritten) await rm(join(runtime, 'update-pending.json'), { force: true });
       if (backupPath) await rm(backupPath, { force: true });
-      await rm(stage, { recursive: true, force: true });
+      await removeTreeWithoutFollowingLinksAsync(stage);
     }
   }
 }
@@ -159,7 +160,7 @@ export async function confirmHostUpdate(dataDir: string): Promise<void> {
   await rm(join(runtime, 'update-pending.json'), { force: true });
   await rm(join(runtime, record.backup), { force: true });
   for (const entry of await readdir(runtime)) {
-    if (/^release-[a-f0-9-]+$/.test(entry) && entry !== record.generation) await rm(join(runtime, entry), { recursive: true, force: true });
+    if (/^release-[a-f0-9-]+$/.test(entry) && entry !== record.generation) await removeTreeWithoutFollowingLinksAsync(join(runtime, entry));
   }
 }
 
@@ -170,6 +171,6 @@ export async function rollbackHostUpdate(dataDir: string): Promise<boolean> {
   const runtime = join(dataDir, 'runtime');
   await rename(join(runtime, record.backup), join(runtime, record.entry));
   await rm(join(runtime, 'update-pending.json'), { force: true });
-  await rm(join(runtime, record.generation), { recursive: true, force: true });
+  await removeTreeWithoutFollowingLinksAsync(join(runtime, record.generation));
   return true;
 }

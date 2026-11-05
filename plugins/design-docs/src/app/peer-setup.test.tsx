@@ -316,6 +316,21 @@ describe('load failures and last good view', () => {
   });
 });
 
+describe('Sync Now completing after unmount', () => {
+  it('does not re-check drift when the view is gone', async () => {
+    const sync = deferred<{ attempted: number; synced: number; blocked: number }>();
+    const outOfSync = vi.fn(async () => ({ outOfSync: true }));
+    const configured = { ...EMPTY, configured: true, roster: { rosterEpoch: 1 }, members: [{ replicaId: 'r-a', machineId: 'app-a', authorized: true, connected: true, retiring: false }] };
+    mount({ groupStatus: async () => configured, peersOutOfSync: outOfSync, syncNow: () => sync.promise });
+    fireEvent.click(await screen.findByRole('button', { name: 'Sync Now' }));
+    const before = outOfSync.mock.calls.length;
+    cleanup();
+    sync.resolve({ attempted: 1, synced: 1, blocked: 0 });
+    await settle();
+    expect(outOfSync.mock.calls.length).toBe(before);
+  });
+});
+
 describe('group status, jobs and lifecycle', () => {
   it('shows honest installer blocker; enables a legacy enrolled peer that has no connection', async () => {
     const status = { ...EMPTY, enrolled: [{ id: 'app-b', name: 'Laptop', connected: true }, { id: 'app-z', name: 'Gone', connected: false }] };
@@ -469,7 +484,7 @@ describe('out of sync notice', () => {
     expect(sync).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Sync Now' }));
     await waitFor(() => expect(screen.queryByText(/out of sync/)).toBeNull());
-    expect(harness.toasts.at(-1)?.message).toBe('Synced 1 peers');
+    expect(harness.toasts.at(-1)?.message).toBe('Synced with your other computers');
   });
 
   it('a peer state push re-checks at once; ignored before a group exists', async () => {
@@ -510,7 +525,7 @@ describe('out of sync notice', () => {
     cleanup();
     const harness = mount({ groupStatus: async () => configured, peersOutOfSync: async () => ({ outOfSync: true }), syncNow: async () => ({ attempted: 2, synced: 1, blocked: 1 }) });
     fireEvent.click(await screen.findByRole('button', { name: 'Sync Now' }));
-    await waitFor(() => expect(harness.toasts.at(-1)?.message).toBe('Synced 1/2; 1 blocked'));
+    await waitFor(() => expect(harness.toasts.at(-1)?.message).toBe('Synced 1. Some changes are waiting for another computer. They will send on their own.'));
   });
 
   it('stays quiet when in sync or when the check fails', async () => {

@@ -453,6 +453,18 @@ describe('config — voiceModel / voiceLanguage normalization', () => {
   });
 });
 
+describe('config — trustedPreviewFolders load sanitization', () => {
+  it('keeps clean absolute folders, drops junk, and ignores a non-array value', () => {
+    store.setConfig({ trustedPreviewFolders: ['/ok/one', '', 5, 'relative/path'] as never });
+    const kept = store.getConfig().trustedPreviewFolders ?? [];
+    expect(kept).toContain('/ok/one');
+    expect(kept).not.toContain('relative/path');
+    expect(kept).not.toContain('');
+    store.setConfig({ trustedPreviewFolders: 'nope' as never });
+    expect(Array.isArray(store.getConfig().trustedPreviewFolders ?? [])).toBe(true);
+  });
+});
+
 describe('config — projectViews normalization (shape-only: non-empty string)', () => {
   // A project view is either a core mode OR an opaque extension module
   // id (an extension-contributed project tab, e.g. the `zana-tickets`

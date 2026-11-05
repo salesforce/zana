@@ -3,6 +3,7 @@
  * what `zcc design-docs export --out` writes and `import` reads.
  */
 import type { DesignDocFile } from '../shared/contract.js';
+import { isAgentInstructionsPath } from '../shared/paths.js';
 import { KIT_DIR, KIT_FILES, type SiteFile } from '../shared/page.js';
 import type { KitReader } from './pages.js';
 
@@ -16,7 +17,8 @@ export const NO_JEKYLL = '.nojekyll';
  * the kit files its pages load (a doc's own copy wins, as in the preview) and
  * `.nojekyll` when it has pages.
  */
-export function siteFiles(files: DesignDocFile[], kit: KitReader): SiteFile[] {
+export function siteFiles(allFiles: DesignDocFile[], kit: KitReader): SiteFile[] {
+  const files = allFiles.filter((file) => !isAgentInstructionsPath(file.path));
   const site: SiteFile[] = files.map(({ path, content, encoding }) => ({ path, content, encoding }));
   const own = new Set(files.map((file) => file.path));
   const usesKit = files.some((file) => file.encoding === 'utf8' && file.content.includes(`${KIT_DIR}/`));

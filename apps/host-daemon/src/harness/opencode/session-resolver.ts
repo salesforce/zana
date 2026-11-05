@@ -65,7 +65,7 @@ async function defaultRunList(
     execFile(
       binary,
       ['session', 'list', '--format', 'json', '-n', String(limit)],
-      { cwd, timeout: TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      { cwd, timeout: TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true },
       (err, stdout) => {
         if (err) return resolve(null);
         try {

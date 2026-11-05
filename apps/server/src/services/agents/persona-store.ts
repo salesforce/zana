@@ -14,7 +14,7 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import type { Project, Persona, CreateTerminalRequest, PersonaHarnessIntentV1, PersonaHarnessRoutingV1, HarnessFamily } from '@zana-ai/zcc-domain/product';
+import { PERSONA_REASONING_LEVELS, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { atomicDurableWrite } from '../harness-routing/storage.js';
@@ -154,6 +154,11 @@ export function sanitizePersona(raw: unknown): Persona | null {
       return null;
     }
   }
+  if (r.reasoningLevel !== undefined) {
+    if (typeof r.reasoningLevel !== 'string' || !(PERSONA_REASONING_LEVELS as readonly string[]).includes(r.reasoningLevel)) {
+      return null;
+    }
+  }
   if (r.executionState !== undefined) {
     if (typeof r.executionState !== 'string' || !['plan', 'interactive', 'accept-edits', 'autonomous'].includes(r.executionState)) {
       return null;
@@ -180,6 +185,7 @@ export function sanitizePersona(raw: unknown): Persona | null {
     codexSandbox: r.codexSandbox,
     codexApproval: r.codexApproval,
     modelLevel: r.modelLevel,
+    ...(r.reasoningLevel !== undefined ? { reasoningLevel: r.reasoningLevel } : {}),
     executionState: r.executionState,
     harnessRouting,
     appendSystemPrompt:
@@ -428,6 +434,7 @@ function ensureReadme(dir: string) {
         '`baseProfile` must be one of `shell`, `claude`, `claude-resume`, `claude-yolo`.',
         '`model` can be `opus`, `sonnet`, `haiku`, or `default` (let Claude decide).',
         '`permissionMode` can be `default`, `acceptEdits`, `plan`, or `bypassPermissions`.',
+        '`reasoningLevel` (optional) can be `low`, `medium`, `high`, `xhigh`, or `max`. Claude, Codex, PI and Grok map it to their own effort setting; agents without one ignore it. Any other value skips the persona.',
         'Files with invalid JSON or missing required fields are silently skipped.',
         'A built-in persona is shadowed when you drop a file with the same `id` here.',
         ''
@@ -584,6 +591,13 @@ export function projectPersonaFields(p: Persona): Persona {
 function parsePersona(content: string): Persona | null {
   try {
     const raw = JSON.parse(content);
+    // Forward compatibility: a persona file written by a newer Zana may carry an
+    // effort level this version does not know. Ignore just that field (the file
+    // is not rewritten) instead of dropping the whole persona.
+    if (raw && typeof raw === 'object' && raw.reasoningLevel !== undefined
+      && !(PERSONA_REASONING_LEVELS as readonly unknown[]).includes(raw.reasoningLevel)) {
+      delete raw.reasoningLevel;
+    }
     const sanitized = sanitizePersona(raw);
     if (!sanitized) return null;
     const migrated = migratePersonaIfNeeded(sanitized);

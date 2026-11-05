@@ -318,6 +318,12 @@ const path = require('path');
 // The launcher probes --version before a real spawn; answer and exit.
 if (process.argv.includes('--version')) { console.log('2.1.220 (fake)'); process.exit(0); }
 
+// Opt-in (demo recordings): answer headless \`--print\` micro-calls, such as the Goal evaluator, with a verdict.
+if (process.env.ZCC_FAKE_EVALUATOR_VERDICT && process.argv.includes('--print')) {
+  console.log(JSON.stringify({ verdict: process.env.ZCC_FAKE_EVALUATOR_VERDICT, rationale: 'The result matches the plan.', confidence: 0.9 }));
+  process.exit(0);
+}
+
 const codexUrl = process.argv.find(arg => arg.startsWith('mcp_servers.zcc-inbox.url='));
 const IS_CODEX = !!codexUrl;
 const MCP_URL = process.env.ZCC_MCP_URL || (codexUrl ? JSON.parse(codexUrl.slice(codexUrl.indexOf('=') + 1)) : '');

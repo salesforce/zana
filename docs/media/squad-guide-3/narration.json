@@ -1,0 +1,37 @@
+[
+  {
+    "id": "board",
+    "caption": "Agents board: your run is a card",
+    "line": "Open the Agents board. Your running Squad is a card, with its status on it. Flow view shows the same run as a graph of who hands work to whom."
+  },
+  {
+    "id": "details",
+    "caption": "Open the card: Squad details",
+    "line": "Open the card to see Squad details: the goal, and progress for each step. It refreshes on its own while the run is active."
+  },
+  {
+    "id": "question",
+    "caption": "Inbox: Needs your answer",
+    "line": "If a worker needs a decision, the run pauses and asks you. The question waits in the Inbox, under Needs your answer."
+  },
+  {
+    "id": "answer",
+    "caption": "Answer, and the run continues",
+    "line": "Choose an answer and continue. A question is not an error. The run was simply waiting for you."
+  },
+  {
+    "id": "done",
+    "caption": "Inbox: Squad completed",
+    "line": "When the work is finished, the Inbox posts Squad completed, with a short summary of the result."
+  },
+  {
+    "id": "result",
+    "caption": "Open Squad details: 4/4 complete",
+    "line": "Open Squad details for the full record of every step."
+  },
+  {
+    "id": "close",
+    "caption": "Find it, answer it, read the result",
+    "line": "That is the whole loop: find the run, answer when it asks, and read the result."
+  }
+]

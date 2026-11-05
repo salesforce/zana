@@ -1,0 +1,44 @@
+{
+  "id": "squad-guide-2",
+  "title": "Your first Squad run",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "Your first Squad run",
+    "subline": "Launch the Research Squad in a few steps",
+    "chips": [
+      "Launcher",
+      "Research Squad",
+      "Goal",
+      "Launch"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Your first Squad run."
+      },
+      {
+        "at": 3.0,
+        "text": "The Research Squad."
+      },
+      {
+        "at": 5.8,
+        "text": "Launched in a few steps."
+      }
+    ],
+    "duration": 11,
+    "revealAt": 8.0
+  },
+  "closer": {
+    "headline": "Watch it run",
+    "subline": "Then read the result yourself",
+    "chips": [
+      "Next: Watch a Squad run"
+    ],
+    "line": "Next: watch a Squad run.",
+    "duration": 5
+  }
+}

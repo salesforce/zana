@@ -107,7 +107,7 @@ export async function uploadToRemote(
       clearTimeout(timer);
       resolve(r);
     };
-    const proc = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let outBuf = '';
     let errBuf = '';
     const timer = setTimeout(() => {
@@ -175,7 +175,7 @@ export async function downloadFromRemote(
       clearTimeout(timer);
       resolve(r);
     };
-    const proc = spawn('ssh', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn('ssh', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let errBuf = '';
     let bytes = 0;
     let overflow = false;

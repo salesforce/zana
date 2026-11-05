@@ -1,0 +1,44 @@
+{
+  "id": "squad-guide-7",
+  "title": "Schedule a Squad",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "Schedule a Squad",
+    "subline": "Run it on a clock, without being there",
+    "chips": [
+      "Scheduler",
+      "Run as Squad",
+      "Cadence",
+      "Inbox notifications"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Schedule a Squad."
+      },
+      {
+        "at": 3.0,
+        "text": "Run it on a clock."
+      },
+      {
+        "at": 5.8,
+        "text": "Without being there."
+      }
+    ],
+    "duration": 11,
+    "revealAt": 8.0
+  },
+  "closer": {
+    "headline": "Use a Squad to accomplish a Goal",
+    "subline": "Keep working until the aim is met",
+    "chips": [
+      "Next: Goals"
+    ],
+    "line": "Next: use a Squad to accomplish a Goal.",
+    "duration": 5
+  }
+}

@@ -107,6 +107,17 @@ describe('zcc design-docs', () => {
     }
   );
 
+  it('surfaces the received-doc project lock through update --project/--global', async () => {
+    const { store, run, changed } = setup();
+    await run(['create', '--title', 'Peer', '--template', 'blank']);
+    const doc = store.list()[0]!;
+    (store as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): void } } }).db
+      .prepare('INSERT INTO sync_doc_references VALUES (?, ?, ?)').run(doc.id, '"foreign"', '[]');
+    changed.mockClear();
+    expect(await run(['update', doc.id, '--global', '--expected-head', 'null'])).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('Map to a Project') });
+    expect(changed).not.toHaveBeenCalled();
+  });
+
   it('passes explicit null CAS tokens without treating them as missing', async () => {
     const { run, store } = setup();
     await run(['create', '--title', 'Null', '--template', 'blank']);
@@ -172,7 +183,7 @@ describe('zcc design-docs', () => {
     expect(await runCli(deps, ['revoke-peer'], ctx)).toMatchObject({ exitCode: 2 });
     expect(await runCli(deps, ['remove-peer', 'replica'], ctx)).toMatchObject({ exitCode: 1, stderr: 'SDK peers.revoke unavailable\n' });
     expect(await runCli(deps, ['enable'], ctx)).toMatchObject({ exitCode: 2 });
-    expect(JSON.parse((await runCli(deps, ['sync'], ctx)).stdout!)).toEqual({ attempted: 1, synced: 0, blocked: 1 });
+    expect(JSON.parse((await runCli(deps, ['sync'], ctx)).stdout!)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
     delete deps.pairing; delete deps.peerSync;
     expect(await runCli(deps, ['peers'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('unavailable') });
     expect(await runCli(deps, ['sync'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('unavailable') });

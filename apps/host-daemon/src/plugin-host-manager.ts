@@ -2,7 +2,6 @@
 import { operationEnvironment } from "./operation-environment.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -13,11 +12,15 @@ import type {
 import type { HostPathWatchChange, HostWatcher } from "@zana-ai/zcc-host-watcher";
 import { jsonValueSchema, type JsonValue } from "@zana-ai/zcc-domain/thread-runtime";
 import {
+  HOST_TEMP_DIR_PREFIX,
+  PLUGIN_TEMP_DIR_PREFIXES,
   createPluginProcessTempDir,
   killProcessGroup,
   supportsProcessGroups,
   ensurePluginProcessDataDir,
+  removeTreeWithoutFollowingLinksAsync,
   sanitizeInheritedChildProcessEnv,
+  sweepOrphanTempDirs,
 } from "@zana-ai/zcc-agent-process-utils";
 import type { HostRpcCommand as HostDaemonOnlineRpcCommand } from '@zana-ai/zcc-contracts/host-rpc';
 interface HostDaemonLogger {
@@ -59,6 +62,8 @@ interface WorkerState {
   child: ChildProcess;
   closed: Promise<void>;
   tempDir: string;
+  /** Settles once the temp dir is removed; a failure is already logged. */
+  tempDirRemoved: Promise<void>;
   pending: Map<string, PendingCall>;
   ready: Promise<void>;
   resolveReady: () => void;
@@ -238,6 +243,37 @@ function sendToWorker(child: ChildProcess, message: object): boolean {
   }
 }
 
+let orphanSweepStarted = false;
+
+/**
+ * Once per daemon process, in the background and never awaited: remove temp
+ * dirs of host workers and provider bridges whose owner process is gone, so a
+ * crash or hard kill does not leave link-holding dirs in the temp folder.
+ */
+function sweepOrphanTempDirsOnce(
+  logger: PluginHostManagerOptions["logger"],
+  signal: AbortSignal,
+): void {
+  if (orphanSweepStarted) return;
+  orphanSweepStarted = true;
+  void sweepOrphanTempDirs({
+    prefixes: PLUGIN_TEMP_DIR_PREFIXES,
+    signal,
+    onFailure: (path, error) =>
+      logger.warn({ path, err: error }, "Failed to remove an orphaned plugin temp directory"),
+  })
+    .then((result) => {
+      // A sweep cut short by this manager's shutdown lets a later manager run it.
+      if (signal.aborted) orphanSweepStarted = false;
+      if (result.removed > 0 || result.failed > 0) {
+        logger.info({ ...result }, "Swept orphaned plugin temp directories");
+      }
+    })
+    .catch((error) => {
+      logger.warn({ err: error }, "Orphaned plugin temp directory sweep failed");
+    });
+}
+
 export class PluginHostManager {
   private readonly workers = new Map<string, WorkerState>();
   private readonly activeCalls = new Map<string, ActiveCallState>();
@@ -248,8 +284,12 @@ export class PluginHostManager {
   private readonly retiredGenerations = new Map<string, Set<string>>();
   private readonly workerMutationTails = new Map<string, Promise<void>>();
   private shuttingDown = false;
+  /** Stops the startup sweep between entries when the daemon shuts down. */
+  private readonly sweepAbort = new AbortController();
 
-  constructor(private readonly options: PluginHostManagerOptions) {}
+  constructor(private readonly options: PluginHostManagerOptions) {
+    sweepOrphanTempDirsOnce(options.logger, this.sweepAbort.signal);
+  }
 
   async call(command: PluginHostCallCommand): Promise<PluginHostCallResult> {
     if (this.shuttingDown) {
@@ -375,6 +415,7 @@ export class PluginHostManager {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.sweepAbort.abort();
     await Promise.allSettled([...this.workerMutationTails.values()]);
     await Promise.all(
       [...this.workers.values()].map((worker) =>
@@ -460,7 +501,7 @@ export class PluginHostManager {
     });
     const tempDir = await createPluginProcessTempDir({
       pluginId: command.pluginId,
-      prefix: "zcc-host",
+      prefix: HOST_TEMP_DIR_PREFIX,
     });
     const shellPath = this.options.shellEnv?.().PATH;
     const startedAtMs = performance.now();
@@ -484,6 +525,7 @@ export class PluginHostManager {
           }),
           detached: supportsProcessGroups(),
           stdio: ["ignore", "ignore", "pipe", "ipc"],
+          windowsHide: true,
         },
       );
     } catch (error) {
@@ -496,12 +538,19 @@ export class PluginHostManager {
         },
         "Failed to start host plugin worker",
       );
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTreeWithoutFollowingLinksAsync(tempDir).catch((cleanupError) => {
+        this.options.logger.warn(
+          { pluginId: command.pluginId, err: cleanupError },
+          "Failed to remove host plugin temporary directory",
+        );
+      });
       throw error;
     }
     const closed = new Promise<void>((resolve) => child.once("close", resolve));
-    void closed
-      .then(() => rm(tempDir, { recursive: true, force: true }))
+    // One removal per worker. The stop path awaits this same promise instead
+    // of walking the tree a second time beside it.
+    const tempDirRemoved = closed
+      .then(() => removeTreeWithoutFollowingLinksAsync(tempDir))
       .catch((error) => {
         this.options.logger.warn(
           { pluginId: command.pluginId, err: error },
@@ -523,6 +572,7 @@ export class PluginHostManager {
       child,
       closed,
       tempDir,
+      tempDirRemoved,
       pending: new Map(),
       ready,
       resolveReady,
@@ -1026,7 +1076,9 @@ export class PluginHostManager {
       "Host plugin worker stopped",
     );
     this.rejectPendingCalls(worker, reason);
-    await rm(worker.tempDir, { recursive: true, force: true });
+    // Never thrown from the stop path: a leftover temp dir is cheap, and the
+    // next daemon start sweeps it once its owner pid is gone.
+    await worker.tempDirRemoved;
   }
 
   private cancelWorkerIdleTimer(worker: WorkerState): void {

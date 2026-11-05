@@ -10,6 +10,7 @@ Published Help videos are copied from here into `content/videos/` (see
 | `guided-start/` | Your first project in 30 seconds | rendered from `guided-start.html` by `render.mjs` |
 | `zana-everywhere/` | Use Zana everywhere | rendered by `render.py` (Pillow, shares `mobile-connect/` helpers) |
 | `squads/` | How to use a Squad | `e2e/demo-squads.spec.ts` |
+| `squad-guide-tools/`, `squad-guide-<n>/` | Squad guide videos, 1920x1080 with section title bars ([guide](squad-guide-README.md)) | `e2e/demo-squad-guide-<n>.spec.ts`, helper `e2e/sdk/demo-video.ts` |
 | `mobile-connect/` | Zana Mobile connection walkthrough | rendered by `render.py` (Pillow) |
 | `zana-slack/` | Zana for Slack | rendered by `render.py` (Pillow, shares `mobile-connect/` helpers) |
 | `zana-tour/` | Zana tour, plus exec and dev cuts | `e2e/demo-zana-tour.spec.ts` |

@@ -19,7 +19,7 @@ export const SETTINGS_SOURCE_DIRS = ['views/settings', 'components/settings'] as
  * A literal found in one of these files must appear in that section's entries.
  */
 export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
-  global: ['views/settings/GlobalView.tsx', 'views/settings/CliSkillsSettings.tsx', 'components/settings/DoctorSection.tsx'],
+  global: ['views/settings/GlobalView.tsx', 'views/settings/CliSkillsSettings.tsx', 'components/settings/DoctorSection.tsx', 'views/settings/TrustedPreviewFoldersSection.tsx'],
   composer: ['views/settings/ComposerSettingsView.tsx'],
   keyboard: ['views/settings/KeyboardSettingsSection.tsx'],
   inbox: ['views/settings/InboxSettingsView.tsx'],

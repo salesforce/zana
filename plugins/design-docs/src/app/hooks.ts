@@ -6,7 +6,7 @@ import {
   type DesignDocFile,
   type DesignDocSummary
 } from '../shared/contract.js';
-import { errorMessage, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo } from './api.js';
+import { errorMessage, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo, type ProjectMapping, type UnassignedProject } from './api.js';
 
 export interface Resource<T> {
   data: T | null;
@@ -102,6 +102,14 @@ export function useDocs(args: ListArgs): Resource<DesignDocSummary[]> {
   return resource;
 }
 
+/** Received docs whose foreign project is unmapped; no request while `enabled` is false. */
+export function useUnassignedDocs(enabled: boolean, args: Pick<ListArgs, 'query' | 'status'>): Resource<DesignDocSummary[]> {
+  const api = useApi();
+  const resource = useResource(enabled ? `unassigned-docs:${JSON.stringify(args)}` : null, () => api.list({ ...args, unassigned: true }));
+  useDocChanges(() => resource.reload());
+  return resource;
+}
+
 export function useDoc(docId: string | null, kind?: DocKind): Resource<DesignDocDetail> {
   const api = useApi();
   const resource = useResource(docId ? `${kind ?? 'doc'}\u0000${docId}` : null, () => api.get(docId!, kind));
@@ -130,6 +138,27 @@ export function useTemplates(): Resource<TemplateInfo[]> {
 export function useProjects(): Resource<ProjectInfo[]> {
   const api = useApi();
   return useResource('projects', () => api.projects());
+}
+
+export function useRemovedProjects(): Resource<Array<{ id: string; label: string }>> {
+  const api = useApi();
+  const resource = useResource('removed-projects', () => api.removedProjects());
+  useDocChanges(() => resource.reload());
+  return resource;
+}
+
+export function useUnassignedProjects(enabled: boolean): Resource<UnassignedProject[]> {
+  const api = useApi();
+  const resource = useResource(enabled ? 'unassigned-projects' : null, () => api.listUnassignedProjects());
+  useDocChanges(() => resource.reload());
+  return resource;
+}
+
+export function useProjectMappings(enabled: boolean): Resource<ProjectMapping[]> {
+  const api = useApi();
+  const resource = useResource(enabled ? 'project-mappings' : null, () => api.listProjectMappings());
+  useDocChanges(() => resource.reload());
+  return resource;
 }
 
 const STORAGE_PREFIX = 'zcc.design-docs.';

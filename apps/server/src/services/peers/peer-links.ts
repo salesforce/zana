@@ -76,6 +76,15 @@ const LABEL_MAX = 80;
 export type PeerLinkState = 'connected' | 'reconnecting' | 'disconnected';
 export type PeerLinkReason = 'ssh-down' | 'peer-offline' | 'paused' | 'revoked';
 export type PeerLinkFailure = 'expired' | 'fenced' | 'conflict' | 'unreachable';
+/** The reasons a repair may report; mirrors `repairPeerLinkResponseSchema` so a response always parses. */
+export const PEER_LINK_REPAIR_REASONS = ['ssh-down', 'peer-offline', 'paused', 'revoked', 'expired', 'fenced', 'conflict', 'unreachable'] as const;
+export type PeerLinkRepairReason = typeof PEER_LINK_REPAIR_REASONS[number];
+
+/** Maps an internal failure/reason to the contract enum; anything unrecognised is dropped, never forwarded. */
+export function toRepairReason(value: string | undefined): PeerLinkRepairReason | undefined {
+  return (PEER_LINK_REPAIR_REASONS as readonly string[]).includes(value ?? '') ? value as PeerLinkRepairReason : undefined;
+}
+
 export type PeerLinkViewPhase = 'pending' | 'exchanged' | 'enrolled' | 'linked' | 'failed' | 'removed';
 
 /** Platform-internal, secret-free view: no code, key or host key. */
@@ -296,8 +305,12 @@ export class PeerLinks implements PeerLinksControlPort {
     repair: async hostId => {
       const rec = this.byInbound(hostId);
       if (!rec?.peer || rec.phase !== 'linked' || rec.paused) return undefined;
-      await this.rotate(rec.peer);
-      return { repaired: true };
+      const views = await this.rotate(rec.peer);
+      // Only this pairing's own view answers for this host; another pairing's state must never be reported as its result.
+      const after = views.find(view => view.pairingId === (rec.pairingId ?? rec.invitationId));
+      if (!after) return { repaired: true };
+      const reason = toRepairReason(after.failure ?? after.reason);
+      return { repaired: true, connected: after.state === 'connected', ...(reason ? { reason } : {}) };
     }
   };
 

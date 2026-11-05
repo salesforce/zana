@@ -3,10 +3,11 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { UI_USER } from '../server/rpc.js';
-import type { DesignDocStore } from '../server/store.js';
+import { DesignDocStore } from '../server/store.js';
+import { createTestDatabase } from '../server/test-db.js';
 import { NavPanel, ProjectTab } from './slots.js';
 import { PEER_STATUS_POLL_MS } from './PeerSettings.js';
-import { projectOptions } from './Workbench.js';
+import { importSummary, projectOptions } from './Workbench.js';
 import { AGENT, createHarness, type Harness } from './test-harness.js';
 
 export function seed(store: DesignDocStore, input: { title: string; projectId?: string | null; summary?: string; tags?: string[]; status?: 'draft' | 'archived' }) {
@@ -182,7 +183,7 @@ describe('peers view', () => {
     expect((screen.getByRole('button', { name: 'Syncing' }) as HTMLButtonElement).disabled).toBe(true);
     finish({ attempted: 2, synced: 2, blocked: 0 });
     await screen.findByRole('button', { name: 'Sync' });
-    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2 peers', kind: 'info' });
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced with your other computers', kind: 'info' });
     expect(syncNow).toHaveBeenCalledOnce();
   });
 
@@ -203,7 +204,7 @@ describe('peers view', () => {
     fireEvent.click(busy);
     finish({ attempted: 3, synced: 2, blocked: 1 });
     await within(rail).findByRole('button', { name: /^Sync peers/ });
-    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2/3; 1 blocked', kind: 'info' });
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2. Some changes are waiting for another computer. They will send on their own.', kind: 'info' });
     expect(syncNow).toHaveBeenCalledOnce();
   });
 
@@ -280,9 +281,16 @@ describe('creating docs', () => {
 
     const bundle = harness.store.templatesExport(['blank']);
     const upload = document.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File([bundle], 'bundle.json', { type: 'application/json' });
+    // Identical content is already present: import is a no-op.
+    fireEvent.change(upload, { target: { files: [new File([bundle], 'same.json', { type: 'application/json' })] } });
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message === 'Nothing imported: that template is already here.')).toBe(true));
+    expect(count()).toBe(before);
+    const edited = JSON.parse(bundle) as { templates: Array<{ description: string }> };
+    edited.templates[0]!.description = 'different content';
+    const file = new File([JSON.stringify(edited)], 'bundle.json', { type: 'application/json' });
     fireEvent.change(upload, { target: { files: [file] } });
     await waitFor(() => expect(count()).toBe(before + 1));
+    expect(harness.toasts.some((toast) => toast.message === 'Imported 1 template.')).toBe(true);
     fireEvent.change(upload, { target: { files: [] } });
     fireEvent.change(upload, { target: { files: [new File(['not json'], 'bad.json')] } });
     await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not import templates'))).toBe(true));
@@ -538,6 +546,26 @@ describe('doc list', () => {
     expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
   });
 
+  it('does not offer Move for a peer-received doc', async () => {
+    const db = createTestDatabase();
+    const harness = createHarness({ store: new DesignDocStore(db) });
+    const doc = seed(harness.store, { title: 'Peer owned', projectId: 'p1' });
+    db.prepare('INSERT INTO sync_doc_references VALUES (?, ?, ?)').run(doc.id, '"foreign"', '[]');
+    seed(harness.store, { title: 'Mine', projectId: 'p1' });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    await screen.findByText('Peer owned', { selector: '.dd-doc-row-title' });
+    const rightClick = (title: string) => fireEvent.contextMenu(screen.getByText(title, { selector: '.dd-doc-row-title' }).closest('button')!, { clientX: 40, clientY: 60 });
+    rightClick('Peer owned');
+    expect(screen.queryByRole('menuitem', { name: /Move to project/ })).toBeNull();
+    fireEvent.click(menuItem(/Map to a Project/));
+    expect(await screen.findByRole('dialog', { name: /Map projects from other computers/ })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('dialog', { name: /Map projects from other computers/ })).getByText('Close', { selector: '.btn' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Map projects from other computers/ })).toBeNull());
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    rightClick('Mine');
+    expect((menuItem(/Move to project/) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('downloads a doc as a zip from the right-click menu and the header menu', async () => {
     const harness = createHarness();
     const blobs: Blob[] = [];
@@ -736,6 +764,10 @@ describe('doc header', () => {
     fireEvent.click(menuItem(/Copy chat reference/));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`::design-doc{id="${doc.id}"}`));
     expect(harness.toasts.at(-1)).toEqual({ message: 'Copied reference', kind: 'info' });
+    more();
+    fireEvent.click(menuItem(/Copy doc link/));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`[Lifecycle](doc://${doc.id}/README.md)`));
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Copied doc link', kind: 'info' });
     writeText.mockRejectedValueOnce(new Error('denied'));
     more();
     fireEvent.click(menuItem(/Copy id/));
@@ -987,5 +1019,15 @@ describe('doc list sections', () => {
     fireEvent.change(await within(dialog).findByRole('combobox'), { target: { value: '' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(harness.store.summary(unlocked.id).alternativeTo).toBeNull());
+  });
+});
+
+describe('importSummary', () => {
+  it('words every import outcome', () => {
+    expect(importSummary(0, 0)).toBe('No templates found in that file.');
+    expect(importSummary(0, 1)).toBe('Nothing imported: that template is already here.');
+    expect(importSummary(0, 3)).toBe('Nothing imported: all 3 templates are already here.');
+    expect(importSummary(1, 0)).toBe('Imported 1 template.');
+    expect(importSummary(2, 1)).toBe('Imported 2 templates; skipped 1 already here.');
   });
 });

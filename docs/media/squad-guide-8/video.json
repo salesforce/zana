@@ -1,0 +1,44 @@
+{
+  "id": "squad-guide-8",
+  "title": "Use a Squad to accomplish a Goal",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "version": "2.5.1",
+  "posterAt": 9.5,
+  "opener": {
+    "headline": "Use a Squad to accomplish a Goal",
+    "subline": "An aim the app works toward",
+    "chips": [
+      "Goals",
+      "Run as Squad",
+      "Max iterations",
+      "Inbox outcome"
+    ],
+    "lines": [
+      {
+        "at": 0.6,
+        "text": "Give a Squad an aim."
+      },
+      {
+        "at": 3.0,
+        "text": "Judged after every iteration."
+      },
+      {
+        "at": 5.8,
+        "text": "The outcome lands in your Inbox."
+      }
+    ],
+    "duration": 11,
+    "revealAt": 8.0
+  },
+  "closer": {
+    "headline": "Build your own Squad",
+    "subline": "Personas and Squads of your own",
+    "chips": [
+      "Next: Build your own Persona and Squad"
+    ],
+    "line": "Next: build your own Persona and Squad.",
+    "duration": 5
+  }
+}

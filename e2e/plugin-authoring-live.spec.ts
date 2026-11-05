@@ -82,6 +82,23 @@ ${readFileSync(serverPath, 'utf8')}`);
     await expect(app.window.getByRole('heading', { name: 'Reload verified' })).toBeVisible();
     await expect(todo).toBeChecked();
 
+    // A healthy backend is not proof that its browser bundle imported. Keep
+    // known pages reachable and rebuild repaired source with the UI action.
+    writeFileSync(appPath, `throw new Error('intentional UI import failure');\n${updated}`);
+    const failedUi = await run(['plugin', 'dev', '--once']);
+    expect(failedUi.code, failedUi.stderr).toBe(0);
+    await expect(app.window.locator('.nav-item', { hasText: id })).toHaveCount(1);
+    await expect(app.window.getByRole('heading', { name: `${id} couldn’t load` })).toBeVisible();
+    await app.window.getByText('Technical details', { exact: true }).click();
+    await expect(app.window.getByText('intentional UI import failure', { exact: true })).toBeVisible();
+    writeFileSync(appPath, 'export default <broken');
+    await app.window.getByRole('button', { name: 'Reload plugin', exact: true }).click();
+    await expect(app.window.locator('.plugin-load-failure [role="status"]')).toContainText('renderer build failed');
+    writeFileSync(appPath, updated);
+    await app.window.getByRole('button', { name: 'Reload plugin', exact: true }).click();
+    await expect(app.window.getByRole('heading', { name: 'Reload verified' })).toBeVisible();
+    await expect(todo).toBeChecked();
+
     writeFileSync(appPath, 'export default <broken');
     const broken = await run(['plugin', 'dev', '--once']);
     expect(broken.code).toBe(1);

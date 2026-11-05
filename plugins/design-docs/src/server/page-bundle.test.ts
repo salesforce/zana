@@ -234,3 +234,29 @@ describe('assetDataUrl', () => {
     expect(assetDataUrl({ path: 'a.css', kind: 'code', content: 'AA', encoding: 'utf8' })).toBeNull();
   });
 });
+
+describe('bundlePage: cross-doc links', () => {
+  it('exports a doc:// link as plain text and warns, leaving same-doc links alone', () => {
+    const result = bundle(
+      '<html><head></head><body><a href="doc://other/api.md#x">Other <b>API</b></a> <a href="doc:other">Entry</a> <a href="page2.html">Next</a></body></html>',
+      { 'page2.html': '<p>2</p>' }
+    );
+    expect(result.html).not.toContain('doc:');
+    expect(result.html).toContain('<span data-dd-crossdoc="1">Other <b>API</b></span>');
+    expect(result.html).toContain('<span data-dd-crossdoc="1">Entry</span>');
+    expect(result.html).toContain('<a href="page2.html">Next</a>');
+    expect(result.warnings.filter((warning) => warning.includes('another design doc'))).toHaveLength(2);
+  });
+  it('does not share a closing tag between an unclosed cross-doc link and a later one', () => {
+    const result = bundle('<html><head></head><body><a href="doc:a">One <a href="doc:b">Two</a></body></html>');
+    const closes = (result.html.match(/<\/span>/g) ?? []).length;
+    const opens = (result.html.match(/<span data-dd-crossdoc/g) ?? []).length;
+    expect(closes).toBeLessThanOrEqual(opens);
+    expect(result.html).not.toContain('doc:');
+  });
+  it('still neutralizes an unclosed or malformed doc link', () => {
+    const result = bundle('<html><head></head><body><a href="doc://../x">Bad</a><a href="DOC:y">Open</body></html>');
+    expect(result.html).not.toMatch(/href="doc/i);
+    expect(result.warnings.length).toBeGreaterThan(0);
+  });
+});

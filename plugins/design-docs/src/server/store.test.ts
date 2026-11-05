@@ -40,7 +40,7 @@ describe('template kind isolation', () => {
     const db = createTestDatabase(), store = new DesignDocStore(db);
     const custom = store.templateNew({ label: 'Mine' }, user);
     const records = store.listTemplateRecords();
-    expect(records.filter((record) => record.origin === 'builtin')).toHaveLength(7);
+    expect(records.filter((record) => record.origin === 'builtin')).toHaveLength(9);
     expect(records.find((record) => record.docId === custom.id)).toMatchObject({ origin: 'user', label: 'Mine' });
     expect(records.every((record) => record.files.length > 0)).toBe(true);
     const registry = store as unknown as { listTemplates(): unknown[] };
@@ -80,7 +80,10 @@ describe('template kind isolation', () => {
     expect(() => store.templateUpdateMeta(copy.id, { entryPath: 'missing.md' }, user)).toThrow('entryPath');
     expect(mutations).toEqual([]);
     const bundle = store.templatesExport([store.requireTemplate(template.id).template_key!]);
-    const imported = store.templatesImport(bundle, user)[0]!;
+    expect(store.templatesImport(bundle, user)).toEqual([]);
+    const changed = JSON.parse(bundle) as { templates: Array<{ description: string }> };
+    changed.templates[0]!.description = 'different content';
+    const imported = store.templatesImport(JSON.stringify(changed), user)[0]!;
     expect(imported.title).toBe('Custom (copy)');
     expect(store.readFile(imported.id, 'image.png', 'template').content).toBe('AAEC');
     expect(store.requireTemplate(imported.id).template_key).not.toBe(store.requireTemplate(template.id).template_key);
@@ -103,6 +106,31 @@ describe('template kind isolation', () => {
     expect(store.get(doc.id).title).toBe('Source');
     const only = store.templateNew({}, user);
     expect(() => store.templateDelete(only.id)).toThrow('last template');
+  });
+
+  it('identifies templates by content: full export then import is a no-op', () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const before = store.templatesExport();
+    expect(store.templatesImportReport(before, user)).toMatchObject({ imported: [], skipped: store.listTemplates().length });
+    expect(store.templatesExport()).toBe(before);
+  });
+
+  it('skips same content under another key or label-less duplicate entries and copies different content', () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const entry = (key: string, content: string, label = 'Same') => ({ key, label, description: 'd', entryPath: 'README.md', files: [{ path: 'README.md', content }] });
+    const bundle = (templates: unknown[]) => JSON.stringify({ kind: 'zcc-design-doc-templates', version: 1, templates });
+    const first = store.templatesImportReport(bundle([entry('a', 'one'), entry('b', 'one')]), user);
+    expect(first.imported).toHaveLength(1);
+    expect(first.skipped).toBe(1);
+    const again = store.templatesImportReport(bundle([entry('c', 'one')]), user);
+    expect(again).toMatchObject({ imported: [], skipped: 1 });
+    const clash = store.templatesImportReport(bundle([entry('a', 'two')]), user);
+    expect(clash.imported.map((doc) => doc.title)).toEqual(['Same (copy)']);
+    expect(store.templateByKey('a')!.files[0]!.content).toBe('one');
+    expect(store.templatesImportReport(bundle([entry('a', 'two')]), user)).toMatchObject({ imported: [], skipped: 1 });
+    const binary = { ...entry('p', ''), files: [{ path: 'README.md', content: 'x' }, { path: 'pic.png', content: 'AAEC', encoding: 'base64' }] };
+    expect(store.templatesImportReport(bundle([binary, { ...binary, key: 'q', files: [...binary.files].reverse() }]), user))
+      .toMatchObject({ skipped: 1 });
   });
 
   it('rolls back an entire import when inserting any template fails', () => {
@@ -581,16 +609,65 @@ describe('DesignDocStore — docs', () => {
 
   it('seeds and reads the builtin registry from template rows', async () => {
     const store = makeStore();
-    expect(store.listTemplates().map((template) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank']);
+    expect(store.listTemplates().map((template) => template.id)).toEqual(['technical', 'product', 'adr', 'research', 'issue', 'api', 'report', 'html-design', 'blank']);
     expect(store.templateByKey('technical')?.files.map((file) => file.path)).toEqual(['README.md', 'diagrams/architecture.mmd']);
     const set = vi.fn();
-    const kv = { get: async () => undefined as boolean | undefined, set };
+    await store.seedBuiltinTemplates({ get: async () => undefined as never, set });
+    expect(store.listTemplates()).toHaveLength(9);
+    expect(set).toHaveBeenCalledWith('templates.offered', expect.arrayContaining(['technical', 'research', 'issue', 'blank']));
+  });
+
+  function memoryKv(initial: Record<string, unknown> = {}) {
+    const values = new Map<string, unknown>(Object.entries(initial));
+    return { values, get: async (key: string) => values.get(key) as never, set: async (key: string, value: unknown) => void values.set(key, value) };
+  }
+
+  it('offers each built-in once: upgrades get new ones, deleted ones stay deleted', async () => {
+    const store = makeStore();
+    const db = (store as any).db;
+    db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key IN ('research', 'issue', 'technical')").run();
+    // An install from before offered ids were recorded.
+    const kv = memoryKv({ 'templates.seed.v1': true });
     await store.seedBuiltinTemplates(kv);
-    expect(store.listTemplates()).toHaveLength(7);
-    expect(set).toHaveBeenCalledWith('templates.seed.v1', true);
-    (store as any).db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key = 'technical'").run();
-    await store.seedBuiltinTemplates({ get: async () => true, set });
+    expect(store.templateByKey('research')?.files.map((file) => file.path).sort()).toEqual(['AGENTS.md', 'plan.md', 'research.md']);
+    expect(store.templateByKey('issue')?.files.map((file) => file.path).sort()).toEqual(['AGENTS.md', 'issue.md', 'plan.md', 'research.md']);
     expect(store.templateByKey('technical')).toBeNull();
+    db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key = 'research'").run();
+    await store.seedBuiltinTemplates(kv);
+    expect(store.templateByKey('research')).toBeNull();
+  });
+
+  it('delivers a built-in added in a later release with no per-release code', async () => {
+    const store = makeStore();
+    const all = store.listTemplates().map((template) => template.id);
+    (store as any).db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key = 'blank'").run();
+    // Every id recorded as offered: the deleted template stays deleted.
+    const kv = memoryKv({ 'templates.offered': all });
+    await store.seedBuiltinTemplates(kv);
+    expect(store.templateByKey('blank')).toBeNull();
+    // 'blank' not yet recorded, as if it shipped in a later release: it is delivered once and recorded.
+    kv.values.set('templates.offered', all.filter((id) => id !== 'blank'));
+    await store.seedBuiltinTemplates(kv);
+    expect(store.templateByKey('blank')).not.toBeNull();
+    expect(kv.values.get('templates.offered')).toContain('blank');
+  });
+
+  it('restores every built-in when the registry is empty', async () => {
+    const store = makeStore();
+    (store as any).db.prepare("DELETE FROM docs WHERE kind = 'template'").run();
+    await store.seedBuiltinTemplates(memoryKv({ 'templates.offered': ['technical'] }));
+    expect(store.listTemplates()).toHaveLength(9);
+  });
+
+  it('ships a plan and agent instructions with the product spec, and no workflow markers in any built-in', () => {
+    const store = makeStore();
+    expect(store.templateByKey('product')?.files.map((file) => file.path).sort()).toEqual(['AGENTS.md', 'README.md', 'mockups/overview.html', 'plan.md']);
+    for (const template of store.listTemplates()) {
+      for (const file of template.files) {
+        if (file.encoding === 'base64') continue;
+        expect(file.content, `${template.id}/${file.path}`).not.toMatch(/AI Instructions|doc-manager|executable-step/);
+      }
+    }
   });
 
   it('creates from explicit files, picks a markdown entry, and rejects bad input', () => {
@@ -1134,5 +1211,53 @@ describe('DesignDocStore — summary lastComment', () => {
     const comment = store.addComment(doc.id, { body: 'hello' }, user);
     db.prepare("UPDATE doc_comments SET created_at = 'later' WHERE id = ?").run(comment.id);
     expect(store.summary(doc.id).lastComment).toMatchObject({ body: 'hello', author: user, createdAt: 0 });
+  });
+});
+
+describe('DesignDocStore received project lock', () => {
+  const setup = () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    const bind = (id: string, logical: string | null) => db.prepare('INSERT OR REPLACE INTO sync_doc_references VALUES (?, ?, ?)').run(id, JSON.stringify(logical), '[]');
+    return { db, store, bind };
+  };
+  it('blocks moving a peer-received doc to a project or Global', () => {
+    const { db, store, bind } = setup();
+    const doc = store.create({ title: 'Received', template: 'blank' }, user);
+    bind(doc.id, 'foreign-project');
+    expect(store.isReceivedProjectLocked(doc.id)).toBe(true);
+    expect(store.summary(doc.id).projectLocked).toBe(true);
+    expect(() => store.update(doc.id, { projectId: 'local' }, user)).toThrow(/came from a peer.*Map to a Project/);
+    expect(() => store.update(doc.id, { projectId: null }, user)).toThrow(/Map to a Project/); // bare same-value request is still a move attempt
+    expect(store.update(doc.id, { projectId: null, title: 'Echo' }, user).title).toBe('Echo'); // echo with other fields is ignored
+    expect(JSON.parse((db.prepare('SELECT project_json FROM sync_doc_references WHERE doc_id = ?').get(doc.id) as { project_json: string }).project_json)).toBe('foreign-project');
+    db.prepare('UPDATE docs SET project_id = ? WHERE id = ?').run('stale', doc.id);
+    expect(() => store.update(doc.id, { projectId: null }, user)).toThrow(DesignDocError);
+    expect(store.list().find((d) => d.id === doc.id)?.projectLocked).toBe(true);
+  });
+  it('treats a mapped-project echo as no move', () => {
+    const { store, bind } = setup();
+    const doc = store.create({ title: 'Mapped', template: 'blank' }, user);
+    bind(doc.id, 'foreign-project');
+    vi.spyOn(store, 'scopeOf').mockReturnValue({ projectId: 'local', global: false, unassigned: false });
+    expect(store.update(doc.id, { projectId: 'local', title: 'Echo2' }, user).title).toBe('Echo2');
+  });
+  it('allows no-op, local and round-tripped moves', () => {
+    const { store, bind } = setup();
+    const local = store.create({ title: 'Local', template: 'blank', projectId: 'p1' }, user);
+    expect(store.isReceivedProjectLocked(local.id)).toBe(false);
+    expect(store.update(local.id, { projectId: 'p2' }, user).projectId).toBe('p2');
+    expect(store.update(local.id, { projectId: null }, user).projectId).toBeNull();
+    const trip = store.create({ title: 'Trip', template: 'blank', projectId: 'p1' }, user);
+    bind(trip.id, 'p1');
+    expect(store.summary(trip.id).projectLocked).toBe(false);
+    expect(store.update(trip.id, { projectId: 'p3' }, user).projectId).toBe('p3');
+    const received = store.create({ title: 'Recv', template: 'blank' }, user);
+    bind(received.id, 'foreign');
+    expect(store.update(received.id, { projectId: null, title: 'Renamed' }, user)).toMatchObject({ title: 'Renamed', projectLocked: true });
+    expect(() => store.update(received.id, { projectId: null }, user)).toThrow(DesignDocError);
+    const bound = store.create({ title: 'Bound', template: 'blank', projectId: 'p1' }, user);
+    bind(bound.id, 'foreign');
+    expect(store.update(bound.id, { projectId: 'p1', status: 'review' }, user).status).toBe('review');
+    expect(() => store.update(bound.id, { projectId: 'p2' }, user)).toThrow(DesignDocError);
   });
 });

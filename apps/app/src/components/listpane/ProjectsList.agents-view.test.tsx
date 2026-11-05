@@ -256,7 +256,8 @@ describe('machine project hierarchy', () => {
     expect(within(local).getByRole('button', { name: 'Local task' })).toBeTruthy();
     expect(within(local).queryByRole('button', { name: 'Open API' })).toBeNull();
     fireEvent.click(within(remote).getByRole('button', { name: 'Open Default Project' }));
-    expect(screen.getByTestId('location').textContent).toBe('/threads/new');
+    expect(h.enterProjectFocus).toHaveBeenCalledWith('default');
+    expect(screen.getByTestId('location').textContent).toBe('/');
     fireEvent.change(screen.getByPlaceholderText('Filter machines or projects'), { target: { value: 'Devbox' } });
     expect(document.querySelector('[data-machine-id="local"]')).toBeNull();
     expect(screen.getByRole('button', { name: 'Open API' })).toBeTruthy();

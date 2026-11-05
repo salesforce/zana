@@ -1117,6 +1117,10 @@ export interface CcApi {
   config: {
     get(): Promise<AppConfig>;
     set(patch: Partial<AppConfig>): Promise<AppConfig>;
+    /** Opens the native folder chooser and trusts the picked folder for read-only preview. `config` is null when cancelled or refused; `error` explains a refusal (for example the 20-folder cap). */
+    addTrustedPreviewFolder(): Promise<{ config: AppConfig | null; error?: string }>;
+    /** Stops trusting one stored folder. Never deletes files. */
+    removeTrustedPreviewFolder(path: string): Promise<AppConfig>;
     /** Fires in EVERY window after any `config:set`, carrying the full new
      *  config, so each window re-applies its mirrored feature flags live. */
     onChanged(cb: (config: AppConfig) => void): () => void;
@@ -1940,6 +1944,8 @@ export interface CcApi {
     runNow(id: string): Promise<Result<Goal>>;
     /** Check reserved workers without starting or resuming work. False means still unconfirmed. */
     reconcile(id: string): Promise<Result<boolean>>;
+    /** Reopen a finished iteration's agent conversation in a new tab (latest resumable one when `iterationId` is omitted). */
+    resumeIteration(input: { goalId: string; iterationId?: string }): Promise<Result<{ session: TerminalSession; reused: boolean }>>;
     onChanged(cb: (goals: Goal[]) => void): () => void;
   };
   /**

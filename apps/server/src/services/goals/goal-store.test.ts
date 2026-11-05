@@ -269,3 +269,44 @@ describe('legacy Squad goals without teamId (GV1)', () => {
     expect(r.status).toBe('draft');
   });
 });
+
+describe('REQ-4 / REQ-12 validateGoalFile keeps a valid iteration conversation', () => {
+  const conversation = { profile: 'claude', id: 'conv-1', cwd: '/proj', startedAt: '2026-01-01T00:00:00.000Z' };
+  const withIteration = (extra: Record<string, unknown>) => ({
+    ...baseGoal, history: { retain: 15, iterations: [{ ...baseGoal.history.iterations[0], ...extra }] }
+  });
+  const loaded = (extra: Record<string, unknown>) => {
+    const r = validateGoalFile(withIteration(extra));
+    if ('error' in r) throw new Error(r.error);
+    return r.history.iterations[0]!;
+  };
+
+  it('keeps a valid conversation', () => {
+    expect(loaded({ conversation }).conversation).toEqual(conversation);
+  });
+  it('keeps a conversation whose id is not known yet', () => {
+    expect(loaded({ conversation: { ...conversation, id: undefined } }).conversation).toMatchObject({ profile: 'claude', cwd: '/proj' });
+  });
+  it.each([
+    ['an unknown profile', { profile: 'not-a-profile' }],
+    ['an option-like id', { id: '--dangerously-skip-permissions' }],
+    ['an empty id', { id: '' }],
+    ['a too-long id', { id: 'a'.repeat(129) }],
+    ['a non-string cwd', { cwd: 7 }],
+    ['a non-string startedAt', { startedAt: 7 }]
+  ])('drops a conversation with %s but keeps the iteration', (_name, bad) => {
+    const iteration = loaded({ conversation: { ...conversation, ...bad } });
+    expect(iteration.conversation).toBeUndefined();
+    expect(iteration).toMatchObject({ id: 'it-1', sessionId: 's-1', verdict: 'partial' });
+  });
+  it.each([['a string', 'conv-1'], ['an array', []], ['null', null]])('drops a conversation that is %s', (_name, bad) => {
+    const iteration = loaded({ conversation: bad });
+    expect(iteration.conversation).toBeUndefined();
+    expect(iteration.id).toBe('it-1');
+  });
+  it('loads an old-format iteration with no conversation and adds none', () => {
+    const iteration = loaded({});
+    expect('conversation' in iteration && iteration.conversation !== undefined).toBe(false);
+    expect(iteration).toMatchObject({ id: 'it-1', sessionId: 's-1', verdict: 'partial', rationale: 'progress' });
+  });
+});

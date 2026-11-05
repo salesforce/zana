@@ -1,4 +1,5 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { ALIAS_LIVE, DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT } from './project-refs.js';
 import type { PluginDatabase, PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   isDocStatus,
@@ -86,6 +87,10 @@ export function repairLegacyPeerSyncMigrationIndexes(db: PluginDatabase): void {
   });
 }
 
+/** Built-ins shipped before offered ids were recorded. Frozen: never add to it; new built-ins need only a templates.ts entry. */
+const LEGACY_OFFERED_BUILTINS: readonly string[] = ['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank'];
+const OFFERED_KEY = 'templates.offered';
+
 /** An agent whose thread has no title yet. Never stored over a real title. */
 export const AGENT_FALLBACK_LABEL = 'Agent';
 /** A terminal session (CLI Agent) calling the CLI: there is no thread to link. */
@@ -106,6 +111,10 @@ export class DesignDocError extends Error {
 export interface ListFilter {
   /** Docs of this project plus global (project-less) docs. Omit for every doc. */
   projectId?: string | null;
+  /** Only received docs whose foreign project id is not mapped to a local project. Ignores `projectId`. */
+  unassigned?: boolean;
+  /** Drop unassigned received docs (the complement of `unassigned`); used by the all-projects view. Ignored when `unassigned` is set. */
+  excludeUnassigned?: boolean;
   query?: string;
   /** Also match `query` inside file contents. Default true; typeahead turns it off. */
   contents?: boolean;
@@ -183,6 +192,7 @@ interface DocRow {
   pinned_at: number | null;
   alternative_to: string | null;
   file_count?: number;
+  project_locked?: number;
   open_comments?: number;
   head?: string | null;
   last_comment?: string | null;
@@ -244,11 +254,16 @@ export const DOC_ONLY = `kind = 'doc'`;
 export const TEMPLATE_ONLY = `kind = 'template'`;
 export type DocKind = 'doc' | 'template';
 
+const RECEIVED_PROJECT_LOCKED =
+  'This doc came from a peer, so its project belongs to the peer. Use "Map to a Project…" in the Design Docs panel to file it on this machine.';
+
 // docs-kind: allow Correlated file counts inherit the outer docs kind predicate.
 const SUMMARY_COLUMNS = `d.*,
   (SELECT h.head_id FROM sync_doc_heads h WHERE h.doc_id = d.id
     AND h.repo_id = (SELECT repo_id FROM sync_repositories ORDER BY created_at LIMIT 1)) AS head,
   (SELECT COUNT(*) FROM doc_files f WHERE f.doc_id = d.id) AS file_count,
+  EXISTS (SELECT 1 FROM sync_doc_references pr WHERE pr.doc_id = d.id AND pr.project_json <> 'null'
+    AND json_extract(pr.project_json, '$') IS NOT d.project_id) AS project_locked,
   (SELECT COUNT(*) FROM doc_comments c WHERE c.doc_id = d.id AND c.status = 'open' AND c.parent_id IS NULL) AS open_comments,
   (SELECT json_object('body', substr(c.body, 1, ${COMMENT_EXCERPT_LENGTH}), 'author', c.author, 'at', c.created_at)
     FROM doc_comments c LEFT JOIN doc_comments p ON p.id = c.parent_id
@@ -271,6 +286,8 @@ export class DesignDocStore {
   private readonly now: () => number;
   private readonly randomId: (prefix: string) => string;
   private readonly maxHistoryBytes: number;
+  /** Local-only deleted-project names and foreign-project aliases; degrades to nothing if its tables cannot be created. */
+  readonly projectRefs: DesignDocProjectRefs;
 
   constructor(
     private readonly db: PluginDatabase,
@@ -282,6 +299,7 @@ export class DesignDocStore {
     this.maxHistoryBytes = options.maxHistoryBytes ?? MAX_HISTORY_BYTES_PER_DOC;
     repairLegacyPeerSyncMigrationIndexes(db);
     db.migrate(DESIGN_DOC_MIGRATIONS);
+    this.projectRefs = new DesignDocProjectRefs(db, { now: this.now });
     // docs-kind: allow Startup backfill repairs file identities for both kinds without peer capture.
     db.prepare("UPDATE doc_files SET sync_id = 'f_' || lower(hex(randomblob(16))) WHERE sync_id IS NULL").run();
     // Creation APIs are synchronous. A fresh database must therefore have a registry before callers use it.
@@ -373,6 +391,15 @@ export class DesignDocStore {
   }
 
   templatesImport(text: unknown, actor: DocActor): DesignDocDetail[] {
+    return this.templatesImportReport(text, actor).imported;
+  }
+
+  /**
+   * Templates are identified by content, not key or label: an incoming template whose content digest matches an existing
+   * template (or an earlier bundle entry) is skipped, so export-then-import is a no-op. Different content under a taken key
+   * is added as a renamed copy.
+   */
+  templatesImportReport(text: unknown, actor: DocActor): { imported: DesignDocDetail[]; skipped: number } {
     if (typeof text !== 'string') throw new DesignDocError('invalid', 'bundleText must be a string');
     if (Buffer.byteLength(text) > MAX_TEMPLATE_BUNDLE_BYTES) throw new DesignDocError('limit', 'template bundle is too large');
     let value: unknown;
@@ -380,10 +407,19 @@ export class DesignDocStore {
     const parsed = templateBundleSchema.safeParse(value);
     if (!parsed.success) throw new DesignDocError('invalid', parsed.error.message);
     const templates = parsed.data.templates.map(sanitizeTemplateInput);
-    return this.db.transaction(() => templates.map((template) => {
-      if (this.templateByKey(template.key)) template = { ...template, key: this.randomId('custom_'), label: this.uniqueCopyName(template.label) };
-      return this.insertTemplate(template, actor);
-    }));
+    return this.db.transaction(() => {
+      const known = new Set(this.listTemplates().map(templateDigest));
+      const imported: DesignDocDetail[] = [];
+      let skipped = 0;
+      for (let template of templates) {
+        const digest = templateDigest(template);
+        if (known.has(digest)) { skipped++; continue; }
+        known.add(digest);
+        if (this.templateByKey(template.key)) template = { ...template, key: this.randomId('custom_'), label: this.uniqueCopyName(template.label) };
+        imported.push(this.insertTemplate(template, actor));
+      }
+      return { imported, skipped };
+    });
   }
 
   purgeTemplates(expectedBundle: string): void {
@@ -432,21 +468,31 @@ export class DesignDocStore {
     return row ? this.toTemplate(row) : null;
   }
 
+  /**
+   * Offers each built-in once per install: any id in DESIGN_DOC_TEMPLATES not yet recorded as offered is inserted
+   * (if absent) and then recorded. Later releases add a built-in by adding a templates.ts entry; a template the
+   * user deleted stays deleted because its id is already recorded.
+   */
   async seedBuiltinTemplates(kv: Pick<PluginKvStorage, 'get' | 'set'>): Promise<void> {
-    const marked = await kv.get<boolean>('templates.seed.v1');
-    if (!marked || this.countTemplates() === 0) this.insertMissingBuiltinTemplates();
-    await kv.set('templates.seed.v1', true);
+    let offered = await kv.get<string[]>(OFFERED_KEY);
+    if (!Array.isArray(offered)) offered = (await kv.get<boolean>('templates.seed.v1')) ? [...LEGACY_OFFERED_BUILTINS] : [];
+    if (this.countTemplates() === 0) offered = [];
+    const seen = new Set(offered);
+    const fresh = new Set(DESIGN_DOC_TEMPLATES.map((template) => template.id).filter((id) => !seen.has(id)));
+    if (fresh.size > 0) this.insertMissingBuiltinTemplates(fresh);
+    await kv.set(OFFERED_KEY, [...new Set([...offered, ...DESIGN_DOC_TEMPLATES.map((template) => template.id)])]);
   }
 
   private countTemplates(): number {
     return (this.db.prepare(`SELECT COUNT(*) AS count FROM docs WHERE ${TEMPLATE_ONLY}`).get() as { count: number }).count;
   }
 
-  private insertMissingBuiltinTemplates(): void {
+  private insertMissingBuiltinTemplates(only?: ReadonlySet<string>): void {
     const actor = JSON.stringify({ kind: 'user', label: 'Zana', threadId: null } satisfies DocActor);
     const at = this.now();
     this.db.transaction(() => {
       for (const [order, template] of DESIGN_DOC_TEMPLATES.entries()) {
+        if (only && !only.has(template.id)) continue;
         const origin = `builtin:${template.id}`;
         // docs-kind: allow Template registry insert is template-only by literal kind value.
         const exists = this.db.prepare(`SELECT 1 FROM docs WHERE ${TEMPLATE_ONLY} AND template_origin = ?`).get(origin);
@@ -469,13 +515,21 @@ export class DesignDocStore {
   list(filter: ListFilter = {}): DesignDocSummary[] {
     const where: string[] = [`d.${DOC_ONLY}`];
     const params: unknown[] = [];
-    if (filter.projectId !== undefined) {
+    const aliases = this.projectRefs.available;
+    if (filter.unassigned) {
+      where.push(`d.project_id IS NULL AND ${FOREIGN_REF_EXISTS}${aliases ? ` AND NOT ${MAPPED_TO_ANY}` : ''}`);
+    } else if (filter.projectId !== undefined) {
       if (filter.projectId === null) {
-        where.push('d.project_id IS NULL');
+        // Genuinely global: no project and no foreign project reference.
+        where.push(`d.project_id IS NULL AND NOT ${FOREIGN_REF_EXISTS}`);
       } else {
-        where.push('(d.project_id = ? OR d.project_id IS NULL)');
+        where.push(`(d.project_id = ? OR (d.project_id IS NULL AND (NOT ${FOREIGN_REF_EXISTS}${aliases ? ` OR ${MAPPED_TO_PROJECT}` : ''})))`);
         params.push(filter.projectId);
+        if (aliases) params.push(filter.projectId);
       }
+    }
+    if (filter.excludeUnassigned && !filter.unassigned) {
+      where.push(`NOT (d.project_id IS NULL AND ${FOREIGN_REF_EXISTS}${aliases ? ` AND NOT ${MAPPED_TO_ANY}` : ''})`);
     }
     const status = filter.status ?? 'all';
     if (status === 'active') where.push(`d.status <> 'archived'`);
@@ -506,13 +560,47 @@ export class DesignDocStore {
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY d.updated_at DESC, d.id LIMIT ?`;
     const rows = this.db.prepare(sql).all(...params, limit) as DocRow[];
-    return rows.map(toSummary);
+    const mapped = aliases ? this.aliasedProjects(rows.filter((row) => row.project_id === null).map((row) => row.id)) : new Map<string, string>();
+    return rows.map((row) => {
+      const summary = toSummary(row);
+      const local = mapped.get(row.id);
+      return local ? { ...summary, projectId: local } : summary;
+    });
+  }
+
+  /** Effective project of received docs: the local project their foreign id is mapped to. */
+  private aliasedProjects(ids: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    for (let index = 0; index < ids.length; index += 500) {
+      const chunk = ids.slice(index, index + 500);
+      const rows = this.db.prepare(`SELECT r.doc_id AS id, a.local_project_id AS local FROM sync_doc_references r
+        JOIN dd_project_aliases a ON a.foreign_project_id = json_extract(r.project_json, '$')
+        WHERE ${ALIAS_LIVE} AND r.doc_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk) as Array<{ id: string; local: string }>;
+      for (const row of rows) out.set(row.id, row.local);
+    }
+    return out;
   }
 
   /** Look up a doc by id or slug; `null` when absent. */
   find(ref: unknown): DesignDocSummary | null {
     const row = this.findRow(ref);
     return row ? toSummary(row) : null;
+  }
+
+  /**
+   * Where a doc sits for visibility checks, computed by id (no list scan, no row cap): its own project,
+   * else the local project its foreign id is mapped to. `global` docs have neither a project nor a
+   * foreign reference; `unassigned` received docs have a foreign reference and no live mapping.
+   * Null for an unknown id or a template.
+   */
+  scopeOf(id: string): { projectId: string | null; global: boolean; unassigned: boolean } | null {
+    const row = this.db.prepare(`SELECT project_id FROM docs WHERE ${DOC_ONLY} AND id = ?`).get(id) as { project_id: string | null } | undefined;
+    if (!row) return null;
+    if (row.project_id !== null) return { projectId: row.project_id, global: false, unassigned: false };
+    const ref = this.db.prepare(`SELECT project_json FROM sync_doc_references WHERE doc_id = ?`).get(id) as { project_json: string } | undefined;
+    if (!ref || ref.project_json === 'null') return { projectId: null, global: true, unassigned: false };
+    const local = this.projectRefs.available ? this.aliasedProjects([id]).get(id) : undefined;
+    return local ? { projectId: local, global: false, unassigned: false } : { projectId: null, global: false, unassigned: true };
   }
 
   /** Like `find`, but throws a `not_found` error the agent can act on. */
@@ -691,7 +779,12 @@ export class DesignDocStore {
       sets.push('entry_path = ?');
       params.push(entryPath);
     }
-    if (patch.projectId !== undefined) {
+    // Setting the project it already has is a no-op; it must not rewrite the replicated project reference either.
+    // A mapped received doc lists under its local project while its own binding stays null; a client echoing
+    // that listed project back with an edit is not asking to move it.
+    const echoesMapping = patch.projectId !== undefined && row.project_id === null && patch.projectId === this.scopeOf(row.id)?.projectId;
+    const moveProject = patch.projectId !== undefined && patch.projectId !== row.project_id && !echoesMapping;
+    if (moveProject) {
       sets.push('project_id = ?');
       params.push(patch.projectId);
     }
@@ -715,12 +808,18 @@ export class DesignDocStore {
           throw new DesignDocError('conflict', 'design doc head changed; re-read the doc before updating metadata');
         }
       }
+      // A same-value projectId alongside other fields is an echo and is ignored; a bare project request is a move attempt.
+      const bareMove = patch.projectId !== undefined && Object.entries(patch)
+        .every(([key, value]) => key === 'projectId' || key === 'expectedHead' || value === undefined);
+      if ((moveProject || bareMove) && this.isReceivedProjectLocked(row.id)) {
+        throw new DesignDocError('invalid', RECEIVED_PROJECT_LOCKED);
+      }
       if (sets.length === 0) return;
       const references = this.db.prepare('SELECT project_json FROM sync_doc_references WHERE doc_id = ?')
         .get(row.id) as { project_json: string } | undefined;
-      const projectReferenceChanged = patch.projectId !== undefined && references && JSON.parse(references.project_json) !== patch.projectId;
+      const projectReferenceChanged = moveProject && references && JSON.parse(references.project_json) !== patch.projectId;
       this.db.prepare(`UPDATE docs SET ${sets.join(', ')} WHERE ${DOC_ONLY} AND id = ?`).run(...params, row.id);
-      if (patch.projectId !== undefined) this.db.prepare('UPDATE sync_doc_references SET project_json = ? WHERE doc_id = ?')
+      if (moveProject) this.db.prepare('UPDATE sync_doc_references SET project_json = ? WHERE doc_id = ?')
         .run(JSON.stringify(patch.projectId), row.id);
       const after = this.requireRow(row.id);
       const semanticChange = !!projectReferenceChanged || ['title', 'summary', 'status', 'tags', 'entry_path', 'project_id'].some((key) =>
@@ -731,6 +830,19 @@ export class DesignDocStore {
         statusBefore: before.status as DocStatus, statusAfter: after.status as DocStatus });
     });
     return toSummary(this.requireRow(row.id));
+  }
+
+  /**
+   * True when the doc's logical project (as replicated from a peer) is foreign to this machine's binding:
+   * moving it would rewrite the peer's project. Locally created docs and docs whose binding equals the
+   * logical project are movable.
+   */
+  isReceivedProjectLocked(docId: string): boolean {
+    const row = this.db.prepare(`SELECT d.project_id AS project_id, r.project_json AS project_json FROM docs d
+      JOIN sync_doc_references r ON r.doc_id = d.id WHERE d.${DOC_ONLY} AND d.id = ?`).get(docId) as { project_id: string | null; project_json: string } | undefined;
+    if (!row) return false;
+    const logical = JSON.parse(row.project_json) as string | null;
+    return logical !== null && logical !== row.project_id;
   }
 
   /** Pin a doc to the top of the list, or unpin it. Not an edit: revision and "updated" stay put. */
@@ -1487,6 +1599,18 @@ export class DesignDocStore {
 
 // ── Pure helpers ────────────────────────────────────────────────────────
 
+/**
+ * Content identity of a template: description, entry path and every file's path, encoding and bytes. Key and label are
+ * excluded so a renamed copy created by an earlier import is recognised as the same template on re-import.
+ */
+export function templateDigest(template: {
+  description: string; entryPath?: string | undefined; files: ReadonlyArray<{ path: string; content: string; encoding?: string | undefined }>
+}): string {
+  const files = [...template.files].map((file) => ({ path: file.path, encoding: file.encoding === 'base64' ? 'base64' : 'utf8', content: file.content }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return createHash('sha256').update(JSON.stringify([template.description, template.entryPath ?? null, files])).digest('hex');
+}
+
 export function sanitizeTemplateInput(value: unknown): Omit<TemplateInput, 'files'> & {
   files: Array<{ path: string; content: string; encoding: string; size: number }>
 } {
@@ -1712,6 +1836,7 @@ function toSummary(row: DocRow): DesignDocSummary {
     tags: parseTags(row.tags),
     entryPath: row.entry_path,
     fileCount: Number(row.file_count ?? 0),
+    projectLocked: !!row.project_locked,
     openComments: Number(row.open_comments ?? 0),
     lastComment: parseExcerpt(row.last_comment),
     pinnedAt: row.pinned_at ?? null,
