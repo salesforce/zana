@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname } from 'node:path';
+import { join } from 'node:path';
 
 /**
- * Acceptance tests (#675) for how PtyManager applies the Squad seat contract.
- * Written before the implementation: the `squadSeat: true` marker is accepted
- * by the types but ignored until the build units land.
+ * Acceptance tests (#675) for how PtyManager applies the Squad seat contract
+ * for a launch that carries the main-owned `squadSeat: true` marker.
  */
 
 interface SpawnCall {
@@ -108,6 +107,9 @@ function create(
 
 const developerInstructions = (args: string[]) => args.filter((a) => a.startsWith('developer_instructions='));
 const pathHead = (env: Record<string, string>) => (env.PATH ?? '').split(':')[0] ?? '';
+/** Every seat root lives under this Zana-owned folder in the temp directory. */
+const SEAT_PARENT = join(tmpdir(), 'zcc-squad-seats');
+const seatRoots = () => (existsSync(SEAT_PARENT) ? readdirSync(SEAT_PARENT) : []);
 /** Shim directories this suite may leave behind are found through the PATH head the seat received. */
 const shimDirOf = (call: SpawnCall) => pathHead(call.env);
 
@@ -219,7 +221,9 @@ describe('Squad seat contract in PtyManager', () => {
       const dir = shimDirOf(call);
       const pathPair = tmuxEnvPairs(call.args).find((p) => p.startsWith('PATH='));
       expect(pathPair).toBeTruthy();
-      expect(pathPair!.slice('PATH='.length).split(':')[0]).toBe(dir === '' ? 'x' : pathPair!.slice('PATH='.length).split(':')[0]);
+      // F5: the pane's PATH head is the seat's own shim directory, the same one the tmux client got.
+      expect(pathPair!.slice('PATH='.length).split(':')[0]).toBe(dir);
+      expect(dir).toMatch(/zcc-squad-seats\/zcc-seat-[^/]+\/bin$/);
       expect(existsSync(pathPair!.slice('PATH='.length).split(':')[0]!)).toBe(true);
       expect(readdirSync(pathPair!.slice('PATH='.length).split(':')[0]!).sort()).toEqual(['gh', 'git']);
     });
@@ -254,14 +258,12 @@ describe('Squad seat contract in PtyManager', () => {
 
     it('a Claude seat with the marker deep-equals the same call without it (REQ-7)', () => {
       const persona = personaFor('claude', { appendSystemPrompt: PERSONA_TEXT, deniedTools: ['Bash(gh:*)'], allowedTools: ['Read'] } as never);
-      const before = readdirSync(tmpdir()).length;
-      const seatNames = () => readdirSync(tmpdir()).filter((n) => /shim|zcc-seat/i.test(n));
+      const seatNames = seatRoots;
       const seatNamesBefore = new Set(seatNames());
       create(mgr, 'claude', persona, {}, false);
       create(mgr, 'claude', persona, {}, true);
       expect(stable(spawns[1]!)).toEqual(stable(spawns[0]!));
       expect(seatNames().filter((n) => !seatNamesBefore.has(n))).toEqual([]);
-      expect(readdirSync(tmpdir()).length - before).toBeLessThanOrEqual(readdirSync(tmpdir()).length);
     });
 
     it('a Claude seat creates no shim directory (REQ-7)', () => {
@@ -312,6 +314,24 @@ describe('Squad seat contract in PtyManager', () => {
     });
   });
 
+  describe('remote seat (F10)', () => {
+    const remote = { host: 'ssh-box' };
+
+    it('fails a remote restore or restart whose persona has contract text instead of respawning without it', () => {
+      expect(() => create(mgr, 'codex', personaFor('codex', { appendSystemPrompt: PERSONA_TEXT }), { remote })).toThrow(/remote project/);
+      expect(() => create(mgr, 'opencode', personaFor('opencode', { deniedTools: ['Bash(gh:*)'] }), { remote })).toThrow(/remote project/);
+      expect(spawns).toHaveLength(0);
+    });
+
+    it('fails a remote seat on a harness that can never be a Squad seat', () => {
+      expect(() => create(mgr, 'cursor', personaFor('cursor'), { remote })).toThrow(/cannot run as a Squad seat/);
+    });
+
+    it('does not run the check for a remote launch without the seat marker (existing behaviour)', () => {
+      expect(() => create(mgr, 'codex', personaFor('codex', { appendSystemPrompt: PERSONA_TEXT }), { remote }, false)).not.toThrow(/remote project/);
+    });
+  });
+
   describe('REQ-10 cleanup', () => {
     let undeclare: () => void;
     beforeEach(() => { undeclare = declareShimCapability('opencode'); });
@@ -354,8 +374,7 @@ describe('Squad seat contract in PtyManager', () => {
     it('cleans up when the spawn itself fails and leaves no seat files behind', async () => {
       const pty = await import('node-pty');
       const original = pty.spawn;
-      const created: string[] = [];
-      const watch = () => readdirSync(tmpdir()).filter((n) => /zcc-seat|zcc-session-mcp|shim/i.test(n));
+      const watch = seatRoots;
       const before = new Set(watch());
       (pty as unknown as { spawn: unknown }).spawn = () => {
         throw new Error('spawn failed');
@@ -365,9 +384,7 @@ describe('Squad seat contract in PtyManager', () => {
       } finally {
         (pty as unknown as { spawn: unknown }).spawn = original;
       }
-      created.push(...watch().filter((n) => !before.has(n)));
-      expect(created).toEqual([]);
-      void dirname;
+      expect(watch().filter((n) => !before.has(n))).toEqual([]);
     });
   });
 });

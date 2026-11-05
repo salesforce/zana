@@ -1516,12 +1516,6 @@ describe('launchTeam Squad seat preflight and marker (#675)', () => {
     expect(h.creates.every((create) => create.squadSeat === true)).toBe(true);
     expect(h.creates.some((create) => create.cohort?.role === 'orchestrator')).toBe(true);
   });
-
-  it('does not set the squadSeat marker on a launch outside the Squad path (REQ-8)', async () => {
-    const { launchFollowUpTerminal } = host as unknown as { launchFollowUpTerminal?: unknown };
-    void launchFollowUpTerminal;
-    expect(h.creates.every((create) => create.squadSeat === undefined)).toBe(true);
-  });
 });
 
 describe('Squad seat marker stays off a non-Squad launch (#675, REQ-8, F4)', () => {

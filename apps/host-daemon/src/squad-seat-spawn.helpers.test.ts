@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { prepareSeatSpawn, shimFirstPath, sweepStaleSeatRoots } from './squad-seat-spawn.js';
+import { assertRemoteSeatContract, prepareSeatSpawn, shimFirstPath, sweepStaleSeatRoots, trustedSeatParent } from './squad-seat-spawn.js';
 import type { SquadSeatCapability } from './harness/launch-provider.js';
 
 /** Helpers behind PtyManager's Squad seat handling (#675) that the spawn tests only reach through a whole launch. */
@@ -101,7 +101,7 @@ describe('prepareSeatSpawn', () => {
     await expect(sweepStaleSeatRoots(join(parent, 'missing'), Date.now(), true)).resolves.toBeUndefined();
   });
 
-  it('logs when a seat root cannot be removed (F6, A5)', () => {
+  it.skipIf(process.getuid?.() === 0)('logs when a seat root cannot be removed (F6, A5, F18)', () => {
     const baseDir = base();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const plan = prepareSeatSpawn({ capability: cap(), persona: { appendSystemPrompt: 'ROLE' }, harnessCommand: 'x', baseDir })!;
@@ -110,7 +110,8 @@ describe('prepareSeatSpawn', () => {
     chmodSync(baseDir, 0o500);
     try {
       plan.release();
-      if (existsSync(root)) expect(warn).toHaveBeenCalled();
+      expect(existsSync(root)).toBe(true);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(root), expect.anything());
     } finally {
       chmodSync(baseDir, 0o700);
       warn.mockRestore();
@@ -133,6 +134,119 @@ describe('prepareSeatSpawn', () => {
     const hostile = 'Bash(' + 'x'.repeat(300) + ':*)';
     expect(() => prepareSeatSpawn({ capability: cap(), persona: { deniedTools: [hostile] }, harnessCommand: 'y', baseDir })).toThrow();
     expect(readdirSync(baseDir)).toEqual([]);
+  });
+});
+
+describe('seat sweep safety (F12, A9, F15, A8, F20)', () => {
+  it('never removes the root of a seat this process still owns, however old', async () => {
+    const baseDir = base();
+    const plan = prepareSeatSpawn({ capability: cap(), persona: { appendSystemPrompt: 'ROLE' }, harnessCommand: 'x', baseDir })!;
+    const root = dirname(plan.instructionsFile!);
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    utimesSync(root, old, old);
+    await sweepStaleSeatRoots(baseDir, Date.now(), true);
+    expect(existsSync(root)).toBe(true);
+    plan.release();
+    expect(existsSync(root)).toBe(false);
+  });
+
+  it('removes an old orphan root once its owner has released nothing (not tracked)', async () => {
+    const parent = base();
+    const orphan = join(parent, 'zcc-seat-orphan');
+    mkdirSync(orphan);
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    utimesSync(orphan, old, old);
+    await sweepStaleSeatRoots(parent, Date.now(), true);
+    expect(existsSync(orphan)).toBe(false);
+  });
+
+  it('is quiet for a missing parent but warns for any other failure', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await sweepStaleSeatRoots(join(base(), 'missing'), Date.now(), true);
+      expect(warn).not.toHaveBeenCalled();
+      const file = join(base(), 'afile');
+      writeFileSync(file, 'x');
+      await sweepStaleSeatRoots(file, Date.now(), true);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('seat sweep failed'), expect.anything());
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('runs one sweep at a time and returns the running one to an overlapping caller', async () => {
+    const parent = base();
+    const first = sweepStaleSeatRoots(parent, Date.now(), true);
+    const second = sweepStaleSeatRoots(parent, Date.now(), true);
+    expect(second).toBe(first);
+    await first;
+  });
+});
+
+describe('trustedSeatParent (A7, F13)', () => {
+  it('creates a private parent and tightens a loose directory this user owns', () => {
+    const dir = join(base(), 'seats');
+    expect(trustedSeatParent(dir)).toBe(dir);
+    expect((statSync(dir).mode & 0o777).toString(8)).toBe('700');
+    chmodSync(dir, 0o777);
+    expect(trustedSeatParent(dir)).toBe(dir);
+    expect((statSync(dir).mode & 0o777).toString(8)).toBe('700');
+  });
+
+  it('refuses a symlinked parent', () => {
+    const real = join(base(), 'real');
+    mkdirSync(real);
+    const link = join(base(), 'link');
+    symlinkSync(real, link);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(trustedSeatParent(link)).toBeUndefined();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('refuses a directory owned by someone else', () => {
+    const dir = join(base(), 'seats');
+    mkdirSync(dir);
+    const uid = vi.spyOn(process, 'getuid').mockReturnValue(( process.getuid?.() ?? 1000) + 1);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(trustedSeatParent(dir)).toBeUndefined();
+    } finally {
+      uid.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('refuses a parent that is a file, and warns', () => {
+    const file = join(base(), 'afile');
+    writeFileSync(file, 'x');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(trustedSeatParent(file)).toBeUndefined();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('assertRemoteSeatContract (F10)', () => {
+  it('lets a native harness, a persona without text, and an absent persona through', () => {
+    expect(() => assertRemoteSeatContract({ capability: cap({ commandDeny: 'native' }), persona: { appendSystemPrompt: 'x' } })).not.toThrow();
+    expect(() => assertRemoteSeatContract({ capability: cap(), persona: {} })).not.toThrow();
+    expect(() => assertRemoteSeatContract({ capability: cap(), persona: undefined })).not.toThrow();
+  });
+
+  it('refuses a remote seat whose persona has instructions or denies a non-native harness cannot carry there', () => {
+    expect(() => assertRemoteSeatContract({ capability: cap({ commandDeny: 'none' }), persona: { appendSystemPrompt: 'x' } })).toThrow(/remote project/);
+    expect(() => assertRemoteSeatContract({ capability: cap({ commandDeny: 'none' }), persona: { deniedTools: ['Bash(gh:*)'] } })).toThrow(/remote project/);
+  });
+
+  it('refuses a harness that can never be a Squad seat', () => {
+    expect(() => assertRemoteSeatContract({ capability: cap(), persona: {}, refusedForSquads: true })).toThrow(/cannot run as a Squad seat/);
   });
 });
 

@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -21,28 +21,80 @@ const SEAT_ROOTS_DIRNAME = 'zcc-squad-seats';
 /** A live seat is far younger; a root older than this is an orphan of a crash or a quit that skipped the release. */
 const SEAT_ROOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SEAT_SWEEP_MIN_INTERVAL_MS = 60_000;
+/** Bound on roots examined per sweep (Rule 5); the next sweep continues. */
+const SEAT_SWEEP_MAX_ENTRIES = 500;
 let lastSeatSweepAt = 0;
+let sweepInFlight: Promise<void> | undefined;
+/** Roots of seats this process still owns: the sweep never removes them, however old (a tmux seat can outlive 7 days). */
+const liveSeatRoots = new Set<string>();
 
-/** Fire-and-forget age sweep of orphaned seat roots under `parent`; never blocks the spawn path. */
+function isNotFound(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
+async function sweepOnce(parent: string, now: number): Promise<void> {
+  try {
+    let examined = 0;
+    for (const name of await readdir(parent)) {
+      if (!name.startsWith('zcc-seat-')) continue;
+      if (++examined > SEAT_SWEEP_MAX_ENTRIES) break;
+      const path = join(parent, name);
+      if (liveSeatRoots.has(path)) continue;
+      try {
+        if (now - (await stat(path)).mtimeMs > SEAT_ROOT_MAX_AGE_MS) await removeTreeWithoutFollowingLinksAsync(path);
+      } catch (error) {
+        console.warn(`[squad-seat] stale seat dir not removed: ${path}`, error);
+      }
+    }
+  } catch (error) {
+    // A missing parent is normal (nothing spawned yet); anything else (EACCES, ENOTDIR) is worth a line.
+    if (!isNotFound(error)) console.warn(`[squad-seat] seat sweep failed for ${parent}`, error);
+  }
+}
+
+/** Fire-and-forget age sweep of orphaned seat roots under `parent`; throttled, never overlapping, never blocks the spawn path. */
 export function sweepStaleSeatRoots(parent: string, now = Date.now(), force = false): Promise<void> {
+  if (sweepInFlight) return sweepInFlight;
   if (!force && now - lastSeatSweepAt < SEAT_SWEEP_MIN_INTERVAL_MS) return Promise.resolve();
   lastSeatSweepAt = now;
-  return (async () => {
-    try {
-      for (const name of await readdir(parent)) {
-        if (!name.startsWith('zcc-seat-')) continue;
-        const path = join(parent, name);
-        try {
-          if (now - (await stat(path)).mtimeMs > SEAT_ROOT_MAX_AGE_MS) await removeTreeWithoutFollowingLinksAsync(path);
-        } catch (error) {
-          console.warn(`[squad-seat] stale seat dir not removed: ${path}`, error);
-        }
-      }
-    } catch {
-      /* best-effort — the parent does not exist yet */
-    }
-  })();
+  const run = sweepOnce(parent, now).finally(() => { sweepInFlight = undefined; });
+  sweepInFlight = run;
+  return run;
 }
+
+/**
+ * The Zana-owned parent for seat roots, or undefined when it cannot be trusted (Rule 2). On a shared
+ * /tmp another user may have created it first: it must be a real directory owned by this user, and is
+ * tightened to 0700. The caller then falls back to a private mkdtemp directly in the temp directory.
+ */
+export function trustedSeatParent(parent: string): string | undefined {
+  try {
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
+    const info = lstatSync(parent);
+    const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+    if (!info.isDirectory() || info.isSymbolicLink() || (uid !== undefined && info.uid !== uid)) {
+      console.warn(`[squad-seat] ${parent} is not a directory owned by this user; using a private temp dir instead`);
+      return undefined;
+    }
+    if ((info.mode & 0o077) !== 0) chmodSync(parent, 0o700);
+    return parent;
+  } catch (error) {
+    console.warn(`[squad-seat] ${parent} cannot be prepared; using a private temp dir instead`, error);
+    return undefined;
+  }
+}
+
+/** Throw unless a remote Squad seat has nothing to deliver: seat files are host-local and createRemote carries no contract (F10). */
+export function assertRemoteSeatContract(input: Pick<SeatSpawnInput, 'capability' | 'persona' | 'refusedForSquads'>): void {
+  if (input.refusedForSquads) throw new Error(REFUSED_MESSAGE);
+  if (!input.persona || input.capability?.commandDeny === 'native') return;
+  const plan = planSeatContract({ persona: input.persona, enforceShims: false });
+  if (plan.instructionsText.length > 0) {
+    throw new Error("Squad seat contract can't be delivered: it cannot be carried to a remote project on this harness. Choose another harness for this persona.");
+  }
+}
+
+const REFUSED_MESSAGE = "Squad seat contract can't be delivered: this harness cannot run as a Squad seat. Choose another harness for this persona.";
 
 export interface SeatSpawnPlan {
   /** Persona instructions plus the advisory lines; never empty on a returned plan with no shim dir. */
@@ -78,30 +130,39 @@ export interface SeatSpawnInput {
  */
 export function prepareSeatSpawn(input: SeatSpawnInput): SeatSpawnPlan | undefined {
   const { capability, persona } = input;
-  if (input.refusedForSquads) {
-    throw new Error("Squad seat contract can't be delivered: this harness cannot run as a Squad seat. Choose another harness for this persona.");
-  }
+  if (input.refusedForSquads) throw new Error(REFUSED_MESSAGE);
   if (!persona || capability?.commandDeny === 'native') return undefined;
   const plan = planSeatContract({
     persona,
     reservedCommands: [basename(input.harnessCommand)],
     enforceShims: capability?.commandDeny === 'shim'
   });
-  if (plan.instructionsText.length > 0 && capability?.instructions !== true) {
+  const wantsText = plan.instructionsText.length > 0;
+  if (wantsText && capability?.instructions !== true) {
     throw new Error("Squad seat contract can't be delivered: this harness cannot carry the persona instructions. Choose another harness for this persona.");
   }
-  const wantsText = plan.instructionsText.length > 0;
   if (!wantsText && plan.shimFiles.length === 0) return undefined;
   const foldIntoGuidance = wantsText && capability?.foldPersonaIntoGuidance === true;
   const needsFile = wantsText && !foldIntoGuidance;
   if (!needsFile && plan.shimFiles.length === 0) {
     return { instructionsText: plan.instructionsText, foldIntoGuidance, release() {} };
   }
-  const parent = input.baseDir ?? join(tmpdir(), SEAT_ROOTS_DIRNAME);
-  mkdirSync(parent, { recursive: true, mode: 0o700 });
-  if (!input.baseDir) void sweepStaleSeatRoots(parent);
-  const root = mkdtempSync(join(parent, 'zcc-seat-'));
+  return materialiseSeat(plan, foldIntoGuidance, needsFile, input.baseDir);
+}
+
+/** Create the seat's root and write its shims and instructions file; removes the root again if any write fails. */
+function materialiseSeat(
+  plan: ReturnType<typeof planSeatContract>,
+  foldIntoGuidance: boolean,
+  needsFile: boolean,
+  baseDir: string | undefined
+): SeatSpawnPlan {
+  const defaultParent = baseDir === undefined ? trustedSeatParent(join(tmpdir(), SEAT_ROOTS_DIRNAME)) : undefined;
+  if (defaultParent) void sweepStaleSeatRoots(defaultParent);
+  const root = mkdtempSync(join(baseDir ?? defaultParent ?? tmpdir(), 'zcc-seat-'));
+  liveSeatRoots.add(root);
   const release = () => {
+    liveSeatRoots.delete(root);
     try {
       // Link-safe: a temp dir is cheap to leave behind, deleting through a link is not.
       removeTreeWithoutFollowingLinks(root);
@@ -111,17 +172,7 @@ export function prepareSeatSpawn(input: SeatSpawnInput): SeatSpawnPlan | undefin
     }
   };
   try {
-    let shimDir: string | undefined;
-    if (plan.shimFiles.length > 0) {
-      shimDir = join(root, 'bin');
-      mkdirSync(shimDir, { mode: 0o700 });
-      chmodSync(shimDir, 0o700);
-      for (const shim of plan.shimFiles) {
-        const path = join(shimDir, shim.name);
-        writeFileSync(path, shim.script, { mode: 0o700 });
-        chmodSync(path, 0o700);
-      }
-    }
+    const shimDir = plan.shimFiles.length > 0 ? writeShims(root, plan.shimFiles) : undefined;
     let instructionsFile: string | undefined;
     if (needsFile) {
       instructionsFile = join(root, 'instructions.md');
@@ -138,6 +189,18 @@ export function prepareSeatSpawn(input: SeatSpawnInput): SeatSpawnPlan | undefin
     release();
     throw error;
   }
+}
+
+function writeShims(root: string, shimFiles: ReturnType<typeof planSeatContract>['shimFiles']): string {
+  const shimDir = join(root, 'bin');
+  mkdirSync(shimDir, { mode: 0o700 });
+  chmodSync(shimDir, 0o700);
+  for (const shim of shimFiles) {
+    const path = join(shimDir, shim.name);
+    writeFileSync(path, shim.script, { mode: 0o700 });
+    chmodSync(path, 0o700);
+  }
+  return shimDir;
 }
 
 /** Put the shim directory first on a PATH string. */

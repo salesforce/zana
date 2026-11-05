@@ -28,7 +28,7 @@ import {
   withBlankedSessionCallbacks,
   writeSessionEnvFile
 } from './tmux-session-env.js';
-import { prepareSeatSpawn, shimFirstPath, type SeatSpawnPlan } from './squad-seat-spawn.js';
+import { assertRemoteSeatContract, prepareSeatSpawn, shimFirstPath, type SeatSpawnPlan } from './squad-seat-spawn.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
@@ -1095,6 +1095,12 @@ export class PtyManager extends EventEmitter {
     openingPrompt?: string;
   }): TerminalSession {
     if (opts.remote) {
+      // A remote spawn carries no seat contract (host-local files), so a Squad seat that needs one fails
+      // instead of respawning silently without it (restore or restart after a persona edit).
+      if (opts.squadSeat) {
+        const remoteProvider = providerFor(opts.profile);
+        assertRemoteSeatContract({ capability: remoteProvider.squadSeat, persona: opts.persona, refusedForSquads: remoteProvider.refusedForSquads });
+      }
       return this.createRemote({ ...opts, remote: opts.remote });
     }
     // Live-session cap: refuse cleanly before spawning anything. Checked here
