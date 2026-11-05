@@ -150,7 +150,7 @@ export function conversationFilePreviewPaths(
   const out: string[] = [];
   const add = (raw: string | null | undefined, discovered = false) => {
     if (!raw || out.length >= PREVIEW_PATH_CAP) return;
-    const path = parseLocalFileMarkdownHref(unwrapLabeledPathLine(raw));
+    const path = parseLocalFileMarkdownHref(unwrapLabeledPathLine(raw).replace(/%/gu, '%25'));
     if (!path || !/[/\\]/u.test(path) || seen.has(path)) return;
     // Free text needs a path-shaped prefix before whitespace can mean a filename.
     if (discovered && /\s/u.test(path) && !/^(?:\/|\.\/|[a-z]:[\\/])/iu.test(path)) return;

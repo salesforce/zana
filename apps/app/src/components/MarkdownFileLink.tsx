@@ -224,9 +224,11 @@ export function MarkdownFileLink({
 }
 
 /** Retain local-link feedback even when the destination or owning context is unavailable. */
-export function UnavailableMarkdownFileLink({ reason, children }: {
+export function UnavailableMarkdownFileLink({ reason, children, title, className }: {
   reason: string;
   children: ReactNode;
+  title?: string;
+  className?: string;
 }) {
   const [activated, setActivated] = useState(false);
   const activate = (event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -234,7 +236,7 @@ export function UnavailableMarkdownFileLink({ reason, children }: {
     setActivated(true);
   };
   return <span className="inbox-md-file-link-wrap">
-    <a href="#" onClick={activate} onAuxClick={activate}>{children}</a>
+    <a href="#" title={title} className={className} onClick={activate} onAuxClick={activate}>{children}</a>
     {activated ? <span role="status">{reason}</span> : null}
   </span>;
 }

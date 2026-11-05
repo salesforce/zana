@@ -80,6 +80,11 @@ it('explains when a local link has no owning thread', async () => {
   expect(h.resolve).not.toHaveBeenCalled();
 });
 
+it('preserves the title of an unavailable local link', () => {
+  render(<MarkdownContent text={'[Report](D:/repo/report.md "File title")'} />);
+  expect(screen.getByText('Report').getAttribute('title')).toBe('File title');
+});
+
 it.each([{ button: 1 }, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }])(
   'keeps modified local-link activation in the preview (%j)', async (options) => {
     h.resolve.mockResolvedValue({ kind: 'resolved', path: 'docs/report.md' });

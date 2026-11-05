@@ -292,7 +292,7 @@ export const MarkdownContent = memo(function MarkdownContent({
                 );
               }
               return (
-                <UnavailableMarkdownFileLink reason={local
+                <UnavailableMarkdownFileLink title={props.title} className={props.className} reason={local
                   ? 'Open this file from a thread to preview it.'
                   : 'This local file link is invalid or unsupported.'}>
                   {props.children}

@@ -79,6 +79,10 @@ describe('parseLocalFileMarkdownHref', () => {
 });
 
 describe('conversationFilePreviewPaths', () => {
+  it('preserves literal percent sequences in raw paths', () => {
+    expect(conversationFilePreviewPaths('docs/100%.md', ['docs/report%20v2.md']))
+      .toEqual(['docs/report%20v2.md', 'docs/100%.md']);
+  });
   it.each(['Updated the and/or logic in v2.5', 'Updated the and/or logic in report.md']) (
     'does not discover a file in ordinary prose: %s', (text) => {
       expect(conversationFilePreviewPaths(text)).toEqual([]);
