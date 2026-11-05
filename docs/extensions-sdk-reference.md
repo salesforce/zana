@@ -283,7 +283,7 @@ host chrome, not a plugin.
 | Field | Meaning |
 | --- | --- |
 | `skills` | Directory roots. Default `["skills"]`; `[]` opts out. Each child dir with a regular `SKILL.md` is a skill named after the folder. |
-| `mcpServers` | Map of Claude CLI MCP servers for PTY / CLI Agent (`--mcp-config`). stdio `command` is basename-only; relative `args` are rewritten to contained paths. Conversation threads do not read this map — they get `zcc.agents.registerTool` via zcc. |
+| `mcpServers` | Map of MCP servers for PTY / CLI Agent sessions: Claude (`--mcp-config`), Codex (`-c mcp_servers.*`) and OpenCode (inline and file config). A server is added to a session when it is `alwaysOn` or a persona names it; all three CLIs apply the same rule, with names rewritten to `plugin_<id>_<name>` on Codex and OpenCode. Cursor PTY does not receive them. stdio `command` is basename-only; relative `args` are rewritten to contained paths. Conversation threads do not read this map — they get `zcc.agents.registerTool` via zcc. |
 | `extra` | Opaque JSON object (≤32 keys, ≤8 KiB). Displayed on install; never synced as skills/MCP. |
 | `requires` | Other plugin ids this plugin consumes via `zcc.services.use`. Host topo-sorts load order. A missing required plugin marks the consumer `needs-configuration`. |
 
@@ -575,8 +575,8 @@ admitted with entry `squad-member-start`; a refusal releases the member's slot.
 Raw `term.write` input and restores of an existing session are not admitted.
 
 A registered agent tool (`agents.registerTool`) is reachable from Modern
-Claude/Codex threads; `zcc.mcpServers` is the matching path for Claude/Codex
-PTY and CLI Agent sessions. Declare both if a tool must work on every
+Claude/Codex threads; `zcc.mcpServers` is the matching path for Claude, Codex and
+OpenCode PTY and CLI Agent sessions. Declare both if a tool must work on every
 surface supported above — Threads do not read `zcc.mcpServers`, and
 PTY/CLI sessions do not read `agents.registerTool`.
 

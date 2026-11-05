@@ -4,7 +4,7 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), signer: vi.fn(() => 'a'.repeat(64)) }));
 vi.mock('node-pty', () => ({ spawn: mocks.spawn }));
 vi.mock('../control-credential.js', () => ({ controlCredentialForSession: mocks.signer }));
-vi.mock('../mcp-config.js', () => ({ ensureMcpConfigForProjectSync: () => '/tmp/test-mcp.json', alwaysOnPluginMcpAllowlist: () => [] }));
+vi.mock('../mcp-config.js', () => ({ ensureMcpConfigForProjectSync: () => '/tmp/test-mcp.json', alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => [] }));
 vi.mock('../tmux.js', () => ({ isTmuxAvailable: () => false, buildLocalTmuxCommand: () => {}, wrapRemoteTmux: (_id: string, command: string) => command, tmuxSessionName: (id: string) => `cc-${id}` }));
 // A Node execution host must not load an Electron credential implementation.
 vi.mock('../harness-auth.js', () => { throw new Error('Electron auth imported by execution engine'); });

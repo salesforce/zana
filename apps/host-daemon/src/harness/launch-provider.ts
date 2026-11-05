@@ -37,7 +37,7 @@ import type { HarnessOption, ProviderCapabilities } from '@zana-ai/zcc-domain/la
 import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
-import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
+import type { HarnessIntegrationAdapter, HarnessMcpServer } from '@zcc/harness-sdk';
 import type { AuthorizedModelTarget, ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
 
 /**
@@ -403,7 +403,7 @@ export interface LaunchProvider {
    * `PtyManager` calls this for every provider when it has a live MCP base URL, so
    * the concrete `-c mcp_servers…` string lives ONLY in the codex provider (Rule 6).
    */
-  mcpArgs(profile: LaunchProfileId, mcpUrl: string): string[];
+  mcpArgs(profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): string[];
 
   /**
    * Argv fragment that applies native per-server or per-tool MCP approval
@@ -435,7 +435,8 @@ export interface LaunchProvider {
    */
   mcpEnv(
     profile: LaunchProfileId,
-    mcpUrl: string
+    mcpUrl: string,
+    servers?: readonly HarnessMcpServer[]
   ): Record<string, string>;
 
   /**

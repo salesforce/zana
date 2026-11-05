@@ -47,7 +47,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 // tmux "available" so a non-headless remote arms the tmux wrap (the tmux-backed

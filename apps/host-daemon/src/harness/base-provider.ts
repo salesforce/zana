@@ -42,7 +42,7 @@ import type {
 } from './launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
-import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
+import type { HarnessIntegrationAdapter, HarnessMcpServer } from '@zcc/harness-sdk';
 import { cleanExtraArgs } from './argv-utils.js';
 import { remoteCdPrefix, shellQuoteArgv } from './shell-quote.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from "./target-resolution.js";
@@ -68,14 +68,14 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
         ? this.authInjection(profile as LaunchProfileId, auth)
         : {};
       return {
-        mcpArgs: mcp ? this.mcpArgs(profile as LaunchProfileId, mcp.url) : [],
+        mcpArgs: mcp ? this.mcpArgs(profile as LaunchProfileId, mcp.url, mcp.servers) : [],
         guidanceArgs: mcp && guidance ? this.guidanceArgs(profile as LaunchProfileId, guidance) : [],
         hookArgs: lifecycle ? this.hookArgs(profile as LaunchProfileId, hookUrls) : [],
         authArgs: injection.args ?? [],
         authEnv: injection.env,
-        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url) : {},
+        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url, mcp.servers) : {},
         mcpConfigFile: mcp
-          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url) ?? undefined)
+          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url, mcp.servers) ?? undefined)
           : undefined
       };
     }
@@ -133,7 +133,7 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    * ARGS (codex). Claude uses the launcher-owned file paths; cursor/shell have
    * no such surface. See the interface doc for the full rationale.
    */
-  mcpArgs(_profile: LaunchProfileId, _mcpUrl: string): string[] {
+  mcpArgs(_profile: LaunchProfileId, _mcpUrl: string, _servers?: readonly HarnessMcpServer[]): string[] {
     return [];
   }
 
@@ -149,7 +149,8 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    */
   mcpEnv(
     _profile: LaunchProfileId,
-    _mcpUrl: string
+    _mcpUrl: string,
+    _servers?: readonly HarnessMcpServer[]
   ): Record<string, string> {
     return {};
   }
@@ -165,7 +166,8 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    */
   mcpConfigFile(
     _profile: LaunchProfileId,
-    _mcpUrl: string
+    _mcpUrl: string,
+    _servers?: readonly HarnessMcpServer[]
   ): { envVar: string; contents: string } | null {
     return null;
   }

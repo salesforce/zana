@@ -49,7 +49,7 @@ vi.mock('node-pty', () => ({
 // pty.ts actually imports (the sync ensure), returning a throwaway path.
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 import { PtyManager } from '../pty.js';

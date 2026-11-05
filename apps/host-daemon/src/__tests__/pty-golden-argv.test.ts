@@ -77,7 +77,7 @@ vi.mock('node-pty', () => ({
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string, extra?: string[]) =>
     `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 // tmux never wraps in tests (keep the bare argv), regardless of the host.

@@ -58,6 +58,7 @@
  */
 
 import type { AppConfig, LaunchProfileId, Persona, ProjectSettings } from '@zana-ai/zcc-domain/product';
+import type { HarnessMcpServer } from '@zcc/harness-sdk';
 import type {
   HarnessAuthInjection,
   ProviderHookUrls,
@@ -158,6 +159,25 @@ function codexBinary(config: AppConfig): string {
 /** A complete double-quoted TOML basic string (the escaped value in quotes). */
 function tomlValue(s: string): string {
   return `"${tomlBasic(s)}"`;
+}
+
+/**
+ * `-c` overrides that add one plugin-contributed MCP server to a codex launch.
+ * The server name is a bare key by construction; env keys that are not bare
+ * keys are dropped rather than quoted. A stdio server without a command and a
+ * URL server without a URL contribute nothing.
+ */
+export function codexServerArgs(server: HarnessMcpServer): string[] {
+  const base = `mcp_servers.${server.name}`;
+  if (server.type === 'stdio') {
+    if (!server.command) return [];
+    const out = ['-c', `${base}.command=${tomlValue(server.command)}`];
+    if (server.args?.length) out.push('-c', `${base}.args=[${server.args.map(tomlValue).join(',')}]`);
+    const env = Object.entries(server.env ?? {}).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
+    if (env.length) out.push('-c', `${base}.env={${env.map(([key, value]) => `${key}=${tomlValue(value)}`).join(',')}}`);
+    return out;
+  }
+  return server.url ? ['-c', `${base}.url=${tomlValue(server.url)}`] : [];
 }
 
 /**
@@ -272,7 +292,7 @@ export class CodexProvider extends BaseLaunchProvider {
     };
   }
 
-  mcpArgs(_profile: LaunchProfileId, mcpUrl: string): string[] {
+  mcpArgs(_profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): string[] {
     // codex reads MCP servers from `~/.codex/config.toml` [mcp_servers], but the
     // `-c key=value` GLOBAL override injects one at spawn with NO file written and
     // NO change to the user's config — the true `--mcp-config` analogue. codex's
@@ -289,7 +309,7 @@ export class CodexProvider extends BaseLaunchProvider {
     // `-c` is a global option accepted before OR after the `resume` subcommand
     // (verified), so appending it to the base argv is safe for both profiles.
     const tomlValue = `"${mcpUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-    return ['-c', `mcp_servers.zcc-inbox.url=${tomlValue}`];
+    return ['-c', `mcp_servers.zcc-inbox.url=${tomlValue}`, ...(servers ?? []).flatMap((server) => codexServerArgs(server))];
   }
 
   mcpApprovalArgs(_profile: LaunchProfileId, approval: McpToolApproval): string[] {

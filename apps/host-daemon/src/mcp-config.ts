@@ -11,11 +11,11 @@
  * Writing outside the project tree (rather than a `.mcp.json` inside it) is
  * deliberate — we don't own the project directory.
  *
- * This launcher file is the Claude CLI / PTY path. Conversation threads do
- * not read it: plugin tools there come from `zcc.agents.registerTool` via
- * the zcc DynamicTools MCP. A plugin that must work on both surfaces
- * declares `zcc.mcpServers` (PTY) and `registerTool` (conversation threads).
- * There is no runtime `registerMcpServer`.
+ * This launcher file is the Claude CLI / PTY path. Codex and OpenCode PTYs
+ * receive the same selection through {@link sessionPluginMcpServers}.
+ * Conversation threads do not read it: plugin tools there come from
+ * `zcc.agents.registerTool` via the zcc DynamicTools MCP. There is no runtime
+ * `registerMcpServer`.
  */
 
 import { join, basename } from 'node:path';
@@ -211,6 +211,54 @@ export function alwaysOnPluginMcpAllowlist(): string[] {
 }
 
 /**
+ * The one enablement rule for plugin/extension MCP servers on every PTY
+ * surface: every currently-registered `alwaysOn` entry plus the entries a
+ * persona names. Registry membership already encodes enabled (and, for
+ * extensions, consented) state. Unknown names are ignored.
+ */
+function selectedServerEntries(extraServerNames?: string[]): Array<[string, McpServerDef]> {
+  const registry = mcpServerRegistry();
+  const names = new Set([...(extraServerNames ?? []), ...allAlwaysOnServerNames()]);
+  const entries: Array<[string, McpServerDef]> = [];
+  for (const name of names) {
+    const def = registry[name];
+    if (def) entries.push([name, def]);
+  }
+  return entries;
+}
+
+/** A plugin MCP server rendered for a CLI that takes servers as args or config. */
+export interface SessionMcpServer {
+  /** Registry key made safe as a bare config key (`plugin_<id>_<name>`). */
+  name: string;
+  type: string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+}
+
+/** Config-key-safe form of a registry key; colons and other punctuation become underscores. */
+function sessionServerName(key: string): string {
+  return key.replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+/**
+ * Servers the session should carry beyond zcc-inbox, selected by the same rule
+ * as the Claude `.mcp.json`. Used for Codex and OpenCode launches.
+ */
+export function sessionPluginMcpServers(extraServerNames?: string[]): SessionMcpServer[] {
+  return selectedServerEntries(extraServerNames).map(([key, def]) => ({
+    name: sessionServerName(key),
+    type: def.type,
+    ...(def.command ? { command: def.command } : {}),
+    ...(def.args ? { args: [...def.args] } : {}),
+    ...(def.url ? { url: def.url } : {}),
+    ...(def.env ? { env: { ...def.env } } : {})
+  }));
+}
+
+/**
  * `.mcp.json` body. The `${ZCC_MCP_URL}` placeholder is intentional —
  * Claude's CLI does env-substitution at spawn against the env we inject
  * in `pty.ts` (`ZCC_MCP_URL=http://127.0.0.1:<port>/mcp/<projectId>`).
@@ -225,14 +273,8 @@ function configBody(extraServerNames?: string[]): string {
       url: '${ZCC_MCP_URL}'
     }
   };
-  const registry = mcpServerRegistry();
-  const names = new Set([...(extraServerNames ?? []), ...allAlwaysOnServerNames()]);
-  // Merge extra servers from the registry; unknown names are ignored.
-  for (const name of names) {
-    const def = registry[name];
-    if (def) {
-      servers[name] = def;
-    }
+  for (const [name, def] of selectedServerEntries(extraServerNames)) {
+    servers[name] = def;
   }
   return JSON.stringify({ mcpServers: servers }, null, 2) + '\n';
 }

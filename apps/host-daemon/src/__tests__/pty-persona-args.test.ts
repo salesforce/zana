@@ -37,7 +37,7 @@ vi.mock('node-pty', () => ({
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string, extra?: string[]) =>
     `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`,
-  alwaysOnPluginMcpAllowlist: () => ['mcp__plugin_example_browser']
+  alwaysOnPluginMcpAllowlist: () => ['mcp__plugin_example_browser'], sessionPluginMcpServers: () => []
 }));
 
 import { PtyManager, personaArgs_build } from '../pty.js';

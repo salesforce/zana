@@ -16,7 +16,7 @@ import { classifyTerminalInput } from './pty-input-activity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
-import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync } from './mcp-config.js';
+import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync, sessionPluginMcpServers } from './mcp-config.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
@@ -1507,7 +1507,7 @@ export class PtyManager extends EventEmitter {
     const authFamily = provider.authKey(effectiveProfile);
     const providerIntegration = provider.integration.configure({
       profile: effectiveProfile,
-      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl }, guidance: composedGuidanceText } : {}),
+      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl, servers: sessionPluginMcpServers(opts.persona?.mcpServers) }, guidance: composedGuidanceText } : {}),
       ...(providerHookBase || providerHookUrls.nativeTool ? {
         lifecycle: {
           stop: providerHookUrls.stop,

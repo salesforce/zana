@@ -34,7 +34,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: () => '/tmp/proj1/.mcp.json',
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 vi.mock('../tmux.js', async importOriginal => ({

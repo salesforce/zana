@@ -48,7 +48,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 import { PtyManager } from '../pty.js';

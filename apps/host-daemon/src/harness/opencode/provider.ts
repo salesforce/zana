@@ -50,6 +50,7 @@ import { ModelDiscoveryCache } from '../model-discovery-cache.js';
  */
 
 import type { AppConfig, LaunchProfileId } from '@zana-ai/zcc-domain/product';
+import type { HarnessMcpServer } from '@zcc/harness-sdk';
 import type {
   AgentLiveness,
   RemoteCommandInput,
@@ -76,6 +77,21 @@ import { randomUUID } from 'node:crypto';
 import { remoteCdPrefix, shellQuote, shellQuoteArgv } from '../shell-quote.js';
 import { cleanExtraArgs } from '../argv-utils.js';
 import { isLiveListedModelTargetId, resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
+
+/** One plugin-contributed MCP server in OpenCode's `mcp` config shape, or null when it is incomplete. */
+export function openCodeServerEntry(server: HarnessMcpServer): Record<string, unknown> | null {
+  if (server.type === 'stdio') {
+    if (!server.command) return null;
+    return {
+      type: 'local',
+      command: [server.command, ...(server.args ?? [])],
+      ...(server.env && Object.keys(server.env).length ? { environment: { ...server.env } } : {}),
+      enabled: true
+    };
+  }
+  return server.url ? { type: 'remote', url: server.url, enabled: true } : null;
+}
+
 
 const OPENCODE_MIN_VERSION = '1.18.0';
 const OPENCODE_REVIEWED_AT = '2026-10-13';
@@ -715,8 +731,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * "remote"` + `url` is OpenCode's `StreamableHTTPClientTransport` server shape,
    * matching the zcc-inbox streamable-http server the claude path points at.
    */
-  mcpEnv(_profile: LaunchProfileId, mcpUrl: string): Record<string, string> {
-    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(this.zccInboxConfig(mcpUrl)) };
+  mcpEnv(_profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): Record<string, string> {
+    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(this.zccInboxConfig(mcpUrl, servers)) };
   }
 
   /**
@@ -735,8 +751,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * Local spawns only — the remote path carries MCP in its own inline env
    * (buildRemoteCommand), where a host-local file wouldn't exist.
    */
-  mcpConfigFile(_profile: LaunchProfileId, mcpUrl: string): { envVar: string; contents: string } {
-    return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl)) };
+  mcpConfigFile(_profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): { envVar: string; contents: string } {
+    return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl, servers)) };
   }
 
   nativeToolGatePluginSource(_profile: LaunchProfileId, nativeToolUrl: string): string {
@@ -758,9 +774,15 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   }
 
   /** The zcc-inbox `mcp` config block — shared by the env and file channels. */
-  private zccInboxConfig(mcpUrl: string) {
+  private zccInboxConfig(mcpUrl: string, servers?: readonly HarnessMcpServer[]) {
+    const plugin: Record<string, unknown> = {};
+    for (const server of servers ?? []) {
+      const entry = openCodeServerEntry(server);
+      if (entry) plugin[server.name] = entry;
+    }
     return {
       mcp: {
+        ...plugin,
         'zcc-inbox': {
           type: 'remote',
           url: mcpUrl,
