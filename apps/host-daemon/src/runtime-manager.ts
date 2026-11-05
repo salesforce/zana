@@ -30,6 +30,7 @@ export function createRuntimeManager(options: {
   onInteractiveRequest?: Parameters<typeof createAgentRuntimeAdapter>[0]['onInteractiveRequest'];
   onPluginToolCall?: Parameters<typeof createAgentRuntimeAdapter>[0]['onPluginToolCall'];
   onNativeToolDecision?: Parameters<typeof createAgentRuntimeAdapter>[0]['onNativeToolDecision'];
+  onNativeToolSettled?: Parameters<typeof createAgentRuntimeAdapter>[0]['onNativeToolSettled'];
   fetchPluginHostArtifact?: Parameters<typeof createAgentRuntimeAdapter>[0]['fetchPluginHostArtifact'];
   artifactCacheLogger?: Parameters<typeof createAgentRuntimeAdapter>[0]['artifactCacheLogger'];
   onProcessExit?: Parameters<typeof createAgentRuntimeAdapter>[0]['onProcessExit'];

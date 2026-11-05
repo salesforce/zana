@@ -26,6 +26,8 @@ import {
   ThreadEventGrammar,
   providerHealthResultSchema,
   type NativeToolDecisionRequest,
+  NATIVE_TOOL_SETTLED_METHOD,
+  nativeToolSettledParamsSchema,
 } from "@zana-ai/zcc-provider-bridge-protocol";
 import {
   JsonRpcResponseError,
@@ -71,6 +73,7 @@ import type {
   AgentRuntimeBridgeLaunch,
   AgentRuntimeExecutionOptions,
   AgentRuntimeNativeToolDecisionRequest,
+  AgentRuntimeNativeToolSettled,
   AgentRuntimeOptions,
   AgentRuntimeProviderRecoveryHint,
   ReapedIdleProviderSession,
@@ -1518,6 +1521,26 @@ function createAgentRuntimeInternal(
         parsedId: parsedLine.parsedId,
         proc,
       });
+      return;
+    }
+
+    if (
+      parsedLine.kind === "notification" &&
+      parsedLine.notificationMethod === NATIVE_TOOL_SETTLED_METHOD
+    ) {
+      // Observational (OBL-011): never reaches the adapter, never awaited, never logged.
+      const parsed = nativeToolSettledParamsSchema.safeParse(parsedLine.parsed.params);
+      if (parsed.success && options.onNativeToolSettled) {
+        const identity = resolveNativeToolIdentity(proc, { ...parsed.data, input: {} });
+        if (identity) {
+          const { input: _input, ...scoped } = identity;
+          try {
+            options.onNativeToolSettled({ ...parsed.data, ...scoped } as AgentRuntimeNativeToolSettled);
+          } catch {
+            // Dropped on purpose.
+          }
+        }
+      }
       return;
     }
 

@@ -93,6 +93,30 @@ export interface DispatchAdmissionContract {
   prompt?: DispatchAdmissionPrompt;
 }
 
+/** Terminal state of one native tool invocation. */
+export type ToolSettledState = 'succeeded' | 'failed' | 'cancelled';
+
+/**
+ * Best-effort, observational completion of a native tool call, correlated to the
+ * policy request by `invocationId`. `outputPreview` is present only for a plugin
+ * that declares `zcc.toolResults: 'preview'`; it is redacted and capped at 4 KiB.
+ */
+export interface ToolSettledContract {
+  invocationId: string;
+  /** PTY session id; present on the PTY surface. */
+  sessionId?: string;
+  /** Thread id; present on the Modern surface. */
+  threadId?: string;
+  projectId: string;
+  providerId: string;
+  toolName: string;
+  state: ToolSettledState;
+  durationMs: number;
+  exitCode?: number;
+  outputBytes?: number;
+  outputPreview?: string;
+}
+
 export interface LifecycleEventContract {
   id: string;
   sequence: number;

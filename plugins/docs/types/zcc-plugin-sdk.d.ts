@@ -394,6 +394,32 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     attachmentCount: number;
   }
 
+  /** Terminal state of one native tool invocation. */
+  export type ToolSettledState = 'succeeded' | 'failed' | 'cancelled';
+
+  /**
+   * Best-effort, observational completion of a native tool call, correlated to
+   * the policy request by `invocationId`. Subscribing with
+   * `events.on('tool.settled', ...)` opts in to metadata-only events;
+   * `outputPreview` (secret-shaped spans redacted, capped at 4 KiB of UTF-8) is
+   * present only when the manifest declares `zcc.toolResults: 'preview'`.
+   */
+  export interface ToolSettledEvent {
+    invocationId: string;
+    /** PTY session id; present on the PTY surface. */
+    sessionId?: string;
+    /** Thread id; present on the Modern surface. */
+    threadId?: string;
+    projectId: string;
+    providerId: string;
+    toolName: string;
+    state: ToolSettledState;
+    durationMs: number;
+    exitCode?: number;
+    outputBytes?: number;
+    outputPreview?: string;
+  }
+
   export type DispatchAdmissionDecision =
     | { action: 'proceed' }
     | { action: 'wait'; reason: string; overrideable: boolean; pluginId?: string }
@@ -660,6 +686,8 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       ): void;
     };
     readonly events: {
+      /** Observational completion of native tool calls; `outputPreview` only with `zcc.toolResults: 'preview'`. */
+      on(name: 'tool.settled', handler: (event: ToolSettledEvent) => void | Promise<void>): void;
       on(name: PluginThreadEventName, handler: (event: PluginThreadEvent) => void | Promise<void>): void;
     };
     /** Server-owned dispatch admission and native tool policy handlers. */

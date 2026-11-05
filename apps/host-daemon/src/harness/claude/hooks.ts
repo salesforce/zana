@@ -3,7 +3,7 @@ import { HOOK_TIMEOUT_SEC, RELAY_BACKSTOP_SEC } from '@zana-ai/zcc-domain/native
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { ProviderCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import { randomUUID } from 'node:crypto';
-import { nativeToolRelayTail } from '../native-tool-relay.js';
+import { nativeToolRelayTail, toolSettledRelayCommand, toolSettledUrlFor } from '../native-tool-relay.js';
 
 export type NativeToolHookState = 'announced' | 'awaiting-decision' | 'allowed' | 'denied' | 'executing' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -277,6 +277,18 @@ export function buildClaudeHookSettings(opts: ClaudeHookSettings): string {
     const nativeToolHook = { matcher: '', hooks: [{ type: 'command', command: nativeToolCmd, timeout: HOOK_TIMEOUT_SEC }] };
     if (Array.isArray(hooks.PreToolUse)) hooks.PreToolUse.push(nativeToolHook);
     else hooks.PreToolUse = [nativeToolHook];
+
+    // OBL-011: the observational twin. Success and failure are separate Claude
+    // events; both post to the same route and the body says which it was.
+    const settledHook = {
+      matcher: '',
+      hooks: [{ type: 'command', command: toolSettledRelayCommand('"$ZCC_TOOLSETTLED_URL"'), timeout: 5 }]
+    };
+    for (const event of ['PostToolUse', 'PostToolUseFailure']) {
+      const existing = hooks[event];
+      if (Array.isArray(existing)) existing.push(settledHook);
+      else hooks[event] = [settledHook];
+    }
   }
 
   const settings: Record<string, unknown> = { hooks };
@@ -370,6 +382,10 @@ export function renderClaudeLifecycle(input: {
   if (toolActivity && input.callbacks.toolActivity) env.ZCC_TOOLACTIVITY_URL = input.callbacks.toolActivity;
   if (overseer && input.callbacks.overseer) env.ZCC_OVERSEER_URL = input.callbacks.overseer;
   if (contentScreen && input.callbacks.contentScreen) env.ZCC_CONTENTSCREEN_URL = input.callbacks.contentScreen;
-  if (nativeTool && input.callbacks.nativeTool) env.ZCC_NATIVETOOL_URL = input.callbacks.nativeTool;
+  if (nativeTool && input.callbacks.nativeTool) {
+    env.ZCC_NATIVETOOL_URL = input.callbacks.nativeTool;
+    const settled = toolSettledUrlFor(input.callbacks.nativeTool);
+    if (settled) env.ZCC_TOOLSETTLED_URL = settled;
+  }
   return { args: settings ? ['--settings', settings] : [], env };
 }

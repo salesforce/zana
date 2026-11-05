@@ -455,4 +455,54 @@ describe("Claude native tool veto", () => {
     await expect(output).resolves.toEqual(deny("native policy transport failed"));
     expect(bridge.messages.some(message => message.method === "tool/policy/decide")).toBe(false);
   });
+
+  describe("settled reports (OBL-011)", () => {
+    function post(): HookCallback {
+      const matchers = latestOptions().hooks?.PostToolUse;
+      return matchers![0].hooks[0];
+    }
+    function postFailure(): HookCallback {
+      return latestOptions().hooks!.PostToolUseFailure![0].hooks[0];
+    }
+    const settledOf = () => bridge.takeMessages().filter(message => message.method === "tool/policy/settled");
+
+    async function allowed(input = toolInput()) {
+      const providerThreadId = await start();
+      const call = invoke(input);
+      reply(call.request.id!, { action: "allow" });
+      await call.output;
+      return providerThreadId;
+    }
+
+    it("reports a successful call with the exit code and output after an allow", async () => {
+      const providerThreadId = await allowed();
+      const output = await post()({
+        hook_event_name: "PostToolUse", session_id: "s", transcript_path: "/t", cwd: "/c",
+        tool_name: "Bash", tool_input: {}, tool_use_id: "native-call-1",
+        tool_response: { stdout: "done", exit_code: 0 },
+      } as never, "x", { signal: new AbortController().signal });
+      expect(output).toEqual({ continue: true });
+      const [event] = settledOf();
+      expect(event.params).toMatchObject({
+        threadId, providerThreadId, callId: "native-call-1", toolName: "Bash", state: "succeeded",
+        exitCode: 0, outputBytes: 4, output: "done",
+      });
+      expect(Number.isInteger(event.params!.durationMs)).toBe(true);
+      expect(event).not.toHaveProperty("id");
+    });
+
+    it("maps a failure hook and an interrupt, and reports non-zero exits as failed", async () => {
+      await allowed();
+      await postFailure()({
+        hook_event_name: "PostToolUseFailure", session_id: "s", transcript_path: "/t", cwd: "/c",
+        tool_name: "Bash", tool_input: {}, tool_use_id: "native-call-1", error: "boom", is_interrupt: true,
+      } as never, "x", { signal: new AbortController().signal });
+      expect(settledOf()[0].params).toMatchObject({ state: "cancelled", output: "boom" });
+      await post()({
+        hook_event_name: "PostToolUse", session_id: "s", transcript_path: "/t", cwd: "/c",
+        tool_name: "Bash", tool_input: {}, tool_use_id: "native-call-1", tool_response: { exit_code: 2 },
+      } as never, "x", { signal: new AbortController().signal });
+      expect(settledOf()[0].params).toMatchObject({ state: "failed", exitCode: 2 });
+    });
+  });
 });

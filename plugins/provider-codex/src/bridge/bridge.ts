@@ -46,7 +46,9 @@ import {
   experimental_defineProviderBridge,
   type ProviderRecoveryHint,
   createNativeToolDecisionTracker,
+  createNativeToolSettledReporter,
   type BridgeNativeToolDecisionRequest,
+  type BridgeNativeToolSettledNotification,
   type NativeToolDecision,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { isDeepStrictEqual } from "node:util";
@@ -230,7 +232,10 @@ interface BridgeRuntimeRequest {
 }
 
 const { send, sendResult, sendError } = createBridgeIo<
-  BridgeNotification | BridgeRuntimeRequest | BridgeNativeToolDecisionRequest
+  | BridgeNotification
+  | BridgeRuntimeRequest
+  | BridgeNativeToolDecisionRequest
+  | BridgeNativeToolSettledNotification
 >();
 
 // OBL-018/p0-modern-codex-veto: Modern Codex command + file-change approvals are
@@ -239,6 +244,8 @@ const { send, sendResult, sendError } = createBridgeIo<
 // every command/file-change even under danger-full-access; this tracker lets a
 // tool-policy plugin veto, and auto-allows (no human prompt) when none is live.
 const nativeToolDecisionTracker = createNativeToolDecisionTracker(send);
+// OBL-011: observational tool.settled reports for the same command/file-change items.
+const nativeToolSettledReporter = createNativeToolSettledReporter(send);
 
 function sendNotification(
   method: string,
@@ -476,6 +483,7 @@ function releaseSession(session: CodexBridgeSession): Promise<void> {
   session.closing = true;
   // Fail closed any native-tool decision still in flight for this session.
   nativeToolDecisionTracker.cancel(session);
+  nativeToolSettledReporter.forget(session.bbThreadId);
   if (sessionsByBbThreadId.get(session.bbThreadId) === session) {
     sessionsByBbThreadId.delete(session.bbThreadId);
   }
@@ -633,6 +641,47 @@ function toProviderRuntimeEvent(
   } as ProviderRuntimeEvent;
 }
 
+const codexCompletedToolItemSchema = z.object({
+  item: z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("commandExecution"),
+      id: z.string().min(1),
+      status: z.string(),
+      aggregatedOutput: z.string().nullable().optional(),
+      exitCode: z.number().int().nullable().optional(),
+    }).passthrough(),
+    z.object({
+      type: z.literal("fileChange"),
+      id: z.string().min(1),
+      status: z.string(),
+    }).passthrough(),
+  ]),
+}).passthrough();
+
+// Reports a finished command / file-change item. Never throws or logs the output.
+function reportCodexItemSettled(session: CodexBridgeSession, params: unknown): void {
+  const parsed = codexCompletedToolItemSchema.safeParse(params);
+  const providerThreadId = session.codexThreadId;
+  if (!parsed.success || !providerThreadId) return;
+  const item = parsed.data.item;
+  const isCommand = item.type === "commandExecution";
+  const exitCode = isCommand ? item.exitCode : undefined;
+  const state = item.status === "declined"
+    ? "cancelled"
+    : item.status === "failed" || (typeof exitCode === "number" && exitCode !== 0)
+      ? "failed"
+      : "succeeded";
+  nativeToolSettledReporter.settled({
+    threadId: session.bbThreadId,
+    providerThreadId,
+    callId: item.id,
+    toolName: codexSubjectToolName(isCommand ? "command" : "file_change"),
+    state,
+    ...(typeof exitCode === "number" ? { exitCode } : {}),
+    ...(isCommand ? { output: item.aggregatedOutput ?? undefined } : {}),
+  });
+}
+
 function handleChildNotification(
   bbThreadId: string,
   serial: number,
@@ -643,6 +692,7 @@ function handleChildNotification(
   if (!session) {
     return;
   }
+  if (method === "item/completed") reportCodexItemSettled(session, params);
   if (method === "thread/started") {
     const parsed = codexThreadStartedNotificationSchema.safeParse(params);
     if (parsed.success) {
@@ -752,6 +802,9 @@ function routeCodexNativeToolPolicy(
           "native-tool policy session unavailable",
         );
         return;
+      }
+      if (decision.action === "allow") {
+        nativeToolSettledReporter.started(session.bbThreadId, subject.itemId);
       }
       responder.result(buildCodexPolicyInteractiveResponse(request, decision));
     })

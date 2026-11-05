@@ -1,6 +1,6 @@
-import { RELAY_BACKSTOP_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
+import { RELAY_BACKSTOP_MS, TOOL_SETTLED_POST_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createNativeToolPolicyHttpClient } from './native-tool-policy-client.js';
+import { createNativeToolPolicyHttpClient, createNativeToolSettledHttpClient } from './native-tool-policy-client.js';
 
 const input = { threadId: 'thread', providerThreadId: 'provider-thread', providerId: 'provider',
   projectId: 'ignored-project', environmentId: 'ignored-environment', callId: 'call', toolName: 'Write', input: { path: 'file' } };
@@ -49,5 +49,44 @@ describe('native tool policy HTTP client', () => {
     else controller.abort();
     expect((await result).action).toBe('deny');
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('createNativeToolSettledHttpClient', () => {
+  const event = {
+    threadId: 't', providerThreadId: 'pt', callId: 'c', toolName: 'Bash', state: 'succeeded', durationMs: 1,
+    providerId: 'claude-code', projectId: 'p', environmentId: 'e', output: 'secret-output'
+  } as never;
+
+  it('posts authenticated and never awaits or throws', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init! });
+      return new Response(null, { status: 204 });
+    });
+    const send = createNativeToolSettledHttpClient({ serverUrl: 'http://127.0.0.1:9', hostId: 'h', hostKey: 'k', sessionId: 's', fetchFn: fetchFn as never });
+    expect(send(event)).toBeUndefined();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.url).toBe('http://127.0.0.1:9/internal/hosts/tool-settled');
+    expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({ sessionId: 's', callId: 'c' });
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer k');
+  });
+
+  it('aborts a hung post at the settled budget and swallows failures', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      const fetchFn = vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        signal = init?.signal ?? undefined;
+        signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      }));
+      createNativeToolSettledHttpClient({ serverUrl: 'http://127.0.0.1:9', hostId: 'h', hostKey: 'k', sessionId: 's', fetchFn: fetchFn as never })(event);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(TOOL_SETTLED_POST_MS + 1);
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

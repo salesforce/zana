@@ -148,6 +148,7 @@ export const pluginZccManifestSchema = z
     projectTab: pluginProjectTabSchema.optional(),
     peers: z.boolean().optional(),
     promptAccess: z.boolean().optional(),
+    toolResults: z.literal('preview').optional(),
     themes: z
       .array(
         z
@@ -219,6 +220,8 @@ export interface PluginManifest {
   peers: boolean;
   /** Declares `zcc.promptAccess: true`: dispatch admission handlers receive redacted, capped prompt text. */
   promptAccess: boolean;
+  /** Declares `zcc.toolResults: 'preview'`: `tool.settled` events carry a redacted, capped `outputPreview`. */
+  toolResults: 'preview' | undefined;
   themes: NonNullable<PluginZccManifest['themes']>;
   engines: { zcc?: string; zccPluginSdk?: string };
 }
@@ -252,6 +255,7 @@ export function readPluginManifest(packageJson: unknown): PluginManifest {
     projectTab: parsed.zcc.projectTab,
     peers: parsed.zcc.peers === true,
     promptAccess: parsed.zcc.promptAccess === true,
+    toolResults: parsed.zcc.toolResults === 'preview' ? 'preview' : undefined,
     themes: parsed.zcc.themes ?? [],
     engines: {
       zcc: parsed.engines?.zcc,

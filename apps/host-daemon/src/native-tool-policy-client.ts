@@ -1,5 +1,5 @@
 import { nativeToolDecisionSchema, type NativeToolDecision } from '@zana-ai/zcc-provider-bridge-protocol';
-import { RELAY_BACKSTOP_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
+import { RELAY_BACKSTOP_MS, TOOL_SETTLED_POST_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import type { AgentRuntimeOptions } from '@zana-ai/zcc-agent-runtime';
 import { joinServerUrl } from './server-url.js';
 
@@ -50,5 +50,35 @@ export function createNativeToolPolicyHttpClient(options: {
       controller.abort();
     }
     return { action: 'deny', reason: 'native policy unavailable or invalid' };
+  };
+}
+
+/**
+ * Fire-and-forget delivery of a settled tool call (OBL-011). Bounded by
+ * `TOOL_SETTLED_POST_MS`, never awaited by the tool path, and never logs the
+ * payload (it can carry tool output). A failure drops the event.
+ */
+export function createNativeToolSettledHttpClient(options: {
+  serverUrl: string;
+  hostId: string;
+  hostKey: string;
+  sessionId: string;
+  fetchFn?: typeof fetch;
+}): NonNullable<AgentRuntimeOptions['onNativeToolSettled']> {
+  return (event) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TOOL_SETTLED_POST_MS);
+    timer.unref?.();
+    void Promise.resolve()
+      .then(async () => {
+        const response = await (options.fetchFn ?? fetch)(joinServerUrl(options.serverUrl, '/internal/hosts/tool-settled').href, {
+          method: 'POST', redirect: 'error', signal: controller.signal,
+          headers: { authorization: `Bearer ${options.hostKey}`, 'x-zcc-host-id': options.hostId, 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId: options.sessionId, ...event })
+        });
+        await response.body?.cancel().catch(() => undefined);
+      })
+      .catch(() => undefined)
+      .finally(() => clearTimeout(timer));
   };
 }

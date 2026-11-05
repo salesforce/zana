@@ -13,6 +13,7 @@ import {
   supervisorToolPolicyDecider,
   warnNativeToolPolicy
 } from './runtime/native-tool-policy.js';
+import { createNativeToolSettledHook, createToolStartTracker } from '@zana-ai/zcc-server/plugins/native-tool-settled-hook';
 import {
   createMainDispatchAdmission,
   dispatchEntryForPrincipal,
@@ -3322,12 +3323,26 @@ const productRouteNativeToolPolicy = productRouteToolPolicyDecider({
   serverUrl: productServerUrl,
   credential: ensureProductServerCredential
 });
+const nativeToolStarts = createToolStartTracker();
 export const nativeToolPolicyHook = createNativeToolPolicyHook({
   getSession: (id) => ptys.getSession(id),
+  onAllowed: (invocationId) => nativeToolStarts.started(invocationId),
   decider: firstToolPolicyDecider(
     supervisorToolPolicyDecider(() => runtimeSupervisor),
     () => (process.env.ELECTRON_RENDERER_URL ? productRouteNativeToolPolicy : null)
   ),
+  log: warnNativeToolPolicy
+});
+
+// OBL-011 settled events: observational, fire-and-forget. Needs the supervised
+// runtime; dev (no supervisor) simply has no sink and the event is dropped.
+export const nativeToolSettledHook = createNativeToolSettledHook({
+  getSession: (id) => ptys.getSession(id),
+  sink: () => {
+    const supervisor = runtimeSupervisor;
+    return supervisor ? (request) => supervisor.emitToolSettled(request) : null;
+  },
+  starts: nativeToolStarts,
   log: warnNativeToolPolicy
 });
 
@@ -9313,6 +9328,7 @@ async function bootstrapNormal() {
     // terminals. Dev has no supervisor, so there it asks the dev product
     // server's signed native-tool-policy route instead.
     onNativeToolPolicyHook: nativeToolPolicyHook,
+    onNativeToolSettledHook: nativeToolSettledHook,
     // Upper bound on the whole exchange; mcp-server.ts fails CLOSED (deny) if
     // this elapses, the inverse of overseerDecisionTimeoutMs's fail-open guard.
     nativeToolPolicyDecisionTimeoutMs: NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS,

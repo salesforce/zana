@@ -19,6 +19,13 @@ export const ASK_APPROVAL_MS = { min: 10_000, max: 120_000, default: 60_000 } as
 /** Margin the decider keeps beyond its two phases to answer before it gives up. */
 export const CEILING_MARGIN_MS = 1_000;
 
+/**
+ * Budget of the post (settled) phase. It is observational: relays post it
+ * fire-and-forget, so this only bounds the background request and never delays
+ * the tool's completion.
+ */
+export const TOOL_SETTLED_POST_MS = 1_500;
+
 /** Extra room transports keep above the largest ceiling. */
 export const BACKSTOP_MARGIN_MS = 4_000;
 

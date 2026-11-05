@@ -17,7 +17,8 @@ import type {
   DispatchAdmissionContract,
   PluginCapabilityIntrospection,
   PluginInteractions,
-  ProjectTabAvailabilityContract
+  ProjectTabAvailabilityContract,
+  ToolSettledContract
 } from './contracts.js';
 
 import type { PluginDatabaseBackup, PluginDatabaseBackupOptions } from './database-backup.js';
@@ -264,7 +265,19 @@ export interface PluginThreadEvent {
 /** Input accepted by core before it adds trusted lifecycle metadata. */
 export type PluginThreadEventInput = Omit<PluginThreadEvent, 'id' | 'schemaVersion' | 'sequence' | 'timestamp'>;
 
+/**
+ * Best-effort, observational completion of a native tool call (Claude/Codex,
+ * PTY and Modern), correlated to {@link PluginToolPolicyRequest} by
+ * `invocationId`. Subscribing with `events.on('tool.settled', ...)` is the opt-in
+ * for metadata-only events. `outputPreview` (redacted, capped at 4 KiB) is
+ * present only when the manifest declares `zcc.toolResults: 'preview'`, read at
+ * activation. Delivery is fire-and-forget: no replay, and a missed event is not
+ * retried.
+ */
+export type ToolSettledEvent = ToolSettledContract;
+
 export interface PluginEvents {
+  on(name: 'tool.settled', handler: (event: ToolSettledEvent) => void | Promise<void>): void;
   on(name: PluginThreadEventName, handler: (event: PluginThreadEvent) => void | Promise<void>): void;
 }
 

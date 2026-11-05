@@ -200,6 +200,12 @@ Migrate to them when a plugin currently works around a missing generic hook:
   but an explicit human allow denies, so use it sparingly. A PTY has no thread
   unless main bound one: its `threadId` is the session id, so branch on
   `surface` and `sessionId` before looking up a thread.
+- `zcc.events.on('tool.settled', ...)` reports how a native tool call ended
+  (`succeeded`, `failed`, `cancelled`, duration, exit code, output size), keyed
+  by the same `invocationId` as `onToolPolicy`. It is observational and best
+  effort. Declare `"toolResults": "preview"` next to `zcc.server` to also receive
+  a redacted 4 KiB `outputPreview`; see
+  [Tool settled events](./extensions-sdk-reference.md#tool-settled-events).
 - `zcc.ui.requestInput` can target a PTY session id shown in the Agents monitor.
   `zcc.host.projectCall` runs on the project's own machine; a project that
   exists only on another machine is confined on that machine.

@@ -306,6 +306,8 @@ export function createAgentRuntimeAdapter(options: {
   onInteractiveRequest?: (request: PendingInteractionCreate) => Promise<PendingInteractionResolution>;
   onPluginToolCall?: (request: ToolCallRequest) => Promise<ToolCallResponse>;
   onNativeToolDecision?: AgentRuntimeOptions['onNativeToolDecision'];
+  /** Observational tool completion (OBL-011); fire-and-forget, scoped to a live thread on this runtime. */
+  onNativeToolSettled?: AgentRuntimeOptions['onNativeToolSettled'];
   fetchPluginHostArtifact?: FetchPluginHostArtifact;
   artifactCacheLogger?: ArtifactCacheLogger;
   onProcessExit?: (info: {
@@ -429,6 +431,16 @@ export function createAgentRuntimeAdapter(options: {
         }
         return decision;
       },
+      ...(options.onNativeToolSettled ? {
+        onNativeToolSettled: event => {
+          const location = threadLocation.get(event.threadId);
+          const session = runtime.getProviderSession(event.threadId);
+          if (!location || runtimes.get(location.environmentId) !== runtime
+            || location.projectId !== event.projectId || location.environmentId !== event.environmentId
+            || session?.providerId !== event.providerId || session.providerThreadId !== event.providerThreadId) return;
+          options.onNativeToolSettled!(event);
+        }
+      } : {}),
       onProcessExit: info => {
         for (const thread of info.threads) {
           const location = threadLocation.get(thread.threadId);

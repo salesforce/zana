@@ -523,6 +523,42 @@ describe('PluginService', () => {
     ).resolves.toEqual({ action: 'reject', message: expected, pluginId: 'peeker' });
   });
 
+  it.each([
+    ['preview', true],
+    [undefined, false]
+  ])('emitToolSettled: output preview only with zcc.toolResults=%s, and only for subscribers', async (toolResults, expectPreview) => {
+    const probe = (name: string, extra?: Record<string, unknown>, subscribe = true) => writePlugin(
+      join(root(), name), name,
+      `export default function plugin(zcc) {
+        zcc.rpc.method('seen', () => globalThis.__settled_${name.replace(/-/g, '_')} ?? []);
+        ${subscribe ? `zcc.events.on('tool.settled', (event) => { (globalThis.__settled_${name.replace(/-/g, '_')} ??= []).push(event); });` : ''}
+      }\n`,
+      extra
+    );
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(probe('settled-a', toolResults ? { toolResults } : undefined));
+    await service.install(probe('settled-quiet', { toolResults: 'preview' }, false));
+    await service.emitToolSettled({
+      invocationId: 'inv', projectId: 'p1', providerId: 'claude-code', toolName: 'Bash', state: 'succeeded', durationMs: 5,
+      outputBytes: 6, output: 'hello!'
+    });
+    const lines = (await service.callRpc('settled-a', 'seen', {})) as Array<Record<string, unknown>>;
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ invocationId: 'inv', state: 'succeeded', outputBytes: 6 });
+    expect('outputPreview' in lines[0]!).toBe(expectPreview);
+    if (expectPreview) expect(lines[0]!.outputPreview).toBe('hello!');
+    expect(await service.callRpc('settled-quiet', 'seen', {})).toEqual([]);
+  });
+
+  it('emitToolSettled: a throwing subscriber never rejects the emit nor blocks other plugins', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(writePlugin(join(root(), 'thrower'), 'thrower',
+      `export default function plugin(zcc) { zcc.events.on('tool.settled', () => { throw new Error('boom'); }); }\n`));
+    await expect(service.emitToolSettled({
+      invocationId: 'inv', projectId: 'p1', providerId: 'claude-code', toolName: 'Bash', state: 'failed', durationMs: 0
+    })).resolves.toBeUndefined();
+  });
+
   it('admitDispatch: failure rejects even when other plugins proceed or wait', async () => {
     const dataDir = root();
     const sources = [

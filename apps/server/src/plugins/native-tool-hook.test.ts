@@ -49,6 +49,14 @@ describe('createNativeToolPolicyHook', () => {
     expect(await hook({ log, decider: () => async () => ({ action: 'maybe' }) })('p1', 's1', event())).toBeNull();
     expect(log).toHaveBeenCalledTimes(2);
   });
+  it('reports an allowed call by invocation id, and never a denied one', async () => {
+    const onAllowed = vi.fn();
+    await hook({ onAllowed })('p1', 's1', event());
+    expect(onAllowed).toHaveBeenCalledWith(parseNativeToolHookEvent('s1', event())?.invocationId);
+    onAllowed.mockClear();
+    await hook({ onAllowed, decider: () => async () => ({ action: 'deny', reason: 'no' }) })('p1', 's1', event());
+    expect(onAllowed).not.toHaveBeenCalled();
+  });
   it('denies oversize input without asking the decider', async () => {
     const decide = vi.fn();
     const result = await hook({ decider: () => decide })('p1', 's1', event({ tool_input: { blob: 'x'.repeat(300 * 1024) } }));

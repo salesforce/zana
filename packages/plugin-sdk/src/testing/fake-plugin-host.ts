@@ -57,6 +57,7 @@ import type {
   PluginHookName,
   PluginHooks,
   PluginEvents,
+  ToolSettledEvent,
   PluginHttp,
   PluginHttpAuthMode,
   PluginHttpHandler,
@@ -409,6 +410,8 @@ export interface FakePluginBehaviorDrivers {
     event: E,
     payload: PluginThreadEventPayloads[E],
   ): Promise<{ errors: unknown[] }>;
+  /** Deliver a `tool.settled` event to every `zcc.events.on('tool.settled', ...)` handler. */
+  emitToolSettled(event: ToolSettledEvent): Promise<{ errors: unknown[] }>;
   /**
    * Call a registered agent tool the way a provider tool-call would:
    * arguments go through the tool's parse step (zod-validated for zod
@@ -1953,9 +1956,14 @@ function createFakePluginHostInternal(
     sharedPortDeclarations.length = 0;
   });
 
+  const toolSettledHandlers: Array<(event: ToolSettledEvent) => void | Promise<void>> = [];
   const events: PluginEvents = {
-    on(event, handler) {
+    on(event: PluginThreadEventName | 'tool.settled', handler: never) {
       assertLive();
+      if (event === 'tool.settled') {
+        toolSettledHandlers.push(handler as (event: ToolSettledEvent) => void | Promise<void>);
+        return;
+      }
       const handlers = threadEventHandlers[event];
       if (handlers === undefined) {
         throw new Error(
@@ -1964,9 +1972,9 @@ function createFakePluginHostInternal(
           ).join(", ")}`,
         );
       }
-      handlers.push(handler);
+      (handlers as unknown[]).push(handler);
     },
-  };
+  } as PluginEvents;
 
   const providers: PluginProviders = {
     register(declaration) {
@@ -2541,6 +2549,19 @@ function createFakePluginHostInternal(
         } catch (error) {
           errors.push(error);
           emitLog("warn", `${event} handler failed: ${errorMessage(error)}`);
+        }
+      }
+      return { errors };
+    },
+
+    async emitToolSettled(event) {
+      const errors: unknown[] = [];
+      for (const handler of [...toolSettledHandlers]) {
+        try {
+          await handler(event);
+        } catch (error) {
+          errors.push(error);
+          emitLog("warn", `tool.settled handler failed: ${errorMessage(error)}`);
         }
       }
       return { errors };

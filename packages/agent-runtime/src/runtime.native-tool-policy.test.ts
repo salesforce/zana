@@ -123,3 +123,49 @@ describe('live runtime native tool identity', () => {
     } finally { await runtime.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
   });
 });
+
+describe('native tool settled notification (OBL-011)', () => {
+  const settled = { threadId: 'thread', providerThreadId: 'prov-1', callId: 'call', toolName: 'Write', state: 'succeeded', durationMs: 4, outputBytes: 2, output: 'hi' };
+  it('scopes the event from the live process records, never the notification, and never reaches the adapter', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'zcc-native-settled-'));
+    const requireProcess = vi.spyOn(RuntimeProviderProcessManager.prototype, 'requireProviderProcess');
+    const onNativeToolSettled = vi.fn();
+    const onEvent = vi.fn();
+    const runtime = createAgentRuntimeWithAdapters({ workspacePath: cwd, onEvent, onToolCall: vi.fn(),
+      onNativeToolSettled, adapterFactory: () => createFakeAdapter(fakeProviderScriptPath) });
+    try {
+      await runtime.startThread({ threadId: 'thread', projectId: 'project', environmentId: 'environment', providerId: 'fake', options: fullRuntimeOptions });
+      const proc = requireProcess.mock.results.find(result => result.type === 'return')!.value;
+      const send = async (params: unknown) => {
+        onNativeToolSettled.mockClear();
+        proc.child.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', method: 'tool/policy/settled', params }) + '\n'));
+        await new Promise(resolve => setImmediate(resolve));
+      };
+      const before = onEvent.mock.calls.length;
+      await send({ ...settled, projectId: 'forged', providerId: 'forged' });
+      expect(onNativeToolSettled).toHaveBeenCalledOnce();
+      expect(onNativeToolSettled.mock.calls[0]![0]).toMatchObject({ ...settled, projectId: 'project', environmentId: 'environment', providerId: 'fake' });
+      expect(onNativeToolSettled.mock.calls[0]![0]).not.toHaveProperty('input');
+      expect(onEvent.mock.calls.length).toBe(before);
+      for (const bad of [{ ...settled, threadId: 'forged' }, { ...settled, providerThreadId: 'unknown' }, { ...settled, state: 'weird' }, { ...settled, durationMs: -1 }]) {
+        await send(bad);
+        expect(onNativeToolSettled).not.toHaveBeenCalled();
+      }
+      proc.expectedShutdownExpectations = 1;
+      await send(settled);
+      expect(onNativeToolSettled).not.toHaveBeenCalled();
+      proc.expectedShutdownExpectations = 0;
+    } finally { requireProcess.mockRestore(); await runtime.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+  });
+  it('contains a throwing callback', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'zcc-native-settled-'));
+    const requireProcess = vi.spyOn(RuntimeProviderProcessManager.prototype, 'requireProviderProcess');
+    const runtime = createAgentRuntimeWithAdapters({ workspacePath: cwd, onEvent() {}, onToolCall: vi.fn(),
+      onNativeToolSettled: () => { throw new Error('boom'); }, adapterFactory: () => createFakeAdapter(fakeProviderScriptPath) });
+    try {
+      await runtime.startThread({ threadId: 'thread', projectId: 'project', environmentId: 'environment', providerId: 'fake', options: fullRuntimeOptions });
+      const proc = requireProcess.mock.results.find(result => result.type === 'return')!.value;
+      expect(() => proc.child.stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', method: 'tool/policy/settled', params: settled }) + '\n'))).not.toThrow();
+    } finally { requireProcess.mockRestore(); await runtime.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+  });
+});

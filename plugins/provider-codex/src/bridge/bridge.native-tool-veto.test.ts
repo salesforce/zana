@@ -234,3 +234,97 @@ it("fails closed to decline when the policy reply is malformed", async () => {
     rmSync(workspace, { recursive: true, force: true });
   }
 }, 30_000);
+
+it("reports tool/policy/settled after an allowed command completes (OBL-011)", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "bb-codex-settled-"));
+  const responseLogPath = join(workspace, "responses.jsonl");
+  const scriptPath = join(workspace, "script.json");
+  writeFileSync(
+    scriptPath,
+    JSON.stringify({
+      responseLogPath,
+      turns: [
+        [
+          {
+            method: "turn/started",
+            params: {
+              threadId: "codex-thread",
+              turn: { id: "turn-1", status: "inProgress" },
+            },
+          },
+          {
+            kind: "request",
+            method: COMMAND_APPROVAL.method,
+            params: COMMAND_APPROVAL.params,
+          },
+          {
+            method: "item/completed",
+            params: {
+              threadId: "codex-thread",
+              turnId: "turn-1",
+              completedAtMs: 0,
+              item: {
+                type: "commandExecution",
+                id: "cmd-item-1",
+                command: "rm -rf /tmp/scratch",
+                cwd: "/tmp",
+                processId: null,
+                pluginId: null,
+                scriptPath: null,
+                source: "agent",
+                status: "failed",
+                commandActions: [],
+                aggregatedOutput: "boom\n",
+                exitCode: 2,
+                durationMs: 5,
+              },
+            },
+          },
+          {
+            method: "turn/completed",
+            params: {
+              threadId: "codex-thread",
+              turn: { id: "turn-1", status: "completed" },
+            },
+          },
+        ],
+      ],
+    }),
+  );
+  stubFakeCodexAppServer(scriptPath);
+  const bridge = createBridgeJsonRpcTestHarness(handleLine);
+  try {
+    await driveApprovalToPolicy(bridge, workspace, "thr_settled");
+    const policy = bridge.messages.find(
+      (message) => message.method === "tool/policy/decide",
+    );
+    handleLine(
+      JSON.stringify({ jsonrpc: "2.0", id: policy?.id, result: { action: "allow" } }),
+    );
+    await vi.waitFor(() => {
+      expect(
+        bridge.messages.some((message) => message.method === "tool/policy/settled"),
+      ).toBe(true);
+    });
+    const settled = bridge.messages.find(
+      (message) => message.method === "tool/policy/settled",
+    );
+    expect(settled?.params).toMatchObject({
+      threadId: "thr_settled",
+      callId: "cmd-item-1",
+      state: "failed",
+      exitCode: 2,
+      output: "boom\n",
+    });
+  } finally {
+    bridge.sendRequest(999, "thread/stop", {
+      threadId: "thr_settled",
+      providerThreadId: "codex-thread",
+      intent: "release",
+      activeTurnId: null,
+    });
+    await bridge.waitForResponse(999).catch(() => undefined);
+    bridge.restore();
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}, 30_000);

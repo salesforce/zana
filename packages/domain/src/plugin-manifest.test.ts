@@ -41,6 +41,13 @@ describe('readPluginManifest', () => {
     expect(() => readPluginManifest(baseZcc({ peers: 'yes' }))).toThrow();
   });
 
+  it('reads the optional toolResults data grant, only the preview value', () => {
+    expect(readPluginManifest(baseZcc()).toolResults).toBeUndefined();
+    expect(readPluginManifest(baseZcc({ toolResults: 'preview' })).toolResults).toBe('preview');
+    expect(() => readPluginManifest(baseZcc({ toolResults: 'full' }))).toThrow();
+    expect(() => readPluginManifest(baseZcc({ toolResults: true }))).toThrow();
+  });
+
   it('reads the optional promptAccess data grant, off unless true', () => {
     expect(readPluginManifest(baseZcc()).promptAccess).toBe(false);
     expect(readPluginManifest(baseZcc({ promptAccess: false })).promptAccess).toBe(false);

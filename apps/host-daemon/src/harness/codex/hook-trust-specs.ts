@@ -8,7 +8,7 @@
 import type { ProviderHookUrls } from '../launch-provider.js';
 import { shellQuote } from '../shell-quote.js';
 import { RELAY_BACKSTOP_SEC } from '@zana-ai/zcc-domain/native-tool-policy-budget';
-import { nativeToolRelayTail } from '../native-tool-relay.js';
+import { nativeToolRelayTail, toolSettledRelayCommand, toolSettledUrlFor } from '../native-tool-relay.js';
 
 /** One matcher group: its matcher and one `command` handler per entry. */
 export interface CodexHookGroup {
@@ -54,9 +54,9 @@ export function renderHookOverrides(specs: readonly CodexHookEventSpec[]): strin
   return specs.flatMap(renderHookOverride);
 }
 
-const one = (event: string, command: string, matcher = '*'): CodexHookEventSpec => ({
+const one = (event: string, command: string | undefined, matcher = '*', extra: readonly string[] = []): CodexHookEventSpec => ({
   event,
-  groups: [{ matcher, commands: [command] }]
+  groups: [{ matcher, commands: [...(command === undefined ? [] : [command]), ...extra] }]
 });
 
 /**
@@ -82,6 +82,12 @@ const one = (event: string, command: string, matcher = '*'): CodexHookEventSpec 
  */
 export function buildCodexHookSpecs(urls: ProviderHookUrls): CodexHookEventSpec[] {
   const specs: CodexHookEventSpec[] = [];
+
+  // OBL-011: the observational post-tool twin of the native-tool gate. It folds
+  // into the one PostToolUse override beside notify's unblock ping (codex takes
+  // one hooks list per event key).
+  const settledUrl = toolSettledUrlFor(urls.nativeTool);
+  const settledCommands = settledUrl ? [toolSettledRelayCommand(shellQuote(settledUrl))] : [];
 
   // PreToolUse carries two independent jobs with DIFFERENT matchers — native
   // tool policy's `*` (every tool call) and notify's `request_user_input` (only
@@ -126,9 +132,11 @@ export function buildCodexHookSpecs(urls: ProviderHookUrls): CodexHookEventSpec[
     preToolUse.push({ matcher: 'request_user_input', commands: [post('blocked')] });
     specs.push(
       one('PermissionRequest', post('blocked')),
-      one('PostToolUse', post('unblocked')),
+      one('PostToolUse', post('unblocked'), '*', settledCommands),
       one('Interrupt', post('unblocked'))
     );
+  } else if (settledCommands.length > 0) {
+    specs.push(one('PostToolUse', undefined, '*', settledCommands));
   }
 
   if (preToolUse.length > 0) specs.push({ event: 'PreToolUse', groups: preToolUse });

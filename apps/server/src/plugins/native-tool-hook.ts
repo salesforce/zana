@@ -25,6 +25,8 @@ export interface NativeToolPolicyHookDeps {
   decider(): ((request: NativeToolPolicyRequest) => Promise<unknown>) | null;
   /** Bounded diagnostics; never carries the tool input. */
   log?(message: string): void;
+  /** Records when an allowed call began, so its settled event can report a duration (OBL-011). */
+  onAllowed?(invocationId: string): void;
 }
 
 export interface NativeToolHookCall {
@@ -107,8 +109,8 @@ export function createNativeToolPolicyHook(deps: NativeToolPolicyHookDeps) {
       return null;
     }
     // The relays match on a non-empty reason, so an allow keeps a fixed one.
-    return decision.data.action === 'deny'
-      ? { decision: 'deny', reason: decision.data.reason }
-      : { decision: 'allow', reason: 'allowed' };
+    if (decision.data.action === 'deny') return { decision: 'deny', reason: decision.data.reason };
+    deps.onAllowed?.(call.invocationId);
+    return { decision: 'allow', reason: 'allowed' };
   };
 }

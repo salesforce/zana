@@ -198,6 +198,14 @@ export interface McpServerOptions {
     body: string
   ) => Promise<{ decision: 'allow' | 'deny'; reason: string } | null>;
   /**
+   * Called with the raw PostToolUse / PostToolUseFailure event JSON a native-tool
+   * relay forwards after a tool call (OBL-011). OBSERVATIONAL: the route answers
+   * 204 before this runs, never reads its result, and logs a failure without the
+   * body (a tool result can carry secrets). The url path carries identity:
+   * `/hook/toolsettled/:projectId/:sessionId`.
+   */
+  onNativeToolSettledHook?: (projectId: string, sessionId: string, body: string) => void | Promise<void>;
+  /**
    * Upper bound (ms) on the whole Native Tool Policy exchange, after which we
    * fail CLOSED (deny) regardless of whether `onNativeToolPolicyHook` has
    * returned — the inverse of {@link overseerDecisionTimeoutMs}'s fail-open
@@ -1191,6 +1199,31 @@ export function matchContentScreenHookRoute(
 }
 
 /**
+ * Match `/hook/toolsettled/:projectId/:sessionId` — the observational
+ * PostToolUse callback (OBL-011). Exported for unit tests.
+ */
+export function matchToolSettledHookRoute(
+  rawUrl: string | undefined
+): { projectId: string; sessionId: string } | null {
+  if (!rawUrl) return null;
+  let pathname: string;
+  try {
+    pathname = new URL(rawUrl, 'http://127.0.0.1').pathname;
+  } catch {
+    return null;
+  }
+  const m = /^\/hook\/toolsettled\/([^/]+)\/([^/]+)$/.exec(pathname);
+  if (!m) return null;
+  const projectId = safeDecode(m[1]);
+  const sessionId = safeDecode(m[2]);
+  if (projectId === null || sessionId === null) return null;
+  return { projectId, sessionId };
+}
+
+/** Largest settled event body read; a bigger one is drained and dropped (best-effort delivery). */
+export const TOOL_SETTLED_BODY_MAX_BYTES = 4 * 1024 * 1024;
+
+/**
  * Match `/hook/nativetool/:projectId/:sessionId` — the SYNCHRONOUS PreToolUse
  * native-tool-policy callback (OBL-004). Like the overseer route this reads
  * the event body and blocks the agent on the reply, but the route is
@@ -1793,6 +1826,50 @@ async function handleRequest(
       void finish(Buffer.concat(chunks).toString('utf8'));
     });
     req.on('error', () => answerDenied('native tool policy request errored'));
+    return;
+  }
+
+  // Observational PostToolUse callback (OBL-011). The reply never waits on the
+  // handler: 204 goes out as soon as the body is in (or dropped), so a slow or
+  // failing consumer cannot delay the relay or the tool. The body is never logged.
+  const toolSettledRoute = matchToolSettledHookRoute(req.url);
+  if (toolSettledRoute) {
+    if (req.method !== 'POST') {
+      req.resume();
+      res.statusCode = 405;
+      res.setHeader('content-type', 'text/plain; charset=utf-8');
+      res.end('method not allowed');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let dropped = false;
+    req.on('data', (c: Buffer) => {
+      total += c.length;
+      if (dropped) return;
+      if (total > TOOL_SETTLED_BODY_MAX_BYTES) {
+        dropped = true;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      res.statusCode = 204;
+      res.end();
+      if (dropped || !opts.onNativeToolSettledHook) return;
+      const body = Buffer.concat(chunks).toString('utf8');
+      void Promise.resolve()
+        .then(() => opts.onNativeToolSettledHook!(toolSettledRoute.projectId, toolSettledRoute.sessionId, body))
+        // A handler error can echo the body (tool output), so only the fact is logged.
+        .catch(() => log('[mcp] tool-settled-hook handler failed'));
+    });
+    req.on('error', () => {
+      if (!res.headersSent) {
+        res.statusCode = 204;
+        res.end();
+      }
+    });
     return;
   }
 

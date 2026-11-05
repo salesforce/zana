@@ -16,9 +16,15 @@ import type {
   ToolCallResponse,
 } from "@zana-ai/zcc-domain/thread-runtime";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
-import type { NativeToolDecision, NativeToolDecisionRequest, ProviderHealthResult } from "@zana-ai/zcc-provider-bridge-protocol";
+import type { NativeToolDecision, NativeToolDecisionRequest, NativeToolSettledParams, ProviderHealthResult } from "@zana-ai/zcc-provider-bridge-protocol";
 
 export type AgentRuntimeNativeToolDecisionRequest = NativeToolDecisionRequest & {
+  providerId: string;
+  projectId: string;
+  environmentId: string;
+};
+
+export type AgentRuntimeNativeToolSettled = NativeToolSettledParams & {
   providerId: string;
   projectId: string;
   environmentId: string;
@@ -149,6 +155,9 @@ export interface AgentRuntimeOptions {
     request: AgentRuntimeNativeToolDecisionRequest,
     signal: AbortSignal,
   ) => Promise<NativeToolDecision>;
+
+  /** Observational completion of a native tool call (OBL-011), scoped like the veto. Fire-and-forget: never awaited. */
+  onNativeToolSettled?: (event: AgentRuntimeNativeToolSettled) => void;
 
   /** Called when a provider pauses for user permission or approval.
    *  The runtime converts provider-native requests into zcc's shared pending-interaction contract. */

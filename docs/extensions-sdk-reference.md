@@ -451,6 +451,47 @@ global `--dangerously-bypass-hook-trust` flag instead; that degraded mode also
 skips the trust prompt for any enabled user or project hook in the launched
 session. Codex Modern (app-server) sessions pass no such flag.
 
+### Tool settled events
+
+`zcc.events.on('tool.settled', handler)` observes the completion of native tool
+calls on Claude and Codex (PTY and Modern). It is observational: it cannot veto,
+delay or alter the tool, and the relay is fire-and-forget (a hung main never
+delays the tool; the host-side post is bounded by `TOOL_SETTLED_POST_MS`, 1.5 s).
+
+```ts
+zcc.events.on('tool.settled', (e) => {
+  // e: { invocationId, sessionId?, threadId?, projectId, providerId, toolName,
+  //      state: 'succeeded' | 'failed' | 'cancelled', durationMs,
+  //      exitCode?, outputBytes?, outputPreview? }
+});
+```
+
+- `invocationId` is the same id the matching `onToolPolicy` request carried, so
+  a plugin can pair a decision with its outcome. PTY events carry `sessionId`,
+  Modern events carry `threadId`.
+- Subscribing is the opt-in for metadata-only events (everything above except
+  `outputPreview`). `outputPreview` is present only when the manifest declares
+  `"toolResults": "preview"` next to `zcc.server`; the flag is read at
+  activation, so changing it needs a reload and, like other new capabilities,
+  does not trigger a re-consent prompt. The preview is redacted for secret-shaped
+  spans in core and capped at 4 KiB of UTF-8. Tool results can carry secrets:
+  the host never logs or persists them, and a plugin should not either.
+- `outputBytes` is the UTF-8 size of the output the provider reported (after the
+  bridge's own bound), not the size of anything the tool wrote elsewhere.
+  Reports whose output exceeds 4 MiB are dropped rather than truncated.
+- Delivery is best effort with no replay: events are lost if the host, a hook or
+  the relay is down, and ordering across invocations is not guaranteed. A handler
+  that throws is contained and does not affect other plugins or the tool.
+- Only calls the host allowed produce an event. On Modern, a settle whose
+  allow was not remembered (for example after a server restart) is dropped.
+- PTY delivery requires a supervised runtime with hook-base evidence, the same
+  condition as native policy; this is not the `tool-after-native` capability,
+  which stays unavailable.
+
+Parity: Claude PTY and Modern (PostToolUse / PostToolUseFailure) and Codex PTY
+(PostToolUse) and Modern (`item/completed` for command and file-change items)
+deliver it. Other harnesses (pi, acp, OpenCode, Cursor) do not.
+
 Scaffolded plugins declare `engines.zccPluginSdk: >=0.1.0`, the public host
 compatibility baseline. This range is intentionally independent from the SDK
 package version selected for development dependencies.

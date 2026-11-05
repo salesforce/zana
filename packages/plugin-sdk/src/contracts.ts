@@ -21,6 +21,8 @@ import type {
   PersonaContributionContract,
   ProjectTabAvailabilityContract,
   TeamContributionContract,
+  ToolSettledContract,
+  ToolSettledState,
 } from '@zana-ai/zcc-domain';
 
 export type {
@@ -40,6 +42,8 @@ export type {
   PersonaContributionContract,
   ProjectTabAvailabilityContract,
   TeamContributionContract,
+  ToolSettledContract,
+  ToolSettledState,
 };
 
 export interface PluginHostRpc {

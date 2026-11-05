@@ -86,6 +86,7 @@ export const pluginBbManifestSchema = z
     host: requiredManifestString.optional(),
     peers: z.boolean().optional(),
     promptAccess: z.boolean().optional(),
+    toolResults: z.literal('preview').optional(),
     skills: z.array(requiredManifestString).optional(),
     themes: z
       .array(

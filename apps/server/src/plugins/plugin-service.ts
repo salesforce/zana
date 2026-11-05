@@ -157,6 +157,7 @@ import { createSerializedTransactionQueue } from '../durable-store.js';
 import { createPluginPackService, type PluginPackService } from './plugin-packs.js';
 import type { PluginRecoveryState } from '@zana-ai/zcc-domain/product';
 import { copyRecoveryRollbackRuntime, copyBundledPluginRuntime } from './plugin-recovery-runtime.js';
+import { finalizeToolSettled } from './tool-settled.js';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -255,6 +256,14 @@ export interface PluginService {
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   dispatchPeer(pluginId: string, method: string, request: import('@zana-ai/zcc-plugin-sdk/server').PluginPeerRequest): Promise<unknown>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
+  /**
+   * Deliver a settled native tool call (OBL-011) to every live plugin that
+   * subscribed with `events.on('tool.settled', ...)`. Core redacts and caps
+   * `output` and hands it over only as `outputPreview` to a plugin whose
+   * activation read `zcc.toolResults: 'preview'`. Best effort: never throws,
+   * never stored, never logged.
+   */
+  emitToolSettled(event: import('./tool-settled.js').ToolSettledIntake): Promise<void>;
   /**
    * The standing instructions the live plugins want in one session, evaluated
    * now with that session's own context. `configure()` runs with real ids, an
@@ -540,6 +549,8 @@ interface LivePlugin {
   pluginStatus?: string | null;
   /** `zcc.promptAccess` as read at this generation's activation; an on-disk edit applies at the next activation. */
   promptAccess?: boolean;
+  /** `zcc.toolResults` as read at this generation's activation; an on-disk edit applies at the next activation. */
+  toolResults?: 'preview';
 }
 
 function readJson(path: string): unknown {
@@ -1650,9 +1661,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     let serverEntry = row.serverEntry;
     let remoteEnvironmentNames: string[] = [];
     let promptAccess = false;
+    let toolResults: 'preview' | undefined;
     try {
       const manifest = loadManifestFromDir(row.rootDir);
       promptAccess = manifest.promptAccess;
+      toolResults = manifest.toolResults;
       hostEntry = manifest.hostEntry;
       if (manifest.serverEntry) serverEntry = manifest.serverEntry;
       remoteEnvironmentNames = parseRemoteEnvironmentNames(manifest.extra);
@@ -1873,7 +1886,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (activationFailure) throw activationFailure;
       toolPolicySealed.add(row.id);
       pendingToolPolicy.delete(row.id);
-      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage, promptAccess });
+      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage, promptAccess, toolResults });
       refreshToolPolicyInventory();
       cancelRecovery(row.id);
       if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
@@ -3147,6 +3160,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async emitThreadEvent(event) {
       await Promise.all(
         [...live.values()].map((current) => current.handle?.emitThreadEvent(event) ?? Promise.resolve())
+      );
+    },
+    async emitToolSettled(intake) {
+      await Promise.all(
+        [...live.values()].map(async (current) => {
+          const handle = current.handle;
+          if (!handle?.hasToolSettledHandler) return;
+          try {
+            // Tool output is a data grant: only a plugin that declared `preview` gets any of it.
+            await handle.emitToolSettled(finalizeToolSettled(intake, current.toolResults === 'preview'));
+          } catch {
+            // Observational: a plugin failure never reaches the tool, and the event is not logged.
+          }
+        })
       );
     },
     async sessionInstructions(args) {

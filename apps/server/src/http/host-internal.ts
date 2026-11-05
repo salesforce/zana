@@ -4,6 +4,8 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { z } from 'zod';
 import { NativeToolPolicyRequestFieldsSchema } from '@zana-ai/zcc-contracts/runtime';
 import { decideMainOwnedToolPolicy } from '../plugins/native-tool-policy.js';
+import { hostToolInvocations } from '../plugins/tool-settled-correlation.js';
+import { NATIVE_TOOL_SETTLED_OUTPUT_MAX_CHARS } from '@zana-ai/zcc-contracts/runtime';
 import { CliCallbackRequestSchema, CLI_CALLBACK_MAX_ACTIVE, CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL, CLI_CALLBACK_MAX_BODY_BYTES, isCliNativeToolPath } from '@zana-ai/zcc-contracts/cli-callbacks';
 import { CliCallbackError } from '../services/launch/cli-callback-authority.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -89,6 +91,9 @@ export async function handleHostInternalHttp(
   }
   if (pathname === '/internal/hosts/native-tool-policy') {
     return handleHostNativeToolPolicy(request, response, ctx);
+  }
+  if (pathname === '/internal/hosts/tool-settled') {
+    return handleHostToolSettled(request, response, ctx);
   }
   if (pathname === '/internal/hosts/cli-callback') {
     return handleHostCliCallback(request, response, ctx);
@@ -375,11 +380,79 @@ async function handleHostNativeToolPolicy(request: IncomingMessage, response: Se
       || current.archivedAt || current.status === 'stopping' || current.status === 'error') {
       deny('native policy session ended'); return true;
     }
+    if (decision.action === 'allow') {
+      hostToolInvocations.remember(`${auth.hostId}\u0000${session.instanceId}\u0000${thread.id}`, input.callId, invocationId);
+    }
     sendJson(response, 200, decision);
   } catch {
     deny('native policy unavailable or invalid');
   } finally {
     clearTimeout(bodyTimer); clearTimeout(timer); activeNativeToolPolicies--;
+  }
+  return true;
+}
+
+const hostToolSettledSchema = z.object({
+  sessionId: z.string().min(1).max(256),
+  providerId: z.string().min(1).max(256),
+  threadId: z.string().min(1).max(256),
+  providerThreadId: z.string().min(1).max(256),
+  callId: z.string().min(1).max(512),
+  toolName: z.string().min(1).max(512).regex(/^[^\x00-\x1f\x7f]+$/),
+  state: z.enum(['succeeded', 'failed', 'cancelled']),
+  durationMs: z.number().int().min(0).max(24 * 60 * 60 * 1000),
+  exitCode: z.number().int().optional(),
+  outputBytes: z.number().int().min(0).optional(),
+  output: z.string().max(NATIVE_TOOL_SETTLED_OUTPUT_MAX_CHARS).optional()
+}).strict();
+
+/**
+ * Observational completion of a Modern native tool call (OBL-011). Answers 204
+ * as soon as the call is validated so a slow plugin can never delay the host;
+ * delivery to plugins is fire-and-forget, the body is never logged, and any
+ * problem drops the event.
+ */
+async function handleHostToolSettled(request: IncomingMessage, response: ServerResponse, ctx: ProductHttpContext): Promise<boolean> {
+  const auth = authenticateHostCall(request, new URL(request.url ?? '/', 'http://127.0.0.1'), ctx);
+  if ('error' in auth) { sendJson(response, auth.status, { error: auth.error }); return true; }
+  if (request.headers['sec-fetch-site'] !== undefined) { sendJson(response, 403, { error: 'tool settled is not a browser route' }); return true; }
+  if (request.method !== 'POST') { sendJson(response, 405, { error: 'method not allowed' }); return true; }
+  const bodyTimer = setTimeout(() => request.destroy(), 10_000);
+  try {
+    const body = await readJsonBody(request, 256 * 1024);
+    clearTimeout(bodyTimer);
+    const parsed = hostToolSettledSchema.safeParse(body);
+    if (!parsed.success) { sendJson(response, 400, { error: 'invalid tool settled event' }); return true; }
+    const event = parsed.data;
+    const session = ctx.hostHub.getSession(auth.hostId);
+    const thread = getConversationThread(ctx.db, event.threadId);
+    if (!session || session.instanceId !== event.sessionId || session.socket.readyState !== session.socket.OPEN
+      || !thread || thread.hostId !== auth.hostId || thread.providerId !== event.providerId
+      || thread.providerThreadId !== event.providerThreadId) {
+      sendJson(response, 409, { error: 'tool settled thread is not live on this host' }); return true;
+    }
+    const invocationId = hostToolInvocations.take(`${auth.hostId}\u0000${session.instanceId}\u0000${thread.id}`, event.callId);
+    response.statusCode = 204;
+    response.end();
+    if (invocationId === undefined) return true;
+    void ctx.plugins
+      ?.emitToolSettled({
+        invocationId,
+        threadId: thread.id,
+        projectId: thread.projectId,
+        providerId: thread.providerId,
+        toolName: event.toolName,
+        state: event.state,
+        durationMs: event.durationMs,
+        ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
+        ...(event.outputBytes !== undefined ? { outputBytes: event.outputBytes } : {}),
+        ...(event.output !== undefined ? { output: event.output } : {})
+      })
+      .catch(() => console.error('[plugins] tool.settled delivery failed'));
+  } catch {
+    if (!response.headersSent) sendJson(response, 400, { error: 'invalid tool settled event' });
+  } finally {
+    clearTimeout(bodyTimer);
   }
   return true;
 }

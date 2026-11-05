@@ -221,3 +221,22 @@ describe.skipIf(!codexPresent)('live codex conformance', () => {
 it('exports the degraded fallback flag name', () => {
   expect(CODEX_BYPASS_HOOK_TRUST_FLAG).toBe('--dangerously-bypass-hook-trust');
 });
+
+describe('tool-settled hook spec (OBL-011)', () => {
+  const postTool = (specs: CodexHookEventSpec[]) => specs.filter((spec) => spec.event === 'PostToolUse');
+  it('adds a standalone PostToolUse relay with the native-tool gate and no notify', () => {
+    const specs = postTool(buildCodexHookSpecs({ nativeTool: ALL_URLS.nativeTool }));
+    expect(specs).toHaveLength(1);
+    expect(JSON.stringify(specs[0])).toContain('/hook/toolsettled/p/s');
+  });
+  it('folds into the one PostToolUse override beside notify', () => {
+    const specs = postTool(buildCodexHookSpecs({ nativeTool: ALL_URLS.nativeTool, notify: ALL_URLS.notify }));
+    expect(specs).toHaveLength(1);
+    const text = JSON.stringify(specs[0]);
+    expect(text).toContain('/hook/toolsettled/p/s');
+    expect(text).toContain('/hook/notify/p/s');
+  });
+  it('adds nothing without a native-tool URL', () => {
+    expect(JSON.stringify(buildCodexHookSpecs({ notify: ALL_URLS.notify }))).not.toContain('toolsettled');
+  });
+});

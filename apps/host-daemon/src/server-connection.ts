@@ -19,7 +19,7 @@ import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manag
 import { createEnrolledPty, type EnrolledPty } from './enrolled-pty.js';
 import { createInteractiveRequestHttpClient } from './interactive-request-client.js';
 import { createPluginToolCallHttpClient } from './plugin-tool-call-client.js';
-import { createNativeToolPolicyHttpClient } from './native-tool-policy-client.js';
+import { createNativeToolPolicyHttpClient, createNativeToolSettledHttpClient } from './native-tool-policy-client.js';
 import { createPluginHostArtifactHttpClient } from './plugin-host-artifact-client.js';
 import {
   InteractiveRequestRegistry,
@@ -126,6 +126,10 @@ export function startEnrolledHostConnection(options: {
     fetchFn, serverUrl: options.serverUrl, hostId: options.hostId,
     hostKey: options.hostKey, sessionId: instanceId
   });
+  const nativeToolSettled = createNativeToolSettledHttpClient({
+    fetchFn, serverUrl: options.serverUrl, hostId: options.hostId,
+    hostKey: options.hostKey, sessionId: instanceId
+  });
   const pluginHostArtifacts = createPluginHostArtifactHttpClient({
     fetchFn,
     serverUrl: options.serverUrl,
@@ -182,6 +186,10 @@ export function startEnrolledHostConnection(options: {
         const decision = await nativeToolPolicy(request, signal);
         return signal.aborted || closed || !socket?.connected || generation !== connectionGeneration
           ? { action: 'deny', reason: 'host session ended' } : decision;
+      },
+      onNativeToolSettled: (event) => {
+        if (closed || !socket?.connected) return;
+        nativeToolSettled(event);
       },
       fetchPluginHostArtifact: (args) => pluginHostArtifacts.fetch(args),
       onProcessExit: (info) => {

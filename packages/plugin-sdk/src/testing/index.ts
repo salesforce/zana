@@ -85,10 +85,16 @@ export interface FakePluginHarness {
       | import('../server.js').PluginHttpResponse
       | Promise<import('../server.js').PluginHttpResponse>;
   }>;
-  events: Array<{
-    name: import('../server.js').PluginThreadEventName;
-    handler: (event: import('../server.js').PluginThreadEvent) => void | Promise<void>;
-  }>;
+  events: Array<
+    | {
+        name: import('../server.js').PluginThreadEventName;
+        handler: (event: import('../server.js').PluginThreadEvent) => void | Promise<void>;
+      }
+    | {
+        name: 'tool.settled';
+        handler: (event: import('../server.js').ToolSettledEvent) => void | Promise<void>;
+      }
+  >;
   sdk: {
     stub(path: string, implementation: (...args: never[]) => unknown): void;
     callsTo(path: string): unknown[][];
@@ -426,8 +432,8 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     events: {
-      on(name, handler) {
-        events.push({ name, handler });
+      on(name: string, handler: unknown) {
+        events.push({ name, handler } as (typeof events)[number]);
       }
     },
     hooks: {

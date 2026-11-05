@@ -254,6 +254,33 @@ export const PtyLifecycleEventMainRequestSchema = z.object({
 }).strict();
 export type PtyLifecycleEventMainRequest = z.infer<typeof PtyLifecycleEventMainRequestSchema>;
 
+/** Longest raw tool output text main forwards for a settled event; core redacts and caps it again before a plugin sees any. */
+export const NATIVE_TOOL_SETTLED_OUTPUT_MAX_CHARS = 32_768;
+
+/**
+ * One settled native tool call of a PTY Electron-main owns (OBL-011). Main
+ * asserts the identity from its live session record and derives `invocationId`
+ * with the same formula as the policy request; the server only fans it out to
+ * plugins. Observational: no reply is read.
+ */
+export const NativeToolSettledMainRequestSchema = z.object({
+  invocationId: z.string().regex(/^[a-f0-9]{64}$/),
+  sessionId: SessionIdSchema.max(256),
+  threadId: SessionIdSchema.max(256).optional(),
+  projectId: ProjectIdSchema.max(256),
+  profile: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
+  toolName: z.string().min(1).max(512).refine(
+    (value) => !/[\x00-\x1f\x7f]/.test(value),
+    'tool name must not contain control characters'
+  ),
+  state: z.enum(['succeeded', 'failed', 'cancelled']),
+  durationMs: z.number().int().min(0).max(2_147_483_647),
+  exitCode: z.number().int().optional(),
+  outputBytes: z.number().int().min(0).optional(),
+  output: z.string().max(NATIVE_TOOL_SETTLED_OUTPUT_MAX_CHARS).optional()
+}).strict();
+export type NativeToolSettledMainRequest = z.infer<typeof NativeToolSettledMainRequestSchema>;
+
 /** Ceiling for the plugin guidance text one PTY launch carries on its argv. */
 export const PTY_SESSION_INSTRUCTIONS_MAX_CHARS = 16_000;
 
@@ -625,6 +652,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     // Admission for PTY input main owns: the server holds the plugin handlers.
     operation: z.literal('plugins-dispatch-admission'),
     request: DispatchAdmissionMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // OBL-011: a settled native tool call of a PTY main owns; observational.
+    operation: z.literal('plugins-tool-settled'),
+    request: NativeToolSettledMainRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     // Lifecycle moments of PTYs main owns: the server holds the plugin handlers.

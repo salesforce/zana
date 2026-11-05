@@ -76,11 +76,13 @@ import type {
   PluginSdkThreadSpawnArgs,
   PluginSdkThreadSummary,
   PluginDispatchAdmissionRequest,
+  PluginEvents,
   PluginHooks,
   PluginToolPolicyRequest,
   PluginToolPolicyDecision,
   PluginThreadEvent,
   PluginThreadEventName,
+  ToolSettledEvent,
   ZccPluginApi,
   ZccPluginFactory
 } from '@zana-ai/zcc-plugin-sdk/server';
@@ -207,6 +209,10 @@ export interface PluginHandle {
   dispatchAdmissionHandlers: Array<(request: PluginDispatchAdmissionRequest) => import('@zana-ai/zcc-domain').DispatchAdmissionDecision | Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>>;
   toolPolicyHandlers: Array<(request: PluginToolPolicyRequest) => PluginToolPolicyDecision | Promise<PluginToolPolicyDecision>>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
+  /** True when the plugin registered a `tool.settled` handler (the metadata opt-in). */
+  readonly hasToolSettledHandler: boolean;
+  /** Deliver a settled native tool call to this plugin's `tool.settled` handlers; each failure is contained. */
+  emitToolSettled(event: ToolSettledEvent): Promise<void>;
   getSettings(): {
     descriptors: Record<string, PluginSettingDescriptor>;
     values: Record<string, PluginSettingValue | undefined>;
@@ -431,6 +437,7 @@ export function createPluginApi(
     name: PluginThreadEventName;
     handler: (event: PluginThreadEvent) => void | Promise<void>;
   }> = [];
+  const toolSettledHandlers: Array<(event: ToolSettledEvent) => void | Promise<void>> = [];
   const sqliteHandles: Array<{ close(): void }> = [];
   let sharedDatabase: PluginDatabase | null = null;
   let sharedSqlite: ReturnType<typeof createSqliteDatabase> | null = null;
@@ -823,9 +830,14 @@ export function createPluginApi(
       }
     },
     events: {
-      on: (name, handler) => {
-        threadEventHandlers.push({ name, handler });
-      }
+      on: ((name: PluginThreadEventName | 'tool.settled', handler: (event: never) => void | Promise<void>) => {
+        if (name === 'tool.settled') {
+          if (typeof handler !== 'function') throw new Error('tool.settled handler must be a function');
+          toolSettledHandlers.push(handler as (event: ToolSettledEvent) => void | Promise<void>);
+          return;
+        }
+        threadEventHandlers.push({ name, handler: handler as (event: PluginThreadEvent) => void | Promise<void> });
+      }) as PluginEvents['on']
     },
     hooks: {
       on: (handler) => {
@@ -2188,6 +2200,18 @@ export function createPluginApi(
         ? hostWorkerExitHandlers.map(handler => () => handler({ hostId: event.hostId }))
         : [...(hostSignalHandlers.get(event.signal ?? '') ?? [])].map(handler => () => handler({ hostId: event.hostId, payload: event.payload }));
       await Promise.allSettled(handlers.map(handler => Promise.resolve().then(handler)));
+    },
+    get hasToolSettledHandler() {
+      return toolSettledHandlers.length > 0;
+    },
+    async emitToolSettled(event) {
+      for (const handler of toolSettledHandlers) {
+        try {
+          await handler(event);
+        } catch (error) {
+          console.error(`[plugin:${pluginId}] events.on tool.settled failed`, error);
+        }
+      }
     },
     async emitThreadEvent(event) {
       for (const record of threadEventHandlers) {

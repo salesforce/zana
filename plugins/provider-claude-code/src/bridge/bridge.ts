@@ -20,6 +20,7 @@ import {
   createBridgeIo,
   createBridgeLineHandler,
   createNativeToolDecisionTracker,
+  createNativeToolSettledReporter,
   createPendingToolCallTracker,
   decodeBridgeJsonRpcResponse,
   runBridgeRequest,
@@ -27,6 +28,7 @@ import {
   withoutBridgeRuntimeEnv,
   type BridgeToolCallRequest,
   type BridgeNativeToolDecisionRequest,
+  type BridgeNativeToolSettledNotification,
   type NativeToolDecision,
   experimental_defineProviderBridge,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
@@ -488,6 +490,7 @@ const { send, sendResult, sendError } = createBridgeIo<
   | SdkMessageNotification
   | BridgeEventNotification
   | BridgeNativeToolDecisionRequest
+  | BridgeNativeToolSettledNotification
   | BridgeToolCallRequest
 >();
 
@@ -496,6 +499,8 @@ const closingSessions = new Map<string, Promise<void>>();
 const toolCallTracker = createPendingToolCallTracker({ sendToolCall: send });
 const { forwardToolCall, handleToolCallResponse } = toolCallTracker;
 const nativeToolDecisionTracker = createNativeToolDecisionTracker(send);
+// OBL-011: observational tool.settled reports, correlated by the SDK tool_use_id.
+const nativeToolSettledReporter = createNativeToolSettledReporter(send);
 
 function resolvePendingSessionWork(
   threadSession: ThreadSession,
@@ -1397,6 +1402,67 @@ function trackSdkAssistantPermissionEscalation(
   }
 }
 
+interface ClaudePostToolInput {
+  hook_event_name: string;
+  tool_use_id: string;
+  tool_name: string;
+  tool_response?: unknown;
+  error?: unknown;
+  is_interrupt?: boolean;
+}
+
+function claudeToolResponseText(value: unknown, depth = 0): string {
+  if (typeof value === "string") return value;
+  if (depth > 4 || typeof value !== "object" || value === null) return "";
+  if (Array.isArray(value)) {
+    return value.slice(0, 64).map((entry) => claudeToolResponseText(entry, depth + 1)).filter(Boolean).join("\n");
+  }
+  const record = value as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const key of ["stdout", "stderr", "output", "content", "text", "result", "error"]) {
+    if (key in record) parts.push(claudeToolResponseText(record[key], depth + 1));
+  }
+  const joined = parts.filter(Boolean).join("\n");
+  if (joined) return joined;
+  try {
+    return JSON.stringify(value).slice(0, 32768);
+  } catch {
+    return "";
+  }
+}
+
+// Reports a finished native tool call; observational, never throws, never logs the output.
+function reportClaudeToolSettled(
+  threadId: string,
+  input: ClaudePostToolInput,
+): void {
+  try {
+    const attachment = threadAttachments.get(threadId);
+    const providerThreadId = attachment?.providerThreadId;
+    if (!attachment || !providerThreadId || !input.tool_use_id || !input.tool_name) return;
+    const failed = input.hook_event_name === "PostToolUseFailure";
+    const response = failed ? undefined : input.tool_response;
+    const record = typeof response === "object" && response !== null ? (response as Record<string, unknown>) : {};
+    const exitCode = typeof record.exit_code === "number" && Number.isInteger(record.exit_code)
+      ? record.exit_code
+      : typeof record.exitCode === "number" && Number.isInteger(record.exitCode) ? record.exitCode : undefined;
+    const cancelled = (failed && input.is_interrupt === true) || record.interrupted === true;
+    const isError = failed || record.is_error === true || (exitCode !== undefined && exitCode !== 0);
+    const output = claudeToolResponseText(failed ? input.error : response).slice(0, 32768);
+    nativeToolSettledReporter.settled({
+      threadId,
+      providerThreadId,
+      callId: input.tool_use_id,
+      toolName: input.tool_name,
+      state: cancelled ? "cancelled" : isError ? "failed" : "succeeded",
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      ...(output ? { output } : {}),
+    });
+  } catch {
+    // Observational only.
+  }
+}
+
 function buildSessionTrackingHooks(
   { sessionSerial, threadIdRef }: CreateSdkCallbackArgs,
   readonlyPreToolUse: HookCallback | undefined,
@@ -1520,6 +1586,7 @@ function buildSessionTrackingHooks(
     if (decision.action !== "allow") {
       return deny(decision.reason);
     }
+    nativeToolSettledReporter.started(threadId, input.tool_use_id);
     if (
       !threadSession.attachment.liveSettings.providerSubagentsEnabled &&
       CLAUDE_PROVIDER_SUBAGENT_TOOL_NAMES.has(input.tool_name)
@@ -1597,6 +1664,12 @@ function buildSessionTrackingHooks(
         ?.residentSession?.permissionEscalationByToolUseId.delete(
           input.tool_use_id,
         );
+    }
+    if (
+      input.hook_event_name === "PostToolUse" ||
+      input.hook_event_name === "PostToolUseFailure"
+    ) {
+      reportClaudeToolSettled(threadIdRef.current, input);
     }
     return { continue: true };
   };
