@@ -68,7 +68,11 @@ describe('createNativeToolSettledHttpClient', () => {
     expect(send(event)).toBeUndefined();
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]!.url).toBe('http://127.0.0.1:9/internal/hosts/tool-settled');
-    expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({ sessionId: 's', callId: 'c' });
+    const body = JSON.parse(String(calls[0]!.init.body));
+    expect(body).toMatchObject({ sessionId: 's', callId: 'c', providerId: 'claude-code' });
+    // The server schema is strict and derives these from the thread record.
+    expect(body).not.toHaveProperty('projectId');
+    expect(body).not.toHaveProperty('environmentId');
     expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer k');
   });
 

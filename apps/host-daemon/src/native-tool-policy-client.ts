@@ -66,6 +66,9 @@ export function createNativeToolSettledHttpClient(options: {
   fetchFn?: typeof fetch;
 }): NonNullable<AgentRuntimeOptions['onNativeToolSettled']> {
   return (event) => {
+    // The server derives project and environment from the thread record and its schema is strict, so
+    // the runtime's own scoping fields must not travel (sending them made every post a 400).
+    const { projectId: _projectId, environmentId: _environmentId, ...wire } = event;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TOOL_SETTLED_POST_MS);
     timer.unref?.();
@@ -74,7 +77,7 @@ export function createNativeToolSettledHttpClient(options: {
         const response = await (options.fetchFn ?? fetch)(joinServerUrl(options.serverUrl, '/internal/hosts/tool-settled').href, {
           method: 'POST', redirect: 'error', signal: controller.signal,
           headers: { authorization: `Bearer ${options.hostKey}`, 'x-zcc-host-id': options.hostId, 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId: options.sessionId, ...event })
+          body: JSON.stringify({ sessionId: options.sessionId, ...wire })
         });
         await response.body?.cancel().catch(() => undefined);
       })
