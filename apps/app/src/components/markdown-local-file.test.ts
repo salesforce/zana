@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   conversationFilePreviewPaths,
   isPreviewableConversationPath,
+  isLocalFileMarkdownHref,
   parseInlineFileCodePath,
   parseLocalFileMarkdownHref,
   resolveThreadFilePreviewPath
@@ -9,6 +10,45 @@ import {
 import { parseThreadMentionHref, splitThreadMentionText } from './markdown-thread-mentions.js';
 
 describe('parseLocalFileMarkdownHref', () => {
+  it('distinguishes a slash-prefixed Windows drive from a protocol-relative URL', () => {
+    expect(isLocalFileMarkdownHref('/D:/repo/report.md')).toBe(true);
+    expect(parseLocalFileMarkdownHref('/D:/repo/report.md')).toBe('D:/repo/report.md');
+    for (const href of ['//workspace/report.md', '//example.com/report.md']) {
+      expect(isLocalFileMarkdownHref(href)).toBe(false);
+      expect(parseLocalFileMarkdownHref(href)).toBeNull();
+    }
+  });
+
+  it.each(['example.com', 'www.github.io', 'report.md'])(
+    'leaves an ambiguous bare destination to web navigation: %s', (href) => {
+      expect(isLocalFileMarkdownHref(href)).toBe(false);
+      expect(parseLocalFileMarkdownHref(href)).toBeNull();
+    }
+  );
+
+  it.each([
+    ['/D:/repo/report.md', 'D:/repo/report.md'],
+    ['D:/repo/report%20one.md:12', 'D:/repo/report one.md'],
+    ['./docs/שלום%20report.md#L3', './docs/שלום report.md'],
+    ['report.md:2', 'report.md'],
+    ['report.md#L2', 'report.md'],
+    ['file:///D:/repo/report.md:2', 'D:/repo/report.md'],
+    ['/tmp/100%25.md', '/tmp/100%.md']
+  ])('normalizes the file target %s', (href, path) => {
+    expect(parseLocalFileMarkdownHref(href)).toBe(path);
+  });
+
+  it.each([
+    '/D:/repo/%2e%2e/private.md', '/tmp/a%2fb.md', '/tmp/a%5cb.md',
+    '/tmp/bad%zz.md', '/tmp/a%00.md', '/tmp/a%0a.md',
+    'D:relative.md', '//server/share/report.md', '\\\\server\\share\\report.md',
+    'file:///D:/repo/%2e%2e/private.md', 'file://server/share/report.md',
+    'file:///tmp/a%2fb.md', '/tmp/a.md:0', '/tmp/a.md#L0',
+    '/tmp/a.md:9007199254740992'
+  ])('rejects unsafe or malformed local target %s', (href) => {
+    expect(parseLocalFileMarkdownHref(href)).toBeNull();
+  });
+
   it('accepts file URLs and absolute paths with a file extension', () => {
     expect(parseLocalFileMarkdownHref('file:///workspace/README.md')).toBe('/workspace/README.md');
     expect(parseLocalFileMarkdownHref('/tmp/app.ts')).toBe('/tmp/app.ts');
@@ -39,6 +79,17 @@ describe('parseLocalFileMarkdownHref', () => {
 });
 
 describe('conversationFilePreviewPaths', () => {
+  it.each(['Updated the and/or logic in v2.5', 'Updated the and/or logic in report.md']) (
+    'does not discover a file in ordinary prose: %s', (text) => {
+      expect(conversationFilePreviewPaths(text)).toEqual([]);
+    }
+  );
+
+  it('allows spaces in explicitly rooted paths and supplied attachment paths', () => {
+    expect(conversationFilePreviewPaths('./docs/my report.md\n/D:/repo/my report.md'))
+      .toEqual(['./docs/my report.md', 'D:/repo/my report.md']);
+    expect(conversationFilePreviewPaths('body', ['docs/my report.md'])).toEqual(['docs/my report.md']);
+  });
   it('picks a workspace-relative path from the top of an assistant dump', () => {
     const dump = [
       'docs/architecture/high-level-architecture.md',

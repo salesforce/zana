@@ -19,8 +19,8 @@ import {
   rewriteLocalhostLinkHref
 } from '../lib/localhost-link-rewrite-preference.js';
 import { handleHttpLinkClick } from '../lib/in-app-browser-link-preference.js';
-import { parseInlineFileCodePath, parseLocalFileMarkdownHref, resolveThreadFilePreviewPath } from './markdown-local-file.js';
-import { MarkdownFileLink } from './MarkdownFileLink.js';
+import { INVALID_LOCAL_FILE_HREF, isLocalFileMarkdownHref, parseInlineFileCodePath, parseLocalFileMarkdownTarget, remarkLocalFileLinks, resolveThreadFilePreviewPath } from './markdown-local-file.js';
+import { MarkdownFileLink, UnavailableMarkdownFileLink } from './MarkdownFileLink.js';
 import { parseThreadMentionHref, remarkThreadMentions } from './markdown-thread-mentions.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { conversationImageSrc } from '../lib/prompt-attachments.js';
@@ -204,6 +204,7 @@ export const MarkdownContent = memo(function MarkdownContent({
     () => [
       remarkGfm,
       remarkMath,
+      remarkLocalFileLinks,
       ...(breaks ? [remarkBreaks] : []),
       ...(threadMentions ? [remarkThreadMentions] : [])
     ],
@@ -252,7 +253,12 @@ export const MarkdownContent = memo(function MarkdownContent({
       <div className="inbox-md">
         <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        urlTransform={(url) => transformMarkdownMediaUrl(url, defaultUrlTransform)}
+        urlTransform={(url, key) => {
+          if (key !== 'href') return transformMarkdownMediaUrl(url, defaultUrlTransform);
+          if (parseLocalFileMarkdownTarget(url)) return url;
+          if (isLocalFileMarkdownHref(url)) return INVALID_LOCAL_FILE_HREF;
+          return parseThreadMentionHref(url) ? url : defaultUrlTransform(url);
+        }}
         rehypePlugins={[
           // html-only avoids KaTeX's sibling MathML+HTML trees, which React
           // warns about as an unkeyed list.
@@ -275,25 +281,22 @@ export const MarkdownContent = memo(function MarkdownContent({
                 </a>
               );
             }
-            const localPath = parseLocalFileMarkdownHref(
-              typeof props.href === 'string' ? props.href : undefined
-            );
-            if (localPath) {
-              if (threadId) {
+            const rawHref = typeof props.href === 'string' ? props.href : undefined;
+            if (rawHref === INVALID_LOCAL_FILE_HREF || isLocalFileMarkdownHref(rawHref)) {
+              const local = parseLocalFileMarkdownTarget(rawHref);
+              if (local && threadId) {
                 return (
-                  <MarkdownFileLink token={localPath} href={props.href} title={localPath} threadId={threadId} projectId={projectId} hints={filePathHints} link>
+                  <MarkdownFileLink token={local.path} lineNumber={local.lineNumber} href={props.href} title={local.path} threadId={threadId} projectId={projectId} hints={filePathHints} link>
                     {props.children}
                   </MarkdownFileLink>
                 );
               }
               return (
-                <a
-                  {...props}
-                  href={props.href}
-                  onClick={(event) => {
-                    event.preventDefault();
-                  }}
-                />
+                <UnavailableMarkdownFileLink reason={local
+                  ? 'Open this file from a thread to preview it.'
+                  : 'This local file link is invalid or unsupported.'}>
+                  {props.children}
+                </UnavailableMarkdownFileLink>
               );
             }
             const href = rewriteLocalhostLinkHref({
@@ -304,7 +307,7 @@ export const MarkdownContent = memo(function MarkdownContent({
             return (
               <a
                 {...props}
-                href={href}
+                href={href || undefined}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(event) => {

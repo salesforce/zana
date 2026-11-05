@@ -13,6 +13,146 @@ import { MarkdownContent } from './MarkdownContent.js';
 beforeEach(() => { vi.resetAllMocks(); });
 afterEach(cleanup);
 
+it.each(['//example.com/report.md', '//github.com/org/repo', '//workspace/report.md', '/settings', '/threads/abc', 'example.com', 'www.github.io', 'report.md'])(
+  'retains web navigation for %s', (href) => {
+    const { container } = render(<MarkdownContent text={`[Navigate](${href})`} threadId="thread-links" />);
+    const anchor = screen.getByRole('link', { name: 'Navigate' });
+    expect(anchor.getAttribute('href')).toBe(href);
+    let prevented: boolean | undefined;
+    container.addEventListener('click', (event) => {
+      prevented = event.defaultPrevented;
+      event.preventDefault(); // Observe native navigation without opening a test page.
+    });
+    fireEvent.click(anchor);
+    expect(prevented).toBe(false);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(h.resolve).not.toHaveBeenCalled();
+  }
+);
+
+it.each([
+  'java&#x09;script:alert(1)//x.md',
+  '&#x01;javascript:alert(1)//x.md',
+  'javascript:alert(1)//x.md',
+  'java%09script:alert(1)//x.md'
+])('does not preserve an obfuscated script destination: %s', (href) => {
+  render(<MarkdownContent text={`[Unsafe](<${href}>)`} threadId="thread-links" />);
+  expect(screen.getByText('Unsafe').getAttribute('href')).toBeNull();
+  expect(h.resolve).not.toHaveBeenCalled();
+});
+
+it('does not put an invalid local destination in a native anchor', () => {
+  render(<MarkdownContent text="[Invalid](D:relative.md)" threadId="thread-links" />);
+  expect(screen.getByText('Invalid').getAttribute('href')).toBe('#');
+});
+
+it.each([
+  ['D:/repo/report.md', 'D:/repo/report.md', null],
+  ['/D:/repo/report.md', 'D:/repo/report.md', null],
+  ['d:\\repo\\report.md', 'd:/repo/report.md', null],
+  ['D:/repo/report%20one.md:12', 'D:/repo/report one.md', 12],
+  ['/D:/repo/report%20one.md#L7', 'D:/repo/report one.md', 7],
+  ['file:///D:/repo/report%20one.md#L7', 'D:/repo/report one.md', 7],
+  ['./docs/שלום%20report.md:3', './docs/שלום report.md', 3],
+  ['/tmp/report.md:5', '/tmp/report.md', 5]
+])('previews the rendered Markdown destination %s', async (href, path, lineNumber) => {
+  h.resolve.mockResolvedValue({ kind: 'resolved', path: 'docs/report.md' });
+  render(<MarkdownContent text={`[Report](<${href}>)`} threadId="thread-links" />);
+  const link = screen.getByRole('link', { name: /Preview/ });
+  expect(fireEvent.click(link)).toBe(false);
+  expect(h.resolve).toHaveBeenCalledWith('thread-links', { path, hints: [] });
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-links', 'docs/report.md', lineNumber));
+});
+
+it.each(['D:relative.md', '/D:/repo/%2e%2e/private.md', 'file://server/share/report.md', '/D:/repo/bad%zz.md', 'D:/repo/a%5cb.md'])(
+  'explains unsupported local destination %s without navigation', async (href) => {
+    render(<MarkdownContent text={`[Report](${href})`} threadId="thread-links" />);
+    expect(fireEvent.click(screen.getByText('Report'))).toBe(false);
+    expect((await screen.findByRole('status')).textContent).toMatch(/invalid|unsupported/i);
+    expect(h.resolve).not.toHaveBeenCalled();
+  }
+);
+
+it('explains when a local link has no owning thread', async () => {
+  render(<MarkdownContent text="[Report](D:/repo/report.md)" />);
+  expect(fireEvent.click(screen.getByText('Report'))).toBe(false);
+  expect((await screen.findByRole('status')).textContent).toMatch(/thread/i);
+  expect(h.resolve).not.toHaveBeenCalled();
+});
+
+it.each([{ button: 1 }, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }])(
+  'keeps modified local-link activation in the preview (%j)', async (options) => {
+    h.resolve.mockResolvedValue({ kind: 'resolved', path: 'docs/report.md' });
+    render(<MarkdownContent text="[Report](/tmp/report.md)" threadId="thread-links" />);
+    const link = screen.getByRole('link', { name: 'Preview report.md' });
+    const allowed = options.button === 1
+      ? fireEvent(link, new MouseEvent('auxclick', { bubbles: true, cancelable: true, ...options }))
+      : fireEvent.click(link, options);
+    expect(allowed).toBe(false);
+    await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-links', 'docs/report.md', null));
+  }
+);
+
+it('carries line focus through ambiguous-file selection', async () => {
+  h.resolve.mockResolvedValue({ kind: 'ambiguous', paths: ['docs/report.md', 'examples/report.md'] });
+  render(<MarkdownContent text="[Report](report.md:9)" threadId="thread-links" />);
+  fireEvent.click(screen.getByText('Report'));
+  fireEvent.click(await screen.findByRole('button', { name: 'docs/report.md' }));
+  expect(h.open).toHaveBeenCalledWith('thread-links', 'docs/report.md', 9);
+});
+
+it('normalizes backslashes in reference links before Markdown URI encoding', async () => {
+  h.resolve.mockResolvedValue({ kind: 'resolved', path: 'docs/report.md' });
+  render(<MarkdownContent text={'[Report][ref]\n\n[ref]: <D:\\repo\\report.md>'} threadId="thread-links" />);
+  fireEvent.click(screen.getByRole('link', { name: 'Preview report.md' }));
+  expect(h.resolve).toHaveBeenCalledWith('thread-links', { path: 'D:/repo/report.md', hints: [] });
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-links', 'docs/report.md', null));
+});
+
+it('ignores a stale resolution after only the requested line changes', async () => {
+  let finish!: (result: { kind: 'resolved'; path: string }) => void;
+  h.resolve.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+    .mockResolvedValue({ kind: 'resolved', path: 'docs/report.md' });
+  const view = render(<MarkdownFileLink token="report.md" threadId="thread-lines" lineNumber={3} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Preview report.md' }));
+  view.rerender(<MarkdownFileLink token="report.md" threadId="thread-lines" lineNumber={4} />);
+  finish({ kind: 'resolved', path: 'docs/report.md' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Preview report.md' }).textContent).toBe('report.md'));
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Preview report.md' }));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-lines', 'docs/report.md', 4));
+});
+
+it('keeps HTTP link behavior and unsafe scheme sanitization', () => {
+  const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  try {
+    render(<MarkdownContent text={'[Web](https://example.com/report.md)\n\n[Unsafe](javascript:bad)\n\n![drive](D:/repo/image.png)'} threadId="thread-links" />);
+    expect(fireEvent.click(screen.getByRole('link', { name: 'Web' }))).toBe(false);
+    expect(open).toHaveBeenCalledWith('https://example.com/report.md', '_blank', 'noopener,noreferrer');
+    expect(screen.getByText('Unsafe').getAttribute('href')).toBeNull();
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(h.resolve).not.toHaveBeenCalled();
+  } finally {
+    open.mockRestore();
+  }
+});
+
+it('shows denied-file errors from the resolver through rendered Markdown', async () => {
+  h.resolve.mockRejectedValue(new Error('path is not inside the thread workspace'));
+  render(<MarkdownContent text="[Private](D:/outside/private.md)" threadId="thread-links" />);
+  fireEvent.click(screen.getByRole('link', { name: 'Preview private.md' }));
+  expect((await screen.findByRole('status')).textContent).toContain('not inside the thread workspace');
+  expect(h.open).not.toHaveBeenCalled();
+});
+
+it('prevents auxiliary navigation for an invalid local link', () => {
+  render(<MarkdownContent text="[Invalid](file://server/share/report.md)" threadId="thread-links" />);
+  const anchor = screen.getByText('Invalid');
+  expect(fireEvent(anchor, new MouseEvent('auxclick', { button: 1, cancelable: true, bubbles: true }))).toBe(false);
+  expect(screen.getByRole('status').textContent).toContain('invalid or unsupported');
+  expect(h.resolve).not.toHaveBeenCalled();
+});
+
 it('shows duplicate basename choices and opens only the selected path', async () => {
   h.resolve.mockResolvedValue({ kind: 'ambiguous', paths: ['docs/guide.md', 'examples/guide.md'] });
   render(<MarkdownFileLink token="guide.md" threadId="thread-1" />);
@@ -20,7 +160,7 @@ it('shows duplicate basename choices and opens only the selected path', async ()
   const choice = await screen.findByRole('button', { name: 'docs/guide.md' });
   expect(h.resolve).toHaveBeenCalledWith('thread-1', { path: 'guide.md', hints: [] });
   fireEvent.click(choice);
-  expect(h.open).toHaveBeenCalledWith('thread-1', 'docs/guide.md');
+  expect(h.open).toHaveBeenCalledWith('thread-1', 'docs/guide.md', null);
 });
 
 it('shows an incomplete-search message without guessing a file', async () => {
@@ -44,7 +184,7 @@ it('opens a uniquely resolved path and passes thread scope, project and hints', 
   h.resolve.mockResolvedValue({ kind: 'resolved', path: 'docs/guide.md' });
   render(<MarkdownFileLink token="guide.md" threadId="thread-2" projectId="project-2" hints={['docs/guide.md']} />);
   fireEvent.click(screen.getByRole('button', { name: 'Preview guide.md' }));
-  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-2', 'docs/guide.md'));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-2', 'docs/guide.md', null));
   expect(h.resolve).toHaveBeenCalledWith('thread-2', { path: 'guide.md', hints: ['docs/guide.md'], projectId: 'project-2' });
 });
 
@@ -54,7 +194,7 @@ it('reports a missing path and retries after the file becomes available', async 
   render(<MarkdownFileLink token="reports/missing.md" threadId="thread-3" />);
   fireEvent.click(screen.getByRole('button', { name: 'Preview missing.md' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
-  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-3', 'reports/missing.md'));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-3', 'reports/missing.md', null));
 });
 
 it('renders resolver errors and permits retry', async () => {
@@ -76,7 +216,7 @@ it('preserves file URL anchors and resolves their normalized path', async () => 
   expect(link.getAttribute('href')).toBe('file:///D:/repo/docs/guide.md');
   fireEvent.click(link);
   expect(h.resolve).toHaveBeenCalledWith('thread-5', { path: 'D:/repo/docs/guide.md', hints: [] });
-  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-5', 'docs/guide.md'));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-5', 'docs/guide.md', null));
 });
 
 it('does not allow choices from an old token or thread to open after rerender', async () => {
@@ -136,7 +276,7 @@ it('resolves a bare filename when a single timeline hint is stale and opens the 
     path: 'guide.md',
     hints: ['old/guide.md']
   }));
-  expect(h.open).toHaveBeenCalledWith('thread-1', 'docs/guide.md');
+  expect(h.open).toHaveBeenCalledWith('thread-1', 'docs/guide.md', null);
 });
 
 it('renders three or more duplicate basename choices from server ambiguity', async () => {

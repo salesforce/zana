@@ -3,6 +3,8 @@ const PATH_LINE_PREFIX = /^(?:file|path)\s*:\s+/iu;
 const PREVIEW_PATH_LINE_CAP = 8;
 const PREVIEW_PATH_CAP = 3;
 const INLINE_FILE_EXT = /\.[A-Za-z][A-Za-z0-9]{0,11}$/u;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/u;
+export const INVALID_LOCAL_FILE_HREF = '#invalid-local-file-link';
 
 function fileBaseName(path: string): string {
   return path.split(/[/\\]/u).pop() ?? path;
@@ -28,32 +30,92 @@ function unwrapLabeledPathLine(line: string): string {
   return labeled ? stripped.slice(labeled[0].length).trim() : stripped;
 }
 
-export function parseLocalFileMarkdownHref(href: string | undefined): string | null {
-  if (!href) return null;
-  const trimmed = href.trim();
-  if (!trimmed || trimmed.startsWith('#') || BLOCKED_SCHEMES.test(trimmed)) return null;
-  if (/^file:\/\//iu.test(trimmed)) {
-    try {
-      const rawPath = trimmed.replace(/^file:\/\//iu, '').split(/[?#]/u)[0] ?? '';
-      if (/%2f|%5c/iu.test(rawPath)) return null;
-      for (const segment of rawPath.split(/[/\\]/u)) {
-        if (decodeURIComponent(segment) === '..') return null;
-      }
-      const url = new URL(trimmed);
-      if (url.host && url.host !== 'localhost' && url.hostname !== '') return null;
-      const path = decodeURIComponent(url.pathname).replace(/^\/([a-z]:\/)/iu, '$1');
-      return path && !path.includes('\0') ? path : null;
-    } catch {
-      return null;
+/** Classification only: invalid local links must also be intercepted instead of navigated. */
+export function isLocalFileMarkdownHref(href: string | undefined): boolean {
+  const value = href?.trim();
+  if (!value || CONTROL_CHARACTERS.test(href ?? '') || value.startsWith('#')
+    || value.startsWith('//') || BLOCKED_SCHEMES.test(value)) return false;
+  if (/^(?:file:|\/?[a-z]:|\\\\)/iu.test(value)) return true;
+  const path = (value.split('#')[0] ?? '').replace(/:\d+$/u, '');
+  // Bare names are ambiguous with domains; only an explicit line marker opts them into preview.
+  if (!/[/\\]/u.test(path) && !/(?::\d+(?:#.*)?|#L\d+)$/u.test(value)) return false;
+  // A colon anywhere else may be an obfuscated URL scheme, never a local filename.
+  return !path.includes(':') && /\.[a-z0-9]{1,12}$/iu.test(fileBaseName(path));
+}
+
+export interface MarkdownFileTarget {
+  path: string;
+  lineNumber: number | null;
+}
+
+function splitFileLine(href: string): MarkdownFileTarget | null {
+  const [destination = '', fragment = ''] = href.split('#');
+  let rawPath = destination;
+  const suffix = /:(\d+)$/u.exec(rawPath);
+  const line = /^L(\d+)$/u.exec(fragment)?.[1] ?? suffix?.[1];
+  const lineNumber = line === undefined ? null : Number(line);
+  if (lineNumber !== null && (!Number.isSafeInteger(lineNumber) || lineNumber <= 0)) return null;
+  if (suffix) rawPath = rawPath.slice(0, -suffix[0].length);
+  return { path: rawPath, lineNumber };
+}
+
+function decodeFilePath(encodedPath: string): string | null {
+  if (/%2f|%5c/iu.test(encodedPath)) return null;
+  const path = decodeURIComponent(encodedPath);
+  return CONTROL_CHARACTERS.test(path) || path.split(/[/\\]/u).includes('..') ? null : path;
+}
+
+function normalizeFileDestination(rawPath: string): string | null {
+  const fileUrl = /^file:/iu.test(rawPath);
+  try {
+    // Validate before URL parsing, which would otherwise collapse dot segments.
+    const encodedPath = fileUrl ? (rawPath.replace(/^file:\/\//iu, '').split('?')[0] ?? '') : rawPath;
+    const decodedPath = decodeFilePath(encodedPath);
+    if (decodedPath === null) return null;
+    let path = decodedPath;
+    if (fileUrl) {
+      const url = new URL(rawPath);
+      if (url.hostname && url.hostname !== 'localhost') return null;
+      path = decodeURIComponent(url.pathname);
     }
-  }
-  const path = trimmed.split('#')[0] ?? trimmed;
-  if (/^[a-z]:[\\/]/iu.test(path) && looksLikeFilePath(path)) return path.replace(/\\/gu, '/');
-  if (path.startsWith('/') && !path.startsWith('//') && looksLikeFilePath(path)) return path;
-  if ((/^\.{0,2}\//u.test(path) || /^[\w.-]+\/[\w./-]+$/u.test(path)) && looksLikeFilePath(path)) {
+    path = path.replace(/\\/gu, '/').replace(/^\/([a-z]:\/)/iu, '$1');
+    if (!path || path.startsWith('//') || /^[a-z]:(?!\/)/iu.test(path)) return null;
+    if (!fileUrl && !looksLikeFilePath(path)) return null;
     return path;
+  } catch {
+    return null;
   }
-  return null;
+}
+
+/** Parse link syntax only. The server resolver and content reader authorize every access. */
+export function parseLocalFileMarkdownTarget(href: string | undefined): MarkdownFileTarget | null {
+  if (!href || !isLocalFileMarkdownHref(href)) return null;
+  const target = splitFileLine(href.trim());
+  if (!target) return null;
+  const path = normalizeFileDestination(target.path);
+  return path ? { path, lineNumber: target.lineNumber } : null;
+}
+
+export function parseLocalFileMarkdownHref(href: string | undefined): string | null {
+  return parseLocalFileMarkdownTarget(href)?.path ?? null;
+}
+
+interface FileLinkNode {
+  type?: string;
+  url?: string;
+  children?: FileLinkNode[];
+}
+
+/** Normalize native drive separators before Markdown URI encoding turns them into %5C. */
+export function remarkLocalFileLinks() {
+  const visit = (node: FileLinkNode): void => {
+    if ((node.type === 'link' || node.type === 'definition') && node.url
+      && /^(?:\/?[a-z]:[/\\]|file:)/iu.test(node.url)) {
+      node.url = node.url.replace(/\\/gu, '/');
+    }
+    node.children?.forEach(visit);
+  };
+  return visit;
 }
 
 /**
@@ -86,10 +148,12 @@ export function conversationFilePreviewPaths(
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  const add = (raw: string | null | undefined) => {
+  const add = (raw: string | null | undefined, discovered = false) => {
     if (!raw || out.length >= PREVIEW_PATH_CAP) return;
     const path = parseLocalFileMarkdownHref(unwrapLabeledPathLine(raw));
-    if (!path || seen.has(path)) return;
+    if (!path || !/[/\\]/u.test(path) || seen.has(path)) return;
+    // Free text needs a path-shaped prefix before whitespace can mean a filename.
+    if (discovered && /\s/u.test(path) && !/^(?:\/|\.\/|[a-z]:[\\/])/iu.test(path)) return;
     seen.add(path);
     out.push(path);
   };
@@ -97,7 +161,7 @@ export function conversationFilePreviewPaths(
   for (const line of text.split(/\r?\n/u).slice(0, PREVIEW_PATH_LINE_CAP)) {
     const candidate = unwrapLabeledPathLine(line);
     if (!candidate || candidate.startsWith('```')) continue;
-    add(candidate);
+    add(candidate, true);
     if (out.length >= PREVIEW_PATH_CAP) break;
   }
   return out;
