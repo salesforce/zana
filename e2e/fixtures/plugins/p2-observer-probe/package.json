@@ -1,0 +1,12 @@
+{
+  "name": "zcc-plugin-p2-observer-probe",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "zcc": ">=1.0.0", "zccPluginSdk": ">=0.1.0" },
+  "zcc": {
+    "name": "P2 Observer Probe",
+    "description": "Test-only observer for admission prompt text, tool.settled, contribution parity and the process helper.",
+    "branding": { "icon": "FlaskConical" },
+    "server": "./server.ts"
+  }
+}

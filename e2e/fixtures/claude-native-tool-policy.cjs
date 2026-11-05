@@ -20,6 +20,14 @@ let hooks = {};
 let serial = 0;
 let turns = Promise.resolve();
 const send = message => process.stdout.write(JSON.stringify(message) + '\n');
+// Record every `--mcp-config` the SDK launched this CLI with, so a spec can read the servers Modern Claude received.
+process.argv.forEach((arg, index) => {
+  if (process.argv[index - 1] !== '--mcp-config') return;
+  try {
+    const raw = arg.trim().startsWith('{') ? arg : require('node:fs').readFileSync(arg, 'utf8');
+    appendFileSync(join(process.cwd(), '.native-policy-mcp.jsonl'), raw.replace(/\n/g, ' ') + '\n', { mode: 0o600 });
+  } catch { /* unreadable config: the spec asserts on the journal */ }
+});
 const journal = row => appendFileSync(join(process.cwd(), '.native-policy-provider.jsonl'), JSON.stringify(row) + '\n', { mode: 0o600 });
 
 async function invokeHook(callbackId, input) {
@@ -69,6 +77,18 @@ async function turn(message) {
       const result = spawnSync('/bin/sh', ['-c', command], { cwd: process.cwd(), timeout: 5_000, encoding: 'utf8' });
       if (result.error) throw result.error;
       exitCode = result.status;
+    }
+    // Labels starting `settled-` also run the SDK's PostToolUse callbacks, as Claude does after a tool ends.
+    if (decision === 'allow' && label.startsWith('settled-')) {
+      const post = { hook_event_name: 'PostToolUse', session_id: sessionId, cwd: process.cwd(),
+        transcript_path: input.transcript_path, permission_mode: permissionMode, tool_name: 'Bash',
+        tool_input: input.tool_input, tool_response: { stdout: 'SETTLED_OUTPUT:' + label + ' token=fixture-secret-must-be-redacted ' + 'x'.repeat(6000), stderr: '', exit_code: exitCode },
+        tool_use_id: toolUseId };
+      const postCallbacks = (hooks.PostToolUse ?? []).filter(row => !row.matcher || new RegExp(row.matcher).test('Bash'))
+        .flatMap(row => row.hookCallbackIds);
+      let postFailed;
+      try { for (const callbackId of postCallbacks) await invokeHook(callbackId, post); } catch (error) { postFailed = String(error); }
+      journal({ phase: 'post', label, sessionId, toolUseId, callbacks: postCallbacks, failed: postFailed });
     }
     journal({ phase: 'settled', label, sessionId, toolUseId, decision, reason, outputs, exitCode, elapsedMs: Date.now() - startedAt });
     reply = `NATIVE_POLICY_RESULT:${label}:${decision}${reason ? ':' + reason : ''}`;

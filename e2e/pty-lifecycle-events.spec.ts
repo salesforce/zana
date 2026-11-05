@@ -62,7 +62,7 @@ serve({ stop: stop[1], notify: notify[1] });
 `;
 
 interface Row {
-  eventId: string; threadId: string; origin: string; surface?: string; sessionId?: string; projectId?: string; providerId?: string;
+  eventId: string; threadId: string; origin: string; surface?: string; sessionId?: string; projectId?: string; providerId?: string; bootId?: string;
 }
 
 async function freePort(): Promise<number> {
@@ -183,6 +183,11 @@ test('a Claude PTY reports created, active, idle, then failed and deleted on a c
     const all = await probe.rows(sessionId);
     expect(new Set(all.map((row) => row.eventId)).size).toBe(all.length);
     for (const row of all) expect(row).toMatchObject({ surface: 'pty', sessionId, projectId: probe.projectId });
+    // One server process: every event carries the same non-empty bootId, across the whole run.
+    const bootIds = new Set((await probe.rpc<Row[]>('lifecycleList')).map((row) => row.bootId));
+    expect([...bootIds]).toHaveLength(1);
+    expect(typeof [...bootIds][0]).toBe('string');
+    expect([...bootIds][0]).not.toBe('');
   } finally {
     await probe.shutdown();
   }

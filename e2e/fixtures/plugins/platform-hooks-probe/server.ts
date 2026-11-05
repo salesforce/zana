@@ -65,6 +65,7 @@ type LifecycleRow = {
   sessionId?: string;
   projectId?: string;
   providerId?: string;
+  bootId?: string;
 };
 
 export default function plugin(zcc: ZccPluginApi) {
@@ -474,7 +475,8 @@ export default function plugin(zcc: ZccPluginApi) {
         ...(event.surface ? { surface: event.surface } : {}),
         ...(event.sessionId ? { sessionId: event.sessionId } : {}),
         ...(event.projectId ? { projectId: event.projectId } : {}),
-        ...(event.providerId ? { providerId: event.providerId } : {})
+        ...(event.providerId ? { providerId: event.providerId } : {}),
+        ...(event.bootId ? { bootId: event.bootId } : {})
       });
     });
   }
