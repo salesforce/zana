@@ -83,6 +83,17 @@ describe('callMainOwnedPtyTool', () => {
     expect(denying.decideToolPolicy).toHaveBeenCalledTimes(2);
   });
 
+  it('does not let another MCP server\'s same-named tool satisfy the host route', async () => {
+    resetNativeAllowsForTest();
+    const p = plugins();
+    const native = { invocationId: 'm'.repeat(64), sessionId: callReq.sessionId, projectId: callReq.projectId, profile: callReq.profile };
+    await decideMainOwnedToolPolicy(p, { ...native, toolName: `mcp__other-server__${callReq.name}`, input: callReq.arguments });
+    expect(p.decideToolPolicy).toHaveBeenCalledTimes(1);
+    await callMainOwnedPtyTool(asService(p), callReq);
+    // the foreign allow is not consumed: the PTY route evaluates for itself
+    expect(p.decideToolPolicy).toHaveBeenCalledTimes(2);
+  });
+
   it('denies without a plugin service', async () => {
     const reply = await callMainOwnedPtyTool(undefined, callReq);
     expect(reply.success).toBe(false);

@@ -24,16 +24,20 @@ export function toolPolicyProviderId(profile: string): string {
  * A native hook allow, remembered briefly so the same call arriving again
  * through the main-owned PTY tool route is not policy-evaluated twice (a
  * second pass could re-ask the human). One-shot, keyed on session + tool name
- * without the `mcp__<server>__` prefix + redacted input hash. Absent record
+ * without the host's `mcp__zcc-inbox__` prefix + redacted input hash. Absent record
  * means the caller evaluates normally, so Codex (whose hook cannot see MCP
  * calls) still gets its single evaluation.
  */
 export const NATIVE_ALLOW_TTL_MS = 15_000;
 const NATIVE_ALLOW_MAX = 256;
+const HOST_MCP_PREFIX = /^mcp__zcc-inbox__/;
 const nativeAllows = new Map<string, number>();
 
 function nativeAllowKey(sessionId: string, toolName: string, input: unknown): string {
-  const bare = toolName.replace(/^mcp__.+?__/, '');
+  // Only the host's own MCP route reaches the PTY tool endpoint, so only its
+  // prefix is equivalent to the bare plugin tool name; any other server's tool
+  // of the same name is a different tool and must not inherit the allow.
+  const bare = toolName.replace(HOST_MCP_PREFIX, '');
   const digest = createHash('sha256').update(JSON.stringify(redactToolInput(input)) ?? '').digest('hex');
   return `${sessionId}\u0000${bare}\u0000${digest}`;
 }

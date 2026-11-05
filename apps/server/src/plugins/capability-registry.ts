@@ -25,6 +25,8 @@ export class CapabilityRegistry {
 }
 
 export const capabilityRegistry = new CapabilityRegistry();
+const MODERN_CODEX_VETO_LIMIT = 'modern/codex: the veto covers commands and file changes Codex raises an approval for. That is every one at full permission scope; at workspace scope Codex raises none for a command that stays inside its sandbox, and automatic review settles approvals inside Codex. MCP tool calls and web search raise no approval and are never gated';
+const MODERN_UNWIRED_VETO = 'modern/{harness}: no awaited native-policy transport is wired for this harness';
 const ACP_CURSOR_VETO_LIMIT = 'modern/acp-cursor: permission requests Cursor raises over ACP are decided by host policy, but a tool it runs without raising a request is not gated, and request coverage is unverified against a logged-in cursor-agent';
 // Exact bridge registrations; only the awaited native-policy transport can advertise a veto.
 for (const harness of ['claude-code', 'codex', 'pi', 'acp', 'acp-opencode', 'acp-cursor']) {
@@ -39,7 +41,8 @@ for (const harness of ['claude-code', 'codex', 'pi', 'acp', 'acp-opencode', 'acp
     // (provider-codex/src/bridge/bridge.ts routeCodexNativeToolPolicy). Web search and
     // MCP tool calls emit no client approval and remain outside the veto — documented,
     // not silently covered.
-    if (harness === 'codex') capabilityRegistry.register(key, 'tool-before-native', { available: true });
+    if (harness === 'codex') capabilityRegistry.register(key, 'tool-before-native', { available: true, reason: MODERN_CODEX_VETO_LIMIT });
+    if (harness === 'pi' || harness === 'acp' || harness === 'acp-opencode') capabilityRegistry.register(key, 'tool-before-native', { available: false, reason: MODERN_UNWIRED_VETO.replace('{harness}', harness) });
     // Cursor over ACP: permission requests the agent raises are decided by host policy
     // before any allow, but an agent running with permissions pre-granted raises none,
     // and no live Cursor login was available to prove which requests it raises. The
@@ -99,7 +102,7 @@ const OPENCODE_PTY_VETO = 'Vetoes tools the agent runs through OpenCode\'s plugi
 // ahead of every tool the agent calls (shell, MCP, file reads and writes). Not
 // gated: a command the user types into the TUI, Tab completion edits, and a
 // remote launch (no host-local directory to name).
-const CURSOR_PTY_VETO = 'Vetoes tools the agent runs through Cursor\'s blocking preToolUse hook; a command the user types into the TUI and Tab completion edits are not gated, and a remote launch carries no veto';
+const CURSOR_PTY_VETO = 'Vetoes tools the agent runs through Cursor\'s blocking preToolUse hook; a command the user types into the TUI and Tab completion edits are not gated, and a remote launch carries no veto. Whether Cursor loads the per-session plugin directory has not been verified against a logged-in cursor-agent';
 for (const harness of ['claude', 'codex', 'opencode', 'cursor']) {
   for (const headless of [false, true]) {
     const key: CapabilitySurfaceKey = { surface: 'pty', harness, headless, hookBase: true };

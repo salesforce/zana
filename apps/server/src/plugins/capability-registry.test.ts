@@ -79,7 +79,7 @@ describe('surface wiring registry', () => {
   it.each([false, true])('advertises the awaited Modern native veto for each wired harness (headless=%s)', headless => {
     for (const harness of ['claude-code', 'codex']) {
       expect(capabilityRegistry.describe({ surface: 'modern', harness, headless, hookBase: true })
-        .find(row => row.id === 'tool-before-native')).toEqual({ id: 'tool-before-native', available: true });
+        .find(row => row.id === 'tool-before-native')).toMatchObject({ id: 'tool-before-native', available: true });
       expect(capabilityRegistry.describe({ surface: 'modern', harness, headless, hookBase: false })
         .find(row => row.id === 'tool-before-native')?.available).toBe(false);
     }
@@ -87,7 +87,20 @@ describe('surface wiring registry', () => {
   it('wires the Modern Codex command + file-change native veto', () => {
     const row = capabilityRegistry.describe({ surface: 'modern', harness: 'codex', headless: false, hookBase: true })
       .find(row => row.id === 'tool-before-native');
-    expect(row).toEqual({ id: 'tool-before-native', available: true });
+    expect(row).toMatchObject({ id: 'tool-before-native', available: true });
+    // Honest scope: Codex raises no approval for an in-sandbox command at workspace scope.
+    expect(row?.reason).toContain('workspace scope');
+    expect(row?.reason).toContain('MCP');
+  });
+  it('states why Modern harnesses without an awaited policy transport are unavailable', () => {
+    for (const harness of ['pi', 'acp', 'acp-opencode']) {
+      expect(capabilityRegistry.describe({ surface: 'modern', harness, headless: false, hookBase: true })
+        .find(r => r.id === 'tool-before-native')).toMatchObject({ available: false, reason: expect.stringContaining(harness) });
+    }
+  });
+  it('flags that the Cursor PTY veto is not verified against a logged-in agent', () => {
+    expect(capabilityRegistry.describe({ surface: 'pty', harness: 'cursor', headless: false, hookBase: true })
+      .find(r => r.id === 'tool-before-native')?.reason).toContain('not been verified');
   });
   it('allows explicit wiring registration only; unknown and missing session evidence unavailable', () => {
     const key = terminalCapabilityKey({ profile: 'codex-yolo' });
