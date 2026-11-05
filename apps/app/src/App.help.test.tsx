@@ -203,11 +203,12 @@ it('native menu items reach the same store actions as their shortcuts', async ()
   try {
     act(() => {
       for (const event of ['app:openSettings', 'app:toggleInbox', 'app:openPalette', 'app:openShortcuts',
-        'app:toggleProjectView', 'app:newClaudeTab', 'app:reopenTab', 'app:closeTab']) fixtures.menuEvent!(event);
+        'app:toggleProjectView', 'app:openHome', 'app:newClaudeTab', 'app:reopenTab', 'app:closeTab']) fixtures.menuEvent!(event);
     });
     // Settings… shares ⌘,'s toggle, so drilled in it opens Project settings too.
     expect(actions.toggleSettings).toHaveBeenCalledOnce();
     expect(actions.setNav).toHaveBeenCalledWith('inbox');
+    expect(actions.setNav).toHaveBeenCalledWith('home');
     expect(actions.setPaletteOpen).toHaveBeenCalledWith(true);
     expect(actions.setShortcutsOpen).toHaveBeenCalledWith(true);
   } finally {

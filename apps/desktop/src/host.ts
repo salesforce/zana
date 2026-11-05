@@ -336,6 +336,7 @@ import { readClaudeLoops } from '@zana-ai/zcc-server/services/misc/claude-loops-
 import { TrayController } from './tray.js';
 import { MenubarController, isRepliable } from './menu.js';
 import { CompanionController } from './companion.js';
+import { createCompanionController, createCompanionHost, onVisibleParent } from './companion-host.js';
 import { createUpdater, type Updater } from './updater.js';
 import { getReleaseNotes } from './release-notes.js';
 import { compareVersions } from '@zana-ai/zcc-extension-sdk';
@@ -1492,36 +1493,18 @@ let tray: TrayController | null = null;
 let menubar: MenubarController | null = null;
 /** Command Center rail + quick panel (opt-in, `companionEnabled`). */
 let companion: CompanionController | null = null;
-
-function companionEnabled(): boolean {
-  return process.platform === 'darwin' && store.getConfig().companionEnabled === true;
-}
-
-/** "Minimize to Command Center" — shows the rail; falls back to a plain minimize when off. */
-function enterCommandCenter() {
-  if (companion?.enter()) return;
-  const win = BrowserWindow.getFocusedWindow() ?? mainWindow();
-  if (win && !win.isDestroyed()) win.minimize();
-}
-
-/**
- * Show/hide the Window-menu entry to match the opt-in flag (no menu rebuild).
- * Disabled too: a hidden item's ⇧⌘M would otherwise still fire on macOS.
- */
-function syncCompanionMenu() {
-  const item = Menu.getApplicationMenu()?.getMenuItemById('companion-enter');
-  if (item) {
-    item.visible = companionEnabled();
-    item.enabled = companionEnabled();
-  }
-  tray?.refreshSurface();
-}
-
-/** The focused window for menu routing — never a companion rail/panel. */
-function focusedAppWindow(): BrowserWindow | null {
-  const focused = BrowserWindow.getFocusedWindow();
-  return focused && !companion?.ownsWindow(focused) ? focused : mainWindow();
-}
+const companionHost = createCompanionHost({
+  platform: process.platform,
+  flag: () => store.getConfig().companionEnabled === true,
+  companion: () => companion,
+  focusedWindow: () => BrowserWindow.getFocusedWindow(),
+  mainWindow: () => mainWindow(),
+  applicationMenu: () => Menu.getApplicationMenu(),
+  refreshTray: () => tray?.refreshSurface()
+});
+const companionEnabled = companionHost.enabled;
+const syncCompanionMenu = companionHost.syncMenu;
+const focusedAppWindow = companionHost.focusedAppWindow;
 
 /** macOS + config flag: the frameless-card menu-bar popover is the tray surface. */
 function menubarPopoverEnabled(): boolean {
@@ -7553,11 +7536,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
   // Command Center opt-in: the yellow traffic light / ⌘M hand off to the rail
   // instead of the Dock (enter() hides the minimized window too). With the rail
   // already up, a window surfaced by a deep link goes back behind it.
-  win.on('minimize', () => {
-    if (!companionEnabled() || !companion) return;
-    if (companion.isActive()) companion.hideBehindRail(win);
-    else companion.enter();
-  });
+  win.on('minimize', () => companionHost.onWindowMinimized(win));
 
   // Push OS-level fullscreen transitions to the renderer that's actually IN
   // this window (not every window — each has its own fullscreen state), so a
@@ -8420,15 +8399,7 @@ function buildAppMenu() {
       label: 'Window',
       submenu: [
         { role: 'minimize' },
-        {
-          id: 'companion-enter',
-          label: 'Minimize to Command Center',
-          accelerator: 'Shift+CmdOrCtrl+M',
-          visible: companionEnabled(),
-          enabled: companionEnabled(),
-          acceleratorWorksWhenHidden: false,
-          click: () => enterCommandCenter()
-        },
+        companionHost.menuItem(),
         { role: 'zoom' },
         ...(isMac
           ? ([
@@ -8891,44 +8862,23 @@ async function bootstrapNormal() {
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
     });
-    // macOS-only surface: elsewhere nothing is constructed or subscribed.
-    if (process.platform === 'darwin') companion = new CompanionController({
+    companion = createCompanionController(process.platform, {
       ptys,
       scheduler,
       agentStatus,
       inboxStore,
-      projectName: (id) => store.listProjects().find((p) => p.id === id)?.name ?? 'project',
-      projectColor: (id) => store.listProjects().find((p) => p.id === id)?.color,
-      triage: (sessionId) => lastTriageBySession.get(sessionId) ?? null,
+      store,
+      triageCache: lastTriageBySession,
       listThreads: listMenubarThreads,
-      onThreadsChanged: (listener) => runtimeSupervisor?.onMenubarThreadsChanged(listener) ?? (() => {}),
-      openThread: (threadId, projectId) => {
-        showMainWindow();
-        void ensureMainWindowReady()
-          .then((ready) => (ready ? openMenubarThread(threadId, projectId) : { ok: false, reason: 'main renderer did not become ready' }))
-          .then((result) => {
-            if (!result?.ok) logMainError('companion open thread', result?.reason ?? 'thread unavailable');
-          })
-          .catch((err) => logMainError('companion open thread', err));
-      },
-      theme: () => resolveTheme(),
+      runtime: () => runtimeSupervisor,
+      windows,
+      ensureMainWindowReady,
+      openThread: openMenubarThread,
+      theme: resolveTheme,
       isEnabled: companionEnabled,
-      getPlacement: () => store.getConfig().companionPlacement,
-      savePlacement: (placement) => {
-        store.setConfig({ companionPlacement: placement });
-      },
-      mainWindows: () => [...windows.values()].map(({ win }) => win),
       showMainWindow,
-      restoreWindows: (wins) => {
-        // E2E keeps app windows hidden (never steal focus), as showMainWindow does.
-        if (E2E_LAUNCH) return;
-        for (const w of wins) {
-          if (w.isDestroyed()) continue;
-          if (w.isMinimized()) w.restore();
-          w.showInactive();
-        }
-      },
-      sendToApp: (channel, ...args) => safeSend(channel, ...args),
+      e2e: E2E_LAUNCH,
+      sendToApp: safeSend,
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
     });
@@ -8947,7 +8897,7 @@ async function bootstrapNormal() {
       openScheduler: (taskId) => safeSend('app:openScheduler', taskId),
       popover: menubar,
       popoverEnabled: menubarPopoverEnabled,
-      commandCenter: { enabled: companionEnabled, enter: enterCommandCenter },
+      commandCenter: { enabled: companionEnabled, enter: companionHost.enter },
       logger: logMainError
     });
     tray.start();
@@ -10293,9 +10243,7 @@ const quitGuard = createQuitGuard({
         ? 'Agent activity could not be checked. Quitting will interrupt any running agents and terminate terminals.'
         : 'Quitting will interrupt running agents and terminate terminals, including background sessions.'
     };
-    // A sheet on a hidden window (Command Center rail up) would be invisible.
-    const parent = mainWindow();
-    const result = parent?.isVisible() ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    const result = await onVisibleParent(mainWindow(), (win) => dialog.showMessageBox(win, opts), () => dialog.showMessageBox(opts));
     return result.response === 0;
   },
   quit: () => app.quit(),
