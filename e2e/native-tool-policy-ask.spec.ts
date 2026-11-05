@@ -33,6 +33,20 @@ const PROBE_LOOP = String.raw`
 const write = (file, text) => { const tmp = file + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, text); fs.renameSync(tmp, file); };
 function serveProbes(command) {
   createInterface({ input: process.stdin }).on('line', (line) => {
+    // call <label>: the agent calls the plugin session tool through the zcc-inbox MCP route.
+    const call = /^call ([\w-]+)$/.exec(line.trim());
+    if (call) {
+      const label = call[1];
+      const { name, args } = JSON.parse(fs.readFileSync(join(__dirname, label + '.json'), 'utf8'));
+      fetch(process.env.ZCC_MCP_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })
+      }).then((response) => response.text().then((text) => ({ status: response.status, text })))
+        .catch((error) => ({ status: 0, text: String(error) }))
+        .then((out) => { write(join(__dirname, label + '.out.json'), JSON.stringify(out)); console.log('CALL_ACK:' + label); });
+      return;
+    }
     const match = /^probe ([\w-]+)$/.exec(line.trim());
     if (!match) return;
     const label = match[1];
@@ -146,7 +160,15 @@ function probeApi(win: Page, stubDir: string, sessionId: string) {
     await expect.poll(() => existsSync(out), { timeout: 170_000, message: `probe ${label} never answered` }).toBe(true);
     return JSON.parse(readFileSync(out, 'utf8')) as ProbeResult;
   };
-  return { rpc, rows, probe };
+  /** The agent calls a plugin session tool over MCP; resolves with the HTTP status and body. */
+  const callTool = async (label: string, name: string, args: unknown): Promise<{ status: number; text: string }> => {
+    writeAtomic(join(stubDir, `${label}.json`), JSON.stringify({ name, args }));
+    await win.evaluate(({ id, line }) => window.cc.terminals.write(id, line), { id: sessionId, line: `call ${label}\r` });
+    const out = join(stubDir, `${label}.out.json`);
+    await expect.poll(() => existsSync(out), { timeout: 170_000, message: `call ${label} never answered` }).toBe(true);
+    return JSON.parse(readFileSync(out, 'utf8')) as { status: number; text: string };
+  };
+  return { rpc, rows, probe, callTool };
 }
 
 /** Boot the private app with the probe plugin running and one main-owned PTY running the stub CLI. */
@@ -277,6 +299,43 @@ test('deny, cancel and an unanswered ask all deny the PTY tool call', async ({ h
     expect(reasonOf(timedOut)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'Tool call approval timed out' });
     expect(Date.now() - started).toBeGreaterThanOrEqual(9_000);
     expect(await pendingAsk(probe)).toEqual([]);
+  } finally {
+    await probe.cleanup();
+  }
+});
+
+test('a PTY plugin tool call the human already approved natively is not asked again, once', async ({ home }) => {
+  test.setTimeout(240_000);
+  const probe = await launchProbe(home, 'claude', CLAUDE_STUB);
+  const tool = 'platform_hooks_probe_marker';
+  try {
+    await probe.rpc('toolPolicyEventsClear');
+    await probe.rpc('setToolPolicySelection', { selection: 'ask' });
+
+    // 1. The CLI's PreToolUse hook asks; the human approves.
+    const hook = probe.probe('native', { ...claudeEvent(probe, 'toolu_single_eval'), tool_name: `mcp__zcc-inbox__${tool}`, tool_input: {} });
+    const ask = await waitForAsk(probe);
+    await probe.win.evaluate(({ sessionId, id }) => window.cc.threads.interactions.respondSession(sessionId, id, { decision: 'allow' }), { sessionId: probe.sessionId, id: ask.id });
+    expect(await hook).toMatchObject({ status: 0, stdout: '' });
+    expect(await probe.rows()).toHaveLength(1);
+
+    // 2. The same call then reaches the main-owned PTY tool route: it runs with NO second ask or evaluation.
+    const first = await probe.callTool('call-1', tool, {});
+    expect(first.status, first.text).toBe(200);
+    expect(JSON.parse(first.text).result.isError, first.text).not.toBe(true);
+    expect(await pendingAsk(probe)).toEqual([]);
+    expect(await probe.rows()).toHaveLength(1);
+
+    // 3. The approval was one-shot: the next identical call is judged (and asked) afresh.
+    const second = probe.callTool('call-2', tool, {});
+    const again = await waitForAsk(probe);
+    await probe.win.evaluate(async ({ sessionId, id }) => {
+      await fetch(`/api/v1/pty-sessions/${sessionId}/interactions/${id}/cancel`, { method: 'POST' });
+    }, { sessionId: probe.sessionId, id: again.id });
+    const denied = await second;
+    expect(denied.status).toBe(200);
+    expect(JSON.parse(denied.text).result.isError, denied.text).toBe(true);
+    expect(await probe.rows()).toHaveLength(2);
   } finally {
     await probe.cleanup();
   }
