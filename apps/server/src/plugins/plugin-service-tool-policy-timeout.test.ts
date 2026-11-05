@@ -37,8 +37,8 @@ function writePlugin(id: string, handlerBody: string, timeoutMs?: unknown): stri
 const sleepThenAllow = (ms: number) => `await new Promise((r) => setTimeout(r, ${ms})); return { action: 'allow' };`;
 const HANG = `await new Promise(() => {});`;
 
-async function setup(plugins: Array<[string, string, unknown?]>) {
-  const service = createPluginService({ dataDir: root(), bundledRoot: root() } as never);
+async function setup(plugins: Array<[string, string, unknown?]>, requestPluginInteraction?: (input: unknown) => Promise<unknown>) {
+  const service = createPluginService({ dataDir: root(), bundledRoot: root(), requestPluginInteraction } as never);
   services.push(service);
   for (const [id, body, timeout] of plugins) await service.install(writePlugin(id, body, timeout));
   return service;
@@ -108,6 +108,22 @@ describe('per-plugin tool policy timeout', () => {
     await advance(200);
     // Evaluation order follows the live set; either way the pair is bounded by one 9 s budget.
     await expect(pending).resolves.toMatchObject({ action: 'deny', reason: expect.stringMatching(/^Plugin tool policy unavailable: (first|second)$/) });
+  });
+
+  it('two plugins plus one ask: the human approval time is never charged to the 9 s decision budget', async () => {
+    // Real timers for the handlers; only Date jumps, so a regression that measures the
+    // approval inside a handler's spent time would leave `plain` with no budget and deny.
+    const approval = vi.fn(async () => {
+      vi.setSystemTime(Date.now() + 30_000);
+      return { outcome: 'submitted', actor: 'human', value: { decision: 'allow' } };
+    });
+    const service = await setup([
+      ['asker', `return { action: 'ask', prompt: 'Run it?' };`, 9_000],
+      ['plain', sleepThenAllow(50), 9_000]
+    ], approval);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    await expect(service.decideToolPolicy(call())).resolves.toEqual({ action: 'allow' });
+    expect(approval).toHaveBeenCalledTimes(1);
   });
 
   it('uses the live plugin set at call time: a removed plugin no longer constrains the call', async () => {

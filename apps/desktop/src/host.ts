@@ -3260,7 +3260,9 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
     for (let offset = 0; offset < page.length; offset += 100) {
       const observations: TeamModernWorkerObservation[] = [];
       for (const { record, worker } of page.slice(offset, offset + 100)) {
-        const reference = { recordId: record.id, slotId: worker.slotId, generation: worker.generation!, threadId: worker.threadId! };
+        const reference = { recordId: record.id, slotId: worker.slotId, generation: worker.generation!, threadId: worker.threadId!,
+          // Read-time revision: a stale "unknown" must not downgrade a worker main bound meanwhile.
+          observedRevision: record.revision };
         // The resuming launch owns this binding: the runtime is still on the old generation and stopped.
         if (worker.bindingState === 'RESUMING') continue;
         try {
