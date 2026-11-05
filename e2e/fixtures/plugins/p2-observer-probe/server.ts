@@ -52,13 +52,15 @@ export default function plugin(zcc: ZccPluginApi) {
     return { action: 'allow' };
   });
 
+  // Tool names are global across plugins; several observer copies load at once, so suffix with the plugin id.
+  const toolName = `p2_probe_tool_${zcc.pluginId.replace(/[^a-zA-Z0-9]/g, '_')}`;
   zcc.agents.registerTool({
-    name: 'p2_probe_tool',
+    name: toolName,
     description: 'Harmless test-only tool. Returns a fixed marker.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     async execute() { return { ok: true, marker: 'P2_TOOL_RAN' }; }
   });
-  zcc.agents.configure(() => ({ tools: ['p2_probe_tool'] }));
+  zcc.agents.configure(() => ({ tools: [toolName] }));
 
   // Process helper. The host discards child output, so each shell writes its own pid files.
   zcc.rpc.method('spawnTree', async (input) => {

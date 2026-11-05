@@ -69,7 +69,7 @@ test('prompt text reaches only the granted plugin, redacted and capped, and reje
   await waitForProduct();
   const granted = rpcOn(page, GRANTED);
   const plain = rpcOn(page, PLAIN);
-  const projectId = ((await (await post('/api/v1/projects', { path: join(home, 'prompt-project') })).json()) as { project: { id: string } }).project.id;
+  const projectId = await addProject(page, join(home, 'prompt-project'));
   await granted('setRejectMarker', { marker: MARKER });
 
   const prompt = `please run ${MARKER} with token=${SECRET} and Bearer abcdefghijklmnop0123`;

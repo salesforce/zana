@@ -59,8 +59,8 @@ export const rpcOn = (page: Page, pluginId: string) => <T,>(method: string, args
 
 export async function waitForRunning(page: Page, ids: string[]): Promise<void> {
   await expect.poll(async () => {
-    const rows = await page.evaluate(async () => (await window.cc.pluginApps.list()).map((row) => ({ id: row.id, status: row.status })));
-    return ids.filter((id) => rows.find((row) => row.id === id)?.status !== 'running');
+    const rows = await page.evaluate(async () => (await window.cc.pluginApps.list()).map((row) => ({ id: row.id, status: row.status, detail: (row as { statusDetail?: string }).statusDetail })));
+    return ids.map((id) => rows.find((row) => row.id === id)).filter((row) => row?.status !== 'running').map((row) => `${row?.status}:${row?.detail ?? ''}`);
   }, { timeout: 45_000, message: 'observer plugins did not reach running' }).toEqual([]);
 }
 
