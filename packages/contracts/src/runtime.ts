@@ -839,6 +839,7 @@ export const PluginAgentContributionSchema = z.object({
 
 export const PluginCapabilitiesChangedMessageSchema = z.object({
   type: z.literal('plugin-capabilities'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
   contributors: z.array(PluginAgentContributionSchema).max(256)
 }).strict();
 

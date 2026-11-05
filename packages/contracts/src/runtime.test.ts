@@ -119,6 +119,12 @@ describe('server runtime contract', () => {
     expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-apps-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, apps: [{ id: 'tasks', name: 'Tasks', description: 'Track work items', icon: 'ListTodo', enabled: true, provenance: 'builtin', status: 'running', appUrl: '/plugins/tasks/assets/dist/renderer.js?v=1', projectTab: { label: 'Tasks', global: false } }] }).success).toBe(true);
     expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-apps-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, apps: [{ id: 'tasks', name: 'Tasks', description: 'Track work items', icon: 'ListTodo', enabled: true, provenance: 'builtin', status: 'running', appUrl: null, rootDir: '/secret' }] }).success).toBe(false);
   });
+  it('accepts the plugin capability message the utility process actually sends, with its protocol version', () => {
+    const contributor = { id: 'p2-contrib', enabled: true, rootDir: '/plugins/p2-contrib', skillsRootPaths: ['skills'], skillNames: ['p2-skill'], mcpServers: [{ name: 'p2-server', type: 'stdio', command: 'node', args: ['mcp-server.js'], alwaysOn: true }], extra: {} };
+    expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-capabilities', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, contributors: [contributor] }).success).toBe(true);
+    expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-capabilities', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1, contributors: [] }).success).toBe(false);
+    expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-capabilities', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, contributors: [{ ...contributor, secret: 'x' }] }).success).toBe(false);
+  });
   it('rejects incompatible utility-process protocol versions before dispatch', () => {
     expect(ServerRuntimeInboundSchema.safeParse({ ...request, protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1, operation: 'projects-list' }).success).toBe(false);
     expect(RuntimeOutboundSchema.safeParse({ type: 'stopped', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1 }).success).toBe(false);
