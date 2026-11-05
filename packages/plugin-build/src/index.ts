@@ -9,7 +9,7 @@ export {
   writePluginArtifactMeta
 } from './build-plugin.js';
 export type { PluginArtifactMeta, PluginBundleOptions } from './build-plugin.js';
-export { buildPluginHost } from './build-plugin-host.js';
+export { buildPluginHost, isPublishedHostArtifact } from './build-plugin-host.js';
 export type { PluginHostBuildResult } from './build-plugin-host.js';
 export {
   PLUGIN_TOOLCHAIN_PINS,
