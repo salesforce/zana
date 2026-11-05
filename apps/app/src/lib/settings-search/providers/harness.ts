@@ -146,8 +146,7 @@ function launchDefaultEntries(family: HarnessFamily, label: string): SettingsSea
     });
   }
   // Every harness that lists models gets a Model tiers group (one picker per tier).
-  const hasTiers = descriptor ? (descriptor.targets?.models?.length ?? 0) > 0 : true;
-  if (hasTiers) {
+  if (hasModels) {
     out.push({
       ...base,
       id: `harness.${family}.model-tiers`,

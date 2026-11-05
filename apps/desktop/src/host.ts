@@ -147,7 +147,7 @@ import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-st
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
-import { liveScopedProviderFor } from './team-model-routing.js';
+import { liveScopedProviderFor, memoizedLiveScopedProviderFor, resolveSlotModel } from './team-model-routing.js';
 import { decideTeamRoutingEnforcement } from './team-routing-enforcement.js';
 import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
@@ -166,7 +166,7 @@ import {
   initialTaskDeliveryState,
   stdinOpeningPrompt
 } from '@zana-ai/zcc-host-daemon/harness/initial-task';
-import { resolveExecutionState, resolveModelTarget, resolveRoleTarget, UnsupportedModelLevelError, type AuthorizedModelTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
+import { resolveExecutionState, resolveModelTarget, resolveRoleTarget, type AuthorizedModelTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { compareCommitExecution } from './launch-execution-commit.js';
 import { listClaudeSessions } from '@zana-ai/zcc-server/services/projects/claude';
 import { ConversationHistoryService } from '@zana-ai/zcc-host-daemon/conversation-history';
@@ -5224,25 +5224,6 @@ const desktopNativeRecovery = createDesktopNativeRecovery({
   }
 });
 
-/**
- * Resolve a slot's model. A tier with no built-in mapping on the shared provider can
- * still resolve through the user's tier rules over the live model inventory, so retry
- * once on a launch-scoped view before giving up.
- */
-async function resolveSlotModel<P extends ReturnType<typeof providerFor>>(
-  provider: P,
-  input: Parameters<typeof resolveModelTarget>[1],
-  scope: { cwd: string; config: ReturnType<typeof store.getConfig> }
-): Promise<{ model: ReturnType<typeof resolveModelTarget>; provider: P }> {
-  try {
-    return { model: resolveModelTarget(provider, { ...input, strictTier: true }), provider };
-  } catch (error) {
-    if (!(error instanceof UnsupportedModelLevelError)) throw error;
-    const live = await liveScopedProviderFor(provider, scope);
-    return { model: resolveModelTarget(live, input), provider: live };
-  }
-}
-
 /** Resolve Team slot route facts in main before durable execution is claimed. */
 async function resolveTeamModelSnapshots(
   projectId: string,
@@ -6921,10 +6902,12 @@ const squadExecutionService = new SquadExecutionService({
       return [provider.adapter.descriptor.id, provider] as const;
     }));
     const requiredProviders = [...providers.keys()].sort();
+    // One live listing per harness for the whole admission, however many slots share it.
+    const liveView = memoizedLiveScopedProviderFor();
     const requiredModels = (await Promise.all(slotPersonas.map(async (persona) => {
       const profile = profileForAdmission(persona);
       const resolutionInput = { config, persona, projectSettings, profile, extraArgs: [], scope: project ? launchExecutionScope(project, {}, config) : 'local' as const };
-      const { model, provider } = await resolveSlotModel(providerFor(profile), resolutionInput, { cwd: project?.path ?? process.cwd(), config });
+      const { model, provider } = await resolveSlotModel(providerFor(profile), resolutionInput, { cwd: project?.path ?? process.cwd(), config }, liveView);
       const role = resolveRoleTarget(provider, resolutionInput);
       return model.targetId && !(role.targetId && provider.nativeRolePinsModel)
         ? [{ id: model.targetId, provider: provider.adapter.descriptor.id }]

@@ -36,4 +36,10 @@ describe('resolveTierFromRules', () => {
   it('reads only the first eight rules', () => {
     expect(resolveTierFromRules([...Array(8).fill('nope'), 'sol'], live)).toBeUndefined();
   });
+
+  it('breaks ties between ids that differ only in case by code point, whatever the list order', () => {
+    const cased = ['gw/Terra-1', 'gw/terra-1'];
+    expect(resolveTierFromRules(['terra'], cased)).toBe('gw/terra-1');
+    expect(resolveTierFromRules(['terra'], [...cased].reverse())).toBe('gw/terra-1');
+  });
 });
