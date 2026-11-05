@@ -62,9 +62,9 @@ vi.mock('../tmux-session-env.js', async (importOriginal) => {
       if (envFileFailure.path) throw new Error('EACCES: mkdtemp');
       return actual.sessionEnvFilePath(id);
     },
-    writeSessionEnvFile: (id: string, vars: Record<string, string | undefined>) => {
+    writeSessionEnvFile: (id: string, vars: Record<string, string | undefined>, spillArgv?: readonly string[]) => {
       if (envFileFailure.write) throw new Error('EACCES: write');
-      return actual.writeSessionEnvFile(id, vars);
+      return actual.writeSessionEnvFile(id, vars, spillArgv);
     }
   };
 });
@@ -191,6 +191,23 @@ describe('pty tmux wrapping (local)', () => {
     const body = readFileSync(file, 'utf8');
     expect(body).toContain(`export ZCC_SESSION_ID='${session.id}'`);
     expect(body).toMatch(/export ZCC_SESSION_TOKEN='[^']+'/);
+  });
+
+  it('keeps tmux backing for an oversized launch by spilling the command into the env file', () => {
+    ptys.setMcpBaseUrl('http://127.0.0.1:54321');
+    const instructions = 'plugin guidance '.repeat(1000);
+    const session = ptys.create({
+      nativeToolPolicyRequired: false, projectId: 'p1', profile: 'claude', config: cfg({ tmuxScope: 'all' }),
+      pluginInstructions: instructions, ...dims
+    });
+    expect(spawned[0].command).toBe('tmux');
+    expect(Buffer.byteLength([spawned[0].command, ...spawned[0].args].join(' '))).toBeLessThan(15_000);
+    expect(spawned[0].args.some((arg) => arg.includes('plugin guidance'))).toBe(false);
+    const file = sessionEnvFilePath(session.id);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    const body = readFileSync(file, 'utf8');
+    expect(body).toMatch(/\nset -- '/);
+    expect(body).toContain('plugin guidance plugin guidance');
   });
 
   it('falls back to a direct spawn when the identity env file cannot be written', () => {

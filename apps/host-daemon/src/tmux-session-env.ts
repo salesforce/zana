@@ -86,11 +86,16 @@ function shSingleQuote(value: string): string {
  * Created 0600 with O_EXCL so a planted symlink or file is rejected. The pane
  * command sources then deletes it (see `buildLocalTmuxCommand`).
  */
-export function writeSessionEnvFile(sessionId: string, vars: Record<string, string | undefined>): string {
+export function writeSessionEnvFile(
+  sessionId: string,
+  vars: Record<string, string | undefined>,
+  /** Command and args to run, for a launch too large for tmux's argv: the pane's `exec "$@"` runs them. */
+  spillArgv?: readonly string[]
+): string {
   const path = sessionEnvFilePath(sessionId);
   const body = Object.entries(vars)
     .map(([key, value]) => (value === undefined ? `unset ${key}\n` : `export ${key}=${shSingleQuote(value)}\n`))
-    .join('');
+    .join('') + (spillArgv ? `set -- ${spillArgv.map(shSingleQuote).join(' ')}\n` : '');
   try {
     unlinkSync(path); // stale file from a prior launch of the same session id
   } catch {
