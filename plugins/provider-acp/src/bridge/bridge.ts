@@ -94,6 +94,7 @@ import {
 import { isPlanAcpMode, isPlanArtifactWritePath } from "../plan-write-policy.js";
 import { acpProfileFromLaunchSpec, type AcpAgentProfile } from "../profiles.js";
 import {
+  cursorAgentCommand,
   approveCursorSessionMcpServer,
   revokeCursorSessionMcpServer,
   type CursorMcpApproval,
@@ -161,6 +162,7 @@ import {
   ACP_BRIDGE_MCP_SERVER_NAME,
   buildAcpMcpServerConfig,
   buildAcpHttpMcpServerConfig,
+  buildPluginAcpMcpServers,
   runAcpDynamicToolMcpServer,
   type AcpMcpServerConfig,
   type AcpStdioMcpServerConfig,
@@ -662,8 +664,13 @@ async function buildSessionMcpServers(
   supportsHttpMcp = false,
 ): Promise<AcpMcpServerConfig[]> {
   const dynamicTools = params.dynamicTools ?? [];
+  // Cursor only runs MCP servers the user approved, and Zana pre-approves just
+  // its own zcc bridge, so plugin servers are not offered to it.
+  const pluginServers = cursorAgentCommand(params.agent.command)
+    ? []
+    : buildPluginAcpMcpServers(params.mcpServers, supportsHttpMcp);
   if (dynamicTools.length === 0) {
-    return [];
+    return pluginServers;
   }
   const bridge = await ensureDynamicToolBridge();
   dynamicToolsByThreadId.set(params.threadId, dynamicTools);
@@ -679,6 +686,7 @@ async function buildSessionMcpServers(
         threadId: params.threadId,
         token: bridge.token,
       }),
+      ...pluginServers,
     ];
   }
   return [
@@ -686,6 +694,7 @@ async function buildSessionMcpServers(
       `http://${bridge.host}:${bridge.httpPort}/mcp/${encodeURIComponent(params.threadId)}`,
       bridge.token,
     ),
+    ...pluginServers,
   ];
 }
 
@@ -3310,6 +3319,7 @@ async function handleRequest(
         dialectId: decodeDialectId(params.options.providerOptions),
         cwd: params.cwd,
         dynamicTools: params.dynamicTools,
+        mcpServers: params.mcpServers,
         options: {
           ...params.options,
           skillRoots: configuredSkillRoots ?? undefined,

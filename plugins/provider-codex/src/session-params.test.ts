@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { PromptInput, RuntimePermissionPolicy } from "@zana-ai/zcc-domain/thread-runtime";
 import {
   buildCodexConfig,
+  buildCodexMcpServerConfig,
   combineWorkspaceWriteRoots,
   gitWritableRootsForWorkspace,
   resolveCodexInstructionOverrides,
@@ -824,4 +825,23 @@ it("adds thread identity only when supplied without leaking the previous environ
   const config = buildCodexConfig({ gitWritableRoots: [] });
   expect(config).not.toHaveProperty("shell_environment_policy.set.ZCC_THREAD_ID");
   expect(config).not.toHaveProperty("shell_environment_policy.set.BB_THREAD_ID");
+});
+
+describe("buildCodexMcpServerConfig", () => {
+  it("emits flat dotted keys, drops unlaunchable servers and non-bare env keys", () => {
+    expect(
+      buildCodexMcpServerConfig([
+        { name: "plugin_a_s", type: "stdio", command: "node", args: ["a.js"], env: { TOKEN: "t", "bad key": "x" } },
+        { name: "plugin_a_h", type: "http", url: "https://x.test/mcp" },
+        { name: "plugin_a_nocmd", type: "stdio" },
+        { name: "bad name", type: "stdio", command: "node" },
+      ]),
+    ).toEqual({
+      "mcp_servers.plugin_a_s.command": "node",
+      "mcp_servers.plugin_a_s.args": ["a.js"],
+      "mcp_servers.plugin_a_s.env.TOKEN": "t",
+      "mcp_servers.plugin_a_h.url": "https://x.test/mcp",
+    });
+    expect(buildCodexMcpServerConfig(undefined)).toEqual({});
+  });
 });

@@ -11,6 +11,7 @@ import {
 } from "@zana-ai/zcc-domain/thread-runtime";
 import type {
   DynamicTool,
+  SessionMcpServer,
   InstructionMode,
   ProviderErrorCategory,
   ThreadEvent,
@@ -250,6 +251,7 @@ interface ThreadRuntimeConfig {
    */
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
   disallowedTools?: readonly string[];
   environmentId: string;
   instructionMode: InstructionMode;
@@ -1164,6 +1166,9 @@ function createAgentRuntimeInternal(
       ...(currentConfig.dynamicTools !== undefined
         ? { dynamicTools: currentConfig.dynamicTools }
         : {}),
+      ...(currentConfig.mcpServers !== undefined
+        ? { mcpServers: currentConfig.mcpServers }
+        : {}),
       ...(currentConfig.disallowedTools !== undefined
         ? { disallowedTools: currentConfig.disallowedTools }
         : {}),
@@ -1319,6 +1324,7 @@ function createAgentRuntimeInternal(
         skillRoots: providerSkillRoots,
       }),
       dynamicTools: currentConfig.dynamicTools,
+      mcpServers: currentConfig.mcpServers,
       disallowedTools: currentConfig.disallowedTools,
       instructionMode: currentConfig.instructionMode,
       ...(currentConfig.sessionKind !== undefined
@@ -1744,6 +1750,7 @@ function createAgentRuntimeInternal(
       options: execOpts,
       instructions,
       dynamicTools,
+      mcpServers,
       disallowedTools,
       instructionMode = "append",
       sessionKind,
@@ -1788,6 +1795,7 @@ function createAgentRuntimeInternal(
           setThreadRuntimeConfig(threadId, {
             ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
             dynamicTools,
+            mcpServers,
             disallowedTools,
             environmentId,
             instructionMode,
@@ -1830,6 +1838,7 @@ function createAgentRuntimeInternal(
                   : {}),
                 options: providerExecutionContext,
                 dynamicTools,
+                mcpServers,
                 disallowedTools,
                 instructionMode,
                 ...(sessionKind !== undefined ? { sessionKind } : {}),
@@ -1840,6 +1849,7 @@ function createAgentRuntimeInternal(
                 cwd: options.workspacePath,
                 options: providerExecutionContext,
                 dynamicTools,
+                mcpServers,
                 disallowedTools,
                 instructionMode,
                 ...(sessionKind !== undefined ? { sessionKind } : {}),
@@ -1959,6 +1969,7 @@ function createAgentRuntimeInternal(
       options: execOpts,
       instructions,
       dynamicTools,
+      mcpServers,
       disallowedTools,
       instructionMode = "append",
     }) {
@@ -2037,6 +2048,7 @@ function createAgentRuntimeInternal(
                 skillRoots: providerSkillRoots,
               }),
               dynamicTools,
+              mcpServers,
               disallowedTools,
               instructionMode,
             };
@@ -2147,6 +2159,7 @@ function createAgentRuntimeInternal(
       options: execOpts,
       instructions,
       dynamicTools,
+      mcpServers,
       disallowedTools,
       instructionMode = "append",
       sessionKind,
@@ -2190,6 +2203,7 @@ function createAgentRuntimeInternal(
           setThreadRuntimeConfig(threadId, {
             ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
             dynamicTools,
+            mcpServers,
             disallowedTools,
             environmentId,
             instructionMode,
@@ -2232,6 +2246,7 @@ function createAgentRuntimeInternal(
               skillRoots: providerSkillRoots,
             }),
             dynamicTools,
+            mcpServers,
             disallowedTools,
             instructionMode,
             ...(sessionKind !== undefined ? { sessionKind } : {}),

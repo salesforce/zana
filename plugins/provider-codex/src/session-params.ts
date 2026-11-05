@@ -5,6 +5,7 @@ import {
   type ReasoningLevel,
   type RuntimePermissionPolicy,
   type ServiceTier,
+  type SessionMcpServer,
   buildShellEnvOverrides,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import fs from "node:fs";
@@ -664,4 +665,35 @@ export function toCodexDynamicTools(
     description: tool.description,
     inputSchema: jsonValueSchema.parse(tool.inputSchema),
   }));
+}
+
+const CODEX_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Codex `config` overrides that add plugin-contributed MCP servers to a
+ * session, as the flat dotted keys the rest of `config` uses. Names are
+ * already config-safe keys; a stdio entry without a command and a remote
+ * entry without a url are skipped, and env keys that are not bare keys are
+ * dropped (never quoted). Env values may be secrets: they go only into the
+ * Codex config, never into logs.
+ */
+export function buildCodexMcpServerConfig(
+  servers: readonly SessionMcpServer[] | undefined,
+): { [key in string]?: JsonValue } {
+  const config: { [key in string]?: JsonValue } = {};
+  for (const server of servers ?? []) {
+    if (!/^[A-Za-z0-9_-]+$/.test(server.name)) continue;
+    const base = `mcp_servers.${server.name}`;
+    if (server.type === "stdio") {
+      if (!server.command) continue;
+      config[`${base}.command`] = server.command;
+      if (server.args?.length) config[`${base}.args`] = [...server.args];
+      for (const [key, value] of Object.entries(server.env ?? {})) {
+        if (CODEX_ENV_KEY.test(key)) config[`${base}.env.${key}`] = value;
+      }
+    } else if (server.url) {
+      config[`${base}.url`] = server.url;
+    }
+  }
+  return config;
 }

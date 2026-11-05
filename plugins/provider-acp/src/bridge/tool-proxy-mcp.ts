@@ -1,6 +1,7 @@
 import {
   dynamicToolSchema,
   type DynamicTool,
+  type SessionMcpServer,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
@@ -310,4 +311,35 @@ export function runAcpDynamicToolMcpServer(): void {
     }
     void handleRequest(env, message);
   });
+}
+
+/**
+ * Plugin-contributed MCP servers (already selected and validated by the host)
+ * as ACP session servers. A stdio entry without a command is skipped; a remote
+ * entry is offered only when the agent advertises HTTP MCP support and has a
+ * url. Env values may be secrets and are never logged here.
+ */
+export function buildPluginAcpMcpServers(
+  servers: readonly SessionMcpServer[] | undefined,
+  supportsHttpMcp: boolean,
+): AcpMcpServerConfig[] {
+  const out: AcpMcpServerConfig[] = [];
+  for (const server of servers ?? []) {
+    if (server.name === ACP_BRIDGE_MCP_SERVER_NAME) continue;
+    if (server.type === "stdio") {
+      if (!server.command) continue;
+      out.push({
+        name: server.name,
+        command: server.command,
+        args: [...(server.args ?? [])],
+        env: Object.entries(server.env ?? {}).map(([name, value]) => ({
+          name,
+          value,
+        })),
+      });
+    } else if (server.url && supportsHttpMcp) {
+      out.push({ name: server.name, type: "http", url: server.url, headers: [] });
+    }
+  }
+  return out;
 }

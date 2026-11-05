@@ -125,6 +125,16 @@ describe('agent runtime thread adapter', () => {
     } finally { adapter.dispose(); }
   });
 
+  it('carries validated plugin MCP servers and drops malformed ones', () => {
+    const server = { name: 'plugin_a_one', type: 'stdio', command: 'node', args: ['x.js'], env: { TOKEN: 's3cret' } };
+    expect(mergeSessionTooling({ remoteProxy: false, mcpServers: [server, { name: 'bad', type: 'stdio' }, 5] }))
+      .toEqual({ mcpServers: [server] });
+    expect(mergeSessionTooling({ remoteProxy: false, mcpServers: [{ name: 'bad', type: 'stdio' }] })).toEqual({});
+    const remote = mergeSessionTooling({ remoteProxy: true, mcpServers: [server] });
+    expect(remote.mcpServers).toEqual([server]);
+    expect(remote.disallowedTools).toBeDefined();
+  });
+
   it('merges plugin tools with remote proxy tooling', () => {
     expect(mergeSessionTooling({
       remoteProxy: false,

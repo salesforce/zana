@@ -2,6 +2,7 @@ import {
   jsonValueSchema,
   removeCommandMentionsFromPromptInput,
   type DynamicTool,
+  type SessionMcpServer,
   type InstructionMode,
   type PromptInput,
   type ReasoningLevel,
@@ -92,6 +93,7 @@ interface BuildInternalSessionParamsArgs {
   cwd: string;
   disallowedTools?: readonly string[] | undefined;
   dynamicTools?: readonly DynamicTool[] | undefined;
+  mcpServers?: readonly SessionMcpServer[] | undefined;
   instructionMode: InstructionMode;
   options: ClaudeSessionExecutionOptions;
   threadId: string;
@@ -139,6 +141,9 @@ function buildInternalSessionParams(
     memoryEnabled: args.options.memoryEnabled,
     providerSubagentsEnabled: args.options.providerSubagentsEnabled,
     ...(dynamicTools && dynamicTools.length > 0 ? { dynamicTools } : {}),
+    ...(args.mcpServers && args.mcpServers.length > 0
+      ? { mcpServers: args.mcpServers.map((server) => ({ ...server })) }
+      : {}),
     ...(args.disallowedTools && args.disallowedTools.length > 0
       ? { disallowedTools: [...args.disallowedTools] }
       : {}),
@@ -171,6 +176,7 @@ interface BuildClaudeSessionParamsArgs {
   options: ClaudeCanonicalExecutionOptions;
   instructionMode: InstructionMode;
   dynamicTools?: readonly DynamicTool[] | undefined;
+  mcpServers?: readonly SessionMcpServer[] | undefined;
   disallowedTools?: readonly string[] | undefined;
   skillRoots?: readonly ClaudeCodeSkillRoot[] | undefined;
   sessionKind?: "interactive" | "automated" | undefined;
@@ -189,6 +195,7 @@ export function buildClaudeSessionParams(
     cwd: args.cwd,
     disallowedTools: args.disallowedTools,
     dynamicTools: args.dynamicTools,
+    mcpServers: args.mcpServers,
     instructionMode: args.instructionMode,
     threadId: args.threadId,
     options: {

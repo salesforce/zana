@@ -109,6 +109,7 @@ import {
   buildBridgeMcpServer,
   getAllowedToolNames,
   BRIDGE_MCP_SERVER_NAME,
+  addPluginMcpServers,
   type ToolCallForwarder,
 } from "./tool-proxy-mcp.js";
 import {
@@ -2835,6 +2836,7 @@ async function handleThreadStart(
     sessionOptions.mcpServers = { [BRIDGE_MCP_SERVER_NAME]: mcpServer };
     sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
   }
+  addPluginMcpServers(sessionOptions, params.mcpServers);
   enableClaudePlanChecklistTools(sessionOptions);
   finishSessionIsolation(
     isolation,
@@ -2949,6 +2951,7 @@ async function handleThreadResume(
     sessionOptions.mcpServers = { [BRIDGE_MCP_SERVER_NAME]: mcpServer };
     sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
   }
+  addPluginMcpServers(sessionOptions, params.mcpServers);
   enableClaudePlanChecklistTools(sessionOptions);
   finishSessionIsolation(
     isolation,
@@ -3030,6 +3033,7 @@ async function handleThreadFork(
     sessionOptions.mcpServers = { [BRIDGE_MCP_SERVER_NAME]: mcpServer };
     sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
   }
+  addPluginMcpServers(sessionOptions, params.mcpServers);
   enableClaudePlanChecklistTools(sessionOptions);
   finishSessionIsolation(
     isolation,
@@ -3069,6 +3073,7 @@ function toClaudeSessionParams(
     options: params.options,
     instructionMode: params.instructionMode,
     dynamicTools: params.dynamicTools,
+    mcpServers: params.mcpServers,
     disallowedTools: params.disallowedTools,
     skillRoots: configuredSkillRoots ?? undefined,
     sessionKind: params.sessionKind,

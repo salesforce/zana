@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { createSkillSnapshotStore } from './skill-snapshots.js';
 import { join } from 'node:path';
 import { resolveZccDataDir } from './host-config.js';
+import { sessionPluginMcpServers } from './mcp-config.js';
 import type { HostBridgeLaunch, HostEventEnvelope, ProviderHealthResult, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type { HostDaemonAcpLaunchSpec } from '@zana-ai/zcc-host-daemon-contract';
 import {
@@ -23,6 +24,8 @@ import { ensureCachedPluginHostArtifact, type FetchPluginHostArtifact } from './
 import { silentArtifactCacheLogger, type ArtifactCacheLogger } from './node-artifact-cache.js';
 import {
   encodeClientTurnRequestIdNumber,
+  sanitizeSessionMcpServers,
+  type SessionMcpServer,
   type PermissionMode,
   type PendingInteractionCreate,
   type PendingInteractionResolution,
@@ -95,24 +98,31 @@ export function mergeSessionTooling(input: {
   remoteProxy: boolean;
   dynamicTools?: DynamicTool[];
   instructions?: string;
+  /** Plugin MCP servers already selected by the single enablement rule; validated here before the wire. */
+  mcpServers?: readonly unknown[];
 }): {
   disallowedTools?: readonly string[];
   instructions?: string;
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
 } {
   const pluginTools = input.dynamicTools ?? [];
   const pluginInstructions = input.instructions?.trim();
+  const mcpServers = sanitizeSessionMcpServers(input.mcpServers ?? []);
+  const mcpPart = mcpServers.length > 0 ? { mcpServers } : {};
   if (input.remoteProxy) {
     return {
       disallowedTools: REMOTE_TOOL_PROXY_DISALLOWED_TOOLS,
       instructions: [REMOTE_TOOL_PROXY_INSTRUCTIONS, pluginInstructions].filter(Boolean).join('\n\n'),
-      dynamicTools: [...REMOTE_TOOL_PROXY_DYNAMIC_TOOLS, ...pluginTools]
+      dynamicTools: [...REMOTE_TOOL_PROXY_DYNAMIC_TOOLS, ...pluginTools],
+      ...mcpPart
     };
   }
-  if (pluginTools.length === 0 && !pluginInstructions) return {};
+  if (pluginTools.length === 0 && !pluginInstructions && mcpServers.length === 0) return {};
   return {
     ...(pluginInstructions ? { instructions: pluginInstructions } : {}),
-    ...(pluginTools.length > 0 ? { dynamicTools: pluginTools } : {})
+    ...(pluginTools.length > 0 ? { dynamicTools: pluginTools } : {}),
+    ...mcpPart
   };
 }
 
@@ -585,7 +595,8 @@ export function createAgentRuntimeAdapter(options: {
           ...mergeSessionTooling({
             remoteProxy,
             dynamicTools: input.dynamicTools,
-            instructions: input.instructions
+            instructions: input.instructions,
+            mcpServers: isIsolatedAutomatedStart(input) ? [] : sessionPluginMcpServers()
           })
         });
         const location = threadLocation.get(input.threadId);
@@ -663,7 +674,8 @@ export function createAgentRuntimeAdapter(options: {
           ...mergeSessionTooling({
             remoteProxy: false,
             dynamicTools: input.dynamicTools,
-            instructions: input.instructions
+            instructions: input.instructions,
+            mcpServers: input.sessionKind === 'automated' ? [] : sessionPluginMcpServers()
           }),
           ...(input.requireNativeLoad === true ? { requireNativeLoad: true as const } : {})
         });

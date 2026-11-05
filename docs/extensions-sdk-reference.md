@@ -283,13 +283,29 @@ host chrome, not a plugin.
 | Field | Meaning |
 | --- | --- |
 | `skills` | Directory roots. Default `["skills"]`; `[]` opts out. Each child dir with a regular `SKILL.md` is a skill named after the folder. |
-| `mcpServers` | Map of MCP servers for PTY / CLI Agent sessions: Claude (`--mcp-config`), Codex (`-c mcp_servers.*`) and OpenCode (inline and file config). A server is added to a session when it is `alwaysOn` or a persona names it; all three CLIs apply the same rule, with names rewritten to `plugin_<id>_<name>` on Codex and OpenCode. Cursor PTY does not receive them. stdio `command` is basename-only; relative `args` are rewritten to contained paths. Conversation threads do not read this map — they get `zcc.agents.registerTool` via zcc. |
+| `mcpServers` | Map of MCP servers for PTY / CLI Agent and Modern sessions (parity matrix below). PTY: Claude (`--mcp-config`), Codex (`-c mcp_servers.*`) and OpenCode (inline and file config). A server is added to a session when it is `alwaysOn` or a persona names it; all three CLIs apply the same rule, with names rewritten to `plugin_<id>_<name>` on Codex and OpenCode. Cursor PTY does not receive them. stdio `command` is basename-only; relative `args` are rewritten to contained paths. Modern threads receive them through the bridge session (see matrix); they also get `zcc.agents.registerTool` via zcc. |
 | `extra` | Opaque JSON object (≤32 keys, ≤8 KiB). Displayed on install; never synced as skills/MCP. |
 | `requires` | Other plugin ids this plugin consumes via `zcc.services.use`. Host topo-sorts load order. A missing required plugin marks the consumer `needs-configuration`. |
 
 Durable skills belong in `zcc.skills`. `agents.contributeSkills` is a runtime extra. There is no `registerMcpServer`. `registerTool` (`parameters`: Zod or JSON Schema) is the conversation-thread tool path and also reaches local PTY sessions through the per-session zcc-inbox MCP server; `zcc.mcpServers` adds your own MCP servers to PTYs.
 
-Do not put secrets in `extra`. Env values on `mcpServers` are written to `.mcp.json` only — the hub sees `envKeys`.
+Do not put secrets in `extra`. Env values on `mcpServers` are passed to the harness that launches the server (`.mcp.json`, Codex/OpenCode config, bridge session params) and are never logged — the hub sees `envKeys`.
+
+**Plugin MCP server parity** (one enablement rule: enabled plugin, then `alwaysOn` or persona-named; names `plugin_<id>_<name>`; stdio `command` basename-only):
+
+| Surface | Harness | `zcc.mcpServers` |
+| --- | --- | --- |
+| PTY / CLI Agent | Claude | Supported (`--mcp-config`) |
+| PTY / CLI Agent | Codex | Supported (`-c mcp_servers.*`) |
+| PTY / CLI Agent | OpenCode | Supported (inline and file config) |
+| PTY / CLI Agent | Cursor | Limit: not received |
+| Modern | Claude | Supported (SDK `mcpServers`); `alwaysOn` entries only, calls use the session's normal permission flow |
+| Modern | Codex | Supported (thread `config` `mcp_servers.*`); `alwaysOn` entries only; URL servers without headers |
+| Modern (ACP) | OpenCode | Supported (ACP `session/new` servers); stdio always, URL servers only when the agent advertises HTTP MCP |
+| Modern (ACP) | Cursor | Limit: Cursor runs only user-approved MCP servers and Zana pre-approves only its own zcc bridge, so plugin servers are withheld |
+| Modern | Pi | Limit: Pi has no MCP client ("No MCP" by design) |
+
+Automated (unattended) Modern sessions receive none. Selection reads the plugin registry of the process that starts the session. Servers are bounded to 32 per session; malformed entries are dropped, never partially applied.
 
 Legacy `extension.json` is shimmed for one release via `shimLegacyExtensionManifest`.
 
@@ -576,9 +592,9 @@ Raw `term.write` input and restores of an existing session are not admitted.
 
 A registered agent tool (`agents.registerTool`) is reachable from Modern
 Claude/Codex threads; `zcc.mcpServers` is the matching path for Claude, Codex and
-OpenCode PTY and CLI Agent sessions. Declare both if a tool must work on every
-surface supported above — Threads do not read `zcc.mcpServers`, and
-PTY/CLI sessions read `agents.registerTool` over the session's zcc-inbox MCP server. Main-owned tool policy (`surface: 'pty'`) runs before every call and fails closed; `configure()` selection (`tools`) applies per session; only plugins enabled for the project are listed; results are size-capped and a call times out after 4 minutes. A tool whose bare name equals a built-in zcc-inbox tool is dropped (the built-in wins). Thread-route and member-fenced sessions do not receive plugin tools.
+OpenCode PTY and CLI Agent sessions and, per the parity matrix under the manifest table, for
+Modern Claude, Modern Codex and OpenCode ACP. Declare both if a tool must work on every
+surface supported above; PTY/CLI sessions read `agents.registerTool` over the session's zcc-inbox MCP server. Main-owned tool policy (`surface: 'pty'`) runs before every call and fails closed; `configure()` selection (`tools`) applies per session; only plugins enabled for the project are listed; results are size-capped and a call times out after 4 minutes. A tool whose bare name equals a built-in zcc-inbox tool is dropped (the built-in wins). Thread-route and member-fenced sessions do not receive plugin tools.
 
 ### Actor-attributed request input
 

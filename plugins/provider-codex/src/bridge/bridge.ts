@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   isStandaloneBuiltinCompactCommand,
   type DynamicTool,
+  type SessionMcpServer,
   type PromptInput,
   type ThreadDelta,
   sanitizeInheritedChildProcessEnv,
@@ -68,6 +69,7 @@ import { macOsPermissionPresentation } from "../presentation.js";
 import {
   resolveCodexInstructionOverrides,
   toCodexDynamicTools,
+  buildCodexMcpServerConfig,
   toCodexPermissionSettings,
   toCodexServiceTier,
   toCodexUserInput,
@@ -75,6 +77,7 @@ import {
   type BbThreadStartParams,
   type CodexSessionOptions,
 } from "../session-params.js";
+import type { JsonValue } from "../generated/codex-app-server/schema/serde_json/JsonValue.js";
 import type { ThreadResumeParams } from "../generated/codex-app-server/schema/v2/ThreadResumeParams.js";
 import {
   createCodexEventTranslator,
@@ -429,6 +432,7 @@ interface CodexSessionConstruction {
   cwd: string;
   instructionMode: "append" | "replace";
   dynamicTools: DynamicTool[] | undefined;
+  mcpServers: SessionMcpServer[] | undefined;
 }
 
 interface CodexBridgeSession {
@@ -1096,12 +1100,22 @@ interface ConstructThreadSessionArgs {
   options: BridgeExecutionOptions;
   instructionMode: "append" | "replace";
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
   request: CodexSessionConstructionRequest;
 }
 
 interface ConstructedCodexSession {
   session: CodexBridgeSession;
   codexThreadId: string;
+}
+
+function withPluginMcpConfig(
+  config: { [key in string]?: JsonValue } | null | undefined,
+  servers: SessionMcpServer[] | undefined,
+): { [key in string]?: JsonValue } | undefined {
+  const plugin = buildCodexMcpServerConfig(servers);
+  if (Object.keys(plugin).length === 0) return config ?? undefined;
+  return { ...(config ?? {}), ...plugin };
 }
 
 async function constructThreadSession(
@@ -1133,6 +1147,7 @@ async function constructThreadSession(
       cwd: args.cwd,
       instructionMode: args.instructionMode,
       dynamicTools: args.dynamicTools,
+      mcpServers: args.mcpServers,
     },
     constructionSignature: constructionSignature(
       args.cwd,
@@ -1204,7 +1219,7 @@ async function constructThreadSession(
       ...instructionOverrides,
       model: decoded.sessionOptions.model ?? undefined,
       serviceTier: toCodexServiceTier(decoded.sessionOptions.serviceTier),
-      config: preparedGitRoots.config ?? undefined,
+      config: withPluginMcpConfig(preparedGitRoots.config, args.mcpServers),
       ...(dynamicTools && dynamicTools.length > 0 ? { dynamicTools } : {}),
     };
 
@@ -1334,6 +1349,9 @@ async function rebuildThreadSession(
       instructionMode: session.construction.instructionMode,
       ...(session.construction.dynamicTools !== undefined
         ? { dynamicTools: session.construction.dynamicTools }
+        : {}),
+      ...(session.construction.mcpServers !== undefined
+        ? { mcpServers: session.construction.mcpServers }
         : {}),
       request: { kind: "resume", providerThreadId: codexThreadId },
     });
@@ -1528,6 +1546,9 @@ async function handleThreadConstruction(
       instructionMode: params.instructionMode,
       ...(params.dynamicTools !== undefined
         ? { dynamicTools: params.dynamicTools }
+        : {}),
+      ...(params.mcpServers !== undefined
+        ? { mcpServers: params.mcpServers }
         : {}),
       request,
     });
