@@ -184,6 +184,42 @@ describe('buildShimScript (REQ-3, REQ-12)', () => {
   });
 });
 
+describe('buildShimScript correctness obligations (CodeNod OBL-001, OBL-007)', () => {
+  it('refuses a prefix of ten or more words (positional parameters past $9)', () => {
+    const words = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
+    const run = runShim('tool', [words], words);
+    expect(run.status).toBe(126);
+    expect(run.marker).toBe('');
+    const other = runShim('tool', [words], [...words.slice(0, 9), 'z']);
+    expect(other.status).toBe(0);
+  });
+
+  it('does not invoke itself when the shimmed command is one the shim itself needs (dirname)', () => {
+    // A depth guard is injected after the shebang so a recursive shim stops at depth 3
+    // instead of forking without limit.
+    const dir = mkdtempSync(join(root, 'recur-'));
+    const shimDir = join(dir, 'shim');
+    const realDir = join(dir, 'real');
+    mkdirSync(shimDir);
+    mkdirSync(realDir);
+    const script = buildShimScript('dirname', [['forbidden']]).replace(
+      '#!/bin/sh\n',
+      '#!/bin/sh\nZCC_DEPTH=$(( ${ZCC_DEPTH:-0} + 1 )); export ZCC_DEPTH\n[ "$ZCC_DEPTH" -gt 3 ] && { echo RECURSION-DETECTED; exit 99; }\n'
+    );
+    writeFileSync(join(shimDir, 'dirname'), script, { mode: 0o700 });
+    const realDirname = spawnSync('sh', ['-c', 'command -v dirname'], { encoding: 'utf8' }).stdout.trim();
+    writeFileSync(join(realDir, 'dirname'), `#!/bin/sh\nexec ${realDirname} "$@"\n`, { mode: 0o700 });
+    const result = spawnSync(join(shimDir, 'dirname'), ['/tmp/example/file'], {
+      encoding: 'utf8',
+      timeout: 15_000,
+      env: { PATH: `${shimDir}:${realDir}:/usr/bin:/bin` }
+    });
+    expect(result.stdout).not.toContain('RECURSION-DETECTED');
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('/tmp/example');
+  });
+});
+
 describe('planSeatContract (REQ-2, REQ-3, REQ-9, REQ-12, REQ-13)', () => {
   it('returns an empty plan for a persona with neither instructions nor denylist (REQ-13)', () => {
     const plan = planSeatContract({ persona: {} });

@@ -1431,6 +1431,21 @@ describe('launchTeam Squad seat preflight and marker (#675)', () => {
     expect(lifecycleRecords().some((r) => r.launchRequestId === req.launchRequestId)).toBe(false);
   });
 
+  it.each(['cursor', 'grok'])('also refuses a non-durable launch with a %s seat, since D7 refuses these harnesses for Squads (CodeNod OBL-005)', async (harness) => {
+    h.personas = [persona('orch'), persona('w1', { baseProfile: harness }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq() as never);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toMatch(/execution tools/i);
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('refuses a non-durable pi seat whose persona has only advisory denies, since nothing could deliver them (CodeNod OBL-006)', async () => {
+    h.personas = [persona('orch'), persona('w1', { baseProfile: 'pi', deniedTools: ['Bash(/usr/bin/gh:*)'] }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq() as never);
+    expect(result.ok).toBe(false);
+    expect(h.creates).toHaveLength(0);
+  });
+
   it('names every refused seat in one message (REQ-6)', async () => {
     h.personas = [persona('orch', { baseProfile: 'grok' }), persona('w1', { baseProfile: 'cursor' }), persona('w2')];
     const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
