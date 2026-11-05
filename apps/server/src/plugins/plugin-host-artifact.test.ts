@@ -127,6 +127,36 @@ describe('loadPluginHostArtifactSnapshot', () => {
     expect(await readFile(join(dir, 'dist', 'host.js'), 'utf8')).toBe('export default "prebuilt";\n');
   });
 
+  it.each(['builtin', 'path'] as const)('loads a published %s host bundle without stacking its banner', async (sourceKind) => {
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-host-published-'));
+    tempDirs.push(dir);
+    await mkdir(join(dir, 'dist'), { recursive: true });
+    const shipped = [
+      'import { createRequire as __createRequire } from "node:module";',
+      'export default { shipped: true };',
+      ''
+    ].join('\n');
+    const bytes = Buffer.from(shipped);
+    const digest = (await import('node:crypto')).createHash('sha256').update(bytes).digest('hex');
+    await writeFile(join(dir, 'dist', 'host.js'), bytes);
+    await writeFile(join(dir, 'dist', 'host.meta.json'), JSON.stringify({ artifactDigest: digest }));
+    await writeFile(join(dir, 'package.json'), JSON.stringify({
+      name: 'zcc-plugin-published-host',
+      version: '1.0.0',
+      zcc: { host: './dist/host.js' }
+    }));
+    const snapshot = await loadPluginHostArtifactSnapshot({
+      pluginId: 'provider-codex',
+      rootDir: dir,
+      hostEntry: './dist/host.js',
+      sourceKind,
+      rebuildBuiltin: true,
+      zccVersion: '1.0.0'
+    });
+    expect(snapshot?.digest).toBe(digest);
+    expect(await readFile(join(dir, 'dist', 'host.js'), 'utf8')).toBe(shipped);
+  });
+
   it('rebuilds builtin source only when development rebuilding is enabled', async () => {
     const dir = await writePlugin('export default { development: true };\n');
     const snapshot = await loadPluginHostArtifactSnapshot({

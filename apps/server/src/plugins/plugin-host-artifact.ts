@@ -3,7 +3,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
-import { buildPluginHost, getPluginBuildToolchain } from '@zana-ai/zcc-plugin-build';
+import { buildPluginHost, getPluginBuildToolchain, isPublishedHostArtifact } from '@zana-ai/zcc-plugin-build';
 import type { PluginHostArtifactSnapshot } from './plugin-host-artifact-registry.js';
 import type { InstalledPluginRow } from './plugin-store.js';
 
@@ -39,7 +39,9 @@ function shouldRebuildHostArtifact(
   rebuildBuiltin: boolean
 ): boolean {
   // Older packages retained source but shipped no build dependencies. Source
-  // presence must never cause a released builtin to be recompiled.
+  // presence must never cause a released builtin to be recompiled. A published
+  // entry is already dist/host.js; rebuilding it stacks the Node banner.
+  if (isPublishedHostArtifact(rootDir, hostEntry)) return false;
   if (sourceKind !== 'path' && !(sourceKind === 'builtin' && rebuildBuiltin)) return false;
   return existsSync(join(rootDir, hostEntry));
 }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildPluginHost } from './build-plugin-host.js';
+import { buildPluginHost, isPublishedHostArtifact } from './build-plugin-host.js';
 
 describe('plugin host build', () => {
   const tempDirs: string[] = [];
@@ -313,5 +313,51 @@ describe('plugin host build', () => {
     await expect(buildPluginHost(dir, '0.9.0-test')).resolves.toMatchObject({
       artifactDigest: expect.any(String)
     });
+  });
+
+  it('does not rebuild a published dist/host.js into itself', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-host-published-'));
+    tempDirs.push(dir);
+    const shipped = [
+      'import { createRequire as __createRequire } from "node:module";',
+      'import { dirname as __pathDirname } from "node:path";',
+      'import { fileURLToPath as __fileURLToPath } from "node:url";',
+      'const require = __createRequire(import.meta.url);',
+      'var __filename = __fileURLToPath(import.meta.url);',
+      'var __dirname = __pathDirname(__filename);',
+      'export default { shipped: true };',
+      ''
+    ].join('\n');
+    await mkdir(join(dir, 'dist'), { recursive: true });
+    await writeFile(join(dir, 'dist', 'host.js'), shipped);
+    await writeFile(join(dir, 'dist', 'host.meta.json'), '{"artifactDigest":"stale"}\n');
+    await writeFile(join(dir, 'package.json'), JSON.stringify({
+      name: 'zcc-plugin-published-host',
+      version: '1.0.0',
+      zcc: { host: './dist/host.js' }
+    }));
+
+    const result = await buildPluginHost(dir, '0.9.0-test');
+    await buildPluginHost(dir, '0.9.0-test');
+
+    const bytes = await readFile(join(dir, 'dist', 'host.js'), 'utf8');
+    expect(bytes).toBe(shipped);
+    expect(bytes.match(/createRequire as __createRequire/gu)).toHaveLength(1);
+    expect(await readFile(join(dir, 'dist', 'host.meta.json'), 'utf8')).toBe('{"artifactDigest":"stale"}\n');
+    expect(result.artifactDigest).toBe(createHash('sha256').update(shipped).digest('hex'));
+    expect(await readdir(join(dir, 'dist'))).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^\.host-stage-/u)
+    ]));
+  });
+
+  it('treats a symlink to dist/host.js as the published artifact', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-host-published-link-'));
+    tempDirs.push(dir);
+    await mkdir(join(dir, 'dist'), { recursive: true });
+    await writeFile(join(dir, 'dist', 'host.js'), 'export default { shipped: true };\n');
+    await symlink(join(dir, 'dist', 'host.js'), join(dir, 'linked-host.js'));
+    expect(isPublishedHostArtifact(dir, './linked-host.js')).toBe(true);
+    expect(isPublishedHostArtifact(dir, './dist/host.js')).toBe(true);
+    expect(isPublishedHostArtifact(dir, './host.ts')).toBe(false);
   });
 });
