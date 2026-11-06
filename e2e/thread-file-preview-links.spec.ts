@@ -6,8 +6,9 @@ import { test, expect, type AppHandle } from './fixtures/app.js';
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
 
 function fileFixtures(home: string) {
-  const root = join(realpathSync(home), 'markdown-link-project');
-  const outside = join(realpathSync(home), 'private-files');
+  const canonicalHome = realpathSync.native ? realpathSync.native(home) : realpathSync(home);
+  const root = join(canonicalHome, 'markdown-link-project');
+  const outside = join(canonicalHome, 'private-files');
   mkdirSync(join(root, 'docs'), { recursive: true });
   mkdirSync(outside, { recursive: true });
   const report = join(root, 'docs', 'report.md');
