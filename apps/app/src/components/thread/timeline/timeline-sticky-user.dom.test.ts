@@ -36,7 +36,7 @@ describe('prompt pinning', () => {
   it('pins small prompts but lets tall prompts scroll out of the reply area', () => {
     const f = fixture([80, 300, 301, 1600, 0]);
     expect(f.pinned()).toEqual([true, true, false, false, false]);
-    expect(f.observe.mock.calls.map(([node]) => node)).toEqual([f.pane, ...f.prompts, ...f.turns]);
+    expect(f.observe.mock.calls.map(([node]) => node)).toEqual([f.pane, ...f.prompts]);
     f.dispose();
   });
 
