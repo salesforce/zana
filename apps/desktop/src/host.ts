@@ -336,6 +336,8 @@ import { listAllFollowUps, saveFollowUp, deleteFollowUp, validateFollowUpFile } 
 import { readClaudeLoops } from '@zana-ai/zcc-server/services/misc/claude-loops-store';
 import { TrayController } from './tray.js';
 import { MenubarController, isRepliable } from './menu.js';
+import { CompanionController } from './companion.js';
+import { createCompanionController, createCompanionHost, onVisibleParent } from './companion-host.js';
 import { createUpdater, type Updater } from './updater.js';
 import { getReleaseNotes } from './release-notes.js';
 import { compareVersions } from '@zana-ai/zcc-extension-sdk';
@@ -1490,6 +1492,20 @@ const goals = new GoalManager();
 const followups = new FollowUpManager();
 let tray: TrayController | null = null;
 let menubar: MenubarController | null = null;
+/** Command Center rail + quick panel (opt-in, `companionEnabled`). */
+let companion: CompanionController | null = null;
+const companionHost = createCompanionHost({
+  platform: process.platform,
+  flag: () => store.getConfig().companionEnabled === true,
+  companion: () => companion,
+  focusedWindow: () => BrowserWindow.getFocusedWindow(),
+  mainWindow: () => mainWindow(),
+  applicationMenu: () => Menu.getApplicationMenu(),
+  refreshTray: () => tray?.refreshSurface()
+});
+const companionEnabled = companionHost.enabled;
+const syncCompanionMenu = companionHost.syncMenu;
+const focusedAppWindow = companionHost.focusedAppWindow;
 
 /** macOS + config flag: the frameless-card menu-bar popover is the tray surface. */
 function menubarPopoverEnabled(): boolean {
@@ -3549,7 +3565,7 @@ function safeSend(channel: string, ...args: unknown[]) {
  * main window when nothing is focused (e.g. the menu fired while unfocused).
  */
 function sendToFocused(channel: string, ...args: unknown[]) {
-  const target = BrowserWindow.getFocusedWindow() ?? mainWindow();
+  const target = focusedAppWindow();
   /* v8 ignore next -- menu routing runs in built Electron; routeMenu is unit-tested */
   if (pluginViews.routeMenu(target, channel, args) || threadViews.routeMenu(target, channel, args)) return;
   if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return;
@@ -7525,6 +7541,11 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     });
   }
 
+  // Command Center opt-in: the yellow traffic light / ⌘M hand off to the rail
+  // instead of the Dock (enter() hides the minimized window too). With the rail
+  // already up, a window surfaced by a deep link goes back behind it.
+  win.on('minimize', () => companionHost.onWindowMinimized(win));
+
   // Push OS-level fullscreen transitions to the renderer that's actually IN
   // this window (not every window — each has its own fullscreen state), so a
   // fullscreen toggle initiated by the OS (e.g. the green traffic-light button)
@@ -8149,6 +8170,7 @@ function registerIpc() {
     get cloneAndRegisterProject() { return cloneAndRegisterProject; },
     get closeSummary() { return closeSummary; },
     get wrapUpClose() { return wrapUpClose; },
+    get companion() { return companion; },
     get conversationHistory() { return conversationHistory; },
     get createInteractiveTerminal() { return createInteractiveTerminal; },
     get createLocalExtension() { return createLocalExtension; },
@@ -8256,6 +8278,7 @@ function registerIpc() {
     get startTeamJobFromUi() { return startTeamJobFromUi; },
     get stopAutonomousRun() { return stopAutonomousRun; },
     get suggestionsStore() { return suggestionsStore; },
+    get syncCompanionMenu() { return syncCompanionMenu; },
     get teams() { return teams; },
     get teamLifecycle() { return teamLifecycle; },
     get templates() { return templates; },
@@ -8370,7 +8393,7 @@ function buildAppMenu() {
           label: 'Reset Zoom',
           accelerator: 'CmdOrCtrl+0',
           click: () => {
-            const win = BrowserWindow.getFocusedWindow() ?? mainWindow();
+            const win = focusedAppWindow();
             if (win && !win.isDestroyed()) win.webContents.setZoomFactor(DEFAULT_RENDERER_ZOOM_FACTOR);
           }
         },
@@ -8384,6 +8407,7 @@ function buildAppMenu() {
       label: 'Window',
       submenu: [
         { role: 'minimize' },
+        companionHost.menuItem(),
         { role: 'zoom' },
         ...(isMac
           ? ([
@@ -8849,9 +8873,31 @@ async function bootstrapNormal() {
       listThreads: listMenubarThreads,
       onThreadsChanged: (listener) => runtimeSupervisor?.onMenubarThreadsChanged(listener) ?? (() => {}),
       theme: () => resolveTheme(),
+      commandCenterEnabled: companionEnabled,
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
     });
+    companion = createCompanionController(process.platform, {
+      ptys,
+      scheduler,
+      agentStatus,
+      inboxStore,
+      store,
+      triageCache: lastTriageBySession,
+      listThreads: listMenubarThreads,
+      runtime: () => runtimeSupervisor,
+      windows,
+      ensureMainWindowReady,
+      openThread: openMenubarThread,
+      theme: resolveTheme,
+      isEnabled: companionEnabled,
+      showMainWindow,
+      e2e: E2E_LAUNCH,
+      sendToApp: safeSend,
+      preloadPath: join(__dirname, '../preload/index.js'),
+      logger: logMainError
+    });
+    companion?.start();
     tray = new TrayController({
       scheduler,
       ptys,
@@ -8866,6 +8912,7 @@ async function bootstrapNormal() {
       openScheduler: (taskId) => safeSend('app:openScheduler', taskId),
       popover: menubar,
       popoverEnabled: menubarPopoverEnabled,
+      commandCenter: { enabled: companionEnabled, enter: companionHost.enter },
       logger: logMainError
     });
     tray.start();
@@ -10211,8 +10258,7 @@ const quitGuard = createQuitGuard({
         ? 'Agent activity could not be checked. Quitting will interrupt any running agents and terminate terminals.'
         : 'Quitting will interrupt running agents and terminate terminals, including background sessions.'
     };
-    const parent = mainWindow();
-    const result = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    const result = await onVisibleParent(mainWindow(), (win) => dialog.showMessageBox(win, opts), () => dialog.showMessageBox(opts));
     return result.response === 0;
   },
   quit: () => app.quit(),
@@ -10249,6 +10295,8 @@ app.on('before-quit', (event) => {
   menubar = null;
   stopTitleBarOverlayTheme?.();
   stopTitleBarOverlayTheme = null;
+  companion?.stop();
+  companion = null;
   templates.stop();
   quickPrompts.stop();
   promptRegistry.stop();

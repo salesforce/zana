@@ -205,6 +205,20 @@ export function ExperimentalView({
         />
       </Section>
 
+      <Section
+        searchId="experimental.command-center-section"
+        anchorId="command-center"
+        title="Command Center (macOS)"
+        help="Adds “Minimize to Command Center” (⇧⌘M) to the Window menu, the menu-bar icon and the sidebar. Instead of minimizing to the Dock, the window collapses to a slim floating rail on the screen edge that shows who needs you, what's working and your schedules — and lets you answer agent questions without reopening the app. Off by default."
+      >
+        <CheckboxField
+          searchId="experimental.command-center"
+          label="Enable Command Center mode"
+          help="When disabled, the entry points are hidden and an open rail is closed (the main window comes back)."
+          checked={config.companionEnabled === true}
+          onChange={(v) => onUpdate({ companionEnabled: v })}
+        />
+      </Section>
     </>
   );
 }

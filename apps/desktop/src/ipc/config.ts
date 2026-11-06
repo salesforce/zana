@@ -32,6 +32,7 @@ export function registerConfigIpc(): void {
         threadViewWindowBounds: _threadViewWindowBounds,
         // Preview trust is granted only by the folder chooser handlers below.
         trustedPreviewFolders: _trustedPreviewFolders,
+        companionPlacement: _companionPlacement,
         ...safePatch
       } = patch;
       const previous = store.getConfig();
@@ -76,6 +77,13 @@ export function registerConfigIpc(): void {
       if (patch.theme !== undefined) {
         ctx.menubar?.refresh();
         ctx.refreshTitleBarOverlays();
+      }
+      // Command Center: turning it off closes an open rail (the app comes back)
+      // and hides the "Minimize to Command Center" entry points; a theme change
+      // re-themes the rail on its next push.
+      if (patch.companionEnabled !== undefined) ctx.syncCompanionMenu();
+      if (patch.companionEnabled !== undefined || patch.theme !== undefined) {
+        ctx.companion?.onConfigChanged();
       }
       // Fan the new config out to EVERY window so other windows (per-project
       // windows, the focus window) refresh their mirrored feature flags live.
