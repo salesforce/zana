@@ -24,6 +24,15 @@ it('keeps cross-platform preview checks for native, path, render and distributio
   expect(planVerification([], true).preview).toBe(true);
 });
 
+it('runs assistant Markdown link clicks on every desktop OS preview job', () => {
+  const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
+  const preview = workflow.jobs['preview-cross-platform'];
+  expect(preview.strategy.matrix.os).toEqual(expect.arrayContaining(['windows-2025', 'macos-15', 'macos-15-intel']));
+  const commands = preview.steps.filter((step: any) => step.name?.startsWith('Run file preview'));
+  expect(commands).toHaveLength(2);
+  for (const command of commands) expect(command.run).toContain('e2e/thread-file-preview-links.spec.ts');
+});
+
 it('plans only populated Electron shards with no install and agrees with actual execution', () => {
   expect(planVerification(['docs/help.md'])).toEqual({ preview: false, e2e: false, e2e_matrix: [1] });
   expect(planVerification(['scripts/ci-verification.mjs']).e2e_matrix).toEqual([1]);
