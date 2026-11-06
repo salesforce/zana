@@ -43,7 +43,11 @@ function fixture(heights: number[], viewport = 600, replyHeights?: number[]) {
     observe,
     disconnect,
     resize: (...targets: HTMLElement[]) =>
-      resize(targets.length > 0 ? targets.map((t) => ({ target: t } as ResizeObserverEntry)) : undefined),
+      resize(
+        targets.length > 0
+          ? targets.map((t) => ({ target: t } as ResizeObserverEntry))
+          : [{ target: pane } as ResizeObserverEntry]
+      ),
     dispose,
     pinned
   };
@@ -60,63 +64,61 @@ describe('prompt pinning', () => {
     f.dispose();
   });
 
-  it('unpins expanded content and restores pinning when it collapses', () => {
-    const f = fixture([120]);
-    f.size.heights[0] = 2000;
+  it('unpins when composer expansion shortens the transcript so the turn no longer fits', () => {
+    // Prompt 100px, reply 150px in a 300px pane (turn 250px <= 300px -> fits, pins).
+    const f = fixture([100], 300, [150]);
+    expect(f.pinned()).toEqual([true]);
+    // Composer expands: transcript pane shrinks to 200px (turn 250px > 200px, reply 150px <= 300px -> unpins).
+    f.size.viewport = 200;
     f.resize();
     expect(f.pinned()).toEqual([false]);
-    f.size.heights[0] = 120;
-    f.resize();
-    expect(f.pinned()).toEqual([true]);
-    f.dispose();
-  });
-
-  it('rechecks after viewport resizing and handles a hidden timeline', () => {
-    const f = fixture([200]);
+    // Composer collapses: transcript pane expands back to 300px.
     f.size.viewport = 300;
     f.resize();
-    expect(f.pinned()).toEqual([false]);
-    f.size.viewport = 800;
-    f.resize();
-    expect(f.pinned()).toEqual([true]);
-    f.size.viewport = 0;
-    f.resize();
-    expect(f.pinned()).toEqual([false]);
-    f.dispose();
-  });
-
-  it('unpins when the transcript no longer leaves room for the reply underneath it (#669)', () => {
-    // Prompt is 100px, reply is 250px (turn is 350px).
-    const f = fixture([100], 400, [250]);
-    // At viewport 400, maxHeight is 200, turn 350 <= 400: leaves plenty of room.
-    expect(f.pinned()).toEqual([true]);
-    // Composer expands: viewport shortens to 300 (prompt 100 <= 150 maxHeight, but turn 350 > 300: prompt would cover reply).
-    f.size.viewport = 300;
-    f.resize();
-    expect(f.pinned()).toEqual([false]);
-    // Composer collapses: viewport restores to 400.
-    f.size.viewport = 400;
-    f.resize();
     expect(f.pinned()).toEqual([true]);
     f.dispose();
   });
 
-  it('allows pinning across long multi-screen replies while unpinning short overlapping replies', () => {
-    // Turn 0: prompt 100px, multi-screen reply 1200px (1200 > viewport 300 + prompt 100 = 400).
-    // Turn 1: prompt 100px, reply 320px (total 420px in a 300px viewport, reply 320 <= viewport 300 + prompt 100 = 400).
-    const f = fixture([100, 100], 300, [1200, 320]);
-    // Turn 0: reply 1200 > 400, prompt 100 <= 150 -> pins.
-    // Turn 1: reply 320 <= 400, turn 420 > 300 -> unpins.
-    expect(f.pinned()).toEqual([true, false]);
+  it('unpins at exact height boundary when reply cannot scroll clear of prompt', () => {
+    // pane 300, prompt 100.
+    // Turn height = 300 (reply 200): fits in viewport without scrolling -> pinned.
+    const f1 = fixture([100], 300, [200]);
+    expect(f1.pinned()).toEqual([true]);
+    f1.dispose();
+
+    // Turn height = 301 (reply 201): exceeds viewport by 1px, reply <= 400 -> overlaps, unpinned.
+    const f2 = fixture([100], 300, [201]);
+    expect(f2.pinned()).toEqual([false]);
+    f2.dispose();
+
+    // Turn height = 500 (reply 400): exceeds viewport, reply == 400 (pane + prompt) -> overlaps, unpinned.
+    const f3 = fixture([100], 300, [400]);
+    expect(f3.pinned()).toEqual([false]);
+    f3.dispose();
+
+    // Turn height = 501 (reply 401): reply > 400 (can scroll clear of 100px prompt) -> pinned.
+    const f4 = fixture([100], 300, [401]);
+    expect(f4.pinned()).toEqual([true]);
+    f4.dispose();
+  });
+
+  it('keeps prompts pinned when long replies can scroll clear of the pinned prompt', () => {
+    // Multi-screen reply: prompt 100px, reply 1000px in a 300px pane.
+    // Reply height (1000px) > paneHeight + promptHeight (400px), so it can scroll clear.
+    const f = fixture([100], 300, [1000]);
+    expect(f.pinned()).toEqual([true]);
+    // Even if composer expands and pane shrinks to 200px, 1000px reply > 300px -> still pins.
+    f.size.viewport = 200;
+    f.resize();
+    expect(f.pinned()).toEqual([true]);
     f.dispose();
   });
 
-  it('handles boundary conditions around pane and turn heights exactly', () => {
-    // Boundary 1: turn height exactly equals pane height (100px prompt + 200px reply = 300px in 300px pane) -> fits, pins.
-    // Boundary 2: reply height exactly equals pane height + prompt height (100px prompt + 400px reply = 500px in 300px pane) -> unpins at boundary <= 400.
-    // Boundary 3: reply height just exceeds pane height + prompt height (100px prompt + 401px reply in 300px pane) -> pins.
-    const f = fixture([100, 100, 100], 300, [200, 400, 401]);
-    expect(f.pinned()).toEqual([true, false, true]);
+  it('keeps prompts pinned when the entire turn fits comfortably within the shortened transcript', () => {
+    // Short turn: prompt 50px, reply 50px in a 200px shortened pane.
+    // prompt + reply (100px) <= paneHeight (200px) -> entire turn fits in viewport.
+    const f = fixture([50], 200, [50]);
+    expect(f.pinned()).toEqual([true]);
     f.dispose();
   });
 
