@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   setConfig: vi.fn((patch: Record<string, unknown>) => ({ ...patch })),
   safeSend: vi.fn(),
+  refreshAgentSounds: vi.fn(),
   refreshTitleBarOverlays: vi.fn(),
   invalidateLlmReuse: vi.fn(),
   verifyState: { cache: undefined as unknown }
@@ -14,7 +15,7 @@ vi.mock('./shared-product-registration.js', () => ({
   productHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler),
   safeProductHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler)
 }));
-vi.mock('./ctx.js', () => ({ ctx: { safeHandle: vi.fn(), safeSend: h.safeSend, refreshTitleBarOverlays: h.refreshTitleBarOverlays, invalidateLlmReuse: h.invalidateLlmReuse } }));
+vi.mock('./ctx.js', () => ({ ctx: { safeHandle: vi.fn(), agentSounds: { refresh: h.refreshAgentSounds }, safeSend: h.safeSend, refreshTitleBarOverlays: h.refreshTitleBarOverlays, invalidateLlmReuse: h.invalidateLlmReuse } }));
 vi.mock('./shared.js', () => ({ harnessVerifyState: h.verifyState }));
 vi.mock('@zana-ai/zcc-server/http/public-app-url', () => ({ presentAppConfig: (config: unknown) => config }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
@@ -25,6 +26,7 @@ beforeEach(() => {
   h.handlers.clear();
   h.setConfig.mockClear();
   h.safeSend.mockClear();
+  h.refreshAgentSounds.mockClear();
   h.refreshTitleBarOverlays.mockClear();
   h.invalidateLlmReuse.mockClear();
   h.verifyState.cache = undefined;
@@ -72,4 +74,15 @@ describe('config.set theme', () => {
     h.handlers.get(IPC.config.set)!({ theme: 'dark' });
     expect(h.invalidateLlmReuse).not.toHaveBeenCalled();
   });
+});
+
+
+it('applies an idle sound toggle immediately after persistence, without replaying on unrelated settings', () => {
+  h.handlers.get(IPC.config.set)!({ agentSoundIdle: false });
+  expect(h.refreshAgentSounds).toHaveBeenCalledOnce();
+  h.handlers.get(IPC.config.set)!({ agentSoundNeedsYou: true });
+  expect(h.refreshAgentSounds).toHaveBeenCalledOnce();
+  h.setConfig.mockImplementationOnce(() => { throw new Error('disk unavailable'); });
+  expect(() => h.handlers.get(IPC.config.set)!({ agentSoundIdle: true })).toThrow('disk unavailable');
+  expect(h.refreshAgentSounds).toHaveBeenCalledOnce();
 });

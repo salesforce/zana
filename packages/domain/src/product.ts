@@ -1018,6 +1018,13 @@ export interface SavedRecordInput {
  */
 export type AgentState = 'working' | 'blocked' | 'done' | 'idle' | 'unknown' | 'waiting';
 
+export type AgentSoundKind = 'idle' | 'needs-you';
+
+export function normalizeAgentSoundVolume(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, Math.round(value))) : 50;
+}
+
 /**
  * At-rest states where it is safe to inject a peer message / nudge, on ANY
  * harness. `waiting` is the resting state of non-OSC harnesses
@@ -2378,6 +2385,11 @@ export interface AppConfig {
    * nothing. Invalid or missing values normalize to `all`.
    */
   notificationDefaultLevel?: NotificationLevel;
+  /** Desktop chimes for visible agents. Both are opt-in; idle settles for five seconds. */
+  agentSoundNeedsYou?: boolean;
+  agentSoundIdle?: boolean;
+  /** Chime volume relative to system output, 0–100; default 50. */
+  agentSoundVolume?: number;
   /**
    * Level for a child thread (one with a parent) that has no level of its own;
    * `inherit` uses {@link notificationDefaultLevel}. Missing or invalid values

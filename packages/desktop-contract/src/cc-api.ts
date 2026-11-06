@@ -1315,6 +1315,7 @@ export interface CcApi {
     }>;
   };
   app: {
+    previewAgentSound?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<void>;
     performance(): Promise<import('./performance.js').RuntimePerformanceSnapshot | null>;
     onMenuEvent(cb: (event: string) => void): () => void;
     homedir(): Promise<string>;

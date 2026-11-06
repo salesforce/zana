@@ -1,4 +1,7 @@
 import { launchFailure } from './launch-pre-spawn.js';
+import { startAgentSoundEvents } from './native/agent-sound-events.js';
+import { AgentSounds } from './native/agent-sounds.js';
+import { normalizeAgentSoundVolume } from '@zana-ai/zcc-domain/product';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -2338,6 +2341,15 @@ const mailDrain = new AgentMailDrainService({
   reply: replyToSquadMember,
   isReplyIdempotent: sessionId => !ptys.getSession(sessionId)
 });
+let stopAgentSoundEvents: (() => void) | undefined;
+const agentSounds = new AgentSounds({
+  config: () => store.getConfig(),
+  play: (kind, volume) => {
+    const win = unscopedWindow() ?? [...windows.values()].find(({ win }) => !win.isDestroyed() && !win.webContents.isDestroyed())?.win;
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC.app.onAgentSound, kind, volume);
+  }
+});
+
 /**
  * Keep-awake: hold a `prevent-app-suspension` power-save block while any agent
  * is actively `working`, so locking the Mac (which doesn't kill us) can't let
@@ -7721,6 +7733,7 @@ function wireBridgeListeners() {
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
     keepAwake.remove(sessionId);
+    agentSounds.remove(`cli:${sessionId}`);
     // Release Flow B/C plan-handoff state and remove the transient `.zana/`
     // handoff files when the coordinator exits (Rule 3 / Rule 5).
     void cleanupOrchestratorOnExit(squadSessionExit, exitedSession);
@@ -7871,6 +7884,9 @@ function wireBridgeListeners() {
     squadExecutionService.observeCoordinatorState(sessionId, state);
     wrapUpClose.observe(sessionId, state);
     const session = ptys.getSession(sessionId);
+    if (session && !session.scheduled && !session.headless) {
+      agentSounds.observe(`cli:${sessionId}`, displayAgentState(sessionId, state));
+    } else agentSounds.remove(`cli:${sessionId}`);
     if (session) captureNativeRecoverySnapshot(session);
     if (state === 'idle' && session) {
       onOrchestratorIdle({
@@ -8106,6 +8122,10 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
 }
 
 function registerIpc() {
+  safeHandleFromWindow<[unknown], number | undefined>(IPC.app.previewAgentSound, (win, kind: unknown) => {
+    if (kind !== 'idle' && kind !== 'needs-you') throw new Error('Unknown agent sound');
+    return normalizeAgentSoundVolume(store.getConfig().agentSoundVolume);
+  }, () => undefined);
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
@@ -8193,6 +8213,7 @@ function registerIpc() {
     get invalidateLlmReuse() { return invalidateLlmReuse; },
     get isTeamWorkerRestore() { return isTeamWorkerRestore; },
     get keepAwake() { return keepAwake; },
+    get agentSounds() { return agentSounds; },
     get launchAuthorizedTerminal() { return launchAuthorizedTerminal; },
     get launchAutonomousTeam() { return launchAutonomousTeam; },
     get launchTeam() { return launchTeam; },
@@ -9799,6 +9820,7 @@ async function bootstrapNormal() {
     normalBootstrapStarted = false;
     throw error;
   }
+  stopAgentSoundEvents ??= startAgentSoundEvents(productServerUrl(), agentSounds);
   // Subscribe only after the supervised origin exists. A healthy stream at the
   // legacy :8780 fallback could belong to another running app and never reconnect.
   // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
@@ -10298,6 +10320,9 @@ app.on('before-quit', (event) => {
   }
   // Release any held power-save block + pending grace timer (Rule 3).
   keepAwake.shutdown();
+  stopAgentSoundEvents?.();
+  stopAgentSoundEvents = undefined;
+  agentSounds.shutdown();
   // Release the loud-tier inbox subscription (Rule 3).
   offLoudInboxAppended?.();
   offLoudInboxAppended = null;
