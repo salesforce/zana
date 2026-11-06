@@ -36,7 +36,7 @@ describe('prompt pinning', () => {
   it('pins small prompts but lets tall prompts scroll out of the reply area', () => {
     const f = fixture([80, 300, 301, 1600, 0]);
     expect(f.pinned()).toEqual([true, true, false, false, false]);
-    expect(f.observe.mock.calls.map(([node]) => node)).toEqual([f.pane, ...f.prompts]);
+    expect(f.observe.mock.calls.map(([node]) => node)).toEqual([f.pane, ...f.prompts, ...f.turns]);
     f.dispose();
   });
 
@@ -97,6 +97,21 @@ describe('prompt pinning', () => {
     // Boundary 3: reply height just exceeds pane height + prompt height (100px prompt + 401px reply in 300px pane) -> pins.
     const f = fixture([100, 100, 100], 300, [200, 400, 401]);
     expect(f.pinned()).toEqual([true, false, true]);
+    f.dispose();
+  });
+
+  it('updates pin state when reply height grows dynamically without a pane resize', () => {
+    // Prompt 100px, reply starts at 150px in a 300px pane (turn 250px <= 300px -> fits, pins).
+    const f = fixture([100], 300, [150]);
+    expect(f.pinned()).toEqual([true]);
+    // Reply grows to 250px during streaming/rendering (turn 350px > 300px, reply 250px <= 400px -> unpins to avoid overlap).
+    f.size.replyHeights[0] = 250;
+    f.resize();
+    expect(f.pinned()).toEqual([false]);
+    // Reply grows to a large multi-screen reply 1000px (> 400px -> re-pins).
+    f.size.replyHeights[0] = 1000;
+    f.resize();
+    expect(f.pinned()).toEqual([true]);
     f.dispose();
   });
 

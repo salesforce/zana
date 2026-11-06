@@ -17,6 +17,19 @@ export function stickyTurnRanges(
 }
 
 /**
+ * A pinned prompt at top: 0 paints over the reply when the turn is too tall
+ * to fit in the viewport, but the reply is not tall enough to scroll clear
+ * of the prompt.
+ */
+function promptOverlapsReply(promptHeight: number, replyHeight: number, paneHeight: number): boolean {
+  return (
+    replyHeight > 0 &&
+    replyHeight <= paneHeight + promptHeight &&
+    promptHeight + replyHeight > paneHeight
+  );
+}
+
+/**
  * Pin user prompts that leave at least half the transcript visible for the reply,
  * but unpin them when the transcript is shortened (e.g. composer expansion) and
  * cannot accommodate the turn without overlapping the reply.
@@ -32,6 +45,10 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
     turn: prompt.closest<HTMLElement>('.thread-timeline-current-turn')
   }));
 
+  const turns = Array.from(
+    new Set(items.map((item) => item.turn).filter((turn): turn is HTMLElement => turn !== null))
+  );
+
   const update = () => {
     const paneHeight = pane.clientHeight;
     const maxHeight = paneHeight / 2;
@@ -40,16 +57,7 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
       const height = prompt.offsetHeight;
       if (height <= 0 || height > maxHeight) return false;
       const replyHeight = turn ? Math.max(0, turn.offsetHeight - height) : 0;
-      // When a reply exists and is not tall enough to scroll fully clear of the
-      // pinned prompt (replyHeight <= paneHeight + height), the prompt may only
-      // pin if the entire turn fits in the pane without needing to scroll.
-      // Otherwise, scrolling to the bottom of the turn causes the pinned prompt
-      // to paint over the top of the reply.
-      const overlaps =
-        replyHeight > 0 &&
-        replyHeight <= paneHeight + height &&
-        height + replyHeight > paneHeight;
-      return !overlaps;
+      return !promptOverlapsReply(height, replyHeight, paneHeight);
     });
     // Pass 2: apply DOM attribute updates in batch
     prompts.forEach((prompt, index) => {
@@ -60,6 +68,7 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
   const observer = new ResizeObserver(update);
   observer.observe(pane);
   for (const prompt of prompts) observer.observe(prompt);
+  for (const turn of turns) observer.observe(turn);
   // Measure before paint, then re-evaluate on expansion, image load, or resize.
   update();
   return () => {
