@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -86,6 +86,9 @@ describe('executionStorageBackendForId', () => {
     expect(executionStorageBackendForId({ filePath, database: db, executionId: 'one' })).toBe('json');
     // Same size, new content: the signature (mtime/ctime) must still invalidate.
     writeFileSync(filePath, ledger(['two']));
+    // Make the signature change observable even on filesystems with coarse timestamps.
+    const changedAt = new Date(Date.now() + 1_000);
+    utimesSync(filePath, changedAt, changedAt);
     expect(executionStorageBackendForId({ filePath, database: db, executionId: 'two' })).toBe('json');
     expect(executionStorageBackendForId({ filePath, database: db, executionId: 'one' })).toBe('sqlite');
     // Unchanged file served from cache.
