@@ -58,11 +58,21 @@ test('agent chimes cross the production event, main, preload and audio boundary'
   await expect.poll(async () => (await request(`threads/${asking.data.thread.id}`)).data.thread.hasPendingInteraction).toBe(true);
   await expect.poll(async () => (await tap()).cues.map(cue => cue[0])).toEqual(['idle', 'needs-you']);
   await expect.poll(async () => (await tap()).audibleStarts).toBeGreaterThan(1);
+});
 
-  const primaryWindow = await app.electron.browserWindow(win);
-  await primaryWindow.evaluate(window => { window.show(); window.focus(); });
-  await primaryWindow.dispose();
-  // Real Settings controls persist; previews use the same player while off.
+test('sound Settings persist and previews play while notifications are disabled', async ({ app }, testInfo) => {
+  const win = app.window;
+  // A fresh visible window keeps Settings actionability independent of the hidden-window scenario.
+  await app.electron.evaluate(({ webContents }) => {
+    (globalThis as any).__previewAudibleStarts = 0;
+    for (const contents of webContents.getAllWebContents()) {
+      contents.on('audio-state-changed', event => {
+        if (event.audible) (globalThis as any).__previewAudibleStarts += 1;
+      });
+    }
+  });
+  const audibleStarts = () => app.electron.evaluate(() => (globalThis as any).__previewAudibleStarts as number);
+  await win.evaluate(() => window.cc.config.set({ agentSoundIdle: false, agentSoundNeedsYou: true, agentSoundVolume: 50 }));
   await win.evaluate(() => { history.pushState({}, '', '/settings/agents#agent-sounds'); dispatchEvent(new PopStateEvent('popstate')); });
   const section = win.locator('#settings-anchor-agent-sounds');
   await section.scrollIntoViewIfNeeded();
@@ -71,10 +81,10 @@ test('agent chimes cross the production event, main, preload and audio boundary'
   await needs.click(); await expect(needs).toHaveAttribute('aria-checked', 'false');
   await section.getByRole('slider', { name: 'Chime volume' }).fill('75');
   await expect.poll(() => win.evaluate(() => window.cc.config.get().then(config => config.agentSoundVolume))).toBe(75);
-  const before = (await tap()).audibleStarts;
+  const before = await audibleStarts();
   await section.getByRole('button', { name: 'Preview Idle' }).click();
   await expect(section.getByRole('status')).toHaveText('Idle preview played.');
-  await expect.poll(async () => (await tap()).audibleStarts).toBeGreaterThan(before);
+  await expect.poll(audibleStarts).toBeGreaterThan(before);
   const bounds = await section.boundingBox();
   expect(bounds?.x).toBeGreaterThanOrEqual(0);
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('agent-notification-sounds.png'));
