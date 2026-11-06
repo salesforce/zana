@@ -31,11 +31,11 @@ export function CompanionTooltip() {
           <ul className="cc-tip-rows">
             {tip.rows.map((r, i) => (
               <li key={i} className="cc-tip-row">
-                <span className={`cc-dot ${agentDot({ state: r.state, recentlyCompleted: !!r.recentlyCompleted })}`} aria-hidden />
+                <span className={`cc-dot ${agentDot({ state: r.state, recentlyCompleted: !!r.recentlyCompleted, failure: r.failure })}`} aria-hidden />
                 <span className="cc-row-main">
                   <span className="cc-row-title">{r.title}</span>
                   <span className="cc-row-meta">
-                    {agentStatusLabel({ state: r.state, recentlyCompleted: !!r.recentlyCompleted })} · {r.projectName}
+                    {agentStatusLabel({ state: r.state, recentlyCompleted: !!r.recentlyCompleted, failure: r.failure })} · {r.projectName}
                     {r.state === 'working' && r.createdAt !== undefined ? ` · ${formatAge(r.createdAt, Date.now())}` : ''}
                   </span>
                 </span>

@@ -1,6 +1,6 @@
 /* ============================================================================
    Command Center companion — surface=companion (rail + quick panel windows).
-   Tiny by default: a slim translucent rail, one contextual card at a time.
+   Tiny by default: a slim rail, one contextual card at a time.
    Reuses the app tokens so it reads as the same product in both themes.
    Legend: red = needs you, gold = working, green = completed, grey = idle.
    ========================================================================== */
@@ -12,7 +12,8 @@ html.companion-surface #root {
 }
 
 .companion-surface {
-  --cc-surface: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  /* Only the outer window is transparent. Desktop text must not bleed through. */
+  --cc-surface: var(--bg-panel);
   --cc-border: color-mix(in srgb, var(--border) 85%, transparent);
   --cc-shadow: 0 6px 22px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.18);
   --cc-attention: var(--danger);
@@ -22,7 +23,6 @@ html.companion-surface #root {
 }
 
 :root[data-theme='light'].companion-surface {
-  --cc-surface: color-mix(in srgb, var(--bg-panel) 90%, transparent);
   --cc-shadow: 0 6px 22px rgba(15, 23, 42, 0.14), 0 1px 3px rgba(15, 23, 42, 0.1);
 }
 
@@ -36,7 +36,8 @@ html.companion-surface #root {
 
 .cc-rail {
   width: 52px;
-  height: 100%;
+  /* Hug the controls: a rounded native window must not stretch the visible rail. */
+  height: auto;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -558,6 +559,22 @@ html.companion-surface #root {
   color: var(--cc-done);
   background: color-mix(in srgb, var(--cc-done) 14%, transparent);
 }
+
+/* Read-only thread context: bounded by default, with the decision kept nearby. */
+.cc-thread-context { margin-bottom: 18px; }
+.cc-thread-label { font-size: 10.5px; font-weight: 600; color: var(--text-dim); margin-bottom: 7px; }
+.cc-thread-attention { color: var(--cc-attention); }
+.cc-thread-message { margin: 0 0 4px; padding-left: 10px; border-left: 2px solid var(--cc-border); color: var(--text-muted); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-thread-message.is-clamped { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cc-thread-question { margin-bottom: 16px; }
+.cc-thread-options { list-style: none; margin: 0 0 9px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cc-thread-options .cc-option { cursor: default; }
+.cc-thread-options .cc-option:hover { border-color: var(--cc-border); }
+.cc-thread-option-description { display: block; color: var(--text-muted); font-size: 11.5px; margin-top: 3px; }
+.cc-thread-footer-note { margin: 0; font-size: 11px; }
+.cc-thread-list-prompt { font-weight: 500; }
+.cc-thread-list-context { color: var(--text-muted); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cc-thread-question .cc-question-prompt, .cc-thread-options { overflow-wrap: anywhere; }
 
 .cc-other,
 .cc-reply {

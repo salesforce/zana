@@ -2,8 +2,8 @@ import { BrowserWindow, screen, type Display, type WebContents } from 'electron'
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
-import { rendererUrl } from './window/renderer-url.js';
 import { DEFAULT_RENDERER_ZOOM_FACTOR } from './window/window-zoom.js';
+import { rendererUrl } from './window/renderer-url.js';
 import { isRepliable } from './menu.js';
 import type { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import type { SchedulerManager } from '@zana-ai/zcc-server/services/scheduler/scheduler';
@@ -86,7 +86,9 @@ export interface CompanionDeps {
 
 /** Visible rail column. */
 export const RAIL_WIDTH = 52;
-export const RAIL_HEIGHT = 268;
+// Natural CSS height: five 38px buttons, five 4px gaps, a 9px divider,
+// 16px padding and 2px border. Native bounds use the shell's shared zoom.
+export const RAIL_HEIGHT = Math.ceil(237 * DEFAULT_RENDERER_ZOOM_FACTOR);
 /** Transparent pad around the rail so its CSS shadow isn't clipped. */
 export const RAIL_PAD = 10;
 /** Gap between the rail and the screen edge. */
@@ -205,13 +207,12 @@ export function tooltipHeight(rows: number, more: number): number {
 }
 
 /**
- * A Modern thread's rail state, matching the app's Agents list
- * (`threadStatusToAgentState`): a pending interaction needs you, an errored
- * thread reads as idle, anything else the feed returns is busy.
+ * Match the app's lanes: errors are at rest, while pending interactions need
+ * user input. Keep the failure separately for the Agents row's error label.
  */
 export function threadAgentState(t: Pick<MenubarThreadAgent, 'status' | 'hasPendingInteraction'>): AgentState {
-  if (t.hasPendingInteraction) return 'blocked';
   if (t.status === 'error') return 'idle';
+  if (t.hasPendingInteraction) return 'blocked';
   return 'working';
 }
 
@@ -524,6 +525,7 @@ export class CompanionController {
         projectColor: t.projectColor ?? this.deps.projectColor(t.projectId),
         title: t.title,
         state,
+        failure: t.status === 'error' ? t.question || 'Thread failed' : undefined,
         createdAt: t.createdAt,
         recentlyCompleted: false
       });
@@ -539,6 +541,7 @@ export class CompanionController {
       const session = e.sessionId ? liveById.get(e.sessionId) : undefined;
       if (session) askedSessions.add(session.id);
       const thread = e.origin?.threadId ? threadsById.get(e.origin.threadId) : undefined;
+      if (thread?.context || thread?.status === 'error') continue; // Prefer current runtime evidence over an old notification.
       if (thread) askedThreads.add(thread.threadId);
       let reason: CompanionRequest['reason'];
       if (e.executionId) reason = 'execution';
@@ -571,7 +574,7 @@ export class CompanionController {
         const t = threadsById.get(a.threadId)!;
         // A thread's pending interaction is answered in its own composer.
         requests.push({
-          id: `thread:${a.threadId}`,
+          id: `thread:${a.threadId}${t.context ? `:${t.context.interactionId}` : ''}`,
           kind: 'blocked',
           threadId: a.threadId,
           projectId: a.projectId,
@@ -579,7 +582,8 @@ export class CompanionController {
           projectColor: a.projectColor,
           agentTitle: a.title,
           prompt: t.question || 'Waiting for your input',
-          ts: t.createdAt,
+          threadContext: t.context,
+          ts: t.context?.createdAt ?? t.createdAt,
           answerable: false,
           reason: 'thread'
         });
@@ -626,7 +630,11 @@ export class CompanionController {
           .filter((s) => s.status === 'running' || s.status === 'starting')
           .map((s) => s.id)
       );
-      const running = task.status.runs.some((r) => !!r.sessionId && alive.has(r.sessionId) && !r.finishedAt);
+      const running = task.status.runs.some((r) => !r.finishedAt && (
+        (r.launchKind ?? task.kind) === 'team'
+          ? r.launchState === 'running' && !!r.executionId
+          : !!r.sessionId && alive.has(r.sessionId)
+      ));
       out.push({
         id: task.id,
         name: task.name,
@@ -724,14 +732,14 @@ export class CompanionController {
     return ok ? { ok: true } : { ok: false, reason: 'ended' };
   }
 
-  /** Deep link: bring the main window forward on a target. The rail stays. */
+  /** Open Zana exits the companion; targeted deep links keep the rail available. */
   open(target: CompanionOpenTarget | null | undefined) {
     if (!target || typeof target !== 'object') return;
     this.closePanel();
     const send = this.deps.sendToApp;
     switch (target.kind) {
       case 'main':
-        this.deps.showMainWindow();
+        this.exit();
         return;
       case 'home':
         this.deps.showMainWindow();
@@ -773,18 +781,35 @@ export class CompanionController {
         } else if (id.startsWith('agent:')) {
           this.open({ kind: 'session', sessionId: id.slice('agent:'.length) });
         } else if (id.startsWith('thread:')) {
-          this.open({ kind: 'thread', threadId: id.slice('thread:'.length) });
+          // Match main-owned identity, including the current interaction. A
+          // stale card must not open a newer question using the old request id.
+          const t = this.threads.find(t => id === `thread:${t.threadId}${t.context ? `:${t.context.interactionId}` : ''}`);
+          if (t) this.open({ kind: 'thread', threadId: t.threadId });
         }
         return;
       }
     }
   }
 
-  runSchedule(taskId: unknown): boolean {
-    if (typeof taskId !== 'string' || !this.deps.scheduler.list().some((t) => t.id === taskId)) return false;
-    this.deps.scheduler.runNow(taskId);
-    this.refresh();
-    return true;
+  async runSchedule(taskId: unknown): Promise<boolean> {
+    if (typeof taskId !== 'string') return false;
+    const previous = this.deps.scheduler.list().find((t) => t.id === taskId);
+    if (!previous) return false;
+    const knownRuns = new Set(previous.status?.runs.map((run) => run.id));
+    const pendingRuns = new Set(previous.status?.runs.filter((run) => run.launchState === 'pending').map((run) => run.id));
+    try {
+      const task = await this.deps.scheduler.runNow(taskId);
+      // runNow can resolve after persisting a launch failure, or recover an
+      // existing reservation. Only acknowledge a confirmed launch from this call.
+      return task.status.runs.some((run) =>
+        (!knownRuns.has(run.id) || pendingRuns.has(run.id)) &&
+        run.launchState === 'running' && !!(run.sessionId || run.executionId));
+    } catch (err) {
+      this.deps.logger?.('companion run schedule', err);
+      return false;
+    } finally {
+      this.refresh();
+    }
   }
 
   // ----- panel ------------------------------------------------------------------
@@ -865,6 +890,7 @@ export class CompanionController {
       title: a.title,
       projectName: a.projectName,
       state: a.state,
+      failure: a.failure,
       createdAt: a.createdAt,
       recentlyCompleted: a.recentlyCompleted
     }));

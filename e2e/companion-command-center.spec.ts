@@ -53,6 +53,26 @@ test('companion: rail replaces the window, opens one panel, and hands back to Za
   // The brand logo actually loads: a missing asset once rendered a broken image.
   const logo = rail.locator('.cc-rail-logo img');
   await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  // Native placement, renderer zoom and CSS must agree. An oversized native
+  // height once left a large empty tail below the avatar.
+  const geometry = await rail.evaluate(() => {
+    const nav = document.querySelector('.cc-rail')!.getBoundingClientRect();
+    const first = document.querySelector('.cc-rail-logo')!.getBoundingClientRect();
+    const last = document.querySelector('.cc-rail-btn:last-child')!.getBoundingClientRect();
+    return { height: nav.height, width: nav.width, topGap: first.top - nav.top, bottomGap: nav.bottom - last.bottom, viewport: { width: innerWidth, height: innerHeight } };
+  });
+  expect(geometry.width).toBeCloseTo(52, 1);
+  expect(geometry.height).toBeGreaterThan(235);
+  expect(geometry.height).toBeLessThanOrEqual(237);
+  expect(geometry.bottomGap).toBeLessThanOrEqual(10);
+  expect(geometry.bottomGap).toBeCloseTo(geometry.topGap, 1);
+  const native = await electron.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes('part=rail'))!;
+    return { zoom: win.webContents.getZoomFactor(), width: win.getBounds().width, height: win.getBounds().height };
+  });
+  expect(native).toEqual({ zoom: 0.95, width: 72, height: 246 });
+  expect(Math.abs(geometry.viewport.height * native.zoom - native.height)).toBeLessThanOrEqual(1);
+  expect(await electron.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('companion-enter')?.accelerator ?? null)).toBeNull();
   if (process.env.ZCC_E2E_RAIL_SHOT) await rail.screenshot({ path: process.env.ZCC_E2E_RAIL_SHOT });
 
   // The full window is hidden; only the rail floats.
@@ -90,8 +110,20 @@ test('companion: rail replaces the window, opens one panel, and hands back to Za
     .toBe(0);
   await expect(rail.getByRole('button', { name: /^Needs you:/ })).toHaveAttribute('aria-pressed', 'false');
 
-  // The logo hands back to Zana and puts the rail away. (Re-showing the main
+  // "Open Zana" in Status must leave Command Center, including the rail.
+  // Previously it only surfaced the app and left the floating widget active.
+  await rail.getByRole('button', { name: /^Status:/ }).click();
+  await expect(card).toHaveAttribute('aria-label', 'Status');
+  await panel.getByRole('button', { name: 'Open Zana', exact: true }).dispatchEvent('click');
+  await expect
+    .poll(async () => (await visibleUrls(electron)).filter((u) => u.includes('surface=companion')).length)
+    .toBe(0);
+  await expect(card).toHaveCount(0);
+
+  // Re-entering still works. The logo also puts the rail away. (Re-showing the main
   // window is a no-op under E2E by design, so only the rail side is asserted.)
+  expect(await window.evaluate(() => window.cc.companion.enter())).toBe(true);
+  await expect.poll(async () => (await visibleUrls(electron)).filter((u) => u.includes('part=rail')).length).toBe(1);
   await rail.locator('.cc-rail-logo').click();
   await expect
     .poll(async () => (await visibleUrls(electron)).filter((u) => u.includes('surface=companion')).length)

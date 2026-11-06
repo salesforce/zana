@@ -49,6 +49,11 @@ describe('pendingRequests / groupAgents', () => {
     expect(pendingRequests(rs, { e1: true }, new Set(['agent:s1'])).map((r) => r.id)).toEqual(['inbox:e2']);
   });
 
+  it('does not revive a failure from an older snapshot as a pending request', () => {
+    const rs = [req({ id: 'thread:failed', reason: 'thread-error', answerable: false }), req({ id: 'thread:question', reason: 'thread', answerable: false })];
+    expect(pendingRequests(rs, {}, new Set()).map(r => r.id)).toEqual(['thread:question']);
+  });
+
   it('groups agents, counting askers as needing you', () => {
     const g = groupAgents(
       [agent({ sessionId: 'b', state: 'blocked' }), agent({ sessionId: 'w', state: 'working' }), agent({ sessionId: 'q', state: 'working' }), agent({ sessionId: 'i' })],
@@ -57,6 +62,16 @@ describe('pendingRequests / groupAgents', () => {
     expect(g.needsYou.map((a) => a.sessionId)).toEqual(['b', 'q']);
     expect(g.working.map((a) => a.sessionId)).toEqual(['w']);
     expect(g.idle.map((a) => a.sessionId)).toEqual(['i']);
+  });
+
+  it('keeps a failed thread out of Needs you, even with a stale blocked state', () => {
+    const failed = agent({ sessionId: 'thread:t1', state: 'blocked', failure: 'Thread failed' });
+    const g = groupAgents([failed], [req({ id: 'old', sessionId: failed.sessionId })]);
+    expect(g.needsYou).toEqual([]);
+    expect(g.idle).toEqual([failed]);
+    expect(agentStatusLabel(failed)).toBe('Error');
+    expect(agentDot(failed)).toBe('cc-dot-attention');
+    expect(railIndicators(snap({ idle: 1 }), 0)).toMatchObject({ needsYou: 0, status: 'done' });
   });
 });
 

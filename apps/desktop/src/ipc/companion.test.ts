@@ -46,13 +46,13 @@ beforeEach(() => {
     dragEnd: vi.fn(),
     answer: vi.fn(() => ({ ok: true })),
     open: vi.fn(),
-    runSchedule: vi.fn(() => true),
+    runSchedule: vi.fn(async () => true),
     enter: vi.fn(() => true)
   };
   registerCompanionIpc();
 });
 
-it('registers every companion channel and forwards companion-window calls with their args', () => {
+it('registers every companion channel and forwards companion-window calls with their args', async () => {
   expect([...fixture.handlers.keys()].sort()).toEqual(Object.values(IPC.companion).filter((ch) => !ch.includes(':on')).sort());
   expect(invoke(IPC.companion.request, event())).toEqual({ requests: [] });
   invoke(IPC.companion.openPanel, event(), 'agents', 'inbox:e1');
@@ -61,7 +61,7 @@ it('registers every companion channel and forwards companion-window calls with t
   expect(fixture.companion!.tooltip).toHaveBeenCalledWith({ label: 'x' });
   expect(invoke(IPC.companion.answer, event(), 'e1', 'yes')).toEqual({ ok: true });
   expect(fixture.companion!.answer).toHaveBeenCalledWith('e1', 'yes');
-  expect(invoke(IPC.companion.runSchedule, event(), 't1')).toBe(true);
+  expect(await invoke(IPC.companion.runSchedule, event(), 't1')).toBe(true);
   invoke(IPC.companion.open, event(), { kind: 'session', id: 's1' });
   expect(fixture.companion!.open).toHaveBeenCalledWith({ kind: 'session', id: 's1' });
   for (const ch of [IPC.companion.exit, IPC.companion.closePanel, IPC.companion.dragStart, IPC.companion.dragEnd]) invoke(ch, event());
@@ -70,11 +70,11 @@ it('registers every companion channel and forwards companion-window calls with t
   expect(invoke(IPC.companion.tooltipState, event())).toBeNull();
 });
 
-it('returns the fallback to app windows, subframes and untrusted origins', () => {
+it('returns the fallback to app windows, subframes and untrusted origins', async () => {
   for (const ev of [event({ id: 99 }), event({ subframe: true }), event({ url: 'https://evil.example/' })]) {
     expect(invoke(IPC.companion.request, ev)).toBeNull();
     expect(invoke(IPC.companion.answer, ev, 'e1', 'yes')).toEqual({ ok: false, reason: 'unknown' });
-    expect(invoke(IPC.companion.runSchedule, ev, 't1')).toBe(false);
+    expect(await invoke(IPC.companion.runSchedule, ev, 't1')).toBe(false);
     expect(invoke(IPC.companion.exit, ev)).toBeUndefined();
   }
   expect(fixture.companion!.answer).not.toHaveBeenCalled();
@@ -86,6 +86,14 @@ it('returns the fallback when no controller exists (non-macOS)', () => {
   fixture.companion = null;
   expect(invoke(IPC.companion.request, event())).toBeNull();
   expect(invoke(IPC.companion.enter, event({ id: 99, url: 'app://zcc/index.html' }))).toBe(false);
+});
+
+it('forwards the asynchronous scheduler refusal', async () => {
+  fixture.companion!.runSchedule.mockResolvedValueOnce(false);
+  expect(await invoke(IPC.companion.runSchedule, event(), 't1')).toBe(false);
+  expect(fixture.companion!.runSchedule).toHaveBeenCalledWith('t1');
+  fixture.companion = null;
+  expect(await invoke(IPC.companion.runSchedule, event(), 't1')).toBe(false);
 });
 
 it('logs a throwing handler and answers with the fallback', () => {

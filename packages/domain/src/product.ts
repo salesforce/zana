@@ -3077,7 +3077,7 @@ export interface CompanionPlacement {
 export type CompanionPanelKind = 'needs-you' | 'agents' | 'scheduler' | 'status';
 
 /** Why a Needs You request can't be answered from the companion (→ "Open in Zana"). */
-export type CompanionUnanswerableReason = 'ended' | 'background' | 'execution' | 'thread';
+export type CompanionUnanswerableReason = 'ended' | 'background' | 'execution' | 'thread' | 'thread-error';
 
 /**
  * One "Needs You" request in the Command Center snapshot. Either a structured
@@ -3087,7 +3087,9 @@ export type CompanionUnanswerableReason = 'ended' | 'background' | 'execution' |
  * and agent state — the companion renderer is a thin view (Rule 1).
  */
 export interface CompanionRequest {
-  /** `inbox:<entryId>`, `agent:<sessionId>` or `thread:<threadId>` — the id `companion.answer` takes. */
+  /** Authoritative Modern-thread interaction; displayed read-only in the rail. */
+  threadContext?: import('./menubar-agent.js').MenubarThreadContext;
+  /** Main-owned request identity: inbox entry, CLI session, or thread + current interaction. */
   id: string;
   kind: 'question' | 'blocked';
   /** Inbox entry id (question kind) — the renderer's answered-set key. */
@@ -3122,6 +3124,8 @@ export interface CompanionAgent {
   projectColor?: string;
   title: string;
   state: AgentState;
+  /** A failed thread stays visible in Agents, without becoming a user request. */
+  failure?: string;
   createdAt: number;
   /** Finished a working turn within the last few minutes (drives the green dot). */
   recentlyCompleted: boolean;
@@ -3187,6 +3191,7 @@ export interface CompanionTooltipRow {
   title: string;
   projectName: string;
   state: AgentState;
+  failure?: string;
   /** Agent rows: start time and the green "Completed" dot. */
   createdAt?: number;
   recentlyCompleted?: boolean;

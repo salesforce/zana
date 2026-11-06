@@ -30,20 +30,32 @@ export function CompanionPanel() {
   const { snapshot, pending, resolve } = useCompanion();
   const [state, setState] = useState<CompanionPanelState | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [closingAfterResolve, setClosingAfterResolve] = useState(false);
   const [top, setTop] = useState(INSET);
   const cardRef = useRef<HTMLDivElement>(null);
   const kindRef = useRef<CompanionPanelState['kind'] | null>(null);
   const now = useNow();
 
   useEffect(() => {
-    void product.companion.panelState().then((s) => s && apply(s));
-    const offPanel = product.companion.onPanel(apply);
+    let alive = true;
+    let pushed = false;
+    const offPanel = product.companion.onPanel((s) => {
+      pushed = true;
+      if (alive) apply(s);
+    });
     const offClosed = product.companion.onPanelClosed(() => {
+      pushed = true;
+      if (!alive) return;
       kindRef.current = null;
+      setClosingAfterResolve(false);
       setState(null);
       setExpanded(null);
     });
+    void product.companion.panelState().then((s) => {
+      if (alive && !pushed && s) apply(s);
+    }).catch(() => undefined);
     return () => {
+      alive = false;
       offPanel();
       offClosed();
     };
@@ -54,6 +66,7 @@ export function CompanionPanel() {
     // keep whatever question is open. Switching panels starts fresh.
     const sameKind = kindRef.current === s.kind;
     kindRef.current = s.kind;
+    setClosingAfterResolve(false);
     setState(s);
     setExpanded((cur) => s.focusRequestId ?? (sameKind ? cur : null));
   }
@@ -86,13 +99,23 @@ export function CompanionPanel() {
     return () => window.removeEventListener('keydown', onKey);
   }, [expandedRequest]);
 
+  useEffect(() => {
+    if (!closingAfterResolve) return;
+    if (state?.kind !== 'needs-you' || pending.length > 0) {
+      setClosingAfterResolve(false);
+      return;
+    }
+    const timer = setTimeout(() => void product.companion.closePanel(), 250);
+    return () => clearTimeout(timer);
+  }, [closingAfterResolve, state?.kind, pending.length]);
+
   if (!state) return null;
 
   const onResolved = (r: CompanionRequest) => {
     resolve(r);
     setExpanded(null);
     // The flow ends quiet: once nothing's left, the panel gets out of the way.
-    if (pending.length <= 1) setTimeout(() => void product.companion.closePanel(), 250);
+    setClosingAfterResolve(true);
   };
 
   let body: ReactNode;
@@ -187,11 +210,17 @@ function NeedsYouList({
               <button type="button" className="cc-row cc-request" onClick={() => onOpen(r.id)}>
                 <span className="cc-dot cc-dot-attention" aria-hidden />
                 <span className="cc-row-main">
-                  <span className="cc-row-title">{r.agentTitle}</span>
-                  <span className="cc-row-prompt">{r.prompt || 'Waiting for your input'}</span>
+                  {r.threadContext ? <>
+                    <span className="cc-row-prompt cc-thread-list-prompt">{r.prompt}</span>
+                    <span className="cc-row-meta">{r.agentTitle}</span>
+                    {r.threadContext.lastMessage && <span className="cc-thread-list-context">{r.threadContext.lastMessage.text}</span>}
+                  </> : <>
+                    <span className="cc-row-title">{r.agentTitle}</span>
+                    <span className="cc-row-prompt">{r.prompt || 'Waiting for your input'}</span>
+                  </>}
                   <span className="cc-row-meta">
                     {r.projectName} · {formatAge(r.ts, now)}
-                    {r.questions && r.questions.length > 1 ? ` · ${r.questions.length} questions` : ''}
+                    {(r.threadContext?.questions?.length ?? r.questions?.length ?? 0) > 1 ? ` · ${r.threadContext?.questions?.length ?? r.questions?.length} questions` : ''}
                   </span>
                 </span>
                 <ChevronRight size={14} className="cc-row-chevron" />
@@ -277,6 +306,7 @@ function AgentGroup({ label, agents, now }: { label: string; agents: CompanionAg
                   {agentStatusLabel(a)} · {a.projectName}
                   {a.state === 'working' ? ` · ${formatAge(a.createdAt, now)}` : ''}
                 </span>
+                {a.failure && <span className="cc-row-prompt cc-row-error">{a.failure}</span>}
               </span>
             </button>
           </li>
@@ -286,12 +316,13 @@ function AgentGroup({ label, agents, now }: { label: string; agents: CompanionAg
   );
 }
 
-/** How long a "Starting…" row waits for the run to show up before giving up. */
+/** How long a confirmed launch waits for its running snapshot to show up. */
 const START_GRACE_MS = 8000;
 
 function ScheduleList({ schedules, now }: { schedules: CompanionSchedule[]; now: number }) {
   // Run now → "Starting…" until main reports the run (or it was refused).
-  const [starting, setStarting] = useState<Record<string, number>>({});
+  // null is an in-flight request; the timestamp starts the snapshot grace period.
+  const [starting, setStarting] = useState<Record<string, number | null>>({});
   const [refused, setRefused] = useState<Record<string, true>>({});
 
   useEffect(() => {
@@ -300,7 +331,7 @@ function ScheduleList({ schedules, now }: { schedules: CompanionSchedule[]; now:
       let changed = false;
       for (const id of Object.keys(cur)) {
         const t = schedules.find((s) => s.id === id);
-        if (!t || t.running || now - cur[id] > START_GRACE_MS) {
+        if (!t || t.running || (cur[id] !== null && now - cur[id] > START_GRACE_MS)) {
           delete next[id];
           changed = true;
         }
@@ -311,12 +342,15 @@ function ScheduleList({ schedules, now }: { schedules: CompanionSchedule[]; now:
 
   const runNow = (id: string) => {
     setRefused(({ [id]: _drop, ...rest }) => rest);
-    setStarting((cur) => ({ ...cur, [id]: Date.now() }));
+    setStarting((cur) => ({ ...cur, [id]: null }));
     void product.companion
       .runSchedule(id)
       .catch(() => false)
       .then((ok) => {
-        if (ok) return;
+        if (ok) {
+          setStarting((cur) => cur[id] === undefined ? cur : { ...cur, [id]: Date.now() });
+          return;
+        }
         setStarting(({ [id]: _drop, ...rest }) => rest);
         setRefused((cur) => ({ ...cur, [id]: true }));
       });

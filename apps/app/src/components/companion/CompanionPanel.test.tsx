@@ -81,6 +81,22 @@ async function mount(s: CompanionSnapshot, state: CompanionPanelState | null) {
   return r;
 }
 
+it('leads thread rows with the real question and drops an expanded question resolved elsewhere', async () => {
+  const context = { interactionId: 'i1', createdAt: NOW - 1000, prompt: 'Which path?', lastMessage: { text: 'Tested the routes.', truncated: false }, questions: [
+    { id: 'q1', prompt: 'Which path?', multiSelect: false, allowFreeText: true },
+    { id: 'q2', prompt: 'Anything else?', multiSelect: false, allowFreeText: true }
+  ] };
+  await mount(snap({ requests: [req(1, { id: 'thread:t1:i1', threadId: 't1', kind: 'blocked', answerable: false, reason: 'thread', prompt: context.prompt, threadContext: context })] }), st('needs-you'));
+  const row = screen.getByRole('button', { name: /Which path/ });
+  expect(row.textContent).toContain('Tested the routes.');
+  expect(row.textContent).toContain('2 questions');
+  fireEvent.click(row);
+  expect(screen.getByRole('region', { name: 'Question 2 of 2' })).toBeTruthy();
+  act(() => pushSnap(snap()));
+  expect(screen.getByText('All clear')).toBeTruthy();
+  expect(screen.queryByText('Which path?')).toBeNull();
+});
+
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
   for (const k of Object.keys(h)) (h as Record<string, ReturnType<typeof vi.fn>>)[k].mockReset();
@@ -111,6 +127,40 @@ it('renders nothing until main reports a panel state', async () => {
   expect(container.firstChild).toBeNull();
   act(() => pushPanel(st('status')));
   expect(screen.getByRole('dialog', { name: 'Status' })).toBeTruthy();
+});
+
+it.each(['open', 'close', 'unmount'] as const)('ignores an initial panel response after a newer %s', async (action) => {
+  let release!: (state: CompanionPanelState) => void;
+  h.request.mockResolvedValue(snap());
+  h.panelState.mockReturnValue(new Promise<CompanionPanelState>(resolve => { release = resolve; }));
+  const view = render(<CompanionPanel />);
+  act(() => pushPanel(st('scheduler')));
+  if (action === 'close') act(() => pushClosed());
+  if (action === 'unmount') view.unmount();
+  await act(async () => release(st('needs-you')));
+  if (action === 'open') expect(screen.getByRole('dialog', { name: 'Scheduler' })).toBeTruthy();
+  else expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByRole('dialog', { name: 'Needs you' })).toBeNull();
+});
+
+it('recovers from a rejected initial panel read through a later live event', async () => {
+  h.request.mockResolvedValue(snap());
+  h.panelState.mockRejectedValue(new Error('Panel closed during request'));
+  render(<CompanionPanel />);
+  await act(async () => {});
+  act(() => pushPanel(st('agents')));
+  expect(screen.getByRole('dialog', { name: 'Agents' })).toBeTruthy();
+});
+
+it.each(['switch', 'new-request', 'unmount', 'reopen'] as const)('cancels a resolved-question close when there is a newer %s', async (action) => {
+  const view = await mount(snap({ requests: [req(1)] }), st('needs-you', { focusRequestId: 'inbox:e1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+  if (action === 'switch') act(() => pushPanel(st('scheduler')));
+  if (action === 'reopen') act(() => pushPanel(st('needs-you')));
+  if (action === 'new-request') act(() => pushSnap(snap({ requests: [req(2)] })));
+  if (action === 'unmount') view.unmount();
+  act(() => vi.advanceTimersByTime(300));
+  expect(h.closePanel).not.toHaveBeenCalled();
 });
 
 it('positions the card at the anchor, clamped to the window, and re-places on resize', async () => {
@@ -273,6 +323,17 @@ it('agents: a Modern thread row opens the thread', async () => {
   expect(h.open).toHaveBeenLastCalledWith({ kind: 'thread', threadId: 't5' });
 });
 
+it('agents: a failed thread is labelled Error under Idle and still opens for review', async () => {
+  await mount(snap({ agents: [agent(5, { sessionId: 'thread:t5', threadId: 't5', state: 'idle', failure: 'Thread failed: Connection closed' })] }), st('agents'));
+  expect(screen.queryByRole('heading', { name: /Needs you/ })).toBeNull();
+  const group = document.querySelector('.cc-group')!;
+  expect(group.querySelector('.cc-group-label')?.textContent).toBe('Idle 1');
+  expect(screen.getByText('Error · Proj')).toBeTruthy();
+  expect(screen.getByText('Thread failed: Connection closed')).toBeTruthy();
+  fireEvent.click(screen.getByTitle('Worker5 — Error'));
+  expect(h.open).toHaveBeenLastCalledWith({ kind: 'thread', threadId: 't5' });
+});
+
 it('agents: omits empty groups', async () => {
   await mount(snap({ agents: [agent(1)] }), st('agents'));
   expect(document.querySelectorAll('.cc-group')).toHaveLength(1);
@@ -328,6 +389,35 @@ it('scheduler: Starting… gives up after the grace window', async () => {
     vi.advanceTimersByTime(30_000); // useNow tick re-evaluates the grace
   });
   expect(screen.queryByText(/Starting…/)).toBeNull();
+});
+
+it('scheduler: prevents duplicate clicks while awaiting a launch, then enables retry on refusal', async () => {
+  let refuse!: (ok: boolean) => void;
+  h.runSchedule.mockReturnValueOnce(new Promise((resolve) => { refuse = resolve; }));
+  await mount(snap({ schedules: [sched(1)] }), st('scheduler'));
+  const button = screen.getByRole('button', { name: 'Run Task1 now' }) as HTMLButtonElement;
+  fireEvent.click(button);
+  act(() => { vi.advanceTimersByTime(30_000); });
+  fireEvent.click(button);
+  expect(h.runSchedule).toHaveBeenCalledOnce();
+  expect(button.disabled).toBe(true);
+  expect(screen.getByText(/Starting…/)).toBeTruthy();
+  await act(async () => { refuse(false); });
+  expect(screen.getByText(/Couldn't start/)).toBeTruthy();
+  expect(screen.queryByText(/Starting…/)).toBeNull();
+  expect(button.disabled).toBe(false);
+});
+
+it('scheduler: a running snapshot arriving before acknowledgement does not resurrect Starting…', async () => {
+  let confirm!: (ok: boolean) => void;
+  h.runSchedule.mockReturnValueOnce(new Promise((resolve) => { confirm = resolve; }));
+  await mount(snap({ schedules: [sched(1)] }), st('scheduler'));
+  fireEvent.click(screen.getByRole('button', { name: 'Run Task1 now' }));
+  act(() => pushSnap(snap({ schedules: [sched(1, { running: true })] })));
+  await act(async () => { confirm(true); });
+  act(() => pushSnap(snap({ schedules: [sched(1)] })));
+  expect(screen.queryByText(/Starting…/)).toBeNull();
+  expect((screen.getByRole('button', { name: 'Run Task1 now' }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 it('scheduler: a refused (false) or rejected run shows an error and can retry', async () => {

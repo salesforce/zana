@@ -34,13 +34,17 @@ export function useCompanion() {
 
   useEffect(() => {
     let alive = true;
+    let pushed = false;
+    const off = product.companion.onSnapshot((s) => {
+      pushed = true;
+      if (alive) setSnapshot(s);
+    });
     product.companion
       .request()
       .then((s) => {
-        if (alive && s) setSnapshot(s);
+        if (alive && !pushed && s) setSnapshot(s);
       })
       .catch(() => undefined);
-    const off = product.companion.onSnapshot((s) => setSnapshot(s));
     const onStorage = (e: StorageEvent) => {
       if (e.key === ANSWERED_STORAGE_KEY) setAnswered(readAnswered(safeStorage()));
     };
@@ -62,7 +66,7 @@ export function useCompanion() {
     const t = setTimeout(() => {
       const now = Date.now();
       setDismissed((prev) => new Map([...prev].filter(([, at]) => now - at < DISMISS_MS)));
-    }, DISMISS_MS);
+    }, Math.max(0, Math.min(...dismissed.values()) + DISMISS_MS - Date.now()));
     return () => clearTimeout(t);
   }, [dismissed]);
 
@@ -97,5 +101,3 @@ export function useNow(ms = 30_000): number {
   }, [ms]);
   return now;
 }
-
-

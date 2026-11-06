@@ -44,7 +44,7 @@ export function registerCompanionIpc(): void {
     reason: 'unknown' as const
   });
   fromCompanion(IPC.companion.open, (c, target: unknown) => c.open(target as never), undefined);
-  fromCompanion(IPC.companion.runSchedule, (c, taskId: unknown) => c.runSchedule(taskId), false);
+  fromCompanion(IPC.companion.runSchedule, (c, taskId: unknown) => c.runSchedule(taskId), Promise.resolve(false));
 
   // Entry from the app itself (sidebar button / tray / menu route through main
   // directly). Any trusted app frame may ask; the controller gates on the flag.

@@ -46,7 +46,7 @@ export function createCompanionHost(deps: CompanionHostDeps) {
 
     /**
      * Show/hide the Window-menu entry to match the opt-in flag (no menu rebuild).
-     * Disabled too: a hidden item's ⇧⌘M would otherwise still fire on macOS.
+     * Disabled too: hidden menu items must not remain actionable.
      */
     syncMenu() {
       const item = deps.applicationMenu()?.getMenuItemById(COMPANION_MENU_ID);
@@ -79,7 +79,8 @@ export function createCompanionHost(deps: CompanionHostDeps) {
       return {
         id: COMPANION_MENU_ID,
         label: 'Minimize to Command Center',
-        accelerator: 'Shift+CmdOrCtrl+M',
+        // Standard Minimize (Cmd+M) already hands off through onWindowMinimized.
+        // Shift+Cmd+M belongs to the renderer's maximize-pane shortcut.
         visible: enabled(),
         enabled: enabled(),
         acceleratorWorksWhenHidden: false,
@@ -136,7 +137,23 @@ export function companionControllerDeps(host: CompanionControllerHost): Companio
     projectColor: (id) => project(id)?.color,
     triage: (sessionId) => host.triageCache.get(sessionId) ?? null,
     listThreads: host.listThreads,
-    onThreadsChanged: (listener) => host.runtime()?.onMenubarThreadsChanged(listener) ?? (() => {}),
+    onThreadsChanged: (listener) => {
+      const runtime = host.runtime();
+      if (runtime) return runtime.onMenubarThreadsChanged(listener);
+      // Bootstrap constructs the companion before the production runtime. In
+      // dev it stays HTTP-backed. Poll only that gap; the controller ignores
+      // hints while inactive and single-flights its bounded HTTP read.
+      let off: (() => void) | undefined;
+      const timer = setInterval(() => {
+        const ready = host.runtime();
+        if (ready) {
+          off = ready.onMenubarThreadsChanged(listener);
+          clearInterval(timer);
+        }
+        listener();
+      }, 2000);
+      return () => { clearInterval(timer); off?.(); };
+    },
     openThread: (threadId, projectId) => {
       host.showMainWindow();
       void host

@@ -254,6 +254,7 @@ function setup(opts: {
   isEnabled?: () => boolean;
   schedules?: Array<{
     id: string;
+    kind?: 'agent' | 'team';
     projectId: string;
     enabled: boolean;
     nextRunAt?: string;
@@ -273,6 +274,7 @@ function setup(opts: {
   const agentStatus = Object.assign(new EventEmitter(), { get: (id: string) => states[id] ?? 'unknown' });
   const schedules = (opts.schedules ?? []).map((s) => ({
     id: s.id,
+    kind: s.kind,
     name: `Task ${s.id}`,
     projectId: s.projectId,
     enabled: s.enabled,
@@ -443,6 +445,20 @@ describe('CompanionController snapshot', () => {
     expect(snap.schedules[2].nextRunAt).toBeNull();
     expect(snap.counts.runningSchedules).toBe(1);
   });
+
+  it.each([
+    [{ executionId: 'exec', launchKind: 'team', launchState: 'running' }, undefined, true],
+    [{ executionId: 'exec', launchState: 'running' }, 'team', true],
+    [{ executionId: 'exec', launchKind: 'team', launchState: 'running', finishedAt: '2026-11-05T12:00:00Z' }, 'team', false],
+    [{ executionId: 'exec', launchKind: 'team', launchState: 'pending' }, 'team', false],
+    [{ executionId: 'exec', launchKind: 'team', launchState: 'failed' }, 'team', false],
+    [{ launchKind: 'team', launchState: 'running' }, 'team', false],
+    [{ executionId: 'exec', launchKind: 'agent', launchState: 'running' }, 'team', false]
+  ] as const)('counts scheduler-owned Squad execution state %o', (run, kind, running) => {
+    const { c } = setup({ schedules: [{ id: 'squad', projectId: 'p1', enabled: true, kind, runs: [run] }] });
+    expect(c.buildSnapshot().schedules[0].running).toBe(running);
+    expect(c.buildSnapshot().counts.runningSchedules).toBe(Number(running));
+  });
 });
 
 describe('CompanionController.answer (Rule 1 gates)', () => {
@@ -538,12 +554,54 @@ describe('CompanionController deep links', () => {
     env.c.stop();
   });
 
-  it('runs only known schedules', () => {
+  it('runs only known schedules and waits for a confirmed launch', async () => {
     const env = setup({ schedules: [{ id: 't1', projectId: 'p1', enabled: true }] });
-    expect(env.c.runSchedule('t1')).toBe(true);
+    let confirm!: (task: unknown) => void;
+    env.scheduler.runNow.mockReturnValueOnce(new Promise((resolve) => { confirm = resolve; }));
+    const finished = vi.fn();
+    const launch = env.c.runSchedule('t1').then(finished);
+    await flush();
+    expect(finished).not.toHaveBeenCalled();
     expect(env.scheduler.runNow).toHaveBeenCalledWith('t1');
-    expect(env.c.runSchedule('t2')).toBe(false);
-    expect(env.c.runSchedule(undefined)).toBe(false);
+    confirm({ status: { runs: [{ id: 'new', launchState: 'running', sessionId: 's1' }] } });
+    await launch;
+    expect(finished).toHaveBeenCalledWith(true);
+    expect(await env.c.runSchedule('t2')).toBe(false);
+    expect(await env.c.runSchedule(undefined)).toBe(false);
+    expect(env.scheduler.runNow).toHaveBeenCalledOnce();
+  });
+
+  it.each(['throw', 'reject'])('refuses and logs a scheduler %s without leaving an unhandled rejection', async (kind) => {
+    const env = setup({ schedules: [{ id: 't1', projectId: 'p1', enabled: true }] });
+    const error = new Error('Unconfirmed worker launch');
+    env.scheduler.runNow.mockImplementationOnce(() => {
+      if (kind === 'throw') throw error;
+      return Promise.reject(error);
+    });
+    expect(await env.c.runSchedule('t1')).toBe(false);
+    expect(env.logger).toHaveBeenCalledWith('companion run schedule', error);
+  });
+
+  it.each([
+    { id: 'new', launchState: 'failed', result: 'error', sessionId: 'reserved' },
+    { id: 'new', launchState: 'pending', sessionId: 'reserved' },
+    { id: 'new', launchState: 'running' },
+    { id: 'new', result: 'error', reasonCode: 'project-missing' },
+    undefined
+  ])('refuses an unconfirmed result even with an older successful run: %j', async (attempt) => {
+    const old = { id: 'old', launchState: 'running', sessionId: 'previous' };
+    const env = setup({ schedules: [{ id: 't1', projectId: 'p1', enabled: true, runs: [old] }] });
+    env.scheduler.runNow.mockResolvedValueOnce({ status: { runs: attempt ? [attempt, old] : [old] } });
+    expect(await env.c.runSchedule('t1')).toBe(false);
+  });
+
+  it.each(['sessionId', 'executionId'])('acknowledges a recovered reservation with a confirmed %s', async (identity) => {
+    const env = setup({ schedules: [{ id: 't1', projectId: 'p1', enabled: true,
+      runs: [{ id: 'reserved', launchState: 'pending' }] }] });
+    env.scheduler.runNow.mockResolvedValueOnce({ status: { runs: [
+      { id: 'reserved', launchState: 'running', [identity]: 'worker' }
+    ] } });
+    expect(await env.c.runSchedule('t1')).toBe(true);
   });
 });
 
@@ -731,6 +789,33 @@ describe('CompanionController windows', () => {
     env.c.stop();
   });
 
+  it('Open Zana leaves Command Center, dismisses its windows and restores the hidden app', () => {
+    const shown = appWindow({ visible: true });
+    const env = setup({ appWindows: [shown] });
+    env.c.enter();
+    env.c.tooltip({ label: 'Status', y: 40 });
+    const tip = partWin('tooltip')!;
+    env.c.openPanel('status');
+    const rail = partWin('rail')!;
+    const panel = partWin('panel')!;
+    expect(panel.visible).toBe(true);
+
+    env.c.open({ kind: 'main' });
+
+    expect(env.c.isActive()).toBe(false);
+    expect(rail.visible).toBe(false);
+    expect(panel.visible).toBe(false);
+    expect(tip.visible).toBe(false);
+    expect(env.c.getPanelState()).toBeNull();
+    expect(env.c.getTooltip()).toBeNull();
+    expect(env.restoreWindows).toHaveBeenCalledWith([shown]);
+    expect(env.showMainWindow).toHaveBeenCalledOnce();
+    // Opening again must not retain windows from the previous hand-off.
+    env.c.open({ kind: 'main' });
+    expect(env.restoreWindows).toHaveBeenLastCalledWith([]);
+    env.c.stop();
+  });
+
   it('puts a re-minimized window back behind a live rail, and only then', () => {
     const later = appWindow({ minimized: true });
     const env = setup({});
@@ -876,6 +961,20 @@ describe('CompanionController panel', () => {
 });
 
 describe('CompanionController Modern threads', () => {
+  it('uses interaction identity and time and prefers native questions over inbox copies', async () => {
+    const context = { interactionId: 'i1', createdAt: NOW - 10, prompt: 'Which path?', questions: [{ id: 'q', prompt: 'Which path?', multiSelect: false, allowFreeText: true }], lastMessage: { text: 'Tested the routes.', truncated: false } };
+    const env = setup({ threads: [thread({ threadId: 't1', hasPendingInteraction: true, question: context.prompt, context })], entries: [question({ id: 'copy', sessionId: undefined, origin: { threadId: 't1' } as never })] });
+    env.c.start(); env.c.enter(); await flush();
+    expect(env.c.buildSnapshot().requests).toEqual([expect.objectContaining({ id: 'thread:t1:i1', ts: NOW - 10, threadContext: context, answerable: false })]);
+    expect(env.c.answer('thread:t1:i1', 'yes')).toEqual({ ok: false, reason: 'unknown' });
+    env.c.open({ kind: 'request', requestId: 'thread:t1:i1' });
+    expect(env.openThread).toHaveBeenCalledWith('t1', 'p1');
+    env.openThread.mockClear();
+    env.c.open({ kind: 'request', requestId: 'thread:t1:older-question' });
+    env.c.open({ kind: 'request', requestId: 'thread:t1' });
+    expect(env.openThread).not.toHaveBeenCalled();
+    env.c.stop();
+  });
   beforeEach(() => {
     fake.windows.length = 0;
   });
@@ -885,6 +984,7 @@ describe('CompanionController Modern threads', () => {
     expect(threadAgentState({ status: 'starting', hasPendingInteraction: false })).toBe('working');
     expect(threadAgentState({ status: 'active', hasPendingInteraction: true })).toBe('blocked');
     expect(threadAgentState({ status: 'error', hasPendingInteraction: false })).toBe('idle');
+    expect(threadAgentState({ status: 'error', hasPendingInteraction: true })).toBe('idle');
   });
 
   it('counts live threads beside pty agents and lists them in the Agents panel', async () => {
@@ -911,7 +1011,7 @@ describe('CompanionController Modern threads', () => {
       recentlyCompleted: false
     });
     // An empty feed project name falls back to main's registry.
-    expect(snap.agents.find((a) => a.threadId === 't2')).toMatchObject({ projectName: 'name-p1', state: 'idle' });
+    expect(snap.agents.find((a) => a.threadId === 't2')).toMatchObject({ projectName: 'name-p1', state: 'idle', failure: 'Thread failed' });
     expect(snap.agents).toHaveLength(3);
     env.c.stop();
   });
@@ -929,6 +1029,28 @@ describe('CompanionController Modern threads', () => {
       expect.objectContaining({ id: 'thread:t2', prompt: 'Waiting for your input' })
     ]);
     expect(env.c.answer('thread:t1', 'yes')).toEqual({ ok: false, reason: 'unknown' });
+    env.c.stop();
+  });
+
+  it('keeps failures in Agents without creating Needs you requests or reviving stale inbox questions', async () => {
+    const env = setup({
+      threads: [thread({ threadId: 't1', status: 'error', hasPendingInteraction: true, question: 'Thread failed: Connection closed' }), thread({ threadId: 't2', status: 'error' })],
+      entries: [question({ id: 'old', sessionId: undefined, origin: { threadId: 't1' } as never })]
+    });
+    env.c.start();
+    env.c.enter();
+    await flush();
+    const snapshot = env.c.buildSnapshot();
+    expect(snapshot.requests).toEqual([]);
+    expect(snapshot.counts).toMatchObject({ blocked: 0, working: 0, idle: 2 });
+    expect(snapshot.agents).toEqual([
+      expect.objectContaining({ threadId: 't1', state: 'idle', failure: 'Thread failed: Connection closed' }),
+      expect.objectContaining({ threadId: 't2', state: 'idle', failure: 'Thread failed' })
+    ]);
+    env.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
+    expect(env.c.getTooltip()?.rows?.[0]).toMatchObject({ state: 'idle', failure: 'Thread failed: Connection closed' });
+    env.c.open({ kind: 'thread', threadId: 't1' });
+    expect(env.openThread).toHaveBeenCalledWith('t1', 'p1');
     env.c.stop();
   });
 

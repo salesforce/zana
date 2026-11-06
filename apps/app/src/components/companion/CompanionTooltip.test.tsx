@@ -67,7 +67,8 @@ it('draws the Agents hover preview: dots, status, project, age and the overflow 
         rows: [
           { title: 'Popover PR', projectName: 'Zana', state: 'working', createdAt: 1_000_000 - 5 * 60_000, recentlyCompleted: false },
           { title: 'Fixer', projectName: 'Core', state: 'blocked', createdAt: 0 },
-          { title: 'Docs', projectName: 'Core', state: 'idle', recentlyCompleted: true }
+          { title: 'Docs', projectName: 'Core', state: 'idle', recentlyCompleted: true },
+          { title: 'Failed thread', projectName: 'Core', state: 'idle', failure: 'Thread failed' }
         ],
         more: 2
       })
@@ -75,7 +76,7 @@ it('draws the Agents hover preview: dots, status, project, age and the overflow 
   );
   expect(container.querySelector('.cc-tip-preview')).toBeTruthy();
   const rows = [...container.querySelectorAll('.cc-tip-row')].map((r) => r.textContent);
-  expect(rows).toEqual(['Popover PRWorking · Zana · 5m', 'FixerNeeds you · Core', 'DocsCompleted · Core']);
+  expect(rows).toEqual(['Popover PRWorking · Zana · 5m', 'FixerNeeds you · Core', 'DocsCompleted · Core', 'Failed threadError · Core']);
   expect(container.querySelector('.cc-tip-row .cc-dot-working')).toBeTruthy();
   expect(container.querySelector('.cc-tip-row .cc-dot-attention')).toBeTruthy();
   expect(container.querySelector('.cc-tip-row .cc-dot-done')).toBeTruthy();

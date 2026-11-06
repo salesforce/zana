@@ -108,7 +108,8 @@ describe('createCompanionHost', () => {
   it('builds the Window-menu item from the same gate, and its click enters', () => {
     const s = setup({ flag: false });
     const item = s.host.menuItem();
-    expect(item).toMatchObject({ id: COMPANION_MENU_ID, accelerator: 'Shift+CmdOrCtrl+M', visible: false, enabled: false, acceleratorWorksWhenHidden: false });
+    expect(item).toMatchObject({ id: COMPANION_MENU_ID, visible: false, enabled: false, acceleratorWorksWhenHidden: false });
+    expect(item.accelerator).toBeUndefined(); // Preserve the renderer's maximize-pane binding.
     (item.click as () => void)();
     expect(s.rail.enter).toHaveBeenCalledOnce();
     expect(setup().host.menuItem()).toMatchObject({ visible: true, enabled: true });
@@ -116,6 +117,31 @@ describe('createCompanionHost', () => {
 });
 
 describe('companionControllerDeps', () => {
+  it('follows a runtime that boots after subscription and disposes the fallback timer', () => {
+    vi.useFakeTimers();
+    try {
+      const off = vi.fn(), listener = vi.fn();
+      const runtime = { onMenubarThreadsChanged: vi.fn(() => off) };
+      let ready: typeof runtime | null = null;
+      const deps = companionControllerDeps({ runtime: () => ready } as CompanionControllerHost);
+      const dispose = deps.onThreadsChanged!(listener);
+      vi.advanceTimersByTime(2000);
+      expect(listener).toHaveBeenCalledOnce();
+      ready = runtime;
+      vi.advanceTimersByTime(2000);
+      expect(runtime.onMenubarThreadsChanged).toHaveBeenCalledWith(listener);
+      expect(listener).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(10_000);
+      expect(listener).toHaveBeenCalledTimes(2);
+      dispose();
+      expect(off).toHaveBeenCalledOnce();
+      const cancelEarly = companionControllerDeps({ runtime: () => null } as CompanionControllerHost).onThreadsChanged!(listener);
+      cancelEarly();
+      vi.advanceTimersByTime(2000);
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
   function host(over: Partial<CompanionControllerHost> = {}) {
     const h = {
       ptys: {},

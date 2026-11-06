@@ -1,5 +1,8 @@
 import {
   getConversationThread,
+  getConversationAssistantPreview,
+  getConversationFailurePreview,
+  listPendingInteractionsByThread,
   listMenubarConversationThreads,
   type ConversationThreadRow,
   type ZccDatabase
@@ -9,12 +12,36 @@ import {
   menubarAgentState,
   type MenubarThreadAgent
 } from '@zana-ai/zcc-domain';
+import { pendingInteractionPayloadSchema } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProjectStore } from '../../project-store.js';
 import type { ProductHub } from '../../http/product-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { conversationThreadViews } from './conversation-thread-view.js';
 
 export const MENUBAR_THREAD_LIMIT = 100;
+
+function pendingContext(db: ZccDatabase, threadId: string): MenubarThreadAgent['context'] {
+  const row = listPendingInteractionsByThread(db, { threadId, statuses: ['pending'], limit: 1 })[0];
+  // A corrupt/oversized payload must not suppress the rest of the fleet.
+  if (!row || row.payload.length > 128 * 1024) return undefined;
+  try {
+    const parsed = pendingInteractionPayloadSchema.safeParse(JSON.parse(row.payload));
+    if (!parsed.success) return undefined;
+    const payload = parsed.data;
+    const questions = payload.kind === 'user_question' ? payload.questions : undefined;
+    let prompt = questions?.[0]?.prompt ?? 'Waiting for your input';
+    if (payload.kind === 'approval') {
+      const subject = payload.subject;
+      prompt = subject.kind === 'command' ? `Approve command: ${subject.command}`
+        : subject.kind === 'file_change' ? `Approve file changes${subject.writeScope ? `: ${subject.writeScope}` : ''}`
+        : subject.kind === 'plan' ? 'Review the proposed plan' : 'Permission requested';
+    } else if ('title' in payload) prompt = payload.title;
+    const lastMessage = getConversationAssistantPreview(db, threadId, row.turnId, row.createdAt);
+    return { interactionId: row.id, createdAt: row.createdAt, prompt: prompt.slice(0, 4000), questions, lastMessage };
+  } catch {
+    return undefined;
+  }
+}
 
 interface MenubarThreadSourceDeps {
   db: ZccDatabase;
@@ -38,7 +65,7 @@ function projectThread(
     projectName: project?.name ?? 'project', projectColor: project?.color, title: thread.title ?? 'Untitled thread',
     state, favorite: false, canFavorite: false, canReply: false, createdAt: thread.createdAt,
     status: thread.status, hasPendingInteraction: thread.hasPendingInteraction,
-    ...(thread.status === 'error' ? { question: 'Thread error - open for details' } : {})
+    ...(thread.status === 'error' ? { question: 'Thread failed' } : {})
   };
   agent.rowKey = menubarAgentRowKey(agent);
   return agent;
@@ -63,6 +90,14 @@ export function createMenubarThreadSource(deps: MenubarThreadSourceDeps) {
         listMenubarConversationThreads(deps.db, { limit: bounded })
       ).flatMap((thread) => {
         const agent = projectThread(thread, projects.get(thread.projectId));
+        if (agent && thread.status === 'error') {
+          const failure = getConversationFailurePreview(deps.db, thread.id);
+          if (failure) agent.question = `Thread failed: ${failure}`;
+        }
+        if (agent && thread.hasPendingInteraction && thread.status !== 'error') {
+          agent.context = pendingContext(deps.db, thread.id);
+          if (agent.context) agent.question = agent.context.prompt;
+        }
         return agent ? [agent] : [];
       });
       rows.sort(compareMenubarThreads);

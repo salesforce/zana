@@ -50,7 +50,7 @@ export function pendingRequests(
   answered: AnsweredIds,
   dismissed: ReadonlySet<string>
 ): CompanionRequest[] {
-  return requests.filter((r) => !dismissed.has(r.id) && !(r.entryId && answered[r.entryId]));
+  return requests.filter((r) => r.reason !== 'thread-error' && !dismissed.has(r.id) && !(r.entryId && answered[r.entryId]));
 }
 
 export interface AgentGroups {
@@ -64,7 +64,8 @@ export function groupAgents(agents: CompanionAgent[], pending: CompanionRequest[
   const asking = new Set(pending.map((r) => r.sessionId).filter(Boolean) as string[]);
   const groups: AgentGroups = { needsYou: [], working: [], idle: [] };
   for (const a of agents) {
-    if (a.state === 'blocked' || a.state === 'waiting' || asking.has(a.sessionId)) groups.needsYou.push(a);
+    if (a.failure) groups.idle.push(a);
+    else if (a.state === 'blocked' || a.state === 'waiting' || asking.has(a.sessionId)) groups.needsYou.push(a);
     else if (a.state === 'working') groups.working.push(a);
     else groups.idle.push(a);
   }
@@ -89,8 +90,8 @@ export function railIndicators(snapshot: CompanionSnapshot, pendingCount: number
 }
 
 /** Dot colour class for an agent row, following the companion legend. */
-export function agentDot(a: Pick<CompanionAgent, 'state' | 'recentlyCompleted'>): string {
-  if (a.state === 'blocked' || a.state === 'waiting') return 'cc-dot-attention';
+export function agentDot(a: Pick<CompanionAgent, 'state' | 'recentlyCompleted' | 'failure'>): string {
+  if (a.failure || a.state === 'blocked' || a.state === 'waiting') return 'cc-dot-attention';
   if (a.state === 'working') return 'cc-dot-working';
   if (a.recentlyCompleted) return 'cc-dot-done';
   return 'cc-dot-idle';
@@ -105,7 +106,8 @@ const STATE_LABEL: Record<AgentState, string> = {
   unknown: 'Idle'
 };
 
-export function agentStatusLabel(a: Pick<CompanionAgent, 'state' | 'recentlyCompleted'>): string {
+export function agentStatusLabel(a: Pick<CompanionAgent, 'state' | 'recentlyCompleted' | 'failure'>): string {
+  if (a.failure) return 'Error';
   if (a.recentlyCompleted && a.state !== 'working' && a.state !== 'blocked') return 'Completed';
   return STATE_LABEL[a.state] ?? 'Idle';
 }
@@ -154,5 +156,6 @@ export const UNANSWERABLE_COPY: Record<NonNullable<CompanionRequest['reason']>, 
   ended: 'This agent is no longer running — open it in the app to continue.',
   background: 'Background job — answer it from the app.',
   execution: 'Execution blocker — respond from the app.',
-  thread: 'Waiting in a thread — open it in the app to respond.'
+  thread: 'Waiting in a thread — open it in the app to respond.',
+  'thread-error': 'This thread stopped with an error. Open the thread to review it.'
 };

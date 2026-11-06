@@ -323,7 +323,7 @@ export function SidebarRail({
             type="button"
             className="sidebar-utility-button"
             aria-label="Minimize to Command Center"
-            title="Minimize to Command Center (⇧⌘M)"
+            title="Minimize to Command Center (⌘M)"
             onClick={() => void product.companion.enter()}
           >
             <PanelRightClose size={18} aria-hidden="true" />

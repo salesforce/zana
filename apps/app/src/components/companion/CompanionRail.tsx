@@ -90,7 +90,7 @@ export function CompanionRail() {
     }
   };
 
-  const needsLabel = pending.length > 0 ? `${pending.length} waiting for you` : 'Nothing waiting';
+  const needsLabel = pending.length > 0 ? `${pending.length} need${pending.length === 1 ? 's' : ''} attention` : 'Nothing needs attention';
   const agentsLabel = `${snapshot.counts.working} working · ${snapshot.counts.idle} idle`;
   const schedLabel =
     snapshot.counts.runningSchedules > 0

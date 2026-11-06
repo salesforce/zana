@@ -1,4 +1,14 @@
 import type { AgentState, IdleResolution } from './product.js';
+import type { PendingInteractionUserQuestionQuestion } from './bb-thread/pending-interactions.js';
+
+/** Read-only, bounded context for the thread's current pending interaction. */
+export interface MenubarThreadContext {
+  interactionId: string;
+  createdAt: number;
+  prompt: string;
+  questions?: PendingInteractionUserQuestionQuestion[];
+  lastMessage?: { text: string; truncated: boolean };
+}
 
 /** Identity and display projection shared by menu-bar producers and consumers. */
 export type MenubarAgent = MenubarCliAgent | MenubarThreadAgent;
@@ -31,6 +41,7 @@ export interface MenubarThreadAgent extends MenubarAgentBase {
   threadId: string;
   status: string;
   hasPendingInteraction: boolean;
+  context?: MenubarThreadContext;
 }
 
 /** Shared status projection for menu-bar thread rows. */

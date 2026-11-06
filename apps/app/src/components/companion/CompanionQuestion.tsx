@@ -4,6 +4,7 @@ import type { CompanionRequest } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { answerFor, buildReply, emptyQState, splitRecommended, type QState } from '../../lib/inbox-answer.js';
 import { UNANSWERABLE_COPY } from './companion-model.js';
+import { CompanionThreadRequest } from './CompanionThreadRequest.js';
 
 const FAIL_COPY: Record<string, string> = {
   ended: 'The agent is no longer running.',
@@ -18,7 +19,17 @@ const FAIL_COPY: Record<string, string> = {
  * "Recommended" tag, Other, Skip and Send. On success it shows "Sent ✓" briefly,
  * then `onResolved` removes the request — the agent continues on its own.
  */
-export function CompanionQuestion({
+export function CompanionQuestion(props: {
+  request: CompanionRequest;
+  onBack: () => void;
+  onResolved: (request: CompanionRequest) => void;
+}) {
+  return props.request.threadContext
+    ? <CompanionThreadRequest key={props.request.id} request={props.request} onBack={props.onBack} />
+    : <AgentQuestion key={props.request.id} {...props} />;
+}
+
+function AgentQuestion({
   request,
   onBack,
   onResolved
@@ -34,6 +45,17 @@ export function CompanionQuestion({
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const aliveRef = useRef(true);
+  const resolveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const openLabel = request.reason === 'thread-error' ? 'Open thread' : 'Open in Zana';
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      clearTimeout(resolveTimer.current);
+    };
+  }, []);
 
   const isQuestion = request.kind === 'question' && questions.length > 0;
   const answers = questions.map((q, i) => answerFor(q, states[i] ?? emptyQState()));
@@ -61,16 +83,17 @@ export function CompanionQuestion({
     const text = isQuestion ? buildReply(questions, answers) : freeText;
     try {
       const res = await product.companion.answer(request.id, text);
+      if (!aliveRef.current) return;
       if (res.ok) {
         setSent(true);
-        setTimeout(() => onResolved(request), 900);
+        resolveTimer.current = setTimeout(() => onResolved(request), 900);
       } else {
         setError(FAIL_COPY[res.reason ?? 'unknown'] ?? FAIL_COPY.unknown);
       }
     } catch {
-      setError('Could not send the answer.');
+      if (aliveRef.current) setError('Could not send the answer.');
     } finally {
-      setSending(false);
+      if (aliveRef.current) setSending(false);
     }
   };
 
@@ -124,8 +147,8 @@ export function CompanionQuestion({
         <button
           type="button"
           className="cc-icon-btn"
-          title="Open in Zana"
-          aria-label="Open in Zana"
+          title={openLabel}
+          aria-label={openLabel}
           onClick={() => void product.companion.open({ kind: 'request', requestId: request.id })}
         >
           <ExternalLink size={14} />
@@ -209,7 +232,7 @@ export function CompanionQuestion({
             className="cc-btn-primary"
             onClick={() => void product.companion.open({ kind: 'request', requestId: request.id })}
           >
-            Open in Zana
+            {openLabel}
           </button>
         )}
       </footer>

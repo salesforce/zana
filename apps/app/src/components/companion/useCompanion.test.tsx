@@ -108,6 +108,22 @@ it('dismisses entry-less requests locally and brings them back after DISMISS_MS'
   expect(result.current.pending).toHaveLength(1);
 });
 
+it('expires each dismissal on time even when another request is dismissed later', async () => {
+  vi.useFakeTimers({ now: 1000 });
+  const first = req({ id: 'agent:a', entryId: undefined });
+  const second = req({ id: 'agent:b', entryId: undefined });
+  h.request.mockResolvedValue(snap({ requests: [first, second] }));
+  const { result } = renderHook(() => useCompanion());
+  await act(async () => {});
+  act(() => result.current.resolve(first));
+  act(() => vi.advanceTimersByTime(10_000));
+  act(() => result.current.resolve(second));
+  act(() => vi.advanceTimersByTime(20_000));
+  expect(result.current.pending.map(r => r.id)).toEqual(['agent:a']);
+  act(() => vi.advanceTimersByTime(10_000));
+  expect(result.current.pending).toHaveLength(2);
+});
+
 it('survives an unavailable localStorage', async () => {
   const spy = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
     throw new Error('denied');

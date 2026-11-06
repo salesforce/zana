@@ -69,7 +69,7 @@ const btn = (re: RegExp) => screen.getByRole('button', { name: re });
 
 it('opens each panel kind from its icon, with idle labels', async () => {
   await mount();
-  fireEvent.click(btn(/^Needs you: Nothing waiting/));
+  fireEvent.click(btn(/^Needs you: Nothing needs attention/));
   expect(h.openPanel).toHaveBeenLastCalledWith('needs-you', undefined);
   fireEvent.click(btn(/^Agents: 0 working · 0 idle/));
   expect(h.openPanel).toHaveBeenLastCalledWith('agents', undefined);
@@ -106,7 +106,7 @@ it('shows the pending badge (9+ cap), pulses once, and opens the first request',
   expect(h.openPanel).toHaveBeenCalledWith('needs-you', 'inbox:e0');
   expect(screen.getByText('PC')).toBeTruthy();
   expect(btn(/^Scheduler: 2 running/)).toBeTruthy();
-  expect(btn(/^Status: 10 waiting for you/)).toBeTruthy();
+  expect(btn(/^Status: 10 need attention/)).toBeTruthy();
   // active needs-you + badge click still re-opens with focus instead of closing
   act(() => pushPanel({ kind: 'needs-you', railSide: 'right', anchorY: 0 }));
   fireEvent.click(screen.getByRole('button', { name: /10 pending/ }));

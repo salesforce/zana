@@ -56,6 +56,32 @@ it('sends the picked option, shows Sent, then resolves the request', async () =>
   expect(onResolved).toHaveBeenCalledOnce();
 });
 
+it('shows a failure as an error with an Open thread action', () => {
+  renderQ(request({ kind: 'blocked', reason: 'thread-error', answerable: false, questions: undefined, prompt: 'Thread failed: Connection closed.' }));
+  expect(screen.getByText('Thread failed: Connection closed.')).toBeTruthy();
+  expect(screen.getByText('This thread stopped with an error. Open the thread to review it.')).toBeTruthy();
+  expect(screen.queryByText(/Waiting in a thread/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Skip' })).toBeNull();
+  fireEvent.click(screen.getAllByRole('button', { name: 'Open thread' })[1]);
+  expect(h.open).toHaveBeenCalledWith({ kind: 'request', requestId: 'inbox:e1' });
+});
+
+it.each(['before-ack', 'after-ack'] as const)('does not resolve a question after unmount (%s)', async (when) => {
+  vi.useFakeTimers();
+  let acknowledge!: (value: { ok: boolean }) => void;
+  h.answer.mockReturnValue(new Promise(resolve => { acknowledge = resolve; }));
+  const onResolved = vi.fn();
+  const view = render(<CompanionQuestion request={request()} onBack={vi.fn()} onResolved={onResolved} />);
+  fireEvent.click(screen.getByRole('button', { name: /Right/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  if (when === 'before-ack') view.unmount();
+  await act(async () => acknowledge({ ok: true }));
+  if (when === 'after-ack') view.unmount();
+  act(() => vi.advanceTimersByTime(1000));
+  expect(onResolved).not.toHaveBeenCalled();
+});
+
 it('picks with number keys and sends with Enter', async () => {
   renderQ();
   fireEvent.keyDown(window, { key: '1' });
