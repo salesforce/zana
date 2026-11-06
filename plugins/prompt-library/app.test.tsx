@@ -2,7 +2,7 @@
 import React from 'react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
-import {PromptLibrary} from './app.tsx';
+import {BookMarkedIcon, injectStyles, PromptLibrary, PROMPT_LIBRARY_STYLES, STYLE_TAG_ID} from './app.tsx';
 const mocks=vi.hoisted(()=>({call:vi.fn(),composer:{scope:{kind:'thread',threadId:'t'},experimental_replacePrompt:vi.fn(),setText:vi.fn(),focus:vi.fn()}}));
 vi.mock('@zana-ai/zcc-plugin-sdk/app',()=>{const rpc={call:mocks.call};return ({definePluginApp:(setup:unknown)=>({setup}),useComposer:()=>mocks.composer,useRpc:()=>rpc});});
 const row={id:'p',createdAt:1,input:[{type:'text',text:'Remember @file',mentions:[]},{type:'localImage',path:'img.png',sourceProjectId:'p'}]};
@@ -72,4 +72,67 @@ it('does not carry another scope\'s rows over while a scope change loads or fail
  fireEvent.change(screen.getByLabelText('Prompt scope'),{target:{value:'starred'}});
  expect((await screen.findByRole('alert')).textContent).toContain('offline');
  expect(screen.queryByText('Remember @file')).toBeNull();expect(screen.queryByRole('button',{name:'Star',exact:true})).toBeNull();
+});
+
+it('renders pill trigger button with icon and text', () => {
+  render(<PromptLibrary />);
+  const button = screen.getByRole('button', { name: 'Prompt Library' });
+  expect(button.classList.contains('pl-trigger-btn')).toBe(true);
+  const icon = button.querySelector('svg');
+  expect(icon).toBeTruthy();
+  expect(icon?.getAttribute('aria-hidden')).toBe('true');
+});
+
+it('closes dialog on backdrop click and keeps dialog open on click inside', async () => {
+  render(<PromptLibrary />);
+  fireEvent.click(screen.getByRole('button', { name: 'Prompt Library' }));
+  await screen.findByText('Remember @file');
+  const dialog = screen.getByRole('dialog');
+  const backdrop = dialog.parentElement;
+  expect(backdrop?.classList.contains('pl-backdrop')).toBe(true);
+
+  // Clicking inside the dialog does not close it
+  fireEvent.mouseDown(dialog);
+  expect(screen.getByRole('dialog')).toBeTruthy();
+
+  // Clicking directly on the backdrop closes it
+  fireEvent.mouseDown(backdrop!);
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('injects stylesheet, prevents duplicate tags, updates altered content, and handles missing document', () => {
+  document.getElementById(STYLE_TAG_ID)?.remove();
+
+  // Initial injection
+  injectStyles();
+  const tag = document.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null;
+  expect(tag).not.toBeNull();
+  expect(tag?.tagName).toBe('STYLE');
+  expect(tag?.textContent).toBe(PROMPT_LIBRARY_STYLES);
+
+  // Repeated injection without duplicate tags
+  injectStyles();
+  expect(document.querySelectorAll(`#${STYLE_TAG_ID}`)).toHaveLength(1);
+
+  // Replacement of existing stylesheet content
+  tag!.textContent = '/* obsolete */';
+  injectStyles();
+  expect(document.getElementById(STYLE_TAG_ID)?.textContent).toBe(PROMPT_LIBRARY_STYLES);
+
+  // Invocation without a document
+  const originalDocument = globalThis.document;
+  try {
+    // @ts-expect-error test undefined document environment
+    delete globalThis.document;
+    expect(() => injectStyles()).not.toThrow();
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+it('renders BookMarkedIcon with custom size', () => {
+  const { container } = render(<BookMarkedIcon size={24} />);
+  const svg = container.querySelector('svg');
+  expect(svg?.getAttribute('width')).toBe('24');
+  expect(svg?.getAttribute('height')).toBe('24');
 });

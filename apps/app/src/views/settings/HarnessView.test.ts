@@ -134,6 +134,11 @@ describe('harness settings-search provider', () => {
     expect(ids).toContain('harness.claude.default-model-level');
     expect(ids).not.toContain('harness.claude.default-provider');
     expect(ids).not.toContain('harness.claude.default-execution-state');
+    expect(ids).toContain('harness.claude.model-tiers');
+    rememberHarnessDescriptors([{ id: 'claude', targets: { models: [] } } as never]);
+    expect(harnessRowEntries([rows[0]]).map((e) => e.id)).not.toContain('harness.claude.model-tiers');
+    rememberHarnessDescriptors([{ id: 'claude' } as never]);
+    expect(harnessRowEntries([rows[0]]).map((e) => e.id)).not.toContain('harness.claude.model-tiers');
     rememberHarnessDescriptors(null);
   });
 

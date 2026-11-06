@@ -123,3 +123,31 @@ it('does not announce completion from an intermediate all-installed poll while t
   expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
   expect(screen.queryByText('Pack saved. Manage each plugin below.')).toBeNull();
 });
+
+it('embeds plugin choices in onboarding with one stateful action and no nested dialog', () => {
+  const onInstall = vi.fn();
+  const view = render(<PluginPackReview inline review={review} onInstall={onInstall} onClose={vi.fn()} onOpenPlugin={vi.fn()} />);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.getByRole('region', { name: 'Team essentials' })).toBeTruthy();
+  expect(screen.getByText(/full trust/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open settings' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Install and continue' }));
+  expect(onInstall).toHaveBeenLastCalledWith(['accounts', 'environments']);
+  fireEvent.click(screen.getByLabelText('Include Environment tools'));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue setup' }));
+  expect(onInstall).toHaveBeenLastCalledWith(['accounts']);
+  view.rerender(<PluginPackReview inline review={review} results={[{ id: 'accounts', status: 'installed' }, { id: 'environments', status: 'installed' }]} onInstall={onInstall} onClose={vi.fn()} onOpenPlugin={vi.fn()} />);
+  expect(screen.getByText('Your selected plugins are installed.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Continue setup' }));
+  expect(onInstall).toHaveBeenLastCalledWith(['accounts', 'environments']);
+});
+it('labels onboarding bundle selection consistently', () => {
+  const onReview = vi.fn();
+  render(<PluginPackCards onboarding packs={[pack]} mode="browse" onReview={onReview} onForget={vi.fn()} />);
+  expect(screen.getByRole('heading', { name: 'Bundles 1' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Choose bundle' }));
+  expect(onReview).toHaveBeenCalledWith(pack);
+  expect(screen.queryByText('Review pack')).toBeNull();
+});

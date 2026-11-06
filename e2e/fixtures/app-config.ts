@@ -4,10 +4,20 @@ import { fileURLToPath } from 'node:url';
 
 export const DISABLED_CLAUDE_BINARY = fileURLToPath(new URL('./isolated-cli-bin/claude', import.meta.url));
 
-/** CLI health checks resolve bare `claude`, independently of app configuration. */
+/**
+ * CLI health checks resolve bare harness names (claude, opencode, codex, cursor-agent, agent),
+ * independently of app configuration. The guard sits ahead of the inherited CLI directories but
+ * behind any directory a spec prepends itself, such as a fake `opencode` or `codex` on PATH.
+ */
 export function isolatedClaudePath(path: string | undefined, allowLiveClaude = false): string | undefined {
   if (allowLiveClaude) return path;
-  return [dirname(DISABLED_CLAUDE_BINARY), path].filter(Boolean).join(delimiter);
+  const guard = dirname(DISABLED_CLAUDE_BINARY);
+  const inherited = process.env.PATH ?? '';
+  const current = path ?? '';
+  // A spec prepends its own directories to the inherited PATH; keep those first.
+  const head = inherited && current.endsWith(inherited) ? current.slice(0, current.length - inherited.length) : '';
+  const tail = head ? inherited : current;
+  return [head.split(delimiter).filter(Boolean).join(delimiter), guard, tail].filter(Boolean).join(delimiter);
 }
 
 /**
@@ -40,7 +50,9 @@ export function writeAppConfig(
   // Relaunches retain settings changed by the test, including explicit fake CLIs.
   const config: Record<string, unknown> = exists
     ? JSON.parse(readFileSync(configPath, 'utf8'))
-    : { walkthroughCompleted: true, setupDismissed: true, ...initialConfig };
+    : { walkthroughCompleted: true, setupDismissed: true,
+      onboarding: { version: 1, profileId: 'salesforce-employees', audience: 'general', step: 'complete' },
+      ...initialConfig };
   if (!allowLiveClaude && config.claudeBinary === undefined) {
     config.claudeBinary = DISABLED_CLAUDE_BINARY;
     writeFileSync(configPath, JSON.stringify(config, null, 2));

@@ -98,7 +98,7 @@ The steps below are the review-first path.
 
 1. Use the design and plan files you already wrote or read in this conversation,
    wherever they are: this project, your home folder (a doc vault, `~/.zcc/library`)
-   or the clone root. Do not copy them.
+   or the clone root. Do not copy them; pass their exact paths. Text that is not on disk can be passed by value as `attachments: [{ name, text }]`.
 2. Check the plan with `squad_plan_check` (`{ path }` of the plan file). Fix it
    until it passes.
 3. Call `list_teams` and pick the Squad the user names. When its `canInferPlan`

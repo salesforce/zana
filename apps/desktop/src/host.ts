@@ -147,7 +147,7 @@ import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-st
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
-import { liveScopedProviderFor } from './team-model-routing.js';
+import { liveScopedProviderFor, memoizedLiveScopedProviderFor, resolveSlotModel } from './team-model-routing.js';
 import { decideTeamRoutingEnforcement } from './team-routing-enforcement.js';
 import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
@@ -312,6 +312,7 @@ import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
 import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
 import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
 import { createSquadProposalStore } from './squad-proposals/store.js';
+import { createStagingStore, SQUAD_STAGING_DIR_NAME, SQUAD_STAGING_PARENT_DIR_NAME } from './squad-proposals/staging.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
 import { goalMentionPaths } from './squad-proposals/sources.js';
@@ -5264,10 +5265,10 @@ async function resolveTeamModelSnapshots(
     const input = { config, persona, projectSettings, profile, extraArgs: [], scope: launchExecutionScope(project, {}, config) };
     // Slots resolve concurrently: each gets its own live-inventory view.
     const provider = team.transport === 'MODERN' ? sharedProvider : await liveScopedProviderFor(sharedProvider, { cwd: project.path, config });
-    const model = resolveModelTarget(provider, input);
-    const role = resolveRoleTarget(provider, input);
-    const roleOwnedModel = !!role.targetId && provider.nativeRolePinsModel;
-    const target = provider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === model.targetId);
+    const { model, provider: routedProvider } = await resolveSlotModel(provider, input, { cwd: project.path, config });
+    const role = resolveRoleTarget(routedProvider, input);
+    const roleOwnedModel = !!role.targetId && routedProvider.nativeRolePinsModel;
+    const target = routedProvider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === model.targetId);
     const verifiedProvider = verified.find((candidate) => candidate.family === provider.adapter.descriptor.id);
     const providerAvailable = provider.adapter.descriptor.id === 'shell'
       || (verifiedProvider?.enabled === true && verifiedProvider.installed);
@@ -6346,7 +6347,7 @@ export async function launchTeam(
     // Modern has no host file reader but a bound `execution.plan.register` tool, so
     // it gets the register-once kickoff and no handoff file at all.
     const planTransport = planAuthoringTransportOf(team.transport);
-    const { planFilePath, planWriteAbsPaths, sourceFilePath } = durableCoordination && !planReady && structured?.executionId && planTransport === 'cli'
+    const { planFilePath, planWriteAbsPaths, sourceFilePath } = durableCoordination && !planReady && structured?.executionId && planTransport === 'cli' && !project.remote
       ? await prepareCoordinatorHandoff({
           executionId: structured.executionId,
           projectId: targetProjectId,
@@ -6643,8 +6644,14 @@ export async function queueThreadTurnForProposal(threadId: string, projectId: st
   }
 }
 
+/** Private copies of attachments kept for pending proposals; under a data folder the source policy lets through. */
+const squadAttachmentStaging = createStagingStore({ root: join(electronZccDataDir(), SQUAD_STAGING_PARENT_DIR_NAME, SQUAD_STAGING_DIR_NAME) });
+const SQUAD_STAGING_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let squadStagingSweepTimer: NodeJS.Timeout | null = null;
+
 const squadProposalServiceDeps: SquadProposalServiceDeps = {
   store: squadProposalStore,
+  staging: squadAttachmentStaging,
   enabled: teamExecutionEnabled,
   lookupProposer,
   projects: { get: (id) => store.listProjects().find((project) => project.id === id) },
@@ -6670,11 +6677,11 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
     // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
     activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
     executionState: async (executionId) => (await executionStore.get(executionId))?.state,
-    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths }, ctx) => {
+    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths, attachments }, ctx) => {
       const sourceBases = squadSourceBases();
       return launchSquad(squadNowLaunchDeps, {
         teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary, completionInboxNotice,
-        sourceCapabilityIds: [], sourcePaths,
+        sourceCapabilityIds: [], sourcePaths, ...(attachments?.length ? { attachments } : {}),
         goalSources: await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
       }, ctx);
     }
@@ -6911,16 +6918,17 @@ const squadExecutionService = new SquadExecutionService({
       return [provider.adapter.descriptor.id, provider] as const;
     }));
     const requiredProviders = [...providers.keys()].sort();
-    const requiredModels = slotPersonas.flatMap((persona) => {
+    // One live listing per harness for the whole admission, however many slots share it.
+    const liveView = memoizedLiveScopedProviderFor();
+    const requiredModels = (await Promise.all(slotPersonas.map(async (persona) => {
       const profile = profileForAdmission(persona);
-      const provider = providerFor(profile);
       const resolutionInput = { config, persona, projectSettings, profile, extraArgs: [], scope: project ? launchExecutionScope(project, {}, config) : 'local' as const };
-      const model = resolveModelTarget(provider, resolutionInput);
+      const { model, provider } = await resolveSlotModel(providerFor(profile), resolutionInput, { cwd: project?.path ?? process.cwd(), config }, liveView);
       const role = resolveRoleTarget(provider, resolutionInput);
       return model.targetId && !(role.targetId && provider.nativeRolePinsModel)
         ? [{ id: model.targetId, provider: provider.adapter.descriptor.id }]
         : [];
-    }).sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
+    }))).flat().sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
     const { requiredSkills, personaMcpServers, inventoryMcpServers } = teamAdmissionRequirements(slotPersonas, request.workUnits);
     const inventory = await collectTeamAdmissionInventory({ requiredSkills, requiredMcpServers: inventoryMcpServers, requiredModels, requiredProviders }, {
       listSkills: () => project ? listSkills({ projectPath: project.path, projectId }) : Promise.resolve([]),
@@ -8609,6 +8617,13 @@ async function bootstrapNormal() {
     } finally {
       await recoverSquadStateAtBoot({ squadFollowUpClaims, squadWorktreeRuntime, squadExecutionService, planCorrection, logError: logMainError });
       await squadProposalService.sweepExpired().catch((error) => logMainError('squad proposals sweepExpired', error));
+      const sweepStaged = () => squadProposalService.sweepStaged().catch((error) => logMainError('squad proposals sweepStaged', error));
+      await sweepStaged();
+      // Registered once at init (bootstrap runs once) and cleared in before-quit (Rule 3).
+      if (!squadStagingSweepTimer) {
+        squadStagingSweepTimer = setInterval(() => { void sweepStaged(); }, SQUAD_STAGING_SWEEP_INTERVAL_MS);
+        squadStagingSweepTimer.unref?.();
+      }
     }
   } catch (error) {
     // A corrupt recovery record must surface the repair flow, not permanently
@@ -10297,6 +10312,7 @@ app.on('before-quit', (event) => {
   stopSkillsWatchers();
   stopExtensionsWatcher();
   localExtensionWatcher.shutdown();
+  if (squadStagingSweepTimer) { clearInterval(squadStagingSweepTimer); squadStagingSweepTimer = null; }
   // Kill every out-of-process extension child (P3-A). Electron also reaps a
   // utilityProcess on app quit, but tear down explicitly so teardown() runs and
   // no orphan lingers if quit is slow. Fire-and-forget — quitting won't block.

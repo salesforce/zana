@@ -22,7 +22,7 @@ import {
   teardownJobTeam,
   type JobTeamContext
 } from './sdk/job-team-scenario.js';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,9 @@ const TITLE = 'Atlas site build';
 const DESIGN = '.zcc/library/designs/e2e-design.md';
 const PLAN = '.zcc/library/runbooks/e2e-plan.md';
 const GOAL = 'Build the Atlas site exactly as the attached plan describes.';
+/** Shown wherever attached content is reviewed (SQUAD_ATTACHMENT_FROZEN_NOTE); spelled out so wording changes fail here. */
+const SQUAD_ATTACHMENT_FROZEN_NOTE =
+  'Attached content was captured when this launch was prepared. Anything changed after that is not included, and the Squad will use only the captured version.';
 const FAKE_ACP_PREFIX = 'FAKE_ACP: ';
 /** Under the E2E HOME, outside the project: a design vault the proposer reads from. */
 const NOTES_DIR = 'zcc-notes';
@@ -341,6 +344,151 @@ test.describe('CLI Agent proposer', () => {
     } catch (error) {
       throw jobTeamFailure(ctx, error);
     } finally {
+      await teardownJobTeam(ctx);
+    }
+  });
+
+  test('keeps attached text for review, shows it as attached, and removes the private copy on launch', async ({ app, home }, testInfo) => {
+    const ctx = createJobTeamContext(app, { tmpPrefix: 'zcc-squad-attach-', scenario: undefined });
+    const outputPath: OutputPath = (name) => testInfo.outputPath(name);
+    const stagedRoot = join(home, '.zcc', 'squad-proposals', 'staged');
+    const stagedFiles = () => (existsSync(stagedRoot) ? readdirSync(stagedRoot).flatMap((id) => readdirSync(join(stagedRoot, id))) : []);
+    try {
+      writeProjectFiles(ctx.projectDir);
+      writeFileSync(join(ctx.projectDir, '.e2e-proposal.json'), JSON.stringify({
+        planPath: PLAN,
+        proposals: [{ label: 'main', input: {
+          teamId: 'e2e-job-team', goal: GOAL, sources: [PLAN], title: TITLE,
+          attachments: [{ name: 'e2e-notes.md', text: '# Notes\n\nCaptured by the proposer.\n' }]
+        } }]
+      }));
+      const projectId = await launchJobTeamCliOwner(ctx, {
+        workerQuantity: 2,
+        prompt: 'E2E propose Squad',
+        orchestratorExtra: { deniedTools: ['Write', 'Edit'] },
+        teamExtra: { defaultPlanning: 'provided' }
+      });
+
+      await expectPlanCheckedAndProposed(ctx);
+      const proposed = loggedResult(readCoordinatorLog(ctx), 'propose[main]');
+      expect(proposed?.value.attachments).toEqual([{ given: 'e2e-notes.md', used: 'e2e-notes.md' }]);
+      // The private copy exists while the proposal is pending, with owner-only permissions.
+      expect(stagedFiles()).toEqual(['e2e-notes.md']);
+      if (process.platform !== 'win32') {
+        const id = readdirSync(stagedRoot)[0]!;
+        expect(statSync(join(stagedRoot, id)).mode & 0o777).toBe(0o700);
+        expect(statSync(join(stagedRoot, id, 'e2e-notes.md')).mode & 0o777).toBe(0o600);
+      }
+
+      await openInboxCard(ctx.window, `Squad launch ready: ${TITLE}`);
+      const detail = ctx.window.locator('.inbox-detail');
+      await expect(detail.getByText('e2e-notes.md (attached)')).toBeVisible();
+      await expect(detail.getByText(SQUAD_ATTACHMENT_FROZEN_NOTE)).toBeVisible();
+      await captureElectronScreenshot(app.electron, ctx.window, outputPath('01-attachment-card.png'));
+
+      await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
+      const modal = ctx.window.getByTestId('launch-modal');
+      await expect(modal).toBeVisible();
+      await expect(modal.getByTestId('team-composer-attachment-note')).toContainText(SQUAD_ATTACHMENT_FROZEN_NOTE);
+      await expect(modal.getByLabel('Attached sources')).toContainText('e2e-notes.md');
+      await captureElectronScreenshot(app.electron, ctx.window, outputPath('02-attachment-composer.png'));
+      const send = modal.getByTestId('team-command-send');
+      await expect(send).toBeEnabled({ timeout: 15_000 });
+      await send.click();
+      await expect(modal).toBeHidden();
+
+      const executionId = await findJobExecutionId(ctx.window, projectId, TITLE);
+      expect(executionId).toBeTruthy();
+      // Launching removes the private copy.
+      await expect.poll(stagedFiles, { timeout: 30_000, intervals: [500] }).toEqual([]);
+    } catch (error) {
+      throw jobTeamFailure(ctx, error);
+    } finally {
+      await teardownJobTeam(ctx);
+    }
+  });
+
+  test('launches OpenCode tiers from the seeded rules with no tier setup', async ({ app }) => {
+    const ctx = createJobTeamContext(app, { tmpPrefix: 'zcc-squad-seeded-tiers-', scenario: undefined });
+    try {
+      writeProjectFiles(ctx.projectDir);
+      writeFileSync(join(ctx.projectDir, '.e2e-proposal.json'), JSON.stringify({
+        planPath: PLAN,
+        proposals: [{ label: 'main', input: { teamId: 'e2e-job-team', goal: GOAL, sources: [PLAN], title: TITLE } }]
+      }));
+      // The installed models include a `terra` family, which the seeded medium rule matches.
+      writeFileSync(join(ctx.projectDir, '.zcc-model-list'), 'gw/alpha-9-terra\ngw/alpha-10-terra\ngw/beta-1-sol\n');
+      const projectId = await launchJobTeamCliOwner(ctx, {
+        workerQuantity: 2,
+        prompt: 'E2E propose Squad',
+        orchestratorExtra: { deniedTools: ['Write', 'Edit'] },
+        teamExtra: { defaultPlanning: 'provided' }
+      });
+      await expectPlanCheckedAndProposed(ctx);
+      const fixtureOpenCode = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'bin', 'opencode');
+      await ctx.window.evaluate((binary) => window.cc.config.set({ harnessOpenCodeEnabled: true, opencodeBinary: binary }), fixtureOpenCode);
+      // No user tier rules: the workers move to OpenCode on the medium tier.
+      await ctx.window.evaluate(() => window.cc.personas.save({
+        id: 'e2e-worker', name: 'E2E Worker', description: 'Durable test worker',
+        baseProfile: 'opencode', permissionMode: 'default', systemPrompt: '', modelLevel: 'medium'
+      }));
+
+      await openInboxCard(ctx.window, `Squad launch ready: ${TITLE}`);
+      await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
+      const modal = ctx.window.getByTestId('launch-modal');
+      const send = modal.getByTestId('team-command-send');
+      await expect(send).toBeEnabled({ timeout: 15_000 });
+      await send.click();
+      await expect(modal).toBeHidden({ timeout: 30_000 });
+      expect(await findJobExecutionId(ctx.window, projectId, TITLE)).toBeTruthy();
+    } catch (error) {
+      throw jobTeamFailure(ctx, error);
+    } finally {
+      await ctx.window.evaluate(() => window.cc.config.set({ opencodeBinary: undefined })).catch(() => undefined);
+      await teardownJobTeam(ctx);
+    }
+  });
+
+  test('launches on a harness without a built-in tier mapping when the user tier rules match the installed models', async ({ app }) => {
+    const ctx = createJobTeamContext(app, { tmpPrefix: 'zcc-squad-tier-rules-', scenario: undefined });
+    try {
+      writeProjectFiles(ctx.projectDir);
+      writeFileSync(join(ctx.projectDir, '.e2e-proposal.json'), JSON.stringify({
+        planPath: PLAN,
+        proposals: [{ label: 'main', input: { teamId: 'e2e-job-team', goal: GOAL, sources: [PLAN], title: TITLE } }]
+      }));
+      // The fixture lists these installed models; `terra` has two versions.
+      writeFileSync(join(ctx.projectDir, '.zcc-model-list'), 'gw/alpha-9-terra\ngw/alpha-10-terra\ngw/beta-1-sol\n');
+      const projectId = await launchJobTeamCliOwner(ctx, {
+        workerQuantity: 2,
+        prompt: 'E2E propose Squad',
+        orchestratorExtra: { deniedTools: ['Write', 'Edit'] },
+        teamExtra: { defaultPlanning: 'provided' }
+      });
+      await expectPlanCheckedAndProposed(ctx);
+      const fixtureOpenCode = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'bin', 'opencode');
+      await ctx.window.evaluate((binary) => window.cc.config.set({
+        harnessOpenCodeEnabled: true,
+        opencodeBinary: binary,
+        harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTierRules: { medium: ['terra'] } } } }
+      }), fixtureOpenCode);
+      await ctx.window.evaluate(() => window.cc.personas.save({
+        id: 'e2e-worker', name: 'E2E Worker', description: 'Durable test worker',
+        baseProfile: 'opencode', permissionMode: 'default', systemPrompt: '', modelLevel: 'medium'
+      }));
+
+      await openInboxCard(ctx.window, `Squad launch ready: ${TITLE}`);
+      await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
+      const modal = ctx.window.getByTestId('launch-modal');
+      const send = modal.getByTestId('team-command-send');
+      await expect(send).toBeEnabled({ timeout: 15_000 });
+      await send.click();
+      await expect(modal).toBeHidden({ timeout: 30_000 });
+      expect(await findJobExecutionId(ctx.window, projectId, TITLE)).toBeTruthy();
+    } catch (error) {
+      throw jobTeamFailure(ctx, error);
+    } finally {
+      await ctx.window.evaluate(() => window.cc.config.set({ harnessRouting: undefined, opencodeBinary: undefined })).catch(() => undefined);
       await teardownJobTeam(ctx);
     }
   });

@@ -9,6 +9,7 @@ import {
 } from './ui/CommandComposer.js';
 import {
   planningToCoordinationMode,
+  SQUAD_ATTACHMENT_FROZEN_NOTE,
   SQUAD_GOAL_MAX_CHARS,
   SQUAD_SUMMARY_MAX_CHARS,
   squadGoalTooLongMessage,
@@ -45,7 +46,7 @@ import { platformShortcut } from '../lib/platformShortcut.js';
 import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 
 /** A source chip. A file outside the project (proposed from HOME or the clone root) shows its path. */
-type ComposerSource = ExecutionSourceCapabilityView & { path?: string; outsideProject?: boolean };
+type ComposerSource = ExecutionSourceCapabilityView & { path?: string; outsideProject?: boolean; attachment?: true };
 
 /** One durable Team launch surface for inferred and user-provided plans. */
 export function TeamComposer({
@@ -406,6 +407,9 @@ export function TeamComposer({
             {prefill.planStepCount != null ? `Plan checked: ${prefill.planStepCount} ${prefill.planStepCount === 1 ? 'step' : 'steps'}. ` : ''}
             Files are captured when you press Launch, so later edits are not included. When the Squad finishes or needs you, it reports back to that conversation.
           </p>
+          {prefill.sources.some((source) => source.attachment) ? (
+            <p data-testid="team-composer-attachment-note">{SQUAD_ATTACHMENT_FROZEN_NOTE}</p>
+          ) : null}
         </section>
       ) : null}
       {error ? (
@@ -540,6 +544,7 @@ export function TeamComposer({
               <FileText size={12} aria-hidden="true" />
               <span>{source.outsideProject && source.path ? source.path : source.name}</span>
               {source.outsideProject ? <span className="launch-attachment-outside">outside the Project</span> : null}
+              {source.attachment ? <span className="launch-attachment-outside">attached</span> : null}
               <button
                 type="button"
                 aria-label={`Remove ${source.name}`}

@@ -16,7 +16,7 @@ describe('SponsorNudge shell mount', () => {
   it('App.tsx mounts SponsorNudge only when the window is not project-scoped', () => {
     const app = src('App.tsx');
     expect(app).toMatch(/import \{ SponsorNudge \} from '\.\/components\/SponsorNudge\.js'/);
-    expect(app).toMatch(/\{!isScopedWindow\(\) && <SponsorNudge \/>\}/);
+    expect(app).toMatch(/\{!onboardingActive && !isScopedWindow\(\) && <SponsorNudge \/>\}/);
   });
 
   it('shell CSS gives the nudge its own row without the status strip', () => {

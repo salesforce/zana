@@ -13,7 +13,18 @@ const memberResults = (installation: PluginPackInstallation): PluginPackMemberRe
 const INSTALL_PROGRESS_INTERVAL_MS = 750;
 
 /** A marketplace pack is a visible installation flow, never a hidden plugin dependency. */
-export function PluginPacksCollection({ mode, query = '', catalogRevision }: { mode: 'browse' | 'installed'; query?: string; catalogRevision?: number }) {
+export function PluginPacksCollection({ mode, query = '', catalogRevision, marketplaceSource, presentation = 'catalog', onInstalled, onReviewChange, onBusyChange, onOpenPlugin }: {
+  mode: 'browse' | 'installed'; query?: string; catalogRevision?: number;
+  marketplaceSource?: string;
+  presentation?: 'catalog' | 'onboarding';
+  onBusyChange?: (busy: boolean) => void;
+  onInstalled?: (installation: PluginPackInstallation) => void | Promise<void>;
+  onReviewChange?: (open: boolean) => void;
+  onOpenPlugin?: (id: string, installation: PluginPackInstallation | null) => void;
+}) {
+  const inline = presentation === 'onboarding';
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const autoOpened = useRef<string | null>(null);
   const [catalog, setCatalog] = useState<PluginPackCatalogEntry[]>([]);
   const [installations, setInstallations] = useState<PluginPackInstallation[]>([]);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string> | null>(null);
@@ -31,6 +42,7 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision }: { m
   const request = useRef(0);
   const identities = useRef(new Map<string, PluginPackIdentity>());
   const stopProgress = useRef<(() => void) | null>(null);
+  const completedInstallation = useRef<PluginPackInstallation | null>(null);
   const api = product.pluginPacks;
   const supported = hasDesktopBridge() && !!api;
 
@@ -52,6 +64,7 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision }: { m
     } catch (error) {
       if (mounted.current && generation === request.current) setError(message(error));
     }
+    finally { if (mounted.current && generation === request.current) setCatalogLoading(false); }
   }, [api, supported]);
 
   useEffect(() => {
@@ -64,12 +77,14 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision }: { m
 
   useEffect(() => () => { stopProgress.current?.(); }, [api, supported]);
 
-  if (!supported) return null;
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
+  useEffect(() => () => { onBusyChange?.(false); }, [onBusyChange]);
 
   const savedByKey = new Map(installations.map((installation) => [identityKey(installation.identity), installation]));
   const catalogByKey = new Map(catalog.map((row) => [identityKey(row.identity), row]));
   identities.current.clear();
-  const cards: PluginPackCardModel[] = (mode === 'browse' ? catalog : installations).map((row) => {
+  const cards: PluginPackCardModel[] = (mode === 'browse' ? catalog : installations)
+    .filter(row => !marketplaceSource || row.identity.marketplaceSource === marketplaceSource).map((row) => {
     const identity = row.identity;
     const key = identityKey(identity);
     identities.current.set(key, identity);
@@ -92,6 +107,8 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision }: { m
     const identity = identities.current.get(card.key);
     if (!identity || loadingKey !== null) return;
     const saved = savedByKey.get(card.key);
+    completedInstallation.current = null;
+    if (inline) setReview(null);
     setLoadingKey(card.key); setError(null); setReviewError(null); setResults(undefined); setInstallBlocked(false);
     try {
       const plan = await api.plan(identity);
@@ -106,13 +123,29 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision }: { m
           defaultSelected: saved ? saved.members.some((previous) => previous.pluginId === member.pluginId && previous.selected) : undefined
         }))
       } });
+      if (!inline) onReviewChange?.(true);
     } catch (error) { if (mounted.current) setError(message(error)); }
     finally { if (mounted.current) setLoadingKey(null); }
   };
 
+  useEffect(() => {
+    const card = cards[0];
+    if (!supported || !inline || cards.length !== 1 || !card || review || loadingKey || autoOpened.current === card.key) return;
+    autoOpened.current = card.key;
+    void openReview(card);
+  }, [supported, inline, cards, review, loadingKey, openReview]);
+
   const install = async (pluginIds: string[]) => {
     if (!review || busy || stopProgress.current) return;
     setBusy(true); setReviewError(null);
+    // Saving onboarding progress can fail after the host consumed the installation plan.
+    // Retry that continuation without replaying an installation that already succeeded.
+    if (inline && completedInstallation.current) {
+      try { await onInstalled?.(completedInstallation.current); }
+      catch (error) { if (mounted.current) setReviewError(message(error)); }
+      finally { if (mounted.current) setBusy(false); }
+      return;
+    }
     setResults(review.plan.members.map((member) => ({
       id: member.pluginId,
       status: pluginIds.includes(member.pluginId) ? member.status === 'installed' ? 'installed' : 'pending' : 'skipped'
@@ -148,6 +181,10 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision }: { m
       stop();
       if (!mounted.current) return;
       setResults(memberResults(installation));
+      if (!installation.members.some(member => member.status === 'failed' || member.status === 'pending')) {
+        completedInstallation.current = installation;
+        if (inline) await onInstalled?.(installation);
+      }
       void refresh();
       if (installation.members.some((member) => member.status === 'failed')) {
         setInstallBlocked(true);
@@ -166,7 +203,7 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision }: { m
         } else setReview((current) => current ? { ...current, plan } : current);
         setInstallBlocked(false);
       }
-    } catch (error) { if (mounted.current) { if (!installationReceived) setResults(undefined); setInstallBlocked(true); setReviewError(`${message(error)} Close this review and open the pack again to retry.`); } }
+    } catch (error) { if (mounted.current) { if (!installationReceived) setResults(undefined); setInstallBlocked(!completedInstallation.current); setReviewError(completedInstallation.current ? message(error) : `${message(error)} ${inline ? 'Reload the bundle to retry.' : 'Close this review and open the pack again to retry.'}`); } }
     finally { stop(); if (mounted.current) setBusy(false); }
   };
 
@@ -183,12 +220,23 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision }: { m
     finally { if (mounted.current) setBusy(false); }
   };
 
+  if (!supported) return null;
+
   return <>
-    <PluginPackCards packs={cards} mode={mode} onReview={(card) => { void openReview(card); }} onForget={(card) => { setForgetError(null); setForget(card); }} />
-    {loadingKey ? <p role="status" className="settings-help">Loading plugin pack…</p> : null}
+    {!inline || (!review && cards.length > 1) ? <PluginPackCards packs={cards} mode={mode} onboarding={inline} onReview={(card) => { void openReview(card); }} onForget={(card) => { setForgetError(null); setForget(card); }} /> : null}
+    {marketplaceSource && !catalogLoading && cards.length === 0 && !error ? <p role="status" className="settings-help">No bundles are currently available from this marketplace. Refresh access or finish setup later.</p> : null}
+    {loadingKey || (inline && catalogLoading) ? <p role="status" className="settings-help">{inline ? 'Loading bundle…' : 'Loading plugin pack…'}</p> : null}
     {error ? <p role="alert" className="modal-error">Plugin packs: {error}</p> : null}
-    {review ? <PluginPackReview key={`${review.model.pack.key}:${planFingerprint(review.plan)}`} review={review.model} busy={busy} installBlocked={installBlocked} error={reviewError} results={results} onClose={() => setReview(null)} onInstall={(ids) => { void install(ids); }} onOpenPlugin={(id) => {
-      setReview(null); appNavigate(getPluginDetailRoutePath(id, { view: 'installed' }));
+    {inline && !busy && !loadingKey && (installBlocked || (error && cards.length > 0)) ? <button type="button" className="settings-btn" onClick={() => { void openReview(review?.model.pack ?? cards[0]!); }}>Reload bundle</button> : null}
+    {inline && review && cards.length > 1 ? <button type="button" className="settings-btn" disabled={busy} onClick={() => setReview(null)}>Choose another bundle</button> : null}
+    {review ? <PluginPackReview inline={inline} key={`${review.model.pack.key}:${planFingerprint(review.plan)}`} review={review.model} busy={busy} installBlocked={installBlocked} error={reviewError} results={results} onClose={() => {
+      setReview(null); onReviewChange?.(false);
+      if (completedInstallation.current) void onInstalled?.(completedInstallation.current);
+    }} onInstall={(ids) => { void install(ids); }} onOpenPlugin={(id) => {
+      onReviewChange?.(false);
+      setReview(null);
+      if (onOpenPlugin) onOpenPlugin(id, completedInstallation.current);
+      else appNavigate(getPluginDetailRoutePath(id, { view: 'installed' }));
     }} /> : null}
     {forget ? <PluginPackForgetConfirm pack={forget} busy={busy} error={forgetError} onClose={() => setForget(null)} onForget={() => { void forgetPack(); }} /> : null}
   </>;

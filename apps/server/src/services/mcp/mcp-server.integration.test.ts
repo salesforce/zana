@@ -140,6 +140,27 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(entries[0].sessionId).toBe('sess-A');
   });
 
+  it('reads a 20 MiB tools/call body: the transport does not cap attachments below the tool bounds', async () => {
+    const store = createMemoryInboxStore();
+    const h = await boot(store, [makeProject('proj-1', 'My Project')]);
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'inbox_push', arguments: { comments: 'a'.repeat(20 * 1024 * 1024) } }
+    });
+    const res = await fetch(`${h.url}/mcp/proj-1/sess-A`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body
+    });
+    // Whatever the tool answers, the transport must have parsed the whole JSON-RPC message.
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { jsonrpc?: string; id?: number };
+    expect(json.jsonrpc).toBe('2.0');
+    expect(json.id).toBe(1);
+  });
+
   it('forwards cancellation and route-identity guard through the request-scoped server builder', async () => {
     const project = makeProject('proj-1', 'My Project');
     const validateTeamRouteIdentity = vi.fn(() => true);

@@ -5,9 +5,10 @@ import { join, relative } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Persona, Team } from '@zana-ai/zcc-domain/product';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
-import { squadGoalTooLongMessage, squadSummaryTooLongMessage } from '@zana-ai/zcc-domain/squad-proposal';
+import { SQUAD_ATTACHMENT_FROZEN_NOTE, squadGoalTooLongMessage, squadSummaryTooLongMessage } from '@zana-ai/zcc-domain/squad-proposal';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { createSquadProposalStore } from './store.js';
+import { createStagingStore, type StagingStore } from './staging.js';
 import { confineSource, goalMentionPaths, goalPathNotAllowed, goalPathTokens, sourceScope, type SquadProposalFs, type SquadSourceScope } from './sources.js';
 import {
   MAX_ACTIVE_NOW_RUNS_PER_SESSION,
@@ -47,10 +48,12 @@ const activeOwnedRuns = vi.fn<SquadLaunchNowDeps['activeOwnedRuns']>();
 const executionState = vi.fn<NonNullable<SquadLaunchNowDeps['executionState']>>();
 const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
-function build() {
-  const store = createSquadProposalStore({ filePath: join(root, 'state', 'squad-proposals.json'), now: () => clock });
+function build(over: { staging?: StagingStore | null; maxRecords?: number } = {}) {
+  const store = createSquadProposalStore({ filePath: join(root, 'state', 'squad-proposals.json'), now: () => clock, ...(over.maxRecords ? { maxRecords: over.maxRecords } : {}) });
+  const staging = over.staging === null ? undefined : over.staging ?? createStagingStore({ root: join(homeDir, '.zcc', 'squad-proposals', 'staged') });
   const service = createSquadProposalService({
     store,
+    ...(staging ? { staging } : {}),
     enabled: () => enabledFlag,
     lookupProposer: (...a) => lookup(...a),
     projects: { get: (id) => ((id === 'p1' || id === 'p2') && projectOk ? { id, name: 'Proj', path: join(root, 'proj') } : undefined) },
@@ -69,7 +72,7 @@ function build() {
     issueSources,
     now: () => clock,
     newId: () => `prop-${++ids}`,
-    sourceBases: () => ({ home: homeDir, cloneRoot: cloneDir }),
+    sourceBases: () => ({ home: homeDir, cloneRoot: cloneDir, dataDirs: [join(homeDir, '.zcc')] }),
     logError,
     launchNow: {
       launchApproval: (...a) => launchApproval(...a),
@@ -78,7 +81,7 @@ function build() {
       launch: (...a) => launchNow(...a)
     }
   });
-  return { store, service, deps: undefined };
+  return { store, service, staging, deps: undefined };
 }
 
 const route = { projectId: 'p1', sessionId: 's1' };
@@ -169,6 +172,14 @@ describe('confineSource', () => {
     expect(await confineSource(fs, scope, '.')).toMatchObject({ code: 'SOURCE_NOT_ALLOWED' });
     expect(await confineSource(fs, scope, 'nope.md')).toMatchObject({ code: 'SOURCE_NOT_FILE' });
     expect(await sourceScope(fs, join(root, 'gone'), { home: homeDir })).toBeUndefined();
+  });
+  it('scopes a remote Project without a root: absolute data-dir files are outside, relative paths refused', async () => {
+    const remote = (await sourceScope(fs, join(root, 'gone'), { home: homeDir }, { remote: true }))!;
+    expect(remote.projectRoot).toBeUndefined();
+    writeFileSync(join(homeDir, 'note.md'), 'x');
+    expect(await confineSource(fs, remote, join(homeDir, 'note.md'))).toMatchObject({ ok: true, source: { outsideProject: true } });
+    expect(await confineSource(fs, remote, 'docs/a.md')).toMatchObject({ ok: false, code: 'SOURCE_NOT_ALLOWED' });
+    expect(await goalPathNotAllowed(fs, remote, `read ${join(homeDir, 'note.md')}`)).toMatchObject({ reason: 'outside-project' });
   });
   it('accepts a file whose name merely starts with two dots', async () => {
     writeFileSync(join(proj(), '..notes.md'), 'x');
@@ -556,6 +567,40 @@ describe('launchSquadNow', () => {
     expect(await svc.store.listPending('p1')).toHaveLength(0);
     expect(appendOnce).not.toHaveBeenCalled();
     expect(issueSources).not.toHaveBeenCalled();
+  });
+
+  it('starts with attachments in memory, reports how they were named, and checks the plan from them', async () => {
+    const attachments = [{ name: 'plan.md', text: 'mine' }, { name: 'notes.md', text: 'n' }, { name: 'notes.md', text: 'n' }];
+    const r = await now({ attachments });
+    expect(r).toMatchObject({ ok: true, value: { attachments: [
+      { given: 'plan.md', used: 'plan (1).md' },
+      { given: 'notes.md', used: 'notes.md' },
+      { given: 'notes.md', used: 'notes.md', deduplicated: 'notes.md' }
+    ] } });
+    const [request] = launchNow.mock.calls[0]!;
+    expect(request.sourcePaths).toEqual([join(root, 'proj', 'plan.md')]);
+    expect(request.attachments).toEqual([{ name: 'plan (1).md', text: 'mine' }, { name: 'notes.md', text: 'n' }]);
+    expect(resolveSquadPlan).toHaveBeenCalledWith('provided', ['# plan', 'mine', 'n', 'Build the thing\nwith details']);
+    expect(issueSources).not.toHaveBeenCalled();
+  });
+
+  it('refuses unsafe, oversize and too many attachments with a coded error naming the attachment', async () => {
+    expect(await now({ attachments: [{ name: '../x.md', text: 'x' }] })).toMatchObject({ ok: false, code: 'INVALID', message: expect.stringContaining("attachment '../x.md'") });
+    expect(await now({ attachments: [{ name: 'big.md', text: 'x'.repeat(4 * 1024 * 1024 + 1) }] }))
+      .toEqual({ ok: false, code: 'SOURCE_TOO_LARGE', message: "attachment 'big.md' is 4194305 bytes; limit is 4194304" });
+    const many = Array.from({ length: 16 }, (_v, i) => ({ name: `f${i}.md`, text: String(i) }));
+    expect(code(await now({ attachments: many }))).toBe('TOO_MANY_SOURCES');
+    expect(await now({ attachments: 'nope' })).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(await now({ attachments: [{ name: 'a.md' }] })).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(launchNow).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat a launch for the same attachments but starts one for different content', async () => {
+    await now({ attachments: [{ name: 'a.md', text: 'one' }] });
+    const repeat = await now({ attachments: [{ name: 'a.md', text: 'one' }] });
+    expect(repeat).toMatchObject({ ok: true, value: { deduped: true } });
+    await now({ attachments: [{ name: 'a.md', text: 'two' }] });
+    expect(launchNow).toHaveBeenCalledTimes(2);
   });
 
   it('defaults completion inbox notices off and forwards an explicit opt-in', async () => {
@@ -1199,5 +1244,159 @@ describe('goal paths and the reviewed card', () => {
     expect(await goalPathNotAllowed(realFs, scope, '@a-recoverable.md')).toBeUndefined();
     const outside = relative(join(root, 'proj'), design);
     expect(await goalPathNotAllowed(realFs, scope, `@${outside}`)).toEqual({ path: design, reason: 'outside-project' });
+  });
+});
+
+describe('attachments kept for review', () => {
+  const allow = () => true;
+  const withFiles = { teamId: 'team1', goal: 'Use the notes', planning: 'infer' as const, attachments: [{ name: 'notes.md', text: '# notes' }, { name: 'more.md', text: 'more' }] };
+  const stagedDir = (id: string) => join(homeDir, '.zcc', 'squad-proposals', 'staged', id);
+  const exists = (path: string) => fsp.stat(path).then(() => true, () => false);
+
+  it('stages the text privately, lists it on the card with the frozen-content note, and reports the mapping', async () => {
+    const r = await svc.service.propose(route, withFiles);
+    expect(r).toMatchObject({ ok: true, value: { attachments: [{ given: 'notes.md', used: 'notes.md' }, { given: 'more.md', used: 'more.md' }] } });
+    const record = await svc.store.get('prop-1');
+    expect(record).toMatchObject({ state: 'pending', staged: { bytes: 11 } });
+    expect(record?.sources.map((s) => [s.relPath, s.attachment, s.outsideProject])).toEqual([['notes.md', true, undefined], ['more.md', true, undefined]]);
+    expect(await fsp.readFile(join(stagedDir('prop-1'), 'notes.md'), 'utf8')).toBe('# notes');
+    const card = appendOnce.mock.calls[0]![0];
+    expect(card.comments).toContain('- Files: notes.md (attached), more.md (attached)');
+    expect(card.comments).toContain(SQUAD_ATTACHMENT_FROZEN_NOTE);
+    expect(card.docs).toEqual([]);
+  });
+
+  it('keeps the note off a card with no attachments', async () => {
+    await svc.service.propose(route, input);
+    expect(appendOnce.mock.calls[0]![0].comments).not.toContain(SQUAD_ATTACHMENT_FROZEN_NOTE);
+  });
+
+  it('hands review the staged files as flagged attachments next to path sources', async () => {
+    await svc.service.propose(route, { ...withFiles, sources: ['plan.md'] });
+    issueSources.mockResolvedValue([
+      { id: 'a', name: 'plan.md', byteSize: 6, expiresAt: 9 }, { id: 'b', name: 'notes.md', byteSize: 7, expiresAt: 9 }, { id: 'c', name: 'more.md', byteSize: 4, expiresAt: 9 }
+    ]);
+    const r = await svc.service.review(1, 'prop-1', allow);
+    expect(issueSources).toHaveBeenCalledWith(1, 'p1', [join(root, 'proj', 'plan.md'), join(svc.staging ? await svc.staging.prepareRoot() : '', 'prop-1', 'notes.md'), expect.stringContaining('more.md')], expect.anything());
+    expect(r).toMatchObject({ ok: true, value: { sources: [
+      { id: 'a', name: 'plan.md' }, { id: 'b', name: 'notes.md', attachment: true }, { id: 'c', name: 'more.md', attachment: true }
+    ] } });
+    expect(r.ok && r.value.sources[1]).not.toHaveProperty('outsideProject');
+    expect(r.ok && r.value.sources[0]).not.toHaveProperty('attachment');
+  });
+
+  it('refuses review once the staged copy is gone, with a message', async () => {
+    await svc.service.propose(route, withFiles);
+    await fsp.rm(stagedDir('prop-1'), { recursive: true });
+    expect(code(await svc.service.review(1, 'prop-1', allow))).toBe('SOURCE_NOT_FILE');
+  });
+
+  it('removes the copies on dismiss, expiry, launch and card failure, but not when a launch is released', async () => {
+    await svc.service.propose(route, withFiles);
+    await svc.service.handleAction({ ref: 'prop-1', input: { optionId: 'dismiss' } });
+    expect(await exists(stagedDir('prop-1'))).toBe(false);
+
+    await svc.service.propose(route, withFiles);
+    clock += 8 * 24 * 60 * 60 * 1000;
+    await svc.service.sweepExpired();
+    expect((await svc.store.get('prop-2'))?.state).toBe('expired');
+    expect(await exists(stagedDir('prop-2'))).toBe(false);
+
+    clock = 1000;
+    await svc.service.propose(route, withFiles);
+    await svc.service.beginLaunch('prop-3', 'p1');
+    svc.service.releaseLaunch('prop-3');
+    expect(await exists(stagedDir('prop-3'))).toBe(true);
+    await svc.service.beginLaunch('prop-3', 'p1');
+    await svc.service.markLaunched('prop-3', 'exec-9');
+    expect(await exists(stagedDir('prop-3'))).toBe(false);
+
+    appendOnce.mockRejectedValueOnce(new Error('inbox down'));
+    expect(code(await svc.service.propose(route, withFiles))).toBe('INVALID');
+    expect((await svc.store.get('prop-4'))?.state).toBe('dismissed');
+    expect(await exists(stagedDir('prop-4'))).toBe(false);
+  });
+
+  it('refuses at the global byte cap without touching existing proposals', async () => {
+    await svc.service.propose(route, withFiles);
+    const root2 = await svc.staging!.prepareRoot();
+    await fsp.mkdir(join(root2, 'big'));
+    await fsp.truncate((await fsp.open(join(root2, 'big', 'f'), 'w').then(async (h) => { await h.close(); return join(root2, 'big', 'f'); })), 64 * 1024 * 1024 - 5);
+    const r = await svc.service.propose(route, withFiles);
+    expect(r).toMatchObject({ ok: false, code: 'TOO_MANY_PROPOSALS' });
+    expect(!r.ok && r.message).toContain('64 MiB');
+    expect(!r.ok && r.message).toContain('start this Squad now');
+    expect((await svc.store.get('prop-1'))?.state).toBe('pending');
+    expect(await exists(stagedDir('prop-1'))).toBe(true);
+    expect(await svc.store.get('prop-3')).toBeUndefined();
+  });
+
+  it('refuses attachments for review when nothing can keep them', async () => {
+    svc = build({ staging: null });
+    expect(await svc.service.propose(route, withFiles)).toMatchObject({ ok: false, code: 'INVALID', message: expect.stringContaining('Start the Squad now') });
+  });
+
+  it('dismisses the record and leaves no folder when the write fails', async () => {
+    const real = createStagingStore({ root: join(homeDir, '.zcc', 'squad-proposals', 'staged') });
+    svc = build({ staging: { ...real, write: vi.fn().mockRejectedValue(new Error('disk full')) } });
+    expect(await svc.service.propose(route, withFiles)).toMatchObject({ ok: false, code: 'INVALID' });
+    expect((await svc.store.get('prop-1'))?.state).toBe('dismissed');
+    expect(await real.entries()).toEqual([]);
+    expect(logError).toHaveBeenCalledWith('squad proposal prop-1 staging', expect.any(Error));
+  });
+
+  it('does not offer a proposal that is still being prepared', async () => {
+    const at = clock;
+    await svc.store.create({ id: 'busy', projectId: 'p1', proposer: { kind: 'pty', id: 's1' }, teamId: 'team1', goal: 'g', planning: 'infer', sources: [], state: 'staging', staged: { bytes: 1 }, createdAt: at, updatedAt: at, expiresAt: at + 1e9 });
+    expect(await svc.service.review(1, 'busy', allow)).toEqual({ ok: false, code: 'NOT_PENDING', message: 'This Squad launch proposal is still being prepared.' });
+    await expect(svc.service.handleAction({ ref: 'busy', input: { optionId: 'dismiss' } })).rejects.toBeInstanceOf(InboxActionOperatorError);
+  });
+
+  it('removes the folders of pruned records', async () => {
+    svc = build({ maxRecords: 1 });
+    await svc.service.propose(route, withFiles);
+    await svc.service.handleAction({ ref: 'prop-1', input: { optionId: 'dismiss' } });
+    await svc.service.propose(route, input);
+    expect(await svc.store.get('prop-1')).toBeUndefined();
+    expect(await exists(stagedDir('prop-1'))).toBe(false);
+  });
+
+  describe('sweepStaged', () => {
+    it('removes folders without a live proposal, abandons stuck staging, keeps pending, clears old temp folders', async () => {
+      await svc.service.propose(route, withFiles);
+      const base = await svc.staging!.prepareRoot();
+      await fsp.mkdir(join(base, 'orphan')); await fsp.writeFile(join(base, 'orphan', 'f'), 'x');
+      await fsp.mkdir(join(base, '.tmp-old-1')); await fsp.mkdir(join(base, '.tmp-new-1'));
+      await fsp.utimes(join(base, '.tmp-old-1'), new Date(1), new Date(1));
+      await fsp.writeFile(join(base, '.tmp-old-1', 'f'), 'x');
+      await fsp.utimes(join(base, '.tmp-old-1'), new Date(1), new Date(1));
+      clock = Date.now();
+      await svc.store.create({ id: 'stuck', projectId: 'p1', proposer: { kind: 'pty', id: 's1' }, teamId: 'team1', goal: 'g', planning: 'infer', sources: [], state: 'staging', staged: { bytes: 1 }, createdAt: clock - 11 * 60_000, updatedAt: clock, expiresAt: clock + 1e9 });
+      await fsp.mkdir(join(base, 'stuck'));
+      await fsp.utimes(join(base, '.tmp-new-1'), new Date(clock), new Date(clock));
+      const removed = await svc.service.sweepStaged();
+      expect(removed).toBe(3);
+      expect(await exists(join(base, 'orphan'))).toBe(false);
+      expect(await exists(join(base, 'stuck'))).toBe(false);
+      expect(await exists(join(base, '.tmp-old-1'))).toBe(false);
+      expect(await exists(join(base, '.tmp-new-1'))).toBe(true);
+      expect(await exists(stagedDir('prop-1'))).toBe(true);
+      expect((await svc.store.get('stuck'))?.state).toBe('dismissed');
+    });
+
+    it('gives up on a folder after five failed attempts and logs it', async () => {
+      const real = createStagingStore({ root: join(homeDir, '.zcc', 'squad-proposals', 'staged') });
+      const remove = vi.fn().mockRejectedValue(new Error('EBUSY'));
+      svc = build({ staging: { ...real, remove } });
+      await real.write('orphan', [{ name: 'f', text: 'x' }]);
+      for (let i = 0; i < 7; i += 1) expect(await svc.service.sweepStaged()).toBe(0);
+      expect(remove).toHaveBeenCalledTimes(5);
+      expect(logError).toHaveBeenCalledWith('squad proposal orphan staged sweep (giving up)', expect.any(Error));
+    });
+
+    it('does nothing without a staging store', async () => {
+      svc = build({ staging: null });
+      expect(await svc.service.sweepStaged()).toBe(0);
+    });
   });
 });

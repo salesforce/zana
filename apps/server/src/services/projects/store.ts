@@ -1,5 +1,6 @@
 import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
 import { isAgentsViewId } from '@zana-ai/zcc-domain/product';
+import { onboardingProgressSchema } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { isNotificationLevel, isOwnNotificationLevel, isProjectIcon } from '@zana-ai/zcc-domain';
 import { app } from 'electron';
@@ -630,6 +631,26 @@ function normalizeCompanionPlacement(
   return next;
 }
 
+const TIER_RULE_LEVELS = ['low', 'medium', 'high', 'extra-high'] as const;
+type TierRules = Partial<Record<(typeof TIER_RULE_LEVELS)[number], string[]>>;
+
+/** Main-side validation of user tier rules: known tiers only, at most 8 trimmed rules of 128 characters each. */
+function normalizeModelTierRules(input: unknown): TierRules | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const rules: TierRules = {};
+  for (const level of TIER_RULE_LEVELS) {
+    const value = (input as Record<string, unknown>)[level];
+    if (!Array.isArray(value)) continue;
+    const kept = value
+      .filter((rule): rule is string => typeof rule === 'string')
+      .map((rule) => rule.trim())
+      .filter((rule) => rule.length > 0 && rule.length <= 128)
+      .slice(0, 8);
+    if (kept.length) rules[level] = kept;
+  }
+  return Object.keys(rules).length ? rules : undefined;
+}
+
 export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   const normalized: Partial<AppConfig> = {};
   const harnesses = normalizeHarnessConfig(input.harnesses);
@@ -643,12 +664,14 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
         const roleTargetId = (routing as { roleTargetId?: unknown }).roleTargetId;
         const modelLevel = (routing as { modelLevel?: unknown }).modelLevel;
         const executionState = (routing as { executionState?: unknown }).executionState;
-        const entry: { providerTargetId?: string; roleTargetId?: string; modelTargetId?: string; modelLevel?: 'low' | 'medium' | 'high' | 'extra-high'; executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous' } = {};
+        const entry: { providerTargetId?: string; roleTargetId?: string; modelTargetId?: string; modelLevel?: 'low' | 'medium' | 'high' | 'extra-high'; modelTierRules?: TierRules; executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous' } = {};
         if (typeof providerTargetId === 'string' && providerTargetId.trim() && providerTargetId.length <= 256) entry.providerTargetId = providerTargetId;
         if (typeof roleTargetId === 'string' && roleTargetId.trim() && roleTargetId.length <= 256) entry.roleTargetId = roleTargetId;
         if (typeof modelTargetId === 'string' && modelTargetId.trim() && modelTargetId.length <= 512) entry.modelTargetId = modelTargetId;
         if (modelLevel === 'low' || modelLevel === 'medium' || modelLevel === 'high' || modelLevel === 'extra-high') entry.modelLevel = modelLevel;
         if (executionState === 'plan' || executionState === 'interactive' || executionState === 'accept-edits' || executionState === 'autonomous') entry.executionState = executionState;
+        const modelTierRules = normalizeModelTierRules((routing as { modelTierRules?: unknown }).modelTierRules);
+        if (modelTierRules) entry.modelTierRules = modelTierRules;
         return Object.keys(entry).length ? [[adapterId, entry]] : [];
       })
     );
@@ -965,6 +988,8 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   ) {
     normalized.lastSeenVersion = input.lastSeenVersion.trim();
   }
+  const onboarding = onboardingProgressSchema.safeParse(input.onboarding);
+  if (onboarding.success) normalized.onboarding = onboarding.data;
   if (typeof input.walkthroughCompleted === 'boolean') {
     normalized.walkthroughCompleted = input.walkthroughCompleted;
   }

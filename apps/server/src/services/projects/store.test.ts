@@ -55,6 +55,19 @@ describe('scratchWorkspaceRoot', () => {
 });
 
 describe('config — boolean feature flags round-trip through setConfig', () => {
+  it('keeps validated model tier rules and drops unknown tiers, non-strings and oversized rules', () => {
+    const out = normalizeConfig({
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTierRules: {
+        medium: [' terra ', '', 7, 'x'.repeat(129), ...Array(9).fill('a')],
+        bogus: ['nope'], low: 'luna'
+      } } } }
+    } as never);
+    const rules = out.harnessRouting?.byAdapter.opencode?.modelTierRules as Record<string, string[]>;
+    expect(rules.medium).toEqual(['terra', ...Array(7).fill('a')]);
+    expect(rules).not.toHaveProperty('bogus');
+    expect(rules).not.toHaveProperty('low');
+  });
+
   // Regression guard: normalizeConfig is a strict allow-list, so every boolean
   // flag must be enumerated there or setConfig silently drops it on save. This
   // bit idleTriageEnabled / agentSelfCloseEnabled — assert each survives a

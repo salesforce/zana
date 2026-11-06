@@ -116,6 +116,8 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       models: [],
       // Opaque model IDs do not establish portable capability levels.
       modelLevelMapping: { low: undefined, medium: undefined, high: undefined, 'extra-high': undefined },
+      // Seeded tier opinion over the live inventory; the user's rules take precedence.
+      defaultModelTierRules: { low: ['luna'], medium: ['terra'], high: ['sol'], 'extra-high': ['sol'] },
       executionStateMapping: {
         plan: 'plan',
         interactive: 'default',

@@ -2211,6 +2211,8 @@ export interface AppConfig {
    * clearing this flag.
    */
   walkthroughCompleted?: boolean;
+  /** Remembered setup audience and resumable progress, independent of app updates. */
+  onboarding?: import('./onboarding.js').OnboardingProgress;
   /**
    * Whether the first-run setup checklist (the dependency doctor) has been
    * completed or dismissed. Absent / false ⇒ the checklist auto-opens once on
@@ -4580,6 +4582,13 @@ export interface HarnessModelRoutingV1 {
     roleTargetId?: string;
     modelTargetId?: string;
     modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
+    /**
+     * For a harness whose installed models carry no portable tier: per tier, ordered rules
+     * that pick a model from the live inventory. A rule is an exact model id or a name term
+     * (such as `terra`); a term matches whole `-`/`_`/`/`/`.`-separated words and picks the
+     * highest version. The first rule that matches wins.
+     */
+    modelTierRules?: Partial<Record<'low' | 'medium' | 'high' | 'extra-high', string[]>>;
     executionTargetId?: string;
     executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
     /** Harness-native per-agent overrides that cannot be represented by one portable axis. */

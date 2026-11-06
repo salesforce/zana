@@ -9,6 +9,7 @@ import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { CliSkillsSettings } from './CliSkillsSettings';
 import { TrustedPreviewFoldersSection } from './TrustedPreviewFoldersSection';
 import { useSplitWorkspace } from '@/lib/split-layout/store';
+import { OnboardingSettingsAction } from '@/components/onboarding/Onboarding';
 
 interface GlobalTabProps {
   config: AppConfig;
@@ -75,6 +76,7 @@ export function GlobalView({
       </Section>
 
       <Section title="Help" searchId="global.help-intro">
+        <OnboardingSettingsAction />
         <SettingsActionRow
           searchId="global.replay-walkthrough"
           label="Replay walkthrough"
