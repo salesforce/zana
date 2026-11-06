@@ -107,6 +107,7 @@ test('prompt pinning adapts to viewport height even below the text truncation li
 });
 
 test('expanding the composer cannot cover the agent reply with a pinned prompt (#669)', async ({ app }) => {
+  await app.window.setViewportSize({ width: 1100, height: 1200 });
   const { detail, threadId } = await openThread(app);
   const timeline = detail.getByTestId('thread-timeline');
   const prompt = Array.from({ length: 25 }, (_, i) => `Drupal and Salesforce ID record ${i + 1}: 001xx000003DGb${i}`).join('\n');
