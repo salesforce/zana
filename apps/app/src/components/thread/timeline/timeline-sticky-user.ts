@@ -59,16 +59,21 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
       const replyHeight = turn ? Math.max(0, turn.offsetHeight - height) : 0;
       return !promptOverlapsReply(height, replyHeight, paneHeight);
     });
-    // Pass 2: apply DOM attribute updates in batch
+    // Pass 2: apply DOM attribute updates only when the state changes
     prompts.forEach((prompt, index) => {
-      prompt.toggleAttribute('data-sticky-prompt', fits[index]);
+      const shouldPin = fits[index]!;
+      if (prompt.hasAttribute('data-sticky-prompt') !== shouldPin) {
+        prompt.toggleAttribute('data-sticky-prompt', shouldPin);
+      }
     });
   };
 
   const observer = new ResizeObserver(update);
   observer.observe(pane);
   for (const prompt of prompts) observer.observe(prompt);
-  for (const turn of turns) observer.observe(turn);
+  // Only the active/latest turn resizes dynamically as a reply streams in.
+  const activeTurn = turns[turns.length - 1];
+  if (activeTurn) observer.observe(activeTurn);
   // Measure before paint, then re-evaluate on expansion, image load, or resize.
   update();
   return () => {
