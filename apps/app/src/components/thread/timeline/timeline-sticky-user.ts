@@ -39,12 +39,10 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
   const update = () => {
     const paneHeight = pane.clientHeight;
     const maxHeight = paneHeight / 2;
-    for (const { prompt, turn } of items) {
+    // Pass 1: measure layout properties in batch without DOM mutation to avoid layout thrashing
+    const fits = items.map(({ prompt, turn }) => {
       const height = prompt.offsetHeight;
-      if (height <= 0 || height > maxHeight) {
-        prompt.removeAttribute('data-sticky-prompt');
-        continue;
-      }
+      if (height <= 0 || height > maxHeight) return false;
       const replyHeight = turn ? Math.max(0, turn.offsetHeight - height) : 0;
       // When a reply exists and is not tall enough to scroll fully clear of the
       // pinned prompt (replyHeight <= paneHeight + height), the prompt may only
@@ -55,8 +53,12 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
         replyHeight > 0 &&
         replyHeight <= paneHeight + height &&
         height + replyHeight > paneHeight;
-      prompt.toggleAttribute('data-sticky-prompt', !overlaps);
-    }
+      return !overlaps;
+    });
+    // Pass 2: apply DOM attribute updates in batch
+    prompts.forEach((prompt, index) => {
+      prompt.toggleAttribute('data-sticky-prompt', fits[index]);
+    });
   };
 
   const observer = new ResizeObserver(update);

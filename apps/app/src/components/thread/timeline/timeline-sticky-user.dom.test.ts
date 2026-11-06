@@ -16,7 +16,7 @@ function fixture(heights: number[], viewport = 600, replyHeights?: number[]) {
   });
   turns.forEach((turn, index) => {
     Object.defineProperty(turn, 'offsetHeight', {
-      get: () => (size.replyHeights[index] ? size.heights[index]! + size.replyHeights[index]! : size.heights[index]!)
+      get: () => size.heights[index]! + size.replyHeights[index]!
     });
   });
   let resize = () => {};
@@ -88,6 +88,15 @@ describe('prompt pinning', () => {
     // Turn 0: reply 1200 > 400, prompt 100 <= 150 -> pins.
     // Turn 1: reply 320 <= 400, turn 420 > 300 -> unpins.
     expect(f.pinned()).toEqual([true, false]);
+    f.dispose();
+  });
+
+  it('handles boundary conditions around pane and turn heights exactly', () => {
+    // Boundary 1: turn height exactly equals pane height (100px prompt + 200px reply = 300px in 300px pane) -> fits, pins.
+    // Boundary 2: reply height exactly equals pane height + prompt height (100px prompt + 400px reply = 500px in 300px pane) -> unpins at boundary <= 400.
+    // Boundary 3: reply height just exceeds pane height + prompt height (100px prompt + 401px reply in 300px pane) -> pins.
+    const f = fixture([100, 100, 100], 300, [200, 400, 401]);
+    expect(f.pinned()).toEqual([true, false, true]);
     f.dispose();
   });
 
