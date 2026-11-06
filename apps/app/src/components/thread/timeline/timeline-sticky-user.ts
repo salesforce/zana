@@ -42,12 +42,8 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
 
   const items = prompts.map((prompt) => ({
     prompt,
-    turn: prompt.closest<HTMLElement>('.thread-timeline-current-turn')
+    turn: prompt.parentElement as HTMLElement | null
   }));
-
-  const turns = Array.from(
-    new Set(items.map((item) => item.turn).filter((turn): turn is HTMLElement => turn !== null))
-  );
 
   const update = () => {
     const paneHeight = pane.clientHeight;
@@ -70,10 +66,10 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
 
   const observer = new ResizeObserver(update);
   observer.observe(pane);
-  for (const prompt of prompts) observer.observe(prompt);
-  // Only the active/latest turn resizes dynamically as a reply streams in.
-  const activeTurn = turns[turns.length - 1];
-  if (activeTurn) observer.observe(activeTurn);
+  for (const { prompt, turn } of items) {
+    observer.observe(prompt);
+    if (turn) observer.observe(turn);
+  }
   // Measure before paint, then re-evaluate on expansion, image load, or resize.
   update();
   return () => {
