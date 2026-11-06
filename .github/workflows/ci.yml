@@ -405,11 +405,11 @@ jobs:
 
       - name: Run file preview production-boundary regression
         if: runner.os != 'Linux'
-        run: pnpm test:e2e -- e2e/thread-file-preview-ambiguity.spec.ts
+        run: pnpm test:e2e -- e2e/thread-file-preview-ambiguity.spec.ts e2e/thread-file-preview-links.spec.ts
 
       - name: Run file preview production-boundary regression on Linux
         if: runner.os == 'Linux'
-        run: xvfb-run -a pnpm test:e2e -- e2e/thread-file-preview-ambiguity.spec.ts
+        run: xvfb-run -a pnpm test:e2e -- e2e/thread-file-preview-ambiguity.spec.ts e2e/thread-file-preview-links.spec.ts
 
       - name: Upload Playwright report on failure
         if: failure()

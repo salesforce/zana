@@ -3,9 +3,9 @@
  * `worktreeOnComplete` choice when it reaches a terminal state. Real Squad launch through the
  * CLI-owner path, fake claude workers, real git repo. Zero model spend.
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync, realpathSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 import {
   createJobTeamContext,
@@ -48,6 +48,27 @@ function initRepo(projectDir: string): { git: (...args: string[]) => string; bas
 
 interface Seen { path: string; branch: string }
 
+function installPolicyHook(projectDir: string) {
+  const git = makeGit(projectDir);
+  const remote = join(projectDir, '.git', 'policy-test-remote.git');
+  git('init', '--bare', remote);
+  git('remote', 'add', 'origin', remote);
+  const hook = join(projectDir, '.git', 'hooks', 'pre-push');
+  writeFileSync(hook, '#!/bin/sh\nprintf preserved-user-policy >&2\nexit 9\n');
+  chmodSync(hook, 0o700);
+}
+
+function expectPreservedPolicyHook(worktree: string) {
+  const hooks = resolve(worktree, makeGit(worktree)('rev-parse', '--git-path', 'zana-hooks'));
+  expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toContain('exec ');
+  const push = spawnSync('git', ['-c', `core.hooksPath=${hooks}`, 'push', 'origin', 'HEAD:refs/heads/policy-test'], {
+    cwd: worktree, encoding: 'utf8', timeout: 15_000,
+    env: { ...process.env, ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: 'isolated-e2e-fixture' }
+  });
+  expect(push.status).not.toBe(0);
+  expect(push.stderr).toContain('preserved-user-policy');
+}
+
 /** Parse `git worktree list --porcelain` into the non-main worktrees. */
 function extraWorktrees(git: (...args: string[]) => string): Seen[] {
   const out = git('worktree', 'list', '--porcelain').split('\n\n').map((block) => {
@@ -67,6 +88,7 @@ async function runState(ctx: JobTeamContext, projectId: string, executionId: str
 /** Launch a worktree-isolated Squad and sample its worktree until the run is terminal. */
 async function runSquad(ctx: JobTeamContext, choice: Choice) {
   const { git, baseHead } = initRepo(ctx.projectDir);
+  if (choice === 'leave') installPolicyHook(ctx.projectDir);
   const projectId = await launchJobTeamCliOwner(ctx, {
     workerQuantity: 2,
     teamExtra: { worktreeIsolation: true, worktreeOnComplete: choice }
@@ -156,6 +178,7 @@ test('leave (default): a completed Squad keeps its worktree, branch and uncommit
     expect(existsSync(join(seen.path, ZANA_FILE))).toBe(true);
     expect(git('rev-parse', 'main')).toBe(baseHead);
     expect(tracked(git, 'main')).not.toContain(WORKER_FILE);
+    expectPreservedPolicyHook(seen.path);
   });
 });
 

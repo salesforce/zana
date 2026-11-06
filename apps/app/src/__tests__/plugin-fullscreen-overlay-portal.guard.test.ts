@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
 /**
@@ -9,7 +10,7 @@ import { expect, it } from 'vitest';
  * no matter how high its z-index is. Full-window overlays must portal to
  * `document.body`.
  */
-const pluginsDir = new URL('../../../../plugins/', import.meta.url).pathname;
+const pluginsDir = fileURLToPath(new URL('../../../../plugins/', import.meta.url));
 const SOURCE = /\.(tsx?|css)$/;
 const SKIP = /(\.test\.|\.d\.ts$|generated\.css$|[\\/](node_modules|dist|kit|playground)[\\/])/;
 const PORTAL = /createPortal|\btoBody\(|\bportal\(/;
