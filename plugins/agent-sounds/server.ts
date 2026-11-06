@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
-import { DEFAULTS, MAX_CLIP_BYTES, MAX_PACKS, preferences, type Clip, type SoundState } from './model.js';
+import { MAX_CLIP_BYTES, MAX_PACKS, preferences, type Clip, type SoundState } from './model.js';
 
 export function validateClip(value: unknown): Clip | undefined {
   if (value === undefined) return undefined;
@@ -17,9 +17,27 @@ export function validateClip(value: unknown): Clip | undefined {
 }
 
 export default async function plugin(zcc: ZccPluginApi) {
-  const saved = await zcc.storage.kv.get<SoundState>('state');
+  const db = zcc.storage.database();
+  db.migrate([`CREATE TABLE IF NOT EXISTS sound_preferences (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS sound_packs (id TEXT PRIMARY KEY, data TEXT NOT NULL);`]);
+  const config = db.prepare('SELECT data FROM sound_preferences WHERE id=1').get() as { data: string } | undefined;
+  const legacy = config ? undefined : await zcc.storage.kv.get<SoundState>('state');
+  const saved: SoundState | undefined = config ? {
+    preferences: JSON.parse(config.data),
+    packs: (db.prepare('SELECT data FROM sound_packs ORDER BY rowid LIMIT ?').all(MAX_PACKS) as { data: string }[]).map(row => JSON.parse(row.data))
+  } : legacy;
   let state: SoundState = { preferences: preferences(saved?.preferences), packs: Array.isArray(saved?.packs) ? saved.packs.slice(0, MAX_PACKS) : [] };
   if (state.preferences.packId !== 'chimes' && !state.packs.some(p => p.id === state.preferences.packId)) state.preferences.packId = 'chimes';
+  // Audio belongs in the plugin database: KV limits each value to 1 MiB and
+  // its whole namespace to 8 MiB. Only new/removed packs touch their audio rows.
+  const persist = (next: SoundState, previous?: SoundState) => db.transaction(() => {
+    db.prepare('INSERT INTO sound_preferences(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(JSON.stringify(next.preferences));
+    for (const pack of next.packs) if (!previous?.packs.some(old => old === pack))
+      db.prepare('INSERT INTO sound_packs(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(pack.id, JSON.stringify(pack));
+    for (const pack of previous?.packs ?? []) if (!next.packs.some(kept => kept.id === pack.id))
+      db.prepare('DELETE FROM sound_packs WHERE id=?').run(pack.id);
+  });
+  if (legacy) { persist(state); await zcc.storage.kv.delete('state'); }
   let pending: Promise<unknown> = Promise.resolve();
   // Inactive packs need only catalogue metadata in the renderer. Bound each read
   // to two clips instead of resending every imported audio file on volume changes.
@@ -28,7 +46,7 @@ export default async function plugin(zcc: ZccPluginApi) {
   const mutate = (change: (current: SoundState) => SoundState) => {
     const work = pending.then(async () => {
       const next = change(state);
-      await zcc.storage.kv.set('state', next);
+      persist(next, state);
       state = next;
       zcc.realtime.publish('changed', null);
       return view();

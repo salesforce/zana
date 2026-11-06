@@ -281,7 +281,8 @@ async function handlePluginAppRpc(
     sendJson(response, 503, { error: 'plugin host is unavailable' });
     return;
   }
-  const body = (await readJsonBody(request)) as { method?: unknown; args?: unknown };
+  // Bounded room for plugin binary data encoded in JSON (including base64 overhead).
+  const body = (await readJsonBody(request, 3 * 1024 * 1024)) as { method?: unknown; args?: unknown };
   if (typeof body.method !== 'string' || body.method.trim().length === 0) {
     sendJson(response, 400, { error: 'method required' });
     return;

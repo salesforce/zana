@@ -1,9 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import { createRequire } from 'node:module';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import plugin, { validateClip } from './server.js';
 import { DEFAULTS, MAX_CLIP_BYTES, openPeonSelection, preferences } from './model.js';
 const wav = { name: 'ping.wav', base64: Buffer.from('RIFFxxxxWAVEdata').toString('base64') };
-async function setup() { const host = createFakePluginHost(); await plugin(host.zcc); return { ...host.harness, zcc: host.zcc }; }
+const databases: { close(): void }[] = [];
+afterEach(() => { for (const db of databases.splice(0)) db.close(); vi.restoreAllMocks(); });
+function wired() {
+  const Database = createRequire(import.meta.url)('better-sqlite3');
+  const raw = new Database(':memory:'); databases.push(raw);
+  const database: PluginDatabase = { runScript: sql => raw.exec(sql), prepare: sql => raw.prepare(sql),
+    migrate: statements => { for (const sql of statements) raw.exec(sql); }, transaction: fn => raw.transaction(fn)() };
+  return createFakePluginHost({ database });
+}
+async function setup() { const host = wired(); await plugin(host.zcc); return { ...host.harness, zcc: host.zcc }; }
 describe('sound data and persistence', () => {
   it('starts silent, persists imports, normalizes config and removes the selected pack', async () => {
     const host = await setup(); const rpc = host.behavior.callRpc;
@@ -13,7 +24,7 @@ describe('sound data and persistence', () => {
     expect(imported.preferences.packId).toBe(imported.packs[0].id);
     expect(await rpc('configure', { enabled: true, volume: 900, idleSpacingSeconds: 1 })).toMatchObject({ preferences: { enabled: true, volume: 100, idleSpacingSeconds: 15 } });
     expect(await rpc('remove', imported.packs[0].id)).toMatchObject({ preferences: { packId: 'chimes' }, packs: [] });
-    expect(host.kv.get('state')).toEqual(await rpc('read')); expect(host.published).toHaveLength(3);
+    expect(host.zcc.storage.database().prepare('SELECT data FROM sound_packs').all()).toEqual([]); expect(host.published).toHaveLength(3);
   });
   it('rejects invalid packs, missing packs and too many packs without losing prior state', async () => {
     const host = await setup(), rpc = host.behavior.callRpc;
@@ -27,19 +38,23 @@ describe('sound data and persistence', () => {
     const host = await setup(), rpc = host.behavior.callRpc;
     await Promise.all([rpc('configure', { volume: 20 }), rpc('configure', { idle: true })]);
     expect(await rpc('read')).toMatchObject({ preferences: { volume: 20, idle: true } });
-    const set = vi.spyOn(host.zcc.storage.kv, 'set'); set.mockRejectedValueOnce(new Error('disk full'));
+    const db = host.zcc.storage.database();
+    db.runScript("CREATE TRIGGER fail_save BEFORE INSERT ON sound_preferences BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
     await expect(rpc('configure', { volume: 60 })).rejects.toThrow('disk full');
     expect(await rpc('read')).toMatchObject({ preferences: { volume: 20 } });
+    db.runScript('DROP TRIGGER fail_save');
     await rpc('configure', { needsYou: false });
     expect(await rpc('read')).toMatchObject({ preferences: { volume: 20, needsYou: false } });
-    // Fake host KV is durable between factory loads.
+    // The same plugin database survives factory reloads.
     await plugin(host.zcc); expect(await host.behavior.callRpc('read')).toMatchObject({ preferences: { volume: 20, idle: true } });
   });
   it('restores bounded packs and falls back when a saved selection is missing', async () => {
-    const host = createFakePluginHost();
+    const host = wired();
     await host.zcc.storage.kv.set('state', { preferences: { packId: 'missing' }, packs: Array.from({ length: 20 }, (_, i) => ({ id: String(i), name: String(i) })) });
     await plugin(host.zcc); const read = await host.harness.behavior.callRpc('read') as any;
     expect(read.preferences.packId).toBe('chimes'); expect(read.packs).toHaveLength(8);
+    expect(await host.zcc.storage.kv.get('state')).toBeUndefined();
+    await plugin(host.zcc); expect((await host.harness.behavior.callRpc('read') as any).packs).toHaveLength(8);
   });
   it('returns audio only for the selected pack while retaining other packs durably', async () => {
     const host = await setup(), rpc = host.behavior.callRpc;
@@ -49,6 +64,28 @@ describe('sound data and persistence', () => {
     expect(second.packs[1].needsYou.base64).toBe(wav.base64);
     const switched = await rpc('configure', { packId: first.packs[0].id }) as any;
     expect(switched.packs[0].idle.base64).toBe(wav.base64); expect(switched.packs[1]).toEqual({ id: second.packs[1].id, name: 'Second' });
+  });
+  it('persists eight paired maximum-size clips beyond the KV quota and reloads the selected audio', async () => {
+    const host = await setup(), rpc = host.behavior.callRpc;
+    const bytes = Buffer.alloc(MAX_CLIP_BYTES); bytes.write('RIFF', 0); bytes.write('WAVE', 8);
+    const clip = { name: 'full.wav', base64: bytes.toString('base64') };
+    let selected: any;
+    for (let i = 0; i < 8; i++) selected = await rpc('importPack', { name: `Full ${i}`, needsYou: clip, idle: clip });
+    await plugin(host.zcc);
+    const restored = await host.behavior.callRpc('read') as any;
+    expect(restored).toEqual(selected);
+    expect(restored.packs[7].idle.base64).toHaveLength(clip.base64.length);
+    expect(host.kv.get('state')).toBeUndefined();
+    await rpc('remove', restored.packs[0].id);
+    expect(host.zcc.storage.database().prepare('SELECT id FROM sound_packs').all()).toHaveLength(7);
+  });
+  it('rolls back pack insertion and selection together after a database failure', async () => {
+    const host = await setup(), rpc = host.behavior.callRpc, db = host.zcc.storage.database();
+    db.runScript("CREATE TRIGGER fail_pack BEFORE INSERT ON sound_packs BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
+    await expect(rpc('importPack', { name: 'Fail', idle: wav })).rejects.toThrow('disk full');
+    await plugin(host.zcc); expect(await host.behavior.callRpc('read')).toEqual({ preferences: DEFAULTS, packs: [] });
+    db.runScript('DROP TRIGGER fail_pack');
+    await expect(host.behavior.callRpc('importPack', { name: 'Works', idle: wav })).resolves.toMatchObject({ packs: [{ name: 'Works' }] });
   });
   it('validates byte signatures, canonical base64, names, quotas and formats', () => {
     expect(validateClip(undefined)).toBeUndefined(); expect(validateClip(wav)?.mime).toBe('audio/wav');

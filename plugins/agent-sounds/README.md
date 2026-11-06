@@ -4,7 +4,7 @@ An optional Zana plugin for agent notification sounds. Install it, open **Plugin
 
 - Import your own WAV, MP3 or OGG files and map them to **Needs you** and **Idle**.
 - Import an OpenPeon folder containing `openpeon.json`. The first `input.required` clip becomes Needs you; the first `task.complete` clip becomes Idle. Missing mappings stay silent. An idle event does not claim successful completion.
-- Packs are local plugin data: up to 8 packs, 1 MB per clip, 8 seconds per playback. No game sounds are shipped, downloaded automatically, or required.
+- Packs live in the plugin’s SQLite database (outside the small-value KV quota): up to 8 packs, 1 MB per clip, 8 seconds per playback. No game sounds are shipped, downloaded automatically, or required.
 - Notifications start off. Needs you is selected by default; idle is opt-in. Volume starts at 35%.
 - Idle must remain stable for 5 seconds. Idle alerts share a configurable 5–60 second spacing across agents. Requests for input interrupt audio and have their own 3-second cooldown.
 - Startup, reload and settings changes do not replay old events. Hidden, scheduled and exited CLI sessions, archived/hidden threads, and uncertain/error statuses do not generate idle alerts.

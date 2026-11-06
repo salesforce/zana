@@ -42,9 +42,14 @@ test('optional sound plugin imports audio, runs with its panel closed, and dispo
   const sampleRate = 16000, frames = 16000, wav = Buffer.alloc(44 + frames * 2);
   wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(sampleRate, 24); wav.writeUInt32LE(sampleRate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(frames * 2, 40);
   for (let i = 0; i < frames; i++) wav.writeInt16LE(Math.round(Math.sin(i * Math.PI * 2 * 660 / sampleRate) * 10000), 44 + i * 2);
+  // Keep one second of real audio and pad with a valid RIFF JUNK chunk to the
+  // advertised 1 MiB limit. Paired base64 clips must cross the actual RPC seam.
+  const fullWav = Buffer.alloc(1024 * 1024), padding = fullWav.length - wav.length;
+  wav.copy(fullWav); fullWav.writeUInt32LE(fullWav.length - 8, 4);
+  fullWav.write('JUNK', wav.length); fullWav.writeUInt32LE(padding - 8, wav.length + 4);
   await win.getByLabel('Pack name').fill('My sound pack');
-  await win.getByLabel('Needs you audio').setInputFiles({ name: 'request.wav', mimeType: 'audio/wav', buffer: wav });
-  await win.getByLabel('Idle audio').setInputFiles({ name: 'idle.wav', mimeType: 'audio/wav', buffer: wav });
+  await win.getByLabel('Needs you audio').setInputFiles({ name: 'request.wav', mimeType: 'audio/wav', buffer: fullWav });
+  await win.getByLabel('Idle audio').setInputFiles({ name: 'idle.wav', mimeType: 'audio/wav', buffer: fullWav });
   await win.getByRole('button', { name: 'Save sound pack' }).click(); await expect(win.getByRole('status')).toContainText('Sound pack imported.');
   await win.getByRole('button', { name: 'Preview Needs you' }).click(); await expect.poll(audible).toHaveLength(1);
   await win.getByRole('switch', { name: 'Sound notifications' }).click();

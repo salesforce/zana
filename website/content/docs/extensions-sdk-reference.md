@@ -192,6 +192,10 @@ contexts and any cross-window lock. Disable, reload, generation replacement
 and shutdown dispose the script. Feature-detect the methods because older
 hosts omit them; automatic activity needs a host containing these APIs.
 
+Plugin-app RPC requests accept up to 3 MiB of encoded JSON. Account for base64
+overhead when transporting binary data, and impose smaller per-file and stored
+data quotas in the plugin. Sound Studio's pair of 1 MiB clips fits this bound.
+
 `ready: false` means unavailable: reset the transition baseline and cancel
 pending notifications. Project, thread and detached plugin windows remain
 unready. Seed the first ready snapshot silently, then detect changes; do not
