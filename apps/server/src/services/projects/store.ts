@@ -1,4 +1,5 @@
 import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
+import { normalizeAgentSoundVolume } from '@zana-ai/zcc-domain/product';
 import { isAgentsViewId } from '@zana-ai/zcc-domain/product';
 import { onboardingProgressSchema } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
@@ -1071,6 +1072,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (isOwnNotificationLevel(input.notificationChildLevel)) {
     normalized.notificationChildLevel = input.notificationChildLevel;
+  }
+  for (const key of ['agentSoundNeedsYou', 'agentSoundIdle'] as const) {
+    if (typeof input[key] === 'boolean') normalized[key] = input[key];
+  }
+  if (input.agentSoundVolume !== undefined) {
+    normalized.agentSoundVolume = normalizeAgentSoundVolume(input.agentSoundVolume);
   }
   if (typeof input.notificationPreviews === 'boolean') {
     normalized.notificationPreviews = input.notificationPreviews;

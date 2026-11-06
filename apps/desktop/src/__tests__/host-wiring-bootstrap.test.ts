@@ -56,6 +56,8 @@ const h = vi.hoisted(() => {
   };
 });
 
+vi.mock('../native/agent-sound-events.js', () => ({ startAgentSoundEvents: vi.fn(() => vi.fn()) }));
+
 vi.mock('electron', () => {
   const loose = h.loose;
   const app = new Proxy({
@@ -1092,6 +1094,79 @@ describe('host bootstrap wiring', () => {
     } finally {
       failed.mockRestore();
     }
+  });
+
+  it('authorizes sound previews in main and rejects unknown sounds, frames and windows', async () => {
+    const { BrowserWindow } = await import('electron');
+    vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:5173');
+    const caller = vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(h.lastWin);
+    const config = vi.spyOn(store, 'getConfig').mockReturnValue({ agentSoundVolume: 75 } as never);
+    const sender = { mainFrame: {}, getURL: () => 'http://127.0.0.1:5173' };
+    const event = { sender, senderFrame: sender.mainFrame };
+    const preview = h.ipcHandlers.get(IPC.app.previewAgentSound)!;
+    try {
+      expect(await preview(event, 'idle')).toBe(75);
+      expect(await preview(event, 'needs-you')).toBe(75);
+      expect(await preview(event, 'other')).toBeUndefined();
+      expect(await preview({ ...event, senderFrame: {} }, 'idle')).toBeUndefined();
+      expect(await preview({ ...event, sender: { ...sender, getURL: () => 'https://untrusted.example' } }, 'idle')).toBeUndefined();
+      caller.mockReturnValue(null);
+      expect(await preview(event, 'idle')).toBeUndefined();
+    } finally { config.mockRestore(); caller.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
+  it('sends each chime to one live window and tolerates windows closing', async () => {
+    const registry = await import('../window/main-window-registry.js');
+    const config = vi.spyOn(store, 'getConfig').mockReturnValue({ agentSoundNeedsYou: true, agentSoundVolume: 65 } as never);
+    let now = 10_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const alive = h.contentsDestroyed;
+    const cues = () => h.sent.filter(([channel]) => channel === IPC.app.onAgentSound);
+    const ring = (id: string) => {
+      now += 3_000;
+      ctx().agentSounds.observe(id, 'working');
+      ctx().agentSounds.observe(id, 'blocked');
+      ctx().agentSounds.remove(id);
+    };
+    let finder: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      h.sent.length = 0;
+      ring('sound-primary');
+      expect(cues()).toEqual([[IPC.app.onAgentSound, 'needs-you', 65]]);
+      finder = vi.spyOn(registry, 'findUnscopedWindow').mockReturnValue(null);
+      ring('sound-scoped-fallback');
+      expect(cues()).toHaveLength(2);
+      h.winDestroyed = true;
+      ring('sound-destroyed');
+      h.winDestroyed = false;
+      h.contentsDestroyed = () => true;
+      ring('sound-destroyed-contents');
+      h.contentsDestroyed = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+      ring('sound-closing-contents');
+      expect(cues()).toHaveLength(2);
+    } finally {
+      finder?.mockRestore(); config.mockRestore(); clock.mockRestore();
+      h.winDestroyed = false; h.contentsDestroyed = alive;
+    }
+  });
+
+  it('routes CLI attention sounds only for visible live agents and releases them on exit', () => {
+    const observe = vi.spyOn(ctx().agentSounds, 'observe');
+    const remove = vi.spyOn(ctx().agentSounds, 'remove');
+    try {
+      h.ptys.sessions.set('sound-visible', sessionFixture({ id: 'sound-visible', projectId: project.id, profile: 'claude' }));
+      ctx().agentStatus.emit('status', 'sound-visible', 'working', 1);
+      expect(observe).toHaveBeenCalledWith('cli:sound-visible', 'working');
+      for (const [id, flags] of [['sound-hidden', { headless: true }], ['sound-scheduled', { scheduled: true }]] as const) {
+        h.ptys.sessions.set(id, sessionFixture({ id, projectId: project.id, ...flags }));
+        ctx().agentStatus.emit('status', id, 'blocked', 1);
+        expect(remove).toHaveBeenCalledWith(`cli:${id}`);
+      }
+      ctx().agentStatus.emit('status', 'sound-missing', 'blocked', 1);
+      expect(remove).toHaveBeenCalledWith('cli:sound-missing');
+      h.ptys.emit('exit', 'sound-visible', 0);
+      expect(remove).toHaveBeenCalledWith('cli:sound-visible');
+    } finally { observe.mockRestore(); remove.mockRestore(); }
   });
 
   it('holds peer messages and mail for an agent while it wraps up', async () => {

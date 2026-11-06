@@ -1196,3 +1196,20 @@ describe('normalizeConfig — onboarding', () => {
     expect(normalizeConfig({ walkthroughCompleted: true }).onboarding).toBeUndefined();
   });
 });
+
+
+describe('agent notification sounds', () => {
+  it.each([true, false])('persists independent opt-in switches (%s)', value => {
+    store.setConfig({ agentSoundIdle: value, agentSoundNeedsYou: !value, agentSoundVolume: 73 });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig()).toMatchObject({ agentSoundIdle: value, agentSoundNeedsYou: !value, agentSoundVolume: 73 });
+  });
+  it.each(['true', 1, null, undefined])('drops invalid switches (%j)', value => {
+    const result = normalizeConfig({ agentSoundIdle: value as never, agentSoundNeedsYou: value as never });
+    expect(result).not.toHaveProperty('agentSoundIdle');
+    expect(result).not.toHaveProperty('agentSoundNeedsYou');
+  });
+  it.each([[-2, 0], [120, 100], [43.6, 44], [NaN, 50], ['80', 50], [null, 50]])('normalizes volume %j to %s', (input, expected) => {
+    expect(normalizeConfig({ agentSoundVolume: input as never }).agentSoundVolume).toBe(expected);
+  });
+});

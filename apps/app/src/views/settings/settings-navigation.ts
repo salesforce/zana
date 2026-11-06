@@ -106,6 +106,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'agent-tabs', label: 'Tabs' },
     { id: 'teams', label: 'Squads' },
     { id: 'agent-attention', label: 'Agent attention' },
+    { id: 'agent-sounds', label: 'Notification sounds' },
     { id: 'scheduled', label: 'Scheduled' },
     { id: 'agent-automation', label: 'Agent automation' },
     { id: 'agent-heartbeat', label: 'Agent heartbeat' },
