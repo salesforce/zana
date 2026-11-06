@@ -66,27 +66,27 @@ describe('prompt pinning', () => {
   });
 
   it('unpins when the transcript no longer leaves room for the reply underneath it (#669)', () => {
-    // Prompt is 180px, reply is 150px (turn is 330px).
-    const f = fixture([180], 450, [150]);
-    // At viewport 450, maxHeight is 225, turn 330 <= 450: leaves plenty of room.
+    // Prompt is 100px, reply is 250px (turn is 350px).
+    const f = fixture([100], 400, [250]);
+    // At viewport 400, maxHeight is 200, turn 350 <= 400: leaves plenty of room.
     expect(f.pinned()).toEqual([true]);
-    // Composer expands: viewport shortens to 300 (turn 330 > 300: prompt would cover reply).
+    // Composer expands: viewport shortens to 300 (prompt 100 <= 150 maxHeight, but turn 350 > 300: prompt would cover reply).
     f.size.viewport = 300;
     f.resize();
     expect(f.pinned()).toEqual([false]);
-    // Composer collapses: viewport restores to 450.
-    f.size.viewport = 450;
+    // Composer collapses: viewport restores to 400.
+    f.size.viewport = 400;
     f.resize();
     expect(f.pinned()).toEqual([true]);
     f.dispose();
   });
 
   it('allows pinning across long multi-screen replies while unpinning short overlapping replies', () => {
-    // Turn 0: prompt 100px, multi-screen reply 1200px.
-    // Turn 1: prompt 100px, short reply 250px (total 350px in a 300px viewport).
-    const f = fixture([100, 100], 300, [1200, 250]);
-    // Turn 0: reply 1200 > viewport 300, prompt 100 <= 150 -> pins.
-    // Turn 1: reply 250 <= viewport 300, turn 350 > viewport 300 -> unpins.
+    // Turn 0: prompt 100px, multi-screen reply 1200px (1200 > viewport 300 + prompt 100 = 400).
+    // Turn 1: prompt 100px, reply 320px (total 420px in a 300px viewport, reply 320 <= viewport 300 + prompt 100 = 400).
+    const f = fixture([100, 100], 300, [1200, 320]);
+    // Turn 0: reply 1200 > 400, prompt 100 <= 150 -> pins.
+    // Turn 1: reply 320 <= 400, turn 420 > 300 -> unpins.
     expect(f.pinned()).toEqual([true, false]);
     f.dispose();
   });

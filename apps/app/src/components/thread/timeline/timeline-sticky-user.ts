@@ -16,39 +16,49 @@ export function stickyTurnRanges(
   }));
 }
 
-/** Pin only prompts that leave at least half the transcript visible for the reply. */
+/**
+ * Pin user prompts that leave at least half the transcript visible for the reply,
+ * but unpin them when the transcript is shortened (e.g. composer expansion) and
+ * cannot accommodate the turn without overlapping the reply.
+ */
 export function observeStickyUserPrompts(pane: HTMLElement): () => void {
   const prompts = Array.from(pane.querySelectorAll<HTMLElement>(
     '.thread-timeline-current-turn > .thread-timeline-item.is-user'
   ));
   if (prompts.length === 0 || typeof ResizeObserver === 'undefined') return () => {};
 
+  const items = prompts.map((prompt) => ({
+    prompt,
+    turn: prompt.closest<HTMLElement>('.thread-timeline-current-turn')
+  }));
+
   const turns = Array.from(
-    new Set(
-      prompts
-        .map((prompt) => prompt.closest<HTMLElement>('.thread-timeline-current-turn'))
-        .filter((turn): turn is HTMLElement => turn !== null)
-    )
+    new Set(items.map((item) => item.turn).filter((turn): turn is HTMLElement => turn !== null))
   );
 
   const update = () => {
-    const maxHeight = pane.clientHeight / 2;
-    const fits = prompts.map((prompt) => {
+    const paneHeight = pane.clientHeight;
+    const maxHeight = paneHeight / 2;
+    for (const { prompt, turn } of items) {
       const height = prompt.offsetHeight;
-      if (height <= 0 || height > maxHeight) return false;
-      const turn = prompt.closest<HTMLElement>('.thread-timeline-current-turn');
-      const replyHeight = turn ? Math.max(0, turn.offsetHeight - height) : 0;
-      // When a reply exists and is not tall enough to fill the transcript on
-      // its own, the prompt may only pin if the entire turn fits in the pane.
-      // Otherwise, scrolling to the reply at the bottom of the turn causes the
-      // pinned prompt to cover part of the reply.
-      if (replyHeight > 0 && replyHeight <= pane.clientHeight && height + replyHeight > pane.clientHeight) {
-        return false;
+      if (height <= 0 || height > maxHeight) {
+        prompt.removeAttribute('data-sticky-prompt');
+        continue;
       }
-      return true;
-    });
-    prompts.forEach((prompt, index) => prompt.toggleAttribute('data-sticky-prompt', fits[index]));
+      const replyHeight = turn ? Math.max(0, turn.offsetHeight - height) : 0;
+      // When a reply exists and is not tall enough to scroll fully clear of the
+      // pinned prompt (replyHeight <= paneHeight + height), the prompt may only
+      // pin if the entire turn fits in the pane without needing to scroll.
+      // Otherwise, scrolling to the bottom of the turn causes the pinned prompt
+      // to paint over the top of the reply.
+      const overlaps =
+        replyHeight > 0 &&
+        replyHeight <= paneHeight + height &&
+        height + replyHeight > paneHeight;
+      prompt.toggleAttribute('data-sticky-prompt', !overlaps);
+    }
   };
+
   const observer = new ResizeObserver(update);
   observer.observe(pane);
   for (const prompt of prompts) observer.observe(prompt);

@@ -117,6 +117,7 @@ test('expanding the composer cannot cover the agent reply with a pinned prompt (
   const user = timeline.getByTestId('thread-user-text').last();
   await expect(user.getByRole('button', { name: 'Show more', exact: true })).toBeVisible();
   const userItem = user.locator('..');
+  await expect(userItem).toHaveCSS('position', 'sticky');
   // Expand composer ("Make prompt box larger")
   await detail.getByTestId('thread-command-expand').click();
   await expect(detail.locator('.thread-command-composer')).toHaveClass(/is-expanded/);
@@ -125,6 +126,7 @@ test('expanding the composer cannot cover the agent reply with a pinned prompt (
   // Collapse composer ("Make prompt box smaller")
   await detail.getByTestId('thread-command-expand').click();
   await expect(detail.locator('.thread-command-composer')).not.toHaveClass(/is-expanded/);
+  await expect(userItem).toHaveCSS('position', 'sticky');
   await expectReplyUncovered(timeline);
 });
 
