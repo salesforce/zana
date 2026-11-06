@@ -45,15 +45,39 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
     turn: prompt.parentElement as HTMLElement | null
   }));
 
-  const update = () => {
-    const paneHeight = pane.clientHeight;
-    const maxHeight = paneHeight / 2;
+  // Fast O(1) lookup from either prompt or turn element back to its item
+  const itemByTarget = new Map<HTMLElement, (typeof items)[number]>();
+  for (const item of items) {
+    itemByTarget.set(item.prompt, item);
+    if (item.turn) itemByTarget.set(item.turn, item);
+  }
+
+  let cachedPaneHeight = pane.clientHeight;
+
+  const evaluateItem = (item: (typeof items)[number], paneHeight: number, maxHeight: number) => {
+    const height = item.prompt.offsetHeight;
+    if (height <= 0 || height > maxHeight) {
+      if (item.prompt.hasAttribute('data-sticky-prompt')) {
+        item.prompt.removeAttribute('data-sticky-prompt');
+      }
+      return;
+    }
+    const replyHeight = item.turn ? Math.max(0, item.turn.offsetHeight - height) : 0;
+    const shouldPin = !promptOverlapsReply(height, replyHeight, paneHeight);
+    if (item.prompt.hasAttribute('data-sticky-prompt') !== shouldPin) {
+      item.prompt.toggleAttribute('data-sticky-prompt', shouldPin);
+    }
+  };
+
+  const updateAll = () => {
+    cachedPaneHeight = pane.clientHeight;
+    const maxHeight = cachedPaneHeight / 2;
     // Pass 1: measure layout properties in batch without DOM mutation to avoid layout thrashing
     const fits = items.map(({ prompt, turn }) => {
       const height = prompt.offsetHeight;
       if (height <= 0 || height > maxHeight) return false;
       const replyHeight = turn ? Math.max(0, turn.offsetHeight - height) : 0;
-      return !promptOverlapsReply(height, replyHeight, paneHeight);
+      return !promptOverlapsReply(height, replyHeight, cachedPaneHeight);
     });
     // Pass 2: apply DOM attribute updates only when the state changes
     prompts.forEach((prompt, index) => {
@@ -64,14 +88,41 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
     });
   };
 
-  const observer = new ResizeObserver(update);
+  // When individual replies stream or expand, re-evaluate only the affected turn
+  // in O(1) rather than re-measuring all historical turns on every streamed frame.
+  const onResize: ResizeObserverCallback = (entries) => {
+    if (!entries || entries.length === 0) {
+      updateAll();
+      return;
+    }
+    let paneResized = false;
+    const dirtyItems = new Set<(typeof items)[number]>();
+    for (const entry of entries) {
+      if (entry.target === pane) {
+        paneResized = true;
+        break;
+      }
+      const item = itemByTarget.get(entry.target as HTMLElement);
+      if (item) dirtyItems.add(item);
+    }
+    if (paneResized) {
+      updateAll();
+      return;
+    }
+    const maxHeight = cachedPaneHeight / 2;
+    for (const item of dirtyItems) {
+      evaluateItem(item, cachedPaneHeight, maxHeight);
+    }
+  };
+
+  const observer = new ResizeObserver(onResize);
   observer.observe(pane);
   for (const { prompt, turn } of items) {
     observer.observe(prompt);
     if (turn) observer.observe(turn);
   }
   // Measure before paint, then re-evaluate on expansion, image load, or resize.
-  update();
+  updateAll();
   return () => {
     observer.disconnect();
     for (const prompt of prompts) prompt.removeAttribute('data-sticky-prompt');

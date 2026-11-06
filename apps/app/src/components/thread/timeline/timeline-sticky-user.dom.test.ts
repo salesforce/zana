@@ -10,26 +10,43 @@ function fixture(heights: number[], viewport = 600, replyHeights?: number[]) {
   const prompts = Array.from(pane.querySelectorAll<HTMLElement>('.is-user'));
   const turns = Array.from(pane.querySelectorAll<HTMLElement>('.thread-timeline-current-turn'));
   const size = { viewport, heights, replyHeights: replyHeights ?? heights.map(() => 0) };
-  Object.defineProperty(pane, 'clientHeight', { get: () => size.viewport });
+  Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => size.viewport });
   prompts.forEach((prompt, index) => {
-    Object.defineProperty(prompt, 'offsetHeight', { get: () => size.heights[index] });
+    Object.defineProperty(prompt, 'offsetHeight', {
+      configurable: true,
+      get: () => size.heights[index]
+    });
   });
   turns.forEach((turn, index) => {
     Object.defineProperty(turn, 'offsetHeight', {
+      configurable: true,
       get: () => size.heights[index]! + size.replyHeights[index]!
     });
   });
-  let resize = () => {};
+  let resize = (_entries?: ResizeObserverEntry[]) => {};
   const observe = vi.fn();
   const disconnect = vi.fn();
   vi.stubGlobal('ResizeObserver', class {
     observe = observe;
     disconnect = disconnect;
-    constructor(callback: () => void) { resize = callback; }
+    constructor(callback: ResizeObserverCallback) {
+      resize = (entries) => callback(entries ?? [], this as unknown as ResizeObserver);
+    }
   });
   const dispose = observeStickyUserPrompts(pane);
   const pinned = () => prompts.map((prompt) => prompt.hasAttribute('data-sticky-prompt'));
-  return { pane, prompts, turns, size, observe, disconnect, resize: () => resize(), dispose, pinned };
+  return {
+    pane,
+    prompts,
+    turns,
+    size,
+    observe,
+    disconnect,
+    resize: (...targets: HTMLElement[]) =>
+      resize(targets.length > 0 ? targets.map((t) => ({ target: t } as ResizeObserverEntry)) : undefined),
+    dispose,
+    pinned
+  };
 }
 
 describe('prompt pinning', () => {
@@ -110,7 +127,7 @@ describe('prompt pinning', () => {
     expect(f.pinned()).toEqual([true, true]);
     // Earlier turn's reply expands (e.g. image loads, tool block expands) to 250px (turn 350px > 300px, reply 250px <= 400px -> unpins).
     f.size.replyHeights[0] = 250;
-    f.resize();
+    f.resize(f.turns[0]!);
     expect(f.pinned()).toEqual([false, true]);
     f.dispose();
   });
@@ -121,12 +138,39 @@ describe('prompt pinning', () => {
     expect(f.pinned()).toEqual([true]);
     // Reply grows to 250px during streaming/rendering (turn 350px > 300px, reply 250px <= 400px -> unpins to avoid overlap).
     f.size.replyHeights[0] = 250;
-    f.resize();
+    f.resize(f.turns[0]!);
     expect(f.pinned()).toEqual([false]);
     // Reply grows to a large multi-screen reply 1000px (> 400px -> re-pins).
     f.size.replyHeights[0] = 1000;
-    f.resize();
+    f.resize(f.turns[0]!);
     expect(f.pinned()).toEqual([true]);
+    f.dispose();
+  });
+
+  it('recomputes only the affected turn in O(1) when a streaming chunk resizes one turn', () => {
+    // 3 turns in a 300px pane.
+    const f = fixture([100, 100, 100], 300, [150, 150, 150]);
+    expect(f.pinned()).toEqual([true, true, true]);
+
+    // Spy on turn 0 and turn 1 offsetHeight to ensure they are NOT read during turn 2 resize
+    let turn0Read = false;
+    let turn1Read = false;
+    Object.defineProperty(f.turns[0], 'offsetHeight', {
+      configurable: true,
+      get: () => { turn0Read = true; return 250; }
+    });
+    Object.defineProperty(f.turns[1], 'offsetHeight', {
+      configurable: true,
+      get: () => { turn1Read = true; return 250; }
+    });
+
+    // Turn 2 grows during streaming to 250px (turn 350px > 300px, reply 250px <= 400px -> unpins)
+    f.size.replyHeights[2] = 250;
+    f.resize(f.turns[2]!);
+
+    expect(f.pinned()).toEqual([true, true, false]);
+    expect(turn0Read).toBe(false);
+    expect(turn1Read).toBe(false);
     f.dispose();
   });
 
