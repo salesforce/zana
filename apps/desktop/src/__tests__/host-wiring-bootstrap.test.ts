@@ -1115,6 +1115,41 @@ describe('host bootstrap wiring', () => {
     } finally { config.mockRestore(); caller.mockRestore(); vi.unstubAllEnvs(); }
   });
 
+  it('sends each chime to one live window and tolerates windows closing', async () => {
+    const registry = await import('../window/main-window-registry.js');
+    const config = vi.spyOn(store, 'getConfig').mockReturnValue({ agentSoundNeedsYou: true, agentSoundVolume: 65 } as never);
+    let now = 10_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const alive = h.contentsDestroyed;
+    const cues = () => h.sent.filter(([channel]) => channel === IPC.app.onAgentSound);
+    const ring = (id: string) => {
+      now += 3_000;
+      ctx().agentSounds.observe(id, 'working');
+      ctx().agentSounds.observe(id, 'blocked');
+      ctx().agentSounds.remove(id);
+    };
+    let finder: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      h.sent.length = 0;
+      ring('sound-primary');
+      expect(cues()).toEqual([[IPC.app.onAgentSound, 'needs-you', 65]]);
+      finder = vi.spyOn(registry, 'findUnscopedWindow').mockReturnValue(null);
+      ring('sound-scoped-fallback');
+      expect(cues()).toHaveLength(2);
+      h.winDestroyed = true;
+      ring('sound-destroyed');
+      h.winDestroyed = false;
+      h.contentsDestroyed = () => true;
+      ring('sound-destroyed-contents');
+      h.contentsDestroyed = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+      ring('sound-closing-contents');
+      expect(cues()).toHaveLength(2);
+    } finally {
+      finder?.mockRestore(); config.mockRestore(); clock.mockRestore();
+      h.winDestroyed = false; h.contentsDestroyed = alive;
+    }
+  });
+
   it('routes CLI attention sounds only for visible live agents and releases them on exit', () => {
     const observe = vi.spyOn(ctx().agentSounds, 'observe');
     const remove = vi.spyOn(ctx().agentSounds, 'remove');
