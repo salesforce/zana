@@ -106,6 +106,28 @@ test('prompt pinning adapts to viewport height even below the text truncation li
   await expectReplyUncovered(timeline);
 });
 
+test('expanding the composer cannot cover the agent reply with a pinned prompt (#669)', async ({ app }) => {
+  const { detail, threadId } = await openThread(app);
+  const timeline = detail.getByTestId('thread-timeline');
+  const prompt = Array.from({ length: 25 }, (_, i) => `Drupal and Salesforce ID record ${i + 1}: 001xx000003DGb${i}`).join('\n');
+  await detail.getByTestId('thread-command-input').fill(prompt);
+  await detail.getByTestId('thread-command-send').click();
+  await expect(timeline.getByTestId('thread-assistant-text').last()).toContainText('Response to:');
+  await waitForCompletion(app, threadId);
+  const user = timeline.getByTestId('thread-user-text').last();
+  await expect(user.getByRole('button', { name: 'Show more', exact: true })).toBeVisible();
+  const userItem = user.locator('..');
+  // Expand composer ("Make prompt box larger")
+  await detail.getByTestId('thread-command-expand').click();
+  await expect(detail.locator('.thread-command-composer')).toHaveClass(/is-expanded/);
+  await expectReplyUncovered(timeline);
+  await expect(userItem).toHaveCSS('position', 'relative');
+  // Collapse composer ("Make prompt box smaller")
+  await detail.getByTestId('thread-command-expand').click();
+  await expect(detail.locator('.thread-command-composer')).not.toHaveClass(/is-expanded/);
+  await expectReplyUncovered(timeline);
+});
+
 test('a short-text prompt collapses by rendered height, not character count', async ({ app }) => {
   const { detail, threadId } = await openThread(app);
   const timeline = detail.getByTestId('thread-timeline');
