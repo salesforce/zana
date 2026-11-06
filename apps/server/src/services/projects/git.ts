@@ -667,12 +667,13 @@ async function configureWorktreeProtection(toplevel: string, worktreePath: strin
         continue;
       }
       const stat = lstatSync(resolvedHook);
-      if (!stat.isFile() || !isExecutableGitHook(resolvedHook, stat.mode)) continue;
+      if (!stat.isFile()) continue;
       // Replacing core.hooksPath would otherwise silently disable this hook.
       // A proxy may only execute a target still confined to its configured directory.
       if (!isWithinPath(resolvedHook, previousHooksDir)) {
         return { ok: false, reason: `cannot preserve executable hook outside configured hooks directory: ${hook}` };
       }
+      if (!isExecutableGitHook(resolvedHook, stat.mode)) continue;
       preservedHooks.set(hook, resolvedHook);
     }
     mkdirSync(zanaHooksPath, { recursive: true, mode: 0o700 });
