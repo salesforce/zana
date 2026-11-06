@@ -182,5 +182,6 @@ describe('plugin guide public docs', () => {
     expect(sdkReference).toContain('previous.has(key)');
     expect(sdkReference).toContain('previous.clear()');
     expect(readFileSync(join(repoRoot, 'website/content/docs/extensions-sdk-reference.md'), 'utf8')).toBe(sdkReference);
+    expect(readFileSync(join(repoRoot, 'plugins/plugin-guide/app.js'), 'utf8')).toContain('experimental_observeAgents');
   });
 });
