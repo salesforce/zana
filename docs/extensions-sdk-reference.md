@@ -167,12 +167,94 @@ Headless (no pixels), plus picker chrome:
 - `background` — `zcc.background.service` / `schedule`
 - `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
 - `approvals` — host-signed approvals (experimental): `experimental_requestApproval(pluginId, { binding, title, summary?, details?, confirmLabel?, tone? })` from `@zana-ai/zcc-plugin-sdk/app` has desktop main draw its own sandboxed sheet and sign the binding it showed; the server calls `zcc.ui.experimental_consumeApproval({ token, binding })` with a binding rebuilt from its own sources before acting. One plugin, one binding (`action`, `target`, `targetLabel`, `subject`, `revision?`, `confirmText?`), one use, five minutes. `confirmText` must be typed. Web, mobile and headless return `{ approved: false, reason: 'unavailable' }`. Agent-initiated actions keep `sdk.confirm`. Tests: `harness.approve(binding)`.
-- `contentScripts` — `contentScripts.register`
+- `contentScripts` — `contentScripts.register`; background renderer subscriptions, including optional generic agent activity and own-plugin realtime signals. See [Background activity and sound plugins](#background-activity-and-sound-plugins).
 - `experimental_providerIcon` — picker glyph for a provider id
 
 Registrations replace wholesale per plugin id. Each carries a `generation` used
 as the React remount key. Wrap UI in `PluginSlotBoundary`. Live-reload with
 `zcc plugin dev`.
+
+## Background activity and sound plugins
+
+Register a content script when an effect must run while the plugin page is
+closed. It mounts per window and plugin generation. Its
+`PluginContentScriptContext` contains `pluginId`, `generation`, `signal`, and
+these optional, experimental methods:
+
+| Method | Contract |
+| --- | --- |
+| `experimental_observeAgents(listener)` | Initial `PluginAgentActivitySnapshot`, then deduplicated changes from the main shell's existing stores. At most 1,000 visible agents; each has `id`, `kind: 'thread' \| 'cli'`, and `state: 'working' \| 'idle' \| 'needs-you' \| 'unknown'`. No prompts, tool arguments or output. |
+| `experimental_onSignal(channel, listener)` | Receives payloads published on this plugin's own realtime channel, useful for reloading saved preferences. |
+
+Both return an unsubscribe function and are also released when the script's
+`signal` aborts. Return a disposer for resources you create: timers, audio
+contexts and any cross-window lock. Disable, reload, generation replacement
+and shutdown dispose the script. Feature-detect the methods because older
+hosts omit them; automatic activity needs a host containing these APIs.
+
+`ready: false` means unavailable: reset the transition baseline and cancel
+pending notifications. Project, thread and detached plugin windows remain
+unready. Seed the first ready snapshot silently, then detect changes; do not
+replay existing idle or needs-you states at startup. Readiness remains true
+through routine roster refreshes after initial hydration. Treat `unknown` as
+uncertain and idle as a display state, never proof of task success. Hidden or
+archived threads and shell, headless, scheduled or exited CLI sessions are
+excluded. The host starts no additional activity poller for this API.
+
+This example observes new input requests without playing audio:
+
+```ts
+import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
+
+export default definePluginApp(app => {
+  app.contentScripts.register({
+    id: 'activity',
+    mount(context) {
+      if (!context.experimental_observeAgents) return;
+      let previous = new Map<string, string>();
+      return context.experimental_observeAgents(snapshot => {
+        if (!snapshot.ready) { previous.clear(); return; }
+        const next = new Map<string, string>();
+        for (const agent of snapshot.agents) {
+          const key = `${agent.kind}:${agent.id}`;
+          next.set(key, agent.state);
+          if (previous.has(key) && previous.get(key) !== 'needs-you' && agent.state === 'needs-you') {
+            console.info('Agent needs input', key);
+          }
+        }
+        previous = next;
+      });
+    }
+  });
+});
+```
+
+### Replacing sounds or sound behavior
+
+**Change clips:** import WAV/MP3/OGG or an OpenPeon pack into Sound Studio.
+Packs are data only; they do not execute hooks or change the plugin's rules.
+
+**Change behavior:** fork Sound Studio or create an independent plugin using
+the activity API. The example lives at `plugins/agent-sounds/`: `policy.ts`
+owns transitions, stability and cooldowns, `player.ts` owns playback, and
+`server.ts` validates and persists packs. Its README covers installation,
+limits and customization. The plugin imports only the public SDK and React;
+it needs no core renderer imports or daemon credentials.
+
+Enable one sound implementation at a time. Turn off the previous plugin's
+notifications or disable that plugin, and keep separate built-in chimes off.
+Installing a sound plugin does **not** automatically override another plugin
+or the built-in chimes: there is no sound-provider registry, global selection
+or cross-plugin priority arbitration. Sound Studio's per-plugin Chromium
+Web Lock prevents that plugin from playing twice across main windows; another
+plugin has independent ownership. Request playback ownership only after a
+ready activity snapshot so scoped windows cannot take the lock.
+
+Replacement plugins should provide an explicit opt-in switch, bounded imports,
+silent startup baselines, input-request priority and a bounded/coalesced idle
+policy. Release all timers and audio on disposal. Verify actual playback,
+page-closed operation, window deduplication and disable cleanup through built
+Electron; mocks alone cannot prove browser audio or window ownership.
 
 ## Adding an Agents view
 

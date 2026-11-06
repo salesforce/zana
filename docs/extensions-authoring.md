@@ -167,6 +167,22 @@ export default definePluginApp((app) => {
 Fill the host `.module-panel-slot` (height 100%, own overflow). Shared `gus-*` /
 `zana-*` CSS classes live in core `global.css` and cascade into plugin panels.
 
+## Custom notification sounds
+
+To replace audio clips, import a sound pack into Sound Studio. To change event
+selection, cooldowns or playback, fork Sound Studio or create a plugin with a
+background `app.contentScripts.register` registration. The optional
+`context.experimental_observeAgents` API supplies generic agent display states
+while the page is closed; `experimental_onSignal` receives the plugin's own
+preference-change events. Feature-detect both APIs on older hosts.
+
+See [Background activity and sound plugins](./extensions-sdk-reference.md#background-activity-and-sound-plugins)
+for a working observation example, readiness and cleanup rules, and the
+forkable `plugins/agent-sounds/` implementation. A replacement plugin does not
+automatically override another sound source: turn off the previous plugin's
+notifications and separate built-in chimes. There is no global sound-provider
+selector or cross-plugin playback arbitration.
+
 ## Plugin migration: generic platform hooks
 
 Existing plugins keep working unchanged — the surfaces below are additive.

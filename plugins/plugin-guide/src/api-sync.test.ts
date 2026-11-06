@@ -169,4 +169,18 @@ describe('plugin guide public docs', () => {
     expect(sdkReference).toContain('component: WorldView');
     expect(sdkReference).toContain('onInspect(member.key)');
   });
+
+  it('teaches sound replacements and the activity lifecycle across authoring surfaces', () => {
+    const reference = copyPluginSurfaceAgentReference(SURFACES.find(row => row.id === 'contentScripts')!);
+    const skill = readPluginAuthoringDocumentation();
+    for (const text of [reference, sdkReference, skill]) {
+      for (const term of ['experimental_observeAgents', 'experimental_onSignal', 'ready: false',
+        'older hosts', 'Sound Studio', 'Web Lock', 'override', 'priority', 'baseline']) {
+        expect(text).toContain(term);
+      }
+    }
+    expect(sdkReference).toContain('previous.has(key)');
+    expect(sdkReference).toContain('previous.clear()');
+    expect(readFileSync(join(repoRoot, 'website/content/docs/extensions-sdk-reference.md'), 'utf8')).toBe(sdkReference);
+  });
 });

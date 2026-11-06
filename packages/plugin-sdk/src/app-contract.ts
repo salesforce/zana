@@ -720,10 +720,26 @@ export interface PluginComposerThreadRowStatus {
   tone?: 'default' | 'running' | 'success' | 'error';
 }
 
+/** Status only: no prompts, tool arguments, output, or success claims. */
+export interface PluginAgentActivity {
+  id: string;
+  kind: 'thread' | 'cli';
+  state: 'working' | 'idle' | 'needs-you' | 'unknown';
+}
+
+export interface PluginAgentActivitySnapshot {
+  ready: boolean;
+  agents: readonly PluginAgentActivity[];
+}
+
 export interface PluginContentScriptContext {
   readonly pluginId: string;
   readonly generation: number;
   readonly signal: AbortSignal;
+  /** Initial snapshot then changes. Main shell only; scoped windows receive no agents. Unsubscribe on disposal. */
+  readonly experimental_observeAgents?: (listener: (snapshot: PluginAgentActivitySnapshot) => void) => () => void;
+  /** This plugin's realtime channel. Unsubscribe on disposal. */
+  readonly experimental_onSignal?: (channel: string, listener: (payload: unknown) => void) => () => void;
   readonly experimental_setThreadRowStatus?: (
     threadId: string,
     status: PluginComposerThreadRowStatus | null

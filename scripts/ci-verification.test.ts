@@ -108,6 +108,20 @@ it('selects the Squad proposal specs for proposal, team and composer seams', () 
   }
 });
 
+it('selects sound playback for the plugin and generic activity SDK seams', () => {
+  for (const path of [
+    'plugins/agent-sounds/runtime.ts',
+    'plugins/agent-sounds/player.ts',
+    'apps/app/src/plugins/agent-activity.ts',
+    'apps/app/src/plugins/PluginContentScriptsHost.tsx',
+    'packages/plugin-sdk/src/app-contract.ts',
+    'packages/plugin-sdk/src/app.ts'
+  ]) expect(boundarySpecs([path])).toContain('e2e/sound-studio-plugin.spec.ts');
+  for (const path of ['docs/extensions-sdk-reference.md', 'plugins/other-plugin/app.tsx', 'packages/plugin-sdk/src/server.ts']) {
+    expect(boundarySpecs([path])).not.toContain('e2e/sound-studio-plugin.spec.ts');
+  }
+});
+
 it('selects the close-with-follow-up spec for the close summary seams', () => {
   for (const path of [
     'apps/server/src/services/followups/close-summary.ts',

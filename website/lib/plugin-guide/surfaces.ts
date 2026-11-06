@@ -410,9 +410,17 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         id: 'contentScripts',
         title: 'Content scripts',
         tagline: 'Per-window mount/dispose.',
-        summary: 'Run host-side DOM work without a panel.',
-        bullets: ['Registered via `app.contentScripts.register`.'],
-        apiSymbols: ['PluginAppContentScripts.register']
+        summary: 'Run renderer subscriptions and effects while the plugin page is closed.',
+        bullets: [
+          'Register `app.contentScripts.register({ id, mount })`. Return a disposer; the context `signal` aborts on disable, reload or shutdown.',
+          'Feature-detect `context.experimental_observeAgents`: an initial snapshot and changes for up to 1,000 visible agents, with ID, thread/CLI kind and working/idle/needs-you/unknown state. No prompts or output; idle does not mean success.',
+          'Treat `ready: false` as unavailable and reset transition baselines. Scoped windows remain unready; the first ready snapshot is a silent baseline. The API is absent on older hosts.',
+          '`context.experimental_onSignal(channel, listener)` receives only this plugin\'s realtime channel. Both observers return unsubscribe functions and are released on abort.',
+          'For one effect across main windows, elect an owner with Chromium Web Locks after readiness; release locks, timers and audio on disposal. No extra activity polling is needed.',
+          'Sound Studio is a forkable sound-plugin example. Import audio packs to replace clips, or create a plugin to rewrite playback and event rules. Enable only one sound plugin: there is no automatic cross-plugin sound override or priority registry.'
+        ],
+        apiSymbols: ['PluginAppContentScripts.register', 'PluginContentScriptContext', 'PluginAgentActivitySnapshot'],
+        firstParty: ['Sound Studio']
       },
       {
         id: 'experimental_providerIcon',

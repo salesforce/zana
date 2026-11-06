@@ -596,6 +596,24 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
   export function useRpc(): { call<T = unknown>(method: string, input?: unknown): Promise<T> };
+  export function useRealtime(channel: string, handler: (payload: unknown) => void): void;
+  export interface PluginAgentActivity {
+    id: string;
+    kind: 'thread' | 'cli';
+    state: 'working' | 'idle' | 'needs-you' | 'unknown';
+  }
+  export interface PluginAgentActivitySnapshot {
+    ready: boolean;
+    agents: readonly PluginAgentActivity[];
+  }
+  export interface PluginContentScriptContext {
+    readonly pluginId: string;
+    readonly generation: number;
+    readonly signal: AbortSignal;
+    /** Main-shell initial snapshot and changes; scoped windows remain unready. */
+    readonly experimental_observeAgents?: (listener: (snapshot: PluginAgentActivitySnapshot) => void) => () => void;
+    readonly experimental_onSignal?: (channel: string, listener: (payload: unknown) => void) => () => void;
+  }
   export interface ContextReference {
   version: 1;
   comment?: string;
@@ -709,7 +727,10 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
   }
 
   export function definePluginApp(
-    setup: (app: { slots: Record<string, (registration: Record<string, unknown>) => void> }) => void
+    setup: (app: {
+      slots: Record<string, (registration: Record<string, unknown>) => void>;
+      contentScripts: { register(registration: { id: string; mount(context: PluginContentScriptContext): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)> }): void };
+    }) => void
   ): unknown;
   export function isPluginAppDefinition(value: unknown): boolean;
   export function callPluginRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;

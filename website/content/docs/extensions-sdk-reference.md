@@ -19,7 +19,7 @@ Handed to `export default function plugin(zcc)`.
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata` |
 | `ui.requestInput` | Host prompt |
 | `ui.experimental_consumeApproval` | Verify and burn a host-signed approval token (see `approvals`) |
-| `status.needsConfiguration` | Degraded-until-configured |
+| `status.needsConfiguration` / `configured` | Mark the plugin "Needs configuration" in the Plugins hub (e.g. until the user signs in), and clear it once set up; both apply live without a reload |
 | `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
 | `sdk.system.defaultHost()` | Primary enrolled host ID, or `null` when none is configured |
 | `http.route` | Authenticated plugin HTTP routes; request `headers` and bounded `rawBody` preserve uploaded bytes; response `body` accepts a string or `Uint8Array` |
@@ -49,6 +49,30 @@ never overridden.
 The server validates environment choices and authorizes host/project access.
 Omit the environment to use the project's default. Provider model discovery
 accepts `hostId` and returns `modelLoadError` when discovery fails.
+
+Harness choice: pass `providerId` for an exact thread provider (an unknown id
+rejects), or `harness: "project-default"` to run the project's effective AI
+harness, resolved like a new agent launch (Settings → AI Harness global
+default, then the project's override). A yolo default also implies
+`permissionMode: "full"` unless you pass one. When no usable harness resolves
+(disabled, not installed, host offline, provider plugin not loaded) the spawn
+rejects with an actionable message; it never falls back. `providerId` wins when
+both are set. With neither, the host still uses its first registered provider —
+legacy behaviour kept for older plugins; new plugins should opt into
+`harness`. `sdk.providers.list()` reports `available: false` for a provider
+whose bridge failed or whose harness is not installed and enabled on the host.
+
+AI-harness overrides: a `harness: "project-default"` spawn also applies the
+resolved harness's overrides the way a new agent launch does — Settings → AI
+Harness, then the project's AI harness overrides — mapped onto the thread's
+model, permission mode, ACP session mode or `/plan`. Explicit `model` and
+`permissionMode` still win. An override the thread cannot apply rejects with an
+actionable message naming it; it is never dropped. Examples: a Codex
+sandbox/approval policy other than exactly `workspace-write` + `on-request` or
+`danger-full-access` + `never` (a half-set pair included), plan on a provider
+with neither a plan mode nor `/plan`, a project Claude Code permission mode, or
+PI provider/model/thinking defaults. A `providerId` spawn applies no harness
+overrides.
 
 `sdk.files.read` and `sdk.files.write` resolve an omitted `hostId` to the
 primary host and retain the host file service's path confinement.
@@ -92,8 +116,10 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Project shell
 
-- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry). Use `header: 'custom'` when the component supplies its own toolbar; render its `headerActions` prop there to retain the host split-pane controls without an extra title row. Set `detachable: true` to offer **Open in new window** (desktop only): the tab then runs in its own OS window, one per project, and other windows show `detachedPlaceholder` (`PluginDetachedTabProps`: `focusWindow()`, `bringBack()`) or a host card instead of mounting it. Inside that window `useZccContext().surface` is `'plugin-view'` and no thread sits beside it, but the page keeps its side panel (below); `useZccNavigate().openInWindow?(projectId, { tabId })` opens or focuses it. `useWindowTitle({ title, detail?, badge?, tone? })` titles that window while the calling component is mounted: `title` replaces the tab label, `detail` follows the project name, and `badge` (tone `neutral`, `warning` or `danger`) shows as a pill and leads the OS title, e.g. `Production · Agentforce · Help — Acme · prod`. It does nothing in the main or a project window, and the host trims and caps each part. Persist edits the window must not lose (drafts) and publish cross-window state over `zcc.realtime`.
-- **Page side panel.** A `navPanel` page or `projectTab` sits beside the host side panel on desktop, also in its detached window; `useZccContext().sidePanel` is `true` there (absent or `false` elsewhere, including inside thread-panel tabs). `useZccNavigate().openPanelAgent({ threadId, title? } | { draft: { prompt, projectId?, view? }, title? })` shows a conversation, or prefills a blank composer so the user picks the harness and sends it. `openPanelTool?({ actionId, title?, params? })` opens one of the plugin's own `threadPanelAction` tabs there, provided it lists `'plugin-page'` in `scopes`; an open tab for the action is focused and given the new `params` instead of duplicated. Both return `false` when the page has no side panel or the request does not match, so keep an in-page fallback. The panel's New Tab page lists only the page owner's `'plugin-page'` actions, never another plugin's. A tool scoped only to `'plugin-page'` never opens beside a thread, even from a saved tab, and a page's detached window keeps its own side-panel tabs apart from the main window's.
+- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry). Use `statusbar: 'hidden'` to omit the host project-path/Git footer for this tab; other project views keep their footer. Use `header: 'custom'` when the component supplies its own toolbar; render its `headerActions` prop there to retain the host split-pane controls without an extra title row. Set `detachable: true` to offer **Open in new window** (desktop only): the tab then runs in its own OS window, one per project, and other windows show `detachedPlaceholder` (`PluginDetachedTabProps`: `focusWindow()`, `bringBack()`) or a host card instead of mounting it. Inside that window `useZccContext().surface` is `'plugin-view'` and no thread sits beside it, but the page keeps its side panel (below); `useZccNavigate().openInWindow?(projectId, { tabId, resourceId? })` opens or focuses it. With `resourceId`, each opaque resource has its own window and saved geometry; the main project tab remains usable. `useZccContext().resourceId` identifies the detached resource, or requests its selection after **Show in main window**. Keep the detached resource fixed, while treating main-window resource selection as navigation. Watch `resourceRequestId` alongside `resourceId` so repeated requests select the same resource again. The host bounds resource ids and checks the project/plugin; an id grants no file access, so plugins must still authorize resource reads and writes. `useWindowTitle({ title, detail?, badge?, tone? })` titles that window while the calling component is mounted: `title` replaces the tab label, `detail` follows the project name, and `badge` (tone `neutral`, `warning` or `danger`) shows as a pill and leads the OS title, e.g. `Production · Agentforce · Help — Acme · prod`. It does nothing in the main or a project window, and the host trims and caps each part. `useZccNavigate().toProject(projectId, { tabId, inMainWindow: true })` explicitly opens the main tab instead of focusing its detached window. Persist edits the window must not lose (drafts) and publish cross-window state over `zcc.realtime`.
+- **Window close handoff.** `useWindowCloseHandler(handlerOrNull)` registers an async preflight for this plugin’s detached window. The handler receives an `AbortSignal`; on a timeout, restore an editable workspace and stop the handoff when it is aborted. Flush unsaved document updates, release edit ownership and remove live view leases before resolving. Native close, Close Tab and return-to-main all await this handler. Throw or reject to keep the window open with an error. Main bounds the wait and accepts completion only from that window; a crash clears the guard. Handlers are removed on unmount.
+- **Resource side-panel scope.** Call `useZccNavigate().setPanelScope?.({ id, view? })` as the active resource changes, or pass `null` to restore the page scope. The host keeps each resource's tools, selected conversation and panel layout independently without remounting the plugin page. `view` supplies the scoped assistant context; use a stable, registered view value. Resource panels reuse their saved state when moved between the main and detached window; plugins should arrange one active owner per resource and persist running work independently of renderer lifetime.
+- **Page side panel.** A `navPanel` page or `projectTab` shares the host rail and tabbed side panel across desktop, web and its detached window; `useZccContext().sidePanel` is `true` there (absent or `false` elsewhere, including inside thread-panel tabs). `useZccNavigate().openPanelAgent({ threadId, title? } | { draft: { prompt, projectId?, view? }, title? })` shows a conversation, or prefills a blank composer so the user picks the harness and sends it. `openPanelTool?({ actionId, title?, params? })` opens one of the plugin's own `threadPanelAction` tabs there, provided it lists `'plugin-page'` in `scopes`; an open tab for the action is focused and given the new `params` instead of duplicated. Both return `false` when the page has no side panel or the request does not match, so keep a navigation fallback. Use the host for conversations and page tools instead of adding another chat rail. The panel's New Tab page lists only the page owner's `'plugin-page'` actions, never another plugin's. A tool scoped only to `'plugin-page'` never opens beside a thread, even from a saved tab, and a page's detached window keeps its own side-panel tabs apart from the main window's.
 - `experimental_agentsView` — add a layout after Board, List and Flow in the global and project Agents view selectors. See [Adding an Agents view](#adding-an-agents-view).
 - `experimental_agentsBoardAction` — toolbar control on the Agents board (`projectId` is `null` on the cross-project Agents nav)
 - `experimental_agentCardAction` — right-click item on an Agents board card
@@ -106,6 +132,8 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 - `experimental_newThreadPanelAction` — CTA under New Chat compose (can open a compose-time side panel)
 
 ### Composer
+
+- **Copied editor selections.** An editor can add `EDITOR_SELECTION_MIME` (`application/x-zcc-editor-selection`, exported by the app SDK) alongside normal `text/plain` on its copy event. The JSON shape is `{ version: 1, path, startLine, endLine, text }`, with one-based inclusive lines and a maximum of 100,000 text characters. The composer validates the metadata against the plain text and inserts an inspectable, removable file-and-line chip. Paste as plain text bypasses it. Sending expands the copied snapshot into ordinary prompt text, including unsaved edits; clipboard paths never grant filesystem access. Missing, malformed, oversized, or mismatched metadata falls back to normal paste.
 
 - `composer` — `composer.customize`: actions, banners, plus-menu items, meta chips, advanced fields, and rich-text effects. Scope to `thread`, `new-thread`, `cli-agent`, `queued-message`, or `side-chat`. `useComposer().experimental_setLaunchPatch` overlays spawn extraArgs / profile / routing
 
@@ -139,12 +167,94 @@ Headless (no pixels), plus picker chrome:
 - `background` — `zcc.background.service` / `schedule`
 - `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
 - `approvals` — host-signed approvals (experimental): `experimental_requestApproval(pluginId, { binding, title, summary?, details?, confirmLabel?, tone? })` from `@zana-ai/zcc-plugin-sdk/app` has desktop main draw its own sandboxed sheet and sign the binding it showed; the server calls `zcc.ui.experimental_consumeApproval({ token, binding })` with a binding rebuilt from its own sources before acting. One plugin, one binding (`action`, `target`, `targetLabel`, `subject`, `revision?`, `confirmText?`), one use, five minutes. `confirmText` must be typed. Web, mobile and headless return `{ approved: false, reason: 'unavailable' }`. Agent-initiated actions keep `sdk.confirm`. Tests: `harness.approve(binding)`.
-- `contentScripts` — `contentScripts.register`
+- `contentScripts` — `contentScripts.register`; background renderer subscriptions, including optional generic agent activity and own-plugin realtime signals. See [Background activity and sound plugins](#background-activity-and-sound-plugins).
 - `experimental_providerIcon` — picker glyph for a provider id
 
 Registrations replace wholesale per plugin id. Each carries a `generation` used
 as the React remount key. Wrap UI in `PluginSlotBoundary`. Live-reload with
 `zcc plugin dev`.
+
+## Background activity and sound plugins
+
+Register a content script when an effect must run while the plugin page is
+closed. It mounts per window and plugin generation. Its
+`PluginContentScriptContext` contains `pluginId`, `generation`, `signal`, and
+these optional, experimental methods:
+
+| Method | Contract |
+| --- | --- |
+| `experimental_observeAgents(listener)` | Initial `PluginAgentActivitySnapshot`, then deduplicated changes from the main shell's existing stores. At most 1,000 visible agents; each has `id`, `kind: 'thread' \| 'cli'`, and `state: 'working' \| 'idle' \| 'needs-you' \| 'unknown'`. No prompts, tool arguments or output. |
+| `experimental_onSignal(channel, listener)` | Receives payloads published on this plugin's own realtime channel, useful for reloading saved preferences. |
+
+Both return an unsubscribe function and are also released when the script's
+`signal` aborts. Return a disposer for resources you create: timers, audio
+contexts and any cross-window lock. Disable, reload, generation replacement
+and shutdown dispose the script. Feature-detect the methods because older
+hosts omit them; automatic activity needs a host containing these APIs.
+
+`ready: false` means unavailable: reset the transition baseline and cancel
+pending notifications. Project, thread and detached plugin windows remain
+unready. Seed the first ready snapshot silently, then detect changes; do not
+replay existing idle or needs-you states at startup. Readiness remains true
+through routine roster refreshes after initial hydration. Treat `unknown` as
+uncertain and idle as a display state, never proof of task success. Hidden or
+archived threads and shell, headless, scheduled or exited CLI sessions are
+excluded. The host starts no additional activity poller for this API.
+
+This example observes new input requests without playing audio:
+
+```ts
+import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
+
+export default definePluginApp(app => {
+  app.contentScripts.register({
+    id: 'activity',
+    mount(context) {
+      if (!context.experimental_observeAgents) return;
+      let previous = new Map<string, string>();
+      return context.experimental_observeAgents(snapshot => {
+        if (!snapshot.ready) { previous.clear(); return; }
+        const next = new Map<string, string>();
+        for (const agent of snapshot.agents) {
+          const key = `${agent.kind}:${agent.id}`;
+          next.set(key, agent.state);
+          if (previous.has(key) && previous.get(key) !== 'needs-you' && agent.state === 'needs-you') {
+            console.info('Agent needs input', key);
+          }
+        }
+        previous = next;
+      });
+    }
+  });
+});
+```
+
+### Replacing sounds or sound behavior
+
+**Change clips:** import WAV/MP3/OGG or an OpenPeon pack into Sound Studio.
+Packs are data only; they do not execute hooks or change the plugin's rules.
+
+**Change behavior:** fork Sound Studio or create an independent plugin using
+the activity API. The example lives at `plugins/agent-sounds/`: `policy.ts`
+owns transitions, stability and cooldowns, `player.ts` owns playback, and
+`server.ts` validates and persists packs. Its README covers installation,
+limits and customization. The plugin imports only the public SDK and React;
+it needs no core renderer imports or daemon credentials.
+
+Enable one sound implementation at a time. Turn off the previous plugin's
+notifications or disable that plugin, and keep separate built-in chimes off.
+Installing a sound plugin does **not** automatically override another plugin
+or the built-in chimes: there is no sound-provider registry, global selection
+or cross-plugin priority arbitration. Sound Studio's per-plugin Chromium
+Web Lock prevents that plugin from playing twice across main windows; another
+plugin has independent ownership. Request playback ownership only after a
+ready activity snapshot so scoped windows cannot take the lock.
+
+Replacement plugins should provide an explicit opt-in switch, bounded imports,
+silent startup baselines, input-request priority and a bounded/coalesced idle
+policy. Release all timers and audio on disposal. Verify actual playback,
+page-closed operation, window deduplication and disable cleanup through built
+Electron; mocks alone cannot prove browser audio or window ownership.
 
 ## Adding an Agents view
 

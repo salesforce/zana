@@ -44,6 +44,8 @@ export type {
   PluginComposerScope,
   PluginComposerScopeKind,
   PluginContentScriptContext,
+  PluginAgentActivity,
+  PluginAgentActivitySnapshot,
   PluginFileOpenerProps,
   PluginFileOpenerRegistration,
   PluginHomepageSectionRegistration,
