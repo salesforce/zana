@@ -12,6 +12,7 @@ vi.mock('@/plugins/plugin-app-loader', () => ({ reconcilePluginApps: vi.fn(), re
 vi.mock('@/plugins/PluginSettingsSections', () => ({ PluginSettingsSections: () => <input aria-label="Plugin connection filter" /> }));
 vi.mock('@/lib/product-client', () => ({ product: {
   extensions: { list: async () => [], onChanged: () => () => {}, marketplaceList: async () => ({ ok: true, value: [] }) },
+  threads: { providers: async () => ({ providers: [] }) },
   pluginApps: { list: async () => api.apps, onChanged: () => () => {}, getSettings: api.settings, setSettings: api.save, reload: api.reload, remove: api.remove, setEnabled: api.toggle }
 } }));
 import { useUi } from '@/store';

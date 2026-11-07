@@ -230,3 +230,15 @@ it('opens project files through the homedir-resolved path', async () => {
   await act(async () => { h.props.project.onSaved(); });
   expect(screen.getByText('Saved')).toBeTruthy();
 });
+
+it('lets harness default saves surface config persistence failures', async () => {
+  useUi.setState({ settingsTab: 'harness', settingsAnchor: null });
+  h.setMock.mockRejectedValue(new Error('config unavailable'));
+  mount();
+  await screen.findByText('tab-harness');
+  await act(async () => {
+    await expect(h.props.harness.onUpdate({ defaultHarness: 'codex' }, { throwOnError: true })).rejects.toThrow('config unavailable');
+  });
+  expect(h.props.harness.config.defaultHarness).toBeUndefined();
+  expect(screen.queryByText('Saved')).toBeNull();
+});

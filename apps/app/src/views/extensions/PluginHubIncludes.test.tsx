@@ -2,19 +2,40 @@
  * @vitest-environment happy-dom
  */
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { PluginHubIncludes } from './PluginHubIncludes.js';
 import { clearPluginSlots, interpretPluginApp } from '@/plugins/plugin-slots';
 
+const inventory = vi.hoisted(() => ({ providers: [] as Array<{ id: string; displayName: string; pluginId: string }> }));
+vi.mock('../../hooks/useRegisteredThreadProviders.js', () => ({ useRegisteredThreadProviders: () => inventory }));
+
 afterEach(() => {
+  inventory.providers = [];
   cleanup();
   clearPluginSlots('hello');
 });
 
 describe('PluginHubIncludes', () => {
+  it('links only the harnesses actually registered by this plugin', () => {
+    inventory.providers = [
+      { id: 'alpha', displayName: 'Alpha agent', pluginId: 'hello' },
+      { id: 'beta', displayName: 'Beta agent', pluginId: 'hello' },
+      { id: 'other', displayName: 'Other agent', pluginId: 'elsewhere' }
+    ];
+    render(<MemoryRouter><PluginHubIncludes plugin={{ id: 'hello', name: 'Hello', icon: 'Puzzle', description: '', enabled: true, provenance: 'direct', status: 'running', appUrl: null }} /></MemoryRouter>);
+    expect(screen.getByRole('heading', { name: 'Adds to Zana' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Alpha agent' }).getAttribute('href')).toBe('/settings/harness');
+    expect(screen.getByRole('link', { name: 'Beta agent' })).toBeTruthy();
+    expect(screen.queryByText('Other agent')).toBeNull();
+  });
+
+  it('does not invent contributions for a plugin without registrations', () => {
+    const { container } = render(<MemoryRouter><PluginHubIncludes plugin={{ id: 'hello', name: 'Hello', icon: 'Puzzle', description: '', enabled: true, provenance: 'direct', status: 'running', appUrl: null }} /></MemoryRouter>);
+    expect(container.innerHTML).toBe('');
+  });
   it('lists live slots, skills, CLI, and MCP for a plugin', () => {
     interpretPluginApp(
       'hello',
@@ -37,7 +58,7 @@ describe('PluginHubIncludes', () => {
       provenance: 'direct',
       status: 'running',
       appUrl: null,
-      skillNames: ['hello'],
+      skillNames: ['hello', 'hello-other'],
       cliNames: ['hello'],
       mcpServers: [{ name: 'hello-mcp', type: 'stdio' }]
     };

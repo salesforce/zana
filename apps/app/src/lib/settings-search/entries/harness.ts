@@ -13,6 +13,15 @@ const text = (config: { [k: string]: unknown }, key: string): string | undefined
 
 export const entries: readonly SettingsSearchEntry[] = [
   {
+    id: 'harness.registered',
+    section: 'harness',
+    anchor: 'harness-registered',
+    label: 'Your AI harnesses',
+    help: 'Provided by your installed plugins. Choose a harness in the composer, or set your default for new agents.',
+    keywords: ['provider plugins', 'registered harnesses', 'models', 'default for new agents'],
+    kind: 'subsection'
+  },
+  {
     id: 'harness.installed-harnesses',
     section: 'harness',
     anchor: 'harness-status',
