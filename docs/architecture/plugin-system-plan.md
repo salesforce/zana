@@ -27,6 +27,37 @@ aspirational slot behavior without citing the file that implements it, and no
 
 ## 1. Where we already are
 
+### Background activity extension (2026-11-06)
+
+The optional sound implementation lives in `plugins/agent-sounds/` (Sound
+Studio), not in a core sound-pack or playback registry. Core supplies two
+generic, optional `PluginContentScriptContext` callbacks:
+`experimental_observeAgents` and `experimental_onSignal`.
+`apps/app/src/plugins/agent-activity.ts` projects up to 1,000 agent IDs,
+thread/CLI kinds and display states from existing stores; it exposes no prompt
+or output content and starts no new poller. `PluginContentScriptsHost.tsx`
+provides the callbacks, confines realtime listeners to the owning plugin, and
+releases subscriptions on abort. The public contract and bundled authoring
+types live in `packages/plugin-sdk/` and remain experimental.
+
+Sound Studio owns preferences, validated data-only audio packs, event policy,
+playback and its configuration UI. Any independent plugin can consume the
+same activity API and supply different sounds or behavior without editing
+core. A data pack replaces clips; a fork/replacement plugin changes rules.
+There is no automatic sound-provider override, global provider selector or
+cross-plugin arbitration: users enable one sound implementation and turn off
+the previous plugin's notifications and separate built-in chimes.
+
+Effects mount per window, so the plugin elects one player using a per-plugin
+Chromium Web Lock only after the main-shell activity snapshot becomes ready.
+Scoped windows stay unready. The first ready snapshot is a silent baseline;
+routine roster refreshes retain readiness after hydration. Disable/reload
+aborts subscriptions and releases pending timers, audio and lock ownership.
+Older hosts omit the callbacks; Sound Studio shows an update message and keeps
+manual imports/previews available. See
+[the SDK guide](../extensions-sdk-reference.md#background-activity-and-sound-plugins)
+and `e2e/sound-studio-plugin.spec.ts` for contract and built-Electron proof.
+
 More is built than Section 5's four bullets suggest. In order of the pipeline:
 
 **Manifest & id (`packages/domain/src/plugin-manifest.ts`, `plugin-id.ts`).**

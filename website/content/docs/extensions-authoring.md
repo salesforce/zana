@@ -31,6 +31,13 @@ the panel, reload, and verify the open panel updates while saved data survives.
 Agents can use their available computer-use tool to do this directly. A successful
 command does not prove the UI rendered; report any UI checks that could not run.
 
+If a UI bundle fails to load, previously registered pages stay reachable and
+show the error with a **Reload plugin** action. Reload rebuilds local TypeScript
+UI entries and retries the browser import without reinstalling. For a first-load
+failure, open the plugin's details under **Plugins** to see the same recovery
+action. Plugins that only contribute commands or settings do not gain sidebar
+pages when they fail.
+
 Keep `ZCC_SERVER_URL` and `ZCC_DATA_DIR` on the same running instance: normally
 port 8780 and `~/.zcc`; dev uses port 8781 and `~/.zcc-dev`. Diagnose backend
 failures with `zcc plugin logs <id> -n 50`.
@@ -159,6 +166,22 @@ export default definePluginApp((app) => {
 
 Fill the host `.module-panel-slot` (height 100%, own overflow). Shared `gus-*` /
 `zana-*` CSS classes live in core `global.css` and cascade into plugin panels.
+
+## Custom notification sounds
+
+To replace audio clips, import a sound pack into Sound Studio. To change event
+selection, cooldowns or playback, fork Sound Studio or create a plugin with a
+background `app.contentScripts.register` registration. The optional
+`context.experimental_observeAgents` API supplies generic agent display states
+while the page is closed; `experimental_onSignal` receives the plugin's own
+preference-change events. Feature-detect both APIs on older hosts.
+
+See [Background activity and sound plugins](./extensions-sdk-reference.md#background-activity-and-sound-plugins)
+for a working observation example, readiness and cleanup rules, and the
+forkable `plugins/agent-sounds/` implementation. A replacement plugin does not
+automatically override another sound source: turn off the previous plugin's
+notifications and separate built-in chimes. There is no global sound-provider
+selector or cross-plugin playback arbitration.
 
 ## Plugin migration: generic platform hooks
 

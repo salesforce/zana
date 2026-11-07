@@ -24,6 +24,28 @@ V1 slots: `navPanel`, `settingsSection`, `homepageSection`, `projectTab`,
 `experimental_projectMenuAction` (Organize / row overflow). Open **Plugin Guide**
 for the full surface map.
 
+Background content scripts can observe generic agent activity without a page
+being open. Feature-detect the optional
+`context.experimental_observeAgents(listener)` and
+`context.experimental_onSignal(channel, listener)` methods. The first delivers
+an initial snapshot and changes from the main shell's existing stores, capped
+at 1,000 visible agents: ID, thread/CLI kind, and
+working/idle/needs-you/unknown state. It carries no prompts or output, and idle
+does not claim success. Treat `ready: false` as unavailable and reset any
+transition baseline; scoped windows remain unready. The second receives only
+this plugin's realtime channel. Both return an unsubscribe function and are
+also released on the script's abort signal. Return your own disposer for timers,
+audio and other resources, and coordinate across windows for effects that
+should happen only once. Older hosts omit these APIs.
+
+Sound Studio (`plugins/agent-sounds/`) is a forkable example: users can import
+audio packs to change clips, or install a replacement plugin to change playback
+and event rules. Disable the previous sound plugin's notifications (and separate
+built-in chimes) when using a replacement. There is no automatic sound-provider
+override or cross-plugin priority registry. See the public
+[background activity and sound-plugin guide](../../docs/extensions-sdk-reference.md#background-activity-and-sound-plugins)
+for the contract and lifecycle.
+
 Question plugins should use the host's shared question UI instead of custom form controls.
 Register `pendingInteraction({ id, questionForm })`, where `questionForm(interaction)`
 returns `{ questions, toResponse }`. Each question has `id`, `prompt`, `multiSelect`,

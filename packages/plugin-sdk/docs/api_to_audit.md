@@ -11,6 +11,7 @@ in-tree consumer and a documented contract.
 | `zcc.host` workers | deferred | Manifest field exists; no authoring loop yet. |
 | Product SDK (`zcc.sdk` spawn/HTTP) | live (threads / files / environments / providers) | Hidden attributed spawn, `threads.output` / `stop`, origin-aware `agents.configure`, number settings, confined `files.read`. Public HTTP remains the remote surface. |
 | Plugin-to-plugin `zcc.services` | experimental | `provide`/`use` live proxy. May change without a major bump until a second in-tree consumer exists. |
+| Content-script `experimental_observeAgents` / `experimental_onSignal` | experimental | Optional renderer-context subscriptions for generic bounded agent display state and own-plugin realtime channels. Sound Studio is the first consumer. Feature-detect on older hosts; see `docs/extensions-sdk-reference.md` for readiness, baseline and disposal rules. No sound-provider arbitration is implied. |
 | `planStepsPresentation` | stable | Provider contract: emit `item/completed` `{ type: "planSteps", steps: [{ step, status }] }` (`pending` / `active` / `completed`). Core persists to `thread_plan_tasks` and the live todo banner. `experimental_planStepsPresentation` remains an alias. |
 | `zcc.plans` | deferred | Durable thread plans stay in core (composer mode, SQLite, `.zcc/plans`, PlanExecutionCard). Plugins that need read/subscribe should use HTTP `POST/PATCH /api/v1/threads/:id/plan/tasks` until a second in-tree plugin needs a typed SDK. Do not extract plan chrome into a plugin. |
 
