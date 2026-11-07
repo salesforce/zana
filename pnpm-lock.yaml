@@ -1310,6 +1310,8 @@ importers:
 
   plugins/agent-city: {}
 
+  plugins/agent-sounds: {}
+
   plugins/ask-user-question: {}
 
   plugins/automations: {}

@@ -22,6 +22,14 @@ The composer displays a removable, inspectable file-and-line chip; Shift-paste k
 
 `experimental_agentsView` contributes a selectable Agents layout. Its component receives `PluginAgentsViewProps`; render scoped `projects`, `members`, `schedules`, and `executions`, then call `onInspect(key)` with the opaque item key. `includeScheduled` and `searchQuery` already filter supplied data. Reloading remounts the view, so clean up timers, observers, and subscriptions. This experimental slot is absent on older hosts; optional chaining makes registration a no-op there.
 
+## Background activity and sound plugins
+
+Use `app.contentScripts.register({ id, mount(context) { /* return disposer */ } })` for effects that must continue with the plugin page closed. Feature-detect the optional `PluginContentScriptContext.experimental_observeAgents` and `experimental_onSignal` methods; older hosts omit them. The activity subscription sends an initial `PluginAgentActivitySnapshot` and changes from existing stores, capped at 1,000 visible agents. Records contain only `id`, thread/CLI `kind` and working/idle/needs-you/unknown `state`, never prompts or output. Idle does not mean success.
+
+Treat `ready: false` as unavailable and reset transition baselines; scoped windows remain unready. Seed the first ready snapshot silently, then react to changes. No extra polling is needed. For one notification player across main windows, request a Chromium Web Lock only after readiness. Own-plugin realtime signals can reload preferences. Both observers return unsubscribe functions and are released when the context `signal` aborts; return a disposer for your own timers, audio contexts and lock ownership on disable, reload and shutdown.
+
+Sound Studio (`plugins/agent-sounds/`) is the forkable example. Import a data-only audio pack to change its clips; fork or create an independent plugin to rewrite playback and event rules. Disable the old sound plugin's notifications and separate built-in chimes before enabling a replacement. There is no automatic cross-plugin sound override or priority registry; a per-plugin Web Lock only deduplicates that plugin across windows. Keep imports bounded and validated, startup baselines silent, input-request priority explicit, and cleanup covered by a built-Electron test. Automatic activity requires a host containing these optional APIs.
+
 ## Resource windows and project chrome
 
 `projectTab({ statusbar: "hidden", ... })` omits the host project-path/Git footer for this tab; other project views keep their footer. `openInWindow(projectId, { tabId, resourceId })` opens one window per opaque resource and preserves the main tab. `useZccContext().resourceId` identifies the resource; it grants no file access. In main, watch `resourceRequestId` too, so repeat navigation reselects the resource. `toProject(projectId, { tabId, inMainWindow: true })` explicitly opens the main tab instead of focusing its detached window.
