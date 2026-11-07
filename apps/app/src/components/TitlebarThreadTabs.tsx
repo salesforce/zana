@@ -8,7 +8,7 @@ import { getAgentsRoutePath, getNewThreadRoutePath, getProjectRoutePath, getThre
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { closeThreadTab, openThreadTab, readThreadTabs, saveThreadTabs, type ThreadTab } from '../lib/thread-tabs.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
-import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
+import { ProjectDot } from './listpane/ProjectDot.js';
 import { copyTextOrFail } from '../lib/copy-text.js';
 import { product } from '../lib/product-client.js';
 import { withRunningProcessWarning } from '../lib/thread-running-processes.js';
@@ -166,7 +166,7 @@ export function TitlebarThreadTabs() {
                 }}
                 title={`${title}\n${project.name} · ${status}${unread ? ' · Unread' : ''}`}
                 aria-label={`${title} — ${project.name}${unread ? ' — Unread' : ''}`} onClick={() => go(tab)}>
-                <ProviderIcon providerId={thread.providerId} size={15} />
+                <ProjectDot project={project} />
                 <span className="titlebar-thread-copy"><span className="titlebar-thread-name">{title}</span>
                   <span className="titlebar-thread-context">
                     <span className="titlebar-thread-project">{project.name}</span>
@@ -198,7 +198,7 @@ export function TitlebarThreadTabs() {
           <div className="titlebar-threads-results">
             {visible.filter(({ thread, project }) => `${thread.title || 'Untitled thread'} ${project.name}`.toLowerCase().includes(query.toLowerCase())).map(({ tab, thread, project }) => (
               <button type="button" key={tab.threadId} onClick={() => go(tab)} aria-current={route.threadId === tab.threadId ? 'page' : undefined}>
-                <ProviderIcon providerId={thread.providerId} size={14} /><span>{thread.title || 'Untitled thread'}<small>{project.name}</small></span>
+                <ProjectDot project={project} /><span>{thread.title || 'Untitled thread'}<small>{project.name}</small></span>
               </button>
             ))}
           </div>
