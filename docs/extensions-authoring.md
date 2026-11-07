@@ -42,6 +42,20 @@ Keep `ZCC_SERVER_URL` and `ZCC_DATA_DIR` on the same running instance: normally
 port 8780 and `~/.zcc`; dev uses port 8781 and `~/.zcc-dev`. Diagnose backend
 failures with `zcc plugin logs <id> -n 50`.
 
+## Provider discovery
+
+Provider plugins appear automatically in **Settings → AI Harness → Your AI
+harnesses** when they register providers. The list uses the live registry,
+links each harness to its owning plugin, and shows model and installation
+evidence for the connected machine. A plugin may register several providers;
+plugins without provider registrations do not gain harness rows.
+
+The plugin's **Adds to Zana** section also links its registered harnesses back
+to Settings, alongside its other contributions. Use the provider registration
+API and plugin-owned branding rather than adding a separate UI catalogue.
+Installing or updating a plugin preserves the chosen default. A registration
+alone does not establish that its executable, credentials, or models are ready.
+
 ## package.json
 
 ```json

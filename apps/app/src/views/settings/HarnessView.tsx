@@ -40,6 +40,7 @@ import {
 } from '../../components/thread/pickers/harness-login.js';
 import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 import { ModelRefreshControl } from './ModelRefreshControl.js';
+import { RegisteredHarnesses } from './RegisteredHarnesses.js';
 import { RevealContext } from '@/lib/settings-search/reveal';
 import {
   BUILTIN_THREAD_PROVIDERS,
@@ -759,7 +760,7 @@ export function HarnessView({
 }: {
   config: AppConfig;
   onConfigDraft: (config: AppConfig) => void;
-  onUpdate: (patch: Partial<AppConfig>) => Promise<void>;
+  onUpdate: (patch: Partial<AppConfig>, options?: { throwOnError?: boolean }) => Promise<void>;
 }) {
   const status = useData((s) => s.harnessStatus);
   const refresh = useData((s) => s.refreshHarnessStatus);
@@ -1090,6 +1091,7 @@ export function HarnessView({
 
   return (
     <div className="harness-settings">
+    <RegisteredHarnesses config={config} status={status} hostId={thisMachineId} hostName={thisMachine?.name} onUpdate={onUpdate} onRefreshStatus={() => runCheck(false)} checkingStatus={checking} />
     <Section
       searchId="harness.installed-harnesses"
       anchorId="harness-status"
