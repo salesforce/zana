@@ -57,6 +57,62 @@ it('opens visited threads only, keeps stable order and project context, and upda
   expect(screen.getByRole('img', { name: 'Error' })).toBeTruthy();
 });
 
+it('uses each project’s saved icon and color in tabs and the overflow list, independent of harness', () => {
+  useData.setState({ projects: [
+    { id: 'p', name: 'Project P', icon: 'Rocket', color: '#f85149' },
+    { id: 'q', name: 'Project Q', icon: 'Cloud', color: '#2f81f7' }
+  ] as Project[] });
+  mount(); visit('/threads/b'); visit('/threads/c');
+  const markers = [...document.querySelectorAll('[role="tab"] .project-dot')];
+  expect(markers.map(marker => marker.getAttribute('data-project-icon'))).toEqual(['Rocket', 'Cloud', 'Rocket']);
+  expect(markers.map(marker => (marker as HTMLElement).style.color)).toEqual(['#f85149', '#2f81f7', '#f85149']);
+  expect(markers.every(marker => marker.getAttribute('aria-hidden') === 'true')).toBe(true);
+  expect(document.querySelector('[data-provider]')).toBeNull();
+  const overflow = document.querySelector('.titlebar-threads-results')!;
+  expect([...overflow.querySelectorAll('.project-dot')].map(marker => marker.outerHTML)).toEqual(markers.map(marker => marker.outerHTML));
+  fireEvent.change(screen.getByLabelText('Find an open thread'), { target: { value: 'Project Q' } });
+  expect(overflow.querySelector('[data-project-icon="Cloud"]')).toBeTruthy();
+  expect(overflow.querySelector('[data-project-icon="Rocket"]')).toBeNull();
+});
+
+it('updates project markers in open tabs and the overflow list without reopening the thread', () => {
+  mount();
+  const tab = tabs()[0]!;
+  const overflow = document.querySelector('.titlebar-threads-results')!;
+  for (const root of [tab, overflow]) {
+    expect((root.querySelector('.project-dot') as HTMLElement).style.background).toBe('#abc');
+  }
+  act(() => useData.setState({ projects: [{ id: 'p', name: 'Renamed Project', icon: 'Cloud', color: '#3fb950' }] as Project[] }));
+  for (const root of [tab, overflow]) {
+    const marker = root.querySelector('[data-project-icon="Cloud"]') as HTMLElement;
+    expect(marker.style.color).toBe('#3fb950');
+    expect(marker.style.background).toBe('');
+  }
+  expect(screen.getByRole('tab', { name: 'Thread a — Renamed Project' })).toBe(tab);
+  expect(screen.getByTestId('route').textContent).toBe('/threads/a');
+  act(() => useData.setState({ projects: [{ id: 'p', name: 'Renamed Project', icon: 'Circle', color: '#2f81f7' }] as Project[] }));
+  for (const root of [tab, overflow]) {
+    expect(root.querySelector('[data-project-icon]')).toBeNull();
+    expect((root.querySelector('.project-dot') as HTMLElement).style.background).toBe('#2f81f7');
+  }
+});
+
+it('preserves the default project’s home marker and uses sidebar fallbacks for unconfigured projects', () => {
+  useData.setState({ projects: [
+    { id: 'p', name: 'Default Project', quickAgent: true, icon: 'Rocket', color: '#f85149' },
+    { id: 'q', name: 'Project Q' }
+  ] as Project[] });
+  mount(); visit('/threads/b');
+  const home = tabs()[0]!.querySelector('.project-dot--home')!;
+  expect(home.querySelector('svg.lucide-house')).toBeTruthy();
+  expect(home.getAttribute('data-project-icon')).toBeNull();
+  expect(home.getAttribute('style')).toBeNull();
+  const plain = tabs()[1]!.querySelector('.project-dot')!;
+  expect(plain.getAttribute('style')).toBeNull();
+  expect(plain.querySelector('svg')).toBeNull();
+  expect(document.querySelector('.titlebar-threads-results .project-dot--home svg.lucide-house')).toBeTruthy();
+});
+
 it('uses distinct working, input and error icons while leaving idle tabs and project context quiet', () => {
   mount(); visit('/threads/b');
   expect(screen.queryByRole('img')).toBeNull();
