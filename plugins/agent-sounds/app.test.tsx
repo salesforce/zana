@@ -27,7 +27,7 @@ it('previews while disabled, saves event settings, spacing and volume', async ()
   fireEvent.click(screen.getByRole('checkbox', { name: /Needs you/ })); await waitFor(() => expect((screen.getByRole('checkbox', { name: /Needs you/ }) as HTMLInputElement).checked).toBe(false));
   fireEvent.click(screen.getByRole('button', { name: '30s' })); await waitFor(() => expect(screen.getByRole('button', { name: '30s' }).getAttribute('aria-pressed')).toBe('true'));
   fireEvent.change(screen.getByRole('slider', { name: 'Sound volume' }), { target: { value: '0' } }); fireEvent.pointerUp(screen.getByRole('slider')); await waitFor(() => expect((screen.getByRole('slider') as HTMLInputElement).value).toBe('0'));
-  await waitFor(() => expect(host.harness.kv.get('state')).toMatchObject({ preferences: { volume: 0 } }));
+  await waitFor(async () => expect(await host.harness.callRpc('read')).toMatchObject({ preferences: { volume: 0 } }));
   fireEvent.click(screen.getByRole('button', { name: 'Preview Idle' })); await screen.findByText('Volume is muted.');
 });
 it('imports, selects, previews and removes custom audio, and reports unmapped events', async () => {
@@ -69,10 +69,10 @@ it('supports idle-only packs, keyboard volume saves and the native folder picker
   fireEvent.click(screen.getByRole('button', { name: 'Preview Idle' })); await screen.findByText('Idle preview played.');
   expect(h.play).toHaveBeenCalledWith('idle', 35, expect.objectContaining({ name: 'idle.wav' }));
   const slider = screen.getByRole('slider'); fireEvent.change(slider, { target: { value: '45' } }); fireEvent.keyUp(slider, { key: 'ArrowRight' });
-  await waitFor(() => expect(host.harness.kv.get('state')).toMatchObject({ preferences: { volume: 45 } }));
+  await waitFor(async () => expect(await host.harness.callRpc('read')).toMatchObject({ preferences: { volume: 45 } }));
   await waitFor(() => expect(slider).not.toHaveProperty('disabled', true));
   fireEvent.change(slider, { target: { value: '50' } }); fireEvent.blur(slider);
-  await waitFor(() => expect(host.harness.kv.get('state')).toMatchObject({ preferences: { volume: 50 } }));
+  await waitFor(async () => expect(await host.harness.callRpc('read')).toMatchObject({ preferences: { volume: 50 } }));
   const pick = vi.spyOn(document.querySelector<HTMLInputElement>('input[webkitdirectory]')!, 'click');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Import OpenPeon folder…' })).not.toHaveProperty('disabled', true));
   fireEvent.click(screen.getByRole('button', { name: 'Import OpenPeon folder…' })); expect(pick).toHaveBeenCalledOnce();
