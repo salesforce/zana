@@ -15,7 +15,7 @@ import type { AuthorizedModelTarget } from '@zana-ai/zcc-host-daemon/harness/tar
 import type { WorkUnitRoutingV1 } from '../execution/routing-policy.js';
 import type { WorkUnitLoopV1, WorkUnitRequirementsV1 } from '../execution/store.js';
 import type { WorkOutputDeclarationV1 } from '../execution/contracts.js';
-import { validOutputDeclaration } from '../execution/contracts.js';
+import { canonicalJson, LOOP_VERDICT_OUTPUT, validOutputDeclaration } from '../execution/contracts.js';
 import { evaluateSlotEligibility, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
 
 export type AdmissionCheckStatus = 'PASS' | 'FAIL' | 'SKIPPED' | 'UNKNOWN';
@@ -287,6 +287,8 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
     if (requireComplete && !input.readOnly && !files?.length) throw new PlanValidationError('file', 'mutating work unit requires file scope');
     if (requireComplete && !verification?.length) throw new PlanValidationError('dag', 'work unit requires verification');
     if (input.output !== undefined && !validOutputDeclaration(input.output)) throw new PlanValidationError('dag', 'invalid bounded output declaration');
+    const loop = normalizeLoop(input.loop, id);
+    const output = loop ? loopVerdictOutput(input.output, id) : input.output;
     return {
       id,
       title: boundedString(input.title, 'work unit title'),
@@ -297,8 +299,9 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
       ...(verification ? { verification } : {}),
       ...(input.readOnly ? { readOnly: true } : {}),
       ...(input.routing ? { routing: normalizeRouting(input.routing) } : {}),
-      ...(input.output ? { output: JSON.parse(JSON.stringify(input.output)) as WorkOutputDeclarationV1 } : {}),
-      ...(requires ? { requires } : {})
+      ...(output ? { output: JSON.parse(JSON.stringify(output)) as WorkOutputDeclarationV1 } : {}),
+      ...(requires ? { requires } : {}),
+      ...(loop ? { loop } : {})
     };
   });
   for (const unit of units) for (const dependency of unit.dependencies) if (!ids.has(dependency)) throw new PlanValidationError('dag', 'missing work unit dependency');
@@ -314,12 +317,46 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
     visited.add(id);
   };
   for (const unit of units) visit(unit.id);
+  validateLoops(units);
   return units;
 }
 
 /** Reject a malformed review loop: missing or unordered fix unit, shared fix target, bad bound (#583). */
-export function validateLoops(_units: readonly AdmissionWorkUnitInput[]): void {
-  throw new Error('not implemented: validateLoops');
+export function validateLoops(units: readonly AdmissionWorkUnitInput[]): void {
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+  const targets = new Set<string>();
+  for (const review of units) {
+    if (!review.loop) continue;
+    const fixId = review.loop.fixUnitId;
+    const fix = byId.get(fixId);
+    if (!fix) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} does not exist`);
+    if (fixId === review.id) throw new PlanValidationError('dag', `loop on ${review.id}: a unit cannot be its own fix unit`);
+    if (!fix.dependencies.includes(review.id)) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} must depend on ${review.id}`);
+    if (targets.has(fixId)) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} is already the target of another loop`);
+    if (fix.loop?.fixUnitId === review.id) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} loops back at the review`);
+    targets.add(fixId);
+  }
+}
+
+function normalizeLoop(loop: WorkUnitLoopV1 | undefined, unitId: string): WorkUnitLoopV1 | undefined {
+  if (loop === undefined) return undefined;
+  if (!loop || typeof loop !== 'object' || loop.version !== 1 || loop.until !== 'PASS' || typeof loop.fixUnitId !== 'string'
+    || !loop.fixUnitId.trim() || !Number.isInteger(loop.max) || loop.max < 1 || loop.max > 5) {
+    throw new PlanValidationError('dag', `invalid loop on work unit ${unitId} (expected a fix unit, until PASS, max 1 to 5)`);
+  }
+  return { version: 1, fixUnitId: boundedString(loop.fixUnitId, 'loop fix unit'), until: 'PASS', max: loop.max };
+}
+
+/** The unit's own output when it already carries the verdict, else the generated verdict declaration. */
+function loopVerdictOutput(output: WorkOutputDeclarationV1 | undefined, unitId: string): WorkOutputDeclarationV1 {
+  if (output === undefined) return LOOP_VERDICT_OUTPUT;
+  const { schema } = output;
+  const verdict = schema.type === 'object' ? schema.properties.verdict : undefined;
+  if (schema.type !== 'object' || !schema.required?.includes('verdict')
+    || canonicalJson(verdict) !== canonicalJson(LOOP_VERDICT_OUTPUT.schema.type === 'object' ? LOOP_VERDICT_OUTPUT.schema.properties.verdict : undefined)) {
+    throw new PlanValidationError('dag', `loop on ${unitId}: output must require a verdict of PASS or CHANGES`);
+  }
+  return output;
 }
 
 function normalizeWorkUnitRequirements(value: unknown): WorkUnitRequirementsV1 | undefined {

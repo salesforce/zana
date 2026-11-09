@@ -84,7 +84,10 @@ function matchLabel(raw: string, labelIndent: number): { key: string; rest: stri
     const key = plainBullet[1].trim().toLowerCase();
     const normalized = key.replace(/\s+/g, ' ');
     const knownOrNearMiss = (KNOWN_LABELS as readonly string[]).includes(normalized) || nearMissLabel(key) !== undefined;
-    if (knownOrNearMiss && indent <= labelIndent) return { key, rest: plainBullet[2], indent };
+    // A plain `- Loop:` line is a label only when its first line is a real loop declaration,
+    // so older Work text that merely starts a bullet with "Loop:" stays Work text.
+    const loopText = isLoopKey(normalized) && !LOOP_GRAMMAR.test(plainBullet[2]);
+    if (knownOrNearMiss && !loopText && indent <= labelIndent) return { key, rest: plainBullet[2], indent };
     return null;
   }
   const bare = BARE_LABEL.exec(raw);
@@ -191,8 +194,13 @@ function parseRequires(
 
 const KNOWN_LABELS = [
   'depends on', 'execution class', 'required role', 'mode', 'read scope', 'write scope', 'excludes', 'work',
-  'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires'
+  'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires', 'loop'
 ] as const;
+
+/** `<unit-id> until PASS, max <N>` (N 1-5); a trailing sentence period is tolerated like other label values. */
+const LOOP_GRAMMAR = /^\s*([a-z0-9][a-z0-9-]*)\s+until\s+PASS,\s*max\s+([1-5])\s*\.?\s*$/i;
+const LOOP_EXPECTED = 'expected "Loop: <unit-id> until PASS, max <N>" with N from 1 to 5';
+const isLoopKey = (key: string): boolean => key === 'loop' || nearMissLabel(key) === 'loop';
 
 function editDistance(a: string, b: string): number {
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -303,6 +311,9 @@ function canonicalizeLabels(
   const sources = new Map<string, string>();
   for (const [key, { value, atLabelIndent }] of rawLabels) {
     const intended = nearMissLabel(key);
+    if (isLoopKey(key) && !atLabelIndent) {
+      return { ok: false, reason: `step ${id} has a nested Loop label (${LOOP_EXPECTED})` };
+    }
     if (intended && !atLabelIndent) {
       return { ok: false, reason: `step ${id} has unrecognised label "${key}" (did you mean "${intended}"?)` };
     }
@@ -380,12 +391,18 @@ function parseStep(block: PlanStepBlock): StepParse {
   if (!executionClass.ok) return executionClass;
   const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
   if (!parsedRequires.ok) return parsedRequires;
-  return { ok: true, rawId, normalizations, unit: buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires) };
+  const parsedLoop = parseLoopLabel(labels.get('loop'), id);
+  if (!parsedLoop.ok) return parsedLoop;
+  const unit = buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires);
+  return { ok: true, rawId, normalizations, unit: parsedLoop.loop ? { ...unit, loop: parsedLoop.loop } : unit };
 }
 
 /** Parse a `Loop:` label value (`<unit-id> until PASS, max <N>`); an absent label gives no loop (#583). */
-export function parseLoopLabel(_value: string | undefined, _unitId: string): { ok: true; loop?: WorkUnitLoopV1 } | { ok: false; reason: string } {
-  throw new Error('not implemented: parseLoopLabel');
+export function parseLoopLabel(value: string | undefined, unitId: string): { ok: true; loop?: WorkUnitLoopV1 } | { ok: false; reason: string } {
+  if (value === undefined) return { ok: true };
+  const match = LOOP_GRAMMAR.exec(value.split('\n')[0]);
+  if (!match) return { ok: false, reason: `step ${unitId} has an invalid Loop label (${LOOP_EXPECTED})` };
+  return { ok: true, loop: { version: 1, fixUnitId: normalizeStepId(match[1]), until: 'PASS', max: Number(match[2]) } };
 }
 
 function buildWorkUnit(
