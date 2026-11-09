@@ -4,6 +4,9 @@ import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { serialTestFiles } from './vitest.serial';
 import DurationSequencer from './scripts/ci-unit-sequencer';
+import { scaleTimeout } from './scripts/test-timeout-scale.mjs';
+
+const DEFAULT_TEST_TIMEOUT_MS = 20_000;
 
 const tippyDir = readdirSync(resolve(__dirname, 'node_modules/.pnpm')).find((name) => name.startsWith('tippy.js@'));
 const tippyEsm = tippyDir
@@ -120,8 +123,9 @@ export default defineConfig({
     // failure still fails immediately, only genuine slow-timeouts get headroom.
     // (Individual suites may still set a higher per-test timeout, e.g. the
     // esbuild-bound plugin-service hot-reload test.)
-    testTimeout: 20_000,
-    hookTimeout: 20_000,
+    // ZANA_TEST_TIMEOUT_SCALE (1 to 5) multiplies both on a busy machine; unset keeps today's values.
+    testTimeout: scaleTimeout(DEFAULT_TEST_TIMEOUT_MS, process.env.ZANA_TEST_TIMEOUT_SCALE),
+    hookTimeout: scaleTimeout(DEFAULT_TEST_TIMEOUT_MS, process.env.ZANA_TEST_TIMEOUT_SCALE),
     // Root runs plugins/tasks tests without that package's vitest config.
     // Inline the bubble menu so its tippy.js import uses the ESM alias above.
     server: {
