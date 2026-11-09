@@ -230,7 +230,7 @@ describe('REQ-9 service side effects at the limit', () => {
       launchTeam: async () => ({ ok: true }),
       getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] }),
       cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
-      replyToSession: () => true,
+      replyToSession: () => false, // a parked coordinator keeps the wake queued, so the test can read it
       resolveExactNativeRecoverySnapshots: (record: ExecutionRecord) => record.nativeRecoverySnapshots ?? []
     } as never);
     await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Loop', slots: [{ initialTask: 'x' }] });
