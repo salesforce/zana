@@ -26,6 +26,12 @@ describe('humanBlockerDenial', () => {
     expect(quoted).toHaveLength(200);
   });
 
+  it('does not promise a card to come for an acknowledged notice that has no Inbox entry id', () => {
+    const text = humanBlockerDenial(record({ jobTitle: 'Ship', noticeIntents: [intent] }), { id: 'b1' });
+    expect(text).not.toContain('once its card appears');
+    expect(text).toContain('card "Ship" (blocker b1)');
+  });
+
   it('says the card has not appeared when the notice has no Inbox entry', () => {
     const text = humanBlockerDenial(record({ jobTitle: 'Ship', noticeIntents: [{ ...intent, status: 'PENDING' }] }), { id: 'b1' });
     expect(text).toContain('once its card appears (blocker b1)');

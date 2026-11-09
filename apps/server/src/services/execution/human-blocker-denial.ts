@@ -24,6 +24,6 @@ export function humanBlockerDenial(record: ExecutionRecord, blocker: Pick<Blocke
   const prefix = 'blocker requires owner resolution: the owner answers it in the Inbox';
   const subject = displayedSubject(record);
   if (intent?.inboxItemId) return `${prefix} card "${subject}" (Inbox entry ${intent.inboxItemId}). Tell the owner to answer that card; do not retry.`;
-  if (intent) return `${prefix} once its card appears (blocker ${blocker.id}). Tell the owner to answer that card when it shows up; do not retry.`;
+  if (intent?.status === 'PENDING') return `${prefix} once its card appears (blocker ${blocker.id}). Tell the owner to answer that card when it shows up; do not retry.`;
   return `${prefix} card "${subject}" (blocker ${blocker.id}). Tell the owner to answer that card; do not retry.`;
 }

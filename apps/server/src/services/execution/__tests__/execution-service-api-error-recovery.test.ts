@@ -125,6 +125,22 @@ describe('SquadExecutionService API-error recovery hooks', () => {
     expect(dispatch).toHaveBeenCalled();
   }));
 
+  it('a coordinator answer on the API-error human blocker is denied and names the Inbox card (#692)', async () => fixture(async (filePath) => {
+    const { service, store } = build(filePath, { t: 1_000 });
+    const { fence, unit } = await startClaimed(service, store);
+    await recordRecovery(store, unit, 100_000);
+    await service.blockApiErrorToHuman('execution-1', unit.id, fence);
+    const blocker = (await store.get('execution-1'))!.blockers!.find((entry) => entry.workUnitId === unit.id)!;
+
+    const denied = await service.answerBlockerByCoordinator(coordinator, blocker.id, 'retry it');
+
+    expect(denied).toMatchObject({ ok: false, code: 'DENIED' });
+    const message = (denied as { message: string }).message;
+    expect(message).toContain(`card "Build release" (blocker ${blocker.id})`);
+    expect(message).not.toContain('once its card appears');
+    expect((await store.get('execution-1'))?.deliveries ?? []).toEqual([]);
+  }));
+
   it('blockApiErrorToHuman swallows a guard rejection', async () => fixture(async (filePath) => {
     const { service, store, logError } = build(filePath, { t: 1_000 });
     const { fence, unit } = await startClaimed(service, store);
