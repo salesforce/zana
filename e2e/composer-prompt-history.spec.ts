@@ -29,6 +29,10 @@ async function placeCaret(input: Locator, position: 'start' | 'end' | number) {
 test.beforeEach(async ({ app }) => {
   const win = app.window;
   await dismissConsentOverlays(win);
+  await win.route('**/api/v1/projects/*/commands', route => route.fulfill({ json: { commands: [
+    { name: 'first', description: 'First test command' },
+    { name: 'second', description: 'Second test command' }
+  ] } }));
   const path = join(app.home, 'prompt-history-project');
   mkdirSync(path);
   const threadId = await win.evaluate(async path => {
