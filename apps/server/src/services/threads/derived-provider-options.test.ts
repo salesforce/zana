@@ -99,4 +99,30 @@ describe('derivedProviderOptionsForCommand', () => {
     await expect(derivedProviderOptionsForCommand({ providerId: 'failed-derived', threadId: 't1', projectId: 'p1', permissionMode: 'full' })).rejects.toThrow('worker unavailable');
     await expect(derivedProviderOptionsForCommand({ providerId: 'missing', threadId: 't1', projectId: 'p1', permissionMode: 'full' })).resolves.toBeUndefined();
   });
+
+  it('merges the main-authorized skill allowlist even without a provider hook', async () => {
+    handles.push(registerThreadProvider('provider-test', { id: 'plain-skills', displayName: 'Plain', capabilities: CAPABILITIES }));
+    const base = { providerId: 'plain-skills', threadId: 't1', projectId: 'p1', permissionMode: 'full' };
+    expect(await derivedProviderOptionsForCommand({ ...base, skillSelection: { automatedSkillIds: ['zcc:a/review'], allowedSkillNames: ['x'] } }))
+      .toEqual({ skillAllowlist: ['zcc-inbox', 'x', 'review'] });
+    expect(await derivedProviderOptionsForCommand({ ...base, skillSelection: { allowedSkillNames: [] } }))
+      .toEqual({ skillAllowlist: ['zcc-inbox'] });
+    expect(await derivedProviderOptionsForCommand({ ...base, skillSelection: {} })).toBeUndefined();
+  });
+
+  it('adds skillAllowlist on top of derived options, and for a non-object derive result', async () => {
+    handles.push(registerThreadProvider('provider-claude-code', {
+      id: 'claude-skills', displayName: 'C', capabilities: CAPABILITIES,
+      deriveProviderOptions: () => ({ memoryEnabled: true })
+    }));
+    handles.push(registerThreadProvider('provider-test', {
+      id: 'null-skills', displayName: 'N', capabilities: CAPABILITIES,
+      deriveProviderOptions: () => null as never
+    }));
+    const base = { threadId: 't1', projectId: 'p1', permissionMode: 'full', skillSelection: { allowedSkillNames: ['x'] } };
+    expect(await derivedProviderOptionsForCommand({ ...base, providerId: 'claude-skills' }))
+      .toEqual({ memoryEnabled: true, skillAllowlist: ['zcc-inbox', 'x'] });
+    expect(await derivedProviderOptionsForCommand({ ...base, providerId: 'null-skills' }))
+      .toEqual({ skillAllowlist: ['zcc-inbox', 'x'] });
+  });
 });
