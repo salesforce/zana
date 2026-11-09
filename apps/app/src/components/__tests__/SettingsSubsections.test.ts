@@ -199,7 +199,6 @@ describe('Settings subsection navigation', () => {
       'agent-tabs',
       'teams',
       'agent-attention',
-      'agent-sounds',
       'scheduled',
       'agent-automation',
       'agent-heartbeat',
