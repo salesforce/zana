@@ -159,7 +159,6 @@ Follow these when writing or editing a doc made from this template. This file is
 - Follow project build, test, lint, coverage, and skill guidance when known. Target at least 80% coverage for new or modified files unless project policy requires more or makes metric inapplicable; state exception and reason.
 - Prefer testable designs over framework access to untestable state, including statics. Keep code DRY.
 - Do not put Work Item IDs or planning-document references in production code comments.
-- Include independent multi-lens review. Resolve Critical and High findings. Present Medium and Low findings to user before adding work.
 
 ### Snippet status
 
@@ -175,8 +174,7 @@ Follow these when writing or editing a doc made from this template. This file is
 
 ### Stop Points
 
-- Run plan review: verify design and execution plan cover every acceptance criterion.
-- \`Run plan review\` is a declared substantive review action. Use configured multi-lens review or documented equivalent independent reviewers. Resolve Critical and High findings in current document. Present Medium and Low findings to user before changing scope. Do not require arbitrary unavailable subagents.
+- Before finishing, check that the design and execution plan cover every acceptance criterion.
 `,yg=`# {{title}}
 
 - **Source:**
@@ -275,7 +273,6 @@ Follow these when writing or editing a doc made from this template. This file is
 - Follow project build, test, lint, coverage, and skill guidance when known. Target at least 80% coverage for new or modified files unless project policy requires more or makes metric inapplicable; state exception and reason.
 - Prefer testable designs over framework access to untestable state, including statics. Keep code DRY.
 - Do not put Work Item IDs or planning-document references in production code comments.
-- Include independent multi-lens review. Resolve Critical and High findings. Present Medium and Low findings to user before adding work.
 
 ### Snippet status
 
@@ -291,8 +288,7 @@ Follow these when writing or editing a doc made from this template. This file is
 
 ### Stop Points
 
-- Run plan review: verify design and execution plan cover every acceptance criterion.
-- \`Run plan review\` is a declared substantive review action. Use configured multi-lens review or documented equivalent independent reviewers. Resolve Critical and High findings in current document. Present Medium and Low findings to user before changing scope. Do not require arbitrary unavailable subagents.
+- Before finishing, check that the design and execution plan cover every acceptance criterion.
 `,Eg=`# Agent instructions: Product spec
 
 Follow these when writing or editing a doc made from this template. This file is for agents only; it is not published.
@@ -325,7 +321,6 @@ Follow these when writing or editing a doc made from this template. This file is
 - Follow project build, test, lint, coverage, and skill guidance when known. Target at least 80% coverage for new or modified files unless project policy requires more or makes metric inapplicable; state exception and reason.
 - Prefer testable designs over framework access to untestable state, including statics. Keep code DRY.
 - Do not put Work Item IDs or planning-document references in production code comments.
-- Include independent multi-lens review. Resolve Critical and High findings. Present Medium and Low findings to user before adding work.
 
 ### Snippet status
 
@@ -341,8 +336,7 @@ Follow these when writing or editing a doc made from this template. This file is
 
 ### Stop Points
 
-- Run plan review: verify design and execution plan cover every acceptance criterion.
-- \`Run plan review\` is a declared substantive review action. Use configured multi-lens review or documented equivalent independent reviewers. Resolve Critical and High findings in current document. Present Medium and Low findings to user before changing scope. Do not require arbitrary unavailable subagents.
+- Before finishing, check that the design and execution plan cover every acceptance criterion.
 `;var wg=`<!doctype html>
 <html lang="en">
 <head>
