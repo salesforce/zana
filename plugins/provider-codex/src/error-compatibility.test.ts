@@ -3,6 +3,18 @@ import { experimental_createDeltaAssembler as createDeltaAssembler } from "@zana
 import { createCodexEventTranslator } from "./translator.js";
 
 it.each([
+  ["contextWindowExceeded", "context-window-exceeded", "contextWindowExceeded"],
+  ["sessionBudgetExceeded", "budget-exceeded", "sessionBudgetExceeded"],
+  ["usageLimitExceeded", "rate-limit", "usageLimitExceeded"],
+  ["serverOverloaded", "overloaded", "serverOverloaded"],
+  ["cyberPolicy", "policy", "cyberPolicy"],
+  ["misalignmentPolicyViolation", "policy", "misalignmentPolicyViolation"],
+  ["internalServerError", "internal", "internalServerError"],
+  ["unauthorized", "unauthorized", "unauthorized"],
+  ["badRequest", "bad-request", "badRequest"],
+  ["threadRollbackFailed", "thread-rollback-failed", "threadRollbackFailed"],
+  ["sandboxError", "sandbox", "sandboxError"],
+  ["other", "unknown", "other"],
   ["rateLimitExceeded", "rate-limit", "rateLimitExceeded"],
   ["flexUnavailable", "overloaded", "flexUnavailable"],
   ["policyCapacityUnavailable", "overloaded", "policyCapacityUnavailable"],
@@ -11,8 +23,12 @@ it.each([
   ["futureError", "unknown", "futureError"],
   [{ futureVariant: { detail: "new protocol payload" } }, "unknown", "futureVariant"],
   [{}, "unknown", "unknown"],
-  [{ httpConnectionFailed: { httpStatusCode: 503 } }, "connection-failed", "httpConnectionFailed"],
-] as const)("settles failed turns and classifies %j", (codexErrorInfo, category, providerCode) => {
+  [{ httpConnectionFailed: { httpStatusCode: 503 } }, "connection-failed", "httpConnectionFailed", 503],
+  [{ responseStreamConnectionFailed: { httpStatusCode: 502 } }, "connection-failed", "responseStreamConnectionFailed", 502],
+  [{ responseStreamDisconnected: { httpStatusCode: null } }, "stream-disconnected", "responseStreamDisconnected"],
+  [{ responseTooManyFailedAttempts: { httpStatusCode: 429 } }, "too-many-failed-attempts", "responseTooManyFailedAttempts", 429],
+  [{ activeTurnNotSteerable: { turnKind: "compact" } }, "active-turn-not-steerable", "activeTurnNotSteerable"],
+] as const)("settles failed turns and classifies %j", (codexErrorInfo, category, providerCode, httpStatusCode: number | null = null) => {
   const translator = createCodexEventTranslator({ additionalWorkspaceWriteRoots: [] });
   const assembler = createDeltaAssembler({ providerId: "codex", entropyPrefix: "compat", textDeltaFlushMs: 0 });
   const translate = (method: string, params: Record<string, unknown>) => assembler.assemble({
@@ -22,7 +38,7 @@ it.each([
   const error = { message: "terminal failure", codexErrorInfo, additionalDetails: null };
   expect(translate("error", { threadId: "t1", turnId: "turn-1", error, willRetry: false })).toEqual([
     expect.objectContaining({ type: "provider/error", errorInfo: {
-      category, providerCode, httpStatusCode: providerCode === "httpConnectionFailed" ? 503 : null,
+      category, providerCode, httpStatusCode,
     } }),
   ]);
   expect(translate("turn/completed", {
