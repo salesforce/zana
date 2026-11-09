@@ -11,6 +11,8 @@ import { bootstrapOutcome, composerBootstrapErrorMessage } from './composer-host
 import { consumeVoiceDraft, voiceDraft } from './thread/voice/voice-drafts.js';
 import { composerSession, resetComposerSessions } from './composer/composer-session.js';
 import { ComposerDraftProvider } from './composer/ComposerDraft.js';
+import { Schema } from '@tiptap/pm/model';
+import { EditorState } from '@tiptap/pm/state';
 
 const h = vi.hoisted(() => {
   const provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
@@ -26,7 +28,11 @@ const h = vi.hoisted(() => {
     restoreText: vi.fn(),
     images: [] as Array<{ id: string; name: string }>,
     attachments: [] as PromptInput[],
-    editor: { isDestroyed: false },
+    typeaheadOpen: false,
+    editor: { isDestroyed: false, view: {
+      state: undefined as unknown as EditorState, composing: false,
+      hasFocus: vi.fn(() => true), endOfTextblock: vi.fn(() => true)
+    } },
     fieldArgs: null as null | { onSubmit: (options?: { modifierEnter?: boolean }) => void; interceptKeyDown: (event: KeyboardEvent) => boolean; projectId?: string; projectRoot?: string; slashCatalog?: { composerActions?: string[] } },
     reloadCommands: vi.fn(),
     voiceArgs: null as null | { onTranscript: (text: string) => void; ownerKey?: string },
@@ -98,7 +104,7 @@ vi.mock('./composer/use-composer-prompt-field.js', () => ({
       },
       restoreText: h.restoreText, removeRestoredAttachment: h.removeAttachment, setText: vi.fn(), replacePrompt: vi.fn(), focus: vi.fn(),
       markRestoreFocus: vi.fn(), handleChromeKeyDown: vi.fn(), dropHandlers: {},
-      suggestions: [], typeaheadOpen: false, canAttach: false };
+      suggestions: [], typeaheadOpen: h.typeaheadOpen, canAttach: false };
   }
 }));
 vi.mock('./thread/voice/useVoiceInput.js', () => ({ useVoiceInput: (args: typeof h.voiceArgs) => { h.voiceArgs = args; return h.voice; } }));
@@ -134,6 +140,12 @@ beforeEach(() => {
   h.extraProjects = []; h.locationProps = null; h.foreignLocation = false;
   h.references = undefined; h.promptHistory.mockResolvedValue({entries: []});
   h.text = 'Draft'; h.images = []; h.attachments = []; h.editor.isDestroyed = false;
+  const schema = new Schema({ nodes: { doc: { content: 'paragraph+' }, paragraph: { content: 'text*' }, text: {} } });
+  h.editor.view.state = EditorState.create({ doc: schema.node('doc', null, [schema.node('paragraph', null, schema.text('Draft'))]) });
+  h.editor.view.composing = false;
+  h.editor.view.hasFocus.mockReturnValue(true);
+  h.editor.view.endOfTextblock.mockReturnValue(true);
+  h.typeaheadOpen = false;
   h.voice.state = 'idle'; h.voice.canRetry = false; h.frozenSend = null;
   h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
   h.options.providerId = 'codex';
@@ -704,6 +716,46 @@ describe('context snapshot history and submission', () => {
   const text = contextReferencePrompt(reference);
   const input = [{ type: 'text' as const, text, references: [{ start: 0, end: text.length, reference }] }];
   const key = (value: string) => h.fieldArgs!.interceptKeyDown(new KeyboardEvent('keydown', {key: value, cancelable: true}));
+
+  it('leaves multiline caret movement native without stepping or replacing the draft', async () => {
+    h.promptHistory.mockResolvedValue({ entries: [{ input: [{ type: 'text', text: 'older' }] }] });
+    render(composer());
+    await act(async () => {});
+    h.editor.view.endOfTextblock.mockReturnValue(false);
+    act(() => { expect(key('ArrowUp')).toBe(false); expect(key('ArrowDown')).toBe(false); });
+    expect(h.restoreText).not.toHaveBeenCalled();
+    h.editor.view.endOfTextblock.mockReturnValue(true);
+    act(() => { expect(key('ArrowUp')).toBe(true); });
+    expect(h.restoreText).toHaveBeenLastCalledWith([{ type: 'text', text: 'older', mentions: [] }]);
+    act(() => { expect(key('ArrowDown')).toBe(true); });
+    expect(h.restoreText).toHaveBeenLastCalledWith([{ type: 'text', text: 'Draft', mentions: [], references: undefined }]);
+  });
+
+  it('does not recall history while autocomplete is open or the editor is destroyed', async () => {
+    h.promptHistory.mockResolvedValue({ entries: [{ input: [{ type: 'text', text: 'older' }] }] });
+    h.typeaheadOpen = true;
+    const view = render(composer());
+    await act(async () => {});
+    act(() => { expect(key('ArrowUp')).toBe(false); });
+    h.typeaheadOpen = false;
+    h.editor.isDestroyed = true;
+    view.rerender(composer());
+    act(() => { expect(key('ArrowUp')).toBe(false); });
+    expect(h.restoreText).not.toHaveBeenCalled();
+  });
+
+  it('steps history only once when the handled editor event bubbles to the chrome', async () => {
+    h.promptHistory.mockResolvedValue({ entries: ['older', 'newest'].map(text => ({ input: [{ type: 'text', text }] })) });
+    render(composer());
+    await act(async () => {});
+    const event = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true });
+    act(() => {
+      expect(h.fieldArgs!.interceptKeyDown(event)).toBe(true);
+      expect(event.defaultPrevented).toBe(true);
+      expect(h.fieldArgs!.interceptKeyDown(event)).toBe(false);
+    });
+    expect(h.restoreText).toHaveBeenCalledExactlyOnceWith([{ type: 'text', text: 'newest', mentions: [] }]);
+  });
 
   it('restores valid history badges and returns to the unsent rich draft, ignoring malformed and textless entries', async () => {
     h.references = input[0].references; h.text = text;
