@@ -19,6 +19,7 @@ import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
 import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync } from './mcp-config.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
+import { assertWindowsCommandLineFits, windowsDirectLaunch } from './harness/windows-command.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
 import {
   SESSION_CALLBACK_ENV_KEYS,
@@ -1889,9 +1890,12 @@ export class PtyManager extends EventEmitter {
       microVmMemoryMib: opts.microVmMemoryMib
     };
     const wrapped = execEnv.wrap({ command, args: fullArgs }, envCtx);
+    // On Windows a trivial `.cmd` forwarder (`@"…\claude.exe" %*`) earlier on
+    // PATH than the exe would route the launch through cmd.exe and its
+    // 8191-character cap; run the exe it forwards to instead. Identity off win32.
     const inner = {
       ...wrapped,
-      command: resolveHarnessCommand(wrapped.command, env.PATH)
+      ...windowsDirectLaunch(resolveHarnessCommand(wrapped.command, env.PATH), wrapped.args)
     };
     const isolationStatus = execEnv.status(envCtx);
     // Callback-env rewrite: identity for local/sandbox (a sandboxed process shares
@@ -2066,6 +2070,9 @@ export class PtyManager extends EventEmitter {
       : opts.scheduled && process.platform !== 'win32'
       ? this.scheduledSupervisor(inner.command, inner.args)
       : inner;
+    // Fail with the limit named, not cmd.exe's bare "The command line is too
+    // long." in an exited terminal. No-op off win32.
+    assertWindowsCommandLineFits(spawnCmd.command, spawnCmd.args);
     (this.hostServices.prepareNativePty ?? ensureNodePtySpawnHelperExecutable)();
     const proc = pty.spawn(spawnCmd.command, spawnCmd.args, {
       name: 'xterm-256color',
