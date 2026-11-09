@@ -10,9 +10,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { scaleTimeout } from "../../scripts/test-timeout-scale.mjs";
-
-/** Short real waits stretch with ZANA_TEST_TIMEOUT_SCALE on a busy machine (#693). */
-const scaled = (ms: number) => scaleTimeout(ms, process.env.ZANA_TEST_TIMEOUT_SCALE);
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +35,9 @@ import {
   type RuntimeRelease,
 } from "./installer.js";
 import { resolveRuntime } from "./runtime-pin.js";
+
+/** Short real waits stretch with ZANA_TEST_TIMEOUT_SCALE on a busy machine (#693). */
+const scaled = (ms: number) => scaleTimeout(ms, process.env.ZANA_TEST_TIMEOUT_SCALE);
 
 const platform = currentPlatform() as RuntimePlatform;
 const version = "1.0.0-test";
