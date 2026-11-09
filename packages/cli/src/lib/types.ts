@@ -65,6 +65,8 @@ export interface Persona {
   addDirs?: string[];
   mcpServers?: string[];
   initialPrompt?: string;
+  /** Skill allowlist; absent = unrestricted. */
+  skills?: string[];
   source?: 'builtin' | 'user' | { projectId: string; projectName?: string };
 }
 
@@ -79,6 +81,7 @@ export interface PersonaSummary {
   description?: string;
   baseProfile?: LaunchProfileId;
   model?: 'opus' | 'sonnet' | 'haiku' | 'default';
+  skills?: string[];
 }
 
 /**

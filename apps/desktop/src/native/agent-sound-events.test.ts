@@ -50,3 +50,60 @@ it('reconnects after a disconnect, baselines threads, and cancels retry at shutd
   h.sockets[1].emit('close'); stop(); vi.advanceTimersByTime(5_000);
   expect(h.sockets).toHaveLength(2); expect(sounds.resetThreads).toHaveBeenCalled();
 });
+
+it('signals done only for a live root completed turn, and waits for background work to settle', () => {
+  const sounds = { observe: vi.fn(), remove: vi.fn(), resetThreads: vi.fn() };
+  const stop = startAgentSoundEvents('http://localhost:1234', sounds), socket = h.sockets[0];
+  const update = (value: any) => socket.emit('message', Buffer.from(JSON.stringify({ type: 'threads:updated', payload: value })));
+  const event = (type: string, id = 'root', status = 'completed', parentToolCallId?: string) => socket.emit('message', Buffer.from(JSON.stringify({ type: 'threads:event', payload: { threadId: 'a', type, payload: { scope: { kind: 'turn', turnId: id }, status, parentToolCallId } } })));
+  update({ ...thread, status: 'active' }); event('turn/started');
+  event('turn/started', 'nested', 'completed', 'tool'); event('turn/completed', 'nested');
+  expect(sounds.observe).not.toHaveBeenCalledWith('thread:a', 'done');
+  event('turn/completed'); expect(sounds.observe).not.toHaveBeenCalledWith('thread:a', 'done');
+  update({ ...thread, activity: { activeBackgroundCommandCount: 1 } });
+  expect(sounds.observe).not.toHaveBeenCalledWith('thread:a', 'done');
+  update(thread); expect(sounds.observe).toHaveBeenLastCalledWith('thread:a', 'done');
+  const completed = sounds.observe.mock.calls.filter(([, state]) => state === 'done').length;
+  update(thread); event('turn/completed');
+  expect(sounds.observe.mock.calls.filter(([, state]) => state === 'done')).toHaveLength(completed);
+  stop();
+});
+it('contains failed, interrupted, unmatched and disconnected completion events in either stream order', () => {
+  const sounds = { observe: vi.fn(), remove: vi.fn(), resetThreads: vi.fn() };
+  const stop = startAgentSoundEvents('http://localhost:1234', sounds), socket = h.sockets[0];
+  const send = (payload: any) => socket.emit('message', Buffer.from(JSON.stringify(payload)));
+  const update = (value: any) => send({ type: 'threads:updated', payload: value });
+  const event = (type: string, status?: string) => send({ type: 'threads:event', payload: { threadId: 'a', type, payload: { scope: { kind: 'turn', turnId: 'root' }, status } } });
+  for (const status of ['failed', 'interrupted', undefined]) {
+    update({ ...thread, status: 'active' }); event('turn/started'); update(thread); event('turn/completed', status);
+  }
+  update({ ...thread, status: 'active' }); event('turn/completed', 'completed'); update(thread);
+  event('turn/started'); update({ ...thread, status: 'stopping' }); event('turn/completed', 'completed'); update(thread);
+  event('turn/started'); send({ type: 'product:reset' }); update(thread); event('turn/completed', 'completed');
+  event('turn/started'); update({ ...thread, visibility: 'hidden' }); event('turn/completed', 'completed'); update(thread);
+  for (const payload of [null, {}, { threadId: '' }, { threadId: 'x'.repeat(257) }, { threadId: 'a', payload: {} }, { threadId: 'a', payload: { scope: { kind: 'turn', turnId: '' } } }]) send({ type: 'threads:event', payload });
+  expect(sounds.observe).not.toHaveBeenCalledWith('thread:a', 'done');
+  event('turn/started'); update(thread); event('turn/completed', 'completed');
+  expect(sounds.observe).toHaveBeenLastCalledWith('thread:a', 'done');
+  stop();
+});
+it('bounds completion tracking without dropping live state into an unbounded history', () => {
+  const sounds = { observe: vi.fn(), remove: vi.fn(), resetThreads: vi.fn() };
+  const stop = startAgentSoundEvents('http://localhost:1234', sounds);
+  for (let i = 0; i < 1002; i++) h.sockets[0].emit('message', Buffer.from(JSON.stringify({ type: 'threads:updated', payload: { ...thread, id: String(i) } })));
+  expect(sounds.observe).toHaveBeenCalledTimes(1002); stop();
+});
+
+it('reads the canonical completion inside the host lifecycle transport envelope', () => {
+  const sounds = { observe: vi.fn(), remove: vi.fn(), resetThreads: vi.fn() };
+  const stop = startAgentSoundEvents('http://localhost:1234', sounds);
+  const send = (type: string, payload: unknown) => h.sockets[0].emit('message', Buffer.from(JSON.stringify({ type, payload })));
+  send('threads:updated', { ...thread, status: 'active' });
+  send('threads:event', { threadId: 'a', kind: 'thread.event', type: 'turn/started',
+    payload: { type: 'turn/started', scope: { kind: 'turn', turnId: 'root' } } });
+  send('threads:event', { threadId: 'a', kind: 'turn.completed', type: 'turn.completed',
+    payload: { type: 'turn/completed', scope: { kind: 'turn', turnId: 'root' }, status: 'completed' } });
+  send('threads:updated', thread);
+  expect(sounds.observe).toHaveBeenLastCalledWith('thread:a', 'done');
+  stop();
+});

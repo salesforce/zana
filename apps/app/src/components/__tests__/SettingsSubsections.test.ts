@@ -199,7 +199,6 @@ describe('Settings subsection navigation', () => {
       'agent-tabs',
       'teams',
       'agent-attention',
-      'agent-sounds',
       'scheduled',
       'agent-automation',
       'agent-heartbeat',
@@ -258,4 +257,9 @@ describe('Settings subsection navigation', () => {
     expect(ids).not.toContain('plugins');
     expect(ids).toContain('usage');
   });
+});
+
+it('puts sounds in Notifications rather than the Agent settings cluster', () => {
+  expect(SETTINGS_SUBSECTIONS.notifications).toContainEqual({ id: 'agent-sounds', label: 'Sounds' });
+  expect(SETTINGS_SUBSECTIONS.agents?.some(row => row.id === 'agent-sounds')).toBe(false);
 });

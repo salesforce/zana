@@ -20,6 +20,7 @@ import type {
   PluginPendingInteractionRegistration,
   PluginProviderIconRegistration,
   PluginSettingsSectionRegistration,
+  PluginNotificationSoundProviderRegistration,
   PluginSidebarFooterActionRegistration,
   ExperimentalSidebarNavigationRegistration,
   PluginSourceCodeRendererRegistration,
@@ -286,6 +287,7 @@ function rejectStaleNavPanelKeys(kind: string, registration: object): void {
 export interface CollectedPluginAppRegistrations {
   homepageSections: PluginHomepageSectionRegistration[];
   settingsSections: PluginSettingsSectionRegistration[];
+  notificationSoundProviders: PluginNotificationSoundProviderRegistration[];
   appOverlays: ExperimentalAppOverlayRegistration[];
   navPanels: PluginNavPanelRegistration[];
   threadPanelActions: PluginThreadPanelActionRegistration[];
@@ -334,6 +336,7 @@ export function collectPluginAppRegistrations(
   const collected: CollectedPluginAppRegistrations = {
     homepageSections: [],
     settingsSections: [],
+    notificationSoundProviders: [],
     appOverlays: [],
     navPanels: [],
     threadPanelActions: [],
@@ -359,6 +362,7 @@ export function collectPluginAppRegistrations(
   const seenIds = {
     homepageSection: new Set<string>(),
     settingsSection: new Set<string>(),
+    notificationSoundProvider: new Set<string>(),
     appOverlay: new Set<string>(),
     navPanel: new Set<string>(),
     threadPanelAction: new Set<string>(),
@@ -391,6 +395,16 @@ export function collectPluginAppRegistrations(
           title: requireNonEmptyString(kind, "title", registration.title),
           component: requireComponent(kind, registration.component),
         });
+      },
+      notificationSoundProvider(registration) {
+        const kind = "slots.notificationSoundProvider";
+        const id = requireSlotId(kind, registration?.id);
+        requireUniqueId(kind, seenIds.notificationSoundProvider, id);
+        if (typeof registration.mount !== "function") throw new Error(`${kind}: "mount" must be a function`);
+        collected.notificationSoundProviders.push({ id,
+          title: requireNonEmptyString(kind, "title", registration.title),
+          description: requireOptionalString(kind, "description", registration.description),
+          component: requireComponent(kind, registration.component), mount: registration.mount });
       },
       settingsSection(registration) {
         const kind = "slots.settingsSection";

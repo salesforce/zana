@@ -1,5 +1,6 @@
 import type { PluginAppEntry, PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
-import { listSettingsSections } from '../../../plugins/plugin-slots.js';
+import { listSettingsSections, listNotificationSoundProviders } from '../../../plugins/plugin-slots.js';
+import { soundProviderSettingsHref } from '../../../plugins/notification-sounds.js';
 import { product } from '../../product-client.js';
 import { getPluginDetailRoutePath } from '../../route-paths.js';
 import { warnSettingsSearchOnce } from '../diagnostics';
@@ -178,6 +179,11 @@ export const pluginSettingsSearchProvider: SettingsSearchProvider = () => {
       keywords: [name, 'plugin settings'],
       href: pluginConfigureHref(section.pluginId)
     });
+  }
+  for (const provider of listNotificationSoundProviders()) {
+    out.push({ id: `plugin.${provider.pluginId}.sounds.${provider.id}`, section: 'notifications',
+      label: provider.title, help: provider.description, kind: 'setting', keywords: ['sound', 'audio', 'notification', 'plugin'],
+      href: soundProviderSettingsHref(provider) });
   }
   return out;
 };

@@ -22,6 +22,14 @@ export interface RestoreProjection extends NativeConversationResume {
   readonly extraArgs?: string[];
 }
 
+/** Main-resolved skill trimming a harness may fold into its settings payload. */
+export interface SkillSettings {
+  readonly skillOverrides?: Readonly<Record<string, 'off'>>;
+  readonly enabledPlugins?: Readonly<Record<string, false>>;
+  /** Lean (empty) allowlist: launch with `--strict-mcp-config` so only Zana's explicit `--mcp-config` loads. */
+  readonly strictMcp?: true;
+}
+
 export interface HarnessRegistration extends SdkHarnessRegistration<LaunchProfileId, LaunchProvider> {
   readonly id: HarnessFamily | 'shell';
   readonly verification?: HarnessVerificationDefinition;
@@ -86,6 +94,8 @@ export interface HarnessRegistration extends SdkHarnessRegistration<LaunchProfil
       readonly nativeTool?: string;
     };
     readonly scope: 'local' | 'remote';
+    /** Optional, main-resolved skill allowlist trimming. Absent keeps today's output. */
+    readonly skillSettings?: SkillSettings;
   }) => { readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> };
   /**
    * Optional local catalog discovery. Main authorizes the project path and profile

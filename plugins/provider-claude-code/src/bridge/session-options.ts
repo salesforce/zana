@@ -28,6 +28,7 @@ export interface BuildSessionOptionsArgs {
   permissionMode: ClaudePermissionMode;
   permissionScope: RuntimePermissionScope;
   plugins?: Options["plugins"];
+  skills?: string[];
   reasoningLevel?: ReasoningLevel;
   workflowsEnabled: boolean;
   chromeEnabled: boolean;
@@ -385,6 +386,7 @@ export function buildSessionOptions(
     ...(extraArgs ? { extraArgs } : {}),
     ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
     ...(params.plugins ? { plugins: params.plugins } : {}),
+    ...(params.skills ? { skills: params.skills } : {}),
     ...(sandbox ? { sandbox } : {}),
     ...(hooks ? { hooks } : {}),
     ...(additionalDirectories.length > 0
