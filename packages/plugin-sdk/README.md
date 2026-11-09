@@ -18,7 +18,7 @@ export default definePluginApp((app) => {
 });
 ```
 
-V1 slots: `navPanel`, `settingsSection`, `homepageSection`, `projectTab`,
+V1 slots: `navPanel`, `settingsSection`, `notificationSoundProvider`, `homepageSection`, `projectTab`,
 `sidebarFooterAction`, `projectStatusbarItem`, `pendingInteraction`. Experimental slots include
 `experimental_createProjectAction` (Add project menu) and
 `experimental_projectMenuAction` (Organize / row overflow). Open **Plugin Guide**
@@ -38,11 +38,11 @@ also released on the script's abort signal. Return your own disposer for timers,
 audio and other resources, and coordinate across windows for effects that
 should happen only once. Older hosts omit these APIs.
 
-Sound Studio (`plugins/agent-sounds/`) is a forkable example: users can import
-audio packs to change clips, or install a replacement plugin to change playback
-and event rules. Disable the previous sound plugin's notifications (and separate
-built-in chimes) when using a replacement. There is no automatic sound-provider
-override or cross-plugin priority registry. See the public
+Users can select their own MP3, WAV, or OGG directly in Settings → Notifications,
+without installing or building a plugin. Sound Studio (`plugins/agent-sounds/`)
+is an optional forkable example for audio collections and custom playback rules. Users choose one notificationSoundProvider in
+Settings → Notifications; the host master gates that provider and built-in
+chimes. Legacy independent content scripts must migrate to participate. See the public
 [background activity and sound-plugin guide](../../docs/extensions-sdk-reference.md#background-activity-and-sound-plugins)
 for the contract and lifecycle.
 
@@ -176,3 +176,11 @@ metadata. Compact display does not reduce model tokens. See `docs/context-refere
 ### Browser toolbar actions
 
 Register `app.slots.experimental_browserToolbarAction({ id, title, component })` to mount a control in each thread browser toolbar. The component receives `PluginBrowserToolbarActionProps`: a desktop-only `page` (`evaluate`, `onMessage`) and a thread-scoped `composer` (`insert`, `update`, `onSubmitted`, `focus`). Page expressions can use `bridge.postMessage(data)`; messages are untrusted and must be schema-validated by the plugin. Evaluation defaults to an isolated world, with an explicit main-world option for framework inspection. Main confines operations to an existing tab owned by the sender window and thread and refuses active control leases. Keep a reference's plugin source id equal to the supplied `pluginId`; update/remove uses that plugin's resource id. See `docs/thread-annotations.md` for lifecycle and limits.
+
+Sound plugins register app.slots.notificationSoundProvider({ id, title, component, mount }).
+Controls appear in Settings → Notifications; only the selected provider mounts
+while the host master is on. Provider changes leave playback off. Configure
+links inspect settings without enabling audio. Return a disposer and honor
+signal abort; do not duplicate the player in general contentScripts. Ordinary
+settingsSection remains on the plugin hub Configure page. See the SDK reference
+for migration, missing-provider behavior and cross-window playback ownership.
