@@ -95,3 +95,48 @@ describe('REQ-7 / D7 the coordinator roster', () => {
     expect(prompt).not.toMatch(/new session for each unit/i);
   });
 });
+
+describe('OBL-001 / REQ-4 the old session is not closed inside the turn that completed the previous unit', () => {
+  it('does not detach or close a session still working when the rest wait runs out', async () => {
+    const { createSeatRecycler, SEAT_REST_WAIT_MS } = await import('../on-demand-seat.js');
+    const calls: string[] = [];
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const recycler = createSeatRecycler({
+      stateOf: () => 'working', sessionOf: async () => 'old',
+      sampleUsage: async () => { calls.push('sample'); }, detach: async () => { calls.push('detach'); return true; },
+      clearRecovery: async () => { calls.push('clear'); }, close: async (id: string) => { calls.push(`close:${id}`); },
+      log: () => undefined, setTimer: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; }, clearTimer: () => undefined
+    } as never);
+    recycler.register('r1', ['s1'], { executionId: 'e1', respawn: async () => ({ ok: true as const, sessionId: 'new' }) });
+    const done = recycler.recycle('r1', 's1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    timers.find((t) => t.ms === SEAT_REST_WAIT_MS)?.fn();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).not.toContain('detach');
+    expect(calls).not.toContain('close:old');
+    await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 20))]);
+  });
+});
+
+describe('OBL-002 / REQ-11 a run released during the final usage sample leaves no waiter or timer', () => {
+  it('registers no exit timer after release', async () => {
+    const { createSeatRecycler } = await import('../on-demand-seat.js');
+    const live = new Set<number>();
+    let next = 0;
+    let finishSample!: () => void;
+    const recycler = createSeatRecycler({
+      stateOf: () => 'idle', sessionOf: async () => 'old',
+      sampleUsage: () => new Promise<void>((resolve) => { finishSample = resolve; }),
+      detach: async () => true, clearRecovery: async () => undefined, close: async () => undefined, log: () => undefined,
+      setTimer: () => { const id = ++next; live.add(id); return id; }, clearTimer: (h: unknown) => { live.delete(h as number); }
+    } as never);
+    recycler.register('r1', ['s1'], { executionId: 'e1', respawn: async () => ({ ok: true as const, sessionId: 'new' }) });
+    const done = recycler.recycle('r1', 's1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    recycler.release('r1');
+    finishSample();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(live.size).toBe(0);
+    void done;
+  });
+});

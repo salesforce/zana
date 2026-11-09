@@ -120,3 +120,14 @@ describe('REQ-5 today\'s launches never respawn', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+describe('COR-002 / REQ-5 a respawn needs the prior session to have completed, even with spare concurrency', () => {
+  it('refuses while the prior approval is consumed but not complete()d, when maxConcurrent would allow a second', () => {
+    const roomy: LaunchPrincipal = { ...team, maxConcurrent: 2, maxLaunchesPerRun: 2 };
+    const { service, firstId } = setup(roomy);
+    expect(service.consume(firstId, 'd1')).toMatchObject({ ok: true });
+    expect(service.authorizeRespawn(firstId, expectedFor())).toMatchObject({ ok: false });
+    service.complete(firstId);
+    expect(service.authorizeRespawn(firstId, expectedFor())).toMatchObject({ ok: true });
+  });
+});
