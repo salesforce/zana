@@ -150,3 +150,16 @@ describe('REQ-4 typed verdict declaration', () => {
     expect(() => normalizeExecutionPlan([unit('r', [], { loop, output } as never), unit('f', ['r'])])).toThrow();
   });
 });
+
+describe('REQ-3 / REQ-6 loop-control deadlock (CodeNod COR-002, OBL-004)', () => {
+  const u = (id: string, dependencies: string[], loop?: { version: 1; fixUnitId: string; until: 'PASS'; max: number }) =>
+    ({ id, title: id, task: `do ${id}`, dependencies, readOnly: true, ...(loop ? { loop } : {}) });
+
+  it('rejects a fix unit that depends on another dependant of its review, which waits for PASS and so can never run before the fix', () => {
+    expect(() => normalizeExecutionPlan([
+      u('r', [], { version: 1, fixUnitId: 'f', until: 'PASS', max: 2 }),
+      u('d', ['r']),
+      u('f', ['r', 'd'])
+    ])).toThrow(/loop/i);
+  });
+});

@@ -120,3 +120,20 @@ describe('REQ-10 loop state survives restart', () => {
     expect(executionBoardProjection(reloaded).work!.assignments[0]).not.toHaveProperty('loopRound');
   }));
 });
+
+describe('REQ-10 retained relaunch between fix completion and re-review (CodeNod OBL-002)', () => {
+  it('keeps the active loop, round, granted extra round and fix result when the run is stopped in round 2 and relaunched', async () => fixture(async (filePath) => {
+    const store = await open(filePath, 1);
+    await finish(store, 'r', { verdict: 'CHANGES' });
+    let rec = (await store.get('execution-1'))!;
+    rec = await store.retryWork(rec.id, rec.stateVersion, lead, 'r'); // extra round granted
+    await finish(store, 'f');
+    rec = (await store.get('execution-1'))!;
+    expect(unitOf(rec, 'r')).toMatchObject({ state: 'READY', loopRound: 2, loopExtraRounds: 1 });
+    rec = await store.transition(rec.id, rec.stateVersion, 'STOPPED', 'info', 'stopped');
+    rec = await store.beginRetainedRecovery(rec.id, rec.stateVersion);
+    expect(unitOf(rec, 'r')).toMatchObject({ state: 'READY', loopRound: 2, loopExtraRounds: 1, loop: { fixUnitId: 'f', max: 1 } });
+    expect(unitOf(rec, 'f')).toMatchObject({ state: 'COMPLETED', result: 'f done' });
+    expect(executionBoardProjection(rec).work!.assignments.find((a) => a.workUnitId === 'r')).toMatchObject({ loopRound: 2, loopMax: 2 });
+  }));
+});
