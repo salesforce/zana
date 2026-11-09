@@ -1,0 +1,21 @@
+import { describe, expect, it } from 'vitest';
+import { blockerCardSubject, humanBlockerDenial } from '../human-blocker-denial.js';
+import type { ExecutionRecord } from '../store.js';
+
+const intent = { key: 'execution-blocker:e1:b1', blockerId: 'b1', status: 'ACKNOWLEDGED' as const, attempts: 0, nextAttemptAt: 0, createdAt: 0, updatedAt: 0 };
+const record = (extra: Partial<ExecutionRecord>) => ({ id: 'e1', ...extra }) as ExecutionRecord;
+
+describe('humanBlockerDenial', () => {
+  it('falls back to the default card subject when the job has no title', () => {
+    expect(blockerCardSubject(record({}))).toBe('Job Execution Blocked');
+    const text = humanBlockerDenial(record({ noticeIntents: [{ ...intent, inboxItemId: 'i-1' }] }), { id: 'b1' });
+    expect(text).toContain('"Job Execution Blocked"');
+    expect(text).toContain('Inbox entry i-1');
+  });
+
+  it('says the card has not appeared when the notice has no Inbox entry', () => {
+    const text = humanBlockerDenial(record({ jobTitle: 'Ship', noticeIntents: [{ ...intent, status: 'PENDING' }] }), { id: 'b1' });
+    expect(text).toContain('once its card appears (blocker b1)');
+    expect(text).not.toContain('"Ship"');
+  });
+});
