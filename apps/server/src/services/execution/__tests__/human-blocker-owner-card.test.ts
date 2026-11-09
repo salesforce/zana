@@ -108,3 +108,25 @@ describe('coordinator denial for a human blocker names the owner Inbox card (#69
     expect(denied).toMatchObject({ ok: false, code: 'DENIED', message: expect.stringContaining('only coordinator') });
   }));
 });
+
+describe('correctness obligations (OBL-009, OBL-005)', () => {
+  it('OBL-009 REQ-4: re-issuing a coordinator-audience answer replays one delivery', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { append: vi.fn(async () => ({ id: 'f' })) });
+    await service.blockWork(workerBinding, 'a', { id: 'blocker', question: 'Which file?', audience: 'coordinator' });
+    await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    expect((await store.get('execution-1'))?.deliveries).toHaveLength(1);
+  }));
+
+  it('OBL-005 REQ-1: repeated coordinator attempts on a human blocker stay denied and enqueue nothing', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { append: vi.fn(async () => ({ id: 'f' })), appendOnce: vi.fn(async () => ({ id: 'inbox-3' })) });
+    await service.blockWork(workerBinding, 'a', { id: 'blocker', question: 'Q?' });
+    await vi.waitFor(async () => expect((await store.get('execution-1'))?.noticeIntents?.[0]?.status).toBe('ACKNOWLEDGED'));
+    for (let i = 0; i < 2; i += 1) {
+      expect(await service.answerBlockerByCoordinator(coordinator, 'blocker', 'x')).toMatchObject({ ok: false, code: 'DENIED' });
+    }
+    const after = (await store.get('execution-1'))!;
+    expect(after.deliveries ?? []).toEqual([]);
+    expect(after.blockers?.[0]?.resolved).toBe(false);
+  }));
+});
