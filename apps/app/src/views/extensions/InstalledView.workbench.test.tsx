@@ -33,7 +33,7 @@ beforeEach(() => {
     setExtensionsTab: () => useUi.setState({ settingsExtensionId: null }) });
   Element.prototype.scrollIntoView = vi.fn();
 });
-afterEach(() => { cleanup(); clearPluginSlots('example'); });
+afterEach(() => { cleanup(); clearPluginSlots('example'); clearPluginSlots('other'); });
 it('shows real settings on a full page, saves through the existing API, and returns to the list', async () => {
   setup();
   await screen.findByRole('tab', { name: 'Settings', exact: true });
@@ -156,4 +156,16 @@ it('offers source recovery instead of reloading a missing folder', async () => {
   expect(inspector().getByRole('button', { name: 'Locate moved plugin…' })).toBeTruthy();
   expect(inspector().getByRole('button', { name: 'Switch to official distribution…' })).toBeTruthy();
   expect(inspector().queryByRole('button', { name: 'Reload', exact: true })).toBeNull();
+});
+
+it('links a sound plugin to its Notifications controls and excludes other plugin providers', async () => {
+  for (const id of ['example', 'other']) interpretPluginApp(id, definePluginApp(app => {
+    app.slots.notificationSoundProvider({ id: 'alerts', title: `${id} sounds`, component: () => null, mount: () => () => {} });
+  }));
+  setup();
+  const link = await screen.findByRole('link', { name: 'Configure sounds →' });
+  expect(link.getAttribute('href')).toBe('/settings/notifications?provider=example%2Falerts#agent-sounds');
+  expect(screen.getByText('example sounds is configured in Settings → Notifications.')).toBeTruthy();
+  expect(screen.queryByText('other sounds is configured in Settings → Notifications.')).toBeNull();
+  expect(screen.getByText('Notification sound providers (1)')).toBeTruthy();
 });
