@@ -1197,7 +1197,6 @@ describe('normalizeConfig — onboarding', () => {
   });
 });
 
-
 describe('agent notification sounds', () => {
   it.each([true, false])('persists independent opt-in switches (%s)', value => {
     store.setConfig({ agentSoundIdle: value, agentSoundNeedsYou: !value, agentSoundVolume: 73 });
@@ -1211,5 +1210,27 @@ describe('agent notification sounds', () => {
   });
   it.each([[-2, 0], [120, 100], [43.6, 44], [NaN, 50], ['80', 50], [null, 50]])('normalizes volume %j to %s', (input, expected) => {
     expect(normalizeConfig({ agentSoundVolume: input as never }).agentSoundVolume).toBe(expected);
+  });
+});
+
+describe('notification sound provider settings', () => {
+  it('persists valid selection and an explicit off master across unrelated config writes', () => {
+    store.setConfig({ notificationSoundProvider: 'custom/voice', notificationSoundsEnabled: false });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig()).toMatchObject({ notificationSoundProvider: 'custom/voice', notificationSoundsEnabled: false });
+    expect(normalizeConfig({ notificationSoundsEnabled: true })).toMatchObject({ notificationSoundsEnabled: true });
+  });
+  it('drops malformed provider references and master values without coercion', () => {
+    expect(normalizeConfig({ notificationSoundProvider: '../../audio', notificationSoundsEnabled: 'true' as never })).toEqual({});
+  });
+});
+
+
+describe('completion sounds and fleet quiet spacing', () => {
+  it('persists independent completion preference and bounds spacing', () => {
+    expect(normalizeConfig({ agentSoundDone: true, agentSoundSpacingSeconds: 12.7 })).toMatchObject({ agentSoundDone: true, agentSoundSpacingSeconds: 13 });
+    expect(normalizeConfig({ agentSoundDone: 'yes' as never, agentSoundSpacingSeconds: NaN })).not.toHaveProperty('agentSoundDone');
+    for (const [input, expected] of [[-1, 2], [80, 60], [10, 10]]) expect(normalizeConfig({ agentSoundSpacingSeconds: input }).agentSoundSpacingSeconds).toBe(expected);
+    expect(normalizeConfig({ agentSoundSpacingSeconds: Infinity })).not.toHaveProperty('agentSoundSpacingSeconds');
   });
 });

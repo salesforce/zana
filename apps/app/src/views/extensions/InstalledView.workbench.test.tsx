@@ -11,6 +11,7 @@ vi.mock('@/hooks/useCompactLayout', () => ({ useCompactLayout: () => false }));
 vi.mock('@/plugins/plugin-app-loader', () => ({ reconcilePluginApps: vi.fn(), reloadPluginApp: api.reloadApp }));
 vi.mock('@/plugins/PluginSettingsSections', () => ({ PluginSettingsSections: () => <input aria-label="Plugin connection filter" /> }));
 vi.mock('@/lib/product-client', () => ({ product: {
+  threads: { providers: async () => ({ providers: [] }) },
   extensions: { list: async () => [], onChanged: () => () => {}, marketplaceList: async () => ({ ok: true, value: [] }) },
   threads: { providers: async () => ({ providers: [] }) },
   pluginApps: { list: async () => api.apps, onChanged: () => () => {}, getSettings: api.settings, setSettings: api.save, reload: api.reload, remove: api.remove, setEnabled: api.toggle }

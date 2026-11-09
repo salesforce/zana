@@ -1105,8 +1105,8 @@ describe('host bootstrap wiring', () => {
     const event = { sender, senderFrame: sender.mainFrame };
     const preview = h.ipcHandlers.get(IPC.app.previewAgentSound)!;
     try {
-      expect(await preview(event, 'idle')).toBe(75);
-      expect(await preview(event, 'needs-you')).toBe(75);
+      expect(await preview(event, 'idle')).toEqual({ volume: 75, clip: undefined });
+      expect(await preview(event, 'needs-you')).toEqual({ volume: 75, clip: undefined });
       expect(await preview(event, 'other')).toBeUndefined();
       expect(await preview({ ...event, senderFrame: {} }, 'idle')).toBeUndefined();
       expect(await preview({ ...event, sender: { ...sender, getURL: () => 'https://untrusted.example' } }, 'idle')).toBeUndefined();

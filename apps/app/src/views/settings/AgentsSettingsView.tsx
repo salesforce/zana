@@ -1,4 +1,3 @@
-import { AgentSoundSettings } from './AgentSoundSettings.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import {
   AUTO_CLOSE_IDLE_DEFAULTS,
@@ -280,7 +279,6 @@ export function AgentsSettingsView({
         />
       </Section>
 
-      <AgentSoundSettings config={config} onUpdate={onUpdate} />
 
       <Section
         anchorId="scheduled"

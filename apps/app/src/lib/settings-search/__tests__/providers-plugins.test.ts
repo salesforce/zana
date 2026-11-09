@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginAppEntry, PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
 
-const slots = vi.hoisted(() => ({ sections: [] as unknown[] }));
-vi.mock('../../../plugins/plugin-slots.js', () => ({ listSettingsSections: () => slots.sections }));
+const slots = vi.hoisted(() => ({ sections: [] as unknown[], sounds: [] as any[] }));
+vi.mock('../../../plugins/plugin-slots.js', () => ({ listSettingsSections: () => slots.sections, listNotificationSoundProviders: () => slots.sounds }));
 vi.mock('../../product-client.js', () => ({ product: { pluginApps: {} } }));
 
 import { searchSettings } from '../index';
@@ -43,6 +43,7 @@ const config = { config: {} as never };
 beforeEach(() => {
   resetPluginSettingsCache();
   slots.sections = [];
+  slots.sounds = [];
 });
 afterEach(() => vi.useRealTimers());
 
@@ -264,4 +265,13 @@ describe('ExtensionsHub revealPluginSetting observer', () => {
     expect(() => cancel()).not.toThrow();
     expect(vi.getTimerCount()).toBe(0);
   });
+});
+
+it('finds plugin sound controls in Notifications without activating the provider', () => {
+  slots.sounds = [{ pluginId: 'voices', id: 'main', title: 'Example voices', description: 'Custom character sounds' }];
+  const rows = pluginSettingsSearchProvider(config) as DeepLinkedSettingsEntry[];
+  const row = rows.find(row => row.id === 'plugin.voices.sounds.main')!;
+  expect(row.section).toBe('notifications');
+  expect(row.href).toBe('/settings/notifications?provider=voices%2Fmain#agent-sounds');
+  expect(row.label).toBe('Example voices');
 });

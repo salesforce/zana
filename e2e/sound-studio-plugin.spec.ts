@@ -25,10 +25,11 @@ test('optional sound plugin imports audio, runs with its panel closed, and dispo
   expect(await win.evaluate(() => window.cc.extensions.install({ kind: 'localDir' }))).toMatchObject({ ok: true });
   await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'agent-sounds')?.status)).toBe('running');
   const route = async (path: string) => { await win.evaluate(path => { history.pushState({}, '', path); dispatchEvent(new PopStateEvent('popstate')); }, path); };
-  await route('/extensions/pages/agent-sounds/main');
-  await expect(win.getByRole('heading', { name: 'Give your agents a voice.' })).toBeVisible();
-  await expect(win.getByText('Notification player ready', { exact: true })).toBeVisible();
-  await expect(win.getByRole('switch', { name: 'Sound notifications' })).toHaveAttribute('aria-checked', 'false');
+  await route('/settings/notifications');
+  await win.getByRole('button', { name: 'Sound provider' }).click();
+  await win.getByRole('option', { name: /^Sound Studio/ }).click();
+  await expect(win.getByRole('heading', { name: 'Sound Studio', exact: true })).toBeVisible();
+  await expect(win.getByRole('switch', { name: 'Play notification sounds' })).toHaveAttribute('aria-checked', 'false');
   await app.electron.evaluate(({ app, webContents }) => {
     (globalThis as any).__studioAudible = [];
     const watch = (contents: Electron.WebContents) => contents.on('audio-state-changed', event => {
@@ -52,13 +53,22 @@ test('optional sound plugin imports audio, runs with its panel closed, and dispo
   await win.getByLabel('Idle audio').setInputFiles({ name: 'idle.wav', mimeType: 'audio/wav', buffer: fullWav });
   await win.getByRole('button', { name: 'Save sound pack' }).click(); await expect(win.getByRole('status')).toContainText('Sound pack imported.');
   await win.getByRole('button', { name: 'Preview Needs you' }).click(); await expect.poll(audible).toHaveLength(1);
-  await win.getByRole('switch', { name: 'Sound notifications' }).click();
+  await win.getByRole('switch', { name: 'Play notification sounds' }).click();
   await expect(win.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
   await win.getByRole('checkbox', { name: /Becomes idle/ }).check();
   await expect.poll(() => win.evaluate(() => window.cc.pluginApps.callRpc('agent-sounds', 'read').then((v: any) => v.preferences.idle))).toBe(true);
+  await expect(win.getByRole('checkbox', { name: /Becomes idle/ })).toBeEnabled();
+  await expect(win.getByText('Notification player ready', { exact: true })).toBeVisible();
+  const settleScreenshot = () => win.evaluate(async () => {
+    document.querySelector('.settings-panel')?.scrollTo({ top: 0, behavior: 'instant' });
+    for (const animation of document.getAnimations()) animation.finish();
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await settleScreenshot();
   await captureElectronScreenshot(app.electron, win, info.outputPath('sound-studio.png'));
   await win.evaluate(async () => { await window.cc.config.set({ theme: 'light' }); document.querySelector<HTMLElement>('.sound-studio')!.style.width = '390px'; });
   await expect.poll(() => win.evaluate(() => { const panel = document.querySelector<HTMLElement>('.sound-studio')!; return panel.scrollWidth <= panel.clientWidth + 1; })).toBe(true);
+  await settleScreenshot();
   await captureElectronScreenshot(app.electron, win, info.outputPath('sound-studio-narrow-light.png'));
   await win.evaluate(async () => { await window.cc.config.set({ theme: 'dark' }); document.querySelector<HTMLElement>('.sound-studio')!.style.width = ''; });
   // A second scoped window must not play another copy or steal the player lock.
@@ -66,7 +76,7 @@ test('optional sound plugin imports audio, runs with its panel closed, and dispo
   const projectId = await win.evaluate(async path => { const result = await window.cc.projects.add(path); if (!result.ok) throw new Error(result.message); return result.value.id; }, path);
   await win.evaluate(id => window.cc.windows.openProject(id), projectId);
   await route('/inbox');
-  await win.reload(); await route('/extensions/pages/agent-sounds/main');
+  await win.reload(); await route('/settings/notifications');
   await expect(win.getByText('Notification player ready', { exact: true })).toBeVisible();
   await route('/inbox');
   await win.evaluate(() => {
@@ -91,9 +101,9 @@ test('optional sound plugin imports audio, runs with its panel closed, and dispo
   await request(`call_tool:ask_user_question tool_args:${question}`); await expect.poll(async () => (await audible()).length).toBe(beforeIdle + 2);
   // Disable the plugin itself. A pending stable-idle timer must be disposed.
   await request('delay:700 disable pending idle'); await win.waitForTimeout(1500);
-  expect(await win.evaluate(() => window.cc.extensions.setEnabled('agent-sounds', false))).toMatchObject({ ok: true });
+  expect(await win.evaluate(() => window.cc.pluginApps.setEnabled('agent-sounds', false))).toMatchObject({ ok: true });
   const beforeDisabled = (await audible()).length; await win.waitForTimeout(6000); expect((await audible()).length).toBe(beforeDisabled);
-  expect(await win.evaluate(() => window.cc.extensions.setEnabled('agent-sounds', true))).toMatchObject({ ok: true });
-  await route('/extensions/pages/agent-sounds/main'); await expect(win.getByText('Notification player ready', { exact: true })).toBeVisible();
+  expect(await win.evaluate(() => window.cc.pluginApps.setEnabled('agent-sounds', true))).toMatchObject({ ok: true });
+  await route('/settings/notifications'); await expect(win.getByText('Notification player ready', { exact: true })).toBeVisible();
   await expect(win.getByRole('button', { name: /My sound pack Your audio/ })).toHaveAttribute('aria-pressed', 'true');
 });

@@ -15,10 +15,24 @@ beforeEach(async () => {
 afterEach(() => cleanup());
 const loaded = async () => { render(<SoundStudio/>); await screen.findByRole('switch', { name: 'Sound notifications' }); };
 const wav = (name = 'ping.wav') => ({ name, size: 16, arrayBuffer: async () => Uint8Array.from(Buffer.from('RIFFxxxxWAVEdata')).buffer }) as File;
-it('registers an optional Plugins page and an independent background script', () => {
-  const navPanel = vi.fn(), register = vi.fn(); definition.setup({ slots: { navPanel }, contentScripts: { register } } as never);
-  expect(navPanel).toHaveBeenCalledWith(expect.objectContaining({ title: 'Sound Studio', placement: 'extensions' })); expect(register).toHaveBeenCalledWith(expect.objectContaining({ id: 'notifications' }));
+it('registers one Settings provider and retains an unlisted legacy panel', async () => {
+  const navPanel = vi.fn(), notificationSoundProvider = vi.fn(), register = vi.fn();
+  definition.setup({ slots: { navPanel, notificationSoundProvider }, contentScripts: { register } } as never);
+  expect(navPanel).toHaveBeenCalledWith(expect.objectContaining({ title: 'Sound Studio', placement: 'unlisted' }));
+  expect(notificationSoundProvider).toHaveBeenCalledWith(expect.objectContaining({ id: 'notifications', title: 'Sound Studio', mount: expect.any(Function) }));
+  expect(register).not.toHaveBeenCalled();
+  const Settings = notificationSoundProvider.mock.calls[0]![0].component;
+  render(<Settings/>);
+  await screen.findByText("Bring your own sounds");
+  expect(screen.queryByRole('switch', { name: 'Sound notifications' })).toBeNull();
 });
+it('keeps previews in Configure and automatic audio off on older hosts', () => {
+  const settingsSection = vi.fn(), register = vi.fn();
+  definition.setup({ slots: { navPanel: vi.fn(), settingsSection }, contentScripts: { register } } as never);
+  expect(settingsSection).toHaveBeenCalledWith(expect.objectContaining({ id: 'sounds', description: expect.stringContaining('Update Zana') }));
+  expect(register).not.toHaveBeenCalled();
+});
+
 it('previews while disabled, saves event settings, spacing and volume', async () => {
   await loaded(); const enabled = screen.getByRole('switch', { name: 'Sound notifications' }); expect(enabled.getAttribute('aria-checked')).toBe('false');
   fireEvent.click(screen.getByRole('button', { name: 'Preview Needs you' })); await screen.findByText('Needs you preview played.'); expect(h.play).toHaveBeenCalledWith('needs-you', 35, undefined);
