@@ -91,10 +91,12 @@ test('soft-wrapped lines retain native navigation and the first visual line can 
   await placeCaret(input, 'end');
   const last = await caret(input);
   await input.press('ArrowUp');
-  expect((await caret(input)).top).toBeLessThan(last.top);
+  // The scroll container can keep the caret at the same viewport Y while it
+  // moves through wrapped lines. Check the actual editor position instead.
+  expect((await caret(input)).from).toBeLessThan(last.from);
   expect((await caret(input)).text).toBe(draft);
   await input.press('ArrowDown');
-  expect((await caret(input)).top).toBe(last.top);
+  expect((await caret(input)).from).toBe(last.from);
   expect((await caret(input)).text).toBe(draft);
   await placeCaret(input, 4);
   await input.press('ArrowUp');
