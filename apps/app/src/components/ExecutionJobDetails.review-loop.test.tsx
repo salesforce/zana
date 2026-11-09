@@ -4,7 +4,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
-import { ExecutionJobDetails } from './ExecutionJobDetails.js';
+import { ExecutionJobDetails, buildJobDetailsText } from './ExecutionJobDetails.js';
 
 // #583 REQ-10: the job details show "Review round k of N" for a loop unit and nothing for a plain unit.
 const base = (assignment: Record<string, unknown>): ExecutionBoardSnapshot => ({
@@ -45,5 +45,10 @@ describe('REQ-10 job details review round', () => {
     load({});
     await screen.findByText(/Review/);
     expect(screen.queryByText(/Review round/)).toBeNull();
+  });
+
+  it('puts the round in the copied job details only for a loop unit', () => {
+    expect(buildJobDetailsText('project-1', base({ loopRound: 2, loopMax: 3 }))).toContain('loop: review round 2 of 3');
+    expect(buildJobDetailsText('project-1', base({}))).not.toContain('loop:');
   });
 });
