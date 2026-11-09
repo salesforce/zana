@@ -191,6 +191,15 @@ function artifactLines(artifacts: ExecutionBoardSnapshot['artifacts']): string[]
  * are a last-N tail; artifacts are name+mediaType+digest only (never bodies). Composed from
  * per-section helpers joined by a blank line between sections (no trailing blank).
  */
+/**
+ * Seats of the run whose Team row asks for a fresh session per unit (#579). A seat id is `<row>:<persona>:<n>`; the
+ * row is looked up in the run's Team, so a team edited since the launch can only show a mark, never change the run.
+ */
+export function freshSessionSlotIds(team: { slots?: ReadonlyArray<{ freshContextPerUnit?: boolean }> } | undefined, slotIds: readonly string[]): Set<string> {
+  const rowOf = (slotId: string) => (slotId.includes(':') ? Number(slotId.slice(0, slotId.indexOf(':'))) : Number.NaN);
+  return new Set(slotIds.filter((slotId) => team?.slots?.[rowOf(slotId)]?.freshContextPerUnit === true));
+}
+
 export function buildJobDetailsText(projectId: string, snapshot: ExecutionBoardSnapshot): string {
   const execution = snapshot.execution;
   return [
@@ -331,6 +340,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const followUpTeam = teams.find((team) => team.id === execution.teamId);
   const followUpRosterIds = new Set([followUpTeam?.orchestratorPersonaId, ...(followUpTeam?.slots ?? []).map((slot) => slot.personaId)].filter((id): id is string => Boolean(id)));
   const followUpRoster = personas.filter((persona) => followUpRosterIds.has(persona.id));
+  const freshSlots = freshSessionSlotIds(followUpTeam, execution.work?.rosterSlotIds ?? []);
   const worktreeAction = async (action: 'leave' | 'instruct' | 'delete' | 'force-delete') => {
     if (!execution.retainedWorktree || execution.stateVersion === undefined) return;
     if ((action === 'delete' || action === 'force-delete') && !window.confirm(
@@ -401,6 +411,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? execution.work?.rosterSlotIds[0] ?? '';
         return <div key={assignment.workUnitId}>
           {assignment.title} → {assignment.slotId ?? 'unassigned'} · {assignment.state}
+          {assignment.slotId !== undefined && freshSlots.has(assignment.slotId) && <span className="scheduler-pill">Fresh session per unit</span>}
           {assignment.recovery && <p role="status" className="execution-details-recovery-reason">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}
           {!isTerminal && (assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
             <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>

@@ -162,6 +162,7 @@ function TeamDetail({
                     </span>
                   )}
                   {!isOrch && slot.startOnDemand === true && <span className="scheduler-pill">Starts when needed</span>}
+                  {!isOrch && slot.freshContextPerUnit === true && <span className="scheduler-pill">Fresh session per unit</span>}
                 </li>
               );
             })}
@@ -214,6 +215,8 @@ function TeamDetail({
   );
 }
 
+const FRESH_SESSION_HELP = "The seat closes its session after each unit and starts a new one for the next, so a long run doesn't carry earlier units in its context. Each new session waits its turn to start, like any seat. Plan-driven Squads only.";
+
 /** Working copy of a slot in the form. */
 interface SlotDraft {
   personaId: string;
@@ -221,6 +224,8 @@ interface SlotDraft {
   label: string;
   /** Keep this seat closed until the engine has a first unit for it. */
   startOnDemand: boolean;
+  /** Close this seat's session after each unit and start a new one for the next (#579). */
+  freshContextPerUnit: boolean;
 }
 
 /** The create/edit form. */
@@ -273,7 +278,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       personaId: s.personaId,
       quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)),
       label: s.label ?? '',
-      startOnDemand: s.startOnDemand === true
+      startOnDemand: s.startOnDemand === true,
+      freshContextPerUnit: s.freshContextPerUnit === true
     }));
     // A squad may name its orchestrator as a persona that is NOT among the
     // worker slots (launch gives the orchestrator its own tab regardless — see
@@ -282,7 +288,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     // form. Saving folds it into `slots`; expansion dedupes it back out.
     const orchId = team?.orchestratorPersonaId;
     if (orchId && !base.some((s) => s.personaId === orchId)) {
-      base.unshift({ personaId: orchId, quantity: 1, label: '', startOnDemand: false });
+      base.unshift({ personaId: orchId, quantity: 1, label: '', startOnDemand: false, freshContextPerUnit: false });
     }
     return base;
   });
@@ -297,7 +303,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       personas.find((p) => !slots.some((s) => s.personaId === p.id))?.id ??
       personas[0]?.id ??
       '';
-    setSlots((prev) => [...prev, { personaId: firstUnused, quantity: 1, label: '', startOnDemand: false }]);
+    setSlots((prev) => [...prev, { personaId: firstUnused, quantity: 1, label: '', startOnDemand: false, freshContextPerUnit: false }]);
   };
 
   const updateSlot = (idx: number, patch: Partial<SlotDraft>) => {
@@ -338,7 +344,9 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
         quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity || 1)),
         ...(s.label.trim() ? { label: s.label.trim() } : {}),
         // On-demand seats need the engine of a plan-driven CLI squad; never store the flag otherwise.
-        ...(s.startOnDemand && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {})
+        ...(s.startOnDemand && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {}),
+        // A fresh session per unit needs the same plan-driven CLI squad; never store the flag otherwise.
+        ...(s.freshContextPerUnit && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { freshContextPerUnit: true as const } : {})
       }));
     // Keep orchestrator only if it's still one of the slots.
     const orch =
@@ -562,6 +570,19 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                         />
                         Start only when its first unit is ready
                       </label>
+                    )}
+                    {transport !== 'MODERN' && orchestratorPersonaId !== slot.personaId && (
+                      <>
+                        <label className="team-slot-on-demand">
+                          <input
+                            type="checkbox"
+                            checked={slot.freshContextPerUnit}
+                            onChange={(e) => updateSlot(idx, { freshContextPerUnit: e.target.checked })}
+                          />
+                          Start each unit in a fresh session
+                        </label>
+                        <span className="team-slot-on-demand">{FRESH_SESSION_HELP}</span>
+                      </>
                     )}
                     <button
                       type="button"

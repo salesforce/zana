@@ -41,7 +41,7 @@ describe('REQ-1 the Team editor offers the fresh-session checkbox', () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
     expect(screen.getAllByLabelText(CHECKBOX).length).toBeGreaterThan(0);
     expect(screen.getByText(/The seat closes its session after each unit and starts a new one for the next/)).toBeTruthy();
-    expect(screen.getByText(/Plan-driven Squads only\./)).toBeTruthy();
+    expect(screen.getByText(/Each new session waits its turn to start, like any seat\. Plan-driven Squads only\./)).toBeTruthy();
   });
 
   it('saves freshContextPerUnit: true on the ticked row only', async () => {
