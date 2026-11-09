@@ -1,4 +1,4 @@
-import type { ExecutionWorkUnitInput } from './store.js';
+import type { ExecutionWorkUnitInput, WorkUnitLoopV1 } from './store.js';
 
 /**
  * Deterministic parser for the portable-executable Markdown plan format so a
@@ -381,6 +381,11 @@ function parseStep(block: PlanStepBlock): StepParse {
   const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
   if (!parsedRequires.ok) return parsedRequires;
   return { ok: true, rawId, normalizations, unit: buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires) };
+}
+
+/** Parse a `Loop:` label value (`<unit-id> until PASS, max <N>`); an absent label gives no loop (#583). */
+export function parseLoopLabel(_value: string | undefined, _unitId: string): { ok: true; loop?: WorkUnitLoopV1 } | { ok: false; reason: string } {
+  throw new Error('not implemented: parseLoopLabel');
 }
 
 function buildWorkUnit(

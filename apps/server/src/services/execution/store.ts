@@ -187,7 +187,22 @@ export interface ExecutionWorkUnitInput {
   routing?: WorkUnitRoutingV1;
   output?: WorkOutputDeclarationV1;
   requires?: WorkUnitRequirementsV1;
+  loop?: WorkUnitLoopV1;
 }
+
+/**
+ * A bounded review loop on a review unit: while its verdict is CHANGES the engine
+ * reopens `fixUnitId` and then the review, up to `max` rounds (#583).
+ */
+export interface WorkUnitLoopV1 {
+  version: 1;
+  fixUnitId: string;
+  until: 'PASS';
+  max: number;
+}
+
+/** The verdict a loop review unit reports through its typed output. */
+export type WorkUnitLoopVerdict = 'PASS' | 'CHANGES';
 
 /** Optional capabilities a work unit must have before the execution can launch. */
 export interface WorkUnitRequirementsV1 {
@@ -251,7 +266,11 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   result?: string;
   structuredResult?: unknown;
   repairDigests?: string[];
-  history: Array<{ action: 'claimed' | 'released' | 'retried' | 'blocked' | 'failed' | 'completed'; slotId?: string; attempt: number; at: number; detail?: string }>;
+  /** Runtime only (excluded from plan identity): current review round of a loop unit, starting at 1. */
+  loopRound?: number;
+  /** Runtime only (excluded from plan identity): rounds granted by a Retry at the loop limit. */
+  loopExtraRounds?: number;
+  history: Array<{ action: 'claimed' | 'released' | 'retried' | 'blocked' | 'failed' | 'completed' | 'reopened'; slotId?: string; attempt: number; at: number; detail?: string }>;
 }
 
 /**
@@ -926,6 +945,15 @@ function validWorkUnitRequirements(value: unknown): value is WorkUnitRequirement
 function validRequirementNames(values: unknown): values is string[] {
   return Array.isArray(values) && values.length <= 50
     && values.every((value) => typeof value === 'string' && value.trim().length >= 1 && value.length <= 256);
+}
+
+/**
+ * Apply a loop review unit's verdict inside the completing mutation: PASS completes a never-run
+ * fix unit as not needed, CHANGES below the bound releases the fix unit, CHANGES at the bound
+ * blocks the review unit with a human blocker (#583).
+ */
+export function applyLoopVerdict(_record: ExecutionRecord, _review: ExecutionWorkUnit, _verdict: WorkUnitLoopVerdict, _timestamp: number): void {
+  throw new Error('not implemented: applyLoopVerdict');
 }
 
 function clearClaim(unit: ExecutionWorkUnit): void {

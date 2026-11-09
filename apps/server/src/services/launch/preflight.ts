@@ -13,7 +13,7 @@ import type {
 import type { ExecutionConsentCeremonyInput } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import type { AuthorizedModelTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import type { WorkUnitRoutingV1 } from '../execution/routing-policy.js';
-import type { WorkUnitRequirementsV1 } from '../execution/store.js';
+import type { WorkUnitLoopV1, WorkUnitRequirementsV1 } from '../execution/store.js';
 import type { WorkOutputDeclarationV1 } from '../execution/contracts.js';
 import { validOutputDeclaration } from '../execution/contracts.js';
 import { evaluateSlotEligibility, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
@@ -75,6 +75,7 @@ export interface AdmissionWorkUnitInput {
   routing?: WorkUnitRoutingV1;
   output?: WorkOutputDeclarationV1;
   requires?: WorkUnitRequirementsV1;
+  loop?: WorkUnitLoopV1;
 }
 
 export interface TeamAdmissionInput {
@@ -314,6 +315,11 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
   };
   for (const unit of units) visit(unit.id);
   return units;
+}
+
+/** Reject a malformed review loop: missing or unordered fix unit, shared fix target, bad bound (#583). */
+export function validateLoops(_units: readonly AdmissionWorkUnitInput[]): void {
+  throw new Error('not implemented: validateLoops');
 }
 
 function normalizeWorkUnitRequirements(value: unknown): WorkUnitRequirementsV1 | undefined {
