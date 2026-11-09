@@ -29,6 +29,8 @@ export function boundarySpecs(paths) {
     if (/services\/execution\/(worker-api-error-recovery|service|store|projection)\.ts|squad-worker-restart|worker-api-error-recovery-wiring|api-error-resume-wiring|harness\/claude\/interaction-hooks|ExecutionJobDetails/.test(path)) add('job-team-api-error-recovery');
     if (/build-plugin-(app|server)\.ts/.test(path)) add('plugin-authoring-live');
     if (/^(?:plugins\/agent-sounds\/|apps\/app\/src\/plugins\/(?:agent-activity|PluginContentScriptsHost)\.|packages\/plugin-sdk\/src\/(?:app-contract|app)\.ts$)/.test(path)) add('sound-studio-plugin');
+    if (/^(?:apps\/desktop\/src\/native\/agent-sound|apps\/app\/src\/views\/settings\/(?:AgentSoundSettings|NotificationsSettingsView)|apps\/app\/src\/plugins\/notification-sounds|packages\/domain\/src\/notification-sounds)/.test(path)) add('agent-notification-sounds', 'custom-notification-sounds');
+    if (/^(?:apps\/app\/src\/plugins\/(?:notification-sounds|PluginContentScriptsHost)|apps\/app\/src\/views\/settings\/NotificationsSettingsView|packages\/plugin-sdk\/src\/(?:app-contract|internal\/plugin-app-collector))/.test(path)) add('notification-sound-providers');
     if (/plugins\/design-docs\/src\/server\/(sync-store|peer-protocol)|(?:^|\/)isolated-plugin-runtime|e2e\/fixtures\/peer-design-docs-worker/.test(path)) add('peer-data-boundary');
     if (/opencode/.test(path)) add('opencode-launch-boundary');
     if (/desktop-browser/.test(path)) add('desktop-browser-broker');

@@ -67,3 +67,9 @@ it('does not create a player when disposed during its initial settings read', as
   resolve({ preferences: DEFAULTS, packs: [] }); await tick();
   expect(context.experimental_onSignal).not.toHaveBeenCalled(); expect(h.play).not.toHaveBeenCalled();
 });
+
+it('uses the host master rather than a legacy plugin opt-in once the provider is mounted', async () => {
+  h.call.mockResolvedValue({ preferences: { ...DEFAULTS, enabled: false }, packs: [] });
+  mountBackground(context); await tick(); listener(snapshot('needs-you'));
+  expect(h.play).toHaveBeenCalledWith('needs-you', 35, undefined);
+});

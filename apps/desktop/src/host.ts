@@ -1,7 +1,8 @@
 import { launchFailure } from './launch-pre-spawn.js';
 import { startAgentSoundEvents } from './native/agent-sound-events.js';
 import { AgentSounds } from './native/agent-sounds.js';
-import { normalizeAgentSoundVolume } from '@zana-ai/zcc-domain/product';
+import { AgentSoundFiles } from './native/agent-sound-files.js';
+import { registerAgentSoundIpc } from './native/agent-sound-ipc.js';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -2342,11 +2343,15 @@ const mailDrain = new AgentMailDrainService({
   isReplyIdempotent: sessionId => !ptys.getSession(sessionId)
 });
 let stopAgentSoundEvents: (() => void) | undefined;
+const agentSoundFiles = new AgentSoundFiles(join(app.getPath('userData'), 'notification-sounds'));
 const agentSounds = new AgentSounds({
   config: () => store.getConfig(),
   play: (kind, volume) => {
     const win = unscopedWindow() ?? [...windows.values()].find(({ win }) => !win.isDestroyed() && !win.webContents.isDestroyed())?.win;
-    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC.app.onAgentSound, kind, volume);
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      const clip = agentSoundFiles.current(kind);
+      win.webContents.send(IPC.app.onAgentSound, kind, volume, ...(clip ? [clip] : []));
+    }
   }
 });
 
@@ -8122,10 +8127,8 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
 }
 
 function registerIpc() {
-  safeHandleFromWindow<[unknown], number | undefined>(IPC.app.previewAgentSound, (win, kind: unknown) => {
-    if (kind !== 'idle' && kind !== 'needs-you') throw new Error('Unknown agent sound');
-    return normalizeAgentSoundVolume(store.getConfig().agentSoundVolume);
-  }, () => undefined);
+  registerAgentSoundIpc({ handle: safeHandleFromWindow, files: agentSoundFiles,
+    volume: () => store.getConfig().agentSoundVolume, showOpenDialog: (win, options) => dialog.showOpenDialog(win, options) });
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
@@ -9820,6 +9823,7 @@ async function bootstrapNormal() {
     normalBootstrapStarted = false;
     throw error;
   }
+  await agentSoundFiles.ready;
   stopAgentSoundEvents ??= startAgentSoundEvents(productServerUrl(), agentSounds);
   // Subscribe only after the supervised origin exists. A healthy stream at the
   // legacy :8780 fallback could belong to another running app and never reconnect.

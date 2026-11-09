@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { listContentScripts, subscribePluginSlots } from './plugin-slots.js';
+import { listContentScripts, listNotificationSoundProviders, subscribePluginSlots } from './plugin-slots.js';
 import { observeAgentActivity } from './agent-activity.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
+import { product } from '../lib/product-client.js';
+import { notificationSoundProvider, notificationSoundsEnabled, type AppConfig } from '@zana-ai/zcc-domain/product';
+import { soundProviderKey } from './notification-sounds.js';
 
 /**
  * Mounts plugin content scripts once at app init (Rule 3). Disposes and
@@ -11,8 +14,13 @@ export function PluginContentScriptsHost() {
   const controllers = useRef(new Map<string, AbortController>());
 
   useEffect(() => {
+    let config: AppConfig | null = null;
+    let revision = 0, stopped = false;
     const sync = () => {
-      const scripts = listContentScripts();
+      const selected = config && notificationSoundsEnabled(config)
+        ? listNotificationSoundProviders().filter(row => soundProviderKey(row) === notificationSoundProvider(config!)) : [];
+      // Separate the identity from ordinary content scripts, even when their ids match.
+      const scripts = [...listContentScripts(), ...selected.map(row => ({ ...row, id: `sound/${row.id}` }))];
       const wanted = new Set(scripts.map((row) => `${row.pluginId}:${row.id}:${row.generation}`));
       for (const [key, controller] of controllers.current) {
         if (!wanted.has(key)) {
@@ -61,7 +69,14 @@ export function PluginContentScriptsHost() {
       }
     };
     sync();
-    return subscribePluginSlots(sync);
+    const offSlots = subscribePluginSlots(sync);
+    const offConfig = product.config.onChanged(next => { ++revision; config = next; sync(); });
+    const request = revision;
+    void product.config.get().then(next => {
+      if (stopped || request !== revision) return;
+      config = next; sync();
+    }).catch(() => { /* Keep sound providers off without authoritative config. */ });
+    return () => { stopped = true; offSlots(); offConfig(); };
   }, []);
 
   useEffect(
