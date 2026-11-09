@@ -293,8 +293,20 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     id: 'settings',
     title: 'Configure',
     fixtureKind: 'spatial',
-    blurb: 'The Plugins hub detail for one install.',
+    blurb: 'Plugin configuration, with sound providers in app Settings.',
     surfaces: [
+      {
+        id: 'notificationSoundProvider',
+        title: 'Notification sound provider',
+        summary: 'Plugin-owned controls in Settings → Notifications.',
+        apiSymbols: ['PluginAppSlots.notificationSoundProvider'],
+        bullets: [
+          'Register id, title, optional description, component and mount together.',
+          'Only the selected provider mounts while the host master is on. Switching providers leaves playback off.',
+          'Configure links inspect settings without enabling audio. Return a disposer; honor signal abort and elect one player across main windows.'
+        ],
+        firstParty: ['Sound Studio', 'Warcraft Voices']
+      },
       {
         id: 'settingsSection',
         title: 'Settings section',
@@ -417,7 +429,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'Treat `ready: false` as unavailable and reset transition baselines. Scoped windows remain unready; the first ready snapshot is a silent baseline. The API is absent on older hosts.',
           '`context.experimental_onSignal(channel, listener)` receives only this plugin\'s realtime channel. Both observers return unsubscribe functions and are released on abort.',
           'For one effect across main windows, elect an owner with Chromium Web Locks after readiness; release locks, timers and audio on disposal. No extra activity polling is needed.',
-          'Sound Studio is a forkable sound-plugin example. Import audio packs to replace clips, or create a plugin to rewrite playback and event rules. Enable only one sound plugin: there is no automatic cross-plugin sound override or priority registry.'
+          'Users select their own audio directly in Settings → Notifications, with no plugin required. Sound Studio is an optional forkable example for audio collections and custom playback rules. Register sound players with notificationSoundProvider: Settings → Notifications selects one provider. The provider still owns input priority and its playback rules.'
         ],
         apiSymbols: ['PluginAppContentScripts.register', 'PluginContentScriptContext', 'PluginAgentActivitySnapshot'],
         firstParty: ['Sound Studio']

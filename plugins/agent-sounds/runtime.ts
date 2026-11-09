@@ -3,7 +3,7 @@ import { SoundPolicy } from './policy.js';
 import { SoundPlayer } from './player.js';
 import type { SoundState } from './model.js';
 
-let status = 'Starting sound notifications…';
+let status = 'Choose this provider in Settings → Notifications to enable automatic sounds.';
 const listeners = new Set<() => void>();
 export const runtimeStatus = { get: () => status, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
 function report(message: string) { status = message; listeners.forEach(listener => listener()); }
@@ -28,7 +28,7 @@ export function mountBackground(context: PluginContentScriptContext): () => void
     let state = await callPluginRpc(context.pluginId, 'read') as SoundState;
     if (controller.signal.aborted) return;
     const player = new SoundPlayer();
-    policy = new SoundPolicy(() => state.preferences, cue => {
+    policy = new SoundPolicy(() => ({ ...state.preferences, enabled: true }), cue => {
       const pack = state.packs.find(p => p.id === state.preferences.packId);
       const clip = cue === 'idle' ? pack?.idle : pack?.needsYou;
       if (pack && !clip) return;

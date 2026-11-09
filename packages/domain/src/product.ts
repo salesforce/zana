@@ -1018,7 +1018,20 @@ export interface SavedRecordInput {
  */
 export type AgentState = 'working' | 'blocked' | 'done' | 'idle' | 'unknown' | 'waiting';
 
-export type AgentSoundKind = 'idle' | 'needs-you';
+/** Stable selection: builtin, or an installed plugin id / provider slot id. */
+export function normalizeNotificationSoundProvider(value: unknown): string | undefined {
+  return value === 'builtin' || (typeof value === 'string' && value.length <= 256 && /^[a-zA-Z0-9][a-zA-Z0-9._-]*\/[a-zA-Z0-9_-]+$/.test(value)) ? value : undefined;
+}
+export function notificationSoundProvider(config: Pick<AppConfig, 'notificationSoundProvider'>): string {
+  return normalizeNotificationSoundProvider(config.notificationSoundProvider) ?? 'builtin';
+}
+/** Existing chime preferences retain their behavior until the master is explicitly set. */
+export function notificationSoundsEnabled(config: Pick<AppConfig, 'notificationSoundsEnabled' | 'agentSoundNeedsYou' | 'agentSoundIdle'>): boolean {
+  return config.notificationSoundsEnabled ?? (config.agentSoundNeedsYou === true || config.agentSoundIdle === true);
+}
+export type AgentSoundKind = 'done' | 'idle' | 'needs-you';
+export interface AgentSoundClip { mime: 'audio/mpeg' | 'audio/wav' | 'audio/ogg'; base64: string }
+export type AgentSoundFilesSelection = Partial<Record<AgentSoundKind, { name: string }>>;
 
 export function normalizeAgentSoundVolume(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value)
@@ -2385,9 +2398,15 @@ export interface AppConfig {
    * nothing. Invalid or missing values normalize to `all`.
    */
   notificationDefaultLevel?: NotificationLevel;
-  /** Desktop chimes for visible agents. Both are opt-in; idle settles for five seconds. */
+  /** Desktop notification sounds for visible agents; idle settles for five seconds. */
+  notificationSoundProvider?: string;
+  notificationSoundsEnabled?: boolean;
   agentSoundNeedsYou?: boolean;
   agentSoundIdle?: boolean;
+  /** An explicit completed turn, independent of the optional idle alert. */
+  agentSoundDone?: boolean;
+  /** Fleet-wide spacing for built-in/custom audio, 2–60 seconds; default 2. */
+  agentSoundSpacingSeconds?: number;
   /** Chime volume relative to system output, 0–100; default 50. */
   agentSoundVolume?: number;
   /**

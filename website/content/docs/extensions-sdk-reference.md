@@ -154,6 +154,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Configure
 
+- `notificationSoundProvider` — controls in Settings → Notifications, plus an exclusive host-gated background audio lifecycle.
 - `settingsSection` — React settings UI on the plugin’s Plugins hub detail (Configure)
 
 ### Platform
@@ -235,7 +236,12 @@ export default definePluginApp(app => {
 
 ### Replacing sounds or sound behavior
 
-**Change clips:** import WAV/MP3/OGG or an OpenPeon pack into Sound Studio.
+**Choose your own audio:** Settings → Notifications → Chimes & custom audio
+lets users select an MP3, WAV, or OGG for each event, with previews and no plugin
+required. Native main selects and copies files; the renderer never supplies a
+playback path. Completed turns and idle are separate notifications.
+
+**Optional collections:** import audio or an OpenPeon pack into Sound Studio.
 Packs are data only; they do not execute hooks or change the plugin's rules.
 
 **Change behavior:** fork Sound Studio or create an independent plugin using
@@ -245,20 +251,54 @@ owns transitions, stability and cooldowns, `player.ts` owns playback, and
 limits and customization. The plugin imports only the public SDK and React;
 it needs no core renderer imports or daemon credentials.
 
-Enable one sound implementation at a time. Turn off the previous plugin's
-notifications or disable that plugin, and keep separate built-in chimes off.
-Installing a sound plugin does **not** automatically override another plugin
-or the built-in chimes: there is no sound-provider registry, global selection
-or cross-plugin priority arbitration. Sound Studio's per-plugin Chromium
-Web Lock prevents that plugin from playing twice across main windows; another
-plugin has independent ownership. Request playback ownership only after a
-ready activity snapshot so scoped windows cannot take the lock.
+### Notification sound providers
 
-Replacement plugins should provide an explicit opt-in switch, bounded imports,
-silent startup baselines, input-request priority and a bounded/coalesced idle
-policy. Release all timers and audio on disposal. Verify actual playback,
-page-closed operation, window deduplication and disable cleanup through built
-Electron; mocks alone cannot prove browser audio or window ownership.
+Register the controls and background runtime together:
+
+```tsx
+app.slots.notificationSoundProvider({
+  id: 'voice',
+  title: 'My voices',
+  description: 'Custom clips and notification rules.',
+  component: VoiceSettings, // receives { pluginId }
+  mount: startVoicePlayer   // receives PluginContentScriptContext; returns disposer
+});
+```
+
+The host lists enabled plugins' providers under **Settings → Notifications → Sounds**.
+The provider picker searches titles and descriptions and displays one provider's
+settings at a time. Use a clear title and short description so users can find it.
+It mounts only the selected provider while the master sound switch is on, even
+when Settings is closed. The provider owns its own clips, imports, volume,
+event choices, cooldowns and playback policy. Do not add a second master switch
+or register the same player using general contentScripts. Ordinary
+settingsSection still belongs to the plugin's hub Configure page.
+
+The stable provider key is pluginId/slotId. The persisted app settings are
+notificationSoundProvider (builtin by default) and notificationSoundsEnabled.
+Main validates the bounded reference; it grants no paths or credentials.
+Switching providers turns the master off. Configure links and Settings search
+only inspect a provider; they never select it or enable sound. Installed plugin
+details retain installation controls and a **Configure sounds** deep link.
+
+Disable, switch, uninstall, reload and shutdown abort the provider signal and
+release its resources. Missing or failed providers stay silent; the host never
+falls back to another player. Existing built-in chime preferences keep their
+behavior until the master is explicitly set. Existing plugin packs and settings
+remain stored, but users must select their migrated provider and enable the
+host master. New profiles and previously off configurations stay off.
+
+Feature-detect notificationSoundProvider on older hosts; offer settings and
+previews without starting automatic audio when it is absent. The registry
+coordinates providers using this contract, not legacy independent content
+scripts. Migrate those players to participate in selection.
+
+A provider must still elect one owner across main windows using a Chromium
+Web Lock, taken only after a ready activity snapshot. Seed initial activity
+silently, give input requests priority, bound/coalesce queues, and release
+timers/audio on signal abort.
+Verify actual playback, page-closed operation, cross-window deduplication and
+disable/switch cleanup in built Electron. Core contains no concrete plugin ids.
 
 ## Adding an Agents view
 

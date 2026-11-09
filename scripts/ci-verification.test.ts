@@ -122,6 +122,17 @@ it('selects sound playback for the plugin and generic activity SDK seams', () =>
   }
 });
 
+it('selects native audio imports and provider ownership at their production boundaries', () => {
+  for (const path of ['apps/desktop/src/native/agent-sound-files.ts', 'apps/desktop/src/native/agent-sound-ipc.ts', 'apps/desktop/src/native/agent-sound-events.ts', 'apps/app/src/views/settings/AgentSoundSettings.tsx']) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/agent-notification-sounds.spec.ts', 'e2e/custom-notification-sounds.spec.ts']));
+  }
+  for (const path of ['apps/app/src/plugins/notification-sounds.ts', 'apps/app/src/plugins/PluginContentScriptsHost.tsx', 'apps/app/src/views/settings/NotificationsSettingsView.tsx', 'packages/plugin-sdk/src/internal/plugin-app-collector.ts']) {
+    expect(boundarySpecs([path])).toContain('e2e/notification-sound-providers.spec.ts');
+  }
+  expect(boundarySpecs(['docs/sounds.md'])).toEqual([]);
+  expect(boundarySpecs(['apps/app/src/views/settings/TerminalSettings.tsx'])).not.toContain('e2e/custom-notification-sounds.spec.ts');
+});
+
 it('selects the close-with-follow-up spec for the close summary seams', () => {
   for (const path of [
     'apps/server/src/services/followups/close-summary.ts',
