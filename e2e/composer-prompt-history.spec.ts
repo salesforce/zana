@@ -15,7 +15,8 @@ async function caret(input: Locator) {
   return input.evaluate(element => {
     const editor = (element as PromptElement).editor;
     const { from, to, head } = editor.state.selection;
-    return { from, to, top: editor.view.coordsAtPos(head).top, text: editor.getText({ blockSeparator: '\n' }) };
+    return { from, to, line: editor.state.doc.textBetween(0, head, '\n', '\n').split('\n').length - 1,
+      text: editor.getText({ blockSeparator: '\n' }) };
   });
 }
 async function placeCaret(input: Locator, position: 'start' | 'end' | number) {
@@ -66,16 +67,17 @@ test('arrows edit a multiline draft and recall history only at the first and las
   const last = await caret(input);
   expect(last.text).toBe(draft);
   await input.press('ArrowUp');
-  expect((await caret(input)).top).toBeLessThan(last.top);
+  await expect.poll(async () => (await caret(input)).line).toBe(2);
   expect((await caret(input)).text).toBe(draft);
   await input.press('ArrowDown');
-  expect((await caret(input)).top).toBe(last.top);
+  await expect.poll(async () => (await caret(input)).line).toBe(3);
   expect((await caret(input)).text).toBe(draft);
   await input.press('ArrowDown');
   expect((await caret(input)).text).toBe(draft);
-  await input.press('ArrowUp');
-  await input.press('ArrowUp');
-  await input.press('ArrowUp');
+  for (const line of [2, 1, 0]) {
+    await input.press('ArrowUp');
+    await expect.poll(async () => (await caret(input)).line).toBe(line);
+  }
   expect((await caret(input)).text).toBe(draft);
   await input.press('ArrowUp');
   await expect(input).toHaveText('Previous prompt');
@@ -93,10 +95,10 @@ test('soft-wrapped lines retain native navigation and the first visual line can 
   await input.press('ArrowUp');
   // The scroll container can keep the caret at the same viewport Y while it
   // moves through wrapped lines. Check the actual editor position instead.
-  expect((await caret(input)).from).toBeLessThan(last.from);
+  await expect.poll(async () => (await caret(input)).from).toBeLessThan(last.from);
   expect((await caret(input)).text).toBe(draft);
   await input.press('ArrowDown');
-  expect((await caret(input)).from).toBe(last.from);
+  await expect.poll(async () => (await caret(input)).from).toBe(last.from);
   expect((await caret(input)).text).toBe(draft);
   await placeCaret(input, 4);
   await input.press('ArrowUp');
@@ -124,11 +126,11 @@ test('paragraphs and list items navigate as one prompt, including while browsing
   });
   const middle = await caret(input);
   await input.press('ArrowUp');
-  expect((await caret(input)).top).toBeLessThan(middle.top);
+  await expect.poll(async () => (await caret(input)).from).toBeLessThan(middle.from);
   expect((await caret(input)).text).toBe(middle.text);
   await placeCaret(input, middle.from);
   await input.press('ArrowDown');
-  expect((await caret(input)).top).toBeGreaterThan(middle.top);
+  await expect.poll(async () => (await caret(input)).from).toBeGreaterThan(middle.from);
   expect((await caret(input)).text).toBe(middle.text);
   await placeCaret(input, 'end');
   await input.press('ArrowDown');
@@ -150,9 +152,8 @@ test('autocomplete, selection shortcuts, toolbar keys and copied-context drafts 
   await input.fill('Select this draft');
   await placeCaret(input, 'end');
   await input.press('Shift+ArrowUp');
-  const selection = await caret(input);
-  expect(selection.from).not.toBe(selection.to);
-  expect(selection.text).toBe('Select this draft');
+  await expect.poll(async () => { const { from, to } = await caret(input); return from !== to; }).toBe(true);
+  expect((await caret(input)).text).toBe('Select this draft');
   await input.press('ArrowUp');
   expect((await caret(input)).text).toBe('Select this draft');
   const send = win.getByTestId('thread-command-send');
