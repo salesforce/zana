@@ -76,6 +76,38 @@ describe('uninstalledSkillWarnings', () => {
   });
 });
 
+describe('multi-skill reach needs one slot covering every skill', () => {
+  it('FAILs (required) when disjoint workers each allow only one of the required skills', () => {
+    const r = admit([slot('w1', ['review']), slot('w2', ['deploy'])], ['review', 'deploy'], {
+      inventory: { version: 1, observedAt: 1, maxAgeMs: 10, skills: [{ name: 'review', available: true }, { name: 'deploy', available: true }], mcpServers: [], models: [], providers: [] }
+    });
+    expect(r.ready).toBe(false);
+    expect(skillChecks(r).find((c) => c.status === 'FAIL')).toMatchObject({ required: true, unavailable: expect.arrayContaining(['review', 'deploy']), message: expect.stringContaining('no single worker slot') });
+  });
+  it('passes when one worker covers all skills even if another covers one', () => {
+    const r = admit([slot('w1', ['review', 'deploy']), slot('w2', ['deploy'])], ['review', 'deploy'], {
+      inventory: { version: 1, observedAt: 1, maxAgeMs: 10, skills: [{ name: 'review', available: true }, { name: 'deploy', available: true }], mcpServers: [], models: [], providers: [] }
+    });
+    expect(skillChecks(r).some((c) => c.status === 'FAIL')).toBe(false);
+  });
+  it('a single skill gap still reports only the per-skill failure', () => {
+    const r = admit([slot('w1', ['review'])], ['review', 'deploy']);
+    expect(skillChecks(r).filter((c) => c.status === 'FAIL' && c.message.includes('no single worker slot'))).toHaveLength(0);
+    expect(skillChecks(r).some((c) => c.status === 'FAIL' && c.unavailable?.[0] === 'deploy')).toBe(true);
+  });
+});
+
+describe('non-enforcing harness allowlists', () => {
+  it('a codex slot carrying an allowlist is unrestricted: no reach failure or warning', () => {
+    const r = admit([{ ...slot('w1', ['zcc-inbox']), provider: 'codex' }], ['review']);
+    expect(skillChecks(r).some((c) => c.status === 'FAIL')).toBe(false);
+  });
+  it('a claude-code slot with an allowlist is still restricted; codex peer makes the unit reachable', () => {
+    expect(admit([{ ...slot('w1', ['zcc-inbox']), provider: 'claude-code' }], ['review']).ready).toBe(false);
+    expect(admit([{ ...slot('w1', ['zcc-inbox']), provider: 'claude' }, { ...slot('w2', ['zcc-inbox']), provider: 'opencode' }], ['review']).ready).toBe(true);
+  });
+});
+
 describe('slotRouteSnapshot skillAllowlist', () => {
   it('carries a copy of the allowlist only when supplied', () => {
     const list = ['zcc-inbox'];

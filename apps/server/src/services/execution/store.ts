@@ -8,7 +8,7 @@ import {
   readRawFile
 } from '../harness-routing/storage.js';
 import type { WorkflowPolicyResultV1 } from './policy-result.js';
-import { EXECUTION_FAILURE_CODES, isDurableCoordination, isSquadExecutionTargetSelector, skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
+import { EXECUTION_FAILURE_CODES, isDurableCoordination, isOrchestratorSlotId, isSquadExecutionTargetSelector, enforcedSkillAllowlist, skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import type { SquadExecutionTargetSelector, SquadWorktreeOwnership } from '@zana-ai/zcc-domain/product';
 import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
@@ -1336,8 +1336,10 @@ export function slotRouteSnapshot(slot: { slotId: string; personaId: string }, m
 }
 
 /** Required skills (`requires.skills`) a slot's allowlist cannot reach; empty when unrestricted or none required (D2). */
-export function unreachableSkills(unit: { requires?: WorkUnitRequirementsV1 }, model: Pick<ResolvedModelSnapshotV1, 'skillAllowlist'> | undefined): string[] {
-  return (unit.requires?.skills ?? []).filter((skill) => !skillAllowlistCovers(model?.skillAllowlist, skill));
+export function unreachableSkills(unit: { requires?: WorkUnitRequirementsV1 }, model: Pick<ResolvedModelSnapshotV1, 'skillAllowlist' | 'provider'> | undefined): string[] {
+  // Only a harness that enforces the allowlist restricts the slot; the rest launch unrestricted.
+  const allowlist = enforcedSkillAllowlist(model);
+  return (unit.requires?.skills ?? []).filter((skill) => !skillAllowlistCovers(allowlist, skill));
 }
 
 /**
@@ -1373,7 +1375,7 @@ export function kickoffBlockerQuestion(unit: { id: string; title?: string }, onl
 
 /** The authorized worker slots: every slot except the coordinator's. One definition for dispatch and kickoff recovery. */
 function workerSlotsOf(record: ExecutionRecord): Array<{ slotId: string; personaId: string }> {
-  return (record.authorizationContext?.slots ?? []).filter((slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:'));
+  return (record.authorizationContext?.slots ?? []).filter((slot) => !isOrchestratorSlotId(slot.slotId));
 }
 
 export function createExecutionStore(options: ExecutionStoreOptions) {
@@ -2275,7 +2277,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (unit.state !== 'READY') throw new Error('work unit is not ready');
       if (unit.assignedSlotId && unit.assignedSlotId !== slotId) throw new Error('work unit is assigned to another slot');
       if (authority.role === 'orchestrator') {
-        if (slotId === authority.slotId || slotId.startsWith('orchestrator:')) throw new Error('coordinator must assign work to a worker slot');
+        if (slotId === authority.slotId || isOrchestratorSlotId(slotId)) throw new Error('coordinator must assign work to a worker slot');
         assertAuthorizedSlot(record, slotId);
       }
       assertScopeAvailable(record, unit);
@@ -2397,6 +2399,16 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             unit.failureCode = 'NO_QUALIFIED_ROUTE';
             unit.failure = 'no authorized worker slot satisfies hard routing requirements';
             unit.history.push({ action: 'failed', attempt: unit.attempt, at: timestamp, detail: unit.failure });
+            deriveReadiness(record);
+            continue;
+          }
+          if (unit.requires?.skills?.length && workerSlots.length && !workerSlots.some((slot) => unreachableSkills(unit, modelBySlot.get(slot.slotId)).length === 0)) {
+            // No worker slot, busy or free, can reach every required skill: waiting never helps, so surface it.
+            unit.state = 'FAILED';
+            unit.failureCode = 'NO_QUALIFIED_ROUTE';
+            unit.failure = 'no authorized worker slot allows every required skill';
+            unit.history.push({ action: 'failed', attempt: unit.attempt, at: timestamp, detail: unit.failure });
+            decisionsChanged = true;
             deriveReadiness(record);
             continue;
           }
@@ -2891,7 +2903,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         .map((entry) => ({ entry, slotId: entry.slot.slotId, priceUsd: slotRankingPriceUsd(slotRouteSnapshot(entry.slot, modelBySlot.get(entry.slot.slotId)), unit.routing?.estimatedContextBytes), deferred: opts?.deferredSlotIds?.has(entry.slot.slotId) === true }))
         .sort((a, b) => compareCheapestFit(a, b))
         .map((ranked) => ranked.entry);
-      const untried = workerSlots.filter((slot) => !tried.has(slot.slotId));
+      // A slot that cannot reach a required skill never takes the unit, routed or not (same check as dispatch).
+      const untried = workerSlots.filter((slot) => !tried.has(slot.slotId) && unreachableSkills(unit, modelBySlot.get(slot.slotId)).length === 0);
       let fresh = cheapestFirst(untried.map((slot) => ({ slot })))[0]?.slot;
       if (unit.routing) {
         // Routing decides who may take the unit: never a FAIL slot, PASS before UNKNOWN, cheapest-fit within each.

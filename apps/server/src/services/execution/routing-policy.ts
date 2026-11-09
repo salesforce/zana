@@ -38,6 +38,9 @@ export interface SlotEligibilityV1 {
   pricingCatalogVersion: number;
 }
 
+/** Reason text `evaluateSlotEligibility` emits when a slot is below the unit's minimum level. */
+export const LEVEL_UNMET_REASON = 'minimum model level unmet';
+
 const LEVELS: readonly ModelLevel[] = ['low', 'medium', 'high', 'extra-high'];
 
 /** Pure, fail-closed predicate shared by routing policy callers. */
@@ -58,7 +61,7 @@ export function evaluateSlotEligibility(routing: WorkUnitRoutingV1 | undefined, 
   containsAll(slot.capabilities, routing?.requiredCapabilities, 'capability');
   containsAll(slot.modalities, routing?.requiredModalities, 'modality');
   if (routing?.minimumLevel) {
-    require(slot.level === undefined ? undefined : LEVELS.indexOf(slot.level) >= LEVELS.indexOf(routing.minimumLevel), 'minimum model level unmet');
+    require(slot.level === undefined ? undefined : LEVELS.indexOf(slot.level) >= LEVELS.indexOf(routing.minimumLevel), LEVEL_UNMET_REASON);
   }
   if (routing?.estimatedContextBytes !== undefined) {
     require(slot.maxContextBytes === undefined ? undefined : slot.maxContextBytes >= routing.estimatedContextBytes, 'context ceiling unmet');

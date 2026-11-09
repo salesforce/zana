@@ -21,6 +21,7 @@ interface Seat { slotId: string; model: string; deferred?: boolean; skillAllowli
 function build(filePath: string, seats: Seat[], opts: { teamId?: string; lifecycleFails?: boolean; installedSkills?: string[] } = {}) {
   const now = () => 1_000;
   const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
+  const logError = vi.fn();
   const service = new SquadExecutionService({
     store,
     artifacts: createExecutionArtifactStore({ filePath: `${filePath}.artifacts`, id: () => 'artifact-1' }),
@@ -39,10 +40,10 @@ function build(filePath: string, seats: Seat[], opts: { teamId?: string; lifecyc
     },
     cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
     resolveTeamModelSnapshots: () => seats.map((seat) => ({ slotId: seat.slotId, personaId: 'engineer', provider: 'claude', model: seat.model, ...(seat.skillAllowlist ? { skillAllowlist: seat.skillAllowlist } : {}) })),
-    replyToSession: vi.fn(() => true), now, inbox: { append: vi.fn(async () => undefined) }, logError: vi.fn(),
+    replyToSession: vi.fn(() => true), now, inbox: { append: vi.fn(async () => undefined) }, logError,
     spawnDeferredWorker: vi.fn(async (_id: string, slotId: string) => ({ ok: true as const, sessionId: `s-${slotId}` }))
   } as never);
-  return { service, store };
+  return { service, store, logError };
 }
 
 async function assigned(filePath: string, seats: Seat[], opts?: Parameters<typeof build>[2]) {
@@ -62,13 +63,14 @@ describe('service passes deferred seats into cheapest-fit dispatch', () => {
     expect(await assigned(filePath, [{ slotId: 'engineer:0', model: 'claude-opus-4' }, { slotId: 'engineer:1', model: 'claude-haiku-4', deferred: true }])).toBe('engineer:1');
   }));
   it('passes no deferred hint (roster-order fallback) when the lifecycle read fails', async () => fixture(async (filePath) => {
-    const { service, store } = build(filePath, [{ slotId: 'engineer:0', model: 'claude-sonnet-4', deferred: true }, { slotId: 'engineer:1', model: 'claude-sonnet-4' }], { lifecycleFails: true });
+    const { service, store, logError } = build(filePath, [{ slotId: 'engineer:0', model: 'claude-sonnet-4', deferred: true }, { slotId: 'engineer:1', model: 'claude-sonnet-4' }], { lifecycleFails: true });
     const spy = vi.spyOn(store, 'dispatchReady');
     const started = await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Build', slots: [{ initialTask: 'Run tests' }], coordinationMode: 'job-team', workUnits: [unit] } as never);
     if (!started.ok) throw new Error(started.message);
     await service.dispatchReady(coordinator);
     expect(spy).toHaveBeenCalled();
     expect(spy.mock.calls[0][1]).not.toHaveProperty('deferredSlotIds');
+    expect(logError).toHaveBeenCalledWith(expect.stringMatching(/execution execution-1 deferred-seat lookup failed \(team launch .+\)/), expect.objectContaining({ message: 'lifecycle down' }));
   }));
   it('gives identical assignments for an identically configured Team under another id (no per-Team branching)', async () => fixture(async (filePath) => {
     const seats = [{ slotId: 'engineer:0', model: 'claude-opus-4' }, { slotId: 'engineer:1', model: 'claude-haiku-4' }];

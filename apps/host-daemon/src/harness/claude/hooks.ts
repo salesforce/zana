@@ -347,6 +347,7 @@ export function renderClaudeLifecycle(input: {
   const autoMode = !remote && input.autoModeActive
     ? buildClaudeAutoModeSettings(input.config)
     : undefined;
+  const skillKeys = skillSettingsKeys(input.skillSettings);
   const wantsAnyHook = stop || notify || firstPrompt || subagents || toolActivity || overseer || contentScreen || nativeTool;
   const settings = wantsAnyHook || autoMode
     ? buildClaudeHookSettings({
@@ -364,8 +365,8 @@ export function renderClaudeLifecycle(input: {
     autoMode,
     skillSettings: input.skillSettings
       })
-    : Object.keys(skillSettingsKeys(input.skillSettings)).length
-      ? JSON.stringify(skillSettingsKeys(input.skillSettings))
+    : Object.keys(skillKeys).length
+      ? JSON.stringify(skillKeys)
       : undefined;
   const env: Record<string, string> = {};
   if (input.autoModeActive) env.CLAUDE_CODE_ENABLE_AUTO_MODE = '1';

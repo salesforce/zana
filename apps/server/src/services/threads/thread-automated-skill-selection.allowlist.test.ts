@@ -8,7 +8,7 @@ vi.mock('@zana-ai/zcc-db', async (orig) => ({
 }));
 const patch = vi.hoisted(() => ({ calls: [] as unknown[], result: { ok: true } as { ok: boolean } }));
 
-import { copyThreadAutomatedSkillIds, threadAllowedSkillNames, threadSkillSelection } from './thread-automated-skill-selection.js';
+import { copyThreadSkillSelection, threadAllowedSkillNames, threadSkillSelection } from './thread-automated-skill-selection.js';
 
 const db = {} as never;
 const set = (metadata: Record<string, unknown>, corrupt = false) => { meta.value = { metadata, corrupt }; };
@@ -44,24 +44,24 @@ describe('threadSkillSelection', () => {
   });
 });
 
-describe('copyThreadAutomatedSkillIds (fork)', () => {
+describe('copyThreadSkillSelection (fork)', () => {
   it('copies nothing for an unrestricted source', () => {
-    copyThreadAutomatedSkillIds(db, 's', 't');
+    copyThreadSkillSelection(db, 's', 't');
     expect(patch.calls).toEqual([]);
   });
   it('copies both fields, so a forked restricted thread stays restricted', () => {
     set({ automatedSkillIds: ['zcc:a/b'], allowedSkillNames: [] });
-    copyThreadAutomatedSkillIds(db, 's', 't');
+    copyThreadSkillSelection(db, 's', 't');
     expect(patch.calls[0]).toMatchObject({ threadId: 't', set: { automatedSkillIds: ['zcc:a/b'], allowedSkillNames: [] } });
   });
   it('copies allowedSkillNames alone', () => {
     set({ allowedSkillNames: ['x'] });
-    copyThreadAutomatedSkillIds(db, 's', 't');
+    copyThreadSkillSelection(db, 's', 't');
     expect(patch.calls[0]).toMatchObject({ set: { allowedSkillNames: ['x'] } });
   });
   it('throws when the target rejects the metadata', () => {
     set({ allowedSkillNames: ['x'] });
     patch.result = { ok: false };
-    expect(() => copyThreadAutomatedSkillIds(db, 's', 't')).toThrow(/exceeds limit/);
+    expect(() => copyThreadSkillSelection(db, 's', 't')).toThrow(/exceeds limit/);
   });
 });

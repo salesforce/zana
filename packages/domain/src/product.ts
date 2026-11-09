@@ -4667,6 +4667,29 @@ export function skillAllowlistCovers(allowlist: readonly string[] | undefined, s
   return allowlist === undefined || allowlist.some((entry) => skillAllowlistEntryMatches(entry, skill));
 }
 
+/** Slot-id prefix of the squad orchestrator seat (`orchestrator:<personaId>`). */
+export const ORCHESTRATOR_SLOT_PREFIX = 'orchestrator:';
+
+/** True for the orchestrator's slot id: `orchestrator:<personaId>` or the bare legacy `orchestrator`. */
+export function isOrchestratorSlotId(slotId: string): boolean {
+  return slotId === 'orchestrator' || slotId.startsWith(ORCHESTRATOR_SLOT_PREFIX);
+}
+
+/**
+ * Provider ids whose harness actually enforces a skill allowlist at launch (Claude CLI and Claude
+ * Modern). Every other harness launches unrestricted, so an allowlist on its slot is not a restriction.
+ */
+export const SKILL_ALLOWLIST_ENFORCING_PROVIDERS: readonly string[] = ['claude', 'claude-yolo', 'claude-code'];
+
+/**
+ * The allowlist that really restricts a slot: its `skillAllowlist` only when the slot's harness enforces it.
+ * An unknown provider (legacy snapshot) keeps the recorded allowlist; an explicit non-enforcing provider is unrestricted.
+ */
+export function enforcedSkillAllowlist(slot: { provider?: string; skillAllowlist?: readonly string[] } | undefined): readonly string[] | undefined {
+  if (!slot || slot.skillAllowlist === undefined) return undefined;
+  return slot.provider === undefined || SKILL_ALLOWLIST_ENFORCING_PROVIDERS.includes(slot.provider) ? slot.skillAllowlist : undefined;
+}
+
 /** A Zana-injected catalog skill: `id` is `zcc:<owner>/<name>`. */
 export interface SkillCatalogEntry {
   id: string;

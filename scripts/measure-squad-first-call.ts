@@ -16,11 +16,13 @@
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const WORKER_PREFIX = 'Team worker standby. You are';
 export const REQUIRED_REDUCTION = 0.2;
+/** Tolerance so floating-point error (1 - 80/100 = 0.19999999999999996) cannot fail the exact boundary. */
+export const REDUCTION_EPSILON = 1e-9;
 
 export interface FirstCallSample {
   sessionId: string;
@@ -122,7 +124,7 @@ export function summarize(samples: readonly FirstCallSample[], options: MeasureO
   const baselineMedian = median(baseline)!;
   const leanMedian = median(lean)!;
   const reduction = baselineMedian > 0 ? 1 - leanMedian / baselineMedian : 0;
-  return { ...base, baselineMedian, leanMedian, reduction, verdict: reduction >= REQUIRED_REDUCTION ? 'pass' : 'fail' };
+  return { ...base, baselineMedian, leanMedian, reduction, verdict: reduction + REDUCTION_EPSILON >= REQUIRED_REDUCTION ? 'pass' : 'fail' };
 }
 
 async function* transcriptFiles(root: string, projectContains?: string): AsyncGenerator<string> {
@@ -137,7 +139,7 @@ async function* transcriptFiles(root: string, projectContains?: string): AsyncGe
 export async function collectSamples(root: string, projectContains?: string): Promise<FirstCallSample[]> {
   const samples: FirstCallSample[] = [];
   for await (const path of transcriptFiles(root, projectContains)) {
-    const sample = parseTranscript(await readFile(path, 'utf8'), path.split('/').pop()?.replace(/\.jsonl$/, ''));
+    const sample = parseTranscript(await readFile(path, 'utf8'), basename(path, '.jsonl'));
     if (sample) samples.push(sample);
   }
   return samples;
@@ -154,23 +156,40 @@ export function parseArgs(argv: readonly string[]): Record<string, string> {
   return out;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+/** Strict positive-integer parse for count flags; throws a usage error otherwise. */
+export function parsePositiveInt(flag: string, raw: string): number {
+  if (!/^[1-9][0-9]*$/.test(raw.trim())) throw new Error(`invalid --${flag}: expected a positive integer, got "${raw}"`);
+  const n = Number(raw.trim());
+  if (!Number.isSafeInteger(n)) throw new Error(`invalid --${flag}: expected a positive integer, got "${raw}"`);
+  return n;
+}
+
+/** CLI body. Returns the process exit code: 0 pass, 1 fail, 2 insufficient sessions or bad arguments. */
+export async function run(argv: readonly string[]): Promise<number> {
   try {
-    const args = parseArgs(process.argv.slice(2));
+    const args = parseArgs(argv);
     if (!args['lean-after']) throw new Error('--lean-after <ISO timestamp> is required');
+    const minBaseline = args['min-baseline'] !== undefined ? parsePositiveInt('min-baseline', args['min-baseline']) : undefined;
+    const minLean = args['min-lean'] !== undefined ? parsePositiveInt('min-lean', args['min-lean']) : undefined;
     const root = args.root ?? join(homedir(), '.claude', 'projects');
     const samples = await collectSamples(root, args['project-contains']);
     const result = summarize(samples, {
       leanAfter: args['lean-after'],
       ...(args.version ? { version: args.version } : {}),
       ...(args.entrypoint ? { entrypoint: args.entrypoint } : {}),
-      ...(args['min-baseline'] ? { minBaseline: Number(args['min-baseline']) } : {}),
-      ...(args['min-lean'] ? { minLean: Number(args['min-lean']) } : {})
+      ...(minBaseline !== undefined ? { minBaseline } : {}),
+      ...(minLean !== undefined ? { minLean } : {})
     });
     console.log(JSON.stringify({ workerSessionsScanned: samples.length, ...result }, null, 2));
-    process.exit(result.verdict === 'pass' ? 0 : result.verdict === 'fail' ? 1 : 2);
+    return result.verdict === 'pass' ? 0 : result.verdict === 'fail' ? 1 : 2;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
+    return 2;
   }
 }
+
+/* c8 ignore start */
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  process.exit(await run(process.argv.slice(2)));
+}
+/* c8 ignore stop */

@@ -331,10 +331,13 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
 
   const personaById = useMemo(() => new Map(allPersonas.map((p) => [p.id, p])), [allPersonas]);
   // Worker personas that set their own skills keep them under lean workers (explicit list wins).
-  const workerPersonasWithSkills = useMemo(
-    () => slots.filter((s) => s.personaId !== orchestratorPersonaId && personaById.get(s.personaId)?.skills !== undefined),
-    [slots, orchestratorPersonaId, personaById]
-  );
+  const workerPersonasWithSkills = useMemo(() => {
+    const unique = new Map<string, (typeof slots)[number]>();
+    for (const s of slots) {
+      if (s.personaId !== orchestratorPersonaId && personaById.get(s.personaId)?.skills !== undefined) unique.set(s.personaId, s);
+    }
+    return [...unique.values()];
+  }, [slots, orchestratorPersonaId, personaById]);
 
   // Advisory only (never gates save): member personas whose skill allowlist names uninstalled skills.
   const restrictedMembers = useMemo(

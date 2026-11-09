@@ -71,6 +71,18 @@ describe('Team editor lean workers toggle', () => {
     expect(screen.getByTestId(NOTICE).textContent).toMatch(/skills apply even when lean is on: Skilled/);
   });
 
+  it('lists a persona once even when it fills several worker slots', () => {
+    const team = {
+      ...base,
+      leanWorkers: true,
+      slots: [...base.slots, { personaId: 'p-skilled', quantity: 1 }, { personaId: 'p-skilled', quantity: 2 }]
+    };
+    render(<SquadEditor team={team} mode="edit" onClose={vi.fn()} />);
+    const text = screen.getByTestId(NOTICE).textContent ?? '';
+    expect(text).toMatch(/lean is on: Skilled\.$/);
+    expect(text.match(/Skilled/g)).toHaveLength(1);
+  });
+
   it('does not count the orchestrator persona skills, and hides the notice when lean is off', () => {
     const { unmount } = render(<SquadEditor team={{ ...base, leanWorkers: true }} mode="edit" onClose={vi.fn()} />);
     expect(screen.queryByTestId(NOTICE)).toBeNull();

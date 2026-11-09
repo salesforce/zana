@@ -109,7 +109,7 @@ import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { narrowAutomatedSkillIds, providerSkillAllowlist, resolvePersonaSkillSelection } from '@zana-ai/zcc-server/services/threads/persona-skill-selection';
 import { resolveSkillSettings } from '@zana-ai/zcc-host-daemon/skill-allowlist-settings';
 import type { SkillSettings } from '@zana-ai/zcc-host-daemon/harness/registration';
-import { effectiveSkills } from '@zana-ai/zcc-domain/product';
+import { effectiveSkills, isOrchestratorSlotId } from '@zana-ai/zcc-domain/product';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { AgentLivenessCache } from '@zana-ai/zcc-host-daemon/harness/agent-liveness';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
@@ -5344,7 +5344,7 @@ export function slotSkillAllowlistFact(
 ): { skillAllowlist?: string[] } {
   const persona = personaSnapshot.find((candidate) => candidate.id === personaId);
   if (!persona) return {};
-  const skillAllowlist = effectiveSkills(team, persona, slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker');
+  const skillAllowlist = effectiveSkills(team, persona, isOrchestratorSlotId(slotId) ? 'orchestrator' : 'worker');
   return skillAllowlist === undefined ? {} : { skillAllowlist };
 }
 
@@ -5494,7 +5494,7 @@ export function authorizeTeamLaunch(
     }
   }
   // Seats that start on demand keep this approval until they start (see on-demand-seat.ts).
-  const waitingSlotIds = new Set(deferredSeatsOf(team, expectedSlots.map((slot) => ({ ...slot, role: slot.slotId.startsWith('orchestrator:') ? 'orchestrator' as const : 'worker' as const }))).map((slot) => slot.slotId));
+  const waitingSlotIds = new Set(deferredSeatsOf(team, expectedSlots.map((slot) => ({ ...slot, role: isOrchestratorSlotId(slot.slotId) ? 'orchestrator' as const : 'worker' as const }))).map((slot) => slot.slotId));
   for (const [index, expected] of expectedSlots.entries()) {
     const persona = known.get(expected.personaId)!;
     const window = seatApprovalWindow(waitingSlotIds.has(expected.slotId), authorizedAt, { expiresAt, deadlineAt });
@@ -5502,7 +5502,7 @@ export function authorizeTeamLaunch(
     const projection = slotRecoveryLaunch({
       nativeRecovery: requestedRecovery,
       slotId: expected.slotId,
-      role: expected.slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker',
+      role: isOrchestratorSlotId(expected.slotId) ? 'orchestrator' : 'worker',
       personaId: expected.personaId,
       profile: profileFor(persona)
     });
@@ -5532,7 +5532,7 @@ export function authorizeTeamLaunch(
       // Only a snapshot that passed the current slot's identity fence reaches
       // the launch payload. launchTeam consumes this main-issued slot data.
       ...((projection.recoveryResume || modernSnapshotIdentityOk(team, requestedRecovery, expected.slotId,
-        expected.slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker', expected.personaId, profileFor(persona)))
+        isOrchestratorSlotId(expected.slotId) ? 'orchestrator' : 'worker', expected.personaId, profileFor(persona)))
         && requestedRecovery ? { nativeRecovery: requestedRecovery } : {})
     });
   }
@@ -6811,10 +6811,16 @@ const squadPlanCheckService = createSquadProposalService({
   lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false }),
   // Advisory tier fit against the Squad's roster; planless runs keep their roster untouched.
   planTierFit: async (projectId, teamId, workUnits) => {
-    const team = teams.list().find((candidate) => candidate.id === teamId);
-    if (!team) return [];
-    const models = await resolveTeamModelSnapshots(projectId, { teamId, slots: expandTeamSlots(team).map(() => ({ initialTask: '' })) });
-    return summarizePlanTierFit(workUnits as ExecutionWorkUnitInput[], models.map((model) => ({ ...model, personaId: model.personaId ?? '' }))).findings;
+    try {
+      const team = teams.list().find((candidate) => candidate.id === teamId);
+      if (!team) return [];
+      const models = await resolveTeamModelSnapshots(projectId, { teamId, slots: expandTeamSlots(team).map(() => ({ initialTask: '' })) });
+      return summarizePlanTierFit(workUnits as ExecutionWorkUnitInput[], models.map((model) => ({ ...model, personaId: model.personaId ?? '' }))).findings;
+    } catch (err) {
+      // Advisory only: a provider or catalog lookup failure must not reject squad_plan_check.
+      logMainError(`squad_plan_check tierFit (team ${teamId})`, err);
+      return [];
+    }
   }
 });
 
@@ -6985,7 +6991,7 @@ const squadExecutionService = new SquadExecutionService({
   , routingEnforcementEnabled: (record) => {
     const workerSlotIds = (record.authorizationContext?.slots ?? [])
       .map((slot) => slot.slotId)
-      .filter((slotId) => !slotId.startsWith('orchestrator:'));
+      .filter((slotId) => !isOrchestratorSlotId(slotId));
     // Startup dispatch can run before launch authorization records its worker
     // roster. Do not freeze advisory routing before route facts exist.
     if (workerSlotIds.length === 0) return false;
@@ -7109,7 +7115,7 @@ const squadExecutionService = new SquadExecutionService({
       observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
       ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId)
     }));
-    const workerRoutes = slotRoutes.filter((slot) => !slot.slotId.startsWith('orchestrator:'));
+    const workerRoutes = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
     const routingRequested = team?.routingEnforced ?? config.teamRoutingEnforcementEnabled === true;
     // Advisory mode passes an explicit false so ROUTE_ELIGIBILITY stays non-required;
     // tier-fit findings are warnings and never change `ready`.

@@ -44,7 +44,7 @@ export function threadSkillSelection(db: ZccDatabase, threadId: string): {
 }
 
 /** Copy both main-authorized selection fields to a fork; an absent field stays absent (unrestricted). */
-export function copyThreadAutomatedSkillIds(db: ZccDatabase, sourceThreadId: string, targetThreadId: string): void {
+export function copyThreadSkillSelection(db: ZccDatabase, sourceThreadId: string, targetThreadId: string): void {
   const { automatedSkillIds, allowedSkillNames } = threadSkillSelection(db, sourceThreadId);
   if (automatedSkillIds === undefined && allowedSkillNames === undefined) return;
   const result = patchThreadPluginMetadata(db, {
@@ -56,5 +56,5 @@ export function copyThreadAutomatedSkillIds(db: ZccDatabase, sourceThreadId: str
     },
     remove: []
   });
-  if (!result.ok) throw new Error('automated skill metadata exceeds limit');
+  if (!result.ok) throw new Error('thread skill selection metadata exceeds limit');
 }

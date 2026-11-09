@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import { resolveSkillSettings } from '../skill-allowlist-settings.js';
 
 /**
@@ -51,8 +52,11 @@ describe.skipIf(!hasClaude || !!process.env.CI)('claude init honours the allowli
     // Every plugin we switched off (MCP-only ones included) is gone from the session.
     const leanPlugins = new Set(lean.plugins.map((p) => p.name));
     for (const prefix of enabledOff) expect(leanPlugins.has(prefix), `${prefix} plugin should be off`).toBe(false);
-    // Only partly-allowed / un-enumerable plugins may still contribute qualified skills.
-    const stillQualified = lean.skills.filter((s) => s.includes(':')).map((s) => s.split(':')[0]);
+    // Only partly-allowed / un-enumerable plugins may still contribute qualified skills. A qualified
+    // skill the allowlist itself keeps (zcc-inbox, even from a plugin that ships only it) is fine.
+    const stillQualified = lean.skills
+      .filter((s) => s.includes(':') && skillAllowlistCovers(['zcc-inbox'], s) === false)
+      .map((s) => s.split(':')[0]);
     const tolerated = new Set(resolved.bestEffortPlugins.map((id) => id.split('@')[0]));
     for (const prefix of stillQualified) expect(tolerated.has(prefix), `${prefix} left on unexpectedly`).toBe(true);
   }, 120_000);

@@ -255,8 +255,9 @@ export function emitPersonaSkillNotice(ctx: ProductHttpContext, threadId: string
       type: stored.type,
       payload: stored.payload
     });
-  } catch {
-    // Advisory only.
+  } catch (error) {
+    // Advisory only: never fail the launch, but leave a trace that the notice was not recorded.
+    console.warn(`[zcc] persona skill notice not recorded for thread ${threadId}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

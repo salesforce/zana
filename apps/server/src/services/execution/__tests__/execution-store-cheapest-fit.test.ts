@@ -21,7 +21,7 @@ function request() {
 }
 
 type Store = ReturnType<typeof createExecutionStore>;
-interface Seat { slotId: string; personaId?: string; model?: string; skillAllowlist?: string[] }
+interface Seat { slotId: string; personaId?: string; model?: string; provider?: string; skillAllowlist?: string[] }
 const HAIKU = 'claude-haiku-4';
 const SONNET = 'claude-sonnet-4';
 const OPUS = 'claude-opus-4';
@@ -38,7 +38,7 @@ async function running(store: Store, roster: Seat[], unit: Partial<ExecutionWork
   }, 'authorization-digest');
   // Unmodeled seats get a provider/model the catalog does not price.
   record = await store.replaceResolvedModels(record.id, roster.map((slot) => ({
-    slotId: slot.slotId, personaId: slot.personaId ?? 'engineer', provider: slot.model ? 'claude' : 'other', model: slot.model ?? 'unpriced', maxContextBytes: 10_000_000,
+    slotId: slot.slotId, personaId: slot.personaId ?? 'engineer', provider: slot.provider ?? (slot.model ? 'claude' : 'other'), model: slot.model ?? 'unpriced', maxContextBytes: 10_000_000,
     ...(slot.skillAllowlist ? { skillAllowlist: slot.skillAllowlist } : {})
   })));
   return store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true, ...unit }]);
@@ -172,11 +172,29 @@ describe('advisory dispatch respects routing and skill reach', () => {
     expect(await pick(`${filePath}.b`, roster, { requires: { skills: ['review'] }, routing: { version: 1 } })).toBe('w2');
     expect(await pick(`${filePath}.c`, roster, {})).toBe('w0');
   }));
-  it('leaves a skill-requiring unit READY when no free slot reaches the skill, and enforce treats such slots as FAIL', async () => fixture(async (filePath) => {
+  it('fails a skill-requiring unit NO_QUALIFIED_ROUTE when no worker slot at all reaches the skill, even without routing', async () => fixture(async (filePath) => {
     const roster = [{ slotId: 'w0', model: HAIKU, skillAllowlist: ['zcc-inbox'] }];
-    expect(await pick(`${filePath}.a`, roster, { requires: { skills: ['review'] } })).toBeUndefined();
-    const store = createExecutionStore({ filePath: `${filePath}.b`, id: () => 'execution', now: () => 1_000 });
-    const record = await running(store, roster, { requires: { skills: ['review'] }, routing: { version: 1 } });
+    const store = createExecutionStore({ filePath: `${filePath}.a`, id: () => 'execution', now: () => 1_000 });
+    const record = await running(store, roster, { requires: { skills: ['review'] } });
+    const { record: after, assignments } = await store.dispatchReady(record.id);
+    expect(assignments).toEqual([]);
+    expect(after.workUnits![0]).toMatchObject({ state: 'FAILED', failureCode: 'NO_QUALIFIED_ROUTE', failure: 'no authorized worker slot allows every required skill' });
+    expect((await store.get(record.id))!.workUnits![0].state).toBe('FAILED');
+  }));
+  it('keeps a skill-requiring unit READY (not failed) while the only capable slot is busy', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    const roster = [{ slotId: 'w0', model: HAIKU, skillAllowlist: ['review'] }];
+    let record = await running(store, roster, { id: 'a', requires: { skills: ['review'] } } as Partial<ExecutionWorkUnitInput>);
+    record = (await store.dispatchReady(record.id)).record;
+    expect(record.workUnits![0].state).toBe('CLAIMED');
+  }));
+  it('an allowlist on a non-enforcing harness does not restrict the slot', async () => fixture(async (filePath) => {
+    const roster = [{ slotId: 'w0', model: HAIKU, provider: 'codex', skillAllowlist: ['zcc-inbox'] }];
+    expect(await pick(filePath, roster, { requires: { skills: ['review'] } })).toBe('w0');
+  }));
+  it('enforce treats a skill-restricted slot as FAIL', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    const record = await running(store, [{ slotId: 'w0', model: HAIKU, skillAllowlist: ['zcc-inbox'] }], { requires: { skills: ['review'] }, routing: { version: 1 } });
     const { record: after } = await store.dispatchReady(record.id, { enforceRouting: true });
     expect(after.workUnits![0]).toMatchObject({ state: 'FAILED', failureCode: 'NO_QUALIFIED_ROUTE' });
     expect(after.routingDecisions![0].candidates[0].reasons).toContain('skill unreachable: review');
@@ -207,6 +225,18 @@ describe('kickoff reassignment uses the same comparator', () => {
   it('never reassigns to a slot whose allowlist cannot reach a required skill', async () => fixture(async (filePath) => {
     const seats = roster({ slotId: 'w1', model: HAIKU, skillAllowlist: ['zcc-inbox'] }, { slotId: 'w2', model: OPUS }, { slotId: 'w3', model: OPUS, skillAllowlist: ['zcc-inbox'] });
     expect(await reassigned(filePath, seats, { requires: { skills: ['review'] }, routing: { version: 1 } })).toBe('w2');
+  }));
+  it('never reassigns an UNROUTED unit to a skill-restricted slot', async () => fixture(async (filePath) => {
+    const seats = roster({ slotId: 'w1', model: HAIKU, skillAllowlist: ['zcc-inbox'] }, { slotId: 'w2', model: OPUS }, { slotId: 'w3', model: OPUS, skillAllowlist: ['zcc-inbox'] });
+    expect(await reassigned(filePath, seats, { requires: { skills: ['review'] } })).toBe('w2');
+  }));
+  it('does not skill-restrict an unrouted reassignment onto a non-enforcing harness', async () => fixture(async (filePath) => {
+    const seats = roster({ slotId: 'w1', model: HAIKU, provider: 'codex', skillAllowlist: ['zcc-inbox'] }, { slotId: 'w2', model: OPUS, skillAllowlist: ['zcc-inbox'] }, { slotId: 'w3', model: OPUS, skillAllowlist: ['zcc-inbox'] });
+    expect(await reassigned(filePath, seats, { requires: { skills: ['review'] } })).toBe('w1');
+  }));
+  it('throws when every untried slot is skill-restricted (unrouted)', async () => fixture(async (filePath) => {
+    const seats = roster({ slotId: 'w1', model: HAIKU, skillAllowlist: ['zcc-inbox'] }, { slotId: 'w2', model: OPUS, skillAllowlist: ['zcc-inbox'] }, { slotId: 'w3', model: OPUS, skillAllowlist: ['zcc-inbox'] });
+    await expect(reassigned(filePath, seats, { requires: { skills: ['review'] } })).rejects.toThrow(/no untried worker slot/);
   }));
   it('picks the cheapest PASS slot under routing and never a FAIL slot', async () => fixture(async (filePath) => {
     const seats = roster({ slotId: 'w1', model: OPUS }, { slotId: 'w2', personaId: 'reviewer', model: HAIKU }, { slotId: 'w3', model: SONNET });

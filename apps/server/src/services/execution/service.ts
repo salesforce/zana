@@ -1,4 +1,4 @@
-import { isDurableCoordination, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, isOrchestratorSlotId, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
@@ -415,7 +415,7 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
   const orchestratorSessionId = launchResult?.orchestratorSessionId || lifecycle.orchestratorSessionId;
 
   const workers = lifecycle.workers || launchResult?.workers;
-  const orchestratorWorker = workers?.find((w: any) => w.slotId === 'orchestrator' || w.slotId?.startsWith('orchestrator:'));
+  const orchestratorWorker = workers?.find((w: any) => w.slotId && isOrchestratorSlotId(w.slotId));
   const orchestratorAuthorizationId = orchestratorWorker?.authorizationId || lifecycle.orchestratorAuthorizationId;
 
   return {
@@ -1835,7 +1835,10 @@ export class ExecutionService {
         .filter((worker) => worker.projectId === record.projectId && worker.process === 'authorized' && !worker.sessionId && worker.onDemand === true && (worker as { transport?: string }).transport !== 'MODERN')
         .flatMap((worker) => worker.slotId ? [worker.slotId] : []);
       return ids.length ? { deferredSlotIds: new Set(ids) } : {};
-    } catch { return {}; }
+    } catch (error) {
+      (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution ${record.id} deferred-seat lookup failed (team launch ${record.teamLaunchRequestId}); dispatching without deferred hint`, error);
+      return {};
+    }
   }
 
   /**
@@ -2988,7 +2991,7 @@ export class ExecutionService {
       try {
         const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
         const slotId = value.deliveries?.find(delivery => delivery.id === deliveryId)?.slotId;
-        const sessionId = slotId === 'orchestrator' || slotId?.startsWith('orchestrator:')
+        const sessionId = slotId && isOrchestratorSlotId(slotId)
           ? lifecycle?.orchestratorSessionId
           : lifecycle?.workers?.find(worker => worker.slotId === slotId && worker.projectId === record.projectId)?.sessionId;
         if (sessionId) this.deps.triggerDeliveryDrain?.(sessionId);
@@ -3363,7 +3366,7 @@ export class ExecutionService {
     const rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
     const lifecycle = extractLifecycleInfo(rawLifecycle);
     let targetSessionId: string | undefined;
-    if (blocker.slotId === 'orchestrator' || blocker.slotId.startsWith('orchestrator:')) {
+    if (isOrchestratorSlotId(blocker.slotId)) {
       targetSessionId = lifecycle?.orchestratorSessionId;
     } else {
       const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === blocker.slotId && candidate.projectId === record.projectId);

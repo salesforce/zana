@@ -128,7 +128,11 @@ describe('persona skill allowlist notice (fail loudly, non-fatal)', () => {
     expect(patch.events[0]).toMatchObject({ threadId: 't9', type: 'system/operation', payload: { operation: 'persona_skill_allowlist', status: 'warning', message: 'careful' } });
     expect(emit).toHaveBeenCalledWith('threads:event', expect.objectContaining({ threadId: 't9', sequence: 7, kind: 'thread.event' }));
     patch.appendThrows = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(() => emitPersonaSkillNotice(c, 't9', 'careful')).not.toThrow();
+    // The failure is non-fatal but leaves a diagnostic naming the thread.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('thread t9'));
+    warn.mockRestore();
     patch.appendThrows = false;
     const source = readFileSync(new URL('./thread-create.ts', import.meta.url), 'utf8');
     expect(source).toContain('emitPersonaSkillNotice(ctx, args.thread.id, personaSkillAllowlistNotice(');

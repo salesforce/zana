@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { skillAllowlistCovers, uninstalledAllowlistSkills } from '@zana-ai/zcc-domain/product';
+import { enforcedSkillAllowlist, isOrchestratorSlotId, skillAllowlistCovers, uninstalledAllowlistSkills } from '@zana-ai/zcc-domain/product';
 import { launchDigest } from './digest.js';
 import { projectIdentityDigest } from './commit-revalidation.js';
 import type { LaunchAuthorizationBinding, LaunchConsumerKind, LaunchPrincipalRef } from './types.js';
@@ -17,7 +17,7 @@ import type { WorkUnitRoutingV1 } from '../execution/routing-policy.js';
 import type { WorkUnitRequirementsV1 } from '../execution/store.js';
 import type { WorkOutputDeclarationV1 } from '../execution/contracts.js';
 import { validOutputDeclaration } from '../execution/contracts.js';
-import { evaluateSlotEligibility, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
+import { evaluateSlotEligibility, LEVEL_UNMET_REASON, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
 
 export type AdmissionCheckStatus = 'PASS' | 'FAIL' | 'SKIPPED' | 'UNKNOWN';
 
@@ -148,7 +148,6 @@ export interface TierFitFinding {
 }
 
 const TIER_LEVELS: readonly ModelLevel[] = ['low', 'medium', 'high', 'extra-high'];
-const LEVEL_UNMET_REASON = 'minimum model level unmet';
 
 /**
  * Advisory plan-time tier fit. Warnings only: it never produces a FAIL and never gates registration.
@@ -162,7 +161,7 @@ export function summarizePlanTierFit(
   slotRoutes: readonly SlotRoute[],
   now: number = Date.now()
 ): { findings: readonly TierFitFinding[] } {
-  const workers = slotRoutes.filter((slot) => !slot.slotId.startsWith('orchestrator:'));
+  const workers = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
   const findings: TierFitFinding[] = [];
   for (const unit of units) {
     if (!unit.routing) continue;
@@ -248,7 +247,7 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
   healthChecks('PROVIDER_HEALTH', requiredProviders, input.inventory?.providers, inventoryFresh, add);
   for (const unit of normalizedPlan ?? []) {
     if (!unit.routing) continue;
-    const eligible = (input.slotRoutes ?? []).filter((slot) => !slot.slotId.startsWith('orchestrator:'))
+    const eligible = (input.slotRoutes ?? []).filter((slot) => !isOrchestratorSlotId(slot.slotId))
       .map((slot) => evaluateSlotEligibility(unit.routing, slot, now));
     const status: AdmissionCheckStatus = eligible.some((result) => result.status === 'PASS') ? 'PASS'
       : eligible.some((result) => result.status === 'UNKNOWN') ? 'UNKNOWN' : 'FAIL';
@@ -544,16 +543,21 @@ function skillReachChecks(
   add: (check: AdmissionCheck) => void
 ): void {
   const skills = unit.requires?.skills;
-  const workers = (slotRoutes ?? []).filter((slot) => !slot.slotId.startsWith('orchestrator:'));
-  if (!skills?.length || !workers.some((slot) => slot.skillAllowlist !== undefined)) return;
+  const workers = (slotRoutes ?? []).filter((slot) => !isOrchestratorSlotId(slot.slotId));
+  if (!skills?.length || !workers.some((slot) => enforcedSkillAllowlist(slot) !== undefined)) return;
   const unreachable: string[] = [];
   for (const skill of skills) {
-    const able = workers.filter((slot) => skillAllowlistCovers(slot.skillAllowlist, skill)).length;
+    const able = workers.filter((slot) => skillAllowlistCovers(enforcedSkillAllowlist(slot), skill)).length;
     if (able === 0) unreachable.push(skill);
     else if (able < workers.length) {
       add({ code: 'SKILL_AVAILABLE', status: 'UNKNOWN', required: false, subject: unit.id,
         message: `work unit ${unit.id} skill ${skill} is reachable by ${able} of ${workers.length} worker slots; work may serialize` });
     }
+  }
+  // Dispatch needs ONE slot covering every required skill; per-skill reach alone can leave the unit READY forever.
+  if (!unreachable.length && skills.length > 1 && !workers.some((slot) => skills.every((skill) => skillAllowlistCovers(enforcedSkillAllowlist(slot), skill)))) {
+    add({ code: 'SKILL_AVAILABLE', status: 'FAIL', required: true, subject: unit.id, unavailable: [...skills],
+      message: `work unit ${unit.id} requirement unavailable: no single worker slot allows all required skills: ${skills.join(', ')}` });
   }
   if (unreachable.length) {
     add({ code: 'SKILL_AVAILABLE', status: 'FAIL', required: true, subject: unit.id, unavailable: unreachable,
