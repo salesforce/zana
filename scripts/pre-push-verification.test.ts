@@ -1367,3 +1367,69 @@ describe('test timeout scale in pre-push (#693)', () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
+
+describe('test timeout scale obligations (#693, CodeNod OBL-001..005)', () => {
+  const testEnvs = (run: ReturnType<typeof vi.fn>) =>
+    run.mock.calls
+      .filter(([command, args]) => command === 'pnpm' && (args[0] === 'verify:full' || (args[0] === 'exec' && args[1] === 'vitest')))
+      .map(([, , options]) => options?.env);
+  const fakeRun = () => vi.fn((command: string) => (command === 'fd' ? { status: 0, stdout: 'scripts/a.guard.test.ts\n' } : { status: 0 }));
+  const withRoot = (fn: (root: string) => void) => {
+    const root = mkdtempSync(join(tmpdir(), 'zana-push-obl-'));
+    try { fn(root); } finally { rmSync(root, { recursive: true, force: true }); }
+  };
+
+  // OBL-001 (REQ-3): any explicit value, valid or not, is kept; other props are kept.
+  it.each(['2', '5', '', '0', 'invalid'])('OBL-001: keeps explicit %j in every flow and keeps unrelated env', (value) => {
+    expect(withTestTimeoutScale({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value })).toEqual({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value });
+    for (const flow of ['full', 'fast-selected', 'fast-broad'] as const) {
+      withRoot((root) => {
+        const run = fakeRun();
+        const env = { PATH: process.env.PATH ?? '', KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value };
+        if (flow === 'full') runFullVerification({ oid: OID, root, run, log: vi.fn(), env });
+        else runFastVerification({ oid: OID, base: BASE, paths: [flow === 'fast-broad' ? 'vitest.config.ts' : 'apps/server/src/service.test.ts'], root, run, log: vi.fn(), env });
+        const envs = testEnvs(run);
+        expect(envs.length).toBeGreaterThan(0);
+        for (const e of envs) expect(e).toMatchObject({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value });
+      });
+    }
+  });
+
+  // OBL-002 / OBL-003 (REQ-3): the default reaches every test command in every branch, and the caller's env is untouched.
+  it.each(['full', 'fast-selected', 'fast-broad'] as const)('OBL-002/003: %s gives every test command scale 3 without mutating the caller env', (flow) => {
+    withRoot((root) => {
+      const run = fakeRun();
+      const env = { PATH: process.env.PATH ?? '', KEEP: 'x' };
+      const before = { ...env };
+      if (flow === 'full') runFullVerification({ oid: OID, root, run, log: vi.fn(), env });
+      else runFastVerification({ oid: OID, base: BASE, paths: [flow === 'fast-broad' ? 'vitest.config.ts' : 'apps/server/src/service.test.ts'], root, run, log: vi.fn(), env });
+      const envs = testEnvs(run);
+      expect(envs).toHaveLength(flow === 'full' ? 1 : 2);
+      for (const e of envs) expect(e).toMatchObject({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: '3' });
+      expect(env).toEqual(before);
+    });
+  });
+
+  // OBL-004 (REQ-3): a user value of 5 reaches every test command.
+  it.each(['full', 'fast-selected', 'fast-broad'] as const)('OBL-004: %s keeps a user value of 5', (flow) => {
+    withRoot((root) => {
+      const run = fakeRun();
+      const env = { PATH: process.env.PATH ?? '', ZANA_TEST_TIMEOUT_SCALE: '5' };
+      if (flow === 'full') runFullVerification({ oid: OID, root, run, log: vi.fn(), env });
+      else runFastVerification({ oid: OID, base: BASE, paths: [flow === 'fast-broad' ? 'vitest.config.ts' : 'apps/server/src/service.test.ts'], root, run, log: vi.fn(), env });
+      for (const e of testEnvs(run)) expect(e?.ZANA_TEST_TIMEOUT_SCALE).toBe('5');
+    });
+  });
+
+  // OBL-005 (REQ-3): shaping never mutates its input and returns a fresh object.
+  it('OBL-005: withTestTimeoutScale returns a new object and leaves the input unchanged', () => {
+    const unset = Object.freeze({ A: '1' });
+    const set = Object.freeze({ A: '1', ZANA_TEST_TIMEOUT_SCALE: '4' });
+    const shaped = withTestTimeoutScale(unset);
+    expect(shaped).not.toBe(unset);
+    expect(unset).toEqual({ A: '1' });
+    const kept = withTestTimeoutScale(set);
+    expect(kept).not.toBe(set);
+    expect(kept).toEqual(set);
+  });
+});
