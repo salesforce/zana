@@ -114,3 +114,17 @@ it('accepts dot-kind terminal envelopes from the host event stream', () => {
   appendConversationThreadEvent(db, { threadId: id, type: 'turn.completed', payload: { type: 'turn/completed', scope: { turnId: 'root' }, status: 'failed', error: { message: 'Host failure' } } });
   expect(getConversationFailurePreview(db, id)).toBe('Host failure');
 });
+
+it('probes bounded per-thread preview revisions without parsing event payloads', async () => {
+  const { getConversationPreviewVersions, PREVIEW_VERSION_THREAD_LIMIT } = await import('./conversation-assistant-preview.js');
+  const { createPendingInteraction, setPendingInteractionResolving } = await import('./pending-interactions.js');
+  const id = setup();
+  expect(getConversationPreviewVersions(db, [])).toEqual([]);
+  expect(getConversationPreviewVersions(db, [id, id])).toEqual([{ threadId: id, eventSequence: null, interactionId: null }]);
+  const event = message(id, 'Context');
+  const pending = createPendingInteraction(db, { originKind: 'plugin', threadId: id, pluginId: 'test', rendererId: 'test', payload: '{}' });
+  expect(getConversationPreviewVersions(db, [id])).toEqual([{ threadId: id, eventSequence: event.sequence, interactionId: pending.id }]);
+  setPendingInteractionResolving(db, { id: pending.id, resolution: '{}' });
+  expect(getConversationPreviewVersions(db, [id])[0].interactionId).toBeNull();
+  expect(getConversationPreviewVersions(db, Array.from({ length: 110 }, (_, i) => `t${i}`))).toHaveLength(PREVIEW_VERSION_THREAD_LIMIT);
+});

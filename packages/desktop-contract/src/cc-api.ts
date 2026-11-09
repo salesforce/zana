@@ -1407,7 +1407,7 @@ export interface CcApi {
    * main-authorized verb (Rule 1).
    */
   companion: {
-    request(): Promise<CompanionSnapshot>;
+    request(): Promise<CompanionSnapshot | null>;
     onSnapshot(cb: (snapshot: CompanionSnapshot) => void): () => void;
     /** Hide the main window(s) behind the rail ("Minimize to Command Center"). */
     enter(): Promise<boolean>;

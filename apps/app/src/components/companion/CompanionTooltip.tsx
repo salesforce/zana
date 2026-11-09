@@ -11,10 +11,17 @@ export function CompanionTooltip() {
   const [tip, setTip] = useState<CompanionTooltipView | null>(null);
 
   useEffect(() => {
-    const off = product.companion.onTooltip(setTip);
+    let alive = true;
+    let pushed = false;
+    const off = product.companion.onTooltip((next) => {
+      pushed = true;
+      if (alive) setTip(next);
+    });
     // The first hover can beat this window's first render: pull what's showing.
-    void product.companion.tooltipState().then((t) => t && setTip((cur) => cur ?? t));
-    return off;
+    void product.companion.tooltipState().then((t) => {
+      if (alive && !pushed) setTip(t);
+    }).catch((err) => console.error('[companion] read tooltip:', err));
+    return () => { alive = false; off(); };
   }, []);
 
   useEffect(() => {

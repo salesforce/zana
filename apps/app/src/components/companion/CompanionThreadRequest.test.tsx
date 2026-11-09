@@ -115,3 +115,11 @@ it('omits missing or duplicate context and describes truncated previews honestly
   expect(screen.getByText('Message preview shortened. Open the thread for the full message.')).toBeTruthy();
   expect(screen.getByText('Which path?')).toBeTruthy();
 });
+
+it('shows navigation failure without losing the pending question', async () => {
+  h.open.mockRejectedValueOnce(new Error('IPC closed'));
+  render(<CompanionQuestion request={request()} onBack={vi.fn()} onResolved={vi.fn()} />);
+  await act(async () => fireEvent.click(screen.getAllByRole('button', { name: 'Open in Zana' })[0]));
+  expect(screen.getByRole('alert').textContent).toContain('Could not open Zana');
+  expect(screen.getByText('Which path?')).toBeTruthy();
+});

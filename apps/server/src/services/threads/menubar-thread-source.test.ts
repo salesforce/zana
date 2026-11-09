@@ -8,18 +8,21 @@ const { getConversationThread, getConversationAssistantPreview, getConversationF
   listMenubarConversationThreads: vi.fn(),
   conversationThreadViews: vi.fn()
 }));
+const getConversationPreviewVersions = vi.hoisted(() => vi.fn(() => [] as Array<{ threadId: string; eventSequence: number; interactionId: string | null }>));
 
 vi.mock('@zana-ai/zcc-db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@zana-ai/zcc-db')>()),
   getConversationThread,
   getConversationAssistantPreview,
   getConversationFailurePreview,
+  getConversationPreviewVersions,
   listPendingInteractionsByThread,
   listMenubarConversationThreads
 }));
 vi.mock('./conversation-thread-view.js', () => ({ conversationThreadViews }));
 
 import { createMenubarThreadSource } from './menubar-thread-source.js';
+import { MenubarAgentSchema } from '@zana-ai/zcc-contracts/runtime';
 
 function view(over: Record<string, unknown>) {
   return {
@@ -42,7 +45,7 @@ function source() {
   };
 }
 
-beforeEach(() => { vi.clearAllMocks(); listPendingInteractionsByThread.mockReturnValue([]); getConversationAssistantPreview.mockReturnValue(undefined); getConversationFailurePreview.mockReturnValue(undefined); });
+beforeEach(() => { vi.clearAllMocks(); getConversationPreviewVersions.mockReturnValue([]); listPendingInteractionsByThread.mockReturnValue([]); getConversationAssistantPreview.mockReturnValue(undefined); getConversationFailurePreview.mockReturnValue(undefined); });
 
 describe('menubar thread source', () => {
   const question = { id: 'q1', prompt: 'Which path?', multiSelect: false, allowFreeText: true,
@@ -61,6 +64,46 @@ describe('menubar thread source', () => {
     expect(row.context).toMatchObject({ interactionId: 'interaction-1', createdAt: 123, questions: [question, { ...question, id: 'q2', prompt: 'Anything else?' }], lastMessage: { text: 'I tested the paths.' } });
     expect(getConversationAssistantPreview).toHaveBeenCalledWith({}, 't1', 'turn-1', 123);
     expect(listPendingInteractionsByThread).toHaveBeenCalledWith({}, { threadId: 't1', statuses: ['pending'], limit: 1 });
+  });
+  it.each([4, 6])('keeps %s-question payloads within the runtime contract without dropping another thread', (count) => {
+    const value = pending({ kind: 'user_question', questions: Array.from({ length: count }, (_, i) => ({ ...question, id: `q${i}` })) });
+    conversationThreadViews.mockReturnValue([view({ hasPendingInteraction: true }), view({ id: 'working' })]);
+    const rows = value.list();
+    expect(rows).toHaveLength(2);
+    if (count === 4) expect(rows[0].context?.questions).toHaveLength(4);
+    else expect(rows[0].context).toBeUndefined();
+    for (const row of rows) expect(MenubarAgentSchema.safeParse(row).success).toBe(true);
+  });
+  it('reuses unchanged context and failure previews and invalidates only changed threads', () => {
+    const value = pending({ kind: 'user_question', questions: [question] });
+    conversationThreadViews.mockReturnValue([view({ hasPendingInteraction: true }), view({ id: 'failed', status: 'error' })]);
+    const versions = [
+      { threadId: 't1', eventSequence: 1, interactionId: 'interaction-1' },
+      { threadId: 'failed', eventSequence: 2, interactionId: null }
+    ];
+    getConversationPreviewVersions.mockImplementation(() => versions.map(v => ({ ...v })));
+    getConversationFailurePreview.mockReturnValue('Connection closed');
+    const initial = value.list();
+    expect(value.list()).toEqual(initial);
+    expect(listPendingInteractionsByThread).toHaveBeenCalledTimes(1);
+    expect(getConversationAssistantPreview).toHaveBeenCalledTimes(1);
+    expect(getConversationFailurePreview).toHaveBeenCalledTimes(1);
+    versions[0].eventSequence++;
+    value.list();
+    expect(getConversationAssistantPreview).toHaveBeenCalledTimes(2);
+    versions[0].interactionId = 'interaction-2';
+    value.list();
+    expect(listPendingInteractionsByThread).toHaveBeenCalledTimes(3);
+    expect(getConversationFailurePreview).toHaveBeenCalledTimes(1);
+    versions[1].eventSequence++;
+    getConversationFailurePreview.mockReturnValue('New failure');
+    expect(value.list()[0].question).toBe('Thread failed: New failure');
+    expect(getConversationFailurePreview).toHaveBeenCalledTimes(2);
+    conversationThreadViews.mockReturnValue([]);
+    value.list();
+    conversationThreadViews.mockReturnValue([view({ hasPendingInteraction: true })]);
+    value.list();
+    expect(listPendingInteractionsByThread).toHaveBeenCalledTimes(4);
   });
   it.each([
     [{ kind: 'approval', subject: { kind: 'command', itemId: 'i', command: 'pnpm test', cwd: null, actions: [], sessionGrant: null }, reason: null, availableDecisions: ['allow_once', 'deny'] }, 'Approve command: pnpm test'],

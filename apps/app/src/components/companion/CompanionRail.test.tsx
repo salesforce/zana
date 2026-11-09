@@ -254,3 +254,40 @@ it('renders agent attention/working/done dots and the edge class', async () => {
   expect(container.querySelector('.cc-dot-done')).toBeTruthy();
   rerender(<CompanionRail />);
 });
+
+it('reports rejected panel and exit actions and retries without optimistic panel state', async () => {
+  await mount();
+  h.openPanel.mockRejectedValueOnce(new Error('IPC closed'));
+  await act(async () => fireEvent.click(btn(/^Agents:/)));
+  expect(screen.getByRole('alert').textContent).toContain('Could not open the panel');
+  expect(btn(/^Agents:/).getAttribute('aria-pressed')).toBe('false');
+  await act(async () => fireEvent.click(btn(/^Agents:/)));
+  expect(screen.queryByRole('alert')).toBeNull();
+  h.exit.mockRejectedValueOnce(new Error('IPC closed'));
+  await act(async () => fireEvent.click(btn(/Open the full window/)));
+  expect(screen.getByRole('alert').textContent).toContain('Could not open Zana');
+});
+
+it('recovers local dragging state after drag start rejects', async () => {
+  const { container } = await mount();
+  h.dragStart.mockRejectedValueOnce(new Error('IPC closed'));
+  const rail = container.querySelector('.cc-rail')!;
+  fireEvent.pointerDown(rail, { button: 0, screenX: 20, screenY: 20, pointerId: 1 });
+  await act(async () => fireEvent.pointerMove(rail, { screenX: 30, screenY: 30, pointerId: 1 }));
+  expect(screen.getByRole('alert').textContent).toContain('Could not move the rail');
+  fireEvent.click(btn(/^Agents:/));
+  expect(h.openPanel).toHaveBeenCalledOnce();
+});
+
+it('owns rejected show and hide tooltip commands', async () => {
+  await mount();
+  h.tooltip.mockRejectedValueOnce(new Error('IPC closed'));
+  fireEvent.mouseEnter(btn(/^Agents:/));
+  await act(async () => vi.advanceTimersByTime(350));
+  fireEvent.mouseEnter(btn(/^Scheduler:/));
+  act(() => vi.advanceTimersByTime(350));
+  h.tooltip.mockRejectedValueOnce(new Error('IPC closed'));
+  fireEvent.mouseLeave(btn(/^Scheduler:/));
+  await act(async () => vi.advanceTimersByTime(90));
+  expect(h.tooltip).toHaveBeenLastCalledWith(null);
+});

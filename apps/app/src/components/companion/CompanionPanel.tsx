@@ -17,6 +17,7 @@ import {
   scheduleStatus
 } from './companion-model.js';
 import { useCompanion, useNow } from './useCompanion.js';
+import { useCompanionAction, type CompanionAction } from './companion-action.js';
 
 /** Card inset from the panel window edge (room for the CSS shadow). */
 const INSET = 8;
@@ -28,6 +29,7 @@ const INSET = 8;
  */
 export function CompanionPanel() {
   const { snapshot, pending, resolve } = useCompanion();
+  const { run, error } = useCompanionAction();
   const [state, setState] = useState<CompanionPanelState | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [closingAfterResolve, setClosingAfterResolve] = useState(false);
@@ -93,11 +95,11 @@ export function CompanionPanel() {
       if (e.key !== 'Escape') return;
       e.preventDefault();
       if (expandedRequest) setExpanded(null);
-      else void product.companion.closePanel();
+      else run('close the panel', () => product.companion.closePanel());
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [expandedRequest]);
+  }, [expandedRequest, run]);
 
   useEffect(() => {
     if (!closingAfterResolve) return;
@@ -105,9 +107,9 @@ export function CompanionPanel() {
       setClosingAfterResolve(false);
       return;
     }
-    const timer = setTimeout(() => void product.companion.closePanel(), 250);
+    const timer = setTimeout(() => run('close the panel', () => product.companion.closePanel()), 250);
     return () => clearTimeout(timer);
-  }, [closingAfterResolve, state?.kind, pending.length]);
+  }, [closingAfterResolve, state?.kind, pending.length, run]);
 
   if (!state) return null;
 
@@ -131,18 +133,18 @@ export function CompanionPanel() {
       <NeedsYouList pending={pending} snapshot={snapshot} now={now} onOpen={setExpanded} />
     );
   } else if (state.kind === 'agents') {
-    body = <AgentsList snapshot={snapshot} pending={pending} now={now} />;
+    body = <AgentsList snapshot={snapshot} pending={pending} now={now} run={run} />;
   } else if (state.kind === 'scheduler') {
-    body = <ScheduleList schedules={snapshot.schedules} now={now} />;
+    body = <ScheduleList schedules={snapshot.schedules} now={now} run={run} />;
   } else {
-    body = <StatusCard snapshot={snapshot} pendingCount={pending.length} />;
+    body = <StatusCard snapshot={snapshot} pendingCount={pending.length} run={run} />;
   }
 
   return (
     <div
       className={`cc-panel-stage cc-rail-${state.railSide}`}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) void product.companion.closePanel();
+        if (e.target === e.currentTarget) run('close the panel', () => product.companion.closePanel());
       }}
     >
       <div
@@ -153,6 +155,7 @@ export function CompanionPanel() {
         aria-label={panelTitle(state.kind)}
       >
         {body}
+        {error && <p className="cc-error" role="alert">{error}</p>}
       </div>
     </div>
   );
@@ -205,28 +208,31 @@ function NeedsYouList({
         <AllClear working={snapshot.counts.working} />
       ) : (
         <ul className="cc-list">
-          {pending.map((r) => (
-            <li key={r.id}>
-              <button type="button" className="cc-row cc-request" onClick={() => onOpen(r.id)}>
-                <span className="cc-dot cc-dot-attention" aria-hidden />
-                <span className="cc-row-main">
-                  {r.threadContext ? <>
-                    <span className="cc-row-prompt cc-thread-list-prompt">{r.prompt}</span>
-                    <span className="cc-row-meta">{r.agentTitle}</span>
-                    {r.threadContext.lastMessage && <span className="cc-thread-list-context">{r.threadContext.lastMessage.text}</span>}
-                  </> : <>
-                    <span className="cc-row-title">{r.agentTitle}</span>
-                    <span className="cc-row-prompt">{r.prompt || 'Waiting for your input'}</span>
-                  </>}
-                  <span className="cc-row-meta">
-                    {r.projectName} · {formatAge(r.ts, now)}
-                    {(r.threadContext?.questions?.length ?? r.questions?.length ?? 0) > 1 ? ` · ${r.threadContext?.questions?.length ?? r.questions?.length} questions` : ''}
+          {pending.map((r) => {
+            const questionCount = r.threadContext?.questions?.length ?? r.questions?.length ?? 0;
+            return (
+              <li key={r.id}>
+                <button type="button" className="cc-row cc-request" onClick={() => onOpen(r.id)}>
+                  <span className="cc-dot cc-dot-attention" aria-hidden />
+                  <span className="cc-row-main">
+                    {r.threadContext ? <>
+                      <span className="cc-row-prompt cc-thread-list-prompt">{r.prompt}</span>
+                      <span className="cc-row-meta">{r.agentTitle}</span>
+                      {r.threadContext.lastMessage && <span className="cc-thread-list-context">{r.threadContext.lastMessage.text}</span>}
+                    </> : <>
+                      <span className="cc-row-title">{r.agentTitle}</span>
+                      <span className="cc-row-prompt">{r.prompt || 'Waiting for your input'}</span>
+                    </>}
+                    <span className="cc-row-meta">
+                      {r.projectName} · {formatAge(r.ts, now)}
+                      {questionCount > 1 ? ` · ${questionCount} questions` : ''}
+                    </span>
                   </span>
-                </span>
-                <ChevronRight size={14} className="cc-row-chevron" />
-              </button>
-            </li>
-          ))}
+                  <ChevronRight size={14} className="cc-row-chevron" />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </>
@@ -236,11 +242,13 @@ function NeedsYouList({
 function AgentsList({
   snapshot,
   pending,
-  now
+  now,
+  run
 }: {
   snapshot: CompanionSnapshot;
   pending: CompanionRequest[];
   now: number;
+  run: CompanionAction;
 }) {
   const groups = groupAgents(snapshot.agents, pending);
   const total = snapshot.agents.length;
@@ -255,7 +263,7 @@ function AgentsList({
             className="cc-icon-btn"
             title="New agent"
             aria-label="New agent"
-            onClick={() => void product.companion.open({ kind: 'home' })}
+            onClick={() => run('open a new agent', () => product.companion.open({ kind: 'home' }))}
           >
             <Plus size={15} />
           </button>
@@ -265,13 +273,13 @@ function AgentsList({
         <p className="cc-empty">No agents running.</p>
       ) : (
         <div className="cc-scroll">
-          <AgentGroup label="Needs you" agents={groups.needsYou} now={now} />
-          <AgentGroup label="Working" agents={groups.working} now={now} />
-          <AgentGroup label="Idle" agents={groups.idle} now={now} />
+          <AgentGroup label="Needs you" agents={groups.needsYou} now={now} run={run} />
+          <AgentGroup label="Working" agents={groups.working} now={now} run={run} />
+          <AgentGroup label="Idle" agents={groups.idle} now={now} run={run} />
         </div>
       )}
       <footer className="cc-card-foot">
-        <button type="button" className="cc-link" onClick={() => void product.companion.open({ kind: 'agents' })}>
+        <button type="button" className="cc-link" onClick={() => run('open Agents', () => product.companion.open({ kind: 'agents' }))}>
           Open Agents
         </button>
       </footer>
@@ -279,7 +287,7 @@ function AgentsList({
   );
 }
 
-function AgentGroup({ label, agents, now }: { label: string; agents: CompanionAgent[]; now: number }) {
+function AgentGroup({ label, agents, now, run }: { label: string; agents: CompanionAgent[]; now: number; run: CompanionAction }) {
   if (agents.length === 0) return null;
   return (
     <section className="cc-group">
@@ -294,9 +302,9 @@ function AgentGroup({ label, agents, now }: { label: string; agents: CompanionAg
               className="cc-row"
               title={`${a.title} — ${agentStatusLabel(a)}`}
               onClick={() =>
-                void product.companion.open(
+                run('open the agent', () => product.companion.open(
                   a.threadId ? { kind: 'thread', threadId: a.threadId } : { kind: 'session', sessionId: a.sessionId }
-                )
+                ))
               }
             >
               <span className={`cc-dot ${agentDot(a)}`} aria-hidden />
@@ -319,7 +327,7 @@ function AgentGroup({ label, agents, now }: { label: string; agents: CompanionAg
 /** How long a confirmed launch waits for its running snapshot to show up. */
 const START_GRACE_MS = 8000;
 
-function ScheduleList({ schedules, now }: { schedules: CompanionSchedule[]; now: number }) {
+function ScheduleList({ schedules, now, run }: { schedules: CompanionSchedule[]; now: number; run: CompanionAction }) {
   // Run now → "Starting…" until main reports the run (or it was refused).
   // null is an in-flight request; the timestamp starts the snapshot grace period.
   const [starting, setStarting] = useState<Record<string, number | null>>({});
@@ -371,7 +379,7 @@ function ScheduleList({ schedules, now }: { schedules: CompanionSchedule[]; now:
                 <button
                   type="button"
                   className="cc-row"
-                  onClick={() => void product.companion.open({ kind: 'scheduler', taskId: t.id })}
+                  onClick={() => run('open the schedule', () => product.companion.open({ kind: 'scheduler', taskId: t.id }))}
                 >
                   <span
                     className={`cc-dot ${t.running || isStarting ? 'cc-dot-working' : failed ? 'cc-dot-attention' : 'cc-dot-idle'}`}
@@ -403,7 +411,7 @@ function ScheduleList({ schedules, now }: { schedules: CompanionSchedule[]; now:
         </ul>
       )}
       <footer className="cc-card-foot">
-        <button type="button" className="cc-link" onClick={() => void product.companion.open({ kind: 'scheduler' })}>
+        <button type="button" className="cc-link" onClick={() => run('open Scheduler', () => product.companion.open({ kind: 'scheduler' }))}>
           Open Scheduler
         </button>
       </footer>
@@ -411,7 +419,7 @@ function ScheduleList({ schedules, now }: { schedules: CompanionSchedule[]; now:
   );
 }
 
-function StatusCard({ snapshot, pendingCount }: { snapshot: CompanionSnapshot; pendingCount: number }) {
+function StatusCard({ snapshot, pendingCount, run }: { snapshot: CompanionSnapshot; pendingCount: number; run: CompanionAction }) {
   const c = snapshot.counts;
   return (
     <>
@@ -425,10 +433,10 @@ function StatusCard({ snapshot, pendingCount }: { snapshot: CompanionSnapshot; p
         </div>
       </div>
       <div className="cc-status-actions">
-        <button type="button" className="cc-btn-primary" onClick={() => void product.companion.open({ kind: 'main' })}>
+        <button type="button" className="cc-btn-primary" onClick={() => run('open Zana', () => product.companion.open({ kind: 'main' }))}>
           Open Zana
         </button>
-        <button type="button" className="cc-btn-ghost" onClick={() => void product.companion.exit()}>
+        <button type="button" className="cc-btn-ghost" onClick={() => run('exit Command Center', () => product.companion.exit())}>
           Exit Command Center
         </button>
       </div>

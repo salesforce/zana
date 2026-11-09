@@ -5,6 +5,7 @@ import { product } from '../../lib/product-client.js';
 import { railIndicators, type Indicator } from './companion-model.js';
 import zanaLogo from '../../assets/zana-favicon.svg';
 import { useCompanion } from './useCompanion.js';
+import { companionAction, useCompanionAction, type CompanionAction } from './companion-action.js';
 
 /** Pointer travel (px) before a press on the rail becomes a drag. */
 const DRAG_THRESHOLD = 4;
@@ -24,9 +25,9 @@ export function CompanionRail() {
   const [open, setOpen] = useState<CompanionPanelKind | null>(null);
   const [pulse, setPulse] = useState(false);
   const prevCount = useRef(0);
-  const drag = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
-  const suppressClick = useRef(false);
+  const { run, error } = useCompanionAction();
   const tip = useTooltip(open !== null);
+  const { drag, suppressClick, pointerHandlers } = useRailDrag(tip.hide, run);
 
   const ind = railIndicators(snapshot, pending.length);
 
@@ -55,39 +56,8 @@ export function CompanionRail() {
 
   const toggle = (kind: CompanionPanelKind, focusRequestId?: string) => {
     if (suppressClick.current) return;
-    if (open === kind && !focusRequestId) void product.companion.closePanel();
-    else void product.companion.openPanel(kind, focusRequestId);
-  };
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    tip.hide();
-    suppressClick.current = false;
-    drag.current = { x: e.screenX, y: e.screenY, dragging: false };
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (!d || d.dragging) return;
-    if (Math.hypot(e.screenX - d.x, e.screenY - d.y) > DRAG_THRESHOLD) {
-      d.dragging = true;
-      suppressClick.current = true;
-      // Capture only once it IS a drag: capturing on pointerdown retargets the
-      // click to the rail itself, so the icon buttons would never see it.
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      void product.companion.dragStart();
-    }
-  };
-  const onPointerUp = (e: React.PointerEvent) => {
-    const d = drag.current;
-    drag.current = null;
-    if (d?.dragging) {
-      (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
-      void product.companion.dragEnd();
-      // Let the click that follows pointerup see the flag, then clear it.
-      setTimeout(() => {
-        suppressClick.current = false;
-      }, 0);
-    }
+    if (open === kind && !focusRequestId) run('close the panel', () => product.companion.closePanel());
+    else run('open the panel', () => product.companion.openPanel(kind, focusRequestId));
   };
 
   const needsLabel = pending.length > 0 ? `${pending.length} need${pending.length === 1 ? 's' : ''} attention` : 'Nothing needs attention';
@@ -102,16 +72,13 @@ export function CompanionRail() {
       <nav
         className="cc-rail"
         aria-label="Command Center"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        {...pointerHandlers}
       >
         <button
           type="button"
           className="cc-rail-logo"
           aria-label="Open the full window"
-          onClick={() => !suppressClick.current && void product.companion.exit()}
+          onClick={() => !suppressClick.current && run('open Zana', () => product.companion.exit())}
           {...tip.bind('Open Zana', 'Leave Command Center', () => !!drag.current?.dragging)}
         >
           {/* The app's own brand mark, as shown in the mobile shell header. */}
@@ -182,9 +149,58 @@ export function CompanionRail() {
         >
           <span className="cc-avatar">{snapshot.userInitials || '·'}</span>
         </RailButton>
+        {error && <span className="cc-rail-error" role="alert" title={error}><span className="sr-only">{error}</span>!</span>}
       </nav>
     </div>
   );
+}
+
+function useRailDrag(hideTooltip: () => void, run: CompanionAction) {
+  const drag = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(resetTimer.current), []);
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    hideTooltip();
+    suppressClick.current = false;
+    drag.current = { x: e.screenX, y: e.screenY, dragging: false };
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d || d.dragging) return;
+    if (Math.hypot(e.screenX - d.x, e.screenY - d.y) > DRAG_THRESHOLD) {
+      d.dragging = true;
+      suppressClick.current = true;
+      // Capture only once it IS a drag: capturing on pointerdown retargets the
+      // click to the rail itself, so the icon buttons would never see it.
+      const element = e.currentTarget as HTMLElement;
+      const pointerId = e.pointerId;
+      element.setPointerCapture(pointerId);
+      run('move the rail', () => product.companion.dragStart(), () => {
+        if (drag.current !== d) return;
+        drag.current = null;
+        suppressClick.current = false;
+        if (element.hasPointerCapture?.(pointerId)) element.releasePointerCapture(pointerId);
+      });
+    }
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    const d = drag.current;
+    drag.current = null;
+    if (d?.dragging) {
+      (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+      run('finish moving the rail', () => product.companion.dragEnd());
+      // Let the click that follows pointerup see the flag, then clear it.
+      resetTimer.current = setTimeout(() => {
+        suppressClick.current = false;
+      }, 0);
+    }
+  };
+
+  return { drag, suppressClick, pointerHandlers: {
+    onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, onLostPointerCapture: onPointerUp
+  } };
 }
 
 function RailButton({
@@ -246,7 +262,7 @@ function useTooltip(panelOpen: boolean) {
   };
   const hide = () => {
     clear();
-    if (showing.current) void product.companion.tooltip(null);
+    if (showing.current) companionAction('hide tooltip', () => product.companion.tooltip(null));
     showing.current = false;
   };
 
@@ -262,7 +278,7 @@ function useTooltip(panelOpen: boolean) {
       const send = () => {
         timer.current = null;
         showing.current = true;
-        void product.companion.tooltip({ label, detail, panel, y: Math.round(r.top + r.height / 2) });
+        companionAction('show tooltip', () => product.companion.tooltip({ label, detail, panel, y: Math.round(r.top + r.height / 2) }), () => { showing.current = false; });
       };
       clear();
       if (showing.current) send();

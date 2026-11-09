@@ -5,6 +5,7 @@ import { product } from '../../lib/product-client.js';
 import { answerFor, buildReply, emptyQState, splitRecommended, type QState } from '../../lib/inbox-answer.js';
 import { UNANSWERABLE_COPY } from './companion-model.js';
 import { CompanionThreadRequest } from './CompanionThreadRequest.js';
+import { useCompanionAction } from './companion-action.js';
 
 const FAIL_COPY: Record<string, string> = {
   ended: 'The agent is no longer running.',
@@ -39,6 +40,7 @@ function AgentQuestion({
   onResolved: (request: CompanionRequest) => void;
 }) {
   const questions = request.questions ?? [];
+  const action = useCompanionAction();
   const [states, setStates] = useState<QState[]>(() => questions.map(emptyQState));
   const [freeText, setFreeText] = useState('');
   const [sending, setSending] = useState(false);
@@ -46,6 +48,7 @@ function AgentQuestion({
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const aliveRef = useRef(true);
+  const inFlight = useRef(false);
   const resolveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const openLabel = request.reason === 'thread-error' ? 'Open thread' : 'Open in Zana';
 
@@ -77,7 +80,8 @@ function AgentQuestion({
   };
 
   const send = async () => {
-    if (!canSend) return;
+    if (!canSend || inFlight.current) return;
+    inFlight.current = true;
     setSending(true);
     setError(null);
     const text = isQuestion ? buildReply(questions, answers) : freeText;
@@ -93,6 +97,7 @@ function AgentQuestion({
     } catch {
       if (aliveRef.current) setError('Could not send the answer.');
     } finally {
+      inFlight.current = false;
       if (aliveRef.current) setSending(false);
     }
   };
@@ -100,13 +105,17 @@ function AgentQuestion({
   // Number keys pick options on a single question; Enter sends.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || e.repeat || e.altKey) return;
       const typing = e.target instanceof Element && !!e.target.closest('input, textarea');
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (!typing && !e.shiftKey))) {
+      const interactive = e.target instanceof Element && !!e.target.closest('button, a, input, textarea, select, [contenteditable], [role="button"]');
+      const inQuestion = e.target instanceof Node && !!rootRef.current?.contains(e.target);
+      if (!inQuestion) return;
+      if (e.key === 'Enter' && !e.shiftKey && (e.metaKey || e.ctrlKey || !interactive)) {
         e.preventDefault();
         void send();
         return;
       }
-      if (typing || questions.length !== 1) return;
+      if (typing || e.metaKey || e.ctrlKey || questions.length !== 1) return;
       const n = Number(e.key);
       if (Number.isInteger(n) && n >= 1 && n <= questions[0].options.length) {
         pick(0, questions[0].options[n - 1].id);
@@ -149,7 +158,7 @@ function AgentQuestion({
           className="cc-icon-btn"
           title={openLabel}
           aria-label={openLabel}
-          onClick={() => void product.companion.open({ kind: 'request', requestId: request.id })}
+          onClick={() => action.run('open Zana', () => product.companion.open({ kind: 'request', requestId: request.id }))}
         >
           <ExternalLink size={14} />
         </button>
@@ -213,6 +222,7 @@ function AgentQuestion({
 
         {!request.answerable && request.reason && <p className="cc-note">{UNANSWERABLE_COPY[request.reason]}</p>}
         {error && <p className="cc-error" role="alert">{error}</p>}
+        {action.error && <p className="cc-error" role="alert">{action.error}</p>}
       </div>
 
       <footer className="cc-question-foot">
@@ -230,7 +240,7 @@ function AgentQuestion({
           <button
             type="button"
             className="cc-btn-primary"
-            onClick={() => void product.companion.open({ kind: 'request', requestId: request.id })}
+            onClick={() => action.run('open Zana', () => product.companion.open({ kind: 'request', requestId: request.id }))}
           >
             {openLabel}
           </button>

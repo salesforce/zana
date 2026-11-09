@@ -2,6 +2,7 @@ import {
   getConversationThread,
   getConversationAssistantPreview,
   getConversationFailurePreview,
+  getConversationPreviewVersions,
   listPendingInteractionsByThread,
   listMenubarConversationThreads,
   type ConversationThreadRow,
@@ -81,6 +82,29 @@ function isOpenableThread(thread: ConversationThreadRow | null, projectId: strin
 }
 
 export function createMenubarThreadSource(deps: MenubarThreadSourceDeps) {
+  let cache = new Map<string, { key: string; context?: MenubarThreadAgent['context']; failure?: string }>();
+  const enrich = (agents: MenubarThreadAgent[]) => {
+    const attention = agents.filter((agent) => agent.status === 'error' || agent.hasPendingInteraction);
+    const versions = new Map(getConversationPreviewVersions(deps.db, attention.map((a) => a.threadId)).map((v) => [v.threadId, v]));
+    const next: typeof cache = new Map();
+    for (const agent of attention) {
+      const version = versions.get(agent.threadId);
+      const key = JSON.stringify([agent.status, agent.hasPendingInteraction, version]);
+      const previous = version ? cache.get(agent.threadId) : undefined;
+      const entry = previous?.key === key ? previous : {
+        key,
+        ...(agent.status === 'error'
+          ? { failure: getConversationFailurePreview(deps.db, agent.threadId) }
+          : { context: pendingContext(deps.db, agent.threadId) })
+      };
+      if (version) next.set(agent.threadId, entry);
+      agent.context = entry.context;
+      if (entry.failure) agent.question = `Thread failed: ${entry.failure}`;
+      else if (entry.context) agent.question = entry.context.prompt;
+    }
+    // Retain only this bounded fleet, including negative results for unchanged threads.
+    cache = next;
+  };
   return {
     list(limit = MENUBAR_THREAD_LIMIT): MenubarThreadAgent[] {
       const bounded = Math.max(1, Math.min(limit, MENUBAR_THREAD_LIMIT));
@@ -90,18 +114,12 @@ export function createMenubarThreadSource(deps: MenubarThreadSourceDeps) {
         listMenubarConversationThreads(deps.db, { limit: bounded })
       ).flatMap((thread) => {
         const agent = projectThread(thread, projects.get(thread.projectId));
-        if (agent && thread.status === 'error') {
-          const failure = getConversationFailurePreview(deps.db, thread.id);
-          if (failure) agent.question = `Thread failed: ${failure}`;
-        }
-        if (agent && thread.hasPendingInteraction && thread.status !== 'error') {
-          agent.context = pendingContext(deps.db, thread.id);
-          if (agent.context) agent.question = agent.context.prompt;
-        }
         return agent ? [agent] : [];
       });
       rows.sort(compareMenubarThreads);
-      return rows.slice(0, bounded);
+      const selected = rows.slice(0, bounded);
+      enrich(selected);
+      return selected;
     },
 
     open(threadId: string, projectId: string): { ok: boolean; reason?: string } {

@@ -455,3 +455,18 @@ it('status: clear and pending variants, Open Zana and Exit', async () => {
   act(() => pushSnap(snap({ requests: [req(1), req(2)] })));
   expect(screen.getByText('2 need you')).toBeTruthy();
 });
+
+it('reports rejected close, navigation and exit actions and clears feedback on retry', async () => {
+  await mount(snap(), st('status'));
+  h.closePanel.mockRejectedValueOnce(new Error('IPC closed'));
+  await act(async () => fireEvent.keyDown(window, { key: 'Escape' }));
+  expect(screen.getByRole('alert').textContent).toContain('Could not close the panel');
+  h.open.mockRejectedValueOnce(new Error('IPC closed'));
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Open Zana' })));
+  expect(screen.getByRole('alert').textContent).toContain('Could not open Zana');
+  h.exit.mockRejectedValueOnce(new Error('IPC closed'));
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Exit Command Center' })));
+  expect(screen.getByRole('alert').textContent).toContain('Could not exit Command Center');
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Exit Command Center' })));
+  expect(screen.queryByRole('alert')).toBeNull();
+});

@@ -84,10 +84,10 @@ it.each(['before-ack', 'after-ack'] as const)('does not resolve a question after
 
 it('picks with number keys and sends with Enter', async () => {
   renderQ();
-  fireEvent.keyDown(window, { key: '1' });
+  fireEvent.keyDown(document.activeElement!, { key: '1' });
   fireEvent.keyDown(window, { key: '9' });
   await act(async () => {
-    fireEvent.keyDown(window, { key: 'Enter' });
+    fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
   });
   expect(h.answer).toHaveBeenCalledWith('inbox:e1', 'Left (Recommended)');
 });
@@ -163,7 +163,7 @@ it('routes an unanswerable request to the app instead of sending', () => {
   expect(screen.getByText('Background job — answer it from the app.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   for (const btn of screen.getAllByRole('button', { name: 'Open in Zana' })) fireEvent.click(btn);
-  fireEvent.keyDown(window, { key: 'Enter' });
+  fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
   expect(h.open).toHaveBeenCalledTimes(2);
   expect(h.open).toHaveBeenCalledWith({ kind: 'request', requestId: 'inbox:e1' });
   expect(h.answer).not.toHaveBeenCalled();
@@ -195,4 +195,46 @@ it('Back and Skip hand control back without answering', () => {
   expect(onResolved).toHaveBeenCalledOnce();
   expect(h.open).toHaveBeenCalledOnce();
   expect(h.answer).not.toHaveBeenCalled();
+});
+
+it.each(['Back to the list', 'Skip', 'Open in Zana', /Right/] as const)('preserves native Enter activation on %s', async (name) => {
+  renderQ();
+  fireEvent.click(screen.getByRole('button', { name: /Left/ }));
+  const button = screen.getAllByRole('button', { name })[0];
+  button.focus();
+  expect(fireEvent.keyDown(button, { key: 'Enter' })).toBe(true);
+  expect(h.answer).not.toHaveBeenCalled();
+  fireEvent.click(button); // native button activation, which happy-dom does not synthesize
+  expect(h.answer).not.toHaveBeenCalled();
+});
+
+it('ignores shortcuts outside the question, composing input and repeated keydowns', () => {
+  renderQ();
+  fireEvent.click(screen.getByRole('button', { name: /Left/ }));
+  fireEvent.keyDown(window, { key: 'Enter' });
+  fireEvent.keyDown(document.activeElement!, { key: 'Enter', isComposing: true });
+  fireEvent.keyDown(document.activeElement!, { key: 'Enter', repeat: true });
+  fireEvent.keyDown(document.activeElement!, { key: 'Enter', altKey: true });
+  expect(h.answer).not.toHaveBeenCalled();
+});
+
+it('supports deliberate Cmd+Enter from a text field and sends only once before acknowledgement', async () => {
+  let acknowledge!: (value: { ok: boolean }) => void;
+  h.answer.mockReturnValue(new Promise(resolve => { acknowledge = resolve; }));
+  renderQ();
+  const input = screen.getByPlaceholderText('Other…');
+  fireEvent.change(input, { target: { value: 'Up' } });
+  fireEvent.keyDown(input, { key: 'Enter', metaKey: true });
+  fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+  expect(h.answer).toHaveBeenCalledExactlyOnceWith('inbox:e1', 'Up');
+  await act(async () => acknowledge({ ok: true }));
+});
+
+it('reports failed navigation and permits a retry', async () => {
+  h.open.mockRejectedValueOnce(new Error('IPC closed'));
+  renderQ();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Open in Zana' })));
+  expect(screen.getByRole('alert').textContent).toContain('Could not open Zana');
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Open in Zana' })));
+  expect(screen.queryByRole('alert')).toBeNull();
 });

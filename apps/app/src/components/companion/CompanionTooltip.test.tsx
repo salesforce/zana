@@ -121,3 +121,25 @@ it('Companion routes ?part= to the right window', async () => {
   render(<Companion part={null} />);
   expect(screen.getByRole('navigation', { name: 'Command Center' })).toBeTruthy();
 });
+
+it('does not resurrect a hidden tooltip when the initial read resolves late', async () => {
+  let resolve!: (v: CompanionTooltipView) => void;
+  h.tooltipState.mockReturnValue(new Promise(r => { resolve = r; }));
+  render(<CompanionTooltip />);
+  act(() => push(null));
+  await act(async () => resolve(view({ label: 'Stale' })));
+  expect(screen.queryByRole('tooltip')).toBeNull();
+});
+
+it('owns rejected and late tooltip initialization responses', async () => {
+  h.tooltipState.mockRejectedValueOnce(new Error('IPC closed'));
+  const first = render(<CompanionTooltip />);
+  await act(async () => {});
+  expect(screen.queryByRole('tooltip')).toBeNull();
+  first.unmount();
+  let resolve!: (v: CompanionTooltipView) => void;
+  h.tooltipState.mockReturnValue(new Promise(r => { resolve = r; }));
+  render(<CompanionTooltip />).unmount();
+  await act(async () => resolve(view()));
+  expect(screen.queryByRole('tooltip')).toBeNull();
+});

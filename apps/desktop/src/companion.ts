@@ -106,6 +106,9 @@ export const REQUEST_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
  * renderer, so capping here would let answered questions crowd out pending ones.
  */
 export const INBOX_CACHE_MAX = 50;
+/** Scan a larger inbox tail because most entries are not questions. */
+export const INBOX_SEED_READ_LIMIT = 200;
+const PUSH_DEBOUNCE_MS = 120;
 /** A working → idle/done edge within this window counts as "recently completed". */
 export const RECENT_DONE_MS = 10 * 60 * 1000;
 /** Answers are bounded so the write path can't be flooded. */
@@ -307,12 +310,13 @@ export class CompanionController {
   private panelState: CompanionPanelState | null = null;
   /** Unanswered-question inbox entries, newest last; bounded (Rule 5). */
   private questions = new Map<string, InboxEntry>();
+  private inboxGeneration = 0;
   /** Last observed state per session, to detect working → done edges. */
   private lastState = new Map<string, AgentState>();
   private completedAt = new Map<string, number>();
   /** Modern threads from the product server, refreshed while the rail is up. */
   private threads: MenubarThreadAgent[] = [];
-  private threadsInFlight = false;
+  private threadsInFlight: number | null = null;
   private threadsDirty = false;
   private threadsGeneration = 0;
   private offs: Array<() => void> = [];
@@ -372,12 +376,7 @@ export class CompanionController {
         if (this.active) void this.refreshThreads();
       }));
     }
-    this.offs.push(
-      inboxStore.onAppended((e) => this.trackEntry(e)),
-      inboxStore.onUpdated((e) => this.trackEntry(e)),
-      inboxStore.onRemoved((id) => this.dropEntries([id])),
-      inboxStore.onPruned((ids) => this.dropEntries(ids))
-    );
+    this.subscribeInbox(inboxStore);
     const onDisplays = () => this.reposition();
     // A re-attached monitor the rail was saved on pulls it back; a removed one
     // (or a resolution / Dock change) re-fits it on the remaining displays.
@@ -385,19 +384,43 @@ export class CompanionController {
       screen.on(ev as 'display-added', onDisplays);
       this.offs.push(() => screen.off(ev as 'display-added', onDisplays));
     }
-    // Seed the question cache from the tail of the inbox (bounded read).
-    void inboxStore
-      .read({ limit: 200 })
-      .then(({ entries }) => {
-        // `read` is newest-first; insert oldest-first so the cache's
-        // insertion-order eviction drops the oldest, not the newest.
-        for (const e of [...entries].reverse()) this.trackEntry(e, false);
-        this.refresh();
-      })
-      .catch((err) => this.log('seedInbox', err));
+  }
+
+  private subscribeInbox(inboxStore: IInboxStore) {
+    const generation = ++this.inboxGeneration;
+    const changed = new Set<string>();
+    let seeding = true;
+    let superseded = false;
+    const mark = (id: string) => {
+      if (!seeding || superseded) return;
+      // If a stalled read sees excessive churn, retain only live evidence.
+      if (changed.size >= INBOX_SEED_READ_LIMIT && !changed.has(id)) {
+        superseded = true;
+        changed.clear();
+      } else changed.add(id);
+    };
+    const track = (entry: InboxEntry) => { mark(entry.id); this.trackEntry(entry); };
+    const drop = (ids: string[]) => { ids.forEach(mark); this.dropEntries(ids); };
+    this.offs.push(
+      inboxStore.onAppended(track), inboxStore.onUpdated(track),
+      inboxStore.onRemoved((id) => drop([id])), inboxStore.onPruned(drop)
+    );
+    void inboxStore.read({ limit: INBOX_SEED_READ_LIMIT }).then(({ entries }) => {
+      if (generation !== this.inboxGeneration || superseded) return;
+      const live = [...this.questions.values()];
+      this.questions.clear();
+      // `read` is newest-first. Replay live entries last so seed eviction
+      // cannot displace newer notifications or overwrite updated questions.
+      for (const e of [...entries].reverse()) if (!changed.has(e.id)) this.trackEntry(e, false);
+      for (const e of live) this.trackEntry(e, false);
+      this.refresh();
+    }).catch((err) => {
+      if (generation === this.inboxGeneration) this.log('seedInbox', err);
+    }).finally(() => { seeding = false; changed.clear(); });
   }
 
   stop() {
+    this.inboxGeneration++;
     for (const off of this.offs.splice(0)) {
       try {
         off();
@@ -414,8 +437,15 @@ export class CompanionController {
     this.tip = null;
     this.tipView = null;
     this.hidden.clear();
+    this.questions.clear();
+    this.lastState.clear();
+    this.completedAt.clear();
     this.threads = [];
     this.threadsGeneration++;
+    this.threadsInFlight = null;
+    this.threadsDirty = false;
+    this.panelState = null;
+    this.dragOffset = null;
     this.active = false;
   }
 
@@ -479,7 +509,7 @@ export class CompanionController {
     this.pushTimer = setTimeout(() => {
       this.pushTimer = null;
       this.pushSnapshot();
-    }, 120);
+    }, PUSH_DEBOUNCE_MS);
   }
 
   // ----- snapshot ---------------------------------------------------------------
@@ -655,12 +685,12 @@ export class CompanionController {
   /** Pull the Modern-thread feed (single-flight; a change mid-read re-reads). */
   private async refreshThreads() {
     if (!this.deps.listThreads) return;
-    if (this.threadsInFlight) {
+    if (this.threadsInFlight === this.threadsGeneration) {
       this.threadsDirty = true;
       return;
     }
     const generation = this.threadsGeneration;
-    this.threadsInFlight = true;
+    this.threadsInFlight = generation;
     this.threadsDirty = false;
     try {
       const threads = await this.deps.listThreads();
@@ -670,8 +700,10 @@ export class CompanionController {
     } catch (err) {
       this.log('refreshThreads', err);
     } finally {
-      this.threadsInFlight = false;
-      if (generation === this.threadsGeneration && this.threadsDirty && this.active) void this.refreshThreads();
+      if (this.threadsInFlight === generation) {
+        this.threadsInFlight = null;
+        if (this.threadsDirty && this.active) void this.refreshThreads();
+      }
     }
   }
 
@@ -1095,8 +1127,8 @@ export class CompanionController {
     win.webContents.on('will-navigate', (e) => e.preventDefault());
     const search = `surface=companion&part=${part}`;
     const url = rendererUrl({ surface: 'companion', part });
-    if (url) void win.loadURL(url);
-    else void win.loadFile(join(__dirname, '../renderer/index.html'), { search });
+    const loaded = url ? win.loadURL(url) : win.loadFile(join(__dirname, '../renderer/index.html'), { search });
+    void loaded.catch((err) => this.log(`load ${part}`, err));
     return win;
   }
 

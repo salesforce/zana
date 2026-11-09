@@ -2,6 +2,26 @@ import type { ZccDatabase } from '../connection.js';
 
 export const ASSISTANT_PREVIEW_CHARS = 4000;
 export const ASSISTANT_PREVIEW_EVENT_LIMIT = 512;
+export const PREVIEW_VERSION_THREAD_LIMIT = 100;
+
+export interface ConversationPreviewVersion {
+  threadId: string;
+  eventSequence: number | null;
+  interactionId: string | null;
+}
+
+/** Indexed revision probes in one bounded read; never load event JSON to check freshness. */
+export function getConversationPreviewVersions(db: ZccDatabase, threadIds: readonly string[]): ConversationPreviewVersion[] {
+  const ids = [...new Set(threadIds)].slice(0, PREVIEW_VERSION_THREAD_LIMIT);
+  if (ids.length === 0) return [];
+  // Interaction payloads are immutable; a different current pending id also
+  // invalidates the cache when an interaction changes without a new event.
+  return db.sqlite.prepare(`SELECT value AS threadId,
+    (SELECT sequence FROM thread_events WHERE thread_id = value ORDER BY sequence DESC LIMIT 1) AS eventSequence,
+    (SELECT id FROM pending_interactions WHERE thread_id = value AND status = 'pending'
+      ORDER BY created_at DESC LIMIT 1) AS interactionId
+    FROM json_each(?)`).all(JSON.stringify(ids)) as ConversationPreviewVersion[];
+}
 
 /** Latest root-turn evidence only: never reuse an older failure after a new turn. */
 export function getConversationFailurePreview(db: ZccDatabase, threadId: string): string | undefined {

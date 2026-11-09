@@ -35,6 +35,7 @@ html.companion-surface #root {
 }
 
 .cc-rail {
+  position: relative;
   width: 52px;
   /* Hug the controls: a rounded native window must not stretch the visible rail. */
   height: auto;
@@ -50,6 +51,22 @@ html.companion-surface #root {
   box-shadow: var(--cc-shadow);
   cursor: grab;
   touch-action: none;
+}
+
+/* Report command failures without changing the fixed native rail geometry. */
+.cc-rail-error {
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--cc-attention);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
 }
 
 .cc-rail:active {

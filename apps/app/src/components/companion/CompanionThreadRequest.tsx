@@ -2,11 +2,13 @@ import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import type { CompanionRequest } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
-import { splitRecommendedLabel } from '../thread/pending-interactions/pending-interaction-question-form.js';
+import { splitRecommendedLabel } from '../../lib/recommended-label.js';
+import { useCompanionAction } from './companion-action.js';
 
 /** Thread questions stay read-only: their original controls live in the thread. */
 export function CompanionThreadRequest({ request, onBack }: { request: CompanionRequest; onBack: () => void }) {
   const context = request.threadContext!;
+  const action = useCompanionAction();
   const [expanded, setExpanded] = useState(false);
   const [canExpand, setCanExpand] = useState(false);
   const messageRef = useRef<HTMLParagraphElement>(null);
@@ -25,7 +27,7 @@ export function CompanionThreadRequest({ request, onBack }: { request: Companion
     observer.observe(element);
     return () => observer.disconnect();
   }, [expanded, message?.text, message?.truncated, showMessage]);
-  const open = () => void product.companion.open({ kind: 'request', requestId: request.id });
+  const open = () => action.run('open Zana', () => product.companion.open({ kind: 'request', requestId: request.id }));
 
   return (
     <div className="cc-question">
@@ -38,6 +40,7 @@ export function CompanionThreadRequest({ request, onBack }: { request: Companion
         <button type="button" className="cc-icon-btn" onClick={open} aria-label="Open in Zana"><ExternalLink size={14} /></button>
       </header>
       <div className="cc-question-body">
+        {action.error && <p className="cc-error" role="alert">{action.error}</p>}
         {showMessage && <section className="cc-thread-context" aria-label="Last assistant message">
           <div className="cc-thread-label">Last message</div>
           <p ref={messageRef} id={messageId} className={`cc-thread-message${expanded ? '' : ' is-clamped'}`}>{message.text}{message.truncated ? '…' : ''}</p>

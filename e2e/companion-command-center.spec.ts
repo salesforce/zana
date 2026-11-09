@@ -188,6 +188,25 @@ test.describe('companion answers', () => {
       await expect(panel.locator('.cc-question-prompt')).toHaveText('Which side?');
       await panel.getByRole('button', { name: /Right/ }).dispatchEvent('click');
       await expect(panel.getByRole('button', { name: /Right/ })).toHaveAttribute('aria-pressed', 'true');
+      // Enter on each native button must activate that control, never submit
+      // the currently selected answer through the window's shortcut listener.
+      for (const name of ['Back to the list', 'Skip', 'Open in Zana', '1 Left']) {
+        const control = panel.getByRole('button', { name, exact: true }).first();
+        const preserved = await control.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', bubbles: true, cancelable: true
+        })));
+        expect(preserved).toBe(true);
+      }
+      expect(existsSync(out)).toBe(false);
+      // A failed IPC command must be caught in the production renderer and
+      // leave the question available for recovery.
+      await electron.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler('companion:open');
+        ipcMain.handle('companion:open', () => { throw new Error('Injected navigation failure'); });
+      });
+      await panel.getByRole('button', { name: 'Open in Zana', exact: true }).first().dispatchEvent('click');
+      await expect(panel.getByRole('alert')).toContainText('Could not open Zana');
+      await expect(panel.locator('.cc-question-prompt')).toHaveText('Which side?');
       await panel.getByRole('button', { name: 'Send' }).dispatchEvent('click');
       await expect(panel.getByRole('status')).toContainText('is continuing');
 

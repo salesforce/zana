@@ -228,7 +228,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'experimental',
     anchor: 'command-center',
     label: 'Command Center (macOS)',
-    help: "Adds “Minimize to Command Center” (⇧⌘M) to the Window menu, the menu-bar icon and the sidebar. Instead of minimizing to the Dock, the window collapses to a slim floating rail on the screen edge that shows who needs you, what's working and your schedules — and lets you answer agent questions without reopening the app. Off by default.",
+    help: "Adds “Minimize to Command Center” (⌘M) to the Window menu, the menu-bar icon and the sidebar. Instead of minimizing to the Dock, the window collapses to a slim floating rail on the screen edge that shows who needs you, what's working and your schedules — and lets you answer agent questions without reopening the app. Off by default.",
     keywords: ['companion', 'rail', 'minimize', 'floating', 'side bar'],
     kind: 'subsection'
   },

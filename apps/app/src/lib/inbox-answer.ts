@@ -43,9 +43,4 @@ export function buildReply(questions: InboxQuestion[], answers: string[]): strin
   return questions.map((q, i) => `Q${i + 1}: ${q.prompt ?? ''}\nA: ${answers[i] ?? ''}`).join('\n\n');
 }
 
-/** "Ship it (Recommended)" → { label: "Ship it", recommended: true }. */
-export function splitRecommended(label: string): { label: string; recommended: boolean } {
-  const m = /^(.*?)\s*[([]\s*recommended\s*[)\]]\s*$/i.exec(label);
-  if (m && m[1]) return { label: m[1], recommended: true };
-  return { label, recommended: false };
-}
+export { splitRecommendedLabel as splitRecommended } from './recommended-label.js';

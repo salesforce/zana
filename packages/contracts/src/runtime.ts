@@ -5,7 +5,7 @@ import { LibraryAgentRequestSchema } from './library-agent.js';
 import { LibraryDocumentRequestSchema } from './library-documents.js';
 import { SHARED_PRODUCT_EVENTS } from './shared-product.js';
 import { z } from 'zod';
-import { pendingInteractionUserQuestionQuestionSchema } from '@zana-ai/zcc-domain/thread-runtime';
+import { pendingInteractionUserQuestionQuestionSchema, USER_QUESTION_MAX_QUESTIONS } from '@zana-ai/zcc-domain/thread-runtime';
 import { ProjectIdSchema, SessionIdSchema, PROJECT_ICONS } from '@zana-ai/zcc-domain';
 import { pluginPackIdentitySchema, pluginPackInstallRequestSchema } from '@zana-ai/zcc-domain';
 import { TerminalRequestCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
@@ -71,7 +71,7 @@ export const MenubarAgentSchema = z.discriminatedUnion('kind', [
       interactionId: z.string().min(1).max(256),
       createdAt: z.number().int().nonnegative(),
       prompt: z.string().max(4000),
-      questions: z.array(pendingInteractionUserQuestionQuestionSchema).max(4).optional(),
+      questions: z.array(pendingInteractionUserQuestionQuestionSchema).max(USER_QUESTION_MAX_QUESTIONS).optional(),
       lastMessage: z.object({ text: z.string().max(4000), truncated: z.boolean() }).strict().optional()
     }).strict().optional()
   }).strict()

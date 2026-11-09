@@ -62,6 +62,7 @@ import {
   REQUEST_MAX_AGE_MS,
   ANSWER_MAX_CHARS,
   INBOX_CACHE_MAX,
+  INBOX_SEED_READ_LIMIT,
   initialsFor,
   panelLayout,
   railRect,
@@ -1291,5 +1292,97 @@ describe('CompanionController drag', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+it('audit regression: scheduler rejection is returned as refusal rather than success', async () => {
+  const failure = Promise.reject(new Error('Unconfirmed worker launch'));
+  // Observe the rejection in the test so this intentionally failing assertion
+  // does not produce an unrelated unhandled-rejection failure.
+  void failure.catch(() => {});
+  const c = new CompanionController({
+    scheduler: { list: () => [{ id: 'known-task' }], runNow: () => failure }
+  } as unknown as CompanionDeps);
+  expect(await c.runSchedule('known-task')).toBe(false);
+});
+
+it('audit regression: a failed Modern thread is not waiting for user input', () => {
+  expect(threadAgentState({ status: 'error', hasPendingInteraction: false })).toBe('idle');
+});
+
+describe('inbox initialization reconciliation', () => {
+  it('does not resurrect removed, pruned, resolved or updated entries from an older seed', async () => {
+    const env = setup({});
+    let seed!: (value: { entries: InboxEntry[]; hasMore: boolean }) => void;
+    env.inboxStore.read.mockReturnValue(new Promise(resolve => { seed = resolve; }));
+    env.c.start();
+    for (const fn of env.listeners.removed) fn('removed');
+    for (const fn of env.listeners.pruned) fn(['pruned']);
+    for (const fn of env.listeners.updated) {
+      fn(question({ id: 'resolved', question: undefined }));
+      fn(question({ id: 'updated', comments: 'New question' }));
+    }
+    for (const fn of env.listeners.appended) fn(question({ id: 'live' }));
+    seed({ entries: ['removed', 'pruned', 'resolved', 'updated', 'untouched'].map(id => question({ id })), hasMore: false });
+    await flush();
+    const requests = env.c.buildSnapshot().requests;
+    expect(requests.map(r => r.entryId).sort()).toEqual(['live', 'untouched', 'updated']);
+    expect(requests.find(r => r.entryId === 'updated')?.prompt).toBe('New question');
+    env.c.stop();
+  });
+
+  it('keeps live notifications when an older seed fills the cache', async () => {
+    const env = setup({});
+    let seed!: (value: { entries: InboxEntry[]; hasMore: boolean }) => void;
+    env.inboxStore.read.mockReturnValue(new Promise(resolve => { seed = resolve; }));
+    env.c.start();
+    for (const fn of env.listeners.appended) fn(question({ id: 'live' }));
+    seed({ entries: Array.from({ length: INBOX_CACHE_MAX }, (_, i) => question({ id: `seed${i}` })), hasMore: false });
+    await flush();
+    expect(env.c.buildSnapshot().requests).toHaveLength(INBOX_CACHE_MAX);
+    expect(env.c.buildSnapshot().requests.some(r => r.entryId === 'live')).toBe(true);
+    env.c.stop();
+  });
+
+  it('discards an excessively churned seed with bounded change tracking', async () => {
+    const env = setup({});
+    let seed!: (value: { entries: InboxEntry[]; hasMore: boolean }) => void;
+    env.inboxStore.read.mockReturnValue(new Promise(resolve => { seed = resolve; }));
+    env.c.start();
+    for (const fn of env.listeners.pruned) fn(Array.from({ length: INBOX_SEED_READ_LIMIT + 2 }, (_, i) => `pruned${i}`));
+    for (const fn of env.listeners.appended) fn(question({ id: 'live' }));
+    seed({ entries: [question({ id: 'pruned0' })], hasMore: false });
+    await flush();
+    expect(env.c.buildSnapshot().requests.map(r => r.entryId)).toEqual(['live']);
+    env.c.stop();
+  });
+
+  it('invalidates seed reads on stop and across restart', async () => {
+    const env = setup({});
+    let oldSeed!: (value: { entries: InboxEntry[]; hasMore: boolean }) => void;
+    env.inboxStore.read.mockReturnValueOnce(new Promise(resolve => { oldSeed = resolve; }));
+    env.c.start();
+    env.c.stop();
+    env.c.start();
+    await flush();
+    for (const fn of env.listeners.appended) fn(question({ id: 'new' }));
+    oldSeed({ entries: [question({ id: 'old' })], hasMore: false });
+    await flush();
+    expect(env.c.buildSnapshot().requests.map(r => r.entryId)).toEqual(['new']);
+    env.c.stop();
+  });
+
+  it('allows a fresh thread read after restart while an old read is still pending', async () => {
+    const env = setup({ threads: [thread({ threadId: 'new' })] });
+    let oldRead!: (value: MenubarThreadAgent[]) => void;
+    env.listThreads.mockReturnValueOnce(new Promise(resolve => { oldRead = resolve; }));
+    env.c.start(); env.c.enter(); env.c.stop();
+    env.c.start(); env.c.enter();
+    await flush();
+    expect(env.c.buildSnapshot().agents.map(a => a.threadId)).toEqual(['new']);
+    oldRead([thread({ threadId: 'old' })]);
+    await flush();
+    expect(env.c.buildSnapshot().agents.map(a => a.threadId)).toEqual(['new']);
+    env.c.stop();
   });
 });
