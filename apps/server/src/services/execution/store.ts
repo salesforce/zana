@@ -8,7 +8,7 @@ import {
   readRawFile
 } from '../harness-routing/storage.js';
 import type { WorkflowPolicyResultV1 } from './policy-result.js';
-import { EXECUTION_FAILURE_CODES, isDurableCoordination, isSquadExecutionTargetSelector } from '@zana-ai/zcc-domain/product';
+import { EXECUTION_FAILURE_CODES, isDurableCoordination, isSquadExecutionTargetSelector, skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import type { SquadExecutionTargetSelector, SquadWorktreeOwnership } from '@zana-ai/zcc-domain/product';
 import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
@@ -18,7 +18,7 @@ import { normalizeExecutionPlan } from '../launch/preflight.js';
 import type { ExecutionDatabase } from '@zana-ai/zcc-db';
 import { readExecutionStoreSqliteState, writeExecutionStoreSqliteState } from './storage/sqlite-state.js';
 import { isResumableExecutionState } from './storage/backend-policy.js';
-import { evaluateSlotEligibility, type SlotRouteSnapshotV1, type WorkUnitRoutingV1 } from './routing-policy.js';
+import { compareCheapestFit, evaluateSlotEligibility, slotRankingPriceUsd, type SlotRouteSnapshotV1, type WorkUnitRoutingV1 } from './routing-policy.js';
 import { MODEL_PRICING_CATALOG_ID, MODEL_PRICING_CATALOG_VERSION } from './model-pricing-catalog.js';
 import {
   assembleExecutionResult,
@@ -577,6 +577,8 @@ export interface ResolvedModelSnapshotV1 {
   health?: 'available' | 'unavailable' | 'unknown';
   observedAt?: number;
   maxAgeMs?: number;
+  /** Resolved persona skill allowlist for the slot; undefined = unrestricted (reaches every skill). */
+  skillAllowlist?: string[];
 }
 
 export interface RoutingDecisionV1 {
@@ -1032,7 +1034,8 @@ function validModelSnapshot(value: unknown): value is ResolvedModelSnapshotV1 {
     && (snapshot.maxContextBytes === undefined || validNonNegativeInteger(snapshot.maxContextBytes))
     && (snapshot.health === undefined || snapshot.health === 'available' || snapshot.health === 'unavailable' || snapshot.health === 'unknown')
     && (snapshot.observedAt === undefined || typeof snapshot.observedAt === 'number' && Number.isFinite(snapshot.observedAt) && snapshot.observedAt >= 0)
-    && (snapshot.maxAgeMs === undefined || validNonNegativeInteger(snapshot.maxAgeMs));
+    && (snapshot.maxAgeMs === undefined || validNonNegativeInteger(snapshot.maxAgeMs))
+    && (snapshot.skillAllowlist === undefined || validStringList(snapshot.skillAllowlist));
 }
 
 function validRouting(value: unknown): value is WorkUnitRoutingV1 {
@@ -1322,13 +1325,29 @@ export function resolvedModelsBySlot(record: Pick<ExecutionRecord, 'resolvedMode
  * context, model facts from the record's resolved models. One builder for
  * dispatch, kickoff reassignment and the delivery re-check, so they cannot drift.
  */
-export function slotRouteSnapshot(slot: { slotId: string; personaId: string }, model: ResolvedModelSnapshotV1 | undefined): SlotRouteSnapshotV1 {
+export function slotRouteSnapshot(slot: { slotId: string; personaId: string }, model: ResolvedModelSnapshotV1 | undefined, skillAllowlist?: readonly string[]): SlotRouteSnapshotV1 & { skillAllowlist?: string[] } {
   return {
+    ...(skillAllowlist !== undefined ? { skillAllowlist: [...skillAllowlist] } : {}),
     slotId: slot.slotId, personaId: slot.personaId, provider: model?.provider, model: model?.model,
     level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
     modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
     observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
   };
+}
+
+/** Required skills (`requires.skills`) a slot's allowlist cannot reach; empty when unrestricted or none required (D2). */
+export function unreachableSkills(unit: { requires?: WorkUnitRequirementsV1 }, model: Pick<ResolvedModelSnapshotV1, 'skillAllowlist'> | undefined): string[] {
+  return (unit.requires?.skills ?? []).filter((skill) => !skillAllowlistCovers(model?.skillAllowlist, skill));
+}
+
+/**
+ * Slot eligibility for a unit: routing predicate plus skill reach. A slot whose allowlist
+ * cannot see a required skill is a hard FAIL, never UNKNOWN (an absent allowlist is unrestricted).
+ */
+export function unitSlotEligibility(unit: { routing?: WorkUnitRoutingV1; requires?: WorkUnitRequirementsV1 }, slot: { slotId: string; personaId: string }, model: ResolvedModelSnapshotV1 | undefined): ReturnType<typeof evaluateSlotEligibility> {
+  const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(slot, model));
+  const missing = unreachableSkills(unit, model);
+  return missing.length ? { ...eligibility, status: 'FAIL', reasons: [...missing.map((skill) => `skill unreachable: ${skill}`), ...eligibility.reasons].slice(0, 16) } : eligibility;
 }
 
 const KICKOFF_TITLE_BUDGET = 200;
@@ -2291,7 +2310,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     * actually assigns or writes first-time shadow evidence; later idle cascades
     * remain true no-ops (no spurious event/bump).
    */
-  async function dispatchReady(executionId: string, opts?: { deprioritizeSlotId?: string; enforceRouting?: boolean }): Promise<{ record: ExecutionRecord; assignments: ExecutionDispatchAssignment[] }> {
+  async function dispatchReady(executionId: string, opts?: { deprioritizeSlotId?: string; enforceRouting?: boolean; deferredSlotIds?: ReadonlySet<string> }): Promise<{ record: ExecutionRecord; assignments: ExecutionDispatchAssignment[] }> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -2328,7 +2347,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             const existing = record.routingDecisions?.some((decision) => `${decision.workUnitId}\0${decision.attempt}\0${decision.policyVersion}` === key);
             if (!existing) {
               const candidates = workerSlots.map((slot) => {
-                const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(slot, modelBySlot.get(slot.slotId)));
+                const eligibility = unitSlotEligibility(unit, slot, modelBySlot.get(slot.slotId));
                 return { slotId: slot.slotId, status: eligibility.status, reasons: eligibility.reasons, ...(eligibility.estimatedInputUsd === undefined ? {} : { estimatedInputUsd: eligibility.estimatedInputUsd }), pricingCatalogId: eligibility.pricingCatalogId, pricingCatalogVersion: eligibility.pricingCatalogVersion };
               });
               if (opts?.enforceRouting && candidates.length && candidates.every((candidate) => candidate.status === 'UNKNOWN')) {
@@ -2336,7 +2355,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
                 // bounded refresh and timeout before this becomes terminal.
                 continue;
               }
-              const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && freeSlots.some((slot) => slot.slotId === candidate.slotId)).sort((left, right) => {
+              const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && !excludedSlots.has(candidate.slotId) && freeSlots.some((slot) => slot.slotId === candidate.slotId)).sort((left, right) => {
                 if (left.estimatedInputUsd === undefined && right.estimatedInputUsd !== undefined) return 1;
                 if (left.estimatedInputUsd !== undefined && right.estimatedInputUsd === undefined) return -1;
                 return (left.estimatedInputUsd ?? 0) - (right.estimatedInputUsd ?? 0) || left.slotId.localeCompare(right.slotId);
@@ -2361,10 +2380,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
               // Shadow evidence is immutable. Enforcement must re-evaluate free
               // slots, because availability changes without incrementing attempt.
               const candidates = workerSlots.map((slot) => {
-                const eligibility = evaluateSlotEligibility(unit.routing!, slotRouteSnapshot(slot, modelBySlot.get(slot.slotId)));
+                const eligibility = unitSlotEligibility(unit, slot, modelBySlot.get(slot.slotId));
                 return { slotId: slot.slotId, status: eligibility.status, estimatedInputUsd: eligibility.estimatedInputUsd };
               });
-              const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && freeSlots.some((slot) => slot.slotId === candidate.slotId)).sort((left, right) => {
+              const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && !excludedSlots.has(candidate.slotId) && freeSlots.some((slot) => slot.slotId === candidate.slotId)).sort((left, right) => {
                 if (left.estimatedInputUsd === undefined && right.estimatedInputUsd !== undefined) return 1;
                 if (left.estimatedInputUsd !== undefined && right.estimatedInputUsd === undefined) return -1;
                 return (left.estimatedInputUsd ?? 0) - (right.estimatedInputUsd ?? 0) || left.slotId.localeCompare(right.slotId);
@@ -2395,8 +2414,31 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             index = freeSlots.findIndex((slot) => slot.slotId === recommendation);
             if (index < 0) continue;
           }
-          if (index < 0 && unit.preferredRole) index = freeSlots.findIndex((slot) => slot.personaId === unit.preferredRole && !excludedSlots.has(slot.slotId));
-          if (index < 0) index = freeSlots.findIndex((slot) => !excludedSlots.has(slot.slotId));
+          if (index < 0) {
+            // Cheapest-fit: persona filter (preferredRole, when any free slot matches), then
+            // price / live-before-deferred / just-finished via the shared comparator; a stable
+            // sort keeps the existing free-slot order as the final tie-break.
+            let open = freeSlots.map((slot, position) => ({ slot, position })).filter((entry) => !excludedSlots.has(entry.slot.slotId));
+            // A slot that cannot reach a required skill never takes the unit (AC3), routed or not.
+            if (unit.requires?.skills?.length) open = open.filter((entry) => unreachableSkills(unit, modelBySlot.get(entry.slot.slotId)).length === 0);
+            if (unit.routing) {
+              // Advisory routing still decides who may take the unit: PASS slots first, then non-FAIL;
+              // only when every open slot fails does the existing first-free/cheapest semantics apply.
+              const status = new Map(open.map((entry) => [entry.slot.slotId, unitSlotEligibility(unit, entry.slot, modelBySlot.get(entry.slot.slotId)).status]));
+              const passing = open.filter((entry) => status.get(entry.slot.slotId) === 'PASS');
+              const nonFail = open.filter((entry) => status.get(entry.slot.slotId) !== 'FAIL');
+              open = passing.length ? passing : nonFail.length ? nonFail : open;
+            }
+            const preferred = unit.preferredRole ? open.filter((entry) => entry.slot.personaId === unit.preferredRole) : [];
+            const pool = preferred.length ? preferred : open;
+            const ranked = pool.map((entry) => ({
+              position: entry.position,
+              slotId: entry.slot.slotId,
+              priceUsd: slotRankingPriceUsd(slotRouteSnapshot(entry.slot, modelBySlot.get(entry.slot.slotId)), unit.routing?.estimatedContextBytes),
+              deferred: opts?.deferredSlotIds?.has(entry.slot.slotId) === true
+            })).sort((a, b) => compareCheapestFit(a, b, opts?.deprioritizeSlotId));
+            if (ranked.length) index = ranked[0].position;
+          }
           if (index < 0) continue;
           const slot = freeSlots[index];
            unit.state = 'CLAIMED';
@@ -2800,7 +2842,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const capable = routing
           ? workerSlotsOf(record)
             // Enforced routing dispatches to PASS slots only, so only they can "take it"; otherwise any non-FAIL slot can.
-            .filter((slot) => { const status = evaluateSlotEligibility(routing, slotRouteSnapshot(slot, modelBySlot.get(slot.slotId))).status; return opts?.enforceRouting ? status === 'PASS' : status !== 'FAIL'; })
+            .filter((slot) => { const status = unitSlotEligibility(unit, slot, modelBySlot.get(slot.slotId)).status; return opts?.enforceRouting ? status === 'PASS' : status !== 'FAIL'; })
           : [];
         // "never started a turn" is only true of a slot this unit was actually tried on in this attempt.
         const triedHere = capable.length === 1 && (unit.history.some((entry) => entry.action === 'claimed' && entry.slotId === capable[0].slotId)
@@ -2832,7 +2874,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * so the service caller falls through to the human block; a single-worker team or
    * a unit that has already tried every slot always throws here and blocks.
    */
-  async function reassignKickoffToFreshSlot(executionId: string, workUnitId: string, opts?: { enforceRouting?: boolean }): Promise<ExecutionRecord> {
+  async function reassignKickoffToFreshSlot(executionId: string, workUnitId: string, opts?: { enforceRouting?: boolean; deferredSlotIds?: ReadonlySet<string> }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (unit.state !== 'READY') throw new WorkUnitRecoveryGuardError('work unit is not reassignable for kickoff failure');
@@ -2843,16 +2885,21 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!),
         ...(unit.noProgressSlots ?? []).filter((entry) => entry.executionAttempt === record.attempt).map((entry) => entry.slotId)
       ]);
+      const modelBySlot = resolvedModelsBySlot(record);
+      // Same comparator as dispatch; stable sort keeps roster order as the final tie-break.
+      const cheapestFirst = <T extends { slot: { slotId: string; personaId: string } }>(entries: T[]): T[] => entries
+        .map((entry) => ({ entry, slotId: entry.slot.slotId, priceUsd: slotRankingPriceUsd(slotRouteSnapshot(entry.slot, modelBySlot.get(entry.slot.slotId)), unit.routing?.estimatedContextBytes), deferred: opts?.deferredSlotIds?.has(entry.slot.slotId) === true }))
+        .sort((a, b) => compareCheapestFit(a, b))
+        .map((ranked) => ranked.entry);
       const untried = workerSlots.filter((slot) => !tried.has(slot.slotId));
-      let fresh = untried[0];
+      let fresh = cheapestFirst(untried.map((slot) => ({ slot })))[0]?.slot;
       if (unit.routing) {
-        // Routing decides who may take the unit: never a FAIL slot, PASS before UNKNOWN, each in roster order.
+        // Routing decides who may take the unit: never a FAIL slot, PASS before UNKNOWN, cheapest-fit within each.
         const routing = unit.routing;
-        const modelBySlot = resolvedModelsBySlot(record);
-        const ranked = untried.map((slot) => ({ slot, status: evaluateSlotEligibility(routing, slotRouteSnapshot(slot, modelBySlot.get(slot.slotId))).status }))
+        const ranked = untried.map((slot) => ({ slot, status: unitSlotEligibility(unit, slot, modelBySlot.get(slot.slotId)).status }))
           .filter((entry) => entry.status !== 'FAIL');
         // Enforced routing refuses anything but PASS at delivery, so UNKNOWN is not a candidate there.
-        fresh = [...ranked.filter((entry) => entry.status === 'PASS'), ...(opts?.enforceRouting ? [] : ranked.filter((entry) => entry.status !== 'PASS'))][0]?.slot;
+        fresh = [...cheapestFirst(ranked.filter((entry) => entry.status === 'PASS')), ...(opts?.enforceRouting ? [] : cheapestFirst(ranked.filter((entry) => entry.status !== 'PASS')))][0]?.slot;
         if (!fresh) throw new WorkUnitRecoveryGuardError('no untried eligible worker slot for kickoff reassignment');
       }
       if (!fresh) throw new WorkUnitRecoveryGuardError('no untried worker slot for kickoff reassignment');
@@ -3599,7 +3646,8 @@ function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedMode
     ...(snapshot.maxContextBytes === undefined ? {} : { maxContextBytes: nonNegativeInteger(snapshot.maxContextBytes, 'model context ceiling') }),
     ...(snapshot.health === undefined ? {} : { health: snapshot.health }),
     ...(snapshot.observedAt === undefined ? {} : { observedAt: finiteTimestamp(snapshot.observedAt, 'model observation time') }),
-    ...(snapshot.maxAgeMs === undefined ? {} : { maxAgeMs: nonNegativeInteger(snapshot.maxAgeMs, 'model max age') })
+    ...(snapshot.maxAgeMs === undefined ? {} : { maxAgeMs: nonNegativeInteger(snapshot.maxAgeMs, 'model max age') }),
+    ...(snapshot.skillAllowlist === undefined ? {} : { skillAllowlist: normalizeStringList(snapshot.skillAllowlist, 'model skill allowlist') })
   };
   if (!validModelSnapshot(normalized)) throw new Error('invalid resolved model snapshot');
   return normalized;

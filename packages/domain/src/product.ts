@@ -4535,6 +4535,13 @@ export interface Persona {
   reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
   harnessRouting?: PersonaHarnessRoutingV1;
+  /**
+   * Skill allowlist (a context filter, NOT a security boundary). Entries are an
+   * exact skill name, `plugin:skill`, or `:name` suffix; no globs. Absent =
+   * unrestricted; an explicit empty array = no skills beyond the always-allowed
+   * ones. Resolve with {@link effectiveSkills}, which always adds `zcc-inbox`.
+   */
+  skills?: string[];
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -4568,6 +4575,8 @@ export interface PersonaSummary {
   /** Reasoning effort; each harness maps it to its own setting (see `Persona.reasoningLevel`). */
   reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
+  /** Skill allowlist (see `Persona.skills`). Absent = unrestricted. */
+  skills?: string[];
   /** Provenance (builtin / user / project / extension). Non-sensitive; lets a
    *  discovery surface show the source badge. */
   source?: PersonaSource;
@@ -4584,8 +4593,139 @@ export function toPersonaSummary(p: Persona): PersonaSummary {
     modelLevel: p.modelLevel,
     reasoningLevel: p.reasoningLevel,
     executionState: p.executionState,
+    ...(p.skills !== undefined ? { skills: p.skills } : {}),
     source: p.source
   };
+}
+
+/** Skills every restricted session keeps: documentation for the Squad `execution.*` mechanics. */
+export const ALWAYS_ALLOWED_SKILLS = ['zcc-inbox'] as const;
+/** Persona allowlist bounds. 63 + the always-allowed skill stays within the 64-id wire limit. */
+export const PERSONA_SKILLS_MAX = 63;
+
+/**
+ * Skill policy of built-in personas, by id. Lives in the electron-free domain package so
+ * the runtime-child HTTP layer (which cannot import the Electron-bound persona store) and
+ * the store's built-in list share one source. Absent id = unrestricted.
+ */
+export const BUILTIN_PERSONA_SKILLS: Readonly<Record<string, readonly string[]>> = {
+  'builtin:reviewer': []
+};
+export const PERSONA_SKILL_NAME_MAX = 200;
+const SKILL_NAME_PART = '[A-Za-z0-9][A-Za-z0-9._-]*';
+const SKILL_ENTRY_RE = new RegExp(`^(?:${SKILL_NAME_PART}:|:)?${SKILL_NAME_PART}$`);
+
+/**
+ * Validate a persisted/renderer `Persona.skills` value. Returns `undefined` for
+ * absent input, a trimmed + deduped list (empty list preserved) when valid, and
+ * `null` when malformed (not an array, too many entries, a non-string/oversized
+ * entry, or anything but name / `plugin:skill` / `:name`, e.g. a glob).
+ */
+export function sanitizePersonaSkills(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > PERSONA_SKILLS_MAX) return null;
+  const out = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') return null;
+    const name = entry.trim();
+    if (!name || name.length > PERSONA_SKILL_NAME_MAX || !SKILL_ENTRY_RE.test(name)) return null;
+    out.add(name);
+  }
+  return [...out];
+}
+
+/**
+ * Main-side resolution of the skill allowlist for one slot. Explicit persona
+ * list wins over lean; lean only presets worker slots whose persona leaves
+ * `skills` unset; otherwise `undefined` = unrestricted. A returned list always
+ * contains {@link ALWAYS_ALLOWED_SKILLS}. Renderer input is never an argument.
+ */
+export function effectiveSkills(
+  team: Pick<Team, 'leanWorkers'> | undefined,
+  persona: Pick<Persona, 'skills'>,
+  slotRole: 'worker' | 'orchestrator'
+): string[] | undefined {
+  if (persona.skills !== undefined) return [...new Set([...ALWAYS_ALLOWED_SKILLS, ...persona.skills])];
+  if (slotRole === 'worker' && team?.leanWorkers === true) return [...ALWAYS_ALLOWED_SKILLS];
+  return undefined;
+}
+
+function parseSkillRef(ref: string): { plugin?: string; name: string } {
+  const at = ref.lastIndexOf(':');
+  return { ...(at > 0 ? { plugin: ref.slice(0, at) } : {}), name: ref.slice(at + 1) };
+}
+
+/** True when allowlist `entry` (name, `plugin:skill`, `:name`) covers skill ref `skill`. */
+export function skillAllowlistEntryMatches(entry: string, skill: string): boolean {
+  const a = parseSkillRef(entry);
+  const b = parseSkillRef(skill);
+  return a.name === b.name && (a.plugin === undefined || b.plugin === undefined || a.plugin === b.plugin);
+}
+
+/** True when any allowlist entry covers `skill`; an undefined allowlist covers everything. */
+export function skillAllowlistCovers(allowlist: readonly string[] | undefined, skill: string): boolean {
+  return allowlist === undefined || allowlist.some((entry) => skillAllowlistEntryMatches(entry, skill));
+}
+
+/** A Zana-injected catalog skill: `id` is `zcc:<owner>/<name>`. */
+export interface SkillCatalogEntry {
+  id: string;
+  name: string;
+}
+
+/** Wire limit of `automatedSkillIds` (host-rpc / runtime contracts). */
+export const MAX_MAPPED_SKILL_IDS = 64;
+
+export interface MappedSkillAllowlist {
+  /** Catalog ids for the existing `automatedSkillIds` field (Zana-injected skills). */
+  automatedSkillIds?: string[];
+  /** Allowlist entries that match no catalog id; user and plugin skills, by name. */
+  allowedSkillNames?: string[];
+}
+
+/**
+ * Split a resolved allowlist into catalog ids and remaining names. An entry that
+ * matches no catalog id is kept as a name only. `undefined` (unrestricted) maps
+ * to an empty result so callers keep today's behavior.
+ */
+export function mapSkillAllowlist(
+  allowlist: readonly string[] | undefined,
+  catalog: readonly SkillCatalogEntry[]
+): MappedSkillAllowlist {
+  if (allowlist === undefined) return {};
+  const ids = new Set<string>();
+  const names: string[] = [];
+  for (const entry of allowlist) {
+    let matched = false;
+    for (const item of catalog) {
+      const owner = /^zcc:([^/]+)\//.exec(item.id)?.[1];
+      if (skillAllowlistEntryMatches(entry, owner ? `${owner}:${item.name}` : item.name)) {
+        ids.add(item.id);
+        matched = true;
+      }
+    }
+    if (!matched) names.push(entry);
+  }
+  // A bare/`:name` entry matches every owner, so entries can fan out past the wire limit.
+  if (ids.size > MAX_MAPPED_SKILL_IDS) {
+    throw new Error(`skill allowlist maps to ${ids.size} injected skills (limit ${MAX_MAPPED_SKILL_IDS}); use plugin-qualified entries to narrow it`);
+  }
+  return { automatedSkillIds: [...ids].sort(), allowedSkillNames: [...new Set(names)] };
+}
+
+/**
+ * Advisory Team-save check: allowlist entries that no installed skill satisfies.
+ * An unavailable inventory (`undefined`) yields no warning, never a failure. The
+ * always-allowed skills are skipped: Zana-injected skills are absent from some
+ * (remote) host inventories.
+ */
+export function uninstalledAllowlistSkills(
+  allowlist: readonly string[] | undefined,
+  inventory: readonly string[] | undefined
+): string[] {
+  if (!allowlist || !inventory) return [];
+  return allowlist.filter((entry) => !(ALWAYS_ALLOWED_SKILLS as readonly string[]).includes(entry)
+    && !inventory.some((installed) => skillAllowlistEntryMatches(entry, installed)));
 }
 
 /**
@@ -4761,6 +4901,11 @@ export interface Team {
   worktreeOnComplete?: 'leave' | 'merge' | 'delete';
   /** Override global structured-work routing enforcement for this Team. */
   routingEnforced?: boolean;
+  /**
+   * Opt-in: worker slots whose persona leaves `skills` unset get only the
+   * always-allowed skills. Only the boolean `true` is stored; see `effectiveSkills`.
+   */
+  leanWorkers?: boolean;
   /** Transport selected for every squad member. Absent persisted teams remain CLI. */
   transport?: SquadTransport;
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */

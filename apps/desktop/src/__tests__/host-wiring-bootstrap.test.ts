@@ -642,6 +642,14 @@ describe('host bootstrap wiring', () => {
     const admission = await o.admissionInput(project.id, request);
     expect(admission).toMatchObject({ slotCount: 2, maxSlots: 32, sourceBytes: 12 });
     expect(admission.slotRoutes).toHaveLength(2);
+    // Advisory (a worker slot has no level): explicit false keeps ROUTE_ELIGIBILITY non-required.
+    expect(admission.enforceRouting).toBe(false);
+    const leveled = await o.admissionInput(project.id, { ...request, resolvedModels: [{ slotId: 's1', personaId: 'pa', provider: 'claude', model: 'sonnet', level: 'high' }] });
+    expect(leveled.enforceRouting).toBe(true);
+    const enforcedTeams = vi.mocked(c.teams.list).getMockImplementation()!;
+    vi.mocked(c.teams.list).mockReturnValue([{ id: 't1', routingEnforced: false, slots: [{ personaId: 'pa' }], orchestratorPersonaId: 'po' }]);
+    expect((await o.admissionInput(project.id, { ...request, resolvedModels: [{ slotId: 's1', personaId: 'pa', provider: 'claude', model: 'sonnet', level: 'high' }] })).enforceRouting).toBe(false);
+    vi.mocked(c.teams.list).mockImplementation(enforcedTeams);
     const missing = await o.admissionInput('no-project', { teamId: 'ghost', workUnits: [], slots: [] });
     expect(missing.slotRoutes).toEqual([]);
     expect(missing.slotCount).toBe(0);
@@ -694,6 +702,21 @@ describe('host bootstrap wiring', () => {
     expect(typeof o.onTerminal).toBe('function');
     expect(typeof o.resolveExactNativeRecoverySnapshots).toBe('function');
     await Promise.resolve(tryIt(() => o.authorizePlanRegistration({ id: 'x' }, []))).catch(() => undefined);
+    // Submitter present: tier-fit advisory is evaluated; it never throws out of registration authorization.
+    await Promise.resolve(tryIt(() => o.authorizePlanRegistration({ id: 'x', resolvedModels: [] }, [], { slotId: 'w' }))).catch(() => undefined);
+    // Tier-fit is advisory: it logs a warning, never throws, and is silent without route facts or findings.
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const planUnit = { id: 'u1', title: 'U', task: 't', dependencies: [], routing: { version: 1, minimumLevel: 'extra-high' } } as never;
+    host.logPlanTierFit('x', [planUnit], undefined);
+    host.logPlanTierFit('x', [planUnit], [{ slotId: 'w', personaId: 'p', level: 'extra-high' }] as never);
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining('plan tier fit'));
+    host.logPlanTierFit('x', [planUnit], [{ slotId: 'w', personaId: 'p', level: 'low' }] as never);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('plan tier fit: execution x: under-tiered'));
+    info.mockClear();
+    // A snapshot without a personaId is tolerated (treated as empty), still reported.
+    host.logPlanTierFit('y', [planUnit], [{ slotId: 'w', level: 'low' }] as never);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('plan tier fit: execution y'));
+    info.mockRestore();
     vi.mocked(c.teams.list).mockRestore();
     vi.mocked(c.personas.list).mockRestore();
   });
@@ -756,6 +779,24 @@ describe('host bootstrap wiring', () => {
       vi.mocked(c.teams.list).mockRestore();
       vi.mocked(c.personas.list).mockRestore();
       h.runtimeOverride = {};
+    }
+  });
+
+  it('stamps skillAllowlist on resolved model snapshots only for restricted slots', async () => {
+    const c = ctx();
+    vi.spyOn(c.teams, 'list').mockReturnValue([{ id: 'tm', transport: 'MODERN', slots: [{ personaId: 'ma' }, { personaId: 'mb' }], orchestratorPersonaId: 'mo' }]);
+    vi.spyOn(c.personas, 'list').mockReturnValue([
+      { id: 'ma', name: 'A', baseProfile: 'claude', model: 'sonnet', skills: ['review'] },
+      { id: 'mb', name: 'B', baseProfile: 'claude', model: 'sonnet' },
+      { id: 'mo', name: 'O', baseProfile: 'claude' }
+    ]);
+    try {
+      const snapshots = await h.squadOpts.resolveTeamModelSnapshots(project.id, { teamId: 'tm', slots: [{ initialTask: 'a' }, { initialTask: 'b' }, { initialTask: 'o' }] });
+      expect(snapshots[0].skillAllowlist).toEqual(expect.arrayContaining(['review']));
+      expect(snapshots[1]).not.toHaveProperty('skillAllowlist');
+    } finally {
+      vi.mocked(c.teams.list).mockRestore();
+      vi.mocked(c.personas.list).mockRestore();
     }
   });
 

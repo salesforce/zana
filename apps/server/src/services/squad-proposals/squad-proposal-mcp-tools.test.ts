@@ -267,6 +267,25 @@ describe('registerSquadProposalTools', () => {
     expect(JSON.parse(r2.content[0].text)).toEqual({ ok: false, reason: 'cycle' });
   });
 
+  it('squad_plan_check passes tierFit warnings through and forwards teamId', async () => {
+    const steps = [{ id: 'a', title: 'A', dependencies: [], writeScope: [] }];
+    const tierFit = { findings: [
+      { unitId: 'a', kind: 'over-tiered' as const, detail: 'o' },
+      { unitId: 'b', kind: 'under-tiered' as const, detail: 'u' },
+      { unitId: 'c', kind: 'no-eligible-slot' as const, detail: 'n' }
+    ] };
+    const fit = vi.fn(async () => ({ ok: true as const, value: { ok: true as const, steps, tierFit } }));
+    const withFit = setup({ checkPlan: fit });
+    const r = await withFit.tools.get('squad_plan_check')!({ path: 'plan.md', teamId: 't1' });
+    expect(r.isError).toBeUndefined();
+    expect(JSON.parse(r.content[0].text)).toEqual({ ok: true, steps, tierFit });
+    expect(fit).toHaveBeenLastCalledWith({ projectId: 'p' }, { path: 'plan.md', teamId: 't1' });
+    const plain = setup({ checkPlan: async () => ({ ok: true, value: { ok: true, steps } }) });
+    expect(JSON.parse((await plain.tools.get('squad_plan_check')!({ text: 'x' })).content[0].text)).toEqual({ ok: true, steps });
+    expect(SQUAD_PLAN_CHECK_JSON_SCHEMA.properties.teamId.maxLength).toBe(256);
+    expect(squadPlanCheckInputSchema.teamId.safeParse('t1').success).toBe(true);
+  });
+
   it('squad_plan_check forwards path or text and formats dep errors', async () => {
     const { tools, checkPlan } = setup();
     await tools.get('squad_plan_check')!({ path: 'plan.md' });

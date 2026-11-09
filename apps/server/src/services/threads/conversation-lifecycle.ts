@@ -80,7 +80,8 @@ import { validateProviderModelSelection } from './provider-model-validation.js';
 import { threadPermissionMode } from './thread-permission-mode.js';
 import {
   copyThreadAutomatedSkillIds,
-  threadAutomatedSkillIds
+  threadAutomatedSkillIds,
+  threadSkillSelection
 } from './thread-automated-skill-selection.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
@@ -214,7 +215,8 @@ async function sendConversationTurnWithLease(
       model: execution?.model,
       permissionMode,
       promptMode: requestedMode === 'plan' ? 'plan' : undefined,
-      plugins: ctx.plugins
+      plugins: ctx.plugins,
+    skillSelection: threadSkillSelection(ctx.db, live.id)
     });
     lease.assertCurrent();
     packedExecution = {
