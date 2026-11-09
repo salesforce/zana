@@ -3324,6 +3324,24 @@ describe('SquadExecutionService', () => {
     ]));
   }));
 
+  it('clearNativeRecoverySnapshot drops one slot\'s snapshot only, and is a no-op when it has none (#579)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let record = await store.upsertNativeRecoverySnapshot(started.value.id, started.value.stateVersion, {
+      attempt: started.value.attempt, slotId: 'worker-1', role: 'worker', personaId: 'p', profileId: 'claude', nativeConversationId: 'native-1'
+    });
+    record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+      attempt: record.attempt, slotId: 'worker-2', role: 'worker', personaId: 'p', profileId: 'claude', nativeConversationId: 'native-2'
+    });
+    const cleared = await store.clearNativeRecoverySnapshot(record.id, 'worker-1');
+    expect(cleared.nativeRecoverySnapshots?.map((entry) => entry.slotId)).toEqual(['worker-2']);
+    expect(cleared.stateVersion).toBe(record.stateVersion + 1);
+    expect((await store.clearNativeRecoverySnapshot(record.id, 'worker-1')).stateVersion).toBe(cleared.stateVersion);
+    await expect(store.clearNativeRecoverySnapshot('missing', 'worker-1')).rejects.toThrow('execution not found');
+  }));
+
   it('rejects exact-native recovery cleanly when retained run has no restorable slots', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, { store }));

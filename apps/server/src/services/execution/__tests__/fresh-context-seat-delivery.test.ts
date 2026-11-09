@@ -168,3 +168,61 @@ describe('REQ-8 usage of a recycled seat counts once', () => {
     expect((await store.get('execution-1'))?.state).not.toBe('BLOCKED');
   }));
 });
+
+describe('#579 engine paths beyond the acceptance tests', () => {
+  it('a unit stays in the current session, with the skip logged, while a blocker answer is waiting or messages are queued', async () => fixture(async (filePath) => {
+    const logError = vi.fn();
+    const recycleSeat = vi.fn(async () => undefined);
+    const { service, deliverAssignment } = await setup(filePath, { worker: seat({ deliveredUnitCount: 1 }), recycleSeat, logError });
+    (service as unknown as { deps: { queuedForSession: () => number } }).deps.queuedForSession = () => 2;
+    await service.dispatchReady(coordinator);
+    expect(recycleSeat).not.toHaveBeenCalled();
+    expect(deliverAssignment).toHaveBeenCalledWith('worker-1', expect.any(String), expect.anything());
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('execution-1/slot-1'), expect.any(Error));
+  }));
+
+  it('delivers to the new session when the hook reports one, and releases the unit for a seat that can never start', async () => fixture(async (filePath) => {
+    const started = await setup(filePath, { worker: seat({ deliveredUnitCount: 1 }), recycleSeat: vi.fn(async () => ({ sessionId: 'worker-2' })) });
+    await started.service.dispatchReady(coordinator);
+    await vi.waitFor(() => expect(started.deliverAssignment).toHaveBeenCalledWith('worker-2', expect.stringContaining('assigned work unit `a`'), expect.anything()));
+  }));
+
+  it('releases the unit when the hook reports a refusal that may pass, and quarantines a seat that never starts', async () => fixture(async (filePath) => {
+    const later = await setup(filePath, { worker: seat({ deliveredUnitCount: 1 }), recycleSeat: vi.fn(async () => ({})) });
+    await later.service.dispatchReady(coordinator);
+    await vi.waitFor(async () => expect((await unitState(later.store, 0))?.state).toBe('READY'));
+    expect(later.deliverAssignment).not.toHaveBeenCalled();
+  }));
+
+  it('a declined recycle delivers to the session the seat has', async () => fixture(async (filePath) => {
+    const { service, deliverAssignment } = await setup(filePath, { worker: seat({ deliveredUnitCount: 1 }), recycleSeat: vi.fn(async () => ({ declined: true as const })) });
+    await service.dispatchReady(coordinator);
+    await vi.waitFor(() => expect(deliverAssignment).toHaveBeenCalledWith('worker-1', expect.any(String), expect.anything()));
+  }));
+
+  it('counts a unit the legacy transport queued, but not one that was refused', async () => fixture(async (filePath) => {
+    const recordUnitDelivered = vi.fn(async () => undefined);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const deliverToWorker = vi.fn(async () => true);
+    const service = new ExecutionService({
+      store, artifacts: createExecutionArtifactStore({ filePath: `${filePath}.artifacts`, id: () => 'artifact-1' }),
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [{ slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'd' }] } } }),
+      launchTeam: async () => ({ ok: true }),
+      getTeamLaunch: async () => ({ id: 'lifecycle-1', workers: [seat({ deliveredUnitCount: 0 })] }),
+      cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
+      replyToSession: () => true, deliverToWorker, recordUnitDelivered, resolveExactNativeRecoverySnapshots: () => []
+    } as never);
+    await service.start('owner', 'project-1', { version: 1 as const, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Build', slots: [{ initialTask: 'Run' }], coordinationMode: 'job-team', workUnits: [unit('a')] } as never);
+    await service.dispatchReady(coordinator);
+    expect(recordUnitDelivered).toHaveBeenCalledWith('lifecycle-1', 'slot-1');
+  }));
+
+  it('a failing delivery count is logged and does not fail the delivery', async () => fixture(async (filePath) => {
+    const logError = vi.fn();
+    const { service, deliverAssignment } = await setup(filePath, { worker: seat({ deliveredUnitCount: 0 }), recordUnitDelivered: vi.fn(async () => { throw new Error('disk'); }), logError });
+    await service.dispatchReady(coordinator);
+    expect(deliverAssignment).toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('lifecycle-1/slot-1'), expect.any(Error));
+  }));
+});

@@ -554,7 +554,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     recordId: string,
     slotId: string,
     /** `replace` (#579): swap the slot's entry in the launch result in place and take no launch of capacity. */
-    binding: { sessionId: string; authorizationId: string; delivery: TeamWorkerDeliveryState; replace?: true }
+    binding: { sessionId: string; authorizationId: string; delivery: TeamWorkerDeliveryState; replace?: true; deliveredUnitCount?: number }
   ): Promise<TeamLifecycleRecord> {
     const safeRecordId = boundedString(recordId, 'record id');
     const safeSlotId = boundedString(slotId, 'slot id');
@@ -573,14 +573,65 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
         && (candidate.sessionId === sessionId || candidate.authorizationId === authorizationId))) {
         throw new Error('duplicate team lifecycle worker');
       }
+      const previousSessionId = worker.sessionId ?? previousResultSessionId(record, safeSlotId);
       worker.sessionId = sessionId;
       worker.authorizationId = authorizationId;
       worker.delivery = binding.delivery;
-      if (record.capacity) record.capacity.launched += 1;
-      record.launchResult.workers.push(boundedIdentity(worker));
-      record.launchResult.launched = record.launchResult.workers.length;
-      // Keep the persisted launch result consistent: consumers of workerSessionIds see on-demand seats too.
-      if (Array.isArray(record.launchResult.workerSessionIds)) record.launchResult.workerSessionIds.push(sessionId);
+      if (binding.deliveredUnitCount !== undefined) worker.deliveredUnitCount = boundedUnitCount(binding.deliveredUnitCount);
+      if (binding.replace === true) {
+        worker.deliveredUnitCount = 0;
+        swapLaunchResultSeat(record, safeSlotId, previousSessionId, boundedIdentity(worker));
+      } else {
+        if (record.capacity) record.capacity.launched += 1;
+        record.launchResult.workers.push(boundedIdentity(worker));
+        record.launchResult.launched = record.launchResult.workers.length;
+        // Keep the persisted launch result consistent: consumers of workerSessionIds see on-demand seats too.
+        if (Array.isArray(record.launchResult.workerSessionIds)) record.launchResult.workerSessionIds.push(sessionId);
+      }
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /**
+   * A seat that finished a unit goes back to waiting for its next session (#579): it keeps its place in the launch
+   * result, loses its session and is stored like a seat that starts on demand, so claim, cancel and restart treat it
+   * the same way. Returns the old session id, or undefined when the seat is not running a session.
+   */
+  async function detachWorkerForRecycle(recordId: string, slotId: string): Promise<{ record: TeamLifecycleRecord; sessionId: string } | undefined> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    const safeSlotId = boundedString(slotId, 'slot id');
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
+      if (!record || record.state !== 'active' || !worker || worker.sessionId === undefined
+        || worker.process !== 'running' || worker.transport === 'MODERN') return undefined;
+      const sessionId = worker.sessionId;
+      delete worker.sessionId;
+      worker.onDemand = true;
+      worker.process = 'authorized';
+      worker.attention = 'active';
+      worker.capacityReleased = false;
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return { record: clone(record), sessionId };
+    });
+  }
+
+  /** Count a unit the worker's current session accepted (#579); kept across restart, reset by the in-place rebind. */
+  async function recordUnitDelivered(recordId: string, slotId: string): Promise<TeamLifecycleRecord | undefined> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    const safeSlotId = boundedString(slotId, 'slot id');
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
+      if (!record || !worker || worker.sessionId === undefined || terminalProcesses.has(worker.process)) return undefined;
+      worker.deliveredUnitCount = boundedUnitCount((worker.deliveredUnitCount ?? 0) + 1);
       record.revision += 1;
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
@@ -1000,7 +1051,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
-  return { claim, complete, setLaunchResult, addWorker, addDeferredWorker, neverStartedSlotsSync, claimDeferredSpawn, reopenDeferredSpawn, failDeferredSeat, bindDeferredWorker, updateWorker, workerMaySpawn, claimWorkerRunning,
+  return { claim, complete, setLaunchResult, addWorker, addDeferredWorker, neverStartedSlotsSync, claimDeferredSpawn, reopenDeferredSpawn, failDeferredSeat, bindDeferredWorker, detachWorkerForRecycle, recordUnitDelivered, updateWorker, workerMaySpawn, claimWorkerRunning,
     reserveModernWorker, acknowledgeModernWorker, markModernWorkerUncertain, modernWorkerMayClose, reconcileModernWorkers,
     fenceCancel: cancel, cancel, reconcileStartup, list, get, findRequest, findModernWorkerBinding };
 }
@@ -1484,6 +1535,24 @@ function boundedWorker(worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): O
     ...(worker.bindingState === undefined ? {} : { bindingState: worker.bindingState }),
     ...(worker.modernContext === undefined ? {} : { modernContext: boundedModernContext(worker.modernContext) })
   };
+}
+
+/** The session the launch result lists for a slot; a detached seat has none on its worker. */
+function previousResultSessionId(record: TeamLifecycleRecord, slotId: string): string | undefined {
+  return record.launchResult.workers.find((candidate) => candidate.slotId === slotId)?.sessionId;
+}
+
+/** Swap a seat's entry in the launch result for its new session, in place (#579). */
+function swapLaunchResultSeat(record: TeamLifecycleRecord, slotId: string, previousSessionId: string | undefined, identity: TeamLaunchedWorker): void {
+  const index = record.launchResult.workers.findIndex((candidate) => candidate.slotId === slotId);
+  if (index === -1) record.launchResult.workers.push(identity);
+  else record.launchResult.workers[index] = identity;
+  record.launchResult.launched = record.launchResult.workers.length;
+  const ids = record.launchResult.workerSessionIds;
+  if (!Array.isArray(ids)) return;
+  const at = previousSessionId === undefined ? -1 : ids.indexOf(previousSessionId);
+  if (at === -1) ids.push(identity.sessionId);
+  else ids[at] = identity.sessionId;
 }
 
 /** A delivered-unit count: a non-negative safe integer. */

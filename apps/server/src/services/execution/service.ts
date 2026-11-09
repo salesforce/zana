@@ -15,6 +15,7 @@ import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-w
 import { PlanReadinessWatchdog, type PlanReadinessExpiryReason } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
 import { evaluateSlotEligibility } from './routing-policy.js';
+import { recycleDecision } from './idle-gated-injector.js';
 import { transitionCircuit, type CircuitState } from './retry-policy.js';
 import { usageCursorIdentity, usageRollup, validateStructuredJson, validateStructuredResult, type ExecutionUsageObservationV1, type UsageSampleKind } from './contracts.js';
 import { CoordinatorWakeConfirmations, type CoordinatorWakeConfirmation, type PendingWakeConfirmation } from './coordinator-wake-confirmation.js';
@@ -208,6 +209,9 @@ function assignmentCorrelation(executionId: string, claim: { claimId?: string; c
   return { executionId, assignmentId: claim.claimId, idempotencyKey: `${executionId}:${claim.claimId}:${claim.claimGeneration}` };
 }
 
+/** How a recycle ended: the new session to deliver to, no session (`final` when the seat will never start), or `declined` when nothing could recycle it and the unit stays with the current session. */
+export interface RecycleOutcome { sessionId?: string; final?: true; declined?: true }
+
 export type DeferredWorkerSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string; retryable?: true };
 
 export interface ExecutionServiceDeps {
@@ -259,9 +263,11 @@ export interface ExecutionServiceDeps {
    * the engine: the worker's own completion call is still waiting on the dispatch that hands over the entry.
    * Failures are the host's to settle (a failed respawn releases the assignment undelivered).
    */
-  recycleSeat?: (recordId: string, slotId: string, assignment: ExecutionDispatchAssignment) => Promise<void>;
+  recycleSeat?: (recordId: string, slotId: string, assignment: ExecutionDispatchAssignment) => Promise<RecycleOutcome | void>;
   /** Record that a unit was accepted by a seat's current session (#579); feeds the lifecycle `deliveredUnitCount`. */
   recordUnitDelivered?: (recordId: string, slotId: string) => Promise<void>;
+  /** Messages queued for a session by the idle-gated injector (#579): a session with any is never closed. */
+  queuedForSession?: (sessionId: string) => number;
   /** Project a runtime receipt only after authenticated work completion is durable. */
   onWorkSettled?: (correlation: ExecutionAssignmentCorrelation & { workerSessionId: string }) => void | Promise<void>;
   triggerDeliveryDrain?: (sessionId: string) => void;
@@ -403,6 +409,8 @@ interface ExtractedLifecycle {
     process?: string;
     /** Set on a seat that starts on demand (it may have no session). */
     onDemand?: true;
+    /** Units the current session accepted; present only for a seat that starts a fresh session per unit (#579). */
+    deliveredUnitCount?: number;
     task?: string;
     exitCode?: number;
     exitSignal?: number;
@@ -416,6 +424,12 @@ interface ExtractedLifecycle {
     status?: string;
     result?: { ok?: boolean; message?: string };
   };
+}
+
+/** The lifecycle record id when the slot's worker counts delivered units (a seat on a fresh session per unit), else undefined. */
+function countedRecordId(record: ExecutionRecord, lifecycle: ExtractedLifecycle | undefined, slotId: string): string | undefined {
+  const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
+  return worker?.deliveredUnitCount === undefined ? undefined : lifecycle?.recordId;
 }
 
 function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
@@ -1604,12 +1618,12 @@ export class ExecutionService {
   }
 
   /** Capture one immutable main-owned transcript usage sample. */
-  async observeSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind): Promise<void> {
+  async observeSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind, slotHint?: string): Promise<void> {
     const key = `${executionId}\0${sessionId}`;
     const flightKey = `${key}\0${sampleKind}`;
     const existing = this.usageFlights.get(flightKey);
     if (existing) return existing;
-    const flight = this.serializeUsage(key, () => this.captureSessionUsage(executionId, sessionId, sampleKind));
+    const flight = this.serializeUsage(key, () => this.captureSessionUsage(executionId, sessionId, sampleKind, slotHint));
     this.usageFlights.set(flightKey, flight);
     void flight.finally(() => {
       if (this.usageFlights.get(flightKey) === flight) this.usageFlights.delete(flightKey);
@@ -1617,7 +1631,7 @@ export class ExecutionService {
     return flight;
   }
 
-  private async captureSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind): Promise<void> {
+  private async captureSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind, slotHint?: string): Promise<void> {
     if (!this.deps.readSessionStats) return;
     const record = await this.deps.store.get(executionId);
     if (!record || isResumeGrantTerminal(record.state)) return;
@@ -1627,7 +1641,8 @@ export class ExecutionService {
     }
     const worker = lifecycle?.workers?.find((candidate) => candidate.sessionId === sessionId);
     const role = lifecycle?.orchestratorSessionId === sessionId ? 'orchestrator' as const : 'worker' as const;
-    const slotId = role === 'orchestrator' ? 'orchestrator' : worker?.slotId ?? 'main:unmapped';
+    // A seat detached between sessions (#579) no longer lists the old session id; the caller's slot keeps its cursor.
+    const slotId = role === 'orchestrator' ? 'orchestrator' : worker?.slotId ?? slotHint ?? 'main:unmapped';
     const unit = role === 'worker' ? record.workUnits?.find((candidate) => candidate.assignedSlotId === slotId && candidate.state === 'CLAIMED') : undefined;
     const resolved = record.resolvedModels.find((candidate) => candidate.slotId === slotId);
     let stats: SessionStats | null = null;
@@ -1929,25 +1944,12 @@ export class ExecutionService {
     }
     const deferred = ready.filter((entry) => entry.sessionId === undefined);
     for (const entry of ready.filter((candidate) => candidate.sessionId !== undefined)) {
-      await this.deliverAssignment(record, entry.assignment, entry.sessionId!);
+      if (this.handOffToRecycle(record, lifecycle, entry.assignment)) continue;
+      await this.deliverAssignment(record, entry.assignment, entry.sessionId!, countedRecordId(record, lifecycle, entry.assignment.slotId));
     }
     const started = await this.startDeferredSeats(lifecycle?.recordId, deferred.map((entry) => entry.assignment.slotId));
     for (const entry of deferred) {
-      const outcome = started.get(entry.assignment.slotId);
-      if (outcome?.sessionId === undefined) {
-        // A refusal that will not pass takes the seat out of rotation, so the unit is not offered to it again.
-        if (outcome?.final) quarantined = (await this.quarantineDeadSeat(record, entry.assignment)) || quarantined;
-        else await this.releaseUndeliveredAssignments(record.id, [entry.assignment]);
-        continue;
-      }
-      // The run may have ended while the seat was starting: stop the session, give it nothing, release the unit.
-      const current = await this.deps.store.get(record.id);
-      if (!current || isResumeGrantTerminal(current.state)) {
-        try { this.deps.closeWorkerSession?.(outcome.sessionId); } catch (error) { this.deps.logError?.(`on-demand seat ${entry.assignment.slotId} could not be closed after the run ended`, error); }
-        await this.releaseUndeliveredAssignments(record.id, [entry.assignment]);
-        continue;
-      }
-      await this.deliverAssignment(record, entry.assignment, outcome.sessionId);
+      quarantined = (await this.deliverStartedSeat(record, entry.assignment, started.get(entry.assignment.slotId), lifecycle)) || quarantined;
     }
     // A unit re-homed or blocked by the quarantine is dispatched again; the quarantined seat is excluded this time.
     if (quarantined) await this.cascadeDispatch(record.id);
@@ -1997,7 +1999,7 @@ export class ExecutionService {
   }
 
   /** Push one assignment's text to a live session; the receipt rules are explained inline. */
-  private async deliverAssignment(record: ExecutionRecord, assignment: ExecutionDispatchAssignment, sessionId: string): Promise<void> {
+  private async deliverAssignment(record: ExecutionRecord, assignment: ExecutionDispatchAssignment, sessionId: string, lifecycleRecordId?: string): Promise<void> {
     const text = assignmentText(record, assignment);
     if (this.deps.deliverAssignment) {
       const correlation = assignmentCorrelation(record.id, assignment);
@@ -2019,6 +2021,7 @@ export class ExecutionService {
         const receipt = await this.deps.deliverAssignment(sessionId, text, correlation);
         // Runtime completion is delivery evidence, never an authenticated work outcome.
         if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
+        else await this.countDeliveredUnit(lifecycleRecordId, assignment.slotId);
       } catch (error) {
         // A lost receipt may follow acceptance. Preserve the claim; never retry blindly.
         this.deps.logError?.(`execution assignment delivery uncertain for ${record.id}/${assignment.workUnitId}`, error);
@@ -2032,12 +2035,100 @@ export class ExecutionService {
       const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
       const delivered = await deliver(sessionId, text);
       if (delivered) {
+        await this.countDeliveredUnit(lifecycleRecordId, assignment.slotId);
         try { this.deps.triggerDeliveryDrain?.(sessionId); } catch { /* nudge best-effort */ }
       } else {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
       }
     } catch {
       await this.releaseUndeliveredAssignments(record.id, [assignment]);
+    }
+  }
+
+  /**
+   * Deliver to a seat once its start settled: stop it and release the unit when the run ended meanwhile, quarantine
+   * a seat that will never start, or release the unit for a refusal that may pass. Returns true when the unit was
+   * re-homed or blocked by a quarantine.
+   */
+  private async deliverStartedSeat(
+    record: ExecutionRecord, assignment: ExecutionDispatchAssignment, outcome: { sessionId?: string; final?: true } | undefined, lifecycle: ExtractedLifecycle | undefined
+  ): Promise<boolean> {
+    if (outcome?.sessionId === undefined) {
+      // A refusal that will not pass takes the seat out of rotation, so the unit is not offered to it again.
+      if (outcome?.final) return this.quarantineDeadSeat(record, assignment);
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      return false;
+    }
+    // The run may have ended while the seat was starting: stop the session, give it nothing, release the unit.
+    const current = await this.deps.store.get(record.id);
+    if (!current || isResumeGrantTerminal(current.state)) {
+      try { this.deps.closeWorkerSession?.(outcome.sessionId); } catch (error) { this.deps.logError?.(`on-demand seat ${assignment.slotId} could not be closed after the run ended`, error); }
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      return false;
+    }
+    await this.deliverAssignment(record, assignment, outcome.sessionId, countedRecordId(record, lifecycle, assignment.slotId));
+    return false;
+  }
+
+  /**
+   * Finish a recycle (#579): the host started the seat's new session (or failed to). The assignment goes to it, or is
+   * released, exactly as for a seat that starts on demand; a seat that can never start is quarantined and the unit
+   * dispatched again.
+   */
+  private async finishRecycle(
+    executionId: string, assignment: ExecutionDispatchAssignment, outcome: RecycleOutcome
+  ): Promise<void> {
+    const record = await this.deps.store.get(executionId);
+    if (!record) return;
+    let lifecycle: ExtractedLifecycle | undefined;
+    try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); } catch (error) {
+      this.deps.logError?.(`fresh session lifecycle read failed for ${executionId}/${assignment.slotId}`, error);
+    }
+    const current = outcome.declined ? lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId)?.sessionId : undefined;
+    // Nothing could start a new session: the unit goes to the one the seat has, or back to the board.
+    const settled = outcome.declined ? { sessionId: current } : outcome;
+    if (await this.deliverStartedSeat(record, assignment, settled, lifecycle)) await this.cascadeDispatch(record.id);
+  }
+
+  /**
+   * A seat that starts a fresh session per unit and has already been given a unit (#579): hand the next one to the
+   * host's `recycleSeat` hook instead of typing it into the old session. The hook is NOT awaited: this dispatch runs
+   * inside the worker's own `execution.work.complete` call, so closing the session here would cut that call short.
+   * Returns true when the entry was handed over.
+   */
+  private handOffToRecycle(record: ExecutionRecord, lifecycle: ExtractedLifecycle | undefined, assignment: ExecutionDispatchAssignment): boolean {
+    const recycle = this.deps.recycleSeat;
+    const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
+    // A session's first unit is just delivered; only a later one may start a new session.
+    if (!recycle || !lifecycle?.recordId || !worker?.deliveredUnitCount) return false;
+    const skip = this.recycleSkipReason(record, assignment.slotId, worker.sessionId, worker.deliveredUnitCount);
+    if (skip) {
+      this.deps.logError?.(`fresh session skipped for ${record.id}/${assignment.slotId}: ${skip}`, new Error(skip));
+      return false;
+    }
+    const where = `${record.id}/${assignment.slotId}`;
+    void Promise.resolve().then(() => recycle(lifecycle.recordId!, assignment.slotId, assignment))
+      .then((outcome) => (outcome ? this.finishRecycle(record.id, assignment, outcome) : undefined))
+      .catch((error) => this.deps.logError?.(`fresh session for ${where} failed`, error));
+    return true;
+  }
+
+  /** Why a seat's next unit stays in its current session, or undefined when it may start a new one. */
+  private recycleSkipReason(record: ExecutionRecord, slotId: string, sessionId: string | undefined, deliveredUnitCount: number): string | undefined {
+    const decision = recycleDecision({
+      deliveredUnitCount,
+      hasBlockedUnit: (record.workUnits ?? []).some((unit) => unit.state === 'BLOCKED' && unit.assignedSlotId === slotId),
+      hasOpenBlockerDelivery: (record.deliveries ?? []).some((delivery) => delivery.slotId === slotId && (delivery.state === 'PENDING' || delivery.state === 'LEASED')),
+      queuedInInjector: (sessionId === undefined ? 0 : this.deps.queuedForSession?.(sessionId) ?? 0)
+    });
+    return decision.recycle ? undefined : decision.reason;
+  }
+
+  /** Tell the lifecycle a unit was accepted, so the next one can start a new session. Never fails a delivery. */
+  private async countDeliveredUnit(lifecycleRecordId: string | undefined, slotId: string): Promise<void> {
+    if (!lifecycleRecordId || !this.deps.recordUnitDelivered) return;
+    try { await this.deps.recordUnitDelivered(lifecycleRecordId, slotId); } catch (error) {
+      this.deps.logError?.(`delivered unit not counted for ${lifecycleRecordId}/${slotId}`, error);
     }
   }
 
