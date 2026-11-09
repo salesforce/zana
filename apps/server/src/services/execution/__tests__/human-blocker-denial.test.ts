@@ -13,6 +13,19 @@ describe('humanBlockerDenial', () => {
     expect(text).toContain('Inbox entry i-1');
   });
 
+  it('names the card by subject and blocker id when no notice intent exists (kickoff blockers)', () => {
+    const text = humanBlockerDenial(record({ jobTitle: 'Ship' }), { id: 'no-progress:1:a:1' });
+    expect(text).toContain('card "Ship" (blocker no-progress:1:a:1)');
+    expect(text).not.toContain('once its card appears');
+  });
+
+  it('shows the subject the way the Inbox heading does: one line, 200 chars', () => {
+    const text = humanBlockerDenial(record({ jobTitle: `Line one\n\tline two ${'x'.repeat(400)}`, noticeIntents: [{ ...intent, inboxItemId: 'i-2' }] }), { id: 'b1' });
+    const quoted = /card "([^"]*)"/.exec(text)![1]!;
+    expect(quoted.startsWith('Line one line two x')).toBe(true);
+    expect(quoted).toHaveLength(200);
+  });
+
   it('says the card has not appeared when the notice has no Inbox entry', () => {
     const text = humanBlockerDenial(record({ jobTitle: 'Ship', noticeIntents: [{ ...intent, status: 'PENDING' }] }), { id: 'b1' });
     expect(text).toContain('once its card appears (blocker b1)');

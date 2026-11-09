@@ -113,9 +113,13 @@ describe('correctness obligations (OBL-009, OBL-005)', () => {
   it('OBL-009 REQ-4: re-issuing a coordinator-audience answer replays one delivery', async () => fixture(async (filePath) => {
     const { service, store } = await setup(filePath, { append: vi.fn(async () => ({ id: 'f' })) });
     await service.blockWork(workerBinding, 'a', { id: 'blocker', question: 'Which file?', audience: 'coordinator' });
-    await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
-    await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
-    expect((await store.get('execution-1'))?.deliveries).toHaveLength(1);
+    const first = await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    const replay = await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    expect(first).toMatchObject({ ok: true });
+    expect(replay).toMatchObject({ ok: true });
+    const deliveries = (await store.get('execution-1'))?.deliveries;
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries?.[0]?.clientRequestId).toBe('execution-1:blocker:coordinator-answer');
   }));
 
   it('OBL-005 REQ-1: repeated coordinator attempts on a human blocker stay denied and enqueue nothing', async () => fixture(async (filePath) => {

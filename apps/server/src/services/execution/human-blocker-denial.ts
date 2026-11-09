@@ -1,3 +1,4 @@
+import { MAX_INBOX_SUBJECT_CHARS } from '../inbox/inbox-store.js';
 import type { ExecutionRecord } from './store.js';
 
 type Blocker = NonNullable<ExecutionRecord['blockers']>[number];
@@ -7,14 +8,22 @@ export function blockerCardSubject(record: Pick<ExecutionRecord, 'jobTitle'>): s
   return record.jobTitle || 'Job Execution Blocked';
 }
 
+/** Subject as the Inbox shows it: one line, capped like the Inbox heading. */
+function displayedSubject(record: Pick<ExecutionRecord, 'jobTitle'>): string {
+  return blockerCardSubject(record).replace(/\s+/g, ' ').trim().slice(0, MAX_INBOX_SUBJECT_CHARS);
+}
+
 /**
  * Denial text for a coordinator that tries to answer a human blocker: names the
- * Inbox card the owner answers, or says the card has not appeared yet.
+ * Inbox card the owner answers. Only a notice that is still PENDING means the
+ * card is not there yet; a blocker with no notice intent (kickoff / API-error
+ * blockers) has its card appended at once, so the card is named without an id.
  */
 export function humanBlockerDenial(record: ExecutionRecord, blocker: Pick<Blocker, 'id'>): string {
-  const key = `execution-blocker:${record.id}:${blocker.id}`;
-  const inboxItemId = record.noticeIntents?.find((intent) => intent.key === key)?.inboxItemId;
+  const intent = record.noticeIntents?.find((candidate) => candidate.blockerId === blocker.id);
   const prefix = 'blocker requires owner resolution: the owner answers it in the Inbox';
-  if (!inboxItemId) return `${prefix} once its card appears (blocker ${blocker.id}). Tell the owner to answer that card when it shows up; do not retry.`;
-  return `${prefix} card "${blockerCardSubject(record)}" (Inbox entry ${inboxItemId}). Tell the owner to answer that card; do not retry.`;
+  const subject = displayedSubject(record);
+  if (intent?.inboxItemId) return `${prefix} card "${subject}" (Inbox entry ${intent.inboxItemId}). Tell the owner to answer that card; do not retry.`;
+  if (intent) return `${prefix} once its card appears (blocker ${blocker.id}). Tell the owner to answer that card when it shows up; do not retry.`;
+  return `${prefix} card "${subject}" (blocker ${blocker.id}). Tell the owner to answer that card; do not retry.`;
 }
