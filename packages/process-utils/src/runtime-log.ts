@@ -45,9 +45,22 @@ export function createRuntimeLog(dataDir: string, role: string, options: { maxBy
   return { file, write, flush: () => tail };
 }
 
+/** A dev launcher may exit first. Never report its broken pipe through that same pipe. */
+export function guardOutputPipes(streams: readonly {
+  on(event: 'error', listener: (error: NodeJS.ErrnoException) => void): unknown;
+  off(event: 'error', listener: (error: NodeJS.ErrnoException) => void): unknown;
+}[] = [process.stdout, process.stderr]) {
+  const onError = (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EPIPE') throw error;
+  };
+  for (const stream of streams) stream.on('error', onError);
+  return () => { for (const stream of streams) stream.off('error', onError); };
+}
+
 /** Install once at each executable's entry; console output remains available to dev/test runners. */
 export function installRuntimeLog(dataDir: string, role: string, bundle?: string | URL) {
   const sink = createRuntimeLog(dataDir, role);
+  const releaseOutputPipes = guardOutputPipes();
   const originals = { warn: console.warn, error: console.error };
   const wrappers = {
     warn: (...args: unknown[]) => { sink.write('warn', args); originals.warn(...args); },
@@ -69,6 +82,7 @@ export function installRuntimeLog(dataDir: string, role: string, bundle?: string
     if (console.warn === wrappers.warn) console.warn = originals.warn;
     if (console.error === wrappers.error) console.error = originals.error;
     process.off('uncaughtExceptionMonitor', fatal);
+    releaseOutputPipes();
     await sink.flush();
   } };
 }
