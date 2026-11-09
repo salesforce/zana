@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, ArrowRight, CheckCircle2, Layers, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import type { OnboardingProfile, OnboardingProgress } from '@zana-ai/zcc-domain/onboarding';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import type { PluginPackInstallation } from '@zana-ai/zcc-domain';
@@ -11,6 +11,7 @@ import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { isScopedWindow } from '../../lib/windowScope.js';
 import { useDialogFocusTrap } from '../../hooks/useDialogFocusTrap.js';
 import { useData, useUi } from '../../store.js';
+import zanaLogo from '../../assets/zana-favicon.svg';
 import { PluginPacksCollection } from '../../views/extensions/PluginPacksCollection.js';
 import { loadOnboarding, openOnboarding, saveOnboarding, useOnboarding } from './onboarding-store.js';
 import './onboarding.css';
@@ -151,7 +152,7 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
       <header className="onboarding-header"><span className="onboarding-eyebrow">{general || step === 'welcome' ? 'Welcome to Zana' : `${profile.organization} employee setup`}</span>
         <button type="button" className="settings-btn" disabled={locked} onClick={finishLater}>Skip for now</button></header>
       <div className="onboarding-body">
-        <div className="onboarding-symbol"><Layers size={27} /></div>
+        <div className="onboarding-symbol"><img src={zanaLogo} alt="Zana logo" width={40} height={40} /></div>
         <h1>{title}</h1>
         {!general && step !== 'welcome' ? <ol className="onboarding-steps" aria-label="Setup progress">{[
           ['marketplace', 'Marketplace'], ['bundles', 'Bundle'], ['connections', 'Connect']
