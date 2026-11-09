@@ -1311,10 +1311,11 @@ describe('verifiers start the review inside the clean snapshot', () => {
   });
 });
 
+const fakeRun = () => vi.fn((command: string) => (command === 'fd' ? { status: 0, stdout: 'scripts/a.guard.test.ts\n' } : { status: 0 }));
+
 describe('test timeout scale in pre-push (#693)', () => {
   const testCommandEnvs = (run: ReturnType<typeof vi.fn>, match: (args: string[]) => boolean) =>
     run.mock.calls.filter(([command, args]) => command === 'pnpm' && match(args)).map(([, , options]) => options?.env);
-  const fakeRun = () => vi.fn((command: string) => (command === 'fd' ? { status: 0, stdout: 'scripts/a.guard.test.ts\n' } : { status: 0 }));
 
   it('REQ-3: withTestTimeoutScale adds 3 when unset and keeps a user value', () => {
     expect(withTestTimeoutScale({ PATH: '/bin' })).toEqual({ PATH: '/bin', ZANA_TEST_TIMEOUT_SCALE: '3' });
@@ -1373,7 +1374,6 @@ describe('test timeout scale obligations (#693, CodeNod OBL-001..005)', () => {
     run.mock.calls
       .filter(([command, args]) => command === 'pnpm' && (args[0] === 'verify:full' || (args[0] === 'exec' && args[1] === 'vitest')))
       .map(([, , options]) => options?.env);
-  const fakeRun = () => vi.fn((command: string) => (command === 'fd' ? { status: 0, stdout: 'scripts/a.guard.test.ts\n' } : { status: 0 }));
   const withRoot = (fn: (root: string) => void) => {
     const root = mkdtempSync(join(tmpdir(), 'zana-push-obl-'));
     try { fn(root); } finally { rmSync(root, { recursive: true, force: true }); }

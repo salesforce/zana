@@ -597,8 +597,12 @@ function prepareSlackAssets(snapshot, run, log, mode) {
   if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
 }
 
-/** Test commands get a longer timeout scale unless the user already set one (#693). */
-export const PREPUSH_TEST_TIMEOUT_SCALE = '3';
+/**
+ * Test commands get a longer timeout scale unless the user already set one (#693).
+ * It reaches suites whose vitest config extends the root one; plugins/tasks (fixed 60 s)
+ * and provider-pi keep their own timeouts.
+ */
+const PREPUSH_TEST_TIMEOUT_SCALE = '3';
 export function withTestTimeoutScale(env) {
   return env.ZANA_TEST_TIMEOUT_SCALE === undefined ? { ...env, ZANA_TEST_TIMEOUT_SCALE: PREPUSH_TEST_TIMEOUT_SCALE } : { ...env };
 }

@@ -65,10 +65,14 @@ it('REQ-4: every SERIAL_TEST_FILES entry exists on disk', () => {
 it('REQ-5: adds exactly the nine flaky files and moves nothing else', () => {
   expect([...SERIAL_TEST_FILES].sort()).toEqual([...ORIGINAL_SERIAL_FILES, ...FLAKY_SERIAL_FILES].sort());
   expect(new Set(SERIAL_TEST_FILES).size).toBe(SERIAL_TEST_FILES.length);
-  // Files the map decided to leave parallel stay parallel.
+  // Files the map decided to leave parallel stay parallel, in the real split too.
+  const split = serialTestFiles(process.cwd());
   for (const file of [
     'apps/host-daemon/src/conversation-history.test.ts',
     'apps/server/src/plugins/plugin-service.hard-reload.test.ts',
     'plugins/provider-codex/src/bridge/provider-maintenance.test.ts'
-  ]) expect(SERIAL_TEST_FILES).not.toContain(file);
+  ]) {
+    expect(SERIAL_TEST_FILES).not.toContain(file);
+    expect(split).not.toContain(file);
+  }
 });
