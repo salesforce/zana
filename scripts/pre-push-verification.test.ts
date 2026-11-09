@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot } from './pre-push-verification.mjs';
+import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot, withTestTimeoutScale } from './pre-push-verification.mjs';
 
 // Spy on spawnSync while keeping real spawning, so tests can check what the hook starts.
 vi.mock('node:child_process', async (importOriginal) => {
@@ -1308,5 +1308,62 @@ describe('verifiers start the review inside the clean snapshot', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('test timeout scale in pre-push (#693)', () => {
+  const testCommandEnvs = (run: ReturnType<typeof vi.fn>, match: (args: string[]) => boolean) =>
+    run.mock.calls.filter(([command, args]) => command === 'pnpm' && match(args)).map(([, , options]) => options?.env);
+  const fakeRun = () => vi.fn((command: string) => (command === 'fd' ? { status: 0, stdout: 'scripts/a.guard.test.ts\n' } : { status: 0 }));
+
+  it('REQ-3: withTestTimeoutScale adds 3 when unset and keeps a user value', () => {
+    expect(withTestTimeoutScale({ PATH: '/bin' })).toEqual({ PATH: '/bin', ZANA_TEST_TIMEOUT_SCALE: '3' });
+    expect(withTestTimeoutScale({ ZANA_TEST_TIMEOUT_SCALE: '2' }).ZANA_TEST_TIMEOUT_SCALE).toBe('2');
+    const input = { PATH: '/bin' };
+    withTestTimeoutScale(input);
+    expect(input).toEqual({ PATH: '/bin' });
+  });
+
+  it('REQ-3: full verification runs verify:full with scale 3 and keeps the rest of the env', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
+    const run = fakeRun();
+    try {
+      runFullVerification({ oid: OID, root, run, log: vi.fn(), env: { PATH: process.env.PATH ?? '', MARKER: 'kept' } });
+      const [env] = testCommandEnvs(run, (args) => args[0] === 'verify:full');
+      expect(env).toMatchObject({ ZANA_TEST_TIMEOUT_SCALE: '3', MARKER: 'kept' });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('REQ-3: full verification keeps the user value', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
+    const run = fakeRun();
+    try {
+      runFullVerification({ oid: OID, root, run, log: vi.fn(), env: { PATH: process.env.PATH ?? '', ZANA_TEST_TIMEOUT_SCALE: '2' } });
+      const [env] = testCommandEnvs(run, (args) => args[0] === 'verify:full');
+      expect(env?.ZANA_TEST_TIMEOUT_SCALE).toBe('2');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('REQ-3: fast verification scales selected tests, broad changed tests and guard tests', () => {
+    for (const paths of [['apps/server/src/service.test.ts'], ['vitest.config.ts']]) {
+      const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
+      const run = fakeRun();
+      try {
+        runFastVerification({ oid: OID, base: BASE, paths, root, run, log: vi.fn(), env: { PATH: process.env.PATH ?? '' } });
+        const envs = testCommandEnvs(run, (args) => args[0] === 'exec' && args[1] === 'vitest');
+        expect(envs.length).toBeGreaterThanOrEqual(2);
+        for (const env of envs) expect(env?.ZANA_TEST_TIMEOUT_SCALE).toBe('3');
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+  });
+
+  it('REQ-3: fast verification keeps the user value', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
+    const run = fakeRun();
+    try {
+      runFastVerification({ oid: OID, base: BASE, paths: ['vitest.config.ts'], root, run, log: vi.fn(), env: { PATH: process.env.PATH ?? '', ZANA_TEST_TIMEOUT_SCALE: '4' } });
+      const envs = testCommandEnvs(run, (args) => args[0] === 'exec' && args[1] === 'vitest');
+      for (const env of envs) expect(env?.ZANA_TEST_TIMEOUT_SCALE).toBe('4');
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
