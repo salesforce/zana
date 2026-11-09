@@ -158,6 +158,27 @@ describe('sanitizeTeam startOnDemand (#580)', () => {
   });
 });
 
+describe('sanitizeTeam freshContextPerUnit (#579)', () => {
+  const slotsOf = (slots: unknown[]) => sanitizeTeam({ id: 'x', name: 'X', slots })?.slots as Array<Record<string, unknown>>;
+
+  it('REQ-1: keeps freshContextPerUnit only when it is the boolean true', () => {
+    expect(slotsOf([{ personaId: 'a', freshContextPerUnit: true }])[0]).toMatchObject({ freshContextPerUnit: true });
+    for (const bad of [false, 'true', 1, null, {}, []]) {
+      expect(slotsOf([{ personaId: 'a', freshContextPerUnit: bad }])[0]).not.toHaveProperty('freshContextPerUnit');
+    }
+  });
+
+  it('REQ-1: the flag combines with startOnDemand and stays on its own row', () => {
+    const slots = slotsOf([{ personaId: 'a', quantity: 3, startOnDemand: true, freshContextPerUnit: true }, { personaId: 'b', quantity: 2 }]);
+    expect(slots[0]).toMatchObject({ quantity: 3, startOnDemand: true, freshContextPerUnit: true });
+    expect(slots[1]).not.toHaveProperty('freshContextPerUnit');
+  });
+
+  it('REQ-1: a slot with no field keeps the exact old shape (frozen loader)', () => {
+    expect(JSON.stringify(slotsOf([{ personaId: 'a' }]))).toBe('[{"personaId":"a","quantity":1}]');
+  });
+});
+
 describe('TeamStore', () => {
   let store: TeamStore;
   let projects: Project[];
@@ -316,6 +337,15 @@ describe('TeamStore', () => {
     reloaded.refresh();
     const old = reloaded.list().find((team) => team.id === 'user:old' || team.name === 'Old');
     expect(old?.slots).toEqual([{ personaId: 'a', quantity: 1 }]);
+  });
+
+  it('REQ-1: saveUser persists freshContextPerUnit through a fresh store', () => {
+    const saved = store.saveUser({ name: 'Fresh', slots: [{ personaId: 'a', freshContextPerUnit: true }, { personaId: 'b' }] });
+    const reloaded = new TeamStore(() => []);
+    reloaded.refresh();
+    const slots = reloaded.list().find((team) => team.id === saved.id)!.slots as Array<Record<string, unknown>>;
+    expect(slots[0]).toMatchObject({ personaId: 'a', freshContextPerUnit: true });
+    expect(slots[1]).not.toHaveProperty('freshContextPerUnit');
   });
 
   it('saveUser round-trips defaultPlanning', () => {
