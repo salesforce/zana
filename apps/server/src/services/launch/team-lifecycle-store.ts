@@ -98,6 +98,11 @@ export interface TeamLifecycleWorker extends Omit<TeamLaunchedWorker, 'sessionId
   exitCode?: number;
   exitSignal?: number;
   exitReason?: string;
+  /**
+   * Units delivered to the worker's current session (#579). Only a seat that starts a fresh session per
+   * unit carries it; the in-place rebind resets it to 0. Absent means the seat is not tracked.
+   */
+  deliveredUnitCount?: number;
 }
 
 export interface TeamModernBindingContext {
@@ -548,7 +553,8 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
   async function bindDeferredWorker(
     recordId: string,
     slotId: string,
-    binding: { sessionId: string; authorizationId: string; delivery: TeamWorkerDeliveryState }
+    /** `replace` (#579): swap the slot's entry in the launch result in place and take no launch of capacity. */
+    binding: { sessionId: string; authorizationId: string; delivery: TeamWorkerDeliveryState; replace?: true }
   ): Promise<TeamLifecycleRecord> {
     const safeRecordId = boundedString(recordId, 'record id');
     const safeSlotId = boundedString(slotId, 'slot id');
@@ -1471,12 +1477,19 @@ function boundedWorker(worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): O
   }
   return {
     ...identity, ...(worker.onDemand === true ? { onDemand: true as const } : {}), process: worker.process, attention: worker.attention, task: worker.task, delivery: worker.delivery,
+    ...(worker.deliveredUnitCount === undefined ? {} : { deliveredUnitCount: boundedUnitCount(worker.deliveredUnitCount) }),
     ...(worker.transport === undefined ? {} : { transport: worker.transport }),
     ...(worker.threadId === undefined ? {} : { threadId: worker.threadId }),
     ...(worker.generation === undefined ? {} : { generation: worker.generation }),
     ...(worker.bindingState === undefined ? {} : { bindingState: worker.bindingState }),
     ...(worker.modernContext === undefined ? {} : { modernContext: boundedModernContext(worker.modernContext) })
   };
+}
+
+/** A delivered-unit count: a non-negative safe integer. */
+function boundedUnitCount(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('invalid delivered unit count');
+  return value;
 }
 
 function boundedModernContext(context: TeamModernBindingContext): TeamModernBindingContext {
@@ -1726,6 +1739,7 @@ function isWorker(value: unknown): value is TeamLifecycleWorker {
     && typeof worker.delivery === 'string' && worker.delivery in deliveryTransitions
     && typeof worker.capacityReleased === 'boolean'
     && worker.capacityReleased === terminalProcesses.has(worker.process)
+    && (worker.deliveredUnitCount === undefined || Number.isSafeInteger(worker.deliveredUnitCount) && worker.deliveredUnitCount >= 0)
     && (transport === 'CLI' || transport === 'MODERN')
     && (transport === 'MODERN'
       ? isModernWorkerState(worker)

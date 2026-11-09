@@ -18,7 +18,7 @@ import { isClaimedDeferredWorker, MAX_TEAM_LAUNCH_DEADLINE_MS, type TeamWorkerPr
 export type DeferredSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string; retryable?: true };
 
 interface SeatLike { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }
-interface TeamLike { transport?: string; slots?: ReadonlyArray<{ startOnDemand?: boolean }> }
+interface TeamLike { transport?: string; slots?: ReadonlyArray<{ startOnDemand?: boolean; freshContextPerUnit?: boolean }> }
 
 /** Row index of an expanded worker slot id (`<row>:<persona>:<n>`), or -1. */
 function rowOf(slotId: string): number {
@@ -30,6 +30,43 @@ function rowOf(slotId: string): number {
 /** Expanded worker seats whose Team row asks to start on demand. */
 export function deferredSeatsOf<T extends SeatLike>(team: TeamLike, seats: readonly T[]): T[] {
   return seats.filter((seat) => seat.role === 'worker' && team.slots?.[rowOf(seat.slotId)]?.startOnDemand === true);
+}
+
+/** Expanded worker seats whose Team row asks for a fresh session per unit (#579). */
+export function freshContextSeatsOf<T extends SeatLike>(team: TeamLike, seats: readonly T[]): T[] {
+  void team;
+  void seats;
+  throw new Error('not implemented: freshContextSeatsOf');
+}
+
+/** What a seat's next launch looks like: a first or late start, or a respawn that must not resume the old conversation. */
+export type SeatLaunchMode = 'start' | 'lateSeat' | 'respawn';
+
+export interface RespawnLaunchShape {
+  /** Whether the launch uses the approval minted by `authorizeRespawn` rather than one from launch. */
+  usesRespawnApproval: boolean;
+  /** Whether the old conversation id and recovery prompt are dropped. */
+  dropsRecovery: boolean;
+}
+
+/** The decision for one launch mode, kept pure so host.ts stays branch-free (#579). */
+export function respawnLaunchShape(mode: SeatLaunchMode): RespawnLaunchShape {
+  void mode;
+  throw new Error('not implemented: respawnLaunchShape');
+}
+
+/** What the engine knows about a seat when it is about to deliver a unit to it. */
+export interface RecycleFacts {
+  deliveredUnitCount: number;
+  hasBlockedUnit: boolean;
+  hasOpenBlockerDelivery: boolean;
+  queuedInInjector: number;
+}
+
+/** Whether to recycle before delivering, or why not (the skip reason is logged with the run and slot id). */
+export function recycleGuard(facts: RecycleFacts): { recycle: true } | { recycle: false; reason: string } {
+  void facts;
+  throw new Error('not implemented: recycleGuard');
 }
 
 /** Plain refusal for a launch that cannot honour on-demand seats, or undefined when it can. */

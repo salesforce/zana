@@ -24,6 +24,13 @@ export type LaunchAuthorizationResult =
   | { decision: 'authorized'; authorization: LaunchAuthorization }
   | { decision: 'denied'; reason: string; usage?: LaunchCapacityUsage; limit?: LaunchCapacityLimit };
 
+/** Most respawns one seat may get in a run (#579). Same size as the execution store's work-unit cap, kept here so launch does not import execution. */
+export const MAX_RESPAWNS_PER_SLOT = 100;
+
+export type LaunchRespawnResult =
+  | { ok: true; authorization: LaunchAuthorization }
+  | { ok: false; reason: string };
+
 export interface LaunchCapacityUsage { active: number; launched: number }
 export interface LaunchCapacityLimit { concurrent: number; launchesPerRun: number }
 
@@ -173,6 +180,21 @@ export class LaunchAuthorizationService {
       return { ok: false, reason: 'authorization binding mismatch' };
     }
     return { ok: true, authorization: { ...authorization } };
+  }
+
+  /**
+   * Mint the single-use approval for a fresh session of a seat whose first one ended (#579). Accepts only a
+   * team-slot authorization this service consumed for the same principal, project and binding, once that
+   * session's approval is complete(), so maxConcurrent holds. The respawn counts toward MAX_RESPAWNS_PER_SLOT
+   * and not toward the run's launches; its consume() must skip `launched` (see the seam note, C1 and C2).
+   */
+  authorizeRespawn(
+    priorAuthorizationId: string,
+    expected: Pick<LaunchAuthorization, 'principal' | 'projectId' | 'binding'>
+  ): LaunchRespawnResult {
+    void priorAuthorizationId;
+    void expected;
+    throw new Error('not implemented: authorizeRespawn');
   }
 
   revoke(id: string): boolean {

@@ -254,6 +254,14 @@ export interface ExecutionServiceDeps {
    * session id, or a failure message; the engine then delivers the assignment or releases it.
    */
   spawnDeferredWorker?: (recordId: string, slotId: string) => Promise<DeferredWorkerSpawnResult>;
+  /**
+   * Replace a seat's finished session with a fresh one and deliver the assignment to it (#579). Not awaited by
+   * the engine: the worker's own completion call is still waiting on the dispatch that hands over the entry.
+   * Failures are the host's to settle (a failed respawn releases the assignment undelivered).
+   */
+  recycleSeat?: (recordId: string, slotId: string, assignment: ExecutionDispatchAssignment) => Promise<void>;
+  /** Record that a unit was accepted by a seat's current session (#579); feeds the lifecycle `deliveredUnitCount`. */
+  recordUnitDelivered?: (recordId: string, slotId: string) => Promise<void>;
   /** Project a runtime receipt only after authenticated work completion is durable. */
   onWorkSettled?: (correlation: ExecutionAssignmentCorrelation & { workerSessionId: string }) => void | Promise<void>;
   triggerDeliveryDrain?: (sessionId: string) => void;
