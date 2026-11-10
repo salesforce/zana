@@ -12,6 +12,7 @@ it; otherwise ask user.
 ```ts
 squad_plan_check({ path })
 list_teams()
+squad_plan_check({ path, teamId }) // advisory tierFit for the chosen Squad; never blocks
 squad_launch({ teamId, goal, planning, sources, attachments, mode: 'review' })
 execution_snapshot({ executionId, after })
 execution_respond({ executionId, expectedStateVersion, blockerId, message })

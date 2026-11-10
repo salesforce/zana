@@ -552,6 +552,9 @@ export const IPC = {
   },
   app: {
     previewAgentSound: 'app:previewAgentSound',
+    getAgentSoundFiles: 'app:getAgentSoundFiles',
+    chooseAgentSoundFile: 'app:chooseAgentSoundFile',
+    clearAgentSoundFile: 'app:clearAgentSoundFile',
     onAgentSound: 'app:onAgentSound',
     performance: 'app:performance',
     homedir: 'app:homedir',

@@ -73,15 +73,16 @@ test('sound Settings persist and previews play while notifications are disabled'
   });
   const audibleStarts = () => app.electron.evaluate(() => (globalThis as any).__previewAudibleStarts as number);
   await win.evaluate(() => window.cc.config.set({ agentSoundIdle: false, agentSoundNeedsYou: true, agentSoundVolume: 50 }));
-  await win.evaluate(() => { history.pushState({}, '', '/settings/agents#agent-sounds'); dispatchEvent(new PopStateEvent('popstate')); });
-  const section = win.locator('#settings-anchor-agent-sounds');
+  await win.evaluate(() => { history.pushState({}, '', '/settings/notifications#builtin-chimes'); dispatchEvent(new PopStateEvent('popstate')); });
+  const section = win.locator('#settings-anchor-builtin-chimes');
   await section.scrollIntoViewIfNeeded();
-  const needs = section.getByRole('switch', { name: 'Play a chime when an agent needs you' });
+  const needs = section.getByRole('switch', { name: 'Agent needs you' });
   await expect(needs).toHaveAttribute('aria-checked', 'true');
   await needs.click(); await expect(needs).toHaveAttribute('aria-checked', 'false');
   await section.getByRole('slider', { name: 'Chime volume' }).fill('75');
   await expect.poll(() => win.evaluate(() => window.cc.config.get().then(config => config.agentSoundVolume))).toBe(75);
   const before = await audibleStarts();
+  await section.getByText('Also notify when an agent becomes idle').click();
   await section.getByRole('button', { name: 'Preview Idle' }).click();
   await expect(section.getByRole('status')).toHaveText('Idle preview played.');
   await expect.poll(audibleStarts).toBeGreaterThan(before);
@@ -89,6 +90,6 @@ test('sound Settings persist and previews play while notifications are disabled'
   expect(bounds?.x).toBeGreaterThanOrEqual(0);
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('agent-notification-sounds.png'));
   await win.reload();
-  await expect(win.locator('#settings-anchor-agent-sounds').getByRole('slider', { name: 'Chime volume' })).toHaveValue('75');
+  await expect(win.locator('#settings-anchor-builtin-chimes').getByRole('slider', { name: 'Chime volume' })).toHaveValue('75');
   expect(await win.evaluate(() => window.cc.config.get().then(config => [config.agentSoundIdle, config.agentSoundNeedsYou]))).toEqual([false, false]);
 });

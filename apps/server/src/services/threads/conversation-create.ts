@@ -76,6 +76,7 @@ import {
   claudeCodePermissionModeForTurn
 } from './conversation-execution-mode.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
+import { threadSkillSelection } from './thread-automated-skill-selection.js';
 import { recordThreadExecutionMode } from './conversation-plan.js';
 import { persistConversationPluginMetadataSeed } from './conversation-plugin-metadata.js';
 import { realpath } from 'node:fs/promises';
@@ -222,7 +223,8 @@ async function startConversationOnHost(
     model: args.input.model,
     permissionMode,
     promptMode: requestedMode === 'plan' ? 'plan' : undefined,
-    plugins: ctx.plugins
+    plugins: ctx.plugins,
+  skillSelection: threadSkillSelection(ctx.db, args.thread.id)
   });
   args.lease.assertCurrent();
   args.beforeStart?.();

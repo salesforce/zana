@@ -27,6 +27,7 @@ import type {
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSettingsSectionRegistration,
+  PluginNotificationSoundProviderRegistration,
   PluginSidebarFooterActionRegistration,
   PluginProjectStatusbarItemRegistration,
   PluginThreadHeaderActionRegistration,
@@ -58,6 +59,7 @@ function emptySnapshot() {
     extensionsHubPanels: [] as PluginNavPanelRegistration[],
     homepageSections: [] as PluginHomepageSectionRegistration[],
     settingsSections: [] as PluginSettingsSectionRegistration[],
+    notificationSoundProviders: [] as PluginNotificationSoundProviderRegistration[],
     projectTabs: [] as PluginProjectTabRegistration[],
     projectMenuActions: [] as PluginProjectMenuActionRegistration[],
     createProjectActions: [] as PluginCreateProjectActionRegistration[],
@@ -94,6 +96,7 @@ function rebuildSnapshot(): void {
     extensionsHubPanels: navPanels.filter((panel) => navPanelListsInExtensionsHub(panel.placement)),
     homepageSections: orderedSets.flatMap((set) => set.homepageSections),
     settingsSections: orderedSets.flatMap((set) => set.settingsSections),
+    notificationSoundProviders: orderedSets.flatMap((set) => set.notificationSoundProviders),
     projectTabs: orderedSets.flatMap((set) => set.projectTabs),
     projectMenuActions: orderedSets.flatMap((set) => set.projectMenuActions),
     createProjectActions: orderedSets.flatMap((set) => set.createProjectActions),
@@ -182,6 +185,10 @@ export function listExtensionsHubPanels(): PluginNavPanelRegistration[] {
 
 export function listHomepageSections(): PluginHomepageSectionRegistration[] {
   return snapshot.homepageSections;
+}
+
+export function listNotificationSoundProviders(): PluginNotificationSoundProviderRegistration[] {
+  return snapshot.notificationSoundProviders;
 }
 
 export function listSettingsSections(): PluginSettingsSectionRegistration[] {

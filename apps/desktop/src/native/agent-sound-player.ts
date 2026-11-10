@@ -1,16 +1,42 @@
-import type { AgentSoundKind } from '@zana-ai/zcc-domain/product';
+import type { AgentSoundClip, AgentSoundKind } from '@zana-ai/zcc-domain/product';
 import { normalizeAgentSoundVolume } from '@zana-ai/zcc-domain/product';
 
 /** Runs in preload's isolated world. One short-lived audio graph per chime. */
-export async function playAgentSound(kind: AgentSoundKind, volume: number): Promise<void> {
+let stopActive: (() => void) | undefined;
+export async function playAgentSound(kind: AgentSoundKind, volume: number, clip?: AgentSoundClip): Promise<void> {
+  stopActive?.();
   const level = normalizeAgentSoundVolume(volume) / 100;
   if (level === 0) return;
   const context = new AudioContext();
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
-  const close = () => { clearTimeout(closeTimer); void context.close().catch(() => {}); };
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    clearTimeout(closeTimer);
+    if (stopActive === close) stopActive = undefined;
+    void context.close().catch(() => {});
+  };
+  stopActive = close;
   try {
     await context.resume();
-    const notes = kind === 'idle' ? [784, 1046.5] : [880, 659.25, 880];
+    if (closed) return;
+    if (clip) {
+      if (!['audio/mpeg', 'audio/wav', 'audio/ogg'].includes(clip.mime) || clip.base64.length > 1_398_104) throw new Error('Invalid notification audio');
+      const binary = atob(clip.base64);
+      const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+      const buffer = await context.decodeAudioData(bytes.buffer);
+      if (closed) return;
+      const source = context.createBufferSource(), gain = context.createGain();
+      source.buffer = buffer;
+      gain.gain.value = level;
+      source.connect(gain); gain.connect(context.destination);
+      source.onended = () => { source.disconnect(); gain.disconnect(); close(); };
+      source.start(0, 0, Math.min(buffer.duration, 8));
+      closeTimer = setTimeout(close, 8_100);
+      return;
+    }
+    const notes = kind === 'done' ? [659.25, 880] : kind === 'idle' ? [784, 1046.5] : [880, 659.25, 880];
     const now = context.currentTime;
     notes.forEach((frequency, index) => {
       const oscillator = context.createOscillator();

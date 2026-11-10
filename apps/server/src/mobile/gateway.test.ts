@@ -106,11 +106,12 @@ async function setup(https = false, options: Partial<MobileGatewayOptions> = {})
   };
 }
 describe('mobile gateway', () => {
-  it('signs confirmed queued sends only after phone authentication and replaces forged proof headers', async () => {
+  it.each(['next-turn/item-1', 'peer-messages/peer_1'])('signs %s only after phone authentication and replaces forged proof headers', async route => {
     const secret = 'mobile-gateway-fixture-secret-at-least-32-bytes';
     const signer = vi.fn((threadId: string, itemId: string) => signUiSend(secret, threadId, itemId, Date.now(), 'mobile-ui'));
     const f = await setup(false, { signQueuedSend: signer });
-    const path = '/api/v1/threads/thread-1/next-turn/item-1/send';
+    const path = `/api/v1/threads/thread-1/${route}/send`;
+    const itemId = route.split('/')[1];
     const body = JSON.stringify({ confirmed: true, expectedUpdatedAt: 2 });
     const headers = { 'content-type': 'application/json' };
     expect((await f.call(path, { method: 'POST', headers, body })).status).toBe(401);
@@ -120,10 +121,10 @@ describe('mobile gateway', () => {
     expect((await f.call(path, { method: 'POST', headers: {
       ...headers, cookie: session.cookie, 'x-zcc-ui-send-proof': 'forged', 'x-zcc-ui-send-surface': 'desktop'
     }, body })).status).toBe(200);
-    expect(signer).toHaveBeenCalledExactlyOnceWith('thread-1', 'item-1');
+    expect(signer).toHaveBeenCalledExactlyOnceWith('thread-1', itemId);
     const forwarded = f.requests.at(-1)!;
     expect(forwarded.headers['x-zcc-ui-send-surface']).toBe('mobile');
-    expect(createUiSendVerifier(secret)(forwarded.headers['x-zcc-ui-send-proof'], 'thread-1', 'item-1', 'mobile-ui')).toBe(true);
+    expect(createUiSendVerifier(secret)(forwarded.headers['x-zcc-ui-send-proof'], 'thread-1', itemId, 'mobile-ui')).toBe(true);
     expect(JSON.parse(forwarded.body)).toEqual({ confirmed: true, expectedUpdatedAt: 2 });
     expect(forwarded.headers.cookie).toBeUndefined();
     f.gateway.revoke(paired.json.deviceId);

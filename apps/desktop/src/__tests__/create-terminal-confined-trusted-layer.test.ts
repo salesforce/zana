@@ -288,4 +288,17 @@ describe('createTerminalConfined — trusted persona layer is NOT sanitized', ()
       PROJECT.launchDefault = original;
     }
   });
+
+  it('forwards main-resolved skillSettings into the claude --settings payload, and omits them when absent', () => {
+    const settingsOf = (opts?: Parameters<typeof createTerminalConfined>[1]) => {
+      spawned.length = 0;
+      const res = createTerminalConfined({ projectId: 'p1', profile: 'claude', personaId: 'persona1', cols: 80, rows: 24 }, opts);
+      expect(res.ok).toBe(true);
+      const args = spawned[0].args as string[];
+      const i = args.indexOf('--settings');
+      return i >= 0 ? JSON.parse(args[i + 1]) : {};
+    };
+    expect(settingsOf().skillOverrides).toBeUndefined();
+    expect(settingsOf({ skillSettings: { skillOverrides: { dropme: 'off' } } }).skillOverrides).toEqual({ dropme: 'off' });
+  });
 });

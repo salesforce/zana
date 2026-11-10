@@ -295,6 +295,14 @@ describe("SdkSession", () => {
     expect(queryMock.mock.calls[0]?.[0]?.options).not.toHaveProperty("skills");
   });
 
+  it("forwards a skills allowlist to the SDK, including an empty one", () => {
+    for (const skills of [["review", "zcc-inbox"], []]) {
+      queryMock.mockClear();
+      new SdkSession({ ...defaultOptions, skills }, vi.fn(), vi.fn()).start();
+      expect(queryMock.mock.calls[0]?.[0]?.options.skills).toEqual(skills);
+    }
+  });
+
   it("mirrors the Claude CLI settings cascade so user, project, and local settings all load", () => {
     const onMessage = vi.fn();
     const onDone = vi.fn();

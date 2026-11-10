@@ -29,6 +29,7 @@ import {
   writeSessionEnvFile
 } from './tmux-session-env.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
+import type { SkillSettings } from './harness/registration.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
 import { probeAgentLiveness as probeAgentLivenessImpl } from './harness/agent-liveness.js';
@@ -1057,6 +1058,11 @@ export class PtyManager extends EventEmitter {
      * for resume / scheduled launches.
      */
     openingPrompt?: string;
+    /**
+     * MAIN-only: resolved skill-allowlist trimming for the harness's settings
+     * payload (see `resolveSkillSettings`). Absent leaves argv unchanged.
+     */
+    skillSettings?: SkillSettings;
   }): TerminalSession {
     if (opts.remote) {
       return this.createRemote({ ...opts, remote: opts.remote });
@@ -1423,7 +1429,8 @@ export class PtyManager extends EventEmitter {
         contentScreen: `${lifecycleBase}/contentscreen/${opts.projectId}/${sessionId}`,
         nativeTool: `${lifecycleBase}/nativetool/${opts.projectId}/${sessionId}`
       } : {},
-      scope: 'local'
+      scope: 'local',
+      ...(opts.skillSettings ? { skillSettings: opts.skillSettings } : {})
     }) ?? { args: [], env: {} };
     // Pre-approve the inbox push tool so the agent can use it without
     // prompting. We merge into the allowedTools list (rather than emit a
@@ -2400,6 +2407,8 @@ export class PtyManager extends EventEmitter {
     title?: string;
     remote: ProjectRemote;
     persona?: Persona;
+    /** See {@link create}'s `skillSettings`. */
+    skillSettings?: SkillSettings;
     headless?: boolean;
     scheduled?: boolean;
     inboxLevel?: InboxNotifyLevel;
@@ -2655,7 +2664,8 @@ export class PtyManager extends EventEmitter {
         subagent: remoteHookUrls.subagent,
         nativeTool: remoteHookUrls.nativeTool
       } : {},
-      scope: 'remote'
+      scope: 'remote',
+      ...(opts.skillSettings ? { skillSettings: opts.skillSettings } : {})
     });
     const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = renderRemoteCommand(remoteEffectiveProfile, {
       ...opts,
