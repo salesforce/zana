@@ -10,14 +10,15 @@ afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, for
 const principal = { kind: 'team' as const, id: 'team:t', allowedProjectIds: ['p'], allowedTeamIds: ['t'], maxConcurrent: 4, maxLaunchesPerRun: 32 };
 const identity = { sessionId: 's1', cohortId: 'c', slotId: '1:w:0', personaId: 'w', projectId: 'p', authorizationId: 'a1' };
 
-async function runningSeat() {
+async function runningSeat(withSessionIds = true, withLateSeat = false) {
   const dir = mkdtempSync(join(tmpdir(), 'fresh-seat-store-'));
   dirs.push(dir);
   const store = createTeamLifecycleStore({ filePath: join(dir, 'lifecycle.json') });
   const claim = await store.claim({ callerPrincipalId: 'o', launchRequestId: 'r', payloadDigest: 'd', capacity: { principal, launched: 0 } } as never);
   const id = claim.record.id;
   await store.addWorker(id, { ...identity, process: 'spawning', attention: 'active', task: 'unknown', delivery: 'bound-at-spawn', deliveredUnitCount: 0 });
-  await store.complete(id, { ok: true, value: { launchRequestId: 'r', launched: 1, cohortId: 'c', workers: [identity], workerSessionIds: ['s1'], failedSlots: [] } });
+  if (withLateSeat) await store.addDeferredWorker(id, { authorizationId: 'a-late', cohortId: 'c', slotId: '2:w:0', personaId: 'w', projectId: 'p', attention: 'active', task: 'unknown', delivery: 'bound-at-spawn' });
+  await store.complete(id, { ok: true, value: { launchRequestId: 'r', launched: 1, cohortId: 'c', workers: [identity], ...(withSessionIds ? { workerSessionIds: ['s1'] } : {}), failedSlots: [] } });
   await store.updateWorker(id, '1:w:0', { process: 'running' });
   return { store, id };
 }
@@ -61,12 +62,26 @@ describe('detachWorkerForRecycle', () => {
 
 describe('bindDeferredWorker', () => {
   it('replace works on a launch result without a worker session id list', async () => {
+    const { store, id } = await runningSeat(false);
+    await store.detachWorkerForRecycle(id, '1:w:0');
+    await store.claimDeferredSpawn(id, '1:w:0');
+    const bound = await store.bindDeferredWorker(id, '1:w:0', { sessionId: 's2', authorizationId: 'a2', delivery: 'bound-at-spawn', replace: true });
+    expect(bound.launchResult.workerSessionIds).toBeUndefined();
+    expect(bound.launchResult.workers.map((w) => w.sessionId)).toEqual(['s2']);
+    expect(bound.workers[0].deliveredUnitCount).toBe(0);
+  });
+  it('replace swaps the id in the session id list when the launch result has one', async () => {
     const { store, id } = await runningSeat();
     await store.detachWorkerForRecycle(id, '1:w:0');
     await store.claimDeferredSpawn(id, '1:w:0');
     const bound = await store.bindDeferredWorker(id, '1:w:0', { sessionId: 's2', authorizationId: 'a2', delivery: 'bound-at-spawn', replace: true });
     expect(bound.launchResult.workerSessionIds).toEqual(['s2']);
-    expect(bound.workers[0].deliveredUnitCount).toBe(0);
+  });
+  it('refuses replace for a seat that never launched, so launch accounting cannot be bypassed', async () => {
+    const { store, id } = await runningSeat(true, true);
+    await store.claimDeferredSpawn(id, '2:w:0');
+    await expect(store.bindDeferredWorker(id, '2:w:0', { sessionId: 's9', authorizationId: 'a9', delivery: 'bound-at-spawn', replace: true })).rejects.toThrow('never launched');
+    expect((await store.get(id))!.capacity!.launched).toBe(1);
   });
   it('a first bind of a counting seat starts its count at the given value, and a bad value is refused', async () => {
     const { store, id } = await runningSeat();

@@ -573,6 +573,10 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
         && (candidate.sessionId === sessionId || candidate.authorizationId === authorizationId))) {
         throw new Error('duplicate team lifecycle worker');
       }
+      // Only a seat detachWorkerForRecycle detached still has its launch-result entry; a first spawn must take capacity.
+      if (binding.replace === true && !record.launchResult.workers.some((candidate) => candidate.slotId === safeSlotId)) {
+        throw new Error('team lifecycle seat was never launched, so it cannot be replaced');
+      }
       const previousSessionId = worker.sessionId ?? previousResultSessionId(record, safeSlotId);
       worker.sessionId = sessionId;
       worker.authorizationId = authorizationId;
