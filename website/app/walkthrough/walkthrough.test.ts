@@ -115,6 +115,9 @@ describe('agent constellation', () => {
     }
     const region = screen.getByRole('region', { name: 'Zana consolidates them into one workspace.' });
     expect(region.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    const hubLogo = region.querySelector('figure > div img') as HTMLImageElement;
+    const hubLogoUrl = new URL(hubLogo.src, 'https://example.test');
+    expect(hubLogoUrl.searchParams.get('url') ?? hubLogoUrl.pathname).toBe('/zana-icon-512.png');
     expect(region.querySelectorAll('svg line')).toHaveLength(8);
     const connections = Array.from(region.querySelectorAll('svg line')).map(line => line.getAttribute('data-connection')).sort();
     expect(connections).toEqual(Array.from(list.children).map(node => node.getAttribute('data-node')).sort());

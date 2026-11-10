@@ -41,7 +41,7 @@ export function AgentConstellation() {
             {connections.map(connection => <line key={connection.id} data-connection={connection.id} x1="560" y1="220" x2={connection.x} y2={connection.y} />)}
           </svg>
           <div className={styles.hub}>
-            <Image src="/walkthrough/icons/zana-fairy.svg" width={58} height={58} alt="" />
+            <Image src="/zana-icon-512.png" width={166} height={166} sizes="(max-width: 760px) 132px, (max-width: 1000px) 150px, 166px" alt="" />
             <strong>Zana</strong>
           </div>
           <ul className={styles.nodes} aria-label="Agents and tools in one place">

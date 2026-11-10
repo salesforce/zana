@@ -13,4 +13,4 @@ Agent glyphs are reused from the corresponding in-repository plugin `icons/` dir
 
 Slack and GitHub PNG marks are copied unmodified from `plugins/slack-bridge-2ff2/icons/slack.png` and `plugins/github/icons/github.png`; source attribution is in those plugins’ icon READMEs.
 
-`zana-fairy.svg` is the silhouette from the site’s `public/zana-mark.svg`, with its background removed and the glyph filled in ink for the gradient center tile.
+The center tile uses the official full-color app icon, `public/zana-icon-512.png`, without recoloring or recreating its background.
