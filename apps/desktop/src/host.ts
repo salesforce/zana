@@ -3285,13 +3285,6 @@ const modernMemberStatus = new Map<string, SquadMemberStatus>();
 const modernStatusFailureLogged = new Set<string>();
 let modernReconcilePending: Promise<void> | undefined;
 let modernReconcileCursor = 0;
-/**
- * Modern threads whose launch owns the binding from reservation until the first turn
- * is accepted. The runtime reports such a thread not-live (activation is only "accepted"
- * after the turn is sent), so reconcile must not read that gap as missing evidence and
- * downgrade a BOUND worker to UNCERTAIN while its first turn is being sent.
- */
-const modernLaunchOwned = new Set<string>();
 
 const captureModernNativeRecovery = createModernNativeRecoveryCapture({ executionStore, logError: logMainError });
 function modernNativeRecoveryMember(worker: TeamLifecycleRecord['workers'][number]) {
@@ -3328,7 +3321,7 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
           // Read-time revision: a stale "unknown" must not downgrade a worker main bound meanwhile.
           observedRevision: record.revision };
         // The resuming launch owns this binding: the runtime is still on the old generation and stopped.
-        if (worker.bindingState === 'RESUMING' || modernLaunchOwned.has(reference.threadId)) continue;
+        if (worker.bindingState === 'RESUMING') continue;
         try {
           const status = await squadRuntime().getSquadMemberStatus({ bindingId: reference.threadId,
             generation: reference.generation, projectId: worker.projectId });
@@ -6482,7 +6475,6 @@ export async function launchTeam(
         }
         reservation = await teamLifecycle.reserveModernWorker(record.id, slotId);
         if (!reservation?.mayCreate) return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad reservation cannot create' };
-        modernLaunchOwned.add(reservation.threadId);
         const runtimeRequest = { bindingId: reservation.threadId, generation: reservation.generation,
           projectId: targetProjectId, teamId: team.id, cohortId, hostId: modernHostId!, providerId: selected.providerId,
           role: expectedSlot.role, worktreePath: effective.cwd, executionId: structured?.executionId,
@@ -6496,7 +6488,6 @@ export async function launchTeam(
         const created = await squadRuntime().createSquadMember(runtimeRequest);
         if (!await teamLifecycle.acknowledgeModernWorker(record.id, slotId, reservation.generation, created.threadId)) {
           await squadRuntime().stopSquadMember(reservation.threadId, targetProjectId, reservation.generation);
-          modernLaunchOwned.delete(reservation.threadId); // launch gave up: let exact evidence release capacity
           const fenced = await teamLifecycle.get(record.id);
           if (fenced) await reconcileModernMembers([fenced]);
           return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad launch canceled during create' };
@@ -6512,7 +6503,6 @@ export async function launchTeam(
           || boundWorker.generation !== reservation.generation || boundWorker.threadId !== created.threadId
           || boundWorker.capacityReleased) {
           await squadRuntime().stopSquadMember(reservation.threadId, targetProjectId, reservation.generation);
-          modernLaunchOwned.delete(reservation.threadId); // launch gave up: let exact evidence release capacity
           const fenced = await teamLifecycle.get(record.id);
           if (fenced) await reconcileModernMembers([fenced]);
           return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad launch canceled before activation' };
@@ -6537,10 +6527,7 @@ export async function launchTeam(
         if (reservation) await teamLifecycle.markModernWorkerUncertain(claim.record.id, slotId, reservation.generation, reservation.threadId);
         else if (authorizationId) launchAuthorization.complete(authorizationId);
         return { ok: false, code: reservation ? 'UNCERTAIN' : 'DENIED', message: error instanceof Error ? error.message : String(error) };
-      } finally {
-        if (reservation) modernLaunchOwned.delete(reservation.threadId);
-        releaseColdStart();
-      }
+      } finally { releaseColdStart(); }
     }
     const result = await launchAuthorizedTerminal(
       request,
