@@ -343,6 +343,8 @@ export interface SeatRecyclerDeps {
   clearRecovery(executionId: string, slotId: string): Promise<void>;
   /** Close a session. */
   close(sessionId: string): Promise<unknown>;
+  /** Messages queued for a session; a session with some is never closed. */
+  queuedFor?(sessionId: string): number;
   log(message: string, error?: unknown): void;
   setTimer?(fn: () => void, ms: number): unknown;
   clearTimer?(handle: unknown): void;
@@ -377,19 +379,27 @@ export function createSeatRecycler(deps: SeatRecyclerDeps) {
 
   /**
    * Close the seat's old session in the fixed order; a step that fails is logged and the next one still runs.
-   * Returns false when the run was released on the way, so nothing more is started for it.
+   * Returns `released` when the run was released on the way (nothing more is started for it), `declined` when the
+   * session is still in a turn or has queued messages (it is left open and keeps the unit), else `closed`.
    */
-  async function retire(run: SeatRecycleRun, recordId: string, slotId: string, sessionId: string): Promise<boolean> {
+  async function retire(run: SeatRecycleRun, recordId: string, slotId: string, sessionId: string): Promise<'closed' | 'released' | 'declined'> {
+    const stillRuns = () => runs.get(recordId) === run;
+    const safeToClose = () => REST_STATES.has(deps.stateOf(sessionId) ?? '') && (deps.queuedFor?.(sessionId) ?? 0) === 0;
     if (!REST_STATES.has(deps.stateOf(sessionId) ?? '')) await waitFor(restWaiters, recordId, sessionId, SEAT_REST_WAIT_MS);
-    if (runs.get(recordId) !== run) return false;
+    if (!stillRuns()) return 'released';
+    if (!safeToClose()) return 'declined';
     if (run.executionId !== undefined) await deps.sampleUsage(run.executionId, sessionId, slotId).catch((error) => deps.log(`usage sample of ${recordId}/${slotId} failed before a fresh session`, error));
-    if (!await deps.detach(recordId, slotId)) return runs.get(recordId) === run;
+    // The sample took time: the run may have ended, or the session picked up work, meanwhile.
+    if (!stillRuns()) return 'released';
+    if (!safeToClose()) return 'declined';
+    if (!await deps.detach(recordId, slotId)) return stillRuns() ? 'closed' : 'released';
+    if (!stillRuns()) { await deps.close(sessionId).catch((error) => deps.log(`old session of ${recordId}/${slotId} could not be closed`, error)); return 'released'; }
     const exited = waitFor(exitWaiters, recordId, sessionId, SEAT_EXIT_WAIT_MS);
     await deps.close(sessionId).catch((error) => deps.log(`old session of ${recordId}/${slotId} could not be closed`, error));
     await exited;
     // After the old session is gone, so a late status write of it cannot bring the snapshot back.
     if (run.executionId !== undefined) await deps.clearRecovery(run.executionId, slotId).catch((error) => deps.log(`recovery snapshot of ${recordId}/${slotId} not cleared`, error));
-    return runs.get(recordId) === run;
+    return stillRuns() ? 'closed' : 'released';
   }
 
   /** Start a seat's fresh session. Resolves with its session id, or with none (`final` for a seat that will never start). */
@@ -398,7 +408,11 @@ export function createSeatRecycler(deps: SeatRecyclerDeps) {
     // No run to start a seat for (after a restart, or once the run ended): the unit stays with the current session.
     if (!run) return { declined: true };
     const old = await deps.sessionOf(recordId, slotId);
-    if (old !== undefined && !await retire(run, recordId, slotId, old)) return { final: true };
+    if (old !== undefined) {
+      const retired = await retire(run, recordId, slotId, old);
+      if (retired === 'declined') return { declined: true };
+      if (retired === 'released') return { final: true };
+    }
     const started = await run.respawn(slotId);
     if (!started.ok) return started.retryable === true ? {} : { final: true };
     if (runs.get(recordId) !== run) {

@@ -110,11 +110,12 @@ describe('OBL-001 / REQ-4 the old session is not closed inside the turn that com
     recycler.register('r1', ['s1'], { executionId: 'e1', respawn: async () => ({ ok: true as const, sessionId: 'new' }) });
     const done = recycler.recycle('r1', 's1');
     await new Promise((resolve) => setTimeout(resolve, 0));
-    timers.find((t) => t.ms === SEAT_REST_WAIT_MS)?.fn();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const restTimer = timers.find((t) => t.ms === SEAT_REST_WAIT_MS);
+    expect(restTimer).toBeDefined();
+    restTimer!.fn();
+    await expect(done).resolves.toEqual({ declined: true });
     expect(calls).not.toContain('detach');
     expect(calls).not.toContain('close:old');
-    await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 20))]);
   });
 });
 
@@ -136,7 +137,7 @@ describe('OBL-002 / REQ-11 a run released during the final usage sample leaves n
     recycler.release('r1');
     finishSample();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(done).resolves.toEqual({ final: true });
     expect(live.size).toBe(0);
-    void done;
   });
 });

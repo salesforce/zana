@@ -21,7 +21,8 @@ const unit = (id: string) => ({ id, title: id.toUpperCase(), task: `do ${id}`, d
 const seat = (extra: Record<string, unknown> = {}) => ({ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running', ...extra });
 
 async function setup(filePath: string, opts: {
-  worker: Record<string, unknown>;
+  worker: Record<string, unknown> | (() => Record<string, unknown>);
+  spawnDeferredWorker?: (...args: any[]) => Promise<any>;
   recycleSeat?: (...args: any[]) => Promise<void>;
   recordUnitDelivered?: (...args: any[]) => Promise<void>;
   deliverAssignment?: (...args: any[]) => Promise<any>;
@@ -39,11 +40,12 @@ async function setup(filePath: string, opts: {
       ]
     } } }),
     launchTeam: async () => ({ ok: true }),
-    getTeamLaunch: async () => ({ id: 'lifecycle-1', orchestratorSessionId: 'coordinator', workers: [opts.worker] }),
+    getTeamLaunch: async () => ({ id: 'lifecycle-1', orchestratorSessionId: 'coordinator', workers: [typeof opts.worker === 'function' ? opts.worker() : opts.worker] }),
     cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
     replyToSession: () => true,
     deliverAssignment: deliverAssignment as never,
     resolveExactNativeRecoverySnapshots: () => [],
+    ...(opts.spawnDeferredWorker ? { spawnDeferredWorker: opts.spawnDeferredWorker } : {}),
     ...(opts.recycleSeat ? { recycleSeat: opts.recycleSeat } : {}),
     ...(opts.recordUnitDelivered ? { recordUnitDelivered: opts.recordUnitDelivered } : {}),
     ...(opts.logError ? { logError: opts.logError } : {})
@@ -106,6 +108,27 @@ describe('REQ-3 the next unit of a seat that already finished one starts a fresh
     await expect(service.dispatchReady(coordinator)).resolves.toBeDefined();
     await vi.waitFor(() => expect(logError).toHaveBeenCalledWith(expect.stringContaining('slot-1'), expect.any(Error)));
     expect(logError.mock.calls[0][0]).toContain('execution-1');
+  }));
+
+  it('Q3: releases the unit undelivered when the hook rejects, instead of leaving it claimed', async () => fixture(async (filePath) => {
+    const recycleSeat = vi.fn(async () => { throw new Error('detach failed'); });
+    const { service, store, deliverAssignment } = await setup(filePath, { worker: seat({ deliveredUnitCount: 1 }), recycleSeat, logError: vi.fn() });
+    await service.dispatchReady(coordinator);
+    await vi.waitFor(async () => expect((await unitState(store, 0))?.state).not.toBe('CLAIMED'));
+    expect(deliverAssignment).not.toHaveBeenCalled();
+  }));
+
+  it('F-count: the first unit given to a seat that starts on demand is counted, so the next one recycles', async () => fixture(async (filePath) => {
+    let bound = false;
+    const spawnDeferredWorker = vi.fn(async () => { bound = true; return { ok: true as const, sessionId: 'worker-1' }; });
+    const recordUnitDelivered = vi.fn(async () => undefined);
+    const waiting = { slotId: 'slot-1', projectId: 'project-1', process: 'authorized', onDemand: true };
+    await fixture(async () => undefined);
+    const { service } = await setup(filePath, {
+      worker: () => (bound ? seat({ deliveredUnitCount: 0 }) : waiting), spawnDeferredWorker, recordUnitDelivered
+    });
+    await service.dispatchReady(coordinator);
+    expect(recordUnitDelivered).toHaveBeenCalledWith('lifecycle-1', 'slot-1');
   }));
 
   it('delivers to the current session when no recycle hook is wired (dependency absent)', async () => fixture(async (filePath) => {

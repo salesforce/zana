@@ -1284,6 +1284,7 @@ const seatRecycler = createSeatRecycler({
   sampleUsage: (executionId, sessionId, slotId) => squadExecutionService.observeSessionUsage(executionId, sessionId, 'terminal', slotId),
   detach: seatLifecycle.detach,
   clearRecovery: async (executionId, slotId) => { await executionStore.clearNativeRecoverySnapshot(executionId, slotId); },
+  queuedFor: (sessionId) => workerInjector.pendingCount(sessionId),
   close: terminateSession,
   log: (message, error) => logMainError(message, error)
 });

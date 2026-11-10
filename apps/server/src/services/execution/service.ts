@@ -2085,8 +2085,15 @@ export class ExecutionService {
       await this.releaseUndeliveredAssignments(record.id, [assignment]);
       return false;
     }
-    await this.deliverAssignment(record, assignment, outcome.sessionId, countedRecordId(record, lifecycle, assignment.slotId));
+    // The snapshot predates the start: the bind has since stored the seat's delivered-unit count, so read it again.
+    const bound = await this.freshLifecycle(record, lifecycle);
+    await this.deliverAssignment(record, assignment, outcome.sessionId, countedRecordId(record, bound, assignment.slotId));
     return false;
+  }
+
+  /** The lifecycle read again, or the earlier one when the read fails. */
+  private async freshLifecycle(record: ExecutionRecord, earlier: ExtractedLifecycle | undefined): Promise<ExtractedLifecycle | undefined> {
+    try { return extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)) ?? earlier; } catch { return earlier; }
   }
 
   /**
@@ -2128,7 +2135,11 @@ export class ExecutionService {
     const where = `${record.id}/${assignment.slotId}`;
     void Promise.resolve().then(() => recycle(lifecycle.recordId!, assignment.slotId, assignment))
       .then((outcome) => (outcome ? this.finishRecycle(record.id, assignment, outcome) : undefined))
-      .catch((error) => this.deps.logError?.(`fresh session for ${where} failed`, error));
+      .catch(async (error) => {
+        this.deps.logError?.(`fresh session for ${where} failed`, error);
+        // The unit must not stay claimed with no session to take it: release it undelivered, like a failed respawn.
+        await this.finishRecycle(record.id, assignment, {}).catch((settleError) => this.deps.logError?.(`fresh session for ${where} could not be settled`, settleError));
+      });
     return true;
   }
 

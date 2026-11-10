@@ -31,10 +31,11 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('createSeatRecycler', () => {
   it('waits for rest, samples usage, detaches BEFORE it closes, clears the snapshot after the exit, then respawns', async () => {
-    const { recycler, order, respawn } = setup();
+    const { recycler, order, respawn, state } = setup();
     const done = recycler.recycle('r1', 's1');
     await tick();
     expect(order).toEqual([]);
+    state.current = 'idle';
     recycler.onState('old', 'idle');
     await tick();
     expect(order).toEqual(['sample:old:s1', 'detach', 'close:old']);
@@ -54,12 +55,50 @@ describe('createSeatRecycler', () => {
     await done;
   });
 
-  it('proceeds when the rest wait runs out, bounded by a timer shorter than the claim lease', async () => {
-    const { recycler, timers, order } = setup();
+  it('declines, leaving the session open, when the rest wait runs out and it is still working (Q2)', async () => {
+    const { recycler, timers, order, respawn } = setup();
     const done = recycler.recycle('r1', 's1');
     await tick();
     expect(timers[0].ms).toBe(SEAT_REST_WAIT_MS);
+    timers[0].fn();
+    await expect(done).resolves.toEqual({ declined: true });
+    expect(order).toEqual([]);
+    expect(respawn).not.toHaveBeenCalled();
+  });
+
+  it('declines when messages are queued for the session after the wait (F-guard)', async () => {
+    const { recycler, state, order } = setup({ queuedFor: () => 2 });
+    state.current = 'idle';
+    await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ declined: true });
+    expect(order).toEqual([]);
+  });
+
+  it('declines when the session picks up work during the usage sample', async () => {
+    const { recycler, state, order } = setup({ sampleUsage: async () => { state.current = 'working'; } });
+    state.current = 'idle';
+    await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ declined: true });
+    expect(order).toEqual([]);
+  });
+
+  it('closes the old session without respawning when the run is released during the sample (Q4)', async () => {
+    let release!: () => void;
+    const { recycler, state, order, respawn } = setup({ sampleUsage: () => new Promise<void>((resolve) => { release = resolve; }) });
+    state.current = 'idle';
+    const done = recycler.recycle('r1', 's1');
+    await tick();
+    recycler.release('r1');
+    release();
+    await expect(done).resolves.toEqual({ final: true });
+    expect(order).not.toContain('detach');
+    expect(respawn).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when the wait runs out but the session came to rest meanwhile', async () => {
+    const { recycler, timers, order, state } = setup();
+    const done = recycler.recycle('r1', 's1');
+    await tick();
     expect(SEAT_REST_WAIT_MS).toBeLessThan(300_000);
+    state.current = 'idle';
     timers[0].fn();
     await tick();
     expect(order).toContain('close:old');

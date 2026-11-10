@@ -162,10 +162,11 @@ export class LaunchAuthorizationService {
       }
     }
     for (const [id, consumed] of this.consumedSlots) {
-      if (consumed.principal.id === principalId) this.consumedSlots.delete(id);
+      if (consumed.principal.id !== principalId) continue;
+      this.consumedSlots.delete(id);
+      this.rotatingRespawns.delete(id);
     }
     this.respawns.delete(principalId);
-    this.rotatingRespawns.clear();
     return true;
   }
 
@@ -237,6 +238,8 @@ export class LaunchAuthorizationService {
     this.pruneExpired();
     const prior = this.consumedSlots.get(priorAuthorizationId);
     if (!prior) return { ok: false, reason: 'no consumed team-slot authorization to respawn from' };
+    // complete() removes an approval whose session ended; one still stored belongs to a session that may be live.
+    if (this.authorizations.has(priorAuthorizationId)) return { ok: false, reason: 'the earlier session of this seat has not completed' };
     if (prior.principal.id !== expected.principal.id || prior.principal.kind !== expected.principal.kind) {
       return { ok: false, reason: 'respawn principal mismatch' };
     }

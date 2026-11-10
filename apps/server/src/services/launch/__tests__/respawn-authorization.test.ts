@@ -131,3 +131,27 @@ describe('COR-002 / REQ-5 a respawn needs the prior session to have completed, e
     expect(service.authorizeRespawn(firstId, expectedFor())).toMatchObject({ ok: true });
   });
 });
+
+describe('forgetPrincipal keeps another run\'s re-issue marker (F-rotating)', () => {
+  it('does not drop the pending re-issue of a different principal', () => {
+    const other: LaunchPrincipal = { ...team, id: 'team:squad:run-2' };
+    const otherRef = { kind: 'team' as const, id: other.id };
+    let next = 0;
+    const service = new LaunchAuthorizationService({
+      resolvePrincipal: (id) => (id === other.id ? other : team), id: () => `auth-${++next}`, now: () => 100
+    });
+    const first = service.authorize({ principal: otherRef, projectId: 'p1', launchDigest: 'd1', binding });
+    if (first.decision !== 'authorized') throw new Error('setup');
+    service.consume(first.authorization.id, 'd1');
+    service.complete(first.authorization.id);
+    const respawn = service.authorizeRespawn(first.authorization.id, { principal: otherRef, projectId: 'p1', binding });
+    if (!respawn.ok) throw new Error('setup respawn');
+    service.revoke(respawn.authorization.id);
+    const mine = service.authorize({ principal: ref, projectId: 'p1', launchDigest: 'x', binding });
+    if (mine.decision === 'authorized') service.complete(mine.authorization.id);
+    expect(service.forgetPrincipal(team.id)).toBe(true);
+    const reissued = service.authorize({ principal: otherRef, projectId: 'p1', launchDigest: 'd1', binding, respawnOf: first.authorization.id });
+    expect(reissued.decision).toBe('authorized');
+    expect(service.isRespawn(reissued.decision === 'authorized' ? reissued.authorization.id : '')).toBe(true);
+  });
+});
