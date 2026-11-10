@@ -11,8 +11,8 @@ import { threadLocalPreviewRoots } from './thread-preview-roots.js';
  * One policy for every server-side gate that reads a file by absolute path
  * (preview open, path resolution, content, media routes).
  *
- * Effective roots are the server-owned roots (project attachments, app
- * artifacts) plus, for local desktop targets only, the folders the user trusted
+ * Effective roots are the server-owned roots (thread storage, project attachments,
+ * app artifacts) plus, for local desktop targets only, the folders the user trusted
  * in Settings. A trusted folder is never offered to a remote thread or machine.
  *
  * Containment policy for every access:
@@ -63,21 +63,22 @@ export function trustedFoldersForTarget(
 export function effectivePreviewRoots(
   dataDir: string,
   projectId: string | null | undefined,
-  trustedFolders: readonly string[]
+  trustedFolders: readonly string[],
+  threadId?: string
 ): PreviewRoot[] {
   return [
-    ...threadLocalPreviewRoots(dataDir, projectId).map((path) => ({ path, trusted: false })),
+    ...threadLocalPreviewRoots(dataDir, projectId, threadId).map((path) => ({ path, trusted: false })),
     ...trustedFolders.map((path) => ({ path, trusted: true }))
   ];
 }
 
 export function effectivePreviewRootsFor(
   ctx: RootsContext,
-  target: { thread: { hostId?: string | null } | null; projectId: string | null | undefined },
+  target: { thread: { id?: string; hostId?: string | null } | null; projectId: string | null | undefined },
   /** Project whose attachment directory is a server-owned root; defaults to the target project. */
   attachmentProjectId: string | null | undefined = target.projectId
 ): PreviewRoot[] {
-  return effectivePreviewRoots(ctx.dataDir, attachmentProjectId, trustedFoldersForTarget(ctx, target));
+  return effectivePreviewRoots(ctx.dataDir, attachmentProjectId, trustedFoldersForTarget(ctx, target), target.thread?.id);
 }
 
 export interface RootMatch {

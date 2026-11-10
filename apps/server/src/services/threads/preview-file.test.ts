@@ -1,13 +1,21 @@
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { threadOpenSignalSchema } from '@zana-ai/zcc-server-contract';
 import {
   openThreadFilePreview,
   PreviewFileError,
+  previewFileDepsFromContext,
   type PreviewFileDeps
 } from './preview-file.js';
+import * as db from '@zana-ai/zcc-db';
+
+vi.mock('@zana-ai/zcc-db', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@zana-ai/zcc-db')>(),
+  getConversationThread: vi.fn(),
+  getEnvironment: vi.fn()
+}));
 
 function deps(over: Partial<PreviewFileDeps> = {}): PreviewFileDeps & { emitted: unknown[] } {
   const emitted: unknown[] = [];
@@ -26,6 +34,30 @@ function deps(over: Partial<PreviewFileDeps> = {}): PreviewFileDeps & { emitted:
 }
 
 describe('openThreadFilePreview', () => {
+  it('uses authoritative context rows and broadcasts the preview to connected windows', () => {
+    const thread = { id: 'thr-1', projectId: 'proj-1', environmentId: 'env-1' };
+    vi.mocked(db.getConversationThread).mockReturnValue(thread as never);
+    vi.mocked(db.getEnvironment).mockReturnValue({ path: '/project' } as never);
+    const emit = vi.fn();
+    const d = previewFileDepsFromContext({
+      db: {}, dataDir: '/data', toProjects: () => [{ id: 'proj-1', path: '/project' }],
+      hub: { emit, size: () => 2 }
+    } as never);
+    expect(d.getProjectPath('proj-1')).toBe('/project');
+    expect(d.getProjectPath('missing')).toBeNull();
+    expect(openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path: 'README.md' }).delivered).toBe(2);
+    expect(emit).toHaveBeenCalledWith('threads:open', expect.objectContaining({ threadId: 'thr-1' }));
+    vi.mocked(db.getEnvironment).mockReturnValue(null);
+    expect(d.getEnvironmentPath('missing')).toBeNull();
+  });
+
+  it('rejects an unprovisioned environment before emitting a preview', () => {
+    const d = deps({ getEnvironmentPath: () => null });
+    expect(() => openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path: 'README.md' }))
+      .toThrowError('environment is not provisioned');
+    expect(d.emitted).toHaveLength(0);
+  });
+
   it('confines a workspace path and emits a thread-open signal', () => {
     const envRoot = mkdtempSync(join(tmpdir(), 'zcc-preview-env-'));
     const d = deps({
@@ -66,6 +98,24 @@ describe('openThreadFilePreview', () => {
       openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path: '../secret.txt' });
     } catch (error) {
       expect(error).toMatchObject({ status: 403, code: 'path-escape' });
+    }
+    expect(d.emitted).toHaveLength(0);
+  });
+
+  it('opens an absolute thread-storage link with the default workspace source', () => {
+    const d = deps({ getThread: () => ({ id: 'thr-1', projectId: 'proj-1', environmentId: null }) });
+    const path = join(d.dataDir, 'thread-storage', 'thr-1', 'recording', 'index.html');
+    expect(openThreadFilePreview(d, { threadId: 'thr-1', source: 'workspace', path }))
+      .toMatchObject({ path, source: 'workspace', delivered: 1 });
+    expect(threadOpenSignalSchema.parse(d.emitted[0]).file).toEqual({ path, source: 'workspace', lineNumber: null });
+  });
+
+  it('keeps absolute storage previews confined to the registered owning thread', () => {
+    const d = deps();
+    for (const id of ['thr-2', 'thr-1-other']) {
+      expect(() => openThreadFilePreview(d, {
+        threadId: 'thr-1', source: 'workspace', path: join(d.dataDir, 'thread-storage', id, 'index.html')
+      })).toThrowError('path is not inside the thread workspace');
     }
     expect(d.emitted).toHaveLength(0);
   });
