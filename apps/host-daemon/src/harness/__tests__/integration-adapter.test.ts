@@ -20,6 +20,7 @@ describe('HarnessIntegrationAdapter compatibility bridge', () => {
 
   it('Codex scoped hook trust drops the bypass flag from the compatibility bridge', () => {
     const provider = new CodexProvider();
+    provider.setBinaryResolverForTests((command) => command);
     provider.setHookTrustMode('scoped', 'codex');
     provider.resolveLaunch('codex', {} as never, false);
     const result = provider.integration.configure({

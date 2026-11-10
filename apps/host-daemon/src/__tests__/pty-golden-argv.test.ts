@@ -580,6 +580,8 @@ describe('golden argv — codex scoped hook trust', () => {
 
   beforeEach(() => {
     spawns.length = 0;
+    // Host-independent identity: the bare launch command is its own verified binary.
+    codex.setBinaryResolverForTests((command) => command);
     codex.setHookTrustMode('scoped', 'codex');
   });
   afterEach(() => codex.setHookTrustMode('bypass'));

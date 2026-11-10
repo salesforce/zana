@@ -75,6 +75,7 @@ import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { codexLegacyRouting } from './legacy-routing.js';
 import { codexInteractionHook } from './interaction-hooks.js';
 import { buildCodexHookSpecs, renderHookOverrides, tomlBasic } from './hook-trust-specs.js';
+import { resolveHarnessCommand, verificationSearchPath } from '../harness-command.js';
 import { CODEX_BYPASS_HOOK_TRUST_FLAG, codexHookStateArgs, type CodexHookTrustMode } from './hook-trust.js';
 
 export const CODEX_EVIDENCE_VERSION = '0.140.0';
@@ -398,6 +399,18 @@ export class CodexProvider extends BaseLaunchProvider {
   private verifiedBinary: string | undefined;
   /** Binary of the launch currently being assembled (resolveLaunch runs just before hookArgs). */
   private launchBinary: string | undefined;
+  /**
+   * The probe verifies the RESOLVED path (`harness-verify.ts` records it), while
+   * `launchBinary` is the configured command, usually the bare `codex`. Compare
+   * like with like: resolve the launch command exactly as verification did.
+   */
+  private resolveBinary: (command: string) => string = (command) =>
+    resolveHarnessCommand(command, verificationSearchPath());
+
+  /** Test seam: substitute the command resolver so identity checks do not depend on the host PATH. */
+  setBinaryResolverForTests(resolver: (command: string) => string): void {
+    this.resolveBinary = resolver;
+  }
 
   get currentHookTrustMode(): CodexHookTrustMode {
     return this.hookTrustMode;
@@ -407,7 +420,8 @@ export class CodexProvider extends BaseLaunchProvider {
     const scoped =
       this.hookTrustMode === 'scoped' &&
       this.verifiedBinary !== undefined &&
-      this.verifiedBinary === this.launchBinary;
+      this.launchBinary !== undefined &&
+      this.verifiedBinary === this.resolveBinary(this.launchBinary);
     return this.buildHookArgs(urls, scoped);
   }
 

@@ -591,13 +591,40 @@ describe('CodexProvider — the three -c bridges (exact argv + TOML escaping)', 
       };
       const scoped = () => {
         const provider = new CodexProvider();
+        provider.setBinaryResolverForTests((command) => command);
         provider.setHookTrustMode('scoped', 'codex');
         provider.resolveLaunch('codex', {} as never, false);
         return provider;
       };
 
+      it('matches a bare launch command to the verified RESOLVED path (default config)', () => {
+        const provider = new CodexProvider();
+        provider.setBinaryResolverForTests((command) => (command === 'codex' ? '/home/u/.local/bin/codex' : command));
+        provider.setHookTrustMode('scoped', '/home/u/.local/bin/codex');
+        provider.resolveLaunch('codex', {} as never, false);
+        const args = provider.hookArgs('codex', urls);
+        expect(args).not.toContain('--dangerously-bypass-hook-trust');
+        expect(args.some((arg) => arg.startsWith('hooks.state='))).toBe(true);
+      });
+
+      it('keeps bypass when the bare command resolves to a different binary than the verified one', () => {
+        const provider = new CodexProvider();
+        provider.setBinaryResolverForTests(() => '/usr/local/bin/codex');
+        provider.setHookTrustMode('scoped', '/home/u/.local/bin/codex');
+        provider.resolveLaunch('codex', {} as never, false);
+        expect(provider.hookArgs('codex', urls)[0]).toBe('--dangerously-bypass-hook-trust');
+      });
+
+      it('keeps bypass when no launch has been resolved yet', () => {
+        const provider = new CodexProvider();
+        provider.setBinaryResolverForTests((command) => command);
+        provider.setHookTrustMode('scoped', 'codex');
+        expect(provider.hookArgs('codex', urls)[0]).toBe('--dangerously-bypass-hook-trust');
+      });
+
       it('keeps the bypass flag when the launched binary is not the probe-verified one', () => {
         const provider = new CodexProvider();
+        provider.setBinaryResolverForTests((command) => command);
         provider.setHookTrustMode('scoped', 'codex');
         provider.resolveLaunch('codex', { codexBinary: '/opt/other/codex' } as never, false);
         expect(provider.hookArgs('codex', urls)[0]).toBe('--dangerously-bypass-hook-trust');
