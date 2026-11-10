@@ -141,7 +141,6 @@ export function startEnrolledHostConnection(options: {
     fetchArtifact: args => pluginHostArtifacts.fetch(args),
     logger: { debug() {}, info(meta, message) { console.info(message, meta); }, warn(meta, message) { console.warn(message, meta); } },
     hostWatcher: hostFsWatcher(),
-    registeredProjectRoots: async () => (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).roots(),
     onWorkerExit: payload => sink.emit({ kind: 'plugin.host.worker-exited', payload }),
     onSignal: payload => sink.emit({ kind: 'plugin.host.signal', payload })
   });
