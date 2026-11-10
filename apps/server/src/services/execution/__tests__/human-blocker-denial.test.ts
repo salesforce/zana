@@ -48,4 +48,14 @@ describe('humanBlockerDenial', () => {
     expect(text).toContain("answer blocker b1 from the Squad's Execution board");
     expect(text).not.toContain('"Ship"');
   });
+
+  it("points to the Squad's Execution board when the card may not exist (PENDING and fallback)", () => {
+    const board = "if there is none, answer blocker b1 from the Squad's Execution board";
+    const pending = humanBlockerDenial(record({ jobTitle: 'Ship', noticeIntents: [{ ...intent, status: 'PENDING' }] }), { id: 'b1' });
+    const fallback = humanBlockerDenial(record({ jobTitle: 'Ship' }), { id: 'b1' });
+    expect(pending).toContain(board);
+    expect(fallback).toContain(board);
+    const withCard = humanBlockerDenial(record({ jobTitle: 'Ship', noticeIntents: [{ ...intent, inboxItemId: 'i-1' }] }), { id: 'b1' });
+    expect(withCard).not.toContain('Execution board');
+  });
 });
