@@ -536,7 +536,7 @@ export async function handleProductHttp(
   }
 
   try {
-    if (handleOnboardingApi(response, path, method)) return true;
+    if (await handleOnboardingApi(response, path, method, ctx.onboardingGitAuth)) return true;
     if (await handleHelpVideosApi(request, response, ctx.helpVideos, path, method)) return true;
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;
     if (await handlePluginPacksApi(request, response, ctx.plugins?.pluginPacks, path, method)) return true;

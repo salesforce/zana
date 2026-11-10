@@ -13,6 +13,7 @@ import { useDialogFocusTrap } from '../../hooks/useDialogFocusTrap.js';
 import { useData, useUi } from '../../store.js';
 import zanaLogo from '../../assets/zana-favicon.svg';
 import { PluginPacksCollection } from '../../views/extensions/PluginPacksCollection.js';
+import { GitAccessChecklist } from './GitAccessChecklist.js';
 import { loadOnboarding, openOnboarding, saveOnboarding, useOnboarding } from './onboarding-store.js';
 import './onboarding.css';
 
@@ -76,10 +77,12 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
     ? { ...initial, step: initial.pluginIds?.length ? 'connections' : 'marketplace' } : initial);
   const [busy, setBusy] = useState(false);
   const [bundleBusy, setBundleBusy] = useState(false);
-  const locked = busy || bundleBusy;
   const [error, setError] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [bundleFooter, setBundleFooter] = useState<HTMLDivElement | null>(null);
+  const [accessFooter, setAccessFooter] = useState<HTMLDivElement | null>(null);
+  const [accessBusy, setAccessBusy] = useState(false);
+  const locked = busy || bundleBusy || accessBusy;
   const [plugins, setPlugins] = useState<PluginAppEntry[]>([]);
   const [pluginsLoading, setPluginsLoading] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
@@ -121,14 +124,16 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
     version: 1, profileId: profile.id, audience,
     step: audience === 'organization' ? 'marketplace' : audience === 'general' ? 'complete' : 'welcome'
   }));
-  const connectMarketplace = () => void run(async () => {
+  const addMarketplace = async () => {
     const catalogs = await product.marketplaces.list();
     const existing = catalogs.find(row => row.source === profile.marketplaceSource);
     const row = existing ? await product.marketplaces.refresh(existing.source) : await product.marketplaces.add(profile.marketplaceSource);
     if (row.lastError) throw new Error(row.lastError);
     if (!active.current) return;
     await persist({ ...progress, step: 'bundles', marketplaceSource: row.source });
-  });
+  };
+  const connectMarketplace = () => void run(addMarketplace);
+  const gitAuth = profile.gitAuth;
   const installed = async (installation: PluginPackInstallation) => {
     await persist({ ...progress, step: 'connections', packId: installation.identity.packId,
       pluginIds: installation.members.filter(member => member.selected && member.status === 'installed').map(member => member.pluginId) });
@@ -170,11 +175,13 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
             <button type="button" className="settings-btn" onClick={() => { useOnboarding.setState({ open: false }); appNavigate('/settings/agents'); }}>Configure coding agents</button>
             <button type="button" className="settings-btn" onClick={() => { useOnboarding.setState({ open: false }); appNavigate(TOOLS_PLUGIN_BROWSE_ROUTE_PATH); }}>Browse plugins</button>
           </div></div>
-        </> : step === 'marketplace' ? <section className="onboarding-card">
+        </> : step === 'marketplace' ? (gitAuth
+          ? <GitAccessChecklist profile={{ ...profile, gitAuth }} connect={addMarketplace} footerTarget={accessFooter} onBusyChange={setAccessBusy} />
+          : <section className="onboarding-card">
           <h2>{profile.organization} internal marketplace</h2><p>{profile.prerequisite}</p><code className="onboarding-source">{profile.marketplaceSource}</code>
           <p className="settings-help">We’ll check access and reuse an existing marketplace or add it if missing.</p>
           {error ? <p className="settings-help">Check your corporate connection and Git sign-in, then retry. You can finish setup later.</p> : null}
-        </section> : step === 'bundles' ? <>
+        </section>) : step === 'bundles' ? <>
           <p>Choose the plugins you need. You can add more later.</p>
           <PluginPacksCollection mode="browse" presentation="onboarding" footerTarget={bundleFooter} onBusyChange={setBundleBusy} marketplaceSource={progress.marketplaceSource ?? profile.marketplaceSource}
             onReviewChange={setReviewOpen} onInstalled={installed} onOpenPlugin={(id, installation) => {
@@ -196,12 +203,13 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
             {!pluginsLoading && !progress.pluginIds?.length ? <p>Manage your installed tools from Plugins.</p> : null}
           </div><p className="settings-help">Installing a plugin does not sign you in. Each plugin owns its connection checks and permissions.</p>
         </>}
-        {error ? <p role="alert" className="modal-error">{error}</p> : null}
+        {error && !(step === 'marketplace' && gitAuth) ? <p role="alert" className="modal-error">{error}</p> : null}
       </div>
       {step !== 'welcome' ? <footer className="onboarding-footer">
         {step === 'bundles' ? <button type="button" className="settings-btn" disabled={locked} onClick={() => { void run(() => persist({ ...progress, step: 'marketplace' })); }}><ArrowLeft size={14} /> Back to access check</button>
           : <button type="button" className="settings-btn" disabled={locked} onClick={() => choose('undecided')}><ArrowLeft size={14} /> Change setup choice</button>}
-        {!general && step === 'marketplace' ? <div className="onboarding-finish-actions">
+        {!general && step === 'marketplace' && gitAuth ? <div ref={setAccessFooter} className="onboarding-finish-actions" /> : null}
+        {!general && step === 'marketplace' && !gitAuth ? <div className="onboarding-finish-actions">
           <button type="button" className="settings-btn primary" disabled={locked} onClick={connectMarketplace}>{busy ? <><Loader2 size={14} /> Checking access…</> : <><RefreshCw size={14} /> {error ? 'Retry access check' : 'Check access and continue'}</>}</button>
         </div> : null}
         {step === 'bundles' ? <div ref={setBundleFooter} className="onboarding-bundle-actions" /> : null}
