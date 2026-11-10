@@ -1,3 +1,4 @@
+import { PeerMessageReviews } from '../../components/thread/timeline/PeerMessageReviews.js';
 import { subscribeProductReconnect } from '../../lib/product-ws.js';
 import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBanner.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -1102,6 +1103,7 @@ function ThreadDetailBody({
                 childCount={childThreads.length}
                 pullRequest={pullRequest}
               />}
+              <PeerMessageReviews threadId={threadId} />
               <QueuedMessagesCard threadId={threadId} />
               <ModelFallbackCard fallback={modelFallback} />
               <BackgroundCommandsCard threadId={threadId} commands={backgroundCommands} workflows={workflows} />

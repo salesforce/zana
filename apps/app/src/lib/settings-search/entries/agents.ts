@@ -24,34 +24,6 @@ const OVERSEER_MODE_LABELS = { off: 'Off', dryRun: 'Dry-run (observe only)', on:
 
 export const entries: readonly SettingsSearchEntry[] = [
   {
-    id: 'agents.agent-sounds.intro', section: 'agents', anchor: 'agent-sounds',
-    label: 'Notification sounds', kind: 'subsection',
-    help: 'Chimes on this computer for visible agents, even when Zana is in the background. Off by default.',
-    keywords: ['audio', 'sound', 'chime', 'notification'],
-  },
-  ...([
-    ['needs-you', 'Play a chime when an agent needs you', 'agentSoundNeedsYou'],
-    ['idle', 'Play a chime when an agent becomes idle', 'agentSoundIdle'],
-  ] as const).map(([id, label, key]): SettingsSearchEntry => ({
-    id: `agents.sound-${id}`, section: 'agents', anchor: 'agent-sounds', label,
-    help: id === 'idle' ? 'After five seconds idle following work. Brief pauses stay quiet.' : 'When an agent requests your input or approval.',
-    kind: 'setting', keywords: ['audio', 'sound', 'chime', 'notification', id],
-    value: (s) => onOff(s.config[key] === true),
-  })),
-  {
-    id: 'agents.sound-volume', section: 'agents', anchor: 'agent-sounds',
-    label: 'Chime volume', kind: 'setting', help: 'Relative to your system volume. Zero mutes both chimes.',
-    keywords: ['audio', 'sound', 'chime', 'volume'],
-    value: (s) => `${s.config.agentSoundVolume ?? 50}%`,
-  },
-  {
-    id: 'agents.sound-preview', section: 'agents', anchor: 'agent-sounds',
-    label: 'Preview sounds', kind: 'action',
-    help: 'Try either chime without enabling notifications. Sound playback is available in the Zana desktop app.',
-    keywords: ['audio', 'sound', 'chime', 'preview'],
-  },
-
-  {
     id: 'agents.agent-guidance.intro',
     section: 'agents',
     anchor: 'agent-guidance',

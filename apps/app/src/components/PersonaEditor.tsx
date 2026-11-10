@@ -15,6 +15,7 @@ import { ImprovePromptButton } from './ImprovePromptButton.js';
 import { StencilForm } from './ui/Skeleton.js';
 import { HarnessOptionSelect } from './HarnessOptionSelect.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { useUninstalledSkills } from '../lib/use-uninstalled-skills.js';
 import { effectivePersonaRouting } from '../lib/personaRouting.js';
 import { fileManagerName } from '../lib/file-manager.js';
 import {
@@ -52,6 +53,12 @@ function parseList(raw: string): string[] {
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+/** Notice shown with the skills field: it is a context filter, never a sandbox. */
+export const SKILLS_FILTER_NOTICE =
+  'A context filter, not a security boundary. zcc-inbox is always allowed. On Claude CLI sessions, a plugin none of whose skills are listed is switched off whole, including any hooks, tool servers, or agents it ships; a plugin with only some of its skills listed stays on. A persona that lists no skills also drops user-level tool servers on Claude CLI sessions. Enforced for Claude only (CLI and Modern); other agents launch with all skills available and show an inbox notice.';
+export const SKILLS_LEAN_NOTICE =
+  "This persona's skills apply even when a Team's lean workers option is on.";
 
 function sourceIsProject(source: Persona['source']): boolean {
   return !!source && typeof source === 'object';
@@ -468,6 +475,15 @@ function PersonaDetail({
             <pre className="persona-detail-pre">{persona.initialPrompt}</pre>
           </div>
         )}
+        {persona.skills !== undefined && (
+          <div className="persona-detail-block" data-testid="persona-skills-detail">
+            <span className="persona-detail-label">Skills</span>
+            <p className="persona-detail-desc">
+              {persona.skills.length ? persona.skills.join(', ') : 'No skills beyond zcc-inbox'}
+            </p>
+            <p className="settings-help persona-form-hint">{SKILLS_FILTER_NOTICE}</p>
+          </div>
+        )}
         {(persona.allowedTools?.length || persona.deniedTools?.length || persona.addDirs?.length) ? (
           <ClaudePersonaOptions
             allowedTools={persona.allowedTools?.join(', ') ?? ''}
@@ -552,6 +568,9 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
   const [deniedTools, setDeniedTools] = useState((persona?.deniedTools ?? []).join(', '));
   const [addDirs, setAddDirs] = useState((persona?.addDirs ?? []).join(', '));
   const [microVmImage, setMicroVmImage] = useState(persona?.microVmImage ?? '');
+  // Unset (unrestricted) and an empty list (no skills beyond zcc-inbox) are different states.
+  const [restrictSkills, setRestrictSkills] = useState(persona?.skills !== undefined);
+  const [skills, setSkills] = useState((persona?.skills ?? []).join(', '));
   const [saving, setSaving] = useState(false);
 
   // The microVM image field is only meaningful when the (experimental) microVM
@@ -561,6 +580,7 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
   // harness profile. Main re-authorizes it against the closed image allowlist at
   // spawn (Rule 1), so a stale value is rejected, not honored.
   const microVmEnabled = useData((s) => s.microVmEnabled);
+  const missingSkills = useUninstalledSkills(restrictSkills ? parseList(skills) : undefined, restrictSkills, projectId);
 
   useEffect(() => {
     let cancelled = false;
@@ -635,6 +655,7 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
       deniedTools: parseList(deniedTools),
       addDirs: parseList(addDirs),
       mcpServers: persona?.mcpServers,
+      skills: restrictSkills ? parseList(skills) : undefined,
       // Persist the microVM image only while the feature is enabled AND a value
       // is set; base-profile-agnostic (applies in the microVM env for any CLI).
       microVmImage: microVmEnabled && microVmImage.trim() ? microVmImage.trim() : undefined
@@ -841,6 +862,39 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
                 placeholder="Written to the session after it starts"
               />
               <ImprovePromptButton value={initialPrompt} onChange={setInitialPrompt} />
+            </div>
+            <div className="scheduler-form-field" data-testid="persona-skills-field">
+              <label htmlFor="persona-restrict-skills">
+                <input
+                  id="persona-restrict-skills"
+                  type="checkbox"
+                  checked={restrictSkills}
+                  onChange={(e) => setRestrictSkills(e.target.checked)}
+                />{' '}
+                Restrict skills
+              </label>
+              {restrictSkills && (
+                <input
+                  id="persona-skills"
+                  type="text"
+                  aria-label="Allowed skills"
+                  value={skills}
+                  onChange={(e) => setSkills(e.target.value)}
+                  placeholder="Leave empty for none, or: review, plugin:skill, :name"
+                />
+              )}
+              {missingSkills.length > 0 && (
+                <p className="settings-help persona-form-hint" role="status" data-testid="persona-skills-uninstalled-warning">
+                  Not installed: {missingSkills.join(', ')}. You can still save; launches will warn until they are installed.
+                </p>
+              )}
+              <p className="settings-help persona-form-hint">{SKILLS_FILTER_NOTICE}</p>
+              <p className="settings-help persona-form-hint" data-testid="persona-skills-lean-notice">{SKILLS_LEAN_NOTICE}</p>
+              {persona?.source === 'builtin' && persona.skills !== undefined && (
+                <p className="settings-help persona-form-hint">
+                  This built-in is restricted by default. Duplicate it and edit the copy to change that; a copy always wins.
+                </p>
+              )}
             </div>
             {/* Claude owns these facets today. Promote a facet to the portable
                 section only after another adapter implements it. */}

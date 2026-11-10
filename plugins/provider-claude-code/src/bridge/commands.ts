@@ -45,6 +45,8 @@ export const claudeThreadStartParamsSchema = z.object({
   baseInstructions: z.string(),
   additionalWorkspaceWriteRoots: bridgeAdditionalWorkspaceWriteRootsSchema,
   plugins: bridgeClaudePluginsSchema,
+  /** Skill allowlist for `Options.skills`; absent = every skill. An empty list hides all. */
+  skills: z.array(z.string()).optional(),
   permissionMode: claudePermissionModeSchema,
   approvedPlanPermissionMode: claudePermissionModeSchema,
   permissionScope: bridgePermissionScopeSchema,

@@ -270,6 +270,11 @@ const CODEX_APP_SERVER_COMMAND_ENV = "ZCC_CODEX_BRIDGE_APP_SERVER_COMMAND";
 const CODEX_APP_SERVER_ARGS_ENV = "ZCC_CODEX_BRIDGE_APP_SERVER_ARGS";
 const CODEX_POOL_BASE_URL_ENV = "CODEX_OPENAI_BASE_URL";
 const CODEX_POOL_AUTH_TOKEN_ENV = "CODEX_POOL_AUTH_TOKEN";
+const APP_SERVER_LAUNCH_ENV_NAMES = [
+  CODEX_POOL_BASE_URL_ENV,
+  CODEX_POOL_AUTH_TOKEN_ENV,
+  "CODEX_HOME",
+] as const;
 
 const CODEX_INITIALIZE_PARAMS = {
   clientInfo: { name: "zcc", version: "1.0.0", title: null },
@@ -374,17 +379,12 @@ export function resolveAppServerLaunch(env: NodeJS.ProcessEnv = process.env): {
 function appServerLaunchEnv(
   envVars: Readonly<Record<string, string>> | undefined,
 ): NodeJS.ProcessEnv {
-  const poolBaseUrl = envVars?.[CODEX_POOL_BASE_URL_ENV];
-  const poolAuthToken = envVars?.[CODEX_POOL_AUTH_TOKEN_ENV];
-  return {
-    ...process.env,
-    ...(poolBaseUrl === undefined
-      ? {}
-      : { [CODEX_POOL_BASE_URL_ENV]: poolBaseUrl }),
-    ...(poolAuthToken === undefined
-      ? {}
-      : { [CODEX_POOL_AUTH_TOKEN_ENV]: poolAuthToken }),
-  };
+  const env = { ...process.env };
+  for (const name of APP_SERVER_LAUNCH_ENV_NAMES) {
+    const value = envVars?.[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
 }
 
 function buildAppServerEnv(
@@ -422,6 +422,7 @@ interface CodexBridgeSession {
   translator: CodexEventTranslator;
   construction: CodexSessionConstruction;
   constructionSignature: string;
+  environmentHash: string;
   turnPermissionSettings: ReturnType<typeof toCodexPermissionSettings>;
   openCodexTurnIds: Set<string>;
   turnSettledWaiters: Map<string, Array<() => void>>;
@@ -517,24 +518,26 @@ function decodeCodexOptions(
   };
 }
 
+function environmentHash(
+  envVars: Readonly<Record<string, string>> | undefined,
+): string {
+  const entries = Object.entries(envVars ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+}
+
 function constructionSignature(
   cwd: string,
   sessionOptions: CodexSessionOptions,
+  envHash: string,
 ): string {
-  const poolBaseUrl = sessionOptions.envVars?.[CODEX_POOL_BASE_URL_ENV];
-  const poolToken = sessionOptions.envVars?.[CODEX_POOL_AUTH_TOKEN_ENV];
   return JSON.stringify({
     cwd,
     reasoningLevel: sessionOptions.reasoningLevel ?? null,
     memoryEnabled: sessionOptions.memoryEnabled ?? null,
     providerSubagentsEnabled: sessionOptions.providerSubagentsEnabled ?? null,
-    poolRoute:
-      poolBaseUrl === undefined || poolToken === undefined
-        ? null
-        : {
-            baseUrl: poolBaseUrl,
-            tokenHash: createHash("sha256").update(poolToken).digest("hex"),
-          },
+    envHash,
   });
 }
 
@@ -972,6 +975,7 @@ async function constructThreadSession(
         : { presentation: tool.presentation }),
     })),
   );
+  const envHash = environmentHash(decoded.sessionOptions.envVars);
   const session: CodexBridgeSession = {
     bbThreadId: args.threadId,
     codexThreadId:
@@ -987,7 +991,9 @@ async function constructThreadSession(
     constructionSignature: constructionSignature(
       args.cwd,
       decoded.sessionOptions,
+      envHash,
     ),
+    environmentHash: envHash,
     turnPermissionSettings: toCodexPermissionSettings({ additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots, gitWritableRoots: [], options: decoded.sessionOptions }),
     openCodexTurnIds: new Set(),
     turnSettledWaiters: new Map(),
@@ -1151,6 +1157,7 @@ function registerResumableSession(session: CodexBridgeSession): void {
     translator: session.translator,
     construction: session.construction,
     constructionSignature: session.constructionSignature,
+    environmentHash: session.environmentHash,
     turnPermissionSettings: session.turnPermissionSettings,
     openCodexTurnIds: new Set(),
     turnSettledWaiters: new Map(),
@@ -1404,9 +1411,15 @@ async function requireLiveSessionForTurn(
   }
 
   const decoded = decodeCodexOptions(params.options);
+  // Follow-ups may omit the environment or send an empty options placeholder.
+  // Complete environments include thread identity, even when other keys are removed.
+  const turnEnvVars = decoded.sessionOptions.envVars ?? {};
   const signature = constructionSignature(
     session.construction.cwd,
     decoded.sessionOptions,
+    Object.keys(turnEnvVars).length === 0
+      ? session.environmentHash
+      : environmentHash(turnEnvVars),
   );
   if (session.connection === null || session.connection.exited) {
     session = await rebuildThreadSession(

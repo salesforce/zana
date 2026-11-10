@@ -7,7 +7,6 @@ import {
   jsonRpcEnvelopeSchema,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { z } from "zod";
-import type { CodexErrorInfo as GeneratedCodexErrorInfo } from "./generated/codex-app-server/schema/v2/CodexErrorInfo.js";
 
 const codexTurnStatusSchema = z.enum([
   "completed",
@@ -500,13 +499,18 @@ const codexErrorHttpStatusSchema = z
   })
   .strip();
 
-const codexErrorInfoSchema = z.union([
+const knownCodexErrorInfoSchema = z.union([
   z.literal("contextWindowExceeded"),
   z.literal("sessionBudgetExceeded"),
   z.literal("usageLimitExceeded"),
+  z.literal("rateLimitExceeded"),
+  z.literal("flexUnavailable"),
   z.literal("serverOverloaded"),
+  z.literal("modelNotFound"),
+  z.literal("policyCapacityUnavailable"),
   z.literal("cyberPolicy"),
   z.literal("misalignmentPolicyViolation"),
+  z.literal("tooManyDenials"),
   z.object({ httpConnectionFailed: codexErrorHttpStatusSchema }),
   z.object({ responseStreamConnectionFailed: codexErrorHttpStatusSchema }),
   z.literal("internalServerError"),
@@ -525,13 +529,19 @@ const codexErrorInfoSchema = z.union([
   }),
   z.literal("other"),
 ]);
-export type CodexErrorInfo = z.infer<typeof codexErrorInfoSchema>;
-const codexErrorInfoSchemaMatchesGenerated: GeneratedCodexErrorInfo extends CodexErrorInfo
-  ? CodexErrorInfo extends GeneratedCodexErrorInfo
-    ? true
-    : false
-  : false = true;
-void codexErrorInfoSchemaMatchesGenerated;
+
+const unrecognizedCodexErrorInfoSchema = z
+  .union([z.string(), z.record(z.string(), z.unknown())])
+  .transform((value) => ({
+    unrecognized:
+      typeof value === "string" ? value : (Object.keys(value)[0] ?? "unknown"),
+  }));
+
+const codexErrorInfoSchema = z.union([
+  knownCodexErrorInfoSchema,
+  unrecognizedCodexErrorInfoSchema,
+]);
+export type CodexErrorInfo = z.output<typeof codexErrorInfoSchema>;
 
 const codexTurnErrorSchema = z
   .object({

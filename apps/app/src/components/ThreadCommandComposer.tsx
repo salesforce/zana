@@ -73,7 +73,8 @@ import { dispatchOptimisticUserMessage, dispatchThreadMessageSent, dispatchThrea
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { ThreadComposerToolbar } from './composer/ThreadComposerToolbar.js';
 import { focusComposerControl } from './composer/focus-composer-control.js';
-import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
+import { useComposerPromptField, type ComposerKeyInterceptor } from './composer/use-composer-prompt-field.js';
+import { canNavigatePromptHistory } from './composer/prompt-history-navigation.js';
 import { ComposerDraftProvider, useComposerDraft, useComposerSession, useComposerSetting } from './composer/ComposerDraft.js';
 import { ProviderCliBanner } from './composer/ProviderCliBanner.js';
 import { useComposerProviderCli } from './composer/use-composer-provider-cli.js';
@@ -265,10 +266,7 @@ function ThreadComposerContent({
   const promptHistoryRichDraftRef = useRef<PromptInput[]>([]);
   const promptHistoryIndexRef = useRef(-1);
   const promptHistoryDraftRef = useRef('');
-  const promptHistoryHandlerRef = useRef<(event: {
-    key: string;
-    preventDefault?: () => void;
-  }) => boolean>(() => false);
+  const promptHistoryHandlerRef = useRef<ComposerKeyInterceptor>(() => false);
   const publicAppUrl = usePublicAppUrl();
   const displayStatus = currentThread?.runtime?.displayStatus ?? status ?? 'idle';
   const submitMode = resolveThreadSubmitMode({
@@ -492,6 +490,8 @@ function ThreadComposerContent({
   }, [planAction, threadId, busy, sendBlocked, field, composerModeEntriesForProvider, setComposerWorkMode, onPlanActionPending, onPlanActionHandled]);
   promptHistoryHandlerRef.current = (event) => {
     if (!threadId || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return false;
+    if (!field.editor || field.editor.isDestroyed || field.typeaheadOpen
+      || !canNavigatePromptHistory(field.editor.view, event)) return false;
     const stepped = stepPromptHistory({
       key: event.key,
       entries: promptHistoryRef.current,

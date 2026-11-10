@@ -194,3 +194,55 @@ describe('StopFailure hook', () => {
     expect(stopFailure(out.args[idx + 1])).toHaveLength(1);
   });
 });
+
+describe('skillSettings', () => {
+  const skill = { skillOverrides: { a: 'off' as const }, enabledPlugins: { 'p@m': false as const } };
+  it('merges skill keys into the hook settings', () => {
+    const parsed = JSON.parse(buildClaudeHookSettings({ stop: false, notify: true, skillSettings: skill }));
+    expect(parsed.skillOverrides).toEqual({ a: 'off' });
+    expect(parsed.enabledPlugins).toEqual({ 'p@m': false });
+    expect(parsed.hooks).toBeDefined();
+  });
+  it('omits skill keys when unset or empty', () => {
+    const base = buildClaudeHookSettings({ stop: false, notify: true });
+    expect(buildClaudeHookSettings({ stop: false, notify: true, skillSettings: {} })).toBe(base);
+    expect(JSON.parse(base).skillOverrides).toBeUndefined();
+  });
+  it('renderClaudeLifecycle emits skill keys alone when no hook is wanted', () => {
+    const out = renderClaudeLifecycle({
+      profile: 'claude-code' as never,
+      caps: { injectsClaudeMcpConfig: true } as never,
+      config: {} as never,
+      scheduled: false, headless: false, autoModeActive: false,
+      callbacks: {}, scope: 'local', skillSettings: skill
+    });
+    const idx = out.args.indexOf('--settings');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(JSON.parse(out.args[idx + 1] as string)).toEqual({ skillOverrides: { a: 'off' }, enabledPlugins: { 'p@m': false } });
+  });
+  it('renderClaudeLifecycle emits --strict-mcp-config for a lean launch, with or without settings keys', () => {
+    const base = {
+      profile: 'claude-code' as never,
+      caps: { injectsClaudeMcpConfig: true } as never,
+      config: {} as never,
+      scheduled: false, headless: false, autoModeActive: false,
+      callbacks: {}, scope: 'local' as const
+    };
+    const alone = renderClaudeLifecycle({ ...base, skillSettings: { strictMcp: true } });
+    expect(alone.args).toEqual(['--strict-mcp-config']);
+    const withKeys = renderClaudeLifecycle({ ...base, skillSettings: { ...skill, strictMcp: true } });
+    expect(withKeys.args).toContain('--settings');
+    expect(withKeys.args).toContain('--strict-mcp-config');
+    expect(renderClaudeLifecycle({ ...base, skillSettings: skill }).args).not.toContain('--strict-mcp-config');
+  });
+  it('renderClaudeLifecycle emits nothing extra without skillSettings or hooks', () => {
+    const out = renderClaudeLifecycle({
+      profile: 'claude-code' as never,
+      caps: { injectsClaudeMcpConfig: true } as never,
+      config: {} as never,
+      scheduled: false, headless: false, autoModeActive: false,
+      callbacks: {}, scope: 'remote'
+    });
+    expect(out.args).not.toContain('--settings');
+  });
+});

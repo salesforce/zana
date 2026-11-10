@@ -83,7 +83,7 @@ const expectedKeys: Record<HarnessRoutingMigrationStore, string[]> = {
   ],
   schedules: ['profile', 'personaId', 'extraArgs'],
   templates: ['defaults.profile', 'defaults.extraArgs'],
-  teams: ['orchestratorPersonaId', 'slots[].personaId'],
+  teams: ['orchestratorPersonaId', 'slots[].personaId', 'leanWorkers'],
   'extension-personas': ['registration'],
   'extension-teams': ['registration']
 };
@@ -106,7 +106,7 @@ describe('harness routing migration inventory', () => {
     );
     expect(sorted(byStore)).toEqual(sorted({
       ...expectedKeys,
-      personas: [...expectedKeys.personas, 'reasoningLevel']
+      personas: [...expectedKeys.personas, 'reasoningLevel', 'skills']
     }));
   });
 

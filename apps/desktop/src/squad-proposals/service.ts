@@ -15,6 +15,7 @@ import {
   type SquadLaunchNowResult,
   type SquadLaunchPrefill,
   type SquadPlanCheckResult,
+  type SquadPlanTierFitFinding,
   type SquadPlanStep,
   type SquadPlanning,
   type SquadProposalErrorCode,
@@ -123,6 +124,11 @@ export interface SquadProposalServiceDeps {
     planSource: 'provided',
     texts: string[]
   ): { workUnits?: Array<{ id: string; title: string; dependencies: string[]; files?: string[] }>; planError?: string };
+  /**
+   * Advisory tier-fit findings for a checked plan against a Squad's roster (squad_plan_check with a teamId).
+   * Must not throw for a missing roster; failures are swallowed by the caller since the result is advisory.
+   */
+  planTierFit?(projectId: string, teamId: string, workUnits: readonly unknown[]): Promise<readonly SquadPlanTierFitFinding[]>;
   fs: SquadProposalFs;
   /** HOME, the clone root and Zana's data folders: with the project, the bases of the source policy. */
   sourceBases(): SquadSourceBases;
@@ -789,7 +795,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
       }
     },
 
-    async checkPlan(route: SquadProposalRoute, input: { path?: string; text?: string }): Promise<SquadProposalOutcome<SquadPlanCheckResult>> {
+    async checkPlan(route: SquadProposalRoute, input: { path?: string; text?: string; teamId?: string }): Promise<SquadProposalOutcome<SquadPlanCheckResult>> {
       try {
         if (!deps.enabled()) return fail('DISABLED', 'Squad launch proposals are turned off.');
         if (!(await deps.lookupProposer(route.sessionId, route.projectId))) return fail('NOT_LIVE', 'This conversation is not live in the project.');
@@ -802,7 +808,14 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         const plan = deps.resolveSquadPlan('provided', [text.value]);
         if (plan.planError) return ok({ ok: false, reason: plan.planError });
         if (!plan.workUnits?.length) return ok({ ok: false, reason: 'No plan steps were found.' });
-        return ok({ ok: true, steps: toPlanSteps(plan.workUnits) });
+        const steps = toPlanSteps(plan.workUnits);
+        // Advisory only: any failure here leaves the pass/fail result untouched.
+        let findings: readonly SquadPlanTierFitFinding[] = [];
+        if (input.teamId && deps.planTierFit) {
+          try { findings = await deps.planTierFit(route.projectId, input.teamId, plan.workUnits); }
+          catch (error) { deps.logError('plan check tier fit', error); }
+        }
+        return ok({ ok: true, steps, ...(findings.length ? { tierFit: { findings: [...findings] } } : {}) });
       } catch (error) {
         return unexpected('plan check', error, 'The plan check failed unexpectedly. Try again.');
       }

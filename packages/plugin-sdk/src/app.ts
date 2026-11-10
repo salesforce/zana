@@ -94,6 +94,7 @@ export type {
   PluginSdkApp,
   PluginSettingsState,
   PluginSettingsSectionRegistration,
+  PluginNotificationSoundProviderRegistration,
   PluginSidebarFooterActionContext,
   PluginSidebarFooterActionRegistration,
   PluginProjectStatusbarAlign,

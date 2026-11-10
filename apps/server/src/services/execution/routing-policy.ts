@@ -38,6 +38,9 @@ export interface SlotEligibilityV1 {
   pricingCatalogVersion: number;
 }
 
+/** Reason text `evaluateSlotEligibility` emits when a slot is below the unit's minimum level. */
+export const LEVEL_UNMET_REASON = 'minimum model level unmet';
+
 const LEVELS: readonly ModelLevel[] = ['low', 'medium', 'high', 'extra-high'];
 
 /** Pure, fail-closed predicate shared by routing policy callers. */
@@ -58,7 +61,7 @@ export function evaluateSlotEligibility(routing: WorkUnitRoutingV1 | undefined, 
   containsAll(slot.capabilities, routing?.requiredCapabilities, 'capability');
   containsAll(slot.modalities, routing?.requiredModalities, 'modality');
   if (routing?.minimumLevel) {
-    require(slot.level === undefined ? undefined : LEVELS.indexOf(slot.level) >= LEVELS.indexOf(routing.minimumLevel), 'minimum model level unmet');
+    require(slot.level === undefined ? undefined : LEVELS.indexOf(slot.level) >= LEVELS.indexOf(routing.minimumLevel), LEVEL_UNMET_REASON);
   }
   if (routing?.estimatedContextBytes !== undefined) {
     require(slot.maxContextBytes === undefined ? undefined : slot.maxContextBytes >= routing.estimatedContextBytes, 'context ceiling unmet');
@@ -84,4 +87,37 @@ export function evaluateSlotEligibility(routing: WorkUnitRoutingV1 | undefined, 
     pricingCatalogId: MODEL_PRICING_CATALOG_ID,
     pricingCatalogVersion: MODEL_PRICING_CATALOG_VERSION
   };
+}
+
+/** Fixed nominal input size used to rank slots by catalog unit price when a unit has no byte estimate. */
+export const NOMINAL_CONTEXT_BYTES = 64 * 1024;
+
+export interface CheapestFitCandidate {
+  slotId: string;
+  /** Catalog input price at the ranking size; undefined when the catalog has no entry (sorts after every priced slot). */
+  priceUsd?: number;
+  /** A `startOnDemand` seat that has not been started yet (D11). */
+  deferred?: boolean;
+}
+
+/** Catalog price for a slot's resolved model at the ranking size; undefined when unpriced. */
+export function slotRankingPriceUsd(slot: Pick<SlotRouteSnapshotV1, 'provider' | 'model'>, estimatedContextBytes?: number): number | undefined {
+  return slot.provider && slot.model ? estimateModelInputUsd(slot.provider, slot.model, estimatedContextBytes ?? NOMINAL_CONTEXT_BYTES) : undefined;
+}
+
+/**
+ * One comparator for runtime slot choice (dispatch and kickoff reassignment): price
+ * (unpriced after priced, never subtracted), then live before deferred (D11), then
+ * the just-finished slot last. Equal returns 0, so a stable sort keeps the caller's
+ * existing order as the final deterministic tie-break.
+ */
+export function compareCheapestFit(a: CheapestFitCandidate, b: CheapestFitCandidate, deprioritizeSlotId?: string): number {
+  if (a.priceUsd !== b.priceUsd) {
+    if (a.priceUsd === undefined) return 1;
+    if (b.priceUsd === undefined) return -1;
+    if (a.priceUsd < b.priceUsd) return -1;
+    if (a.priceUsd > b.priceUsd) return 1;
+  }
+  return (Number(a.deferred === true) - Number(b.deferred === true))
+    || (Number(a.slotId === deprioritizeSlotId) - Number(b.slotId === deprioritizeSlotId));
 }
