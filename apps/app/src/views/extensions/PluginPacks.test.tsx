@@ -151,3 +151,32 @@ it('labels onboarding bundle selection consistently', () => {
   expect(onReview).toHaveBeenCalledWith(pack);
   expect(screen.queryByText('Review pack')).toBeNull();
 });
+
+it('moves inline actions into the wizard footer while preserving selection, progress and retry state', () => {
+  const onInstall = vi.fn();
+  const footer = document.createElement('footer');
+  document.body.append(footer);
+  const view = render(<PluginPackReview inline footerTarget={footer} review={review} onInstall={onInstall} onClose={vi.fn()} onOpenPlugin={vi.fn()} />);
+  expect(within(footer).getByText('1 already installed · 1 to install')).toBeTruthy();
+  expect(within(screen.getByRole('region')).queryByRole('button')).toBeNull();
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(within(footer).getByRole('button', { name: 'Continue setup' }));
+  expect(onInstall).toHaveBeenLastCalledWith(['accounts']);
+  fireEvent.click(screen.getByRole('checkbox'));
+  view.rerender(<PluginPackReview inline footerTarget={footer} busy review={review} onInstall={onInstall} onClose={vi.fn()} onOpenPlugin={vi.fn()} />);
+  expect((within(footer).getByRole('button', { name: 'Installing…' }) as HTMLButtonElement).disabled).toBe(true);
+  view.rerender(<PluginPackReview inline footerTarget={footer} review={review} results={[{ id: 'environments', status: 'failed', error: 'Offline' }]} onInstall={onInstall} onClose={vi.fn()} onOpenPlugin={vi.fn()} />);
+  expect(screen.getByRole('alert').textContent).toBe('Offline');
+  fireEvent.click(within(footer).getByRole('button', { name: 'Retry failed plugins' }));
+  expect(onInstall).toHaveBeenLastCalledWith(['environments']);
+  view.unmount();
+  expect(footer.childNodes).toHaveLength(0);
+  footer.remove();
+});
+
+it('leaves the modal footer intact when an embedding footer target is provided', () => {
+  const footer = document.createElement('footer');
+  render(<PluginPackReview footerTarget={footer} review={review} onInstall={vi.fn()} onClose={vi.fn()} onOpenPlugin={vi.fn()} />);
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Install selected plugins' })).toBeTruthy();
+  expect(footer.childNodes).toHaveLength(0);
+});
