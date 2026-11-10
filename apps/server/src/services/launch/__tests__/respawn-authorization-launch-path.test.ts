@@ -11,9 +11,9 @@ const binding = {
 };
 const expected = { principal: ref, projectId: 'p1', binding };
 
-function endedFirstSession(now = { value: 100 }) {
+function endedFirstSession(now = { value: 100 }, principal: LaunchPrincipal = team) {
   let next = 0;
-  const service = new LaunchAuthorizationService({ resolvePrincipal: () => team, id: () => `auth-${++next}`, now: () => now.value });
+  const service = new LaunchAuthorizationService({ resolvePrincipal: () => principal, id: () => `auth-${++next}`, now: () => now.value });
   const first = service.authorize({ principal: ref, projectId: 'p1', launchDigest: 'd1', binding });
   if (first.decision !== 'authorized') throw new Error('setup');
   service.consume(first.authorization.id, 'd1');
@@ -48,6 +48,45 @@ describe('respawn approval through the launch path', () => {
     expect(service.authorize({ principal: ref, projectId: 'p1', launchDigest: 'd', binding, respawnOf: firstId })).toMatchObject({
       decision: 'denied', reason: 'respawn authorization is not being re-issued'
     });
+  });
+
+  it('refuses a re-issue whose binding, digest or project differs from the revoked approval, and keeps the marker for the real one', () => {
+    const { service, firstId } = endedFirstSession();
+    const respawn = service.authorizeRespawn(firstId, expected);
+    if (!respawn.ok) throw new Error(respawn.reason);
+    service.revoke(respawn.authorization.id);
+    const digest = respawn.authorization.launchDigest;
+    const other = { ...respawn.authorization.binding, personaId: 'someone-else' };
+    expect(service.authorize({ principal: ref, projectId: 'p1', launchDigest: digest, binding: other, respawnOf: firstId }))
+      .toMatchObject({ decision: 'denied', reason: 'respawn re-issue does not match the revoked approval' });
+    expect(service.authorize({ principal: ref, projectId: 'p1', launchDigest: 'forged', binding: respawn.authorization.binding, respawnOf: firstId }))
+      .toMatchObject({ decision: 'denied' });
+    expect(service.authorize({ principal: ref, projectId: 'p1', launchDigest: digest, binding: respawn.authorization.binding, respawnOf: firstId }))
+      .toMatchObject({ decision: 'authorized' });
+  });
+
+  it('keeps the re-issue marker when the attempt is denied for concurrency, so a retry works', () => {
+    const { service, firstId } = endedFirstSession({ value: 100 }, { ...team, maxLaunchesPerRun: 2 });
+    const respawn = service.authorizeRespawn(firstId, expected);
+    if (!respawn.ok) throw new Error(respawn.reason);
+    service.revoke(respawn.authorization.id);
+    const request = { principal: ref, projectId: 'p1', launchDigest: respawn.authorization.launchDigest, binding: respawn.authorization.binding, respawnOf: firstId };
+    // another launch takes the only concurrent slot
+    const blocker = service.authorize({ principal: ref, projectId: 'p1', launchDigest: 'x', binding: { ...binding, slotId: '2:worker:0' } });
+    if (blocker.decision !== 'authorized') throw new Error('setup blocker');
+    expect(service.authorize(request)).toMatchObject({ decision: 'denied', reason: 'principal concurrent launch limit reached' });
+    service.complete(blocker.authorization.id);
+    expect(service.authorize(request)).toMatchObject({ decision: 'authorized' });
+  });
+
+  it('drops a stale marker when a fresh respawn is minted instead of re-issuing the revoked one', () => {
+    const { service, firstId } = endedFirstSession();
+    const respawn = service.authorizeRespawn(firstId, expected);
+    if (!respawn.ok) throw new Error(respawn.reason);
+    service.revoke(respawn.authorization.id);
+    expect(service.authorizeRespawn(firstId, expected)).toMatchObject({ ok: true });
+    expect(service.authorize({ principal: ref, projectId: 'p1', launchDigest: respawn.authorization.launchDigest, binding: respawn.authorization.binding, respawnOf: firstId }))
+      .toMatchObject({ decision: 'denied', reason: 'respawn authorization is not being re-issued' });
   });
 
   it('lets a respawn that was never spent be minted again once its approval expired', () => {

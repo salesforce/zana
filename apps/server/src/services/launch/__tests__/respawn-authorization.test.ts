@@ -150,7 +150,7 @@ describe('forgetPrincipal keeps another run\'s re-issue marker (F-rotating)', ()
     const mine = service.authorize({ principal: ref, projectId: 'p1', launchDigest: 'x', binding });
     if (mine.decision === 'authorized') service.complete(mine.authorization.id);
     expect(service.forgetPrincipal(team.id)).toBe(true);
-    const reissued = service.authorize({ principal: otherRef, projectId: 'p1', launchDigest: 'd1', binding, respawnOf: first.authorization.id });
+    const reissued = service.authorize({ principal: otherRef, projectId: 'p1', launchDigest: respawn.authorization.launchDigest, binding: respawn.authorization.binding, respawnOf: first.authorization.id });
     expect(reissued.decision).toBe('authorized');
     expect(service.isRespawn(reissued.decision === 'authorized' ? reissued.authorization.id : '')).toBe(true);
   });

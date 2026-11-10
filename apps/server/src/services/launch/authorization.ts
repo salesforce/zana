@@ -66,7 +66,7 @@ export class LaunchAuthorizationService {
   /** Respawn approvals (minted, not yet gone) and the consumed approval each was minted from. */
   private readonly respawnIds = new Map<string, string>();
   /** Priors whose respawn approval was just revoked to be re-issued by the launch path. */
-  private readonly rotatingRespawns = new Set<string>();
+  private readonly rotatingRespawns = new Map<string, ConsumedSlot>();
 
   constructor(private readonly deps: LaunchAuthorizationDeps) {
     this.now = deps.now ?? (() => Date.now());
@@ -92,8 +92,11 @@ export class LaunchAuthorizationService {
     }
     this.expireAuthorizedReservations(principal.id);
     const state = this.runState.get(principal.id) ?? { launched: 0, active: new Set<string>() };
-    const rotating = input.respawnOf !== undefined && this.rotatingRespawns.delete(input.respawnOf);
-    if (input.respawnOf !== undefined && !rotating) return { decision: 'denied', reason: 'respawn authorization is not being re-issued' };
+    const revoked = input.respawnOf === undefined ? undefined : this.rotatingRespawns.get(input.respawnOf);
+    if (input.respawnOf !== undefined && !revoked) return { decision: 'denied', reason: 'respawn authorization is not being re-issued' };
+    // A re-issue must be the very approval that was revoked: same principal, project, digest and binding (#579).
+    if (revoked && !this.matchesRevoked(revoked, input)) return { decision: 'denied', reason: 'respawn re-issue does not match the revoked approval' };
+    const rotating = revoked !== undefined;
     if (!rotating && state.launched >= principal.maxLaunchesPerRun) return this.capacityDenial(principal, state, 'principal launch budget exhausted');
     if (state.active.size >= principal.maxConcurrent) return this.capacityDenial(principal, state, 'principal concurrent launch limit reached');
     const createdAt = this.now();
@@ -108,10 +111,20 @@ export class LaunchAuthorizationService {
       launchDigest: input.launchDigest, binding: structuredClone(input.binding), state: 'authorized', createdAt, expiresAt: input.expiresAt
     };
     this.authorizations.set(authorization.id, authorization);
-    if (rotating) this.respawnIds.set(authorization.id, input.respawnOf!);
+    if (rotating) {
+      // Only now that every check passed is the marker spent; a denied attempt can be retried.
+      this.rotatingRespawns.delete(input.respawnOf!);
+      this.respawnIds.set(authorization.id, input.respawnOf!);
+    }
     state.active.add(authorization.id);
     this.runState.set(principal.id, state);
     return { decision: 'authorized', authorization: { ...authorization } };
+  }
+
+  private matchesRevoked(revoked: ConsumedSlot, input: LaunchAuthorizationRequest): boolean {
+    return revoked.principal.id === input.principal.id && revoked.principal.kind === input.principal.kind
+      && revoked.projectId === input.projectId && revoked.launchDigest === input.launchDigest
+      && JSON.stringify(revoked.binding) === JSON.stringify(input.binding);
   }
 
   complete(id: string): void {
@@ -252,6 +265,8 @@ export class LaunchAuthorizationService {
     if (state.active.size >= principal.maxConcurrent) return { ok: false, reason: 'principal concurrent launch limit reached' };
     const slotId = prior.binding.slotId ?? '';
     if (this.outstandingRespawn(priorAuthorizationId) !== undefined) return { ok: false, reason: 'a respawn authorization is already outstanding' };
+    // A fresh mint supersedes a revoked-but-never-re-issued approval of this prior.
+    this.rotatingRespawns.delete(priorAuthorizationId);
     if ((this.respawns.get(principal.id)?.get(slotId) ?? 0) >= MAX_RESPAWNS_PER_SLOT) return { ok: false, reason: 'seat respawn limit reached' };
     const createdAt = this.now();
     if (this.authorizations.size >= this.maxAuthorizations) return { ok: false, reason: 'authorization store limit reached' };
@@ -301,7 +316,13 @@ export class LaunchAuthorizationService {
     authorization.state = 'revoked';
     authorization.revokedAt = this.now();
     const prior = this.respawnIds.get(id);
-    if (prior !== undefined) this.rotatingRespawns.add(prior);
+    const consumed = prior === undefined ? undefined : this.consumedSlots.get(prior);
+    if (prior !== undefined && consumed) {
+      this.rotatingRespawns.set(prior, {
+        principal: { ...authorization.principal }, projectId: authorization.projectId,
+        launchDigest: authorization.launchDigest, binding: structuredClone(authorization.binding)
+      });
+    }
     this.complete(id);
     return true;
   }
