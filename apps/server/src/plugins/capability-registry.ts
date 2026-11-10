@@ -25,7 +25,7 @@ export class CapabilityRegistry {
 }
 
 export const capabilityRegistry = new CapabilityRegistry();
-const MODERN_CODEX_VETO_LIMIT = 'modern/codex: not advertised as a full veto. It is not proven live, and it covers commands and file changes Codex raises an approval for. That is every one at full permission scope; at workspace scope Codex raises none for a command that stays inside its sandbox, and automatic review settles approvals inside Codex. MCP tool calls and web search raise no approval and are never gated';
+const MODERN_CODEX_VETO_LIMIT = 'modern/codex: not advertised as a full veto. It is not proven live, and it covers commands and file changes Codex raises an approval for. Codex runs the commands it classifies as known-safe (for example ls or cat) without any approval, so a policy that denies all shell use does not stop them. Beyond that, at full permission scope Codex raises an approval for the rest; at workspace scope Codex raises none for a command that stays inside its sandbox, and automatic review settles approvals inside Codex. MCP tool calls and web search raise no approval and are never gated';
 const MODERN_UNWIRED_VETO = 'modern/{harness}: no awaited native-policy transport is wired for this harness';
 const ACP_CURSOR_VETO_LIMIT = 'modern/acp-cursor: permission requests Cursor raises over ACP are decided by host policy, but a tool it runs without raising a request is not gated, and request coverage is unverified against a logged-in cursor-agent';
 // Exact bridge registrations; only the awaited native-policy transport can advertise a veto.
@@ -36,7 +36,8 @@ for (const harness of ['claude-code', 'codex', 'pi', 'acp', 'acp-opencode', 'acp
     capabilityRegistry.register(key, 'lifecycle-delivery', { available: true });
     if (harness === 'claude-code') capabilityRegistry.register(key, 'tool-before-native', { available: true });
     // OBL-018/p0-modern-codex-veto: with approvalPolicy:"untrusted" codex raises an
-    // approval for every command + file-change (even under danger-full-access), and the
+    // approval for each command + file-change it does not classify as known-safe (even
+    // under danger-full-access); known-safe commands run unprompted. The
     // bridge routes both through the host native-tool policy before execution
     // (provider-codex/src/bridge/bridge.ts routeCodexNativeToolPolicy). Web search and
     // MCP tool calls emit no client approval and remain outside the veto — documented,

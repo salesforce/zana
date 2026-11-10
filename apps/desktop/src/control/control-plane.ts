@@ -144,7 +144,8 @@ export interface ControlPlaneDeps {
    */
   replyTerminal: (
     sessionId: string,
-    text: string
+    text: string,
+    callerClass?: CallerClass
   ) => boolean | Promise<boolean | { refused: { code: string; message: string } }>;
   /** Live agent state for a session — drives `run --wait` and `status`. */
   getAgentStatus: (sessionId: string) => AgentState;
@@ -721,7 +722,7 @@ export async function dispatchOp(
       if (text.length > MAX_REPLY) {
         return { ok: false, code: 'BAD_ARGS', message: `text exceeds ${MAX_REPLY} chars` };
       }
-      const accepted = await deps.replyTerminal(id, text);
+      const accepted = await deps.replyTerminal(id, text, caller.class);
       if (typeof accepted === 'object') return { ok: false, ...accepted.refused };
       if (!accepted) return { ok: false, code: 'NOT_FOUND', message: `session not replyable: ${id}` };
       return { ok: true, value: true };

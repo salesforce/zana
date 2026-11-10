@@ -135,26 +135,40 @@ let lastSessionMcpSweepAt = 0;
 /** Suffix of a per-session native tool gate directory (a provider that names one on argv). */
 const NATIVE_TOOL_GATE_DIR_SUFFIX = '.native-tool-gate.d';
 
-function sweepStaleSessionMcpConfigs(dir: string): void {
+/**
+ * Remove crash-orphaned per-session launch artifacts older than the age cap.
+ * Artifacts are named `<sessionId>.<suffix>`; one whose session is still owned
+ * by a live PtyManager is never removed, however old its mtime — the native
+ * tool gate module/dir a running session loaded must outlive any later launch.
+ */
+export async function sweepStaleSessionArtifacts(
+  dir: string,
+  now: number,
+  isOwnedBySession: (sessionId: string) => boolean
+): Promise<void> {
+  try {
+    for (const name of await readdirAsync(dir)) {
+      const isGateDir = name.endsWith(NATIVE_TOOL_GATE_DIR_SUFFIX);
+      if (!isGateDir && !name.endsWith('.json') && !name.endsWith('.instructions.md') && !name.endsWith('.native-tool-gate.mjs')) continue;
+      const dot = name.indexOf('.');
+      if (dot > 0 && isOwnedBySession(name.slice(0, dot))) continue;
+      const path = join(dir, name);
+      try {
+        if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await (isGateDir ? rmAsync(path, { recursive: true, force: true }) : unlinkAsync(path));
+      } catch {
+        /* best-effort per-file */
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+function sweepStaleSessionMcpConfigs(dir: string, isOwnedBySession: (sessionId: string) => boolean): void {
   const now = Date.now();
   if (now - lastSessionMcpSweepAt < SESSION_MCP_SWEEP_MIN_INTERVAL_MS) return;
   lastSessionMcpSweepAt = now;
-  void (async () => {
-    try {
-      for (const name of await readdirAsync(dir)) {
-        const isGateDir = name.endsWith(NATIVE_TOOL_GATE_DIR_SUFFIX);
-        if (!isGateDir && !name.endsWith('.json') && !name.endsWith('.instructions.md') && !name.endsWith('.native-tool-gate.mjs')) continue;
-        const path = join(dir, name);
-        try {
-          if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await (isGateDir ? rmAsync(path, { recursive: true, force: true }) : unlinkAsync(path));
-        } catch {
-          /* best-effort per-file */
-        }
-      }
-    } catch {
-      /* best-effort */
-    }
-  })();
+  void sweepStaleSessionArtifacts(dir, now, isOwnedBySession);
 }
 
 interface Live {
@@ -873,10 +887,19 @@ export class PtyManager extends EventEmitter {
    * wrapper that clobbers the inline-config env var. Swept for crash orphans on
    * every call; unlinked on session exit ({@link finalizeExit}).
    */
+  /** True while this manager still tracks the session or any of its launch artifacts. */
+  private ownsSessionArtifacts(sessionId: string): boolean {
+    return this.live.has(sessionId)
+      || this.sessionMcpConfigFiles.has(sessionId)
+      || this.sessionInstructionFiles.has(sessionId)
+      || this.sessionNativeToolGateFiles.has(sessionId)
+      || this.sessionNativeToolGateDirs.has(sessionId);
+  }
+
   private writeSessionMcpConfigFile(sessionId: string, contents: string): string | null {
     try {
       mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
-      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR);
+      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR, (id) => this.ownsSessionArtifacts(id));
       const path = join(SESSION_MCP_CONFIG_DIR, `${sessionId}.json`);
       writeFileSync(path, contents, { mode: 0o600 });
       this.sessionMcpConfigFiles.set(sessionId, path);
@@ -917,7 +940,7 @@ export class PtyManager extends EventEmitter {
       const bundle = build(dir);
       if (!bundle) return null;
       mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
-      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR);
+      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR, (id) => this.ownsSessionArtifacts(id));
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       this.sessionNativeToolGateDirs.set(sessionId, dir);
       for (const file of bundle.files) {

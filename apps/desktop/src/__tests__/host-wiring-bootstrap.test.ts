@@ -546,11 +546,14 @@ describe('host bootstrap wiring', () => {
       expect(sessionId).toBeTruthy();
       const replyTerminal = h.controlPlaneDeps.replyTerminal;
       h.admission.mockResolvedValue({ code: 'DISPATCH_WAITING', message: 'busy' });
-      await expect(replyTerminal(sessionId, 'hi')).resolves.toEqual({ refused: { code: 'DISPATCH_WAITING', message: 'busy' } });
+      await expect(replyTerminal(sessionId, 'hi', 'operator')).resolves.toEqual({ refused: { code: 'DISPATCH_WAITING', message: 'busy' } });
       expect(h.admission).toHaveBeenCalledWith({ sessionId, projectId: project.id, entry: 'reply', origin: 'user', promptText: 'hi' });
+      // An agent on the same-uid control socket is never labelled as the human.
+      await replyTerminal(sessionId, 'hi', 'agent');
+      expect(h.admission).toHaveBeenLastCalledWith({ sessionId, projectId: project.id, entry: 'reply', origin: 'agent', promptText: 'hi' });
       h.admission.mockResolvedValue(null);
       expect(await replyTerminal('ghost', 'hi')).toBeFalsy();
-      expect(h.admission).toHaveBeenCalledTimes(1);
+      expect(h.admission).toHaveBeenCalledTimes(2);
     });
   });
 

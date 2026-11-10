@@ -806,6 +806,8 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
     "legacy runtime commands may omit provider memory policy; current servers always send the persisted provider preference.",
   "hostDaemonCommandSchema.options.providerSubagentsEnabled":
     "legacy runtime commands may omit provider subagent policy; current servers always send the persisted provider preference.",
+  "hostDaemonCommandSchema.resolution.actor":
+    "plugin-submitted resolutions from older servers omit the actor; an absent actor is treated as unknown, never as human.",
   "hostDaemonCommandSchema.resumeContext.disallowedTools":
     "turn.submit resume context may omit provider-specific built-in tool removals for providers that do not need them.",
   "hostDaemonCommandSchema.resumeContext.acpLaunchSpec":

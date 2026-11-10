@@ -29,12 +29,16 @@ export function usePtySessionInteractions(sessionId: string | null): PtySessionI
     setItems([]);
     if (!sessionId) return undefined;
     let cancelled = false;
+    // Only the newest refresh may write: an older response that lands late would
+    // otherwise restore an already-resolved card and hide the next request.
+    let generation = 0;
     const load = async () => {
+      const mine = ++generation;
       try {
         const next = await apiJson<PtySessionInteraction[]>(base(sessionId));
-        if (!cancelled) setItems(Array.isArray(next) ? next : []);
+        if (!cancelled && mine === generation) setItems(Array.isArray(next) ? next : []);
       } catch {
-        if (!cancelled) setItems([]);
+        if (!cancelled && mine === generation) setItems([]);
       }
     };
     void load();

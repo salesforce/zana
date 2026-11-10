@@ -228,12 +228,13 @@ test('Modern mixed squad launches with Codex native-veto descriptor and Claude m
     const coordinator = members().find((row: { modernContext: { role: string } }) => row.modernContext.role === 'orchestrator');
     expect(await probe.page.evaluate(id => window.cc.terminals.list(id), probe.projectId)).toEqual([]);
     expect(await thread(probe.page, coordinator.threadId)).toMatchObject({ providerId: 'codex', visibility: 'visible' });
-    // p0-modern-codex-veto: approvalPolicy:"untrusted" raises command + file_change
-    // approvals, routed through decideNativeTool before any auto-approve, so Codex
-    // now reports an available native-tool veto (web search / MCP stay unsupported,
-    // asserted at the unit layer).
+    // Codex routes commands and file changes through decideNativeTool, but that is not
+    // proven live and web search / MCP calls raise no approval, so the descriptor
+    // honestly reports the veto as unavailable with the limit stated (OBL-019).
     const descriptor = await rpc<{ capabilities: Array<{ id: string; available: boolean; reason?: string }> }>(probe.page, 'capabilities', { threadId: coordinator.threadId });
-    expect(descriptor.capabilities.find(row => row.id === 'tool-before-native')).toMatchObject({ available: true });
+    expect(descriptor.capabilities.find(row => row.id === 'tool-before-native')).toMatchObject({
+      available: false, reason: expect.stringContaining('not advertised as a full veto')
+    });
     const workerThread = await thread(probe.page, worker.threadId);
     expect(workerThread).toMatchObject({ providerId: 'claude-code', visibility: 'hidden' });
     expect(workerThread.cwd).not.toBe(probe.cwd);

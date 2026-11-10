@@ -244,7 +244,9 @@ const { send, sendResult, sendError } = createBridgeIo<
 // OBL-018/p0-modern-codex-veto: Modern Codex command + file-change approvals are
 // routed through the host native-tool policy BEFORE the human interaction path.
 // With approvalPolicy:"untrusted" (session-params.ts) codex raises an approval for
-// every command/file-change even under danger-full-access; this tracker lets a
+// every command/file-change it does not classify as known-safe (ls, cat, ...), even
+// under danger-full-access; known-safe commands run with no approval and so are
+// outside this veto. This tracker lets a
 // tool-policy plugin veto, and auto-allows (no human prompt) when none is live.
 const nativeToolDecisionTracker = createNativeToolDecisionTracker(send);
 // OBL-011: observational tool.settled reports for the same command/file-change items.

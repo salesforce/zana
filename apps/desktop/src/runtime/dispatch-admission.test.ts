@@ -5,6 +5,7 @@ import {
   boundedAdmissionPrompt,
   createMainDispatchAdmission,
   dispatchEntryForPrincipal,
+  dispatchOriginForCallerClass,
   dispatchOriginForPrincipal,
   productRouteDispatchAdmissionDecider
 } from './dispatch-admission.js';
@@ -127,5 +128,18 @@ describe('principal mapping', () => {
   it('routes team slots through the job-team entry', () => {
     expect(dispatchEntryForPrincipal({ kind: 'team' })).toBe('job-team-dispatch');
     expect(dispatchEntryForPrincipal({ kind: 'interactive-user' })).toBe('initial');
+  });
+});
+
+describe('dispatchOriginForCallerClass', () => {
+  it.each([
+    ['operator', 'user'],
+    ['agent', 'agent'],
+    ['orchestrator', 'agent'],
+    ['product-server', 'system'],
+    [undefined, 'system'],
+    ['something-else', 'system']
+  ])('labels %s as %s, never promoting an unclassified caller to user', (callerClass, origin) => {
+    expect(dispatchOriginForCallerClass(callerClass)).toBe(origin);
   });
 });

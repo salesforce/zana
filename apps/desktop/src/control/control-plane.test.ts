@@ -561,6 +561,12 @@ describe('dispatchOp', () => {
     expect(await dispatchOp('term.reply', { sessionId: 's', text: 'hi' }, deps)).toEqual({ ok: true, value: true });
   });
 
+  it('term.reply hands the attested caller class to the delivery dep', async () => {
+    const replyTerminal = vi.fn(async () => true);
+    await dispatchOp('term.reply', { sessionId: 's', text: 'hi' }, makeDeps({ replyTerminal }));
+    expect(replyTerminal).toHaveBeenCalledWith('s', 'hi', 'operator');
+  });
+
   it('term.create rejects an unknown profile before touching the creator', async () => {
     const createTerminal = vi.fn(() => ({ ok: true as const, value: { id: 's' } as any }));
     const deps = makeDeps({ createTerminal });

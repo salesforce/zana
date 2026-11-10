@@ -42,6 +42,21 @@ describe('PtyInteractionBanner', () => {
     expect(container.querySelector('[data-testid="pty-interaction-banner"]')).toBeNull();
   });
 
+  it('lets only the newest refresh write, so a late older response cannot restore a resolved card', async () => {
+    let releaseFirst: (items: PtySessionInteraction[]) => void = () => {};
+    apiJson.mockImplementationOnce(() => new Promise<PtySessionInteraction[]>(resolve => { releaseFirst = resolve; }));
+    render(<PtyInteractionBanner sessionId="s1" />);
+    await waitFor(() => expect(apiJson).toHaveBeenCalledTimes(1));
+    // A newer refresh (the next request) lands first.
+    apiJson.mockResolvedValueOnce([request({ id: 'i2', payload: { kind: 'plugin', title: 'Second request', data: {}, requireHuman: true } })]);
+    await act(async () => { events.get('pty-interactions:changed')?.({ sessionId: 's1' }); });
+    expect(await screen.findByText('Second request')).toBeTruthy();
+    // The older response, carrying the already-resolved card, arrives afterwards.
+    await act(async () => { releaseFirst([request()]); });
+    expect(screen.getByText('Second request')).toBeTruthy();
+    expect(screen.queryByText('Confirm deploy')).toBeNull();
+  });
+
   it('answers through desktop main so the human proof is minted outside the page', async () => {
     const respondSession = vi.fn(async () => undefined);
     (window as any).cc = { threads: { interactions: { respondSession } } };

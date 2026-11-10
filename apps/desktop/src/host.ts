@@ -23,6 +23,7 @@ import { createNativeToolSettledHook, createToolStartTracker } from '@zana-ai/zc
 import {
   createMainDispatchAdmission,
   dispatchEntryForPrincipal,
+  dispatchOriginForCallerClass,
   dispatchOriginForPrincipal,
   productRouteDispatchAdmissionDecider
 } from './runtime/dispatch-admission.js';
@@ -10531,10 +10532,10 @@ async function bootstrapNormal() {
     // Close-idle action uses — one summarize-then-close path for every surface.
     summarizeAndCloseTerminals: (projectId, sessionIds, summarize) =>
       closeSummary.summarizeAndClose(projectId, sessionIds, { summarize }),
-    replyTerminal: async (sessionId, text) => {
+    replyTerminal: async (sessionId, text, callerClass) => {
       const session = ptys.getSession(sessionId);
       if (!session) return ptys.reply(sessionId, text);
-      const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'reply', origin: 'user', promptText: text });
+      const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'reply', origin: dispatchOriginForCallerClass(callerClass), promptText: text });
       return refusal ? { refused: refusal } : ptys.reply(sessionId, text);
     },
     getAgentStatus: (sessionId) => agentStatus.get(sessionId),

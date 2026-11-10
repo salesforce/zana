@@ -521,7 +521,7 @@ export function toCodexThreadPermissionSettings(
       return {
         // OBL-018/p0-modern-codex-veto: "untrusted" (UnlessTrusted) is the ONLY
         // approvalPolicy that still raises command + file-change approval requests
-        // under sandbox:danger-full-access (codex safety.rs returns AskUser BEFORE
+        // (for anything codex does not classify as known-safe) under sandbox:danger-full-access (codex safety.rs returns AskUser BEFORE
         // the sandbox check). Every other value auto-approves under full access, so
         // nothing would reach the native-tool veto. The sandbox is UNCHANGED. These
         // approvals are intercepted and auto-allowed in bridge.ts (decideNativeTool)

@@ -90,6 +90,18 @@ export function dispatchOriginForPrincipal(principal: { kind: string; id: string
   return 'system';
 }
 
+/**
+ * Who produced a control-socket input, from the caller class the control plane
+ * attested. The socket is reachable by any same-uid process, so only the
+ * operator-class caller is a human; agents and orchestrators are labelled
+ * agent, and anything unclassified is never promoted to user.
+ */
+export function dispatchOriginForCallerClass(callerClass: string | undefined): DispatchAdmissionMainRequest['origin'] {
+  if (callerClass === 'operator') return 'user';
+  if (callerClass === 'agent' || callerClass === 'orchestrator') return 'agent';
+  return 'system';
+}
+
 /** Job Team slots dispatch through their own entry; every other launch is an initial prompt. */
 export function dispatchEntryForPrincipal(principal: { kind: string }): 'initial' | 'job-team-dispatch' {
   return principal.kind === 'team' ? 'job-team-dispatch' : 'initial';
