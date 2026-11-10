@@ -12,6 +12,17 @@ describe("buildPiSessionParams", () => {
     expect(buildPiSessionParams({ threadId: "thread", cwd: "/work", instructionMode: "append", options: { model } }).model).toBe(model);
     expect(buildPiTurnOptions({ model }).model).toBe(model);
   });
+ it("keeps the session thread id when the caller's variables name another", () => {
+    expect(
+      buildPiSessionParams({
+        threadId: "bb-thread-1",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: { envVars: { ZCC_THREAD_ID: "other", ZCC_PROJECT_ID: "proj-1" } },
+      }).shellEnvOverrides,
+    ).toEqual({ ZCC_PROJECT_ID: "proj-1", ZCC_THREAD_ID: "bb-thread-1" });
+  });
+
   it("injects the bb thread id into the shell env and drops invalid keys", () => {
     expect(
       buildPiSessionParams({

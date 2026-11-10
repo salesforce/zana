@@ -1,0 +1,39 @@
+.page { padding-bottom: 80px; }
+.hero { padding: 68px 0 38px; }
+.hero h1 { margin: 0 0 22px; font-size: clamp(44px, 6vw, 72px); font-weight: 550; line-height: 1.08; letter-spacing: -.055em; }
+.lede { max-width: 590px; color: var(--muted); font-size: 18px; line-height: 1.75; margin: 0; }
+.feature { overflow: hidden; border: 1px solid var(--border); border-radius: 18px; background: var(--panel); box-shadow: 0 25px 80px -55px var(--accent-lavender); }
+.player { width: 100%; aspect-ratio: 16 / 9; background: #070a12; }
+.player iframe, .play, .play img { width: 100%; height: 100%; display: block; border: 0; }
+.play { cursor: pointer; padding: 0; position: relative; color: #eef2fb; background: #070a12; text-align: left; font: inherit; }
+.play img { object-fit: contain; }
+.playLabel { position: absolute; bottom: 25px; right: 28px; display: flex; align-items: center; gap: 12px; padding: 10px 18px 10px 10px; border: 1px solid #6177a1; border-radius: 999px; background: #10182deb; font-size: 13px; font-weight: 550; box-shadow: 0 8px 30px #0005; }
+.playIcon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: #0d152b; background: #93dfff; font-size: 22px; }
+.play:hover .playLabel { border-color: #93dfff; background: #192943; }
+.play:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -4px; }
+.caption { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 28px 32px 30px; }
+.eyebrow { font-size: 10px; line-height: 1.6; letter-spacing: .13em; text-transform: uppercase; color: var(--accent-blue); margin: 0 0 10px; font-weight: 600; }
+.caption h2 { margin: 0 0 10px; font-size: 24px; font-weight: 550; letter-spacing: -.035em; }
+.caption > div > p:last-child { margin: 0; color: var(--muted); max-width: 510px; font-size: 13px; line-height: 1.7; }
+.caption > a { flex-shrink: 0; }
+.resources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; padding-top: 28px; }
+.resources article { padding: 28px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); display: flex; flex-direction: column; align-items: flex-start; }
+.resources h2 { margin: 0 0 14px; font-size: 20px; font-weight: 550; letter-spacing: -.03em; }
+.resources article > p:not(.eyebrow) { font-size: 14px; line-height: 1.8; margin: 0 0 24px; color: var(--muted); }
+.resources a, .textLink { font-size: 13px; font-weight: 550; color: var(--accent-blue); }
+.resources a { margin-top: auto; }
+.resources a span, .textLink span { display: inline-block; margin-left: 8px; }
+.resources a:hover, .textLink:hover { text-decoration: underline; text-underline-offset: 4px; }
+.about { margin-top: 76px; max-width: 700px; }
+.about h2 { margin: 0 0 18px; font-size: 36px; font-weight: 550; line-height: 1.2; letter-spacing: -.045em; }
+.about > p:not(.eyebrow) { color: var(--muted); font-size: 16px; line-height: 1.9; }
+.about > div { margin-top: 24px; gap: 28px; }
+@media (max-width: 760px) {
+  .hero { padding-top: 44px; }
+  .caption { align-items: flex-start; flex-direction: column; gap: 22px; padding: 24px; }
+  .resources { grid-template-columns: 1fr; gap: 16px; }
+  .resources article { padding: 24px; }
+  .about { margin-top: 54px; }
+  .playLabel { bottom: 12px; right: 12px; padding: 6px 12px 6px 6px; font-size: 11px; gap: 8px; }
+  .playIcon { width: 26px; height: 26px; font-size: 18px; }
+}

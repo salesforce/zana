@@ -26,6 +26,12 @@ const ALLOW_LIST: readonly { file: string; count: number; reason: string }[] = [
     reason: "directory holds only extracted native files this process wrote",
   },
   {
+    file: "apps/host-daemon/src/pty.ts",
+    count: 3,
+    reason:
+      "per-session native tool gate directory (0700) holding only files this process wrote; removed on exit, on a failed write, and by the stale sweep",
+  },
+  {
     file: "apps/host-daemon/src/peer-tunnels.ts",
     count: 2,
     reason: "private key and socket scratch dir the tunnel wrote itself",

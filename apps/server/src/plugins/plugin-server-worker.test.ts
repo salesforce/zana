@@ -18,7 +18,7 @@ import { runPluginWorker } from './plugin-server-worker';
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); transport.dispose.mockClear(); });
 
-async function fixture(source: string, extension = 'mjs') {
+async function fixture(source: string, extension = 'mjs', apiExtra: Record<string, unknown> = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'plugin-worker-api-'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
   const entry = join(dir, `server.${extension}`); await writeFile(entry, source);
@@ -28,7 +28,8 @@ async function fixture(source: string, extension = 'mjs') {
   const api = {
     storage: { database: () => { throw Error('parent database must not be used'); } },
     rpc: { method: (name: string, handler: (input: unknown) => unknown) => { handlers.set(name, handler); } },
-    services: { use: () => ({}) }
+    services: { use: () => ({}) },
+    ...apiExtra
   };
   const sdk: Record<string, unknown> = { version: 2, sync: () => 'sync', lazy: () => Promise.resolve('lazy') };
   const running = runPluginWorker(port as unknown as MessagePort);
@@ -148,4 +149,22 @@ it('takes database backups inside the worker from the worker-owned connection', 
   } finally { copy.close(); }
   f.port.emit('close');
   await expect(f.handlers.get('backup')!({})).rejects.toMatchObject({ code: 'aborted' });
+});
+
+it('rebuilds the spawn exit promise from the host wait() handle', async () => {
+  const hostSpawn = vi.fn(async (_c: string, _a: string[], _o?: unknown) => ({ pid: 7, wait: () => Promise.resolve(3) }));
+  const f = await fixture(`export default api => { api.rpc.method('run', async () => { const h = await api.process.spawn('echo', ['x'], { cwd: '/' }); return { pid: h.pid, code: await h.exited, keys: Object.keys(h).sort() }; }); };`, 'mjs', { process: { spawn: hostSpawn } });
+  expect(await f.handlers.get('run')!({})).toEqual({ pid: 7, code: 3, keys: ['exited', 'pid'] });
+  expect(hostSpawn).toHaveBeenCalledWith('echo', ['x'], { cwd: '/' });
+});
+
+it('resolves exited with null when the host wait() rejects', async () => {
+  const hostSpawn = vi.fn(async () => ({ pid: 9, wait: () => Promise.reject(new Error('gone')) }));
+  const f = await fixture(`export default api => { api.rpc.method('run', async () => (await api.process.spawn('x', [])).exited); };`, 'mjs', { process: { spawn: hostSpawn } });
+  expect(await f.handlers.get('run')!({})).toBeNull();
+});
+
+it('leaves a plugin api without process.spawn untouched', async () => {
+  const f = await fixture(`export default api => { api.rpc.method('has', () => 'process' in api); };`);
+  expect(f.handlers.get('has')!({})).toBe(false);
 });

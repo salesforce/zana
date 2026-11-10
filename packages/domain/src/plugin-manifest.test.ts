@@ -41,6 +41,20 @@ describe('readPluginManifest', () => {
     expect(() => readPluginManifest(baseZcc({ peers: 'yes' }))).toThrow();
   });
 
+  it('reads the optional toolResults data grant, only the preview value', () => {
+    expect(readPluginManifest(baseZcc()).toolResults).toBeUndefined();
+    expect(readPluginManifest(baseZcc({ toolResults: 'preview' })).toolResults).toBe('preview');
+    expect(() => readPluginManifest(baseZcc({ toolResults: 'full' }))).toThrow();
+    expect(() => readPluginManifest(baseZcc({ toolResults: true }))).toThrow();
+  });
+
+  it('reads the optional promptAccess data grant, off unless true', () => {
+    expect(readPluginManifest(baseZcc()).promptAccess).toBe(false);
+    expect(readPluginManifest(baseZcc({ promptAccess: false })).promptAccess).toBe(false);
+    expect(readPluginManifest(baseZcc({ promptAccess: true })).promptAccess).toBe(true);
+    expect(() => readPluginManifest(baseZcc({ promptAccess: 'yes' }))).toThrow();
+  });
+
   it('parses optional host and pty entries', () => {
     const manifest = readPluginManifest(baseZcc({ host: './host.ts', pty: './pty.ts' }));
     expect(manifest.hostEntry).toBe('./host.ts');
@@ -162,6 +176,17 @@ describe('readPluginManifest', () => {
     expect(readPluginManifest(baseZcc()).toolPolicy).toBeUndefined();
     expect(readPluginManifest(baseZcc({ toolPolicy: true })).toolPolicy).toBe(true);
     expect(readPluginManifest(baseZcc({ toolPolicy: false })).toolPolicy).toBe(false);
+  });
+
+  it('clamps zcc.toolPolicyTimeoutMs to [1000, 9000] with a 5000 default', () => {
+    expect(readPluginManifest(baseZcc()).toolPolicyTimeoutMs).toBe(5_000);
+    expect(readPluginManifest(baseZcc({ toolPolicyTimeoutMs: 1 })).toolPolicyTimeoutMs).toBe(1_000);
+    expect(readPluginManifest(baseZcc({ toolPolicyTimeoutMs: 2_500.7 })).toolPolicyTimeoutMs).toBe(2_500);
+    expect(readPluginManifest(baseZcc({ toolPolicyTimeoutMs: 60_000 })).toolPolicyTimeoutMs).toBe(9_000);
+  });
+
+  it('rejects a non-numeric zcc.toolPolicyTimeoutMs', () => {
+    expect(() => readPluginManifest(baseZcc({ toolPolicyTimeoutMs: '5s' }))).toThrow();
   });
 
   it('rejects zcc.toolPolicy true without a server', () => {

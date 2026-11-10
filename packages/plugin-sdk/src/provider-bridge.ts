@@ -67,6 +67,8 @@ export type {
 
 export {
   BRIDGE_INBOUND_REQUEST_METHODS,
+  nativeToolDecisionRequestSchema,
+  nativeToolDecisionSchema,
   BRIDGE_JSON_RPC_ERRORS,
   BRIDGE_NOTIFICATION_METHODS,
   BRIDGE_REQUEST_METHODS,
@@ -98,6 +100,8 @@ export {
   providerInstallationStatusParamsSchema,
 } from "@zana-ai/zcc-provider-bridge-protocol";
 export type {
+  NativeToolDecisionRequest,
+  NativeToolDecision,
   BridgeExecutionOptions,
   DeltaBackgroundTaskShape,
   DeltaFileChange,
@@ -144,6 +148,8 @@ export {
   completeStartedToolItem,
   createBridgeIo,
   createBridgeLineHandler,
+  createNativeToolDecisionTracker,
+  createNativeToolSettledReporter,
   createPendingToolCallTracker,
   createProviderTurnStateRegistry,
   createProviderVisibilityMetadata,
@@ -207,6 +213,8 @@ export {
 export type {
   AcceptedUserMessageState,
   BridgeJsonRpcResponse,
+  BridgeNativeToolDecisionRequest,
+  BridgeNativeToolSettledNotification,
   BridgeToolCallRequest,
   BuildInteractiveResponseArgs,
   DecodedInteractiveRequest,
@@ -280,6 +288,9 @@ export {
   claudeTaskToolOutputSchema,
   createStandaloneBuiltinCompactCommandInput,
   dynamicToolSchema,
+  SESSION_MCP_SERVERS_MAX,
+  sanitizeSessionMcpServers,
+  sessionMcpServerSchema,
   getThreadEventScopeTurnId,
   instructionModeValues,
   isApprovalInteractionOutcome,
@@ -326,6 +337,7 @@ export type {
   ClaudeTaskToolOutput,
   ClientTurnRequestId,
   DynamicTool,
+  SessionMcpServer,
   InstructionMode,
   JsonObject,
   JsonValue,

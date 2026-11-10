@@ -40,6 +40,7 @@ import {
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
 import { PromptModal } from './PromptModal.js';
 import { AgentSessionView } from './AgentSessionView.js';
+import { PtyInteractionBanner } from './pty-interaction-banner.js';
 import {
   LANES,
   cardCohort,
@@ -745,6 +746,9 @@ function AgentMonitorSession({
   );
 
   return (
+    <div className="agent-monitor-session-stack" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {!exited && <PtyInteractionBanner sessionId={t.id} />}
+      <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
     <AgentSessionView
       mobileTitleInShell={mobileTitleInShell}
       session={t}
@@ -759,5 +763,7 @@ function AgentMonitorSession({
       background={background}
       footer={monitorActions}
     />
+      </div>
+    </div>
   );
 }

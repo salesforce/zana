@@ -136,3 +136,38 @@ describe('proxyPluginCliCommand', () => {
     );
   });
 });
+
+describe('plugin CLI caller context', () => {
+  async function run(env: Record<string, string | undefined>, self: unknown | null) {
+    vi.resetModules();
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    const callControlPlane = vi.fn().mockResolvedValue({ ok: true, value: { exitCode: 0, stdout: 'ok' } });
+    vi.doMock('./control-client.js', () => ({ isAppRunning: () => true, callControlPlane }));
+    const fetchMock = vi.fn(async () => (self === null ? new Response('{}', { status: 401 }) : new Response(JSON.stringify(self))));
+    vi.stubGlobal('fetch', fetchMock);
+    const h = await import('./plugin-cli-proxy.js');
+    await h.runExplicitPluginCli('/data', 'fixture', ['x'], false);
+    return { args: callControlPlane.mock.calls[0]![0].args as Record<string, unknown>, fetchMock };
+  }
+  const clear = { ZCC_PROJECT_ID: undefined, BB_PROJECT_ID: undefined, ZCC_THREAD_ID: undefined, BB_THREAD_ID: undefined, ZCC_SESSION_ID: undefined, ZCC_SESSION_TOKEN: undefined };
+
+  it('sends env identity without a lookup', async () => {
+    const { args, fetchMock } = await run({ ...clear, ZCC_PROJECT_ID: 'p', ZCC_THREAD_ID: 't' }, null);
+    expect(args).toMatchObject({ projectId: 'p', threadId: 't' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllEnvs(); vi.unstubAllGlobals();
+  });
+  it('resolves identity through the session lookup when env is absent', async () => {
+    const { args } = await run({ ...clear, ZCC_SESSION_ID: 's', ZCC_SESSION_TOKEN: 'k' }, { projectId: 'p', threadId: 't' });
+    expect(args).toMatchObject({ projectId: 'p', threadId: 't' });
+    vi.unstubAllEnvs(); vi.unstubAllGlobals();
+  });
+  it('keeps the session id as thread when the session has none or lookup fails', async () => {
+    const none = await run({ ...clear, ZCC_SESSION_ID: 's', ZCC_SESSION_TOKEN: 'k' }, { projectId: 'p' });
+    expect(none.args).toMatchObject({ projectId: 'p', threadId: 's' });
+    const refused = await run({ ...clear, ZCC_SESSION_ID: 's', ZCC_SESSION_TOKEN: 'k' }, null);
+    expect(refused.args.threadId).toBe('s');
+    expect(refused.args).not.toHaveProperty('projectId');
+    vi.unstubAllEnvs(); vi.unstubAllGlobals();
+  });
+});

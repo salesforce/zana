@@ -540,3 +540,35 @@ describe("buildClaudeTurnParams", () => {
     expect(params).not.toHaveProperty("claudeCodePermissionMode");
   });
 });
+
+describe("buildClaudeSessionParams plugin MCP servers", () => {
+  const server = {
+    name: "plugin_demo_srv",
+    type: "stdio",
+    command: "node",
+    args: ["srv.js"],
+    env: { TOKEN: "x" },
+  };
+  function build(mcpServers?: (typeof server)[]) {
+    return buildClaudeSessionParams({
+      threadId: "thread-1",
+      cwd: "/tmp/worktree",
+      instructionMode: "append",
+      mcpServers,
+      options: toCanonicalWireOptions(EXECUTION_CONTEXT),
+    });
+  }
+
+  it("copies each server instead of aliasing the caller's objects", () => {
+    const input = [server];
+    const params = build(input);
+    expect(params.mcpServers).toEqual([server]);
+    expect(params.mcpServers?.[0]).not.toBe(server);
+    expect(params.mcpServers).not.toBe(input);
+  });
+
+  it("omits mcpServers when undefined or empty", () => {
+    expect(build(undefined)).not.toHaveProperty("mcpServers");
+    expect(build([])).not.toHaveProperty("mcpServers");
+  });
+});

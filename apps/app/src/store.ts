@@ -827,6 +827,7 @@ function mirroredConfigFlags(config: AppConfig) {
     goalsEnabled: config.goalsEnabled ?? false,
     cliRemoteToolProxyEnabled: config.cliRemoteToolProxyEnabled ?? false,
     followUpsEnabled: config.followUpsEnabled ?? false,
+    companionEnabled: config.companionEnabled === true,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
     agentsListOrganization: config.agentsListOrganization ?? 'status',
@@ -1612,6 +1613,9 @@ interface DataState {
   /** Mirror of AppConfig.followUpsEnabled — gates the experimental Follow-ups
    *  project tab. Hydrated on init, kept live by the Settings toggle. Default off. */
   followUpsEnabled: boolean;
+  /** Mirror of AppConfig.companionEnabled — shows the "Minimize to Command
+   *  Center" sidebar button. Default off. */
+  companionEnabled: boolean;
   /** Mirror of AppConfig.idleAttentionSensitivity — drives the Agents board's
    *  "Needs you" lane promotion of triaged idle agents (advisory; main owns the
    *  verdict). Hydrated on init, kept live by the Settings select. Default
@@ -2160,6 +2164,7 @@ export const useData = create<DataState>((set, get) => ({
   goalsEnabled: false,
   cliRemoteToolProxyEnabled: false,
   followUpsEnabled: false,
+  companionEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
   agentsListOrganization: 'status',

@@ -44,7 +44,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 import { PtyManager, PTY_RECENT_EXITED_CAP } from '../pty.js';
@@ -78,7 +78,7 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
   it('surfaces an OpenCode exit-64 model-drift message as a data line before exit', () => {
     const mgr = new PtyManager();
     const events = capture(mgr);
-    const session = mgr.create({ projectId: 'p1', profile: 'opencode', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+    const session = mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'opencode', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
     const proc = spawned[0];
 
     // The crash signature lands in the session's output tail...
@@ -106,7 +106,7 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
   it('stays silent on a clean exit (code 0)', () => {
     const mgr = new PtyManager();
     const events = capture(mgr);
-    mgr.create({ projectId: 'p1', profile: 'opencode', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+    mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'opencode', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
     const proc = spawned[0];
     proc.dataCb?.(MODEL_GONE);
     proc.exitCb?.({ exitCode: 0 });
@@ -118,7 +118,7 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
   it('stays silent for a non-opencode profile on exit-64 (no provider explanation)', () => {
     const mgr = new PtyManager();
     const events = capture(mgr);
-    mgr.create({ projectId: 'p1', profile: 'shell', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+    mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
     const proc = spawned[0];
     proc.dataCb?.(MODEL_GONE);
     proc.exitCb?.({ exitCode: 64 });
@@ -132,6 +132,7 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
     const ids: string[] = [];
     for (let i = 0; i <= PTY_RECENT_EXITED_CAP; i++) {
       const session = mgr.create({
+        nativeToolPolicyRequired: false,
         projectId: 'p1',
         profile: 'shell',
         cwd: '/tmp',
@@ -156,7 +157,7 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
     process.env.ZCC_DEBUG_YOLO_CAPTURE = dir;
     try {
       const mgr = new PtyManager();
-      const session = mgr.create({ projectId: 'p1', profile: 'opencode', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+      const session = mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'opencode', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
       const proc = spawned[0];
       proc.dataCb?.('startup failed');
       proc.diagnosticDataCb?.('startup failed');

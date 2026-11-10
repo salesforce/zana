@@ -501,6 +501,64 @@ describe('PluginService', () => {
     ).resolves.toEqual({ action: 'reject', message: 'blocked', pluginId: 'rejecter' });
   });
 
+  it.each([
+    [true, '{"p":{"text":"hello","truncated":false,"attachmentCount":1}}'],
+    [false, '{"p":null}']
+  ])('admitDispatch: prompt text reaches a handler only with promptAccess=%s', async (granted, expected) => {
+    const dir = writePlugin(
+      join(root(), 'peeker'),
+      'peeker',
+      `export default function plugin(zcc) {
+        zcc.hooks.on((request) => ({ action: 'reject', message: JSON.stringify({ p: request.prompt ?? null }) }));
+      }\n`,
+      granted ? { promptAccess: true } : undefined
+    );
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(dir);
+    await expect(
+      service.admitDispatch({
+        dispatchId: 'd1', projectId: 'p1', generation: 1, surface: 'modern', entry: 'initial', origin: 'user',
+        prompt: { text: 'hello', truncated: false, attachmentCount: 1 }
+      })
+    ).resolves.toEqual({ action: 'reject', message: expected, pluginId: 'peeker' });
+  });
+
+  it.each([
+    ['preview', true],
+    [undefined, false]
+  ])('emitToolSettled: output preview only with zcc.toolResults=%s, and only for subscribers', async (toolResults, expectPreview) => {
+    const probe = (name: string, extra?: Record<string, unknown>, subscribe = true) => writePlugin(
+      join(root(), name), name,
+      `export default function plugin(zcc) {
+        zcc.rpc.method('seen', () => globalThis.__settled_${name.replace(/-/g, '_')} ?? []);
+        ${subscribe ? `zcc.events.on('tool.settled', (event) => { (globalThis.__settled_${name.replace(/-/g, '_')} ??= []).push(event); });` : ''}
+      }\n`,
+      extra
+    );
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(probe('settled-a', toolResults ? { toolResults } : undefined));
+    await service.install(probe('settled-quiet', { toolResults: 'preview' }, false));
+    await service.emitToolSettled({
+      invocationId: 'inv', projectId: 'p1', providerId: 'claude-code', toolName: 'Bash', state: 'succeeded', durationMs: 5,
+      outputBytes: 6, output: 'hello!'
+    });
+    const lines = (await service.callRpc('settled-a', 'seen', {})) as Array<Record<string, unknown>>;
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ invocationId: 'inv', state: 'succeeded', outputBytes: 6 });
+    expect('outputPreview' in lines[0]!).toBe(expectPreview);
+    if (expectPreview) expect(lines[0]!.outputPreview).toBe('hello!');
+    expect(await service.callRpc('settled-quiet', 'seen', {})).toEqual([]);
+  });
+
+  it('emitToolSettled: a throwing subscriber never rejects the emit nor blocks other plugins', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(writePlugin(join(root(), 'thrower'), 'thrower',
+      `export default function plugin(zcc) { zcc.events.on('tool.settled', () => { throw new Error('boom'); }); }\n`));
+    await expect(service.emitToolSettled({
+      invocationId: 'inv', projectId: 'p1', providerId: 'claude-code', toolName: 'Bash', state: 'failed', durationMs: 0
+    })).resolves.toBeUndefined();
+  });
+
   it('admitDispatch: failure rejects even when other plugins proceed or wait', async () => {
     const dataDir = root();
     const sources = [
@@ -1511,6 +1569,99 @@ describe('PluginService', () => {
     expect(session.instructions).toBe('url for thr-9');
   });
 
+  describe('sessionInstructions', () => {
+    const args = { surface: 'pty' as const, sessionId: 'sess-1', threadId: 'sess-1', projectId: 'proj-1', harness: 'claude-code' };
+
+    it('evaluates configure() with the session context and labels each plugin', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(
+        join(root(), 'ctx-probe'),
+        'ctx-probe',
+        `export default function plugin(zcc) {
+          zcc.agents.contributeInstructions('static note');
+          zcc.agents.configure((ctx) => ({
+            instructions: [ctx.surface, ctx.sessionId, ctx.threadId, ctx.projectId, ctx.project?.id, ctx.provider?.id].join('|')
+          }));
+        }\n`
+      );
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      await service.install(pluginDir);
+      const text = await service.sessionInstructions(args);
+      expect(text).toContain('Instructions from the ZCC plugin "ctx-probe":\nstatic note');
+      expect(text).toContain('pty|sess-1|sess-1|proj-1|proj-1|claude-code');
+    });
+
+    it('logs a throwing configure() to that plugin and keeps the others', async () => {
+      const dataDir = root();
+      const bad = writePlugin(
+        join(root(), 'bad-one'),
+        'bad-one',
+        `export default function plugin(zcc) {
+          zcc.agents.configure(() => { throw new Error('kaput'); });
+          zcc.agents.contributeInstructions(() => { throw new Error('provider kaput'); });
+        }\n`
+      );
+      const good = writePlugin(
+        join(root(), 'good-one'),
+        'good-one',
+        `export default function plugin(zcc) {
+          zcc.agents.configure(() => ({ instructions: 'still here' }));
+        }\n`
+      );
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      await service.install(bad);
+      await service.install(good);
+      const text = await service.sessionInstructions(args);
+      expect(text).toContain('still here');
+      expect(text).not.toContain('kaput');
+      const log = (await service.readLogs('bad-one', 50)).join('\n');
+      expect(log).toContain('configure failed for a PTY session: kaput');
+      expect(log).toContain('contributeInstructions failed for a PTY session: provider kaput');
+    });
+
+    it('bounds one contribution and the total, and logs the truncation', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(
+        join(root(), 'wordy'),
+        'wordy',
+        `export default function plugin(zcc) {
+          zcc.agents.contributeInstructions('${'a'.repeat(100)}');
+          zcc.agents.configure(() => ({ instructions: 'b'.repeat(50000) }));
+        }\n`
+      );
+      const small = writePlugin(join(root(), 'wordy2'), 'wordy2', `export default function plugin(zcc) { zcc.agents.configure(() => ({ instructions: 'c'.repeat(4096) })); }\n`);
+      const small2 = writePlugin(join(root(), 'wordy3'), 'wordy3', `export default function plugin(zcc) { zcc.agents.configure(() => ({ instructions: 'd'.repeat(4096) })); }\n`);
+      const small3 = writePlugin(join(root(), 'wordy4'), 'wordy4', `export default function plugin(zcc) { zcc.agents.configure(() => ({ instructions: 'e'.repeat(4096) })); }\n`);
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      for (const dir of [pluginDir, small, small2, small3]) await service.install(dir);
+      const text = await service.sessionInstructions(args);
+      expect(text.length).toBeLessThanOrEqual(16_000);
+      expect(text).not.toContain('b'.repeat(4097));
+      expect((await service.readLogs('wordy', 50)).join('\n')).toContain('truncated');
+    });
+
+    it('answers empty when no plugin contributes', async () => {
+      const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+      await expect(service.sessionInstructions(args)).resolves.toBe('');
+    });
+  });
+
+  it('logs a configure() failure behind the machine-wide skill and Modern session tools', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'flaky'),
+      'flaky',
+      `export default function plugin(zcc) {
+        zcc.agents.configure(() => { throw new Error('flaky configure'); });
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    await service.sessionTools({ threadId: 'thr-1', projectId: 'proj-1' });
+    expect((await service.readLogs('flaky', 50)).join('\n')).toContain('configure failed for a session: flaky configure');
+    expect((await service.readLogs('flaky', 50)).join('\n')).toContain('configure failed for the machine-wide instructions skill: flaky configure');
+  });
+
   it('reconcileBuiltins skips official autoInstall:false plugins such as tasks', async () => {
     const dataDir = root();
     const bundled = root();
@@ -1860,6 +2011,42 @@ describe('host agent-tool source', () => {
       'execution_snapshot',
       'execution_resume_binding'
     ]));
+  });
+});
+
+describe('PTY session plugin tools', () => {
+  it('offers live plugin tools only, honours configure(), and runs only those tools', async () => {
+    const { createModernTeamLaunchSource } = await import('../services/agents/modern-team-launch-tools.js');
+    const pluginDir = writePlugin(
+      join(root(), 'pty-tools'),
+      'pty-tools',
+      `export default function plugin(zcc) {
+        zcc.agents.registerTool({ name: 'echo_tool', description: 'Echo', parameters: { type: 'object' }, execute: async (input) => ({ ok: true, input }) });
+        zcc.agents.registerTool({ name: 'hidden_tool', description: 'Hidden', parameters: { type: 'object' }, execute: async () => ({ ok: true }) });
+        zcc.agents.configure(({ surface, projectId }) => (projectId === 'skip' ? {} : { tools: surface === 'pty' ? ['echo_tool'] : ['echo_tool', 'hidden_tool'] }));
+      }\n`
+    );
+    const service = createPluginService({
+      dataDir: root(),
+      bundledRoot: root(),
+      hostAgentToolSource: createModernTeamLaunchSource({
+        getConfig: () => ({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: false, teamJobLaunchEnabled: true }),
+        callMcpTool: async () => ({ ok: true, text: '{}' })
+      })
+    });
+    await service.install(pluginDir);
+    const pty = await service.ptySessionTools({ surface: 'pty', sessionId: 's1', threadId: 's1', projectId: 'proj-1' });
+    expect(pty.tools.map((row) => row.name)).toEqual(['echo_tool']);
+    expect((await service.sessionTools({ threadId: 't', projectId: 'proj-1' })).tools.map((row) => row.name)).toContain('execution_start');
+    expect((await service.ptySessionTools({ surface: 'pty', sessionId: 's1', threadId: 's1', projectId: 'skip' })).tools).toEqual([]);
+    const ctx = { threadId: 's1', projectId: 'proj-1', signal: new AbortController().signal };
+    const ran = await service.invokePtySessionTool({ name: 'echo_tool', input: { a: 1 }, ctx });
+    expect(ran.success).toBe(true);
+    const hostTool = await service.invokePtySessionTool({ name: 'execution_start', input: {}, ctx });
+    expect(hostTool).toMatchObject({ success: false, contentItems: [{ text: 'Unsupported tool: execution_start' }] });
+    await service.disable('pty-tools');
+    expect((await service.ptySessionTools({ surface: 'pty', sessionId: 's1', threadId: 's1', projectId: 'proj-1' })).tools).toEqual([]);
+    service.stop();
   });
 });
 

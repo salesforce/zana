@@ -40,7 +40,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 vi.mock('../tmux.js', () => ({
@@ -66,6 +66,7 @@ const ENV_KEYS = ['ZCC_DATA_DIR', 'CLAUDE_CONFIG_DIR'] as const;
 
 function create(mgr: PtyManager, extra: Record<string, unknown> = {}) {
   return mgr.create({
+    nativeToolPolicyRequired: false,
     projectId: 'p1',
     profile: 'claude',
     cwd: '/tmp',

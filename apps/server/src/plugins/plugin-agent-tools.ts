@@ -23,6 +23,8 @@ export interface PluginAgentToolSource {
   extraInstructions?: readonly string[];
   extraInstructionProviders?: ReadonlyArray<(ctx: { threadId: string; projectId: string }) => string | null | Promise<string | null>>;
   pluginMetadata?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
+  /** Told when this plugin's `configure()` throws, so the failure reaches the plugin log. */
+  onConfigureError?: (error: unknown) => void;
 }
 
 export interface PluginSessionTools {
@@ -296,7 +298,8 @@ async function configurePlugin(
       }
       const text = result.instructions?.trim();
       if (text) instructions.push(text);
-    } catch {
+    } catch (error) {
+      try { source.onConfigureError?.(error); } catch { /* logging must not change the outcome */ }
       return { selected: 'none', instructions, parameterOverrides };
     }
   }

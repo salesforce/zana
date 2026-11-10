@@ -1,4 +1,5 @@
 import { deprecation, errResult, type CliResult } from '../cli-result.js';
+import { callControlPlane } from '../control-client.js';
 import { flagValue, hasFlag, splitSentinel, stripFlags } from '../flag-parse.js';
 import {
   productRequest,
@@ -465,6 +466,16 @@ export async function runThreadCommand(
   if (subcommand === 'interactions') {
     const id = rest[0];
     if (!id) return errResult('thread interactions requires a <threadId>', 2);
+    if (rest[1] === 'respond') {
+      const interactionId = rest[2];
+      const raw = flagValue(rest, '--value');
+      if (!interactionId || raw === undefined) return errResult('thread interactions <threadId> respond <interactionId> --value <JSON>', 2);
+      let value: unknown;
+      try { value = JSON.parse(raw); } catch { return errResult('--value must be JSON', 2); }
+      const result = await callControlPlane({ dataDir, op: 'interaction.respond', args: { threadId: id, interactionId, value } });
+      if (!result.ok) return errResult(result.message ?? 'Interaction refused', result.code === 'INTERACTION_REFUSED' ? 5 : 1);
+      return renderOrJson(json, result.value, `${JSON.stringify(result.value, null, 2)}\n`);
+    }
     const listed = await productRequest<unknown>(
       'GET',
       `/api/v1/threads/${encodeURIComponent(id)}/interactions`,

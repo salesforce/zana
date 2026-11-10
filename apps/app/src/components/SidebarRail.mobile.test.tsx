@@ -10,7 +10,8 @@ const h = vi.hoisted(() => ({
   consume: vi.fn(() => false)
 }));
 vi.mock('../store.js', () => ({
-  useUi: Object.assign((selector: (state: typeof h.state) => unknown) => selector(h.state), { getState: () => h.state })
+  useUi: Object.assign((selector: (state: typeof h.state) => unknown) => selector(h.state), { getState: () => h.state }),
+  useData: (selector: (state: { companionEnabled: boolean }) => unknown) => selector({ companionEnabled: false })
 }));
 vi.mock('../plugins/plugin-slots.js', () => ({
   subscribePluginSlots: () => () => {},

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { expect, it, vi } from 'vitest';
 import { getHost } from '@zana-ai/zcc-db';
 import { CLI_CALLBACK_MAX_BODY_BYTES, CLI_CALLBACK_MAX_RESPONSE_BYTES } from '@zana-ai/zcc-contracts/cli-callbacks';
@@ -142,7 +143,7 @@ it('denies within the bound when the policy never answers', async () => {
   vi.useFakeTimers();
   try {
     const f = nativeFixture(() => new Promise(() => undefined));
-    const result = f.forward(nativeInput()); await vi.advanceTimersByTimeAsync(3_000);
+    const result = f.forward(nativeInput()); await vi.advanceTimersByTimeAsync(MAX_MAIN_CEILING_MS);
     expect(replyOf(await result)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'native tool policy timed out' });
   } finally { vi.useRealTimers(); }
 });

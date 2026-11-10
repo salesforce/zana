@@ -278,3 +278,53 @@ export const dynamicToolSchema = z.object({
   presentation: threadEventItemPresentationSchema.optional(),
 });
 export type DynamicTool = z.infer<typeof dynamicToolSchema>;
+
+export const SESSION_MCP_SERVERS_MAX = 32;
+const SESSION_MCP_ENV_MAX = 128;
+
+/**
+ * A plugin-contributed MCP server handed to a provider bridge at session
+ * construction, beside {@link DynamicTool}s. Selection (enabled plugin,
+ * alwaysOn) is decided by the host before this crosses the wire. The name is
+ * already a config-safe key (`plugin_<id>_<name>`). `env` may hold secrets:
+ * bridges pass it to the harness and never log it.
+ */
+export const sessionMcpServerSchema = z
+  .object({
+    name: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
+    type: z.string().min(1).max(32),
+    command: z.string().min(1).max(4096).optional(),
+    args: z.array(z.string().max(8192)).max(256).optional(),
+    url: z.string().min(1).max(4096).optional(),
+    env: z
+      .record(z.string().min(1).max(256), z.string().max(65_536))
+      .refine((env) => Object.keys(env).length <= SESSION_MCP_ENV_MAX, {
+        message: "too many env entries",
+      })
+      .optional(),
+  })
+  .strict();
+export type SessionMcpServer = z.infer<typeof sessionMcpServerSchema>;
+
+/**
+ * Validates host-selected servers for the wire: entries that do not parse, or
+ * that cannot be launched (stdio without command, remote without url), are
+ * dropped (fail closed per entry), duplicates by name keep the first, and the
+ * list is capped at {@link SESSION_MCP_SERVERS_MAX}.
+ */
+export function sanitizeSessionMcpServers(
+  candidates: readonly unknown[],
+): SessionMcpServer[] {
+  const out: SessionMcpServer[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (out.length >= SESSION_MCP_SERVERS_MAX) break;
+    const parsed = sessionMcpServerSchema.safeParse(candidate);
+    if (!parsed.success || seen.has(parsed.data.name)) continue;
+    const server = parsed.data;
+    if (server.type === "stdio" ? !server.command : !server.url) continue;
+    seen.add(server.name);
+    out.push(server);
+  }
+  return out;
+}

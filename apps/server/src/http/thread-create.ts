@@ -85,6 +85,8 @@ export interface SpawnThreadInput {
 }
 
 export class ThreadCreateError extends Error {
+  /** Extra JSON fields a route may return beside `error` and `message`. */
+  details?: Record<string, unknown>;
   constructor(
     readonly status: number,
     readonly code: string,

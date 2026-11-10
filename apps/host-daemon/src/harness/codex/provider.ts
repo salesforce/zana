@@ -6,11 +6,16 @@
  *  - RESUME IS A SUBCOMMAND, not a flag: `codex resume --last` reopens the most
  *    recent session (vs claude's `--resume`/`--continue` flag). So the base argv
  *    for `codex-resume` is `['resume', '--last']`, not a leading `--flag`.
- *  - HOOKS come from `~/.codex/config.toml` / codex's hook schema, NOT from CLI
- *    flags. So the Claude flag stack (`--settings`, `--session-id`,
- *    `--permission-mode`) is not part of codex's interface, and this provider
- *    returns `[]` for the persona / project-settings flag stacks. Those
- *    `ProviderCapabilities` stay OFF (see `providerCapabilities`).
+ *  - HOOKS are discovered PER CONFIG LAYER and APPENDED, not sourced from one
+ *    file: codex collects hooks from each layer (user `~/.codex/config.toml`,
+ *    project `.codex`, the session-flags layer our `-c hooks.*` lands in, and
+ *    managed/requirements layers) lowest-precedence-first and concatenates them.
+ *    Our `-c hooks.<Event>=…` overrides only replace each other WITHIN the
+ *    session-flags layer; they do NOT drop the user's or project's hooks. Hooks
+ *    do NOT come from CLI flags, so the Claude flag stack (`--settings`,
+ *    `--session-id`, `--permission-mode`) is not part of codex's interface, and
+ *    this provider returns `[]` for the persona / project-settings flag stacks.
+ *    Those `ProviderCapabilities` stay OFF (see `providerCapabilities`).
  *
  * MCP, GUIDANCE, and HOOKS are all bridged through the SAME `-c` global-override
  * channel — codex accepts three launcher injections natively, each written with
@@ -21,10 +26,16 @@
  *  - **GUIDANCE** (G3): `-c developer_instructions=…` injects the inbox/mesh/
  *    report guidance as a developer-role message — see {@link guidanceArgs}.
  *  - **HOOKS** (A6/C9): `-c hooks.<Event>=[…]` registers `command` hooks that curl
- *    our local `/hook/*` callbacks, PLUS the global `--dangerously-bypass-hook-trust`
- *    flag (a `-c`-injected hook is untrusted and won't RUN without it; the source
- *    is self-vetted since WE build the curl-to-127.0.0.1 commands) — see
- *    {@link hookArgs}. Full lifecycle parity with the claude `--settings` hooks,
+ *    our local `/hook/*` callbacks. A `-c`-injected hook lands in the session-flags
+ *    layer UNTRUSTED and won't RUN until trusted, so the launcher also passes ONE
+ *    `-c hooks.state={…}` override carrying the `trusted_hash` of exactly the
+ *    handlers Zana generates (user and project hooks keep their normal trust
+ *    state). That scoped mode is enabled only after a per-binary conformance probe
+ *    proves codex computes the same hashes (`hook-trust.ts`); until then, when the
+ *    probe fails, and for every remote launch, the DEGRADED fallback is the global
+ *    `--dangerously-bypass-hook-trust` flag, which skips the trust prompt for the
+ *    user's and project's enabled hooks too — see {@link hookArgs}. Full lifecycle
+ *    parity with the claude `--settings` hooks,
  *    reaching the SAME provider-agnostic `/hook/*` handlers:
  *      · `Stop` → `/hook/stop` — turn END (auto-close, scheduler stamp, goal loop);
  *        codex's `supportsHooks`/`canAutoCloseOnFinish` are ON because of it.
@@ -47,6 +58,7 @@
  */
 
 import type { AppConfig, LaunchProfileId, Persona, ProjectSettings } from '@zana-ai/zcc-domain/product';
+import type { HarnessMcpServer } from '@zcc/harness-sdk';
 import type {
   HarnessAuthInjection,
   ProviderHookUrls,
@@ -62,8 +74,9 @@ import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js
 import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { codexLegacyRouting } from './legacy-routing.js';
 import { codexInteractionHook } from './interaction-hooks.js';
-import { shellQuote } from '../shell-quote.js';
-import { nativeToolRelayTail } from '../native-tool-relay.js';
+import { buildCodexHookSpecs, renderHookOverrides, tomlBasic } from './hook-trust-specs.js';
+import { resolveHarnessCommand, verificationSearchPath } from '../harness-command.js';
+import { CODEX_BYPASS_HOOK_TRUST_FLAG, codexHookStateArgs, type CodexHookTrustMode } from './hook-trust.js';
 
 export const CODEX_EVIDENCE_VERSION = '0.140.0';
 const codexEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -152,19 +165,28 @@ function codexBinary(config: AppConfig): string {
   return config.codexBinary || 'codex';
 }
 
-/** Escape a value for embedding in a TOML basic (double-quoted) string. */
-function tomlBasic(s: string): string {
-  return s
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\t/g, '\\t')
-    .replace(/\r/g, '\\r');
-}
-
 /** A complete double-quoted TOML basic string (the escaped value in quotes). */
 function tomlValue(s: string): string {
   return `"${tomlBasic(s)}"`;
+}
+
+/**
+ * `-c` overrides that add one plugin-contributed MCP server to a codex launch.
+ * The server name is a bare key by construction; env keys that are not bare
+ * keys are dropped rather than quoted. A stdio server without a command and a
+ * URL server without a URL contribute nothing.
+ */
+export function codexServerArgs(server: HarnessMcpServer): string[] {
+  const base = `mcp_servers.${server.name}`;
+  if (server.type === 'stdio') {
+    if (!server.command) return [];
+    const out = ['-c', `${base}.command=${tomlValue(server.command)}`];
+    if (server.args?.length) out.push('-c', `${base}.args=[${server.args.map(tomlValue).join(',')}]`);
+    const env = Object.entries(server.env ?? {}).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
+    if (env.length) out.push('-c', `${base}.env={${env.map(([key, value]) => `${key}=${tomlValue(value)}`).join(',')}}`);
+    return out;
+  }
+  return server.url ? ['-c', `${base}.url=${tomlValue(server.url)}`] : [];
 }
 
 /**
@@ -183,32 +205,6 @@ function codexOptionArgs(
   if (sandbox) args.push('-s', sandbox);
   if (approval) args.push('-a', approval);
   return args;
-}
-
-/**
- * Build one `-c hooks.<Event>=[…]` override registering a single `command` hook.
- * The `command` is a shell string codex runs via `sh -c` (with the event JSON on
- * stdin), so the WHOLE inline-table is one TOML value: escape the assembled
- * command once for the TOML basic string it sits in.
- */
-function codexHookOverride(event: string, command: string, matcher = '*'): string[] {
-  return ['-c', `hooks.${event}=[{matcher="${matcher}",hooks=[{type="command",command="${tomlBasic(command)}"}]}]`];
-}
-
-/**
- * Build one `-c hooks.<Event>=[…]` override with MULTIPLE matcher entries.
- * Codex takes exactly one hooks list per event key — a second `-c
- * hooks.<Event>=…` for the same event OVERWRITES the first rather than
- * merging (verified live) — so two independent features that both need
- * `PreToolUse` (native tool policy's `*` matcher, notify's
- * `request_user_input` matcher) must fold into ONE override, same as the
- * existing `UserPromptSubmit` folding below.
- */
-function codexHookOverrideMulti(event: string, entries: ReadonlyArray<{ matcher: string; command: string }>): string[] {
-  const tables = entries
-    .map(({ matcher, command }) => `{matcher="${matcher}",hooks=[{type="command",command="${tomlBasic(command)}"}]}`)
-    .join(',');
-  return ['-c', `hooks.${event}=[${tables}]`];
 }
 
 export class CodexProvider extends BaseLaunchProvider {
@@ -269,6 +265,7 @@ export class CodexProvider extends BaseLaunchProvider {
     resumeSessionId?: string
   ): ResolvedLaunch {
     const command = codexBinary(config);
+    this.launchBinary = command;
     // Resume is a SUBCOMMAND (positional), unlike claude/cursor's leading
     // `--resume` flag — so it must be the FIRST argv element, and the `-c`/`-m`/
     // `-s`/`-a` layers `PtyManager` splices on all come AFTER it (verified:
@@ -287,7 +284,7 @@ export class CodexProvider extends BaseLaunchProvider {
     // full bypass (skips BOTH the approval prompt AND the sandbox). It supersedes
     // the `-s`/`-a` axis, so the launcher suppresses those pickers for this profile
     // (see `harnessOptions` in launch-provider.ts). This differs from
-    // `--dangerously-bypass-hook-trust` (hooks only), which is spliced separately.
+    // `--dangerously-bypass-hook-trust` (hooks only), which is only the degraded hook-trust fallback.
     if (profile === 'codex-yolo') {
       return { command, args: ['--dangerously-bypass-approvals-and-sandbox'] };
     }
@@ -297,7 +294,7 @@ export class CodexProvider extends BaseLaunchProvider {
     };
   }
 
-  mcpArgs(_profile: LaunchProfileId, mcpUrl: string): string[] {
+  mcpArgs(_profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): string[] {
     // codex reads MCP servers from `~/.codex/config.toml` [mcp_servers], but the
     // `-c key=value` GLOBAL override injects one at spawn with NO file written and
     // NO change to the user's config — the true `--mcp-config` analogue. codex's
@@ -314,7 +311,7 @@ export class CodexProvider extends BaseLaunchProvider {
     // `-c` is a global option accepted before OR after the `resume` subcommand
     // (verified), so appending it to the base argv is safe for both profiles.
     const tomlValue = `"${mcpUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-    return ['-c', `mcp_servers.zcc-inbox.url=${tomlValue}`];
+    return ['-c', `mcp_servers.zcc-inbox.url=${tomlValue}`, ...(servers ?? []).flatMap((server) => codexServerArgs(server))];
   }
 
   mcpApprovalArgs(_profile: LaunchProfileId, approval: McpToolApproval): string[] {
@@ -390,146 +387,74 @@ export class CodexProvider extends BaseLaunchProvider {
     return 'codex';
   }
 
+  /** Trust mode for LOCAL launches; `bypass` until a binary probe verifies scoped trust. */
+  private hookTrustMode: CodexHookTrustMode = 'bypass';
+
+  /** Set by the registration after the per-binary conformance probe. */
+  setHookTrustMode(mode: CodexHookTrustMode, binary?: string): void {
+    this.hookTrustMode = mode;
+    this.verifiedBinary = mode === 'scoped' ? binary : undefined;
+  }
+
+  /** Binary the conformance probe verified; scoped trust never applies to any other binary. */
+  private verifiedBinary: string | undefined;
+  /** Binary of the launch currently being assembled (resolveLaunch runs just before hookArgs). */
+  private launchBinary: string | undefined;
+  /**
+   * The probe verifies the RESOLVED path (`harness-verify.ts` records it), while
+   * `launchBinary` is the configured command, usually the bare `codex`. Compare
+   * like with like: resolve the launch command exactly as verification did.
+   */
+  private resolveBinary: (command: string) => string = (command) =>
+    resolveHarnessCommand(command, verificationSearchPath());
+
+  /** Test seam: substitute the command resolver so identity checks do not depend on the host PATH. */
+  setBinaryResolverForTests(resolver: (command: string) => string): void {
+    this.resolveBinary = resolver;
+  }
+
+  get currentHookTrustMode(): CodexHookTrustMode {
+    return this.hookTrustMode;
+  }
+
   hookArgs(_profile: LaunchProfileId, urls: ProviderHookUrls): string[] {
-    // codex has a claude-shaped hooks subsystem in `~/.codex/config.toml`; the
-    // `-c hooks.<Event>=[…]` GLOBAL overrides register hooks at spawn with NO file
-    // written. We wire `command`-type hooks that curl the SAME identity-baked
-    // `/hook/*` routes the claude path bakes into its `ZCC_*_URL` env, so the
-    // main-process handlers stay provider-agnostic. Event-key casing is PascalCase
-    // (codex's `HookEventsToml` config struct).
-    //
-    // Two hard requirements, both verified on codex 0.140.0 (A6/C9 spike):
-    //  1. A `-c`-injected hook is UNTRUSTED and parses-but-won't-RUN unless we also
-    //     pass the global `--dangerously-bypass-hook-trust` flag. That's a
-    //     deliberate security-posture choice; it's the flag's stated use ("automation
-    //     that already vets hook sources") — every command is OUR curl to 127.0.0.1,
-    //     never agent- or user-supplied. The flag is global (valid before OR after
-    //     the `resume` subcommand), same slot as our `-c` args. Emitted ONCE.
-    //  2. codex delivers each hook's event JSON on the command's STDIN (verified:
-    //     the binary logs `failed to write hook stdin`). Fire-and-forget hooks that
-    //     only ping a fixed URL DRAIN stdin first (`cat >/dev/null`) so codex's
-    //     write never blocks on an unread pipe; the first-prompt hook instead pipes
-    //     stdin through (`--data-binary @-`) because it needs the `prompt` body.
-    //     `curl -sS -m 5 -o /dev/null` keeps every hook quiet and bounded so a
-    //     hung callback can't wedge codex's shutdown.
-    //
-    //     `-o /dev/null` is LOAD-BEARING, not cosmetic: codex reads a hook
-    //     command's STDOUT and, for lifecycle events like `Stop`, tries to parse
-    //     it as an optional JSON control directive. Our `/hook/*` routes reply
-    //     with a plain `ok` body, so without discarding curl's response codex logs
-    //     `error: hook returned invalid stop hook JSON output` on every turn end
-    //     (verified live via an interactive PTY on codex 0.140.0). Draining STDIN
-    //     (`cat >/dev/null`) is a separate concern — that stops codex blocking on
-    //     the pipe; `-o /dev/null` stops it mis-reading the reply. The claude path
-    //     (`spawn-plan.ts`) already redirects with `>/dev/null 2>&1` for the same
-    //     reason.
-    const args: string[] = [];
+    const scoped =
+      this.hookTrustMode === 'scoped' &&
+      this.verifiedBinary !== undefined &&
+      this.launchBinary !== undefined &&
+      this.verifiedBinary === this.resolveBinary(this.launchBinary);
+    return this.buildHookArgs(urls, scoped);
+  }
 
-    // PreToolUse carries two independent jobs with DIFFERENT matchers — native
-    // tool policy's `*` (every tool call) and notify's `request_user_input`
-    // (only the ask-user-question tool). Verified live these matchers are
-    // mutually exclusive per call (a plain Bash call never fires the
-    // `request_user_input`-matched hook), so no stdout collision; but codex
-    // takes exactly one hooks list per event key — a second `-c
-    // hooks.PreToolUse=…` OVERWRITES rather than merges — so both entries fold
-    // into ONE override, same as the `UserPromptSubmit` folding below.
-    const preToolUseEntries: Array<{ matcher: string; command: string }> = [];
-    if (urls.nativeTool) {
-      // OBL-004: this hook must actually BLOCK, not fire-and-forget — verified
-      // live against codex 0.154.0 that a hook's stdout IS parsed as a
-      // blocking `hookSpecificOutput.permissionDecision` directive, the
-      // identical contract Claude's PreToolUse hooks use
-      // (`codex_core::tools::router` logs "Command blocked by PreToolUse
-      // hook: <reason>" and the tool never runs). So we pipe stdin straight
-      // into `/hook/nativetool/…` (which replies in that exact shape, see
-      // mcp-server.ts) and relay only its exact DENY. A plugin `allow` means
-      // "no objection", never approval — and codex's parser rejects an
-      // `allow` without `updatedInput` as "unsupported
-      // permissionDecision:allow" and shows a failed hook on every call
-      // (`codex-rs/hooks/src/engine/output_parser.rs`, identical at
-      // rust-v0.140.0, v0.154.0 and v0.157.0). So an allow prints nothing,
-      // which codex reads as "no decision": its own approval policy decides.
-      // FAIL CLOSED: every other outcome (a non-zero curl exit — refused,
-      // timeout, non-2xx, a body cut short — or any other body) emits an
-      // explicit `deny` JSON ourselves — verified live that codex otherwise
-      // fails OPEN (empty hook stdout → tool proceeds unmodified), the
-      // opposite of OBL-004's "transport failure fails closed" requirement.
-      // The tail is shared with the Claude relay (native-tool-relay.ts).
-      preToolUseEntries.push({
-        matcher: '*',
-        command:
-          `OUT=$(curl --fail -s -m 5 -X POST --data-binary @- ${shellQuote(urls.nativeTool)}); STATUS=$?; ` +
-          nativeToolRelayTail()
-      });
-    }
-
-    if (urls.stop) {
-      // Turn END → auto-close / scheduler stamp / goal loop. `/hook/stop` ignores
-      // the body, so just drain stdin and ping.
-      args.push(
-        ...codexHookOverride('Stop', `cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST "${urls.stop}"`)
-      );
-    }
-
-    if (urls.notify) {
-      // Forward identities so prompt repaints cannot resolve pending approval and
-      // another concurrent tool's completion cannot dismiss this request.
-      const post = (action: string) =>
-        `curl -sS -m 5 -o /dev/null -X POST --data-binary @- "${urls.notify}/${action}"`;
-      preToolUseEntries.push({ matcher: 'request_user_input', command: post('blocked') });
-      args.push(
-        ...codexHookOverride('PermissionRequest', post('blocked')),
-        ...codexHookOverride('PostToolUse', post('unblocked')),
-        ...codexHookOverride('Interrupt', post('unblocked'))
-      );
-    }
-
-    if (preToolUseEntries.length > 0) {
-      args.push(...codexHookOverrideMulti('PreToolUse', preToolUseEntries));
-    }
-
-    // UserPromptSubmit carries two independent jobs; codex takes ONE hooks list per
-    // event key, so fold both commands into a single `UserPromptSubmit` override
-    // (each `command` entry gets its own stdin copy).
-    const userPromptCommands: string[] = [];
-    if (urls.notify) {
-      // A new turn cleared the "needs you" wait → POST /unblocked. Drains stdin.
-      userPromptCommands.push(`cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST "${urls.notify}/unblocked"`);
-    }
-    if (urls.firstPrompt) {
-      // Forward the event JSON (carries `prompt`) so the tab-namer can title the
-      // tab. Pipe stdin through verbatim — this is the one hook that needs the body.
-      userPromptCommands.push(
-        `curl -sS -m 5 -o /dev/null -X POST --data-binary @- "${urls.firstPrompt}"`
-      );
-    }
-    if (userPromptCommands.length > 0) {
-      const hookEntries = userPromptCommands
-        .map((c) => `{type="command",command="${tomlBasic(c)}"}`)
-        .join(',');
-      args.push('-c', `hooks.UserPromptSubmit=[{matcher="*",hooks=[${hookEntries}]}]`);
-    }
-
-    if (urls.subagent) {
-      // Live sub-agent-count badge. SubagentStart → /start (increments),
-      // SubagentStop → /stop (decrements). Both fixed-URL pings; drain stdin.
-      args.push(
-        ...codexHookOverride(
-          'SubagentStart',
-          `cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST "${urls.subagent}/start"`
-        ),
-        ...codexHookOverride(
-          'SubagentStop',
-          `cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST "${urls.subagent}/stop"`
-        )
-      );
-    }
-
-    // No hooks wanted → nothing to wire (and no need for the bypass flag).
-    if (args.length === 0) return [];
-    // The bypass flag must precede the `-c` hooks so an untrusted `-c` hook will
-    // actually RUN. Emitted exactly once regardless of how many events we wired.
-    return ['--dangerously-bypass-hook-trust', ...args];
+  /**
+   * `-c hooks.<Event>=[…]` overrides register `command` hooks at spawn with NO
+   * file written; they curl the SAME identity-baked `/hook/*` routes the claude
+   * path uses, so the main-process handlers stay provider-agnostic (specs and
+   * command shapes live in `hook-trust-specs.ts`).
+   *
+   * A `-c`-injected hook lands in codex's SESSION-FLAGS config layer and is
+   * UNTRUSTED until `hooks.state` holds a matching `trusted_hash`. Two ways to
+   * make it run:
+   *  - SCOPED (preferred): one extra `-c hooks.state={…}` naming only the hashes
+   *    of the handlers generated here, so user and project hooks keep their normal
+   *    trust state. Used only when the per-binary conformance probe verified that
+   *    codex computes the same hashes (see `hook-trust.ts`).
+   *  - GLOBAL bypass (degraded fallback): `--dangerously-bypass-hook-trust`, which
+   *    skips the trust check for EVERY enabled hook, user and project hooks
+   *    included. Used before the probe completes, when the probe fails or
+   *    mismatches, and always for remote launches (the remote binary cannot be
+   *    probed locally). Every command wired here is OUR curl to 127.0.0.1, never
+   *    agent- or user-supplied. The flag is valid before OR after the `resume`
+   *    subcommand, same slot as our `-c` args; emitted ONCE.
+   */
+  private buildHookArgs(urls: ProviderHookUrls, scoped: boolean): string[] {
+    const specs = buildCodexHookSpecs(urls);
+    // No hooks wanted → nothing to wire (and no need for any trust arg).
+    if (specs.length === 0) return [];
+    const overrides = renderHookOverrides(specs);
+    return scoped
+      ? [...overrides, ...codexHookStateArgs(specs)]
+      : [CODEX_BYPASS_HOOK_TRUST_FLAG, ...overrides];
   }
 
   /**
@@ -577,15 +502,17 @@ export class CodexProvider extends BaseLaunchProvider {
     // HOOK PARITY WITH CLAUDE REMOTE: when `createRemote` set up the reverse
     // tunnel (interactive, MCP server up), it hands us `remoteHookUrls` pointed at
     // the loopback `-R` port. We turn those into the SAME `-c hooks.*` overrides
-    // (+ the one trust-bypass flag) as the local path — so a remote codex tab
+    // (+ the one trust-bypass flag, never the scoped state) as the local path — so a remote codex tab
     // reaches the identical provider-agnostic `/hook/*` routes as a remote claude
     // tab (turn-end / blocked-unblocked / first-prompt naming / subagent count).
     // No urls (shell/cursor gate, scheduled/headless, or pre-bind) ⇒ empty, i.e.
     // the historical no-hooks remote spawn. MCP/guidance are deliberately NOT
     // bridged remotely — mirroring claude remote, which tunnels only the async
     // fire-and-forget hooks, never the larger MCP surface.
+    // Remote launches always use the global bypass flag: the probe verifies the
+    // LOCAL binary only, so scoped trust cannot be vouched for on the remote one.
     const hookArgs = input.remoteHookUrls
-      ? this.hookArgs(input.profile, input.remoteHookUrls)
+      ? this.buildHookArgs(input.remoteHookUrls, false)
       : [];
     return this.simpleRemoteExec(input, 'codex', hookArgs);
   }

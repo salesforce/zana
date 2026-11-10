@@ -105,7 +105,7 @@ describe('ask-user-question timeout setting', () => {
       timeoutMs: 30 * MINUTE
     }, { signal: expect.any(AbortSignal) });
     test.host.harness.submitInteraction({ answers: ['A'] });
-    await expect(call).resolves.toEqual({ outcome: 'submitted', value: { answers: ['A'] } });
+    await expect(call).resolves.toEqual({ outcome: 'submitted', value: { answers: ['A'] }, actor: 'human' });
   });
 
   it('publishes a questions schema so providers send the shape the card renders', async () => {

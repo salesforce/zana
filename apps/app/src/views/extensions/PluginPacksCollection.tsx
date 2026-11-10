@@ -13,10 +13,11 @@ const memberResults = (installation: PluginPackInstallation): PluginPackMemberRe
 const INSTALL_PROGRESS_INTERVAL_MS = 750;
 
 /** A marketplace pack is a visible installation flow, never a hidden plugin dependency. */
-export function PluginPacksCollection({ mode, query = '', catalogRevision, marketplaceSource, presentation = 'catalog', onInstalled, onReviewChange, onBusyChange, onOpenPlugin }: {
+export function PluginPacksCollection({ mode, query = '', catalogRevision, marketplaceSource, presentation = 'catalog', footerTarget, onInstalled, onReviewChange, onBusyChange, onOpenPlugin }: {
   mode: 'browse' | 'installed'; query?: string; catalogRevision?: number;
   marketplaceSource?: string;
   presentation?: 'catalog' | 'onboarding';
+  footerTarget?: HTMLElement | null;
   onBusyChange?: (busy: boolean) => void;
   onInstalled?: (installation: PluginPackInstallation) => void | Promise<void>;
   onReviewChange?: (open: boolean) => void;
@@ -229,7 +230,7 @@ export function PluginPacksCollection({ mode, query = '', catalogRevision, marke
     {error ? <p role="alert" className="modal-error">Plugin packs: {error}</p> : null}
     {inline && !busy && !loadingKey && (installBlocked || (error && cards.length > 0)) ? <button type="button" className="settings-btn" onClick={() => { void openReview(review?.model.pack ?? cards[0]!); }}>Reload bundle</button> : null}
     {inline && review && cards.length > 1 ? <button type="button" className="settings-btn" disabled={busy} onClick={() => setReview(null)}>Choose another bundle</button> : null}
-    {review ? <PluginPackReview inline={inline} key={`${review.model.pack.key}:${planFingerprint(review.plan)}`} review={review.model} busy={busy} installBlocked={installBlocked} error={reviewError} results={results} onClose={() => {
+    {review ? <PluginPackReview inline={inline} footerTarget={footerTarget} key={`${review.model.pack.key}:${planFingerprint(review.plan)}`} review={review.model} busy={busy} installBlocked={installBlocked} error={reviewError} results={results} onClose={() => {
       setReview(null); onReviewChange?.(false);
       if (completedInstallation.current) void onInstalled?.(completedInstallation.current);
     }} onInstall={(ids) => { void install(ids); }} onOpenPlugin={(id) => {

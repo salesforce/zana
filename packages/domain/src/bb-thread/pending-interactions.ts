@@ -358,6 +358,7 @@ const pluginPendingInteractionPayloadSchema = z.object({
   kind: z.literal("plugin"),
   title: z.string().trim().min(1).max(PLUGIN_INTERACTION_MAX_TITLE_LENGTH),
   data: jsonValueSchema,
+  requireHuman: z.union([z.boolean(), z.literal("native-sheet")]).optional(),
 });
 type PluginPendingInteractionPayload = z.infer<
   typeof pluginPendingInteractionPayloadSchema
@@ -501,6 +502,7 @@ export type UserQuestionPendingInteractionResolution = z.infer<
 
 const pluginPendingInteractionResolutionSchema = z.object({
   kind: z.literal("plugin_submitted"),
+  actor: z.enum(['human', 'cli', 'agent', 'unknown']).optional(),
 });
 type PluginPendingInteractionResolution = z.infer<
   typeof pluginPendingInteractionResolutionSchema

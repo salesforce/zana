@@ -1,5 +1,6 @@
 import { type CliResult } from '../cli-result.js';
 import { productRequest, renderOrJson, type ProductHttpDeps } from '../product-http.js';
+import { resolveCallerIdentity } from '../session-identity.js';
 
 interface ThreadRow {
   id?: string;
@@ -24,11 +25,12 @@ export async function statusDashboardHttp(
     ? projects.data
     : (projects.data.projects ?? []);
   const threadList = threads.data.threads ?? [];
+  const caller = await resolveCallerIdentity(deps);
   const payload = {
     projectCount: projectList.length,
     threadCount: threadList.length,
-    currentProjectId: process.env.ZCC_PROJECT_ID ?? null,
-    currentThreadId: process.env.ZCC_THREAD_ID ?? process.env.ZCC_SESSION_ID ?? null,
+    currentProjectId: caller.projectId ?? null,
+    currentThreadId: caller.threadId ?? process.env.ZCC_SESSION_ID ?? null,
     threads: threadList.map((row) => ({
       id: row.id,
       status: row.status,

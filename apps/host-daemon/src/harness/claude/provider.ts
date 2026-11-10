@@ -349,6 +349,11 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
     }
   }
 
+  /** Plugin instructions ride their own additive `--append-system-prompt` layer. */
+  pluginInstructionArgs(_profile: LaunchProfileId, text: string): string[] {
+    return text ? ['--append-system-prompt', text] : [];
+  }
+
   // mcpArgs / guidanceArgs / hookArgs all inherit the EMPTY defaults from
   // BaseLaunchProvider: claude carries MCP as the launcher-owned `--mcp-config`
   // FILE + `ZCC_MCP_URL` env, guidance as the `--append-system-prompt` that

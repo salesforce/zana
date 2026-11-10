@@ -1,3 +1,4 @@
+import { RELAY_BACKSTOP_MS } from "@zana-ai/zcc-domain/native-tool-policy-budget";
 import {
   chmodSync,
   existsSync,
@@ -409,6 +410,7 @@ async function readNextPromptText(call: ClaudeQueryCall): Promise<string> {
 }
 
 async function invokeBridgeHooks(
+  bridge: BridgeJsonRpcTestHarness,
   matchers:
     | readonly {
         hooks: readonly BridgePreToolUseHook[];
@@ -416,15 +418,31 @@ async function invokeBridgeHooks(
     | undefined,
   input: Parameters<BridgePreToolUseHook>[0],
   toolUseId?: string,
+  policyDecision: "allow" | "deny" = "allow",
 ): Promise<Awaited<ReturnType<BridgePreToolUseHook>>[]> {
   const outputs: Awaited<ReturnType<BridgePreToolUseHook>>[] = [];
   for (const matcher of matchers ?? []) {
     for (const hook of matcher.hooks) {
-      outputs.push(
-        await hook(input, toolUseId, {
-          signal: new AbortController().signal,
-        }),
+      const output = hook(input, toolUseId, {
+        signal: new AbortController().signal,
+      });
+      await Promise.resolve();
+      const request = bridge.takeMessages().find(
+        (message) => message.method === "tool/policy/decide",
       );
+      if (request && typeof request.id === "string") {
+        handleLine(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result:
+              policyDecision === "allow"
+                ? { action: "allow" }
+                : { action: "deny", reason: "Denied by native policy" },
+          }),
+        );
+      }
+      outputs.push(await output);
     }
   }
   return outputs;
@@ -4041,6 +4059,7 @@ describe("bridge", () => {
       for (const toolName of ["Agent", "Task"]) {
         const toolUseId = `tool-disabled-${toolName.toLowerCase()}`;
         const disabledSubagentOutputs = await invokeBridgeHooks(
+          bridge,
           hooks.PreToolUse,
           {
             hook_event_name: "PreToolUse",
@@ -4062,6 +4081,7 @@ describe("bridge", () => {
         );
       }
       const enabledWorkflowOutputs = await invokeBridgeHooks(
+        bridge,
         hooks.PreToolUse,
         {
           hook_event_name: "PreToolUse",
@@ -4112,6 +4132,7 @@ describe("bridge", () => {
         ultracode: false,
       });
       const enabledSubagentOutputs = await invokeBridgeHooks(
+        bridge,
         hooks.PreToolUse,
         {
           hook_event_name: "PreToolUse",
@@ -4131,7 +4152,31 @@ describe("bridge", () => {
           }),
         }),
       );
+      const policyDeniedOutputs = await invokeBridgeHooks(
+        bridge,
+        hooks.PreToolUse,
+        {
+          hook_event_name: "PreToolUse",
+          tool_name: "Write",
+          tool_input: { file_path: "/tmp/blocked" },
+          tool_use_id: "tool-policy-denied",
+          session_id: "session-1",
+          transcript_path: "/tmp/transcript.jsonl",
+          cwd: "/tmp/worktree",
+        },
+        "tool-policy-denied",
+        "deny",
+      );
+      expect(policyDeniedOutputs).toContainEqual(
+        expect.objectContaining({
+          hookSpecificOutput: expect.objectContaining({
+            permissionDecision: "deny",
+            permissionDecisionReason: "Denied by native policy",
+          }),
+        }),
+      );
       const disabledWorkflowOutputs = await invokeBridgeHooks(
+        bridge,
         hooks.PreToolUse,
         {
           hook_event_name: "PreToolUse",
@@ -4162,6 +4207,93 @@ describe("bridge", () => {
       query.finish();
       await bridge.waitForResponse(4);
     } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
+
+  it("fails closed when native PreToolUse policy does not explicitly allow", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    const threadId = "thread-native-tool-policy";
+    const input = {
+      hook_event_name: "PreToolUse" as const,
+      tool_name: "Bash",
+      tool_input: { command: "touch should-not-run" },
+      tool_use_id: "native-tool-1",
+      session_id: "session-1",
+      transcript_path: "/tmp/transcript.jsonl",
+      cwd: "/tmp/worktree",
+    };
+    const invoke = async () => {
+      const hook = getLatestQueryCall().options.hooks?.PreToolUse?.[0]?.hooks[0];
+      if (!hook) throw new Error("Expected native PreToolUse hook");
+      const output = hook(input, input.tool_use_id, {
+        signal: new AbortController().signal,
+      });
+      await Promise.resolve();
+      const request = bridge.takeMessages().find(
+        (message) => message.method === "tool/policy/decide",
+      );
+      if (typeof request?.id !== "string") {
+        throw new Error("Expected native policy request");
+      }
+      return { output, requestId: request.id };
+    };
+
+    try {
+      await startBridgeThread({ bridge, threadId });
+
+      const allowed = await invoke();
+      handleLine(JSON.stringify({
+        jsonrpc: "2.0", id: allowed.requestId, result: { action: "allow" },
+      }));
+      await expect(allowed.output).resolves.toEqual({ continue: true });
+
+      const denied = await invoke();
+      handleLine(JSON.stringify({
+        jsonrpc: "2.0", id: denied.requestId,
+        result: { action: "deny", reason: "Host denied tool" },
+      }));
+      await expect(denied.output).resolves.toMatchObject({
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: "Host denied tool",
+        },
+      });
+
+      const failed = await invoke();
+      handleLine(JSON.stringify({
+        jsonrpc: "2.0", id: failed.requestId,
+        error: { code: -32000, message: "Host unavailable" },
+      }));
+      await expect(failed.output).resolves.toMatchObject({
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: "native policy reply unavailable or invalid",
+        },
+      });
+
+      vi.useFakeTimers();
+      const timedOut = await invoke();
+      await vi.advanceTimersByTimeAsync(RELAY_BACKSTOP_MS);
+      await expect(timedOut.output).resolves.toMatchObject({
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: "native policy timed out",
+        },
+      });
+      vi.useRealTimers();
+
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally {
+      vi.useRealTimers();
       queries.forEach((query) => query.finish());
       bridge.restore();
     }
@@ -6260,6 +6392,49 @@ describe("canonical model context-window hint", () => {
     approvalReviewer: null,
     permissionEscalation: null,
   };
+
+  it("keeps the session's ZCC identity when a later turn rebuilds the environment", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-identity-keep";
+      bridge.sendRequest(1, "thread/start", {
+        threadId,
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: {
+          ...canonicalOptions,
+          envVars: { ZCC_THREAD_ID: threadId, ZCC_PROJECT_ID: "proj-1", PLUGIN_ACCESS_TOKEN: "first" },
+        },
+      });
+      const providerThreadId = getProviderThreadIdFromResult(await bridge.waitForResponse(1));
+
+      bridge.sendRequest(2, "turn/start", {
+        threadId,
+        providerThreadId,
+        clientRequestId: "creq_23456789ac",
+        input: [{ type: "text", text: "continue", mentions: [] }],
+        options: {
+          ...canonicalOptions,
+          envVars: { ZCC_THREAD_ID: "other-thread", ZCC_PROJECT_ID: "other-project", PLUGIN_ACCESS_TOKEN: "second" },
+        },
+      });
+      await bridge.flushWork();
+
+      expect(getLatestQueryOptions()).toMatchObject({
+        env: { ZCC_THREAD_ID: threadId, ZCC_PROJECT_ID: "proj-1", PLUGIN_ACCESS_TOKEN: "second" },
+      });
+    } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
 
   it("rebuilds with the same provider session when the turn environment changes", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);

@@ -34,7 +34,7 @@ describe('compactConversation', () => {
       expect.any(Array),
       'start',
       undefined,
-      { compact: true }
+      { compact: true, origin: 'system' }
     );
   });
 

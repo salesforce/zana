@@ -45,7 +45,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 vi.mock('../tmux.js', () => ({
@@ -97,7 +97,9 @@ describe('OpenCode MCP-via-file hardening (OPENCODE_CONFIG)', () => {
 
     const fileCfg = JSON.parse(readFileSync(filePath, 'utf8'));
     const envCfg = JSON.parse(call.env.OPENCODE_CONFIG_CONTENT);
-    expect(fileCfg).toEqual(envCfg);
+    // The file may also carry the per-session native tool gate plugin; the env copy
+    // (shared with the remote path) is the MCP block alone.
+    expect(fileCfg.mcp).toEqual(envCfg.mcp);
     const server = fileCfg.mcp['zcc-inbox'];
     expect(server.type).toBe('remote');
     expect(server.enabled).toBe(true);

@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { buildClaudeHookSettings } from '../claude/hooks.js';
 import { CodexProvider } from '../codex/provider.js';
-import { NATIVE_TOOL_RELAY_UNREACHABLE, nativeToolRelayTail } from '../native-tool-relay.js';
+import { NATIVE_TOOL_RELAY_UNREACHABLE, nativeToolRelayTail, toolSettledRelayCommand, toolSettledUrlFor } from '../native-tool-relay.js';
 
 type Respond = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -190,5 +190,24 @@ describe('Claude --settings relay without a callback URL', () => {
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe(NATIVE_TOOL_RELAY_UNREACHABLE);
     expect(received).toBeNull();
+  });
+});
+
+describe('observational tool-settled relay (OBL-011)', () => {
+  it('derives the settled twin of a native-tool URL, or nothing for other shapes', () => {
+    expect(toolSettledUrlFor('http://127.0.0.1:1/hook/nativetool/p/s')).toBe('http://127.0.0.1:1/hook/toolsettled/p/s');
+    expect(toolSettledUrlFor('http://127.0.0.1:1/hook/other/p/s')).toBeUndefined();
+    expect(toolSettledUrlFor(undefined)).toBeUndefined();
+  });
+
+  it('posts the event in the background, prints nothing, and exits 0 even when the server is down or unset', async () => {
+    received = null;
+    const relay = (urlWord: string, env: Record<string, string> = {}): Relay => ({ command: toolSettledRelayCommand(urlWord), env });
+    expect(await run(relay('"$ZCC_TOOLSETTLED_URL"', { ZCC_TOOLSETTLED_URL: `${base}/hook/toolsettled/p/s` }), CLAUDE_EVENT)).toEqual({ code: 0, stdout: '' });
+    for (let i = 0; i < 50 && received === null; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(received).toMatchObject({ url: '/hook/toolsettled/p/s' });
+    expect(JSON.parse(received!.body)).toMatchObject({ tool_use_id: 'toolu_01RelayProbe' });
+    expect(await run(relay(`'http://127.0.0.1:1/hook/toolsettled/p/s'`), CLAUDE_EVENT)).toEqual({ code: 0, stdout: '' });
+    expect(await run(relay('"$ZCC_TOOLSETTLED_URL"'), CLAUDE_EVENT)).toEqual({ code: 0, stdout: '' });
   });
 });

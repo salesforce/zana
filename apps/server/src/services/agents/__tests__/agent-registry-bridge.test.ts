@@ -57,7 +57,7 @@ function baseOpts(
   projectId = 'p1',
   cohort?: SessionCohort
 ) {
-  return { projectId, profile, cwd: '/work/p1', cols: 80, rows: 24, config: cfg, cohort } as const;
+  return { nativeToolPolicyRequired: false, projectId, profile, cwd: '/work/p1', cols: 80, rows: 24, config: cfg, cohort } as const;
 }
 
 describe('Phase-0 registry bridge wiring', () => {

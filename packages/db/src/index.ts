@@ -161,6 +161,7 @@ export {
   remapConversationEventPayloadThreadId,
   type ConversationThreadEventRow
 } from './data/conversation-events.js';
+export { getConversationAssistantPreview, getConversationFailurePreview, getConversationPreviewVersions } from './data/conversation-assistant-preview.js';
 export {
   createPendingInteraction,
   getActivePendingInteractionForThread,

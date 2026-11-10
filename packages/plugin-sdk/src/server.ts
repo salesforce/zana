@@ -17,7 +17,8 @@ import type {
   DispatchAdmissionContract,
   PluginCapabilityIntrospection,
   PluginInteractions,
-  ProjectTabAvailabilityContract
+  ProjectTabAvailabilityContract,
+  ToolSettledContract
 } from './contracts.js';
 
 import type { PluginDatabaseBackup, PluginDatabaseBackupOptions } from './database-backup.js';
@@ -236,8 +237,16 @@ export interface PluginThreadEvent {
   /** Host clock timestamp in epoch milliseconds. */
   timestamp: number;
   name: PluginThreadEventName;
+  /**
+   * The thread record, or for a PTY session main has no thread binding for, the session id
+   * (see `surface`); the same convention as native tool policy requests.
+   */
   threadId: string;
   projectId?: string;
+  /** Which execution surface produced the event: a Modern thread or a PTY terminal session. */
+  surface?: 'modern' | 'pty';
+  /** The PTY session id; present when `surface` is `pty`. */
+  sessionId?: string;
   thread?: PluginSdkThreadSummary;
   lastAssistantText?: string | null;
   error?: string | null;
@@ -256,11 +265,28 @@ export interface PluginThreadEvent {
 /** Input accepted by core before it adds trusted lifecycle metadata. */
 export type PluginThreadEventInput = Omit<PluginThreadEvent, 'id' | 'schemaVersion' | 'sequence' | 'timestamp'>;
 
+/**
+ * Best-effort, observational completion of a native tool call (Claude/Codex,
+ * PTY and Modern), correlated to {@link PluginToolPolicyRequest} by
+ * `invocationId`. Subscribing with `events.on('tool.settled', ...)` is the opt-in
+ * for metadata-only events. `outputPreview` (redacted, capped at 4 KiB) is
+ * present only when the manifest declares `zcc.toolResults: 'preview'`, read at
+ * activation. Delivery is fire-and-forget: no replay, and a missed event is not
+ * retried.
+ */
+export type ToolSettledEvent = ToolSettledContract;
+
 export interface PluginEvents {
+  on(name: 'tool.settled', handler: (event: ToolSettledEvent) => void | Promise<void>): void;
   on(name: PluginThreadEventName, handler: (event: PluginThreadEvent) => void | Promise<void>): void;
 }
 
-/** Host-owned dispatch identity exposed to admission handlers. Never includes prompt content. */
+/**
+ * Host-owned dispatch identity exposed to admission handlers. Prompt content is
+ * absent unless the plugin declares `zcc.promptAccess: true`; then `prompt`
+ * carries redacted text capped at 32 KiB, a truncation flag, and the attachment
+ * count (attachment content is never provided).
+ */
 export type PluginDispatchAdmissionRequest = DispatchAdmissionContract;
 
 export interface PluginHooks {
@@ -283,7 +309,16 @@ export interface PluginHooks {
 /** Host-owned native-tool invocation identity exposed to policy handlers. Input is redacted (secrets stripped) before it ever reaches a plugin. */
 export interface PluginToolPolicyRequest {
   invocationId: string;
+  /**
+   * The thread the call belongs to. For `surface: 'pty'` with no thread binding
+   * this is the PTY session id, which is not a thread record: `getThread` finds
+   * nothing for it. Use `sessionId` and `surface` to tell the cases apart.
+   */
   threadId: string;
+  /** The terminal session id for a `'pty'` call; absent on `'modern'`. */
+  sessionId?: string;
+  /** Which kind of agent session made the call. */
+  surface?: 'pty' | 'modern';
   projectId: string;
   providerId: string;
   toolName: string;
@@ -296,10 +331,19 @@ export interface PluginToolPolicyRequest {
  * `deny` blocks the call before it runs and its `reason` is shown to the
  * agent; a blank or ill-formed reason is replaced and reasons are capped at
  * 1024 characters.
+ *
+ * `ask` holds the call while the host shows `prompt` to the user and a human
+ * decides. Only an explicit human allow lets the call continue (the provider's
+ * own permission flow still decides after it); a deny, cancel, timeout, session
+ * end, missing UI or any answer that is not from a human blocks it. The plugin
+ * cannot answer its own ask. `timeoutMs` is clamped to 10000-120000 ms and
+ * defaults to 60000 ms; `prompt` is plain text, capped at 2000 characters. An
+ * agent may be held for that long, so use `ask` sparingly.
  */
 export type PluginToolPolicyDecision =
   | { action: 'allow' }
-  | { action: 'deny'; reason: string };
+  | { action: 'deny'; reason: string }
+  | { action: 'ask'; prompt: string; timeoutMs?: number };
 
 export interface PluginSdkThreadSummary {
   id: string;
@@ -1037,6 +1081,29 @@ function isHighSurrogate(codeUnit: number): boolean {
   return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
 }
 
+export interface PluginProcessSpawnOptions {
+  /** Absolute working directory. */
+  cwd?: string;
+  /** Extra environment, merged over the server's. */
+  env?: Record<string, string>;
+}
+
+export interface PluginProcessHandle {
+  readonly pid: number;
+  /** Exit code, or `null` when the child was killed by a signal, failed after start, or the plugin stopped. */
+  readonly exited: Promise<number | null>;
+}
+
+/**
+ * Host-tracked child processes. Each child runs in its own process group with output discarded and no shell.
+ * The host stops every live child (SIGTERM, a short wait, then SIGKILL of the group) when the plugin is disposed,
+ * deactivated, or its worker crashes. At most 8 children per plugin may be live. On Windows there are no process
+ * groups, so only the direct child is stopped. A raw `node:child_process` spawn is NOT tracked and is never reaped.
+ */
+export interface PluginProcess {
+  spawn(command: string, args: string[], options?: PluginProcessSpawnOptions): Promise<PluginProcessHandle>;
+}
+
 export interface PluginBackground {
   service(name: string, start: () => void | (() => void) | Promise<void | (() => void)>): void;
   schedule(cron: string, job: () => void | Promise<void>): void;
@@ -1145,6 +1212,10 @@ export interface PluginPtyHarnessDeclaration {
 
 export interface PluginAgentConfigureContext {
   desktopPresentation?: boolean;
+  /** Which surface the session runs on; absent on Modern threads. */
+  surface?: 'pty';
+  /** The PTY session id when `surface` is `pty`; then `threadId` equals it and is not a thread record. */
+  sessionId?: string;
   threadId?: string;
   projectId?: string;
   origin?: { kind?: 'fork' | null; pluginId?: string | null };
@@ -1207,8 +1278,8 @@ export interface PluginAgents {
 }
 
 import type { JsonObject, JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
-import type { PluginApprovalBinding, PluginApprovalRequest } from './approval-contract.js';
-export type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult } from './approval-contract.js';
+import type { PluginApprovalBinding, PluginApprovalRequest, PluginToolApprovalRequest, PluginApprovalResult } from './approval-contract.js';
+export type { PluginApprovalBinding, PluginApprovalRequest, PluginToolApprovalRequest, PluginApprovalResult } from './approval-contract.js';
 import type { PluginServices } from './plugin-services.js';
 import type {
   PluginProviderExtensionKindDeclaration,
@@ -1240,7 +1311,7 @@ export type PluginInteractionCancelReason =
   | 'timeout';
 
 export type PluginInteractionResult =
-  | { outcome: 'submitted'; value: JsonValue }
+  | { outcome: 'submitted'; value: JsonValue; actor: import('@zana-ai/zcc-domain').InteractionActor }
   | { outcome: 'cancelled'; reason: PluginInteractionCancelReason };
 
 export interface PluginInteractionRequest {
@@ -1249,6 +1320,14 @@ export interface PluginInteractionRequest {
   title: string;
   payload: JsonValue;
   timeoutMs?: number;
+  /**
+   * Default false. `true` requires a single-use response proof from a human
+   * acting in the Zana window or on a native sheet. `'native-sheet'` is
+   * stricter: the answer must come from a confirmation sheet the desktop main
+   * process draws itself, so renderer code (and any process that can call
+   * `zcc interaction respond`) cannot satisfy it. The workflow decides when to ask.
+   */
+  requireHuman?: boolean | 'native-sheet';
 }
 
 export interface PluginMentionSuggestion {
@@ -1297,17 +1376,29 @@ export interface PluginProjectTabAvailabilityRegistration {
 }
 
 export interface PluginUi {
+  /** Await main's human approval sheet during an active registered server tool.
+   * Missing desktop, remote, archived or stale thread scope fails closed.
+   * Keep the returned token in plugin code, never in tool results, transcripts or agent env.
+   */
+  requestToolApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+  /** Alias for requestToolApproval. Requires an active server-tool invocation. */
+  requestApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+  /** @deprecated Use requestToolApproval. */
+  experimental_requestApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
   requestInput(
     request: PluginInteractionRequest,
     options?: { signal?: AbortSignal }
   ): Promise<PluginInteractionResult>;
   /**
-   * Consume a token the app obtained with `experimental_requestApproval`.
+   * Consume a token obtained with `requestToolApproval` or an app button approval.
    * Pass the binding rebuilt from your own sources: it resolves true once,
    * for this plugin, within five minutes, when every field matches what the
    * user approved. Anything else, including a host without a desktop signer,
-   * resolves false.
+   * resolves false. Tool approvals must be consumed within the same active
+   * invocation; rebuild target and revision after the approval wait.
    */
+  consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
+  /** @deprecated Use consumeApproval. */
   experimental_consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
   registerMentionProvider(registration: PluginMentionProviderRegistration): void;
   registerProjectTabAvailability(registration: PluginProjectTabAvailabilityRegistration): void;
@@ -1328,6 +1419,8 @@ export interface ZccPluginApi {
   readonly realtime: PluginRealtime;
   readonly storage: PluginStorage;
   readonly background: PluginBackground;
+  /** Host-tracked child processes that are reaped when the plugin stops. */
+  readonly process: PluginProcess;
   /** Environment for sessions on non-primary machines. Needs `zcc.extra.remoteEnvironment` in the manifest. */
   readonly remoteEnvironment: PluginRemoteEnvironment;
   readonly cli: PluginCli;

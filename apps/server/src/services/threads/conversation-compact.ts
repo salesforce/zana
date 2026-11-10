@@ -23,7 +23,7 @@ export async function compactConversation(ctx: ProductHttpContext, threadId: str
     createStandaloneBuiltinCompactCommandInput(),
     'start',
     undefined,
-    { compact: true }
+    { compact: true, origin: 'system' }
   );
   return { ok: true };
 }

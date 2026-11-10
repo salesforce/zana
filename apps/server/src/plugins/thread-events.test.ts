@@ -100,6 +100,13 @@ describe('emitPluginThreadEvent', () => {
     });
   });
 
+  it('stamps modern as the default surface and keeps an explicit pty identity', () => {
+    expect(emitHardenedLifecycle({ name: 'thread.idle', threadId: 't', projectId: 'p' })).toMatchObject({ surface: 'modern', threadId: 't', projectId: 'p' });
+    const pty = emitHardenedLifecycle({ name: 'thread.idle', threadId: 's', sessionId: 's', surface: 'pty', projectId: 'p' });
+    expect(pty).toMatchObject({ surface: 'pty', sessionId: 's' });
+    expect('sessionId' in emitHardenedLifecycle({ name: 'thread.idle', threadId: 't' })).toBe(false);
+  });
+
   it('redacts, bounds, and projects lifecycle payloads', () => {
     const event = emitHardenedLifecycle({
       name: 'thread.failed',

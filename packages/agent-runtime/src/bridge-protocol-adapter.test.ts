@@ -601,6 +601,19 @@ describe("buildCommandPlan lifecycle commands", () => {
     });
   });
 
+  it("forwards plugin MCP servers on start and resume only when provided", () => {
+    const adapter = makeAdapter();
+    const mcpServers = [{ name: "plugin_a_s", type: "stdio", command: "node" }];
+    const base = { threadId: "thr_1", cwd: "/w", options: fullModeOptions, instructionMode: "append" as const };
+    const start = adapter.buildCommandPlan({ type: "thread/start", ...base, mcpServers });
+    const resume = adapter.buildCommandPlan({ type: "thread/resume", ...base, providerThreadId: "p_1", mcpServers });
+    for (const plan of [start, resume]) {
+      expect(plan).toMatchObject({ kind: "request", params: { mcpServers } });
+    }
+    const none = adapter.buildCommandPlan({ type: "thread/start", ...base });
+    expect(none.kind === "request" ? none.params : {}).not.toHaveProperty("mcpServers");
+  });
+
   it("plans thread/discard as an ungated request", () => {
     const adapter = makeAdapter();
     expect(

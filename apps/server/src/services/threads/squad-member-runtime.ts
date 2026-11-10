@@ -10,7 +10,7 @@ import {
   SquadMemberDeliveryCompletionSchema, type SquadMemberDeliveryCompletion,
   SquadRuntimePreflightRequestSchema, SquadMemberResumeRequestSchema,
   type SquadMemberResumeRequest, type SquadMemberResumeResult,
-  SquadRuntimeOperationSchema, SQUAD_RUNTIME_OPERATION_PATH,
+  SquadRuntimeOperationSchema, SQUAD_RUNTIME_OPERATION_PATH, SQUAD_START_REFUSED_PREFIX,
   type SquadMemberControlRequest, type SquadMemberDeliveryRequest, type SquadMemberDeliveryResult,
   type SquadMemberRuntimeRequest, type SquadMemberStatus,
   type SquadRuntimePreflightRequest, type SquadRuntimePreflightResult
@@ -25,9 +25,11 @@ import type { JsonObject } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { activatePreparedConversation, createConversationFromRequest } from './conversation-create.js';
 import { stopConversation, sendConversationTurn } from './conversation-lifecycle.js';
+import { admissionRefusal, admitDispatch } from './dispatch-service.js';
 import { resumeConversationQueue } from './conversation-deferred-messages.js';
 import { resumeConversationStrict, StrictResumeError } from './conversation-host-rpc.js';
 import { bridgeLaunchForProvider, canonicalThreadProviderId, getThreadProvider, waitForThreadProvider } from './thread-provider-catalog.js';
+import { capabilityRegistry } from '../../plugins/capability-registry.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
 import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
@@ -129,8 +131,14 @@ export async function preflightSquadRuntime(
     ? await ctx.plugins.toolPolicyReadiness()
     : { ready: false, required: [], reason: 'plugin service is unavailable' };
   const policyInventoryReady = inventory.ready;
-  // Modern bridges currently enforce host/proxy tools only, not all provider-native tools.
-  const nativeToolPolicyWired = false;
+  // Veto state comes from the host-owned capability registry, never a constant:
+  // wired only when every requested Modern provider advertises an available
+  // `tool-before-native` descriptor. Honest per OBL-019; no launch block (D2).
+  const requestedProviderIds = [...new Set(request.providerIds.map(canonicalThreadProviderId))];
+  const nativeToolPolicyWired = requestedProviderIds.length > 0 && requestedProviderIds.every(providerId =>
+    capabilityRegistry
+      .describe({ surface: 'modern', harness: providerId, headless: false, hookBase: true })
+      .some(descriptor => descriptor.id === 'tool-before-native' && descriptor.available));
   const nativeToolPolicyRequired = request.nativeToolPolicyRequired === true || inventory.required.length > 0;
   const status = ProviderStatusResultSchema.parse(await ctx.hostHub.callHostOnlineRpc({
     hostId, command: { type: 'provider.status' }
@@ -153,9 +161,10 @@ export async function preflightSquadRuntime(
     }
     providers.push({ providerId, available: !reason, ...(reason ? { reason: reason.slice(0, 1024) } : {}) });
   }
+  // Missing Modern provider-native enforcement is advertised by capability
+  // descriptors. It must not prevent an otherwise supported squad from starting.
   const reason = !policyInventoryReady ? `plugin tool policy inventory is not ready${inventory.reason ? `: ${inventory.reason}` : ''}`
-    : nativeToolPolicyRequired && !nativeToolPolicyWired ? 'Modern provider-native tool policy is not wired'
-       : providers.some(row => !row.available) ? 'one or more Modern providers are unavailable' : undefined;
+    : providers.some(row => !row.available) ? 'one or more Modern providers are unavailable' : undefined;
   if (!reason) for (const selection of request.selections ?? []) {
     const providerId = canonicalThreadProviderId(selection.providerId);
     if (!providers.some(provider => provider.providerId === providerId && provider.available)) throw new Error('Modern selection provider is unavailable');
@@ -220,6 +229,14 @@ export async function createSquadMemberConversation(
       hostId: request.hostId, providerIds: [request.providerId], nativeToolPolicyRequired: request.nativeToolPolicyRequired,
       selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] });
     if (!preflight.ready) throw new Error(preflight.reason);
+    // The member's first turn is dispatched by activation, which does not admit. Admit the
+    // start here, once, before any thread or environment exists. A prepared member cannot
+    // be held for later, so a wait is a refusal; an admission failure also refuses.
+    const refusal = admissionRefusal(await admitDispatch(ctx, {
+      projectId: request.projectId, surface: 'modern', entry: 'squad-member-start', origin: 'system',
+      prompt: { text: request.prompt }
+    }));
+    if (refusal) throw new Error(`${SQUAD_START_REFUSED_PREFIX} (${refusal.code}): ${refusal.message}`.slice(0, 1024));
     const thread = await createConversationFromRequest(ctx, {
       id: request.bindingId, projectId: request.projectId, hostId: preflight.hostId, providerId: request.providerId,
       input: [request.prompt], promptInput: [{ type: 'text', text: request.prompt, mentions: [] }], title: request.title,

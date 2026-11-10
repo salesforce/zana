@@ -57,9 +57,9 @@ describe('classifyCaller', () => {
     const verify = (credential: unknown) => credential === 'product-secret';
     expect(classifyCaller(undefined, undefined, 'product-secret', undefined, verify)).toBe('product-server');
     expect(classifyCaller('', undefined, 'product-secret', undefined, verify)).toBe('product-server');
-    // Wrong or missing credential stays operator (human zcc still confirms).
-    expect(classifyCaller(undefined, undefined, 'nope', undefined, verify)).toBe('operator');
-    expect(classifyCaller(undefined, undefined, 'product-secret')).toBe('operator');
+    // A credential without a session marker never upgrades to a human caller.
+    expect(classifyCaller(undefined, undefined, 'nope', undefined, verify)).toBe('agent');
+    expect(classifyCaller(undefined, undefined, 'product-secret')).toBe('agent');
     // A session id still wins — an agent cannot steal product-server even with the secret.
     expect(classifyCaller('sess-1', undefined, 'product-secret', undefined, verify)).toBe('agent');
   });
@@ -548,6 +548,23 @@ describe('dispatchOp', () => {
     const deps = makeDeps({ replyTerminal: () => false });
     const r = await dispatchOp('term.reply', { sessionId: 'ghost', text: 'hi' }, deps);
     expect(r).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+  });
+
+  it('term.reply surfaces an admission refusal with its code instead of NOT_FOUND', async () => {
+    const deps = makeDeps({ replyTerminal: async () => ({ refused: { code: 'DISPATCH_REJECTED', message: 'blocked by policy' } }) });
+    const r = await dispatchOp('term.reply', { sessionId: 's', text: 'hi' }, deps);
+    expect(r).toEqual({ ok: false, code: 'DISPATCH_REJECTED', message: 'blocked by policy' });
+  });
+
+  it('term.reply accepts an async delivery', async () => {
+    const deps = makeDeps({ replyTerminal: async () => true });
+    expect(await dispatchOp('term.reply', { sessionId: 's', text: 'hi' }, deps)).toEqual({ ok: true, value: true });
+  });
+
+  it('term.reply hands the attested caller class to the delivery dep', async () => {
+    const replyTerminal = vi.fn(async () => true);
+    await dispatchOp('term.reply', { sessionId: 's', text: 'hi' }, makeDeps({ replyTerminal }));
+    expect(replyTerminal).toHaveBeenCalledWith('s', 'hi', 'operator');
   });
 
   it('term.create rejects an unknown profile before touching the creator', async () => {

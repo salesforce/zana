@@ -1,0 +1,82 @@
+.section {
+  position: relative;
+  isolation: isolate;
+  padding: 60px 0 42px;
+  background:
+    radial-gradient(ellipse at 4% 0%, color-mix(in srgb, var(--accent-lavender) 8%, transparent), transparent 48%),
+    radial-gradient(ellipse at 94% 90%, color-mix(in srgb, var(--accent-blue) 5%, transparent), transparent 42%);
+}
+.heading { text-align: center; }
+.eyebrow { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 0 18px; color: var(--accent-blue); text-transform: uppercase; font-size: 10px; font-weight: 650; letter-spacing: .22em; }
+.eyebrow::before, .eyebrow::after { content: ''; width: 26px; height: 1px; background: currentColor; opacity: .65; }
+.heading h2 { margin: 0; font-size: clamp(28px, 3.5vw, 44px); font-weight: 650; line-height: 1.2; letter-spacing: -.045em; }
+.heading h2 span { color: var(--accent-blue); background: linear-gradient(100deg, #6296ff 0%, #2dd4bf 52%, #d99bc6 100%); background-clip: text; -webkit-text-fill-color: transparent; }
+.heading > p:last-child { margin: 14px 0 0; color: var(--muted-2); font-size: 16px; line-height: 1.8; }
+.diagram { position: relative; height: 460px; margin: 30px 0 0; }
+.connections { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.connections line { stroke: var(--accent-blue); stroke-width: 1.2; stroke-dasharray: 2 7; stroke-linecap: round; opacity: .75; vector-effect: non-scaling-stroke; transition: opacity .2s, stroke-width .2s; }
+.hub { position: absolute; z-index: 1; left: 50%; top: 47.8261%; transform: translate(-50%, -50%); width: 166px; height: 166px; text-align: center; }
+.hub img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 14px 26px #0002); }
+.hub strong { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 6px; padding: 2px 6px; border-radius: 6px; background: var(--bg); color: var(--text); font-size: 23px; font-weight: 750; line-height: 1.1; letter-spacing: -.045em; }
+.nodes { list-style: none; padding: 0; margin: 0; }
+.nodes > li { position: absolute; z-index: 2; transform: translate(-50%, -50%); }
+.nodes > li[data-node="claude"] { left: 16.0714%; top: 20.4348%; }
+.nodes > li[data-node="codex"] { left: 50%; top: 9.1304%; }
+.nodes > li[data-node="cursor"] { left: 83.9286%; top: 20.4348%; }
+.nodes > li[data-node="opencode"] { left: 11.6071%; top: 60%; }
+.nodes > li[data-node="grok"] { left: 88.3929%; top: 60%; }
+.nodes > li[data-node="agentforce"] { left: 21.9643%; top: 82.1739%; }
+.nodes > li[data-node="more"] { left: 78.0357%; top: 82.1739%; }
+.nodes > li[data-node="tools"] { left: 50%; top: 93.4783%; }
+.node { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 60px; padding: 10px 16px; border: 1px solid color-mix(in srgb, var(--accent-lavender) 36%, var(--border)); border-radius: 13px; background: var(--bg-panel); box-shadow: 0 4px 16px #0001; transition: border-color .2s, background .2s, box-shadow .2s; }
+.node:hover, .node:focus-visible { border-color: var(--accent-blue); background: var(--bg-elevated); box-shadow: 0 0 24px var(--accent-soft); }
+.icons { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.icon { display: grid; place-items: center; width: 35px; height: 35px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent-soft); }
+.icon img { display: block; width: 23px; height: 23px; object-fit: contain; }
+:global([data-theme="light"]) .monochromeIcon { filter: brightness(0); opacity: .72; }
+.label { text-align: center; white-space: nowrap; }
+.label strong { display: block; color: var(--text); font-size: 14px; font-weight: 550; letter-spacing: -.02em; line-height: 1.4; }
+.label small { display: block; margin-top: 3px; color: var(--muted-2); font-size: 10px; letter-spacing: .025em; line-height: 1.4; }
+.diagram:has([data-node="claude"] a:is(:hover, :focus-visible)) [data-connection="claude"],
+.diagram:has([data-node="codex"] a:is(:hover, :focus-visible)) [data-connection="codex"],
+.diagram:has([data-node="cursor"] a:is(:hover, :focus-visible)) [data-connection="cursor"],
+.diagram:has([data-node="opencode"] a:is(:hover, :focus-visible)) [data-connection="opencode"],
+.diagram:has([data-node="grok"] a:is(:hover, :focus-visible)) [data-connection="grok"],
+.diagram:has([data-node="agentforce"] a:is(:hover, :focus-visible)) [data-connection="agentforce"],
+.diagram:has([data-node="more"] a:is(:hover, :focus-visible)) [data-connection="more"],
+.diagram:has([data-node="tools"] a:is(:hover, :focus-visible)) [data-connection="tools"] { opacity: 1; stroke-width: 2; }
+@media (max-width: 1000px) and (min-width: 761px) {
+  .node { gap: 8px; padding: 10px 12px; }
+  .label strong { font-size: 12px; }
+  .label small { font-size: 9px; }
+  .icon { width: 30px; height: 30px; }
+  .icon img { width: 21px; height: 21px; }
+  .hub { width: 150px; height: 150px; }
+  .nodes > li[data-node="agentforce"] { left: 20%; }
+  .nodes > li[data-node="more"] { left: 80%; }
+}
+@media (max-width: 760px) {
+  .section { padding: 40px 0; }
+  .heading > p:last-child { max-width: 440px; margin-inline: auto; font-size: 14px; }
+  .diagram { height: auto; margin-top: 30px; padding-top: 184px; }
+  .connections { display: none; }
+  .diagram::before { position: absolute; content: ''; top: 164px; left: 50%; height: 20px; width: 1px; background: repeating-linear-gradient(to bottom, var(--accent-blue) 0 3px, transparent 3px 8px); }
+  .hub { top: 0; transform: translateX(-50%); width: 132px; height: 132px; }
+  .hub strong { font-size: 21px; }
+  .nodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .nodes > li { position: static; transform: none; min-width: 0; }
+  .node { min-height: 72px; height: 100%; gap: 10px; padding: 12px 10px; }
+  .label { white-space: normal; }
+  .label strong { font-size: 12px; }
+  .label small { font-size: 9px; }
+  .icon { width: 30px; height: 30px; }
+  .icon img { width: 21px; height: 21px; }
+}
+@media (max-width: 450px) {
+  .nodes { gap: 10px; }
+  .node { flex-direction: column; min-height: 110px; gap: 8px; padding: 12px 8px; }
+  .heading h2 { font-size: 29px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .node, .connections line { transition: none; }
+}

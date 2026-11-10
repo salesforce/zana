@@ -1,4 +1,5 @@
 import { launchFailure } from './launch-pre-spawn.js';
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { startAgentSoundEvents } from './native/agent-sound-events.js';
 import { AgentSounds } from './native/agent-sounds.js';
 import { AgentSoundFiles } from './native/agent-sound-files.js';
@@ -12,12 +13,41 @@ import { createSnapshotNotifications } from './runtime/snapshot-notifications.js
 import {
   createNativeToolPolicyHook,
   firstToolPolicyDecider,
+  inventoryDemandsVeto,
   productRouteToolPolicyDecider,
+  productRouteToolPolicyInventory,
   supervisorToolPolicyDecider,
   warnNativeToolPolicy
 } from './runtime/native-tool-policy.js';
+import { createNativeToolSettledHook, createToolStartTracker } from '@zana-ai/zcc-server/plugins/native-tool-settled-hook';
+import {
+  createMainDispatchAdmission,
+  dispatchEntryForPrincipal,
+  dispatchOriginForPrincipal,
+  productRouteDispatchAdmissionDecider
+} from './runtime/dispatch-admission.js';
+import { createPtySessionInstructionsResolver, productRoutePtySessionInstructions } from './runtime/pty-session-instructions.js';
+import { createPtySessionTools, productRoutePtySessionToolCall, productRoutePtySessionTools } from './runtime/pty-session-tools.js';
+import { createPtyLifecycleEmitter, productRoutePtyLifecycleSink } from './runtime/pty-lifecycle-events.js';
 import { localMetadataProjects, localProjectPathOptions } from '@zana-ai/zcc-server/services/projects/project-metadata';
 import { invokeSharedProduct } from './ipc/shared-product-registry.js';
+import {
+  createAdmittedTerminalReply,
+  createNativeToolPolicyRequiredResolver,
+  createToolWindowResolver,
+  mainSpawnBindings,
+  providerNativeToolPolicyRequired,
+  recordAllowedToolStart,
+  releaseRefusedSquadStart,
+  replyJobTeamPty,
+  resolveLaunchPluginInstructions,
+  supervisedChannel,
+  supervisedOrDevRoute,
+  devProductRoute,
+  prefixedWarn
+} from './runtime/host-plugin-gates.js';
+import { createInteractionResponder } from './interaction-proof.js';
+import { registerInteractionResponseIpc } from './ipc/interaction-response.js';
 import { cliHostProblem, teamHostProblem } from './ipc/cli-host-guard.js';
 import { SHARED_PRODUCT_EVENTS } from '@zana-ai/zcc-contracts/shared-product';
 import { SharedClient, allowsSharedNavigation } from './window/shared-client.js';
@@ -86,7 +116,7 @@ import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-hos
 import { IPC, resolveDeepLinkChannel, type PluginViewTarget, type ThreadViewTarget } from '@zana-ai/zcc-desktop-contract';
 import { createDeepLinkHost, registerDeepLinkIpc, registerDeepLinkScheme, wantsSingleInstanceLock } from './deep-link-host.js';
 import { signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
-import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema, type SquadMemberStatus } from '@zana-ai/zcc-contracts/runtime';
+import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema, SQUAD_START_REFUSED_PREFIX, type SquadMemberStatus } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
 import { registerDesktopBrowserIpc } from './desktop-browser-main-ipc.js';
 import {
@@ -345,6 +375,8 @@ import { listAllFollowUps, saveFollowUp, deleteFollowUp, validateFollowUpFile } 
 import { readClaudeLoops } from '@zana-ai/zcc-server/services/misc/claude-loops-store';
 import { TrayController } from './tray.js';
 import { MenubarController, isRepliable } from './menu.js';
+import { CompanionController } from './companion.js';
+import { createCompanionController, createCompanionHost, onVisibleParent } from './companion-host.js';
 import { createUpdater, type Updater } from './updater.js';
 import { getReleaseNotes } from './release-notes.js';
 import { compareVersions } from '@zana-ai/zcc-extension-sdk';
@@ -1500,6 +1532,20 @@ const goals = new GoalManager();
 const followups = new FollowUpManager();
 let tray: TrayController | null = null;
 let menubar: MenubarController | null = null;
+/** Command Center rail + quick panel (opt-in, `companionEnabled`). */
+let companion: CompanionController | null = null;
+const companionHost = createCompanionHost({
+  platform: process.platform,
+  flag: () => store.getConfig().companionEnabled === true,
+  companion: () => companion,
+  focusedWindow: () => BrowserWindow.getFocusedWindow(),
+  mainWindow: () => mainWindow(),
+  applicationMenu: () => Menu.getApplicationMenu(),
+  refreshTray: () => tray?.refreshSurface()
+});
+const companionEnabled = companionHost.enabled;
+const syncCompanionMenu = companionHost.syncMenu;
+const focusedAppWindow = companionHost.focusedAppWindow;
 
 /** macOS + config flag: the frameless-card menu-bar popover is the tray surface. */
 function menubarPopoverEnabled(): boolean {
@@ -1941,8 +1987,10 @@ const CONTENT_SCREEN_DECISION_TIMEOUT_MS = 8_000;
 
 // OBL-004: fail-CLOSED ceiling on the whole native-tool-policy exchange — the
 // inverse of Overseer/ContentScreen's fail-OPEN guards above, since a denied
-// tool call degrades safely but a silently-allowed one does not.
-const NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS = 8_000;
+// tool call degrades safely but a silently-allowed one does not. It covers the
+// decision phase plus the largest human approval wait for an `ask`, and sits
+// below every relay's own timeout so main's deny always arrives first.
+const NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS = MAX_MAIN_CEILING_MS;
 
 const contentScreen = new ContentScreen({
   getConfig: () => ({ mode: store.getConfig().contentScreenMode ?? 'off' }),
@@ -3326,7 +3374,9 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
 
 async function replyToSquadMember(sessionId: string, text: string, correlation?: { assignmentId: string; idempotencyKey: string }): Promise<boolean> {
   const session = ptys.getSession(sessionId);
-  if (session) return ptys.reply(sessionId, text);
+  if (session) {
+    return replyJobTeamPty({ admit: admitPtyDispatch, reply: (id, body) => ptys.reply(id, body) }, { id: sessionId, projectId: session.projectId }, text);
+  }
   const binding = (await teamLifecycle.list()).flatMap(record => record.state === 'active' ? record.workers : [])
     .find(worker => worker.transport === 'MODERN' && worker.threadId === sessionId && worker.bindingState === 'BOUND'
       && worker.process === 'running' && !worker.capacityReleased);
@@ -3345,12 +3395,114 @@ const productRouteNativeToolPolicy = productRouteToolPolicyDecider({
   serverUrl: productServerUrl,
   credential: ensureProductServerCredential
 });
+const nativeToolStarts = createToolStartTracker();
 export const nativeToolPolicyHook = createNativeToolPolicyHook({
   getSession: (id) => ptys.getSession(id),
+  onAllowed: recordAllowedToolStart(nativeToolStarts),
   decider: firstToolPolicyDecider(
     supervisorToolPolicyDecider(() => runtimeSupervisor),
     () => (process.env.ELECTRON_RENDERER_URL ? productRouteNativeToolPolicy : null)
   ),
+  log: warnNativeToolPolicy
+});
+
+// OBL-011 settled events: observational, fire-and-forget. Needs the supervised
+// runtime; dev (no supervisor) simply has no sink and the event is dropped.
+export const nativeToolSettledHook = createNativeToolSettledHook({
+  getSession: (id) => ptys.getSession(id),
+  sink: supervisedChannel(() => runtimeSupervisor, 'emitToolSettled'),
+  starts: nativeToolStarts,
+  log: warnNativeToolPolicy
+});
+
+const productRouteNativeToolPolicyInventory = productRouteToolPolicyInventory({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+const productRouteDispatchAdmission = productRouteDispatchAdmissionDecider({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Plugin dispatch admission for PTY input main forwards (initial prompt, reply,
+ * Job Team task). Same decider order as {@link nativeToolPolicyHook}. Returns
+ * null to proceed or the refusal; unreachable admission refuses. Raw keystrokes
+ * (`term.write`) are not dispatches and are never admitted.
+ */
+export const admitPtyDispatch = createMainDispatchAdmission({
+  supervised: supervisedChannel(() => runtimeSupervisor, 'admitDispatch'),
+  productRoute: devProductRoute(productRouteDispatchAdmission),
+  log: warnNativeToolPolicy
+});
+
+const productRoutePtyLifecycle = productRoutePtyLifecycleSink({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Plugin lifecycle events for the PTYs main owns. Moments are queued and delivered
+ * off the PTY path (bounded, with a per-delivery timeout). Fed once from
+ * {@link wireBridgeListeners} and the lifecycle hooks; disposed in before-quit.
+ */
+export const ptyLifecycle = createPtyLifecycleEmitter({
+  supervised: supervisedChannel(() => runtimeSupervisor, 'emitPtyLifecycle'),
+  productRoute: devProductRoute(productRoutePtyLifecycle),
+  log: prefixedWarn('pty-lifecycle')
+});
+
+const productRoutePtySessionInstructionsSource = productRoutePtySessionInstructions({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Standing plugin instructions for a PTY about to spawn, evaluated per session by
+ * the plugin host. Additive: any failure launches the session without them.
+ */
+export const resolvePtyPluginInstructions = createPtySessionInstructionsResolver({
+  supervised: supervisedChannel(() => runtimeSupervisor, 'ptySessionInstructions'),
+  productRoute: devProductRoute(productRoutePtySessionInstructionsSource),
+  log: prefixedWarn('pty-instructions')
+});
+
+const productRoutePtySessionToolsSource = productRoutePtySessionTools({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+const productRoutePtySessionToolCallSource = productRoutePtySessionToolCall({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Plugin tools for the live PTYs, served on each session's zcc-inbox route.
+ * Identity comes from the live PTY record; the plugin host applies the
+ * main-owned tool policy before it runs a tool. Same decider order as
+ * {@link nativeToolPolicyHook}: the supervised channel, then the signed product
+ * route in electron-vite dev.
+ */
+export const ptyPluginTools = createPtySessionTools({
+  getSession: (id) => ptys.getSession(id),
+  listSource: supervisedOrDevRoute(() => runtimeSupervisor, 'ptySessionTools', productRoutePtySessionToolsSource),
+  callSource: supervisedOrDevRoute(() => runtimeSupervisor, 'ptySessionToolCall', productRoutePtySessionToolCallSource),
+  log: prefixedWarn('pty-plugin-tools')
+});
+
+/**
+ * Whether the native-tool veto must be reachable for a provider spawn (OBL-018).
+ * Reads the same inventory shape the squad preflight uses: a non-empty `required`
+ * means at least one enabled plugin owns tool policy, so the spawn must fail
+ * closed if it can't reach the hook. Mirrors {@link nativeToolPolicyHook}'s
+ * decider order — supervised runtime channel first, then the signed product route
+ * in electron-vite dev. If neither answers, fail closed (treat as required) so a
+ * torn or unreachable inventory never silently drops the veto.
+ */
+const resolveNativeToolPolicyRequired = createNativeToolPolicyRequiredResolver({
+  source: supervisedOrDevRoute(
+    () => runtimeSupervisor, 'toolPolicyReadiness', productRouteNativeToolPolicyInventory),
   log: warnNativeToolPolicy
 });
 
@@ -3470,7 +3622,7 @@ async function ensureRendererStaticHost(): Promise<void> {
     dataDir: resolveZccDataDir(process.env, app.getPath('home')),
     runtimeDir: __dirname,
     version: resolvedAppVersion(),
-    extraEnv: { ZCC_PRODUCT_SERVER_CREDENTIAL: ensureProductServerCredential() },
+    productServerCredential: ensureProductServerCredential(),
     onLocalThreadWork: (working) => keepAwake.observe('modern-threads', working ? 'working' : 'idle'),
     onUnexpectedExit: runtimeRecovery.notify
   });
@@ -3574,7 +3726,7 @@ function safeSend(channel: string, ...args: unknown[]) {
  * main window when nothing is focused (e.g. the menu fired while unfocused).
  */
 function sendToFocused(channel: string, ...args: unknown[]) {
-  const target = BrowserWindow.getFocusedWindow() ?? mainWindow();
+  const target = focusedAppWindow();
   /* v8 ignore next -- menu routing runs in built Electron; routeMenu is unit-tested */
   if (pluginViews.routeMenu(target, channel, args) || threadViews.routeMenu(target, channel, args)) return;
   if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return;
@@ -3616,6 +3768,7 @@ function claimDock() {
 }
 
 function showMainWindow() {
+  companionHost.onAppOpened();
   if (sharedClient.showSelected()) return;
   claimDock();
   const win = unscopedWindow();
@@ -4307,6 +4460,18 @@ export function createTerminalConfined(
     resume?: boolean;
     /** Coordinator-owned identity. MAIN-only; never read from renderer request. */
     preallocatedSessionId?: string;
+    /**
+     * Thread binding main resolved for this session. MAIN-only; never read from
+     * the renderer request. Absent for a PTY with no bound thread, in which case
+     * the session carries project identity only and resolves the rest through
+     * the authenticated session lookup.
+     */
+    threadId?: string;
+    /**
+     * Per-session plugin guidance main resolved from the plugin host. MAIN-only;
+     * never read from the renderer request.
+     */
+    pluginInstructions?: string;
     /** Immutable main-owned preflight snapshot. Prevents settings/persona TOCTOU. */
     launchSnapshot?: {
       project: Project;
@@ -4317,6 +4482,13 @@ export function createTerminalConfined(
     };
     /** Main-resolved cwd shared by discovery authorization and spawn. */
     effectiveLaunch?: EffectiveLaunch;
+    /**
+     * MAIN-only pre-spawn native-tool veto gate (OBL-018). The async caller read
+     * the tool-policy inventory and set this true when an enabled plugin owns
+     * tool policy; the pty layer then fails closed if the native-tool hook is
+     * unreachable. Omitted defaults to required for a provider launch.
+     */
+    nativeToolPolicyRequired?: boolean;
     /** MAIN-only text for OpenCode's spawn-time tab namer. Null suppresses it. */
     tabNamerPrompt?: string | null;
     /** Keep a main-owned retained squad worktree after this agent exits. */
@@ -4459,8 +4631,19 @@ export function createTerminalConfined(
     });
     const resolvedMicroVmImage =
       req.microVmImage ?? effectivePersona?.microVmImage ?? projectMicroVmSettings.microVmImage;
+    // Pre-spawn native-tool veto gate (OBL-018). A plain shell runs no provider
+    // agent, so no native tool policy applies. For a provider launch, the async
+    // caller resolved the tool-policy inventory (this fn is sync — git resolution
+    // already happened upstream) and passed `opts.nativeToolPolicyRequired`: when
+    // any enabled plugin owns tool policy, the spawn must reach the native-tool
+    // hook, and the pty layer fails closed on this flag when it can't. Absent
+    // (an internal caller that didn't resolve it) defaults to required for a
+    // provider so the veto is never silently dropped.
+    const nativeToolPolicyRequired = providerNativeToolPolicyRequired(selection.profile, opts?.nativeToolPolicyRequired);
     const session = ptys.create({
+      nativeToolPolicyRequired,
       preallocatedSessionId: opts?.preallocatedSessionId,
+      ...mainSpawnBindings(opts),
       projectId: req.projectId,
       profile: selection.profile,
       persona: effectivePersona,
@@ -4586,6 +4769,18 @@ async function launchAuthorizedTerminal(
   const foundProject = projects.find((candidate) => candidate.id === req.projectId);
   if (!foundProject) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
   const project = foundProject;
+  // Opening prompt of a fresh launch: admitted before anything is authorized or spawned.
+  // A restore re-attaches existing work and carries no new dispatch.
+  if (req.prompt?.trim() && !req.resumeSessionId && !spawnOpts?.resume && !spawnOpts?.reconnectTmuxId
+    && !spawnOpts?.preallocatedSessionId) {
+    const refusal = await admitPtyDispatch({
+      projectId: project.id,
+      entry: dispatchEntryForPrincipal(principal),
+      origin: dispatchOriginForPrincipal(principal),
+      promptText: preissuedInitialTask ?? req.prompt
+    });
+    if (refusal) return { ok: false, code: refusal.code, message: refusal.message };
+  }
   if (project.remote) await refreshRemoteStartPathHosts(productServerUrl());
   const config = store.getConfig();
   const personaSnapshot = personas.list();
@@ -4777,8 +4972,20 @@ async function launchAuthorizedTerminal(
         cwd: authorizedPlan.resolved.effectiveLaunch.cwd
       });
       const spawn = async () => {
+      // Resolve the native-tool veto gate here (async) so the sync
+      // createTerminalConfined can consume it (OBL-018). Shell launches need no
+      // policy; a provider launch requires the hook be reachable when a plugin
+      // owns tool policy, and the pty layer fails closed on the flag.
+      const nativeToolPolicyRequired =
+        request.profile !== 'shell' && (await resolveNativeToolPolicyRequired());
+      const pluginInstructions = await resolveLaunchPluginInstructions(resolvePtyPluginInstructions, {
+        sessionId: authorizedPlan.sessionId, threadId: spawnOpts?.threadId, projectId: request.projectId, profile: request.profile
+      });
       const result = createTerminalConfined(request, {
         ...spawnOpts,
+        nativeToolPolicyRequired,
+        // Main-resolved only; overrides any caller-supplied field.
+        pluginInstructions,
         preallocatedSessionId: authorizedPlan.sessionId,
         launchSnapshot: {
           project: authorizedPlan.resolved.project,
@@ -5064,6 +5271,9 @@ async function launchBackgroundTerminal(
         spawnLaunch.cwd,
         authorizedPlan.resolved.config
       );
+      const pluginInstructions = await resolveLaunchPluginInstructions(resolvePtyPluginInstructions, {
+        sessionId: authorizedPlan.sessionId, threadId: request.threadId, projectId: request.projectId, profile: request.profile
+      });
       spawnAttempted = true;
       // Scheduler/background launches honour the persona skill allowlist exactly like interactive ones.
       const skillSettings = await resolveCliSkillSettings({
@@ -5076,6 +5286,8 @@ async function launchBackgroundTerminal(
       });
       const session = createTerminalFromAuthorizedPlan({
         ...request,
+        // Main-resolved only; never carried over from the request.
+        pluginInstructions,
         cwd: spawnLaunch.cwd,
         ...(skillSettings ? { skillSettings } : {}),
         projectSettings: authorizedPlan.resolved.projectSettings,
@@ -6284,6 +6496,13 @@ export async function launchTeam(
         await squadRuntime().activateSquadMember(runtimeRequest);
         return { ok: true, value: { id: created.threadId } };
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (reservation && message.startsWith(SQUAD_START_REFUSED_PREFIX)) {
+          // Admission refused before the runtime created anything: there is no member to stop or
+          // verify, so release the reserved slot now rather than holding it as uncertain.
+          await releaseRefusedSquadStart({ integration: teamLifecycleIntegration, lifecycle: teamLifecycle, logError: logMainError }, { recordId: claim.record.id, slotId, generation: reservation.generation, threadId: reservation.threadId });
+          return { ok: false, code: 'DENIED', message };
+        }
         if (reservation) await teamLifecycle.markModernWorkerUncertain(claim.record.id, slotId, reservation.generation, reservation.threadId);
         else if (authorizationId) launchAuthorization.complete(authorizationId);
         return { ok: false, code: reservation ? 'UNCERTAIN' : 'DENIED', message: error instanceof Error ? error.message : String(error) };
@@ -7686,6 +7905,12 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     });
   }
 
+  // Command Center opt-in: the yellow traffic light / ⌘M hand off to the rail
+  // instead of the Dock (enter() hides the minimized window too). Returning to
+  // any app window dismisses the companion.
+  win.on('minimize', () => companionHost.onWindowMinimized(win));
+  win.on('focus', () => companionHost.onAppOpened(win));
+
   // Push OS-level fullscreen transitions to the renderer that's actually IN
   // this window (not every window — each has its own fullscreen state), so a
   // fullscreen toggle initiated by the OS (e.g. the green traffic-light button)
@@ -7790,6 +8015,7 @@ function wireBridgeListeners() {
   });
   ptys.on('exit', (sessionId: string, code: number, signal?: number | null, reason?: string | null) => {
     safeSend(IPC.terminals.onExit, sessionId, code);
+    ptyLifecycle.exited(sessionId, code, signal);
     squadProposalNotifier.forget(sessionId);
     const ledgerEntryId = launchLedgerEntriesBySession.get(sessionId);
     launchLedgerEntriesBySession.delete(sessionId);
@@ -7951,6 +8177,7 @@ function wireBridgeListeners() {
     localExtensionWatcher.onSessionExit(sessionId);
   });
   ptys.on('sessionUpdated', (session) => {
+    ptyLifecycle.observe(session);
     refreshRestoreCapability(session);
     captureNativeRecoverySnapshot(session);
     safeSend(IPC.terminals.onUpdated, session);
@@ -8273,17 +8500,36 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
   return { ok: true };
 }
 
+/* v8 ignore start -- needs the supervised runtime / a real BrowserWindow; createPluginApprovalHandler and showApprovalSheet are unit-tested */
+const listApprovalApps = () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer();
+const showNativeApprovalSheet = (parent: BrowserWindow, view: Parameters<typeof showApprovalSheet>[1], timeoutMs?: number) =>
+  showApprovalSheet(parent, view, (options) => new BrowserWindow(options), timeoutMs);
+/* v8 ignore stop */
+
+const pluginApprovalHandler = createPluginApprovalHandler({
+  secret: ensureProductServerCredential,
+  listApps: listApprovalApps,
+  showSheet: showNativeApprovalSheet,
+  resolveToolWindow: createToolWindowResolver<BrowserWindow>({
+    productServerUrl,
+    store,
+    localHostId,
+    windows,
+    mainWindow
+  })
+});
+
 function registerIpc() {
+  registerInteractionResponseIpc(safeHandleFromWindow, createInteractionResponder({ serverUrl: productServerUrl, secret: ensureProductServerCredential }), {
+    listApps: listApprovalApps,
+    showSheet: showNativeApprovalSheet
+  });
   registerAgentSoundIpc({ handle: safeHandleFromWindow, files: agentSoundFiles,
     volume: () => store.getConfig().agentSoundVolume, showOpenDialog: (win, options) => dialog.showOpenDialog(win, options) });
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
-  safeHandleFromWindow(IPC.pluginApprovals.request, createPluginApprovalHandler({
-    secret: ensureProductServerCredential,
-    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
-    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options))
-  }), () => ({ approved: false as const, reason: 'unavailable' as const }));
+  safeHandleFromWindow(IPC.pluginApprovals.request, pluginApprovalHandler, () => ({ approved: false as const, reason: 'unavailable' as const }));
   /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
   registerPluginViewIpc(safeHandle, pluginViews);
   registerPluginViewCloseIpc(safeHandleFromWindow, pluginViewCloseGuard, windows);
@@ -8319,6 +8565,7 @@ function registerIpc() {
     get cloneAndRegisterProject() { return cloneAndRegisterProject; },
     get closeSummary() { return closeSummary; },
     get wrapUpClose() { return wrapUpClose; },
+    get companion() { return companion; },
     get conversationHistory() { return conversationHistory; },
     get createInteractiveTerminal() { return createInteractiveTerminal; },
     get createLocalExtension() { return createLocalExtension; },
@@ -8363,6 +8610,7 @@ function registerIpc() {
     get invalidateLlmReuse() { return invalidateLlmReuse; },
     get isTeamWorkerRestore() { return isTeamWorkerRestore; },
     get keepAwake() { return keepAwake; },
+    get admitPtyDispatch() { return admitPtyDispatch; },
     get agentSounds() { return agentSounds; },
     get launchAuthorizedTerminal() { return launchAuthorizedTerminal; },
     get launchAutonomousTeam() { return launchAutonomousTeam; },
@@ -8427,6 +8675,7 @@ function registerIpc() {
     get startTeamJobFromUi() { return startTeamJobFromUi; },
     get stopAutonomousRun() { return stopAutonomousRun; },
     get suggestionsStore() { return suggestionsStore; },
+    get syncCompanionMenu() { return syncCompanionMenu; },
     get teams() { return teams; },
     get teamLifecycle() { return teamLifecycle; },
     get templates() { return templates; },
@@ -8541,7 +8790,7 @@ function buildAppMenu() {
           label: 'Reset Zoom',
           accelerator: 'CmdOrCtrl+0',
           click: () => {
-            const win = BrowserWindow.getFocusedWindow() ?? mainWindow();
+            const win = focusedAppWindow();
             if (win && !win.isDestroyed()) win.webContents.setZoomFactor(DEFAULT_RENDERER_ZOOM_FACTOR);
           }
         },
@@ -8555,6 +8804,7 @@ function buildAppMenu() {
       label: 'Window',
       submenu: [
         { role: 'minimize' },
+        companionHost.menuItem(),
         { role: 'zoom' },
         ...(isMac
           ? ([
@@ -8683,6 +8933,7 @@ function registerStartupStateIpc(): void {
   app.on('activate', () => {
     // Repair mode never reaches normal bootstrap, so window lifecycle belongs
     // beside startup IPC rather than normal services.
+    companionHost.onAppOpened();
     if (startupState.mode !== 'repair-required' && sharedClient.showSelected()) return;
     if (!unscopedWindow()) createWindow(undefined, startupState.mode === 'repair-required');
     else showMainWindow();
@@ -9024,9 +9275,31 @@ async function bootstrapNormal() {
       listThreads: listMenubarThreads,
       onThreadsChanged: (listener) => runtimeSupervisor?.onMenubarThreadsChanged(listener) ?? (() => {}),
       theme: () => resolveTheme(),
+      commandCenterEnabled: companionEnabled,
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
     });
+    companion = createCompanionController(process.platform, {
+      ptys,
+      scheduler,
+      agentStatus,
+      inboxStore,
+      store,
+      triageCache: lastTriageBySession,
+      listThreads: listMenubarThreads,
+      runtime: () => runtimeSupervisor,
+      windows,
+      ensureMainWindowReady,
+      openThread: openMenubarThread,
+      theme: resolveTheme,
+      isEnabled: companionEnabled,
+      showMainWindow,
+      e2e: E2E_LAUNCH,
+      sendToApp: safeSend,
+      preloadPath: join(__dirname, '../preload/index.js'),
+      logger: logMainError
+    });
+    companion?.start();
     tray = new TrayController({
       scheduler,
       ptys,
@@ -9041,6 +9314,7 @@ async function bootstrapNormal() {
       openScheduler: (taskId) => safeSend('app:openScheduler', taskId),
       popover: menubar,
       popoverEnabled: menubarPopoverEnabled,
+      commandCenter: { enabled: companionEnabled, enter: companionHost.enter },
       logger: logMainError
     });
     tray.start();
@@ -9236,7 +9510,8 @@ async function bootstrapNormal() {
     // close so the run logs success rather than a kill-signal error. Non-
     // scheduled sessions (or any we can't match) fall back to a plain expected
     // close so nothing regresses.
-    onStopHook: (_projectId: string, sessionId: string) => {
+    onStopHook: (projectId: string, sessionId: string) => {
+       ptyLifecycle.turnFinished(sessionId, projectId);
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
@@ -9288,6 +9563,7 @@ async function bootstrapNormal() {
         }
         agentStatus.markBlocked(sessionId);
       } else {
+        ptyLifecycle.turnStarted(sessionId, projectId);
         apiErrorResume.cancel(sessionId);
         workerApiErrorRecovery.onTurnStarted(sessionId, agentStatus.get(sessionId));
         agentStatus.turnStarted(sessionId);
@@ -9397,6 +9673,8 @@ async function bootstrapNormal() {
     // terminals. Dev has no supervisor, so there it asks the dev product
     // server's signed native-tool-policy route instead.
     onNativeToolPolicyHook: nativeToolPolicyHook,
+    ptyPluginTools,
+    onNativeToolSettledHook: nativeToolSettledHook,
     // Upper bound on the whole exchange; mcp-server.ts fails CLOSED (deny) if
     // this elapses, the inverse of overseerDecisionTimeoutMs's fail-open guard.
     nativeToolPolicyDecisionTimeoutMs: NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS,
@@ -10193,6 +10471,8 @@ async function bootstrapNormal() {
   const controlDir = resolveZccDataDir(process.env, app.getPath('home'));
   ensureProductServerCredential();
   startControlPlane({
+    requestPluginToolApproval: pluginApprovalHandler.requestToolApproval,
+    respondInteraction: createInteractionResponder({ serverUrl: productServerUrl, secret: ensureProductServerCredential }),
     invokeSharedProduct,
     socketPath: join(controlDir, 'control.sock'),
     tokenPath: join(controlDir, 'control.token'),
@@ -10232,7 +10512,11 @@ async function bootstrapNormal() {
     // Close-idle action uses — one summarize-then-close path for every surface.
     summarizeAndCloseTerminals: (projectId, sessionIds, summarize) =>
       closeSummary.summarizeAndClose(projectId, sessionIds, { summarize }),
-    replyTerminal: (sessionId, text) => ptys.reply(sessionId, text),
+    replyTerminal: createAdmittedTerminalReply({
+      getSession: (id) => ptys.getSession(id),
+      admit: admitPtyDispatch,
+      reply: (id, text) => ptys.reply(id, text)
+    }),
     getAgentStatus: (sessionId) => agentStatus.get(sessionId),
     isLiveSession: (sessionId) => ptys.getSession(sessionId) !== null,
     // App-attested orchestrator gate: a session is promoted past agent-class
@@ -10351,6 +10635,7 @@ async function bootstrapNormal() {
     // Dock-reactivate must restore the full shell. Recreate it when no UNSCOPED
     // window is live — not merely when zero windows exist — so a user who closed
     // the main window but left a scoped project window open can still get back.
+    companionHost.onAppOpened();
     if (sharedClient.showSelected()) return;
     if (!unscopedWindow()) createWindow();
     else showMainWindow();
@@ -10390,8 +10675,7 @@ const quitGuard = createQuitGuard({
         ? 'Agent activity could not be checked. Quitting will interrupt any running agents and terminate terminals.'
         : 'Quitting will interrupt running agents and terminate terminals, including background sessions.'
     };
-    const parent = mainWindow();
-    const result = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    const result = await onVisibleParent(mainWindow(), (win) => dialog.showMessageBox(win, opts), () => dialog.showMessageBox(opts));
     return result.response === 0;
   },
   quit: () => app.quit(),
@@ -10404,6 +10688,7 @@ app.on('before-quit', (event) => {
   if (!quitGuard.allowQuit(event)) return;
   windowShutdownStarted = true;
   runtimeRecovery.dispose();
+  ptyLifecycle.dispose();
   // Quit can bypass a usable per-window close transition. Clear native maximize
   // state here too, so macOS cannot restore a maximized window on next launch.
   for (const controller of boundsControllers.values()) controller.flushForClose();
@@ -10428,6 +10713,8 @@ app.on('before-quit', (event) => {
   menubar = null;
   stopTitleBarOverlayTheme?.();
   stopTitleBarOverlayTheme = null;
+  companion?.stop();
+  companion = null;
   templates.stop();
   quickPrompts.stop();
   promptRegistry.stop();

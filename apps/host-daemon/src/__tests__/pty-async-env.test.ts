@@ -24,7 +24,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 import type {
@@ -133,7 +133,7 @@ describe('PtyManager — async createSession environment', () => {
   });
 
   it('returns a session in `starting` synchronously and never touches node-pty', () => {
-    const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    const s = ptys.create({ nativeToolPolicyRequired: false, ...base, config: cfg(), environment: 'sandbox' });
     expect(s.status).toBe('starting');
     expect(s.pid).toBeUndefined();
     expect(s.environment).toBe('sandbox');
@@ -142,7 +142,7 @@ describe('PtyManager — async createSession environment', () => {
   });
 
   it('flips to running, stamps the pid, and drains buffered input on attach', async () => {
-    const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    const s = ptys.create({ nativeToolPolicyRequired: false, ...base, config: cfg(), environment: 'sandbox' });
     const updatedBefore = ptys.listenerCount('sessionUpdated');
     const exitBefore = ptys.listenerCount('exit');
     const ready = ptys.waitForReady(s.id);
@@ -166,7 +166,7 @@ describe('PtyManager — async createSession environment', () => {
   });
 
   it('streams guest output into the backlog once attached', async () => {
-    const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    const s = ptys.create({ nativeToolPolicyRequired: false, ...base, config: cfg(), environment: 'sandbox' });
     const exec = new FakeExec();
     pending!.resolve(exec);
     await flush();
@@ -178,14 +178,14 @@ describe('PtyManager — async createSession environment', () => {
   });
 
   it('passes the REWRITTEN callback env to createSession', () => {
-    ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    ptys.create({ nativeToolPolicyRequired: false, ...base, config: cfg(), environment: 'sandbox' });
     expect(lastCtx?.sessionEnv.ZCC_REWRITTEN).toBe('1');
     expect(lastCtx?.spawnEnv?.ZCC_REWRITTEN).toBe('1');
     expect(lastInner).not.toBeNull();
   });
 
   it('FAILS CLOSED on boot failure — finalizes with a non-zero exit, no local fallback', async () => {
-    const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    const s = ptys.create({ nativeToolPolicyRequired: false, ...base, config: cfg(), environment: 'sandbox' });
     const updatedBefore = ptys.listenerCount('sessionUpdated');
     const exitBefore = ptys.listenerCount('exit');
     const ready = expect(ptys.waitForReady(s.id)).rejects.toThrow('no hypervisor');
@@ -208,7 +208,7 @@ describe('PtyManager — async createSession environment', () => {
   it('times out readiness and removes temporary listeners', async () => {
     vi.useFakeTimers();
     try {
-      const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+      const s = ptys.create({ nativeToolPolicyRequired: false, ...base, config: cfg(), environment: 'sandbox' });
       const updatedBefore = ptys.listenerCount('sessionUpdated');
       const exitBefore = ptys.listenerCount('exit');
       const ready = ptys.waitForReady(s.id, 10);
@@ -225,7 +225,7 @@ describe('PtyManager — async createSession environment', () => {
   });
 
   it('tears the guest down if the session is closed mid-boot', async () => {
-    const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    const s = ptys.create({ nativeToolPolicyRequired: false, ...base, config: cfg(), environment: 'sandbox' });
     ptys.close(s.id); // user closes before the VM finishes booting
     const exec = new FakeExec();
     pending!.resolve(exec);
@@ -236,7 +236,7 @@ describe('PtyManager — async createSession environment', () => {
   });
 
   it('closeExpected finalizes a pidless start and rejects a late backend attach', async () => {
-    const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    const s = ptys.create({ nativeToolPolicyRequired: false, ...base, config: cfg(), environment: 'sandbox' });
     const exits: Array<[string, number]> = [];
     ptys.on('exit', (id: string, code: number) => exits.push([id, code]));
 

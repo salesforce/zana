@@ -1,6 +1,7 @@
 import { createPeerToolVerifier } from './peer-tool-proof.js';
 import { createMachineProjectSync, type MachineProjectSync } from '../services/hosts/machine-project-sync.js';
 import { HelpVideoCatalogueService } from '../services/help-video-catalogue.js';
+import { OnboardingGitAuthService } from '../services/onboarding-git-auth.js';
 import { closeThreadReads } from '../services/threads/thread-reads.js';
 import { closeQueuedMessages } from '../services/threads/queued-messages.js';
 import { previewService, disposePreviews } from '../services/previews/preview-service.js';
@@ -38,6 +39,7 @@ import type { LocalAppOriginArgs } from './local-app-origins.js';
 import { createProductHub, type ProductHub } from './product-hub.js';
 import { createHostHub, type HostHub } from './host-hub.js';
 import { PendingInteractionLifecycle } from '../services/interactions/pending-interactions.js';
+import { PtyInteractionStore } from '../services/interactions/pty-interactions.js';
 import { prunePendingInteractionInboxCopies } from '../services/interactions/pending-interaction-attention.js';
 import { conversationThreadView } from '../services/threads/conversation-create.js';
 import { emitPluginThreadStatus } from '../plugins/thread-events.js';
@@ -63,8 +65,9 @@ import { startConversationHistoryMaintenance } from '../services/threads/convers
 import { PersistentTerminalSessions } from './persistent-terminal-sessions.js';
 import { ProviderModelCatalogStore } from '../services/threads/provider-model-catalog-store.js';
 import { createUiSendVerifier } from './ui-send-proof.js';
-import { createPluginApprovalVerifier, signPluginApproval } from './plugin-approval-proof.js';
+import { capturePluginToolApprovalIdentity, createPluginApprovalVerifier, signPluginApproval, isPluginToolApprovalScopeLive, requestPluginToolApprovalViaControl, type PluginToolApprovalScope } from './plugin-approval-proof.js';
 import { createNativeToolPolicyVerifier } from './native-tool-policy-proof.js';
+import { createDetailedInteractionProofVerifier, type InteractionProofBinding } from './interaction-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import { createDbTunnelHostStore, createTunnelHostReopener, type TunnelHostStore } from '../services/hosts/tunnel-hosts.js';
 import { reconcileRemoteProjectBindings, repairHost, tunnelLocalPort } from '../services/hosts/host-bootstrap.js';
@@ -107,6 +110,8 @@ export interface ProductTerminalRecord extends TerminalSession {
 
 export interface ProductHttpContext {
   helpVideos?: HelpVideoCatalogueService;
+  /** Onboarding browser Git sign-in (host comes from the onboarding profile only). */
+  onboardingGitAuth?: OnboardingGitAuthService;
   productInstanceId: string;
   origins: LocalAppOriginArgs;
   dataDir: string;
@@ -131,6 +136,8 @@ export interface ProductHttpContext {
   saved: ISavedStore;
   hub: ProductHub;
   pendingInteractions: PendingInteractionLifecycle;
+  /** `ui.requestInput` for PTY sessions, which have no thread row. */
+  ptyInteractions: PtyInteractionStore;
   threadTitleNamer: ThreadTitleNamer;
   closeSummary: CloseSummaryService;
   terminalSessions: Map<string, ProductTerminalRecord>;
@@ -184,8 +191,10 @@ export interface ProductHttpContext {
   verifyUiSend: (proof: unknown, threadId: string, itemId: string, caller?: import('./ui-send-proof.js').UiSendCaller) => boolean;
   /** Consumes a desktop-signed plugin approval (plugin-approval-proof.ts). Absent or secretless servers refuse every token. */
   verifyPluginApproval?: (token: unknown, pluginId: string, binding: unknown) => boolean;
+  requestPluginToolApproval?: (input: PluginToolApprovalScope) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginApprovalResult>;
   /** Consumes main's proof on a native tool policy request (native-tool-policy-proof.ts). Absent or secretless servers refuse every one. */
   verifyNativeToolPolicy?: (token: unknown, body: string) => boolean;
+  verifyInteractionProof?: (token: unknown, binding: InteractionProofBinding) => import('./interaction-proof.js').VerifiedInteractionProof | null;
   verifyPeerTool?: (token: unknown, body: string) => boolean;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
@@ -375,6 +384,9 @@ export function createProductHttpContext(
     }
   });
   pendingInteractions.start();
+  const ptyInteractions = new PtyInteractionStore({
+    onChanged: (change) => hub.emit('pty-interactions:changed', change)
+  });
   const envToken = process.env.ZCC_HOST_ENROLL_TOKEN;
   const enrollToken = options.enrollToken
     ?? (envToken && envToken.length >= 16 ? envToken : undefined)
@@ -497,12 +509,14 @@ export function createProductHttpContext(
   let verifyPluginApproval: NonNullable<ProductHttpContext['verifyPluginApproval']> = rejectUiSend;
   let mintCoreApproval: ProductHttpContext['mintCoreApproval'];
   let verifyNativeToolPolicy: NonNullable<ProductHttpContext['verifyNativeToolPolicy']> = rejectUiSend;
+  let verifyInteractionProof: NonNullable<ProductHttpContext['verifyInteractionProof']> = () => null;
   if (options.uiSendSecret && options.uiSendSecret.length >= 32) {
     verifyUiSend = createUiSendVerifier(options.uiSendSecret);
     verifyPluginApproval = createPluginApprovalVerifier(options.uiSendSecret);
     const approvalSecret = options.uiSendSecret;
     mintCoreApproval = binding => signPluginApproval(approvalSecret, CORE_APPROVAL_PRINCIPAL, binding as never);
     verifyNativeToolPolicy = createNativeToolPolicyVerifier(options.uiSendSecret);
+    verifyInteractionProof = createDetailedInteractionProofVerifier(options.uiSendSecret);
   }
 
   const keyProvider = options.peerKeyProvider ?? { getKey: async () => null };
@@ -632,6 +646,7 @@ export function createProductHttpContext(
   );
   ctx = {
     helpVideos: new HelpVideoCatalogueService(dataDir),
+    onboardingGitAuth: new OnboardingGitAuthService(),
     productInstanceId,
     origins: options.origins,
     dataDir,
@@ -652,6 +667,7 @@ export function createProductHttpContext(
     saved,
     hub,
     pendingInteractions,
+    ptyInteractions,
     threadTitleNamer,
     closeSummary,
     terminalSessions,
@@ -675,13 +691,24 @@ export function createProductHttpContext(
     pluginStorageEpochs: new PluginStorageEpochs({ directory: join(realpathSync(dataDir), 'plugin-storage-epochs'), instanceId: productInstanceId, keyProvider }),
     verifyUiSend,
     verifyPluginApproval,
+    requestPluginToolApproval: async (input) => {
+      const scope = { db, projects, hostHub };
+      const identity = input.identity ?? capturePluginToolApprovalIdentity(scope, input.request.threadId);
+      if (!identity || !isPluginToolApprovalScopeLive(scope, input.request.threadId, input.projectId, identity)) return { approved: false, reason: 'unavailable' };
+      const result = await requestPluginToolApprovalViaControl(dataDir, input);
+      if (result.approved && !isPluginToolApprovalScopeLive(scope, input.request.threadId, input.projectId, identity)) return { approved: false, reason: 'unavailable' };
+      return result;
+    },
     verifyNativeToolPolicy,
+    verifyInteractionProof,
     verifyPeerTool: options.uiSendSecret && options.uiSendSecret.length >= 32 ? createPeerToolVerifier(options.uiSendSecret) : undefined,
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
       if (disposed) return remoteProjectReconciler.dispose();
       disposed = true;
+      ptyInteractions.dispose();
       ctx.helpVideos?.dispose();
+      ctx.onboardingGitAuth?.dispose();
       stopPeerAuthority();
       ctx.peerInstaller?.dispose();
       ctx.peerLinks?.dispose();

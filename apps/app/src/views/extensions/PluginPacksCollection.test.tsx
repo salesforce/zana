@@ -407,3 +407,22 @@ it('preserves the installed selection while retrying a failed onboarding save', 
   expect(onInstalled).toHaveBeenLastCalledWith(installation);
   expect(api.install).toHaveBeenCalledOnce();
 });
+
+it('clears the wizard footer when switching between bundle selection and review', async () => {
+  const second = { ...catalog, identity: { ...identity, packId: 'other' }, pack: { ...catalog.pack, id: 'other', displayName: 'Other bundle' } };
+  api.list.mockResolvedValue([catalog, second]);
+  const footer = document.createElement('footer');
+  document.body.append(footer);
+  const view = render(<PluginPacksCollection mode="browse" presentation="onboarding" footerTarget={footer} />);
+  const choices = await screen.findAllByRole('button', { name: 'Choose bundle' });
+  expect(footer.childNodes).toHaveLength(0);
+  fireEvent.click(choices[0]!);
+  await within(footer).findByRole('button', { name: 'Install and continue' });
+  fireEvent.click(screen.getByRole('button', { name: 'Choose another bundle' }));
+  expect(footer.childNodes).toHaveLength(0);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Choose bundle' })[0]!);
+  await within(footer).findByRole('button', { name: 'Install and continue' });
+  view.unmount();
+  expect(footer.childNodes).toHaveLength(0);
+  footer.remove();
+});

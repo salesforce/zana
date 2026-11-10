@@ -25,7 +25,9 @@ import { getPrimaryHost, countConversationThreadsForQuit } from '@zana-ai/zcc-db
 import { handleProjectSourcesApi } from './project-sources-api.js';
 import { handleMachineProjectApi, validatedProjectPath } from './machine-project-api.js';
 import { handleNotificationsApi } from './notifications-api.js';
-import { handleNativeToolPolicyApi } from './native-tool-policy-api.js';
+import { handleDispatchAdmissionApi, handleNativeToolPolicyApi, handleNativeToolPolicyInventoryApi, handlePtyLifecycleEventApi, handlePtySessionInstructionsApi, handlePtySessionToolsApi } from './native-tool-policy-api.js';
+import { handleSessionsSelfApi } from './sessions-self-api.js';
+import { INTERACTION_PROOF_HEADER } from './interaction-proof.js';
 import { resolveProjectHost } from './project-host.js';
 import { mutateProjectFile } from './project-file-mutations.js';
 import { invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -534,7 +536,7 @@ export async function handleProductHttp(
   }
 
   try {
-    if (handleOnboardingApi(response, path, method)) return true;
+    if (await handleOnboardingApi(response, path, method, ctx.onboardingGitAuth)) return true;
     if (await handleHelpVideosApi(request, response, ctx.helpVideos, path, method)) return true;
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;
     if (await handlePluginPacksApi(request, response, ctx.plugins?.pluginPacks, path, method)) return true;
@@ -591,6 +593,12 @@ export async function handleProductHttp(
     if (await handleMachineProjectApi(request, response, ctx, path, method)) return true;
     if (await handleNotificationsApi(request, response, ctx, path, method, requestUrl)) return true;
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
+    if (await handleNativeToolPolicyInventoryApi(request, response, ctx, path, method)) return true;
+    if (await handleDispatchAdmissionApi(request, response, ctx, path, method)) return true;
+    if (await handlePtyLifecycleEventApi(request, response, ctx, path, method)) return true;
+    if (await handlePtySessionInstructionsApi(request, response, ctx, path, method)) return true;
+    if (await handlePtySessionToolsApi(request, response, ctx, path, method)) return true;
+    if (await handleSessionsSelfApi(request, response, ctx, path, method)) return true;
     if (await handlePeerToolsApi(request, response, ctx, path, method)) return true;
     if (await handleThreadPeerReviewApi(request, response, ctx, path, method)) return true;
 
@@ -2503,12 +2511,85 @@ export async function handleProductHttp(
           sendJson(response, 400, { error: 'invalid_request', message: 'respond value must be JSON' });
           return true;
         }
+        const proof = headerValue(request.headers, INTERACTION_PROOF_HEADER);
+        const verified = proof ? ctx.verifyInteractionProof?.(proof, {
+          threadId: threadInteractionRespond.id,
+          interactionId: threadInteractionRespond.interactionId,
+          body: JSON.stringify(body)
+        }) : null;
+        if (proof && !verified) {
+          throw new ThreadCreateError(403, 'invalid-proof', 'Invalid interaction proof');
+        }
+        // Caller markers can only lower trust. HTTP alone never establishes human authority.
+        const actor = verified?.actor ?? (headerValue(request.headers, 'authorization')
+          || headerValue(request.headers, 'x-zcc-session-token')
+          || headerValue(request.headers, 'x-zcc-caller-credential')
+          || headerValue(request.headers, 'x-zcc-caller-session-id') ? 'agent' : 'unknown');
         const interaction = ctx.pendingInteractions.respondToPluginInteraction({
           threadId: threadInteractionRespond.id,
           interactionId: threadInteractionRespond.interactionId,
-          value: parsed.data
+          value: parsed.data,
+          actor,
+          attestation: verified?.attestation
         });
         sendJson(response, 200, interaction);
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ...error.details, error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const ptyInteractionRespond = routeParams(path, '/api/v1/pty-sessions/:id/interactions/:interactionId/respond');
+    if (ptyInteractionRespond && method === 'POST') {
+      try {
+        const body = (await readJsonBody(request)) as { value?: unknown };
+        const parsed = jsonValueSchema.safeParse(body?.value);
+        if (!parsed.success) {
+          sendJson(response, 400, { error: 'invalid_request', message: 'respond value must be JSON' });
+          return true;
+        }
+        const proof = headerValue(request.headers, INTERACTION_PROOF_HEADER);
+        const verified = proof ? ctx.verifyInteractionProof?.(proof, {
+          sessionId: ptyInteractionRespond.id,
+          interactionId: ptyInteractionRespond.interactionId,
+          body: JSON.stringify(body)
+        }) : null;
+        if (proof && !verified) {
+          throw new ThreadCreateError(403, 'invalid-proof', 'Invalid interaction proof');
+        }
+        const actor = verified?.actor ?? (headerValue(request.headers, 'authorization')
+          || headerValue(request.headers, 'x-zcc-session-token')
+          || headerValue(request.headers, 'x-zcc-caller-credential')
+          || headerValue(request.headers, 'x-zcc-caller-session-id') ? 'agent' : 'unknown');
+        sendJson(response, 200, ctx.ptyInteractions.respond({
+          sessionId: ptyInteractionRespond.id,
+          interactionId: ptyInteractionRespond.interactionId,
+          value: parsed.data,
+          actor,
+          attestation: verified?.attestation
+        }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ...error.details, error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const ptyInteractionCancel = routeParams(path, '/api/v1/pty-sessions/:id/interactions/:interactionId/cancel');
+    if (ptyInteractionCancel && method === 'POST') {
+      try {
+        sendJson(response, 200, ctx.ptyInteractions.cancel({
+          sessionId: ptyInteractionCancel.id,
+          interactionId: ptyInteractionCancel.interactionId,
+          reason: 'user'
+        }));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });
@@ -2516,6 +2597,12 @@ export async function handleProductHttp(
         }
         sendHostFailure(response, error);
       }
+      return true;
+    }
+
+    const ptyInteractions = routeParams(path, '/api/v1/pty-sessions/:id/interactions');
+    if (ptyInteractions && method === 'GET') {
+      sendJson(response, 200, ctx.ptyInteractions.list(ptyInteractions.id));
       return true;
     }
 

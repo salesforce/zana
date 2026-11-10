@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   isStandaloneBuiltinCompactCommand,
   type DynamicTool,
+  type SessionMcpServer,
   type PromptInput,
   type ThreadDelta,
   sanitizeInheritedChildProcessEnv,
@@ -45,6 +46,11 @@ import {
   type ProviderRuntimeEvent,
   experimental_defineProviderBridge,
   type ProviderRecoveryHint,
+  createNativeToolDecisionTracker,
+  createNativeToolSettledReporter,
+  type BridgeNativeToolDecisionRequest,
+  type BridgeNativeToolSettledNotification,
+  type NativeToolDecision,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -63,6 +69,7 @@ import { macOsPermissionPresentation } from "../presentation.js";
 import {
   resolveCodexInstructionOverrides,
   toCodexDynamicTools,
+  buildCodexMcpServerConfig,
   toCodexPermissionSettings,
   toCodexServiceTier,
   toCodexUserInput,
@@ -70,6 +77,7 @@ import {
   type BbThreadStartParams,
   type CodexSessionOptions,
 } from "../session-params.js";
+import type { JsonValue } from "../generated/codex-app-server/schema/serde_json/JsonValue.js";
 import type { ThreadResumeParams } from "../generated/codex-app-server/schema/v2/ThreadResumeParams.js";
 import {
   createCodexEventTranslator,
@@ -227,8 +235,22 @@ interface BridgeRuntimeRequest {
 }
 
 const { send, sendResult, sendError } = createBridgeIo<
-  BridgeNotification | BridgeRuntimeRequest
+  | BridgeNotification
+  | BridgeRuntimeRequest
+  | BridgeNativeToolDecisionRequest
+  | BridgeNativeToolSettledNotification
 >();
+
+// OBL-018/p0-modern-codex-veto: Modern Codex command + file-change approvals are
+// routed through the host native-tool policy BEFORE the human interaction path.
+// With approvalPolicy:"untrusted" (session-params.ts) codex raises an approval for
+// every command/file-change it does not classify as known-safe (ls, cat, ...), even
+// under danger-full-access; known-safe commands run with no approval and so are
+// outside this veto. This tracker lets a
+// tool-policy plugin veto, and auto-allows (no human prompt) when none is live.
+const nativeToolDecisionTracker = createNativeToolDecisionTracker(send);
+// OBL-011: observational tool.settled reports for the same command/file-change items.
+const nativeToolSettledReporter = createNativeToolSettledReporter(send);
 
 function sendNotification(
   method: string,
@@ -412,6 +434,7 @@ interface CodexSessionConstruction {
   cwd: string;
   instructionMode: "append" | "replace";
   dynamicTools: DynamicTool[] | undefined;
+  mcpServers: SessionMcpServer[] | undefined;
 }
 
 interface CodexBridgeSession {
@@ -465,6 +488,9 @@ function releaseSession(session: CodexBridgeSession): Promise<void> {
     return session.releasePromise;
   }
   session.closing = true;
+  // Fail closed any native-tool decision still in flight for this session.
+  nativeToolDecisionTracker.cancel(session);
+  nativeToolSettledReporter.forget(session.bbThreadId);
   if (sessionsByBbThreadId.get(session.bbThreadId) === session) {
     sessionsByBbThreadId.delete(session.bbThreadId);
   }
@@ -624,6 +650,47 @@ function toProviderRuntimeEvent(
   } as ProviderRuntimeEvent;
 }
 
+const codexCompletedToolItemSchema = z.object({
+  item: z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("commandExecution"),
+      id: z.string().min(1),
+      status: z.string(),
+      aggregatedOutput: z.string().nullable().optional(),
+      exitCode: z.number().int().nullable().optional(),
+    }).passthrough(),
+    z.object({
+      type: z.literal("fileChange"),
+      id: z.string().min(1),
+      status: z.string(),
+    }).passthrough(),
+  ]),
+}).passthrough();
+
+// Reports a finished command / file-change item. Never throws or logs the output.
+function reportCodexItemSettled(session: CodexBridgeSession, params: unknown): void {
+  const parsed = codexCompletedToolItemSchema.safeParse(params);
+  const providerThreadId = session.codexThreadId;
+  if (!parsed.success || !providerThreadId) return;
+  const item = parsed.data.item;
+  const isCommand = item.type === "commandExecution";
+  const exitCode = isCommand ? item.exitCode : undefined;
+  const state = item.status === "declined"
+    ? "cancelled"
+    : item.status === "failed" || (typeof exitCode === "number" && exitCode !== 0)
+      ? "failed"
+      : "succeeded";
+  nativeToolSettledReporter.settled({
+    threadId: session.bbThreadId,
+    providerThreadId,
+    callId: item.id,
+    toolName: codexSubjectToolName(isCommand ? "command" : "file_change"),
+    state,
+    ...(typeof exitCode === "number" ? { exitCode } : {}),
+    ...(isCommand ? { output: item.aggregatedOutput ?? undefined } : {}),
+  });
+}
+
 function handleChildNotification(
   bbThreadId: string,
   serial: number,
@@ -634,6 +701,7 @@ function handleChildNotification(
   if (!session) {
     return;
   }
+  if (method === "item/completed") reportCodexItemSettled(session, params);
   if (method === "thread/started") {
     const parsed = codexThreadStartedNotificationSchema.safeParse(params);
     if (parsed.success) {
@@ -679,6 +747,119 @@ const codexChildToolCallParamsSchema = z.object({
   tool: z.string().min(1),
   arguments: z.unknown(),
 });
+
+// Codex approval subjects the native-tool veto governs. permission_grant and
+// user_question keep the human interaction path (a permission grant is a user
+// decision, not a tool-before-native hook point; see research-codex-modern-tool-classes).
+const NATIVE_TOOL_VETO_CODEX_SUBJECTS = new Set(["command", "file_change"]);
+
+// Translate an approval subject into the native-tool toolName the policy decides on.
+function codexSubjectToolName(subjectKind: string): string {
+  return subjectKind === "file_change" ? "codex.file_change" : "codex.command";
+}
+
+// Synthesize the codex wire response for a policy decision WITHOUT a human prompt.
+// allow -> allow_once (always an available decision for these subjects, no grant);
+// deny -> deny. Reuses buildCodexInteractiveResult so the encoder stays single-source.
+function buildCodexPolicyInteractiveResponse(
+  request: DecodedInteractiveRequest,
+  decision: NativeToolDecision,
+): ReturnType<typeof buildCodexInteractiveResult> {
+  const resolution =
+    decision.action === "allow"
+      ? ({ decision: "allow_once", grantedPermissions: null } as const)
+      : ({ decision: "deny" } as const);
+  return buildCodexInteractiveResult(request.payload, { status: "fulfilled", value: resolution });
+}
+
+// Human interaction path for a decoded request (prompt via the runtime).
+function routeCodexHumanInteraction(
+  session: CodexBridgeSession,
+  request: DecodedInteractiveRequest,
+  responder: CodexAppServerRequestResponder,
+): void {
+  void sendRuntimeRequest(BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest, {
+    providerThreadId: session.codexThreadId ?? request.providerThreadId,
+    threadId: session.bbThreadId,
+    turnId: request.turnId,
+    payload: request.payload,
+    providerNativeIds: true,
+  })
+    .then(
+      (value) => responder.result(buildCodexInteractiveResult(request.payload, { status: "fulfilled", value })),
+      (reason: unknown) => responder.result(buildCodexInteractiveResult(request.payload, { status: "rejected", reason })),
+    )
+    .catch((error: unknown) => {
+      responder.error(
+        BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+}
+
+// Route a decoded command/file-change approval through the native-tool veto.
+// On allow, codex proceeds with no human prompt (danger-full-access UX preserved);
+// on deny/timeout/transport-failure the tracker fails closed and the tool is refused.
+function routeCodexNativeToolPolicy(
+  session: CodexBridgeSession,
+  request: DecodedInteractiveRequest,
+  responder: CodexAppServerRequestResponder,
+): void {
+  if (request.payload.kind !== "approval") {
+    responder.error(
+      BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+      "native-tool policy routing requires an approval payload",
+    );
+    return;
+  }
+  const subject = request.payload.subject;
+  void nativeToolDecisionTracker
+    .decide(
+      {
+        threadId: session.bbThreadId,
+        providerThreadId: session.codexThreadId ?? request.providerThreadId,
+        callId: subject.itemId,
+        toolName: codexSubjectToolName(subject.kind),
+        input: request.payload as unknown as Record<string, unknown>,
+      },
+      session,
+    )
+    .then((decision) => {
+      // The session may have been torn down while the decision was in flight;
+      // fail closed rather than resolving a request on a dead session.
+      if (
+        currentSession(session.bbThreadId, session.serial) !== session ||
+        session.closing
+      ) {
+        responder.error(
+          BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+          "native-tool policy session unavailable",
+        );
+        return;
+      }
+      // A policy allow only replaces the human prompt under danger-full-access,
+      // where the sandbox grants everything anyway. Under workspace-write the
+      // approval is a real permission boundary: an allow means "no objection",
+      // so the human still decides. A deny always refuses.
+      if (
+        decision.action === "allow" &&
+        session.turnPermissionSettings.sandbox !== "danger-full-access"
+      ) {
+        routeCodexHumanInteraction(session, request, responder);
+        return;
+      }
+      if (decision.action === "allow") {
+        nativeToolSettledReporter.started(session.bbThreadId, subject.itemId);
+      }
+      responder.result(buildCodexPolicyInteractiveResponse(request, decision));
+    })
+    .catch((error: unknown) => {
+      responder.error(
+        BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+}
 
 function handleChildRequest(
   bbThreadId: string,
@@ -754,23 +935,18 @@ function handleChildRequest(
   }
   const request = decoded;
 
-  void sendRuntimeRequest(BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest, {
-    providerThreadId: session.codexThreadId ?? request.providerThreadId,
-    threadId: session.bbThreadId,
-    turnId: request.turnId,
-    payload: request.payload,
-    providerNativeIds: true,
-  })
-    .then(
-      (value) => responder.result(buildCodexInteractiveResult(request.payload, { status: "fulfilled", value })),
-      (reason: unknown) => responder.result(buildCodexInteractiveResult(request.payload, { status: "rejected", reason })),
-    )
-    .catch((error: unknown) => {
-      responder.error(
-        BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
-        error instanceof Error ? error.message : String(error),
-      );
-    });
+  // OBL-018: command + file-change approvals are a native-tool veto point, not a
+  // human prompt. Route them through the policy; permission_grant + user_question
+  // still go to the human interaction path below.
+  if (
+    request.payload.kind === "approval" &&
+    NATIVE_TOOL_VETO_CODEX_SUBJECTS.has(request.payload.subject.kind)
+  ) {
+    routeCodexNativeToolPolicy(session, request, responder);
+    return;
+  }
+
+  routeCodexHumanInteraction(session, request, responder);
 }
 
 function buildMacOsPermissionItemDelta(
@@ -949,12 +1125,22 @@ interface ConstructThreadSessionArgs {
   options: BridgeExecutionOptions;
   instructionMode: "append" | "replace";
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
   request: CodexSessionConstructionRequest;
 }
 
 interface ConstructedCodexSession {
   session: CodexBridgeSession;
   codexThreadId: string;
+}
+
+function withPluginMcpConfig(
+  config: { [key in string]?: JsonValue } | null | undefined,
+  servers: SessionMcpServer[] | undefined,
+): { [key in string]?: JsonValue } | undefined {
+  const plugin = buildCodexMcpServerConfig(servers);
+  if (Object.keys(plugin).length === 0) return config ?? undefined;
+  return { ...(config ?? {}), ...plugin };
 }
 
 async function constructThreadSession(
@@ -987,6 +1173,7 @@ async function constructThreadSession(
       cwd: args.cwd,
       instructionMode: args.instructionMode,
       dynamicTools: args.dynamicTools,
+      mcpServers: args.mcpServers,
     },
     constructionSignature: constructionSignature(
       args.cwd,
@@ -1060,7 +1247,7 @@ async function constructThreadSession(
       ...instructionOverrides,
       model: decoded.sessionOptions.model ?? undefined,
       serviceTier: toCodexServiceTier(decoded.sessionOptions.serviceTier),
-      config: preparedGitRoots.config ?? undefined,
+      config: withPluginMcpConfig(preparedGitRoots.config, args.mcpServers),
       ...(dynamicTools && dynamicTools.length > 0 ? { dynamicTools } : {}),
     };
 
@@ -1191,6 +1378,9 @@ async function rebuildThreadSession(
       instructionMode: session.construction.instructionMode,
       ...(session.construction.dynamicTools !== undefined
         ? { dynamicTools: session.construction.dynamicTools }
+        : {}),
+      ...(session.construction.mcpServers !== undefined
+        ? { mcpServers: session.construction.mcpServers }
         : {}),
       request: { kind: "resume", providerThreadId: codexThreadId },
     });
@@ -1385,6 +1575,9 @@ async function handleThreadConstruction(
       instructionMode: params.instructionMode,
       ...(params.dynamicTools !== undefined
         ? { dynamicTools: params.dynamicTools }
+        : {}),
+      ...(params.mcpServers !== undefined
+        ? { mcpServers: params.mcpServers }
         : {}),
       request,
     });
@@ -1957,6 +2150,9 @@ async function handleRequest(
 
 function handleParsedMessage(parsed: unknown): void {
   const response = decodeBridgeJsonRpcResponse(parsed);
+  if (response && nativeToolDecisionTracker.handle(response)) {
+    return;
+  }
   if (response && typeof response.id === "number") {
     const pending = pendingRuntimeRequests.get(response.id);
     if (pending) {

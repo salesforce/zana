@@ -1,0 +1,12 @@
+{
+  "name": "zcc-plugin-tool-approval-probe",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "zcc": ">=1.0.0", "zccPluginSdk": ">=0.1.0" },
+  "zcc": {
+    "name": "Tool Approval Probe",
+    "description": "Test-only server tool exercising main-owned approval proofs.",
+    "branding": { "icon": "FlaskConical" },
+    "server": "./server.ts"
+  }
+}
