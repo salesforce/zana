@@ -235,7 +235,8 @@ export async function createSquadMemberConversation(
         persistBindingMetadata(ctx, thread.id, { squadBinding: request.bindingId, squadGeneration: request.generation,
           squadHost: preflight.hostId, squadEnvironmentPath: environment.path, squadCreateFingerprint: fingerprint,
           squadRole: request.role, ...(request.executionId ? { squadExecution: request.executionId } : {}),
-          automatedSkillIds });
+          automatedSkillIds,
+          ...(request.allowedSkillNames !== undefined ? { allowedSkillNames: request.allowedSkillNames } : {}) });
       }
     });
     if (thread.id !== request.bindingId) throw new Error('squad runtime did not preserve reserved binding UUID');

@@ -95,6 +95,7 @@ export const HARNESS_ROUTING_MIGRATION_INVENTORY: readonly HarnessRoutingMigrati
     'modelLevel', 'executionState', 'harnessRouting'
   ]),
   ...entries('personas', 'already-canonical', 'Retain portable persona reasoning effort unchanged', ['reasoningLevel']),
+  ...entries('personas', 'already-canonical', 'Retain portable persona skill allowlist unchanged', ['skills']),
   ...entries('personas', 'already-canonical', 'Retain portable persona facet unchanged', [
     'appendSystemPrompt', 'allowedTools', 'deniedTools', 'addDirs'
   ]),
@@ -110,6 +111,7 @@ export const HARNESS_ROUTING_MIGRATION_INVENTORY: readonly HarnessRoutingMigrati
   ...entries('teams', 'already-canonical', 'Team persona references remain canonical', [
     'orchestratorPersonaId', 'slots[].personaId'
   ]),
+  ...entries('teams', 'already-canonical', 'Team lean-worker preset remains canonical', ['leanWorkers']),
   ...entries('extension-personas', 'ephemeral', 'Extension persona registry is in-memory and has no durable migration writer', ['registration']),
   ...entries('extension-teams', 'ephemeral', 'Extension team registry is in-memory and has no durable migration writer', ['registration'])
 ];

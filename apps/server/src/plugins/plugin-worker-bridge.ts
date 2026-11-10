@@ -287,7 +287,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
       const failed = (cause: unknown) => {
         // Quiescence is unproven: invalidate admission permanently, never report success.
         Atomics.store(new Int32Array(gate), 0, 2);
-        fault ??= Object.assign(new Error(`Plugin worker termination failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }), { code: 'PLUGIN_TERMINATION_FAILED' });
+        fault = Object.assign(new Error(`Plugin worker termination failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }), { code: 'PLUGIN_TERMINATION_FAILED' });
         stopped = true;
         console.error('[plugin-worker-bridge] Worker termination failed', { pluginId, callId, functionId, cause });
         reject(fault);
@@ -299,13 +299,20 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
   }
   function invokeSync(fn: number, args: any[]): any {
     if (committing) throw new Error('Plugin commit callback cannot call host APIs');
-    if (stopped || !shared) throw new Error('Plugin runtime stopped');
+    if (stopped || !shared) throw fault ?? new Error('Plugin runtime stopped');
     const header = new Int32Array(shared, 0, 2);
     Atomics.store(header, 0, 0);
     port.postMessage({ kind: 'api-wait', waiting: true }, []);
     try {
     port.postMessage({ kind: 'call', fn, args: encode(args), shared }, []);
-    if (Atomics.wait(header, 0, 0, 10_000) === 'timed-out') { stopped = true; throw new Error('Plugin API call timed out'); }
+    if (Atomics.wait(header, 0, 0, 10_000) === 'timed-out') {
+      const error = new Error('Plugin API call timed out');
+      dispose(error);
+      // Heartbeats can continue after this timeout. The parent must retire the
+      // unusable runtime even if plugin code catches the original exception.
+      port.postMessage({ kind: 'failure', message: error.message }, []);
+      throw error;
+    }
     const bytes = new Uint8Array(shared, 8, Atomics.load(header, 1));
     const result = JSON.parse(Buffer.from(bytes).toString('utf8'));
     if (result.error) throw errorFrom(result.error);
@@ -384,24 +391,26 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
     } catch (error) { reply(undefined, error); }
   };
   port.on('message', onMessage);
+  function dispose(error = new Error('Plugin runtime stopped')) {
+    fault ??= error;
+    stopped = true; port.off('message', onMessage);
+    remoteResults.clear();
+    for (const call of [...pending.values()]) call.cancel(error);
+    pending.clear(); functions.clear();
+    temporaryIds.clear();
+    for (const remove of removeFunctionListeners.values()) remove();
+    removeFunctionListeners.clear();
+    for (const remove of removeSignalListeners.values()) remove();
+    removeSignalListeners.clear(); signalRefs.clear();
+    for (const controller of signals.values()) controller.abort();
+    signals.clear();
+  }
   return {
     encode, decode,
     get fault() { return fault; },
     get activeCommits() { return activeCommits; },
     get retainedFunctions() { return functions.size; },
     isBusy: () => pending.size > 0 || remoteResults.size > 0,
-    dispose(error = new Error('Plugin runtime stopped')) {
-      stopped = true; port.off('message', onMessage);
-      remoteResults.clear();
-      for (const call of [...pending.values()]) call.cancel(error);
-      pending.clear(); functions.clear();
-      temporaryIds.clear();
-      for (const remove of removeFunctionListeners.values()) remove();
-      removeFunctionListeners.clear();
-      for (const remove of removeSignalListeners.values()) remove();
-      removeSignalListeners.clear(); signalRefs.clear();
-      for (const controller of signals.values()) controller.abort();
-      signals.clear();
-    }
+    dispose
   };
 }

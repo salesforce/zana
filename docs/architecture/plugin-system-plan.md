@@ -27,6 +27,38 @@ aspirational slot behavior without citing the file that implements it, and no
 
 ## 1. Where we already are
 
+### Background activity extension (2026-11-06)
+
+The optional sound implementation lives in `plugins/agent-sounds/` (Sound
+Studio); core contains no sound packs or plugin-specific playback policy. Core supplies two
+generic, optional `PluginContentScriptContext` callbacks:
+`experimental_observeAgents` and `experimental_onSignal`.
+`apps/app/src/plugins/agent-activity.ts` projects up to 1,000 agent IDs,
+thread/CLI kinds and display states from existing stores; it exposes no prompt
+or output content and starts no new poller. `PluginContentScriptsHost.tsx`
+provides the callbacks, confines realtime listeners to the owning plugin, and
+releases subscriptions on abort. The public contract and bundled authoring
+types live in `packages/plugin-sdk/` and remain experimental.
+
+Sound Studio owns preferences, validated data-only audio packs, event policy,
+playback and its configuration UI. Any independent plugin can consume the
+same activity API and supply different sounds or behavior without editing
+core. A data pack replaces clips; a fork/replacement plugin changes rules.
+The notificationSoundProvider slot now gives these plugins one Settings home
+and exclusive selection. Core coordinates activation and gates built-in chimes;
+providers retain their policy and audio implementation. Legacy independent
+content scripts must migrate to participate.
+
+Effects mount per window, so the plugin elects one player using a per-plugin
+Chromium Web Lock only after the main-shell activity snapshot becomes ready.
+Scoped windows stay unready. The first ready snapshot is a silent baseline;
+routine roster refreshes retain readiness after hydration. Disable/reload
+aborts subscriptions and releases pending timers, audio and lock ownership.
+Older hosts omit the callbacks; Sound Studio shows an update message and keeps
+manual imports/previews available. See
+[the SDK guide](../extensions-sdk-reference.md#background-activity-and-sound-plugins)
+and `e2e/sound-studio-plugin.spec.ts` for contract and built-Electron proof.
+
 More is built than Section 5's four bullets suggest. In order of the pipeline:
 
 **Manifest & id (`packages/domain/src/plugin-manifest.ts`, `plugin-id.ts`).**
@@ -274,3 +306,16 @@ per-slot error boundaries") describes work that is done; it does not mention
 that nothing calls it yet. Item 3 ("Marketplace is discovery + provenance
 only") matches `marketplace-store.ts`/`addMarketplace` as read. Item 4 has not
 been investigated in this pass.
+
+
+### Notification sounds in Settings
+
+Sound providers contribute controls and a background lifecycle through the generic
+notificationSoundProvider slot. Settings → Notifications owns the master switch
+and one selected pluginId/slotId reference. Only the selected, enabled provider
+mounts; switch/disable/reload/uninstall abort its signal. Missing providers fail
+silent, with no fallback. Built-in chimes share the same selection gate in main.
+Plugins retain their own imports, volume, event rules and audio policy. Configure
+links inspect without selecting or enabling. Provider changes explicitly leave
+playback off. The core never names concrete plugins. General content scripts
+remain independent; existing sound players must migrate into the provider slot.

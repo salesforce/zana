@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import zanaLogo from '../../assets/zana-favicon.svg';
 const api = vi.hoisted(() => ({
   get: vi.fn(), set: vi.fn(), changed: vi.fn(), json: vi.fn(), off: vi.fn(), list: vi.fn(), add: vi.fn(), refresh: vi.fn(),
   plugins: vi.fn(), appsChanged: vi.fn(), navigate: vi.fn(), ui: vi.fn(), desktop: true, scoped: false, configLoaded: true,
@@ -36,6 +37,10 @@ afterEach(cleanup);
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole('button', { name }));
 it('keeps the welcome screen focused on the audience choice and one skip action', () => {
   render(<Onboarding profile={profile} />);
+  const logo = screen.getByRole('img', { name: 'Zana logo' });
+  expect(logo.getAttribute('src')).toBe(zanaLogo);
+  expect(logo.getAttribute('width')).toBe('40');
+  expect(logo.getAttribute('height')).toBe('40');
   expect(screen.getAllByRole('button', { name: 'Skip for now' })).toHaveLength(1);
   expect(screen.queryByRole('button', { name: 'Change setup choice' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Finish later' })).toBeNull();

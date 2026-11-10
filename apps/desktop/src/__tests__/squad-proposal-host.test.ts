@@ -159,6 +159,55 @@ describe('squadProposalMcpDeps', () => {
   });
 });
 
+describe('squad_plan_check tier fit (host planTierFit)', () => {
+  type Check = (route: { projectId: string }, input: { text: string; teamId?: string }) => Promise<any>;
+  const checkPlan = () => (host.squadProposalMcpDeps() as { checkSquadPlan: Check }).checkSquadPlan;
+  const PLAN = `## Execution Plan
+
+### only-step: Do it <!-- executable-step -->
+
+- **Depends on:** None
+- **Execution class:** Routine
+- **Mode:** Mutating
+- **Read scope:** None
+- **Write scope:** \`a.txt\`
+- **Excludes:** None
+- **Work:** Write a.txt.
+- **Verification:** Read a.txt.
+- **Completion criteria:** File exists.
+- **Stop conditions:** Cannot write.
+- **Outputs / handoff:** Content.
+`;
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+  const knownTeam = (workerModel: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'squad-host-tier-'));
+    dirs.push(dir);
+    h.projects = [{ id: 'p1', name: 'Proj', path: dir }];
+    h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'worker', quantity: 1 }] }];
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude' }, { id: 'worker', name: 'Worker', baseProfile: 'claude', model: workerModel }];
+  };
+
+  it('adds no tierFit for an unknown team id', async () => {
+    const result = await checkPlan()({ projectId: 'p1' }, { text: PLAN, teamId: 'ghost' });
+    expect(result).toMatchObject({ ok: true, value: { ok: true } });
+    expect(result.value).not.toHaveProperty('tierFit');
+  });
+
+  it('adds no tierFit without a teamId', async () => {
+    knownTeam('opus');
+    const result = await checkPlan()({ projectId: 'p1' }, { text: PLAN });
+    expect(result).toMatchObject({ ok: true, value: { ok: true } });
+    expect(result.value).not.toHaveProperty('tierFit');
+  });
+
+  it('flags an over-tiered unit against a known Squad roster while the check stays ok', async () => {
+    knownTeam('opus');
+    const result = await checkPlan()({ projectId: 'p1' }, { text: PLAN, teamId: 'team1' });
+    expect(result).toMatchObject({ ok: true, value: { ok: true, tierFit: { findings: [{ unitId: 'only-step', kind: 'over-tiered' }] } } });
+  });
+});
+
 describe('list_teams canInferPlan', () => {
   it('is true only when the orchestrator persona can write files', () => {
     expect(host.listTeamSummariesForMcp()).toMatchObject([{ id: 'team1', canInferPlan: true }]);

@@ -47,6 +47,12 @@ describe('provider-claude-code plugin', () => {
     expect(runtimeHost.harness.providers.map((row) => row.id)).toEqual(
       typedHost.harness.providers.map((row) => row.id)
     );
+    const nativeRoots = ({ experimental_nativeSkillRoots, experimental_nativeCommandRoots, experimental_resolvesNativeRoots }: (typeof typedHost.harness.providers)[number]) => ({
+      experimental_nativeSkillRoots, experimental_nativeCommandRoots, experimental_resolvesNativeRoots
+    });
+    expect(runtimeHost.harness.providers.map(nativeRoots)).toEqual(
+      typedHost.harness.providers.map(nativeRoots)
+    );
     await typedHost.harness.dispose();
     await runtimeHost.harness.dispose();
   });

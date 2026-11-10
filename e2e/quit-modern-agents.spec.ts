@@ -40,3 +40,39 @@ test('an idle desktop quits without a confirmation', async ({ app }) => {
   await app.electron.evaluate(({ app }) => app.quit());
   await closed;
 });
+
+test('quits after the dev launcher disconnects its output pipes', async ({ app }) => {
+  await stubNativeDialogs(app.electron, [0]);
+  // Disconnect the parent's read ends while keeping Playwright's inspector alive.
+  // This reproduces a dev app whose launcher has exited, without touching a live instance.
+  const child = app.electron.process();
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  const errors = await app.electron.evaluate(async () => {
+    const failures: string[] = [];
+    const monitor = (error: Error) => { failures.push(error.message); };
+    process.on('uncaughtExceptionMonitor', monitor);
+    try {
+      // A runner may retain duplicate pipe handles. Also deliver the observed
+      // native error so this proves bootstrap installed both guards in Electron.
+      for (const stream of [process.stdout, process.stderr]) {
+        stream.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+      }
+      process.stdout.write('direct disconnected stdout\n');
+      process.stderr.write('direct disconnected stderr\n');
+      console.log('disconnected dev stdout');
+      console.warn('disconnected dev stderr');
+      console.error('disconnected dev error');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return failures;
+    } finally {
+      process.off('uncaughtExceptionMonitor', monitor);
+    }
+  });
+  expect(errors).toEqual([]);
+  const closed = app.electron.waitForEvent('close');
+  // Playwright normally reads the debugger-disconnect notice from stderr.
+  // With stderr closed, close() explicitly detaches its inspector after app.quit().
+  await app.electron.close();
+  await closed;
+});

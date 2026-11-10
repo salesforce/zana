@@ -112,6 +112,35 @@ it('skips desktop invalidation for a standalone server', async () => {
   finally { vi.unstubAllEnvs(); }
 });
 
+it('discovers scoped CLI peers and forwards signed-origin peer delivery through main', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-peer-ops-'));
+  const socketPath = join(dir, 's');
+  const calls: any[] = [];
+  let fail = false;
+  const server = createServer(socket => socket.once('data', data => {
+    const call = JSON.parse(data.toString()); calls.push(call);
+    socket.end(JSON.stringify(fail ? { ok: false, code: 'SEND_FAILED', message: 'gone' } : { ok: true, value: call.op === 'agent.list' ? [
+      { sessionId: 's1', projectId: 'p1', displayName: 'Title', handle: 'reviewer', role: 'QA', capabilities: ['tests'], state: 'working' },
+      { sessionId: 's2', projectId: 'p2' }, { sessionId: 's3', projectId: 'p1', teamLaunchId: 'private-squad' }
+    ] : { id: 'm1', delivered: false } }) + '\n');
+  }));
+  try {
+    await new Promise<void>(resolve => server.listen(socketPath, resolve));
+    writeFileSync(join(dir, 'control.token'), JSON.stringify({ token: 'fixture', nonce: 'nonce', socket: socketPath }));
+    const ops = createCliAgentOpsViaControl(dir);
+    expect(await ops.peers!('p1')).toEqual([{ sessionId: 's1', projectId: 'p1', kind: 'cli-agent', displayName: 'Title', handle: 'reviewer', role: 'QA', capabilities: ['tests'], status: 'working' }]);
+    expect(await ops.peers!()).toEqual(expect.arrayContaining([expect.objectContaining({ sessionId: 's2', displayName: 's2', status: 'unknown' })]));
+    const input = { to: 's1', projectId: 'p1', fromSessionId: 'thread-1', fromHandle: 'Builder', message: 'review' };
+    expect(await ops.sendPeer!(input)).toEqual({ ok: true, id: 'm1', delivered: false });
+    expect(calls.at(-1)).toMatchObject({ op: 'agent.peer.send', args: input });
+    fail = true;
+    expect(await ops.peers!()).toEqual([]);
+    expect(await ops.sendPeer!(input)).toEqual({ ok: false, error: 'gone' });
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve())); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 it.each([true, false])('awaits desktop model invalidation and reports failure (ok=%s)', async (ok) => {
   const dir = mkdtempSync(join(tmpdir(), 'zcc-mc-'));
   const socketPath = join(dir, 's');

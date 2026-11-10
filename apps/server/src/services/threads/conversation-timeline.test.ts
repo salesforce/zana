@@ -173,7 +173,8 @@ describe('conversationTimeline', () => {
 
   it.each([
     ['/data/attachments/proj-1/shot.png', false],
-    ['/data/artifacts/run/shot.png', true]
+    ['/data/artifacts/run/shot.png', true],
+    ['/data/thread-storage/11111111-1111-4111-8111-111111111111/shot.png', true]
   ])('offers Preview for authorized local reads of %s', (attachment, withoutProject) => {
     const threadId = '11111111-1111-4111-8111-111111111111';
     const readIntent = (projectId: string | null) => {

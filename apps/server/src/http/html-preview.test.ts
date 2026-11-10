@@ -82,6 +82,8 @@ describe('HTML preview HTTP', () => {
     await mkdir(join(root, 'thread-storage/t1'), { recursive: true });
     await writeFile(join(root, 'thread-storage/t1/out.htm'), '<p>stored</p>');
     expect(await (await fetch(url('out.htm', { threadId: 't1', source: 'thread-storage' }))).text()).toBe('<p>stored</p>');
+    vi.mocked(getEnvironment).mockReturnValue(null);
+    expect(await (await fetch(url(join(root, 'thread-storage/t1/out.htm'), { threadId: 't1' }))).text()).toBe('<p>stored</p>');
     expect(rpc).not.toHaveBeenCalled();
   });
 

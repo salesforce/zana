@@ -293,8 +293,20 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     id: 'settings',
     title: 'Configure',
     fixtureKind: 'spatial',
-    blurb: 'The Plugins hub detail for one install.',
+    blurb: 'Plugin configuration, with sound providers in app Settings.',
     surfaces: [
+      {
+        id: 'notificationSoundProvider',
+        title: 'Notification sound provider',
+        summary: 'Plugin-owned controls in Settings → Notifications.',
+        apiSymbols: ['PluginAppSlots.notificationSoundProvider'],
+        bullets: [
+          'Register id, title, optional description, component and mount together.',
+          'Only the selected provider mounts while the host master is on. Switching providers leaves playback off.',
+          'Configure links inspect settings without enabling audio. Return a disposer; honor signal abort and elect one player across main windows.'
+        ],
+        firstParty: ['Sound Studio', 'Warcraft Voices']
+      },
       {
         id: 'settingsSection',
         title: 'Settings section',
@@ -410,9 +422,17 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         id: 'contentScripts',
         title: 'Content scripts',
         tagline: 'Per-window mount/dispose.',
-        summary: 'Run host-side DOM work without a panel.',
-        bullets: ['Registered via `app.contentScripts.register`.'],
-        apiSymbols: ['PluginAppContentScripts.register']
+        summary: 'Run renderer subscriptions and effects while the plugin page is closed.',
+        bullets: [
+          'Register `app.contentScripts.register({ id, mount })`. Return a disposer; the context `signal` aborts on disable, reload or shutdown.',
+          'Feature-detect `context.experimental_observeAgents`: an initial snapshot and changes for up to 1,000 visible agents, with ID, thread/CLI kind and working/idle/needs-you/unknown state. No prompts or output; idle does not mean success.',
+          'Treat `ready: false` as unavailable and reset transition baselines. Scoped windows remain unready; the first ready snapshot is a silent baseline. The API is absent on older hosts.',
+          '`context.experimental_onSignal(channel, listener)` receives only this plugin\'s realtime channel. Both observers return unsubscribe functions and are released on abort.',
+          'For one effect across main windows, elect an owner with Chromium Web Locks after readiness; release locks, timers and audio on disposal. No extra activity polling is needed.',
+          'Users select their own audio directly in Settings → Notifications, with no plugin required. Sound Studio is an optional forkable example for audio collections and custom playback rules. Register sound players with notificationSoundProvider: Settings → Notifications selects one provider. The provider still owns input priority and its playback rules.'
+        ],
+        apiSymbols: ['PluginAppContentScripts.register', 'PluginContentScriptContext', 'PluginAgentActivitySnapshot'],
+        firstParty: ['Sound Studio']
       },
       {
         id: 'experimental_providerIcon',

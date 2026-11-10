@@ -1668,7 +1668,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
               live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
               await store.upsert(degraded);
               // Schedule the retry before publishing, so the row is never advertised as terminal while a retry is pending.
-              if (error.message === WATCHDOG_FAILURE_MESSAGE && isCurrent(row.id, epoch)) scheduleWatchdogRecovery(row.id);
+              if ((error.message === WATCHDOG_FAILURE_MESSAGE || error.message === 'Plugin API call timed out') && isCurrent(row.id, epoch)) scheduleWatchdogRecovery(row.id);
               refreshToolPolicyInventory();
               if (!isCurrent(row.id, epoch)) return;
               await emitCapabilities();

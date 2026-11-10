@@ -15,6 +15,7 @@ import { ScopeControl } from '@/components/settings/ScopeControl';
 import { GlobalTab } from '@/views/settings/GlobalView';
 import { TerminalTab } from '@/views/settings/TerminalSettingsView';
 import { AgentsTab } from '@/views/settings/AgentsSettingsView';
+import { NotificationsSettingsView } from './NotificationsSettingsView.js';
 import { HarnessTab } from '@/views/settings/HarnessView';
 import { EditorTab } from '@/views/settings/EditorView';
 import { ExperimentalTab } from '@/views/settings/ExperimentalView';
@@ -98,6 +99,11 @@ export function SettingsView() {
   const snapshot = useMemo(() => buildSettingsSnapshot({ config, project: null, machines: null }), [config]);
   const navigate = useNavigate();
   const location = useLocation();
+  useEffect(() => {
+    if (tab === 'agents' && (/^#(?:agent-sounds|agents\.sound-|agents\.agent-sounds)/).test(location.hash)) {
+      void navigate({ pathname: '/settings/notifications', search: '?provider=builtin', hash: location.hash }, { replace: true });
+    }
+  }, [tab, location.hash, navigate]);
   const routeRef = useRef({ navigate, location });
   useEffect(() => {
     routeRef.current = { navigate, location };
@@ -295,6 +301,8 @@ export function SettingsView() {
           <KeyboardSettingsSection />
         ) : tab === 'terminal' ? (
           <TerminalTab config={config} onConfigDraft={setConfig} onUpdate={update} />
+        ) : tab === 'notifications' ? (
+          <NotificationsSettingsView config={config} onUpdate={patch => update(patch, { throwOnError: true })} />
         ) : tab === 'agents' ? (
           <AgentsTab config={config} onConfigDraft={setConfig} onUpdate={update} />
         ) : tab === 'prompts' ? (

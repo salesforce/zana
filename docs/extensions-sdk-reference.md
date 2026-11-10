@@ -154,6 +154,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Configure
 
+- `notificationSoundProvider` — controls in Settings → Notifications, plus an exclusive host-gated background audio lifecycle.
 - `settingsSection` — React settings UI on the plugin’s Plugins hub detail (Configure)
 
 ### Platform
@@ -167,12 +168,137 @@ Headless (no pixels), plus picker chrome:
 - `background` — `zcc.background.service` / `schedule`
 - `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
 - `approvals` — host-signed approvals (experimental): `experimental_requestApproval(pluginId, { binding, title, summary?, details?, confirmLabel?, tone? })` from `@zana-ai/zcc-plugin-sdk/app` has desktop main draw its own sandboxed sheet and sign the binding it showed; the server calls `zcc.ui.experimental_consumeApproval({ token, binding })` with a binding rebuilt from its own sources before acting. One plugin, one binding (`action`, `target`, `targetLabel`, `subject`, `revision?`, `confirmText?`), one use, five minutes. `confirmText` must be typed. Web, mobile and headless return `{ approved: false, reason: 'unavailable' }`. Agent-initiated actions keep `sdk.confirm`. Tests: `harness.approve(binding)`.
-- `contentScripts` — `contentScripts.register`
+- `contentScripts` — `contentScripts.register`; background renderer subscriptions, including optional generic agent activity and own-plugin realtime signals. See [Background activity and sound plugins](#background-activity-and-sound-plugins).
 - `experimental_providerIcon` — picker glyph for a provider id
 
 Registrations replace wholesale per plugin id. Each carries a `generation` used
 as the React remount key. Wrap UI in `PluginSlotBoundary`. Live-reload with
 `zcc plugin dev`.
+
+## Background activity and sound plugins
+
+Register a content script when an effect must run while the plugin page is
+closed. It mounts per window and plugin generation. Its
+`PluginContentScriptContext` contains `pluginId`, `generation`, `signal`, and
+these optional, experimental methods:
+
+| Method | Contract |
+| --- | --- |
+| `experimental_observeAgents(listener)` | Initial `PluginAgentActivitySnapshot`, then deduplicated changes from the main shell's existing stores. At most 1,000 visible agents; each has `id`, `kind: 'thread' \| 'cli'`, and `state: 'working' \| 'idle' \| 'needs-you' \| 'unknown'`. No prompts, tool arguments or output. |
+| `experimental_onSignal(channel, listener)` | Receives payloads published on this plugin's own realtime channel, useful for reloading saved preferences. |
+
+Both return an unsubscribe function and are also released when the script's
+`signal` aborts. Return a disposer for resources you create: timers, audio
+contexts and any cross-window lock. Disable, reload, generation replacement
+and shutdown dispose the script. Feature-detect the methods because older
+hosts omit them; automatic activity needs a host containing these APIs.
+
+Plugin-app RPC requests accept up to 3 MiB of encoded JSON. Account for base64
+overhead when transporting binary data, and impose smaller per-file and stored
+data quotas in the plugin. Sound Studio's pair of 1 MiB clips fits this bound.
+
+`ready: false` means unavailable: reset the transition baseline and cancel
+pending notifications. Project, thread and detached plugin windows remain
+unready. Seed the first ready snapshot silently, then detect changes; do not
+replay existing idle or needs-you states at startup. Readiness remains true
+through routine roster refreshes after initial hydration. Treat `unknown` as
+uncertain and idle as a display state, never proof of task success. Hidden or
+archived threads and shell, headless, scheduled or exited CLI sessions are
+excluded. The host starts no additional activity poller for this API.
+
+This example observes new input requests without playing audio:
+
+```ts
+import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
+
+export default definePluginApp(app => {
+  app.contentScripts.register({
+    id: 'activity',
+    mount(context) {
+      if (!context.experimental_observeAgents) return;
+      let previous = new Map<string, string>();
+      return context.experimental_observeAgents(snapshot => {
+        if (!snapshot.ready) { previous.clear(); return; }
+        const next = new Map<string, string>();
+        for (const agent of snapshot.agents) {
+          const key = `${agent.kind}:${agent.id}`;
+          next.set(key, agent.state);
+          if (previous.has(key) && previous.get(key) !== 'needs-you' && agent.state === 'needs-you') {
+            console.info('Agent needs input', key);
+          }
+        }
+        previous = next;
+      });
+    }
+  });
+});
+```
+
+### Replacing sounds or sound behavior
+
+**Choose your own audio:** Settings → Notifications → Chimes & custom audio
+lets users select an MP3, WAV, or OGG for each event, with previews and no plugin
+required. Native main selects and copies files; the renderer never supplies a
+playback path. Completed turns and idle are separate notifications.
+
+**Optional collections:** import audio or an OpenPeon pack into Sound Studio.
+Packs are data only; they do not execute hooks or change the plugin's rules.
+
+**Change behavior:** fork Sound Studio or create an independent plugin using
+the activity API. The example lives at `plugins/agent-sounds/`: `policy.ts`
+owns transitions, stability and cooldowns, `player.ts` owns playback, and
+`server.ts` validates and persists packs. Its README covers installation,
+limits and customization. The plugin imports only the public SDK and React;
+it needs no core renderer imports or daemon credentials.
+
+### Notification sound providers
+
+Register the controls and background runtime together:
+
+```tsx
+app.slots.notificationSoundProvider({
+  id: 'voice',
+  title: 'My voices',
+  description: 'Custom clips and notification rules.',
+  component: VoiceSettings, // receives { pluginId }
+  mount: startVoicePlayer   // receives PluginContentScriptContext; returns disposer
+});
+```
+
+The host lists enabled plugins' providers under **Settings → Notifications → Sounds**.
+The provider picker searches titles and descriptions and displays one provider's
+settings at a time. Use a clear title and short description so users can find it.
+It mounts only the selected provider while the master sound switch is on, even
+when Settings is closed. The provider owns its own clips, imports, volume,
+event choices, cooldowns and playback policy. Do not add a second master switch
+or register the same player using general contentScripts. Ordinary
+settingsSection still belongs to the plugin's hub Configure page.
+
+The stable provider key is pluginId/slotId. The persisted app settings are
+notificationSoundProvider (builtin by default) and notificationSoundsEnabled.
+Main validates the bounded reference; it grants no paths or credentials.
+Switching providers turns the master off. Configure links and Settings search
+only inspect a provider; they never select it or enable sound. Installed plugin
+details retain installation controls and a **Configure sounds** deep link.
+
+Disable, switch, uninstall, reload and shutdown abort the provider signal and
+release its resources. Missing or failed providers stay silent; the host never
+falls back to another player. Existing built-in chime preferences keep their
+behavior until the master is explicitly set. Existing plugin packs and settings
+remain stored, but users must select their migrated provider and enable the
+host master. New profiles and previously off configurations stay off.
+
+Feature-detect notificationSoundProvider on older hosts; offer settings and
+previews without starting automatic audio when it is absent. The registry
+coordinates providers using this contract, not legacy independent content
+scripts. Migrate those players to participate in selection.
+
+A provider must still elect one owner across main windows using a Chromium
+Web Lock, taken only after a ready activity snapshot. Seed initial activity
+silently, give input requests priority, bound/coalesce queues, and release
+timers/audio on signal abort.
+Verify actual playback, page-closed operation, cross-window deduplication and
+disable/switch cleanup in built Electron. Core contains no concrete plugin ids.
 
 ## Adding an Agents view
 

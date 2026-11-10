@@ -31,9 +31,30 @@ the panel, reload, and verify the open panel updates while saved data survives.
 Agents can use their available computer-use tool to do this directly. A successful
 command does not prove the UI rendered; report any UI checks that could not run.
 
+If a UI bundle fails to load, previously registered pages stay reachable and
+show the error with a **Reload plugin** action. Reload rebuilds local TypeScript
+UI entries and retries the browser import without reinstalling. For a first-load
+failure, open the plugin's details under **Plugins** to see the same recovery
+action. Plugins that only contribute commands or settings do not gain sidebar
+pages when they fail.
+
 Keep `ZCC_SERVER_URL` and `ZCC_DATA_DIR` on the same running instance: normally
 port 8780 and `~/.zcc`; dev uses port 8781 and `~/.zcc-dev`. Diagnose backend
 failures with `zcc plugin logs <id> -n 50`.
+
+## Provider discovery
+
+Provider plugins appear automatically in **Settings → AI Harness → Your AI
+harnesses** when they register providers. The list uses the live registry,
+links each harness to its owning plugin, and shows model and installation
+evidence for the connected machine. A plugin may register several providers;
+plugins without provider registrations do not gain harness rows.
+
+The plugin's **Adds to Zana** section also links its registered harnesses back
+to Settings, alongside its other contributions. Use the provider registration
+API and plugin-owned branding rather than adding a separate UI catalogue.
+Installing or updating a plugin preserves the chosen default. A registration
+alone does not establish that its executable, credentials, or models are ready.
 
 ## package.json
 
@@ -159,6 +180,28 @@ export default definePluginApp((app) => {
 
 Fill the host `.module-panel-slot` (height 100%, own overflow). Shared `gus-*` /
 `zana-*` CSS classes live in core `global.css` and cascade into plugin panels.
+
+## Custom notification sounds
+
+Users can choose their own MP3, WAV, or OGG directly in **Settings → Notifications**
+under **Chimes & custom audio**, independently for completed turns, input requests,
+and optional idle alerts. No plugin or sound-pack creation is required. Settings
+include previews, volume, and fleet-wide quiet spacing.
+
+Plugins are optional: use Sound Studio for imported collections or OpenPeon packs,
+or create themed voices and custom playback rules with a
+`app.slots.notificationSoundProvider({ id, title, component, mount })` registration. The optional
+`context.experimental_observeAgents` API supplies generic agent display states
+while the page is closed; `experimental_onSignal` receives the plugin's own
+preference-change events. Feature-detect both APIs on older hosts.
+
+See [Background activity and sound plugins](./extensions-sdk-reference.md#background-activity-and-sound-plugins)
+for a working observation example, readiness and cleanup rules, and the
+forkable `plugins/agent-sounds/` implementation. Users select one provider in Settings → Notifications → Sounds. The host master
+gates its runtime and suppresses built-in chimes while a plugin is selected.
+Switching providers leaves playback off. Keep provider controls inside this
+Settings surface; use Installed plugins for lifecycle management. Legacy audio
+content scripts must migrate to this registration to participate in selection.
 
 ## Plugin migration: generic platform hooks
 

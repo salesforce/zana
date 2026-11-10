@@ -14,7 +14,7 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import { PERSONA_REASONING_LEVELS, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
+import { PERSONA_REASONING_LEVELS, BUILTIN_PERSONA_SKILLS, sanitizePersonaSkills, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { atomicDurableWrite } from '../harness-routing/storage.js';
@@ -171,6 +171,9 @@ export function sanitizePersona(raw: unknown): Persona | null {
     harnessRouting = sanitized;
   }
 
+  const skills = sanitizePersonaSkills(r.skills);
+  if (skills === null) return null;
+
   const strArray = (v: unknown): string[] | undefined =>
     Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : undefined;
 
@@ -187,6 +190,7 @@ export function sanitizePersona(raw: unknown): Persona | null {
     modelLevel: r.modelLevel,
     ...(r.reasoningLevel !== undefined ? { reasoningLevel: r.reasoningLevel } : {}),
     executionState: r.executionState,
+    ...(skills !== undefined ? { skills } : {}),
     harnessRouting,
     appendSystemPrompt:
       typeof r.appendSystemPrompt === 'string' ? r.appendSystemPrompt : undefined,
@@ -281,7 +285,10 @@ const BUILTIN: Persona[] = [
       'Skip style nits unless they harm readability. Assume the author is competent;',
       'frame findings as questions when unsure. Your goal is to catch bugs before they ship.'
     ].join('\n'),
-    initialPrompt: 'Review the current diff for correctness and clarity.'
+    initialPrompt: 'Review the current diff for correctness and clarity.',
+    // Dedicated-role persona: skills trim context. Empty list = only the always-allowed zcc-inbox.
+    // A user edit or fork shadows this built-in and always wins (plan D10).
+    skills: [...BUILTIN_PERSONA_SKILLS['builtin:reviewer']]
   },
   {
     id: 'builtin:software-engineer',
@@ -435,6 +442,7 @@ function ensureReadme(dir: string) {
         '`model` can be `opus`, `sonnet`, `haiku`, or `default` (let Claude decide).',
         '`permissionMode` can be `default`, `acceptEdits`, `plan`, or `bypassPermissions`.',
         '`reasoningLevel` (optional) can be `low`, `medium`, `high`, `xhigh`, or `max`. Claude, Codex, PI and Grok map it to their own effort setting; agents without one ignore it. Any other value skips the persona.',
+        '`skills` (optional) is a list of skill names (`name`, `plugin:skill`, or `:name`; no globs) that limits which skills the agent can see. `zcc-inbox` is always kept. Omit it for no limit; `[]` keeps only `zcc-inbox`. It trims context and is not a security boundary. Anything else skips the persona.',
         'Files with invalid JSON or missing required fields are silently skipped.',
         'A built-in persona is shadowed when you drop a file with the same `id` here.',
         ''

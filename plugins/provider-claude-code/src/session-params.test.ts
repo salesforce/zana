@@ -121,6 +121,24 @@ describe("buildClaudeSessionParams", () => {
     );
   });
 
+  it("maps skillAllowlist to SDK skills, keeping an empty list and omitting when unset", () => {
+    const shared = { threadId: "thread-1", cwd: "/tmp/worktree", instructionMode: "append" as const };
+    const withList = (skillAllowlist?: string[]) => buildClaudeSessionParams({
+      ...shared,
+      options: {
+        ...toCanonicalWireOptions(EXECUTION_CONTEXT),
+        providerOptions: {
+          ...toCanonicalWireOptions(EXECUTION_CONTEXT).providerOptions,
+          ...(skillAllowlist ? { skillAllowlist } : {}),
+        },
+      },
+    });
+    expect(withList(["review", "zcc-inbox"]).skills).toEqual(["review", ":review", "zcc-inbox", ":zcc-inbox"]);
+    expect(withList(["plug:foo", ":bar"]).skills).toEqual(["plug:foo", ":bar"]);
+    expect(withList([]).skills).toEqual([]);
+    expect(withList()).not.toHaveProperty("skills");
+  });
+
   it("falls back to provider defaults when the providerOptions bag is absent", () => {
     const params = buildClaudeSessionParams({
       threadId: "thread-1",
