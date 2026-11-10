@@ -6,7 +6,7 @@ describe('surface wiring registry', () => {
   it.each(['claude', 'codex', 'opencode', 'cursor', 'pi', 'unknown'])('uses recorded PTY evidence for %s', harness => {
     for (const headless of [false, true]) for (const hookBase of [false, true]) {
       const capabilities = capabilityRegistry.describe({ surface: 'pty', harness, headless, hookBase });
-      expect(capabilities.find(row => row.id === 'tool-before-native')?.available).toBe(['claude', 'codex', 'opencode', 'cursor'].includes(harness) && hookBase);
+      expect(capabilities.find(row => row.id === 'tool-before-native')?.available).toBe(['claude', 'codex', 'opencode'].includes(harness) && hookBase);
       expect(capabilities.find(row => row.id === 'tool-after-native')?.available).toBe(false);
     }
   });
@@ -32,7 +32,7 @@ describe('surface wiring registry', () => {
     for (const headless of [false, true]) {
       const wired = capabilityRegistry.describe({ surface: 'pty', harness: 'cursor', headless, hookBase: true })
         .find(row => row.id === 'tool-before-native');
-      expect(wired).toMatchObject({ available: true, reason: expect.stringContaining('preToolUse') });
+      expect(wired).toMatchObject({ available: false, reason: expect.stringContaining('preToolUse') });
       expect(wired?.reason).toContain('user types');
       expect(wired?.reason).toContain('remote');
       const unwired = capabilityRegistry.describe({ surface: 'pty', harness: 'cursor', headless, hookBase: false })
@@ -77,17 +77,18 @@ describe('surface wiring registry', () => {
     expect(rows.find(row => row.id === 'message-admission')?.available).toBe(harness !== 'spoofed-claude');
   });
   it.each([false, true])('advertises the awaited Modern native veto for each wired harness (headless=%s)', headless => {
-    for (const harness of ['claude-code', 'codex']) {
+    for (const harness of ['claude-code']) {
       expect(capabilityRegistry.describe({ surface: 'modern', harness, headless, hookBase: true })
         .find(row => row.id === 'tool-before-native')).toMatchObject({ id: 'tool-before-native', available: true });
       expect(capabilityRegistry.describe({ surface: 'modern', harness, headless, hookBase: false })
         .find(row => row.id === 'tool-before-native')?.available).toBe(false);
     }
   });
-  it('wires the Modern Codex command + file-change native veto', () => {
+  it('wires the Modern Codex command + file-change veto but reports it unavailable until proven live', () => {
     const row = capabilityRegistry.describe({ surface: 'modern', harness: 'codex', headless: false, hookBase: true })
       .find(row => row.id === 'tool-before-native');
-    expect(row).toMatchObject({ id: 'tool-before-native', available: true });
+    expect(row).toMatchObject({ id: 'tool-before-native', available: false });
+    expect(row?.reason).toContain('not proven live');
     // Honest scope: Codex raises no approval for an in-sandbox command at workspace scope.
     expect(row?.reason).toContain('workspace scope');
     expect(row?.reason).toContain('MCP');

@@ -379,7 +379,7 @@ never blocks the terminal. A session that reconnects after an app restart report
 A native pre-tool hook is capability-gated per surface and harness, from the
 host's own wiring (`zcc.sdk.capabilities.forThread` reports
 `tool-before-native` / `tool-after-native` per thread; see the matrix below).
-Claude and Codex (PTY and Modern), OpenCode and Cursor (PTY only) can veto; every
+Claude (PTY and Modern), Codex (PTY only) and OpenCode (PTY only) advertise a veto. Modern Codex and Cursor PTY wire one but report it unavailable until it is proven live; every
 other surface reports `tool-before-native` unavailable with a reason, and no
 surface delivers `tool-after-native`. The lifecycle for an intercepted invocation
 is strictly ordered and exactly-once-terminal:
@@ -532,18 +532,22 @@ sessions always have a hook base). Native After is not delivered anywhere.
 
 | Surface | Harness | Headless | Hook base | Admission | Lifecycle | Native Before | Native After | Interactions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| modern | claude-code, codex | no | any | available | available | available | unavailable | available |
-| modern | claude-code, codex | yes | any | available | available | available | unavailable | unavailable |
-| modern | pi, acp, acp-opencode, acp-cursor | no | any | available | available | unavailable | unavailable | available |
-| modern | pi, acp, acp-opencode, acp-cursor | yes | any | available | available | unavailable | unavailable | unavailable |
+| modern | claude-code | no | any | available | available | available | unavailable | available |
+| modern | claude-code | yes | any | available | available | available | unavailable | unavailable |
+| modern | codex, pi, acp, acp-opencode, acp-cursor | no | any | available | available | unavailable | unavailable | available |
+| modern | codex, pi, acp, acp-opencode, acp-cursor | yes | any | available | available | unavailable | unavailable | unavailable |
 | pty | claude, codex | no | yes | available | available | available | unavailable | available |
 | pty | claude, codex | no | no | available | created and exit only | unavailable | unavailable | available |
 | pty | claude, codex | yes | yes | available | created and exit only | available | unavailable | unavailable |
 | pty | claude, codex | yes | no | available | created and exit only | unavailable | unavailable | unavailable |
-| pty | opencode, cursor | no | yes | available | created and exit only | available | unavailable | available |
-| pty | opencode, cursor | no | no | available | created and exit only | unavailable | unavailable | available |
-| pty | opencode, cursor | yes | yes | available | created and exit only | available | unavailable | unavailable |
-| pty | opencode, cursor | yes | no | available | created and exit only | unavailable | unavailable | unavailable |
+| pty | opencode | no | yes | available | created and exit only | available | unavailable | available |
+| pty | cursor | no | yes | available | created and exit only | unavailable | unavailable | available |
+| pty | opencode | no | no | available | created and exit only | unavailable | unavailable | available |
+| pty | cursor | no | no | available | created and exit only | unavailable | unavailable | available |
+| pty | opencode | yes | yes | available | created and exit only | available | unavailable | unavailable |
+| pty | cursor | yes | yes | available | created and exit only | unavailable | unavailable | unavailable |
+| pty | opencode | yes | no | available | created and exit only | unavailable | unavailable | unavailable |
+| pty | cursor | yes | no | available | created and exit only | unavailable | unavailable | unavailable |
 | pty | pi, shell | no | any | available | created and exit only | unavailable | unavailable | available |
 | pty | pi, shell | yes | any | available | created and exit only | unavailable | unavailable | unavailable |
 | pty | unknown | any | any | unavailable | unavailable | unavailable | unavailable | unavailable |
