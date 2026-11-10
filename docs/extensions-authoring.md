@@ -183,19 +183,25 @@ Fill the host `.module-panel-slot` (height 100%, own overflow). Shared `gus-*` /
 
 ## Custom notification sounds
 
-To replace audio clips, import a sound pack into Sound Studio. To change event
-selection, cooldowns or playback, fork Sound Studio or create a plugin with a
-background `app.contentScripts.register` registration. The optional
+Users can choose their own MP3, WAV, or OGG directly in **Settings → Notifications**
+under **Chimes & custom audio**, independently for completed turns, input requests,
+and optional idle alerts. No plugin or sound-pack creation is required. Settings
+include previews, volume, and fleet-wide quiet spacing.
+
+Plugins are optional: use Sound Studio for imported collections or OpenPeon packs,
+or create themed voices and custom playback rules with a
+`app.slots.notificationSoundProvider({ id, title, component, mount })` registration. The optional
 `context.experimental_observeAgents` API supplies generic agent display states
 while the page is closed; `experimental_onSignal` receives the plugin's own
 preference-change events. Feature-detect both APIs on older hosts.
 
 See [Background activity and sound plugins](./extensions-sdk-reference.md#background-activity-and-sound-plugins)
 for a working observation example, readiness and cleanup rules, and the
-forkable `plugins/agent-sounds/` implementation. A replacement plugin does not
-automatically override another sound source: turn off the previous plugin's
-notifications and separate built-in chimes. There is no global sound-provider
-selector or cross-plugin playback arbitration.
+forkable `plugins/agent-sounds/` implementation. Users select one provider in Settings → Notifications → Sounds. The host master
+gates its runtime and suppresses built-in chimes while a plugin is selected.
+Switching providers leaves playback off. Keep provider controls inside this
+Settings surface; use Installed plugins for lifecycle management. Legacy audio
+content scripts must migrate to this registration to participate in selection.
 
 ## Plugin migration: generic platform hooks
 

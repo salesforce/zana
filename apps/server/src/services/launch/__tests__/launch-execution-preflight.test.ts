@@ -6,7 +6,7 @@ import type { HarnessExecutionTarget } from '@zana-ai/zcc-domain/harness-adapter
 import { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { ExecutionConsentBinding, ExecutionConsentReserveResult, ExecutionConsentScope } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
-import { collectTeamAdmissionInventory, evaluateTeamAdmission, normalizeExecutionPlan, preflightExecutionAuthorization } from '../preflight.js';
+import { collectTeamAdmissionInventory, evaluateTeamAdmission, normalizeExecutionPlan, preflightExecutionAuthorization, summarizePlanTierFit } from '../preflight.js';
 
 const target = (patch: Partial<HarnessExecutionTarget> = {}): HarnessExecutionTarget => ({
   id: 'opencode.execution.accept-edits', state: 'accept-edits', equivalence: 'closest',
@@ -412,5 +412,87 @@ describe('Team admission', () => {
     };
     const reordered = { ...baseInput, requiredSkills: ['a', 'b'], requiredProviders: ['a', 'b'], inventory: { ...baseInput.inventory, skills: [...baseInput.inventory.skills].reverse(), providers: [...baseInput.inventory.providers].reverse() } };
     expect(evaluateTeamAdmission(baseInput).digest).toBe(evaluateTeamAdmission(reordered).digest);
+  });
+});
+
+describe('summarizePlanTierFit (advisory)', () => {
+  const slot = (slotId: string, level?: 'low' | 'medium' | 'high' | 'extra-high', personaId = slotId) => ({ slotId, personaId, ...(level ? { level } : {}) });
+  const unit = (id: string, routing?: Record<string, unknown>) => ({ id, ...(routing ? { routing: { version: 1 as const, ...routing } } : {}) });
+
+  it('returns nothing for units without routing, an empty plan, or a matched tier', () => {
+    expect(summarizePlanTierFit([unit('a')], [slot('w1', 'high')]).findings).toEqual([]);
+    expect(summarizePlanTierFit([], [slot('w1', 'low')]).findings).toEqual([]);
+    expect(summarizePlanTierFit([unit('a', { minimumLevel: 'medium' })], [slot('w1', 'medium'), slot('w2', 'high')]).findings).toEqual([]);
+  });
+
+  it('flags over-tiered when the cheapest qualified slot sits above the declared minimum', () => {
+    const { findings } = summarizePlanTierFit([unit('a', { minimumLevel: 'low', requiredRole: 'w-high' })], [slot('w-low', 'low'), slot('w-high', 'high', 'w-high')]);
+    expect(findings).toEqual([{ unitId: 'a', kind: 'over-tiered', detail: expect.stringContaining('needs low but its cheapest qualified slot is high') }]);
+  });
+
+  it('does not flag over-tiered without a declared minimum or with unknown slot level', () => {
+    expect(summarizePlanTierFit([unit('a', { requiredRole: 'w' })], [slot('w', 'high')]).findings).toEqual([]);
+    expect(summarizePlanTierFit([unit('a', { taskClass: 'x' })], [slot('w')]).findings).toEqual([]);
+  });
+
+  it('flags under-tiered when only the minimum level keeps every worker slot out', () => {
+    const { findings } = summarizePlanTierFit([unit('a', { minimumLevel: 'extra-high' })], [slot('w1', 'low'), slot('w2', 'high'), slot('orchestrator:0', 'extra-high')]);
+    expect(findings).toEqual([{ unitId: 'a', kind: 'under-tiered', detail: expect.stringContaining('highest worker slot is high') }]);
+  });
+
+  it('flags no-eligible-slot for other mismatches and for an empty roster', () => {
+    expect(summarizePlanTierFit([unit('a', { requiredRole: 'ghost' })], [slot('w1', 'low')]).findings).toMatchObject([{ unitId: 'a', kind: 'no-eligible-slot' }]);
+    expect(summarizePlanTierFit([unit('a', { minimumLevel: 'low' })], []).findings).toMatchObject([{ kind: 'no-eligible-slot' }]);
+    expect(summarizePlanTierFit([unit('a', { minimumLevel: 'low' })], [slot('orchestrator:0', 'low')]).findings).toMatchObject([{ kind: 'no-eligible-slot' }]);
+  });
+
+  it('stays silent when route facts are unknown', () => {
+    expect(summarizePlanTierFit([unit('a', { minimumLevel: 'high' })], [slot('w1')]).findings).toEqual([]);
+  });
+
+  it('reports under-tiered with an unknown ceiling when no slot declares a level', () => {
+    const slots = [{ slotId: 'w1', personaId: 'p', level: 'low' as const }];
+    expect(summarizePlanTierFit([unit('a', { minimumLevel: 'high' })], slots, 1).findings[0]?.kind).toBe('under-tiered');
+  });
+
+  it('evaluateTeamAdmission exposes tier findings as warnings only, with ROUTE_ELIGIBILITY non-required when enforceRouting is false', () => {
+    const plan = [{ id: 'a', title: 'A', task: 'do', dependencies: [], files: ['a.ts'], verification: ['t'], routing: { version: 1 as const, minimumLevel: 'extra-high' as const } }];
+    const base = { workUnits: plan, requireCompletePlan: true, slotCount: 1, maxSlots: 4, initialTasks: ['x'], slotRoutes: [slot('w1', 'low')], now: 1 };
+    const advisory = evaluateTeamAdmission({ ...base, enforceRouting: false });
+    expect(advisory.ready).toBe(true);
+    expect(advisory.checks.find((check) => check.code === 'ROUTE_ELIGIBILITY')).toMatchObject({ status: 'FAIL', required: false });
+    expect(advisory.tierFit?.findings).toMatchObject([{ unitId: 'a', kind: 'under-tiered' }]);
+    const enforced = evaluateTeamAdmission({ ...base, enforceRouting: true });
+    expect(enforced.checks.find((check) => check.code === 'ROUTE_ELIGIBILITY')?.required).toBe(true);
+    // Findings never change the digest.
+    expect(advisory.digest).toBe(evaluateTeamAdmission({ ...base, enforceRouting: false, slotRoutes: base.slotRoutes }).digest);
+    const clean = evaluateTeamAdmission({ ...base, slotRoutes: [slot('w1', 'extra-high')] });
+    expect(clean.tierFit).toBeUndefined();
+    expect(evaluateTeamAdmission({ ...base, slotRoutes: undefined }).tierFit).toBeUndefined();
+  });
+
+  it('evaluateTeamAdmission surfaces over-tiered and no-eligible-slot findings as warnings, and stays silent on unknown tiers', () => {
+    const mk = (routing: Record<string, unknown>) => [{ id: 'a', title: 'A', task: 'do', dependencies: [], files: ['a.ts'], verification: ['t'], routing: { version: 1 as const, ...routing } }];
+    const base = { requireCompletePlan: true, slotCount: 1, maxSlots: 4, initialTasks: ['x'], enforceRouting: false, now: 1 };
+    const over = evaluateTeamAdmission({ ...base, workUnits: mk({ minimumLevel: 'low', requiredRole: 'w-high' }), slotRoutes: [slot('w-low', 'low'), slot('w-high', 'high', 'w-high')] });
+    expect(over.tierFit?.findings).toMatchObject([{ unitId: 'a', kind: 'over-tiered' }]);
+    expect(over.ready).toBe(true);
+    const none = evaluateTeamAdmission({ ...base, workUnits: mk({ requiredRole: 'ghost' }), slotRoutes: [slot('w1', 'low')] });
+    expect(none.tierFit?.findings).toMatchObject([{ unitId: 'a', kind: 'no-eligible-slot' }]);
+    expect(none.ready).toBe(true);
+    const unknown = evaluateTeamAdmission({ ...base, workUnits: mk({ minimumLevel: 'high' }), slotRoutes: [slot('w1')] });
+    expect(unknown.tierFit).toBeUndefined();
+  });
+
+  it('tier findings and a hard skill-reach FAIL coexist: ready=false only because of the skill gap', () => {
+    const plan = [{ id: 'a', title: 'A', task: 'do', dependencies: [], files: ['a.ts'], verification: ['t'], requires: { skills: ['review'] }, routing: { version: 1 as const, minimumLevel: 'extra-high' as const } }];
+    const r = evaluateTeamAdmission({
+      workUnits: plan, requireCompletePlan: true, slotCount: 1, maxSlots: 4, initialTasks: ['x'], enforceRouting: false, now: 1,
+      slotRoutes: [{ ...slot('w1', 'low'), skillAllowlist: ['zcc-inbox'] }]
+    });
+    expect(r.tierFit?.findings).toMatchObject([{ kind: 'under-tiered' }]);
+    const reach = r.checks.find((check) => check.code === 'SKILL_AVAILABLE' && check.status === 'FAIL');
+    expect(reach).toMatchObject({ required: true, subject: 'a', unavailable: ['review'] });
+    expect(r.ready).toBe(false);
   });
 });

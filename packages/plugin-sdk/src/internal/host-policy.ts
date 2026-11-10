@@ -70,6 +70,11 @@ export function pluginCliCollisionWarning(
  * Guarded by host-session-tools.policy.test.ts.
  */
 export const RESERVED_AGENT_TOOL_NAMES: readonly string[] = [
+  "register_agent",
+  "list_agents",
+  "find_agent",
+  "agent_send",
+  "agent_inbox",
   "update_environment_directory",
   "preview_file",
   "share_preview",

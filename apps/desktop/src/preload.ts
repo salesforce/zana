@@ -46,9 +46,9 @@ seedDocumentTheme(process.argv, globalThis.document, globalThis.MutationObserver
 // across the main-side stores).
 ipcRenderer.setMaxListeners(50);
 // Main chooses exactly one window, so multiple project windows never double-play.
-ipcRenderer.on(IPC.app.onAgentSound, (_event, kind, volume) => {
-  if ((kind === 'idle' || kind === 'needs-you') && typeof volume === 'number') {
-    void playAgentSound(kind, volume).catch(error => console.warn('[agent sound]', error));
+ipcRenderer.on(IPC.app.onAgentSound, (_event, kind, volume, clip) => {
+  if ((kind === 'done' || kind === 'idle' || kind === 'needs-you') && typeof volume === 'number') {
+    void playAgentSound(kind, volume, clip).catch(error => console.warn('[agent sound]', error));
   }
 });
 import type {
@@ -1302,10 +1302,13 @@ const api: CcApi = {
   },
   app: {
     previewAgentSound: async (kind) => {
-      const volume = await ipcRenderer.invoke(IPC.app.previewAgentSound, kind);
-      if (typeof volume !== 'number') throw new Error('Sound preview unavailable');
-      await playAgentSound(kind, volume);
+      const result = await ipcRenderer.invoke(IPC.app.previewAgentSound, kind);
+      if (!result || typeof result.volume !== 'number') throw new Error('Sound preview unavailable');
+      await playAgentSound(kind, result.volume, result.clip);
     },
+    getAgentSoundFiles: () => ipcRenderer.invoke(IPC.app.getAgentSoundFiles),
+    chooseAgentSoundFile: kind => ipcRenderer.invoke(IPC.app.chooseAgentSoundFile, kind),
+    clearAgentSoundFile: kind => ipcRenderer.invoke(IPC.app.clearAgentSoundFile, kind),
     onMenuEvent: (cb: (event: string) => void) => {
       const events = [
         'app:openSettings',

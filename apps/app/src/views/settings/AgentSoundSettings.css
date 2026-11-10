@@ -18,3 +18,15 @@
   justify-content: flex-end;
   gap: 8px;
 }
+.agent-sound-event{padding:18px 0;border-top:1px solid var(--border)}
+.agent-sound-event:first-child{border-top:0;padding-top:0}
+.agent-sound-event .settings-field{margin-bottom:12px}
+.agent-sound-event-controls{display:flex;gap:10px;align-items:center;min-width:0}
+.agent-sound-event-controls>.launch-model-picker-trigger{flex:1;min-width:0;justify-content:space-between}
+.agent-sound-event-controls>.launch-model-picker-trigger>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-sound-event-controls>.btn{white-space:nowrap}
+.agent-sound-options{display:grid;grid-template-columns:minmax(0,1fr) minmax(160px,1fr);gap:24px;padding-top:18px;border-top:1px solid var(--border)}
+.agent-sound-idle{border-top:1px solid var(--border);padding:16px 0;margin-bottom:8px}
+.agent-sound-idle>summary{cursor:pointer;font-size:12px;color:var(--text-muted)}
+.agent-sound-idle[open]>.agent-sound-event{padding-top:18px}
+@media(max-width:600px){.agent-sound-options{grid-template-columns:minmax(0,1fr);gap:8px}}

@@ -184,6 +184,21 @@ describe('trusted Modern member runtime', () => {
     });
   });
 
+  it('persists allowedSkillNames (including empty) and omits the key when unset', async () => {
+    await createSquadMemberConversation(ctx, { ...member, allowedSkillNames: ['ext:fmt'] });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ allowedSkillNames: ['ext:fmt'] });
+  });
+
+  it('keeps an empty allowedSkillNames list as restricted metadata', async () => {
+    await createSquadMemberConversation(ctx, { ...member, allowedSkillNames: [] });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ allowedSkillNames: [] });
+  });
+
+  it('does not persist allowedSkillNames when unrestricted', async () => {
+    await createSquadMemberConversation(ctx, member);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).not.toHaveProperty('allowedSkillNames');
+  });
+
   it('persists and sends an empty automated skill selection by default', async () => {
     await createSquadMemberConversation(ctx, member);
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds: [] });

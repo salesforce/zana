@@ -196,6 +196,7 @@ export type {
   PluginNavPanelPlacement,
   PluginNavPanelRegistration,
   PluginSettingsSectionRegistration,
+  PluginNotificationSoundProviderRegistration,
   PluginHomepageSectionRegistration,
   PluginProjectTabRegistration,
   PluginProjectMenuActionRegistration,

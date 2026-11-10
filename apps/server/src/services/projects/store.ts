@@ -1,5 +1,5 @@
 import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
-import { normalizeAgentSoundVolume } from '@zana-ai/zcc-domain/product';
+import { normalizeAgentSoundVolume, normalizeNotificationSoundProvider } from '@zana-ai/zcc-domain/product';
 import { isAgentsViewId } from '@zana-ai/zcc-domain/product';
 import { onboardingProgressSchema } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
@@ -831,6 +831,10 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.askUserQuestionUiEnabled === 'boolean') {
     normalized.askUserQuestionUiEnabled = input.askUserQuestionUiEnabled;
   }
+  if (typeof input.threadCommunicationEnabled === 'boolean') normalized.threadCommunicationEnabled = input.threadCommunicationEnabled;
+  if (Number.isSafeInteger(input.threadCommunicationGeneration) && input.threadCommunicationGeneration! >= 0) {
+    normalized.threadCommunicationGeneration = input.threadCommunicationGeneration;
+  }
   if (typeof input.extensionLlmEnabled === 'boolean') {
     normalized.extensionLlmEnabled = input.extensionLlmEnabled;
   }
@@ -1073,11 +1077,17 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (isOwnNotificationLevel(input.notificationChildLevel)) {
     normalized.notificationChildLevel = input.notificationChildLevel;
   }
-  for (const key of ['agentSoundNeedsYou', 'agentSoundIdle'] as const) {
+  const soundProvider = normalizeNotificationSoundProvider(input.notificationSoundProvider);
+  if (soundProvider !== undefined) normalized.notificationSoundProvider = soundProvider;
+  if (typeof input.notificationSoundsEnabled === 'boolean') normalized.notificationSoundsEnabled = input.notificationSoundsEnabled;
+  for (const key of ['agentSoundNeedsYou', 'agentSoundIdle', 'agentSoundDone'] as const) {
     if (typeof input[key] === 'boolean') normalized[key] = input[key];
   }
   if (input.agentSoundVolume !== undefined) {
     normalized.agentSoundVolume = normalizeAgentSoundVolume(input.agentSoundVolume);
+  }
+  if (typeof input.agentSoundSpacingSeconds === 'number' && Number.isFinite(input.agentSoundSpacingSeconds)) {
+    normalized.agentSoundSpacingSeconds = Math.max(2, Math.min(60, Math.round(input.agentSoundSpacingSeconds)));
   }
   if (typeof input.notificationPreviews === 'boolean') {
     normalized.notificationPreviews = input.notificationPreviews;

@@ -3,6 +3,7 @@ import type {
   PluginSettingValue
 } from '@zana-ai/zcc-plugin-sdk/server';
 import { getThreadProvider } from './thread-provider-catalog.js';
+import { providerSkillAllowlist } from './persona-skill-selection.js';
 
 export interface PluginSettingsReader {
   getSettings(pluginId: string): {
@@ -19,6 +20,8 @@ export interface DerivedProviderOptionsArgs {
   permissionMode: string;
   promptMode?: 'plan';
   plugins?: PluginSettingsReader;
+  /** Main-authorized selection (squad metadata); both absent = unrestricted. */
+  skillSelection?: { automatedSkillIds?: readonly string[]; allowedSkillNames?: readonly string[] };
 }
 
 function settingsWithoutSecrets(
@@ -38,7 +41,12 @@ export async function derivedProviderOptionsForCommand(
   args: DerivedProviderOptionsArgs
 ): Promise<Record<string, unknown> | undefined> {
   const provider = getThreadProvider(args.providerId);
-  if (!provider?.deriveProviderOptions) return undefined;
+  const skillAllowlist = providerSkillAllowlist(
+    args.skillSelection?.automatedSkillIds, args.skillSelection?.allowedSkillNames
+  );
+  const withSkills = (options: Record<string, unknown> | undefined): Record<string, unknown> | undefined =>
+    skillAllowlist === undefined ? options : { ...options, skillAllowlist };
+  if (!provider?.deriveProviderOptions) return withSkills(undefined);
   const context: PluginProviderOptionsContext = {
     threadId: args.threadId,
     projectId: args.projectId,
@@ -49,6 +57,6 @@ export async function derivedProviderOptionsForCommand(
   };
   // A synchronous plugin hook still crosses an asynchronous worker transport.
   const derived = await provider.deriveProviderOptions(context);
-  if (!derived || typeof derived !== 'object' || Array.isArray(derived)) return undefined;
-  return derived;
+  if (!derived || typeof derived !== 'object' || Array.isArray(derived)) return withSkills(undefined);
+  return withSkills(derived);
 }

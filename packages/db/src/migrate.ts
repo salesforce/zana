@@ -538,6 +538,17 @@ export function migrate(database: SqliteDatabase): void {
       'CREATE INDEX IF NOT EXISTS host_link_uses_plugin ON host_link_uses(plugin_id)'
     ]);
   }
+  if (!applied.has(40)) applyVersion(database, 40, [
+    `CREATE TABLE IF NOT EXISTS peer_review_messages (
+      id TEXT PRIMARY KEY, owner_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL,
+      body TEXT NOT NULL, transport TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending','approved','delivered','discarded')),
+      revision INTEGER NOT NULL DEFAULT 1, config_generation INTEGER,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS peer_review_owner ON peer_review_messages(owner_thread_id, status, created_at)'
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

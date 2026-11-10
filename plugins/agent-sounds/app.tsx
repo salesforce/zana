@@ -13,7 +13,7 @@ export async function readClip(file: File): Promise<Clip> {
   return { name: file.name, mime: 'audio/wav', base64: btoa(binary) };
 }
 
-export function SoundStudio() {
+export function SoundStudio({ embedded = false }: { embedded?: boolean } = {}) {
   const rpc = useRpc(), [state, setState] = useState<SoundState | null>(null), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
   const [name, setName] = useState('My sound pack'), [needsFile, setNeedsFile] = useState<File>(), [idleFile, setIdleFile] = useState<File>();
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
@@ -76,11 +76,11 @@ export function SoundStudio() {
     } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }
-  if (!state) return <section className="sound-studio"><style>{styles}</style><div className="sound-inner"><h2>Sound Studio</h2><p role="status">{message || 'Loading sounds…'}</p></div></section>;
+  if (!state) return <section className={`sound-studio${embedded ? ' sound-studio--embedded' : ''}`}><style>{styles}</style><div className="sound-inner">{!embedded && <h2>Sound Studio</h2>}<p role="status">{message || 'Loading sounds…'}</p></div></section>;
   const p = state.preferences, pack = state.packs.find(pack => pack.id === p.packId);
-  return <section className="sound-studio" aria-label="Sound Studio"><style>{styles}</style><div className="sound-inner">
-    <header><span className="sound-eyebrow">PLUGIN · NOTIFICATIONS</span><h2>Give your agents a voice.</h2><p>Your sounds, your rules. A little personality without a room full of interruptions.</p></header>
-    <div className="sound-card sound-master"><div><h3>Sound notifications</h3><p>{p.enabled ? 'On for the events you choose below.' : 'Off. Preview sounds before switching on.'}</p></div><button type="button" role="switch" aria-checked={p.enabled} disabled={busy} aria-label="Sound notifications" onClick={() => void configure({ enabled: !p.enabled })}>{p.enabled ? 'On' : 'Off'}</button></div>
+  return <section className={`sound-studio${embedded ? ' sound-studio--embedded' : ''}`} aria-label="Sound Studio"><style>{styles}</style><div className="sound-inner">
+    {!embedded && <header><span className="sound-eyebrow">PLUGIN · NOTIFICATIONS</span><h2>Give your agents a voice.</h2><p>Your sounds, your rules. A little personality without a room full of interruptions.</p></header>}
+    {!embedded && <div className="sound-card sound-master"><div><h3>Sound notifications</h3><p>{p.enabled ? 'On for the events you choose below.' : 'Off. Preview sounds before switching on.'}</p></div><button type="button" role="switch" aria-checked={p.enabled} disabled={busy} aria-label="Sound notifications" onClick={() => void configure({ enabled: !p.enabled })}>{p.enabled ? 'On' : 'Off'}</button></div>}
     <div className="sound-card"><h3>Sound packs</h3><p>Start with chimes or bring your own collection.</p><div className="sound-packs" role="group" aria-label="Sound packs">
       {[{ id: 'chimes', name: 'Soft chimes' }, ...state.packs].map(item => <button type="button" key={item.id} disabled={busy} aria-pressed={p.packId === item.id} onClick={() => void configure({ packId: item.id })}><strong>{item.name}</strong><span>{item.id === 'chimes' ? 'Built in to this plugin' : 'Your audio'}</span></button>)}
     </div><div className="sound-actions"><button type="button" onClick={() => void preview('needs-you')}>Preview Needs you</button><button type="button" onClick={() => void preview('idle')}>Preview Idle</button>{pack && <button type="button" disabled={busy} onClick={() => void action('remove', pack.id, 'Pack removed. Switched to soft chimes.')}>Remove {pack.name}</button>}</div></div>
@@ -102,6 +102,13 @@ export function SoundStudio() {
 }
 
 export default definePluginApp(app => {
-  app.slots.navPanel({ id: 'main', title: 'Sound Studio', icon: 'Volume2', placement: 'extensions', component: SoundStudio });
-  app.contentScripts.register({ id: 'notifications', mount: mountBackground });
+  const component = () => <SoundStudio embedded />;
+  // Retain existing bookmarks without adding navigation clutter.
+  app.slots.navPanel({ id: 'main', title: 'Sound Studio', icon: 'Volume2', placement: 'unlisted', component });
+  if (typeof app.slots.notificationSoundProvider === 'function') {
+    app.slots.notificationSoundProvider({ id: 'notifications', title: 'Sound Studio', description: 'Custom sounds, imported packs, and your own notification rules.', component, mount: mountBackground });
+  } else {
+    // Older hosts can still configure and preview; automatic audio stays off.
+    app.slots.settingsSection({ id: 'sounds', title: 'Sound Studio', description: 'Update Zana to select this provider in Settings → Notifications.', component });
+  }
 });

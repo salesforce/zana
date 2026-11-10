@@ -41,6 +41,7 @@ export interface DeferredSendPayload {
   mode: ThreadSendMode;
   execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: string; acpMode?: string };
   senderThreadId?: string;
+  peerReviewId?: string;
   admission?: { generation: number; overrideable: boolean; reason: string; pluginId?: string };
 }
 
@@ -74,6 +75,7 @@ export function deferConversationSend(
     mode: ThreadSendMode;
     execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: string; acpMode?: string };
     senderThreadId?: string;
+    peerReviewId?: string;
     sendAfter?: number | null;
     paused?: boolean;
     groupBoundaryId?: string | null;
@@ -96,6 +98,7 @@ export function deferConversationSend(
       mode: args.mode,
       ...(args.execution ? { execution: args.execution } : {}),
       ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {}),
+      ...(args.peerReviewId ? { peerReviewId: args.peerReviewId } : {}),
       ...(args.admission ? { admission: args.admission } : {})
     } satisfies DeferredSendPayload),
     sendAfter: args.sendAfter ?? null,

@@ -38,7 +38,7 @@ export type SquadLaunchNowDep = (
 
 export type SquadPlanCheckDep = (
   route: { projectId: string },
-  input: { path?: string; text?: string }
+  input: { path?: string; text?: string; teamId?: string }
 ) => Promise<DepResult<SquadPlanCheckResult>>;
 
 export interface RegisterSquadProposalToolsOpts {
@@ -61,7 +61,7 @@ export const SQUAD_LAUNCH_DESCRIPTION =
   "Launch a Squad in YOUR project from files you wrote or read. This is the preferred way for an agent to start a Squad; do not hand-build an execution.start request. mode 'review' (the default choice) prepares the launch and the user presses Launch in the Inbox card; it behaves exactly like squad_propose. mode 'now' starts the Squad immediately with no Inbox card and makes you its owner (you answer its blockers and get its reports): use it ONLY when the user explicitly asked to run it now, start immediately or skip the Inbox. If the Squad or its Project requires review, it refuses and you must retry with mode 'review'. Use planning 'provided' with a validated portable plan as a source when list_teams says canInferPlan is false. Pass the files' exact paths, wherever they are: this project, the user's home folder or the clone root (protected locations such as ~/.ssh are refused with SOURCE_NOT_ALLOWED). Do not copy them to disk. Text that exists only in this conversation can be passed by value in attachments [{ name, text }] (files and attachments share one budget; the result lists what each name became). Members of a running Squad cannot launch.";
 
 export const SQUAD_PLAN_CHECK_DESCRIPTION =
-  'Check a portable-executable plan exactly as a Squad Launch will in Plan provided in goal mode. Pass the plan file path (in this project, the home folder or the clone root) or the plan text. Returns the parsed steps or the reason it fails. Read-only.';
+  'Check a portable-executable plan exactly as a Squad Launch will in Plan provided in goal mode. Pass the plan file path (in this project, the home folder or the clone root) or the plan text. Returns the parsed steps or the reason it fails. Pass teamId (from list_teams) to also get an advisory tierFit section: over-tiered, under-tiered or no-eligible-slot warnings for that Squad\'s roster; it never changes whether the plan passes. Read-only.';
 
 /**
  * Transport bounds only (Rule 5): four times the real limits. The proposal service enforces
@@ -94,7 +94,8 @@ const FIELD_HELP = {
   completionInboxNotice: 'Post an Inbox notice when this agent-started Squad completes. Defaults to false.',
   mode: "'review': the user reviews and launches it from the Inbox (default choice). 'now': start immediately, only when the user explicitly asked for that.",
   planPath: 'Path of the plan file: relative to the project, or absolute (home folder or clone root).',
-  planText: 'The plan text (at most 1 MiB).'
+  planText: 'The plan text (at most 1 MiB).',
+  planTeamId: 'Optional Squad id (from list_teams): adds advisory tierFit warnings for that Squad\'s roster. Does not affect pass/fail.'
 } as const;
 
 export const squadProposeInputSchema = {
@@ -118,7 +119,8 @@ export const squadLaunchInputSchema = {
 
 export const squadPlanCheckInputSchema = {
   path: z.string().min(1).max(TRANSPORT.pathChars).optional().describe(FIELD_HELP.planPath),
-  text: z.string().optional().describe(FIELD_HELP.planText)
+  text: z.string().optional().describe(FIELD_HELP.planText),
+  teamId: z.string().min(1).max(TRANSPORT.teamIdChars).optional().describe(FIELD_HELP.planTeamId)
 };
 
 /** The same bounds and help as JSON Schema, for the Modern thread bridge (which doesn't take zod). */
@@ -161,7 +163,8 @@ export const SQUAD_PLAN_CHECK_JSON_SCHEMA = {
   type: 'object',
   properties: {
     path: { type: 'string', minLength: 1, maxLength: TRANSPORT.pathChars, description: FIELD_HELP.planPath },
-    text: { type: 'string', description: FIELD_HELP.planText }
+    text: { type: 'string', description: FIELD_HELP.planText },
+    teamId: { type: 'string', minLength: 1, maxLength: TRANSPORT.teamIdChars, description: FIELD_HELP.planTeamId }
   }
 };
 
@@ -251,7 +254,7 @@ export function registerSquadProposalTools(server: McpServer, opts: RegisterSqua
     { description: SQUAD_PLAN_CHECK_DESCRIPTION, inputSchema: squadPlanCheckInputSchema },
     async (input) => {
       if (!(await isLive(opts, sessionId))) return errorResult(`squad_plan_check failed: ${NOT_LIVE_MESSAGE}`);
-      const { path, text } = input;
+      const { path, text, teamId } = input;
       if ((path === undefined) === (text === undefined)) {
         return errorResult('squad_plan_check failed: INVALID: pass exactly one of path or text.');
       }
@@ -259,7 +262,7 @@ export function registerSquadProposalTools(server: McpServer, opts: RegisterSqua
         return errorResult('squad_plan_check failed: INVALID: text exceeds 1 MiB.');
       }
       try {
-        const res = await checkPlan({ projectId: opts.projectId }, path !== undefined ? { path } : { text });
+        const res = await checkPlan({ projectId: opts.projectId }, { ...(path !== undefined ? { path } : { text }), ...(teamId ? { teamId } : {}) });
         return res.ok
           ? { content: [{ type: 'text' as const, text: JSON.stringify(res.value) }] }
           : errorResult(`squad_plan_check failed: ${res.code}: ${res.message}`);
