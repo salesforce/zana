@@ -467,12 +467,9 @@ Known limit: a second checkout added through `POST /projects/:id/sources` is
 refused for remote calls unless that machine's own catalogue holds it.
 
 Lifecycle events (`PluginThreadEvent` from `zcc.events.on`) now always carry a
-host-generated `id`, a process-local `sequence`, a `bootId`, and a `timestamp` — do not
+host-generated `id`, a process-local `sequence`, and a `timestamp` — do not
 derive identity from event content, and do not expect a durable replay stream;
-delivery is best-effort. `bootId` is generated once per server process: dedupe
-by `id`, compare `sequence` only between events with the same `bootId`, and
-treat a changed `bootId` as a restart with no continuity (reset any
-sequence-based state).
+delivery is best-effort.
 
 #### PTY lifecycle events
 
@@ -767,8 +764,8 @@ server over its start message, never through process environment. Proofs never r
 processes, renderer storage, or agent environment.
 
 `zcc thread interactions <threadId> respond <interactionId> --value '<JSON>'`
-uses the desktop control socket. Every caller on that socket answers as `cli`,
-never `human`, so a human-required gate rejects it with 403; agent and
+uses the desktop control socket. Any same-uid process can reach that socket, so every caller on it answers as `cli`,
+never `human`, and a human-required gate rejects it with 403; agent and
 orchestrator callers answer as `agent` and are rejected the same way. Only the
 Zana window or the main-drawn sheet can satisfy `requireHuman`. Non-desktop HTTP
 cannot satisfy it either.

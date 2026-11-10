@@ -764,8 +764,8 @@ server over its start message, never through process environment. Proofs never r
 processes, renderer storage, or agent environment.
 
 `zcc thread interactions <threadId> respond <interactionId> --value '<JSON>'`
-uses the desktop control socket. Every caller on that socket answers as `cli`,
-never `human`, so a human-required gate rejects it with 403; agent and
+uses the desktop control socket. Any same-uid process can reach that socket, so every caller on it answers as `cli`,
+never `human`, and a human-required gate rejects it with 403; agent and
 orchestrator callers answer as `agent` and are rejected the same way. Only the
 Zana window or the main-drawn sheet can satisfy `requireHuman`. Non-desktop HTTP
 cannot satisfy it either.
