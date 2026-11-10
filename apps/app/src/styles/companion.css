@@ -236,6 +236,9 @@ html.companion-surface #root {
   width: 460px;
 }
 
+/* Reserve the actions' space during hover, keeping the card still when pinned. */
+.cc-card.is-preview .cc-agent-action { visibility: hidden; }
+
 @keyframes cc-card-in {
   from { opacity: 0; transform: scale(0.98); }
   to { opacity: 1; transform: none; }

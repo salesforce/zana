@@ -24,7 +24,6 @@ import {
   type CompanionSchedule,
   type CompanionSnapshot,
   type CompanionTooltip,
-  type CompanionTooltipRow,
   type CompanionTooltipView,
   type IdleTriageResult,
   type InboxEntry,
@@ -42,7 +41,8 @@ import {
  *  - the RAIL — fixed ~52px column, shown inactive so it never steals focus;
  *  - the PANEL — fixed-size transparent window beside the rail; the card inside
  *    hugs the rail side and sizes itself, so the window never resizes (no
- *    flicker). A click on its transparent area, Esc, or blur closes it;
+ *    flicker). Agents hover previews this same card without focus or input;
+ *    clicking pins it. A pinned card closes on backdrop click, Esc, or blur;
  *  - the TOOLTIP — tiny click-through window beside a hovered rail icon (the
  *    rail window is only as wide as the rail, so it can't draw one itself).
  *
@@ -117,9 +117,6 @@ const SCHEDULES_MAX = 30;
 /** Tooltip window — sized per hover; the pill inside hugs the rail side. */
 export const TOOLTIP_WIDTH = 260;
 export const TOOLTIP_HEIGHT = 56;
-/** Hover preview (Agents / Needs you): row cap and the height each row adds. */
-export const TOOLTIP_ROWS_MAX = 6;
-export const TOOLTIP_ROW_HEIGHT = 34;
 /** Modern threads held for the snapshot (Rule 5). */
 export const THREADS_MAX = 100;
 const TOOLTIP_GAP = 6;
@@ -201,12 +198,6 @@ export function tooltipBounds(rail: Rect, work: Rect, edge: CompanionEdge, iconY
   const idealY = rail.y - RAIL_PAD + iconY - height / 2;
   const y = clamp(Math.round(idealY), work.y, work.y + work.height - height);
   return { x: Math.round(x), y, width: TOOLTIP_WIDTH, height };
-}
-
-/** Tooltip window height for a hover preview of `rows` lines (+1 for "N more"). */
-export function tooltipHeight(rows: number, more: number): number {
-  const lines = rows + (more > 0 ? 1 : 0);
-  return lines === 0 ? TOOLTIP_HEIGHT : TOOLTIP_HEIGHT + lines * TOOLTIP_ROW_HEIGHT;
 }
 
 /**
@@ -302,8 +293,6 @@ export class CompanionController {
   private tip: BrowserWindow | null = null;
   /** Tooltip showing now — the tooltip window pulls it on mount (first hover). */
   private tipView: CompanionTooltipView | null = null;
-  /** The hover that produced it — re-run on each snapshot so a preview stays live. */
-  private tipRequest: CompanionTooltip | null = null;
   private active = false;
   /** App windows `enter()` (or a later minimize) put away, re-shown on `exit()`. */
   private hidden = new Set<BrowserWindow>();
@@ -461,22 +450,21 @@ export class CompanionController {
     this.reposition();
     this.pushSnapshot();
     void this.refreshThreads();
-    rail.showInactive();
     for (const win of hideAppWindows(this.deps.mainWindows())) this.hidden.add(win);
+    rail.showInactive();
     return true;
   }
 
   /**
-   * An app window surfaced while the rail is up (deep link, Dock click) and was
-   * minimized again: put it back behind the rail instead of the Dock.
+   * A window minimized while the rail is up belongs behind it instead of in the Dock.
    */
   hideBehindRail(win: BrowserWindow) {
     if (!this.active) return;
     for (const w of hideAppWindows([win])) this.hidden.add(w);
   }
 
-  /** Close the rail and bring back every window it put away. */
-  exit() {
+  /** Close the rail and restore its windows without changing the navigation target. */
+  resume() {
     this.leave();
     const wins = [...this.hidden].filter((w) => !w.isDestroyed());
     this.hidden.clear();
@@ -485,6 +473,11 @@ export class CompanionController {
     } catch (err) {
       this.log('restoreWindows', err);
     }
+  }
+
+  /** Close the rail and bring the full shell forward. */
+  exit() {
+    this.resume();
     this.deps.showMainWindow();
   }
 
@@ -764,7 +757,7 @@ export class CompanionController {
     return ok ? { ok: true } : { ok: false, reason: 'ended' };
   }
 
-  /** Open Zana exits the companion; targeted deep links keep the rail available. */
+  /** Every validated navigation back into Zana dismisses the companion. */
   open(target: CompanionOpenTarget | null | undefined) {
     if (!target || typeof target !== 'object') return;
     this.closePanel();
@@ -774,25 +767,25 @@ export class CompanionController {
         this.exit();
         return;
       case 'home':
-        this.deps.showMainWindow();
+        this.exit();
         send('app:openHome');
         return;
       case 'agents':
-        this.deps.showMainWindow();
+        this.exit();
         send('app:openAgents');
         return;
       case 'scheduler': {
         const taskId = typeof target.taskId === 'string' && this.deps.scheduler.list().some((t) => t.id === target.taskId)
           ? target.taskId
           : undefined;
-        this.deps.showMainWindow();
+        this.exit();
         send('app:openScheduler', taskId);
         return;
       }
       case 'session': {
         const s = typeof target.sessionId === 'string' ? this.deps.ptys.getSession(target.sessionId) : undefined;
         if (!s) return;
-        this.deps.showMainWindow();
+        this.exit();
         send('app:focusSession', s.id, s.projectId);
         return;
       }
@@ -800,6 +793,7 @@ export class CompanionController {
         // Only a thread main's own feed reported (Rule 1).
         const t = typeof target.threadId === 'string' ? this.threads.find((x) => x.threadId === target.threadId) : undefined;
         if (!t || !this.deps.openThread) return;
+        this.resume();
         this.deps.openThread(t.threadId, t.projectId);
         return;
       }
@@ -808,7 +802,7 @@ export class CompanionController {
         if (id.startsWith('inbox:')) {
           const entry = this.questions.get(id.slice('inbox:'.length));
           if (!entry) return;
-          this.deps.showMainWindow();
+          this.exit();
           send('app:focusInboxEntry', entry.id, entry.projectId);
         } else if (id.startsWith('agent:')) {
           this.open({ kind: 'session', sessionId: id.slice('agent:'.length) });
@@ -848,6 +842,11 @@ export class CompanionController {
 
   openPanel(kind: unknown, focusRequestId?: unknown) {
     if (!this.active || !PANEL_KINDS.includes(kind as CompanionPanelKind)) return;
+    this.showPanel(kind as CompanionPanelKind, false, typeof focusRequestId === 'string' ? focusRequestId : undefined);
+  }
+
+  /** Hover and pin share one window and renderer, so promoting never replaces the card. */
+  private showPanel(kind: CompanionPanelKind, preview: boolean, focusRequestId?: string) {
     if (this.blurCloseTimer) {
       clearTimeout(this.blurCloseTimer);
       this.blurCloseTimer = null;
@@ -858,16 +857,22 @@ export class CompanionController {
     const layout = panelLayout(rail, work, edge);
     panel.setBounds({ x: layout.x, y: layout.y, width: layout.width, height: layout.height }, false);
     this.panelState = {
-      kind: kind as CompanionPanelKind,
+      kind,
+      preview,
       railSide: edge,
       anchorY: layout.anchorY,
-      focusRequestId: typeof focusRequestId === 'string' ? focusRequestId : undefined
+      focusRequestId
     };
     this.pushSnapshot();
     this.sendTo(panel, IPC.companion.onPanel, this.panelState);
     if (this.rail) this.sendTo(this.rail, IPC.companion.onPanel, this.panelState);
-    if (!panel.isVisible()) panel.show();
-    panel.focus();
+    panel.setIgnoreMouseEvents(preview);
+    panel.setFocusable(!preview);
+    if (!panel.isVisible()) {
+      if (preview) panel.showInactive();
+      else panel.show();
+    }
+    if (!preview) panel.focus();
   }
 
   closePanel() {
@@ -889,44 +894,32 @@ export class CompanionController {
 
   // ----- tooltip ------------------------------------------------------------------
 
-  /** Rail hover: float the label beside the icon (null / invalid hides it). */
-  tooltip(raw: unknown, snapshot?: CompanionSnapshot) {
+  /** Rail hover: Agents uses its shared card; other icons float a label. */
+  tooltip(raw: unknown) {
     const tip = sanitizeTooltip(raw);
-    if (!tip || !this.active || this.dragTimer || this.panelState || !this.rail || this.rail.isDestroyed()) {
+    // A late hover-leave after a click must never dismiss the pinned panel.
+    if (this.panelState && !this.panelState.preview) return;
+    if (!tip || !this.active || this.dragTimer || !this.rail || this.rail.isDestroyed()) {
       this.hideTooltip();
+      if (this.panelState?.preview) this.closePanel();
       return;
     }
-    this.tipRequest = tip;
+    if (tip.panel === 'agents') {
+      this.showPanel('agents', true);
+      return;
+    }
+    if (this.panelState?.preview) this.closePanel();
     const win = this.ensureTip();
     const { rail, work, edge } = this.currentRail();
-    const preview = tip.panel ? this.previewRows(tip.panel, snapshot) : { rows: [], more: 0 };
-    win.setBounds(tooltipBounds(rail, work, edge, tip.y, tooltipHeight(preview.rows.length, preview.more)), false);
+    win.setBounds(tooltipBounds(rail, work, edge, tip.y), false);
     this.tipView = {
       label: tip.label,
       detail: tip.detail,
-      ...(preview.rows.length > 0 ? { rows: preview.rows, more: preview.more } : {}),
       side: edge,
       theme: this.deps.theme()
     };
     this.sendTo(win, IPC.companion.onTooltip, this.tipView);
     if (!win.isVisible()) win.showInactive();
-  }
-
-  /**
-   * Hover preview for an icon, from main's own snapshot (never renderer data).
-   * Agents only: Needs-you's pending set depends on the renderer's answered set.
-   */
-  private previewRows(panel: CompanionPanelKind, snapshot?: CompanionSnapshot): { rows: CompanionTooltipRow[]; more: number } {
-    if (panel !== 'agents') return { rows: [], more: 0 };
-    const rows: CompanionTooltipRow[] = (snapshot ?? this.buildSnapshot()).agents.map((a) => ({
-      title: a.title,
-      projectName: a.projectName,
-      state: a.state,
-      failure: a.failure,
-      createdAt: a.createdAt,
-      recentlyCompleted: a.recentlyCompleted
-    }));
-    return { rows: rows.slice(0, TOOLTIP_ROWS_MAX), more: Math.max(0, rows.length - TOOLTIP_ROWS_MAX) };
   }
 
   getTooltip(): CompanionTooltipView | null {
@@ -935,7 +928,6 @@ export class CompanionController {
 
   private hideTooltip() {
     this.tipView = null;
-    this.tipRequest = null;
     if (!this.tip || this.tip.isDestroyed() || !this.tip.isVisible()) return;
     this.sendTo(this.tip, IPC.companion.onTooltip, null);
     this.tip.hide();
@@ -1022,7 +1014,7 @@ export class CompanionController {
     if (this.panelState && this.panel && !this.panel.isDestroyed()) {
       const layout = panelLayout(rail, work, edge);
       this.panel.setBounds({ x: layout.x, y: layout.y, width: layout.width, height: layout.height }, false);
-      this.panelState = { kind: this.panelState.kind, railSide: edge, anchorY: layout.anchorY };
+      this.panelState = { kind: this.panelState.kind, preview: this.panelState.preview, railSide: edge, anchorY: layout.anchorY };
       this.sendTo(this.panel, IPC.companion.onPanel, this.panelState);
     }
   }
@@ -1039,7 +1031,6 @@ export class CompanionController {
     for (const win of [this.rail, this.panel]) {
       if (win) this.sendTo(win, IPC.companion.onSnapshot, snapshot);
     }
-    if (this.tipRequest?.panel && this.tipView) this.tooltip(this.tipRequest, snapshot);
   }
 
   private sendTo(win: BrowserWindow, channel: string, ...args: unknown[]) {
@@ -1068,6 +1059,7 @@ export class CompanionController {
     // Click-away dismissal. Deferred a beat so a click that moved focus to the
     // rail (switching panels) can cancel it via openPanel().
     win.on('blur', () => {
+      if (this.panelState?.preview) return;
       if (this.blurCloseTimer) clearTimeout(this.blurCloseTimer);
       this.blurCloseTimer = setTimeout(() => {
         this.blurCloseTimer = null;

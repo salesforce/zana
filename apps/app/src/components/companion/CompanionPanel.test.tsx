@@ -129,6 +129,47 @@ it('renders nothing until main reports a panel state', async () => {
   expect(screen.getByRole('dialog', { name: 'Status' })).toBeTruthy();
 });
 
+it('shares grouped Agents rows between hover and pin, enabling actions without replacing the card', async () => {
+  const { container } = await mount(snap({
+    agents: [agent(1), agent(2, { state: 'working' }), agent(3, { state: 'blocked' }), agent(4, { state: 'working' }), agent(5, { state: 'working' })]
+  }), st('agents', { preview: true }));
+  const card = screen.getByRole('tooltip', { name: 'Agents' });
+  expect(card.className).toContain('is-preview');
+  const rows = Array.from(card.querySelectorAll<HTMLButtonElement>('.cc-row'));
+  expect(rows.map(row => row.querySelector('.cc-row-title')?.textContent)).toEqual(['Worker3', 'Worker2', 'Worker4', 'Worker5', 'Worker1']);
+  expect(Array.from(card.querySelectorAll('.cc-group-label')).map(el => el.textContent)).toEqual(['Needs you 1', 'Working 3', 'Idle 1']);
+  for (const button of card.querySelectorAll<HTMLButtonElement>('button')) {
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+  }
+  expect(h.open).not.toHaveBeenCalled();
+  expect(card.querySelectorAll('.cc-agent-action')).toHaveLength(2);
+
+  act(() => pushPanel(st('agents', { preview: false })));
+  expect(screen.getByRole('dialog', { name: 'Agents' })).toBe(card);
+  expect(container.querySelectorAll('.cc-row')[0]).toBe(rows[0]);
+  expect(card.className).not.toContain('is-preview');
+  expect(rows.every(row => !row.disabled)).toBe(true);
+  fireEvent.click(rows[0]);
+  expect(h.open).toHaveBeenCalledWith({ kind: 'session', sessionId: 'a3' });
+  fireEvent.click(screen.getByRole('button', { name: 'New agent' }));
+  expect(h.open).toHaveBeenCalledWith({ kind: 'home' });
+  fireEvent.click(screen.getByRole('button', { name: 'Open Agents' }));
+  expect(h.open).toHaveBeenCalledWith({ kind: 'agents' });
+});
+
+it('updates the shared Agents hover for live requests and empty fleets', async () => {
+  await mount(snap({ agents: [agent(1, { state: 'working' })] }), st('agents', { preview: true }));
+  expect(screen.getByText('Working', { selector: 'h3' })).toBeTruthy();
+  act(() => pushSnap(snap({ agents: [agent(1, { state: 'working' })], requests: [req(1, { sessionId: 'a1' })] })));
+  expect(screen.getByText('Needs you', { selector: 'h3' })).toBeTruthy();
+  expect(screen.queryByText('Working', { selector: 'h3' })).toBeNull();
+  act(() => pushSnap(snap()));
+  expect(screen.getByText('No agents running.')).toBeTruthy();
+  act(() => pushClosed());
+  expect(screen.queryByRole('tooltip')).toBeNull();
+});
+
 it.each(['open', 'close', 'unmount'] as const)('ignores an initial panel response after a newer %s', async (action) => {
   let release!: (state: CompanionPanelState) => void;
   h.request.mockResolvedValue(snap());

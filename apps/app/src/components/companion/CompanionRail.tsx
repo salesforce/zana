@@ -32,7 +32,7 @@ export function CompanionRail() {
   const ind = railIndicators(snapshot, pending.length);
 
   useEffect(() => {
-    const offPanel = product.companion.onPanel((s) => setOpen(s.kind));
+    const offPanel = product.companion.onPanel((s) => setOpen(s.preview ? null : s.kind));
     const offClosed = product.companion.onPanelClosed(() => setOpen(null));
     return () => {
       offPanel();
@@ -162,7 +162,6 @@ function useRailDrag(hideTooltip: () => void, run: CompanionAction) {
   useEffect(() => () => clearTimeout(resetTimer.current), []);
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    hideTooltip();
     suppressClick.current = false;
     drag.current = { x: e.screenX, y: e.screenY, dragging: false };
   };
@@ -172,6 +171,7 @@ function useRailDrag(hideTooltip: () => void, run: CompanionAction) {
     if (Math.hypot(e.screenX - d.x, e.screenY - d.y) > DRAG_THRESHOLD) {
       d.dragging = true;
       suppressClick.current = true;
+      hideTooltip();
       // Capture only once it IS a drag: capturing on pointerdown retargets the
       // click to the rail itself, so the icon buttons would never see it.
       const element = e.currentTarget as HTMLElement;

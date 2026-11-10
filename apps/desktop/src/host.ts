@@ -3632,6 +3632,7 @@ function claimDock() {
 }
 
 function showMainWindow() {
+  companionHost.onAppOpened();
   if (sharedClient.showSelected()) return;
   claimDock();
   const win = unscopedWindow();
@@ -7703,9 +7704,10 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
   }
 
   // Command Center opt-in: the yellow traffic light / ⌘M hand off to the rail
-  // instead of the Dock (enter() hides the minimized window too). With the rail
-  // already up, a window surfaced by a deep link goes back behind it.
+  // instead of the Dock (enter() hides the minimized window too). Returning to
+  // any app window dismisses the companion.
   win.on('minimize', () => companionHost.onWindowMinimized(win));
+  win.on('focus', () => companionHost.onAppOpened(win));
 
   // Push OS-level fullscreen transitions to the renderer that's actually IN
   // this window (not every window — each has its own fullscreen state), so a
@@ -8707,6 +8709,7 @@ function registerStartupStateIpc(): void {
   app.on('activate', () => {
     // Repair mode never reaches normal bootstrap, so window lifecycle belongs
     // beside startup IPC rather than normal services.
+    companionHost.onAppOpened();
     if (startupState.mode !== 'repair-required' && sharedClient.showSelected()) return;
     if (!unscopedWindow()) createWindow(undefined, startupState.mode === 'repair-required');
     else showMainWindow();
@@ -10398,6 +10401,7 @@ async function bootstrapNormal() {
     // Dock-reactivate must restore the full shell. Recreate it when no UNSCOPED
     // window is live — not merely when zero windows exist — so a user who closed
     // the main window but left a scoped project window open can still get back.
+    companionHost.onAppOpened();
     if (sharedClient.showSelected()) return;
     if (!unscopedWindow()) createWindow();
     else showMainWindow();

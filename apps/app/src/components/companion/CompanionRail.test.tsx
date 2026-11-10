@@ -92,6 +92,31 @@ it('toggles closed when the active panel icon is clicked again, and tracks panel
   expect(btn(/^Agents:/).getAttribute('aria-pressed')).toBe('false');
 });
 
+it('keeps an Agents hover passive until clicking pins it, then toggles closed normally', async () => {
+  await mount();
+  const agents = btn(/^Agents:/);
+  fireEvent.mouseEnter(agents);
+  act(() => vi.advanceTimersByTime(350));
+  expect(h.tooltip).toHaveBeenLastCalledWith(expect.objectContaining({ panel: 'agents' }));
+  act(() => pushPanel({ kind: 'agents', preview: true, railSide: 'right', anchorY: 0 }));
+  expect(agents.getAttribute('aria-pressed')).toBe('false');
+  expect(h.tooltip).not.toHaveBeenCalledWith(null);
+  fireEvent.pointerDown(agents, { button: 0, screenX: 10, screenY: 10 });
+  expect(h.tooltip).not.toHaveBeenCalledWith(null);
+  fireEvent.pointerUp(agents);
+  fireEvent.click(agents);
+  expect(h.openPanel).toHaveBeenCalledWith('agents', undefined);
+  expect(h.closePanel).not.toHaveBeenCalled();
+  act(() => pushPanel({ kind: 'agents', preview: false, railSide: 'right', anchorY: 0 }));
+  expect(agents.getAttribute('aria-pressed')).toBe('true');
+  expect(h.tooltip).toHaveBeenLastCalledWith(null);
+  fireEvent.mouseLeave(agents);
+  act(() => vi.advanceTimersByTime(100));
+  expect(h.closePanel).not.toHaveBeenCalled();
+  fireEvent.click(agents);
+  expect(h.closePanel).toHaveBeenCalledOnce();
+});
+
 it('shows the pending badge (9+ cap), pulses once, and opens the first request', async () => {
   const many = Array.from({ length: 10 }, (_, i) => req(i));
   await mount(snap({ requests: many, userInitials: 'PC', counts: { ...EMPTY_SNAPSHOT.counts, runningSchedules: 2 }, schedules: [] }));
