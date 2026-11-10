@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -58,6 +58,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 describe('SidebarRail Command Center button', () => {
@@ -65,6 +66,17 @@ describe('SidebarRail Command Center button', () => {
     mount();
     fireEvent.click(screen.getByLabelText('Minimize to Command Center'));
     expect(h.enter).toHaveBeenCalledTimes(1);
+  });
+  it('owns an enter rejection and allows a retry', async () => {
+    const error = new Error('companion unavailable');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    h.enter.mockRejectedValueOnce(error);
+    mount();
+    fireEvent.click(screen.getByLabelText('Minimize to Command Center'));
+    await waitFor(() => expect(logged).toHaveBeenCalledWith('[companion] enter:', error));
+    fireEvent.click(screen.getByLabelText('Minimize to Command Center'));
+    expect(h.enter).toHaveBeenCalledTimes(2);
+    expect(logged).toHaveBeenCalledTimes(1);
   });
   it.each([
     ['flag off', () => (h.data.companionEnabled = false)],
