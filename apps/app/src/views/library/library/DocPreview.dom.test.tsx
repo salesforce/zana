@@ -193,6 +193,8 @@ it('handles a rejected read and a document with no path', async () => {
 it('renders fenced text and Mermaid while preserving the source text for editing', async () => {
   mocks.read.mockResolvedValueOnce({ ok: true, content: '```text\nplain code\n```\n\n```mermaid\ngraph TD; A-->B;\n```', sha256: 'a'.repeat(64) });
   const view = render(<DocPreview doc={note} />); await view.findByText('plain code'); await view.findByText(/Diagram: graph TD/);
+  // Only the plain fence gets a Copy code button; the diagram doesn't.
+  expect(view.getAllByRole('button', { name: 'Copy code' })).toHaveLength(1);
 });
 
 it('opens preview links inside the library, including bare and file hrefs', async () => {

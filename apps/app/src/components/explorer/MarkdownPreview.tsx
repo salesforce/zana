@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { DocumentLinkBoundary } from '../DocumentLinkBoundary.js';
+import { CopyableFencedPre } from '../FencedCodeBlock.js';
 import { documentLinkUrlTransform, type DocumentLink } from '../document-links.js';
 
 export default function MarkdownPreview({ content, documentPath, fragment, onOpenDocument }: {
@@ -11,7 +12,9 @@ export default function MarkdownPreview({ content, documentPath, fragment, onOpe
 }) {
   return <DocumentLinkBoundary className="explorer-md-preview" documentPath={documentPath} fragment={fragment} onOpenDocument={onOpenDocument}><div className="inbox-md">
     <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={documentLinkUrlTransform} components={{
-      table: ({ node: _node, ...props }) => <div className="inbox-md-table-wrap"><table {...props} /></div>
+      table: ({ node: _node, ...props }) => <div className="inbox-md-table-wrap"><table {...props} /></div>,
+      // Same pinned Copy code button as MarkdownContent (#464).
+      pre: CopyableFencedPre
     }}>{content}</ReactMarkdown>
   </div></DocumentLinkBoundary>;
 }
