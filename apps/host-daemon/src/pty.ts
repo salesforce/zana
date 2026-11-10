@@ -2257,28 +2257,16 @@ export class PtyManager extends EventEmitter {
         console.warn(`[pty] session ${sessionId}: identity env dir unavailable; spawning without tmux:`, err);
       }
     }
-    const tmuxEnv = withBlankedSessionCallbacks(sessionEnv);
-    const tmuxBytes = (cmd: { command: string; args: string[] }) =>
-      Buffer.byteLength([cmd.command, ...cmd.args].join(' '), 'utf8');
-    let prospectiveTmux = identityEnvFile
-      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, tmuxEnv, identityEnvFile)
+    const prospectiveTmux = identityEnvFile
+      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, withBlankedSessionCallbacks(sessionEnv), identityEnvFile)
       : undefined;
     // Conservative bound below MAX_IMSGSIZE (16384) minus tmux's per-arg framing
     // and imsg header; empirically a serialized argv ~16 KiB is rejected while
     // ~15.7 KiB is accepted.
     const TMUX_IMSG_SAFE_BYTES = 15_000;
-    let tmuxCommandBytes = prospectiveTmux ? tmuxBytes(prospectiveTmux) : 0;
-    // An oversized launch (plugin instructions can add up to 16 KB to one argument) keeps its
-    // restore backing: the 0600 env file the pane already sources carries the command and args.
-    let spillArgv: string[] | undefined;
-    if (prospectiveTmux && identityEnvFile && tmuxCommandBytes >= TMUX_IMSG_SAFE_BYTES) {
-      const spilled = buildLocalTmuxCommand(sessionId, inner.command, inner.args, tmuxEnv, identityEnvFile, true);
-      if (tmuxBytes(spilled) < TMUX_IMSG_SAFE_BYTES) {
-        prospectiveTmux = spilled;
-        spillArgv = [inner.command, ...inner.args];
-        tmuxCommandBytes = tmuxBytes(spilled);
-      }
-    }
+    const tmuxCommandBytes = prospectiveTmux
+      ? Buffer.byteLength([prospectiveTmux.command, ...prospectiveTmux.args].join(' '), 'utf8')
+      : 0;
     let useTmux = !!prospectiveTmux && tmuxCommandBytes < TMUX_IMSG_SAFE_BYTES;
     if (prospectiveTmux && !useTmux) {
       console.warn(
@@ -2290,8 +2278,7 @@ export class PtyManager extends EventEmitter {
       try {
         writeSessionEnvFile(
           sessionId,
-          Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]])),
-          spillArgv
+          Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]]))
         );
         this.sessionEnvFiles.set(sessionId, identityEnvFile);
       } catch (err) {

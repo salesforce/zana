@@ -161,18 +161,14 @@ export function buildLocalTmuxCommand(
   command: string,
   args: string[],
   sessionEnv?: Record<string, string | undefined>,
-  envFile?: string,
-  spillArgv = false
+  envFile?: string
 ): { command: string; args: string[] } {
   // Identity/secret vars must not ride `-e` (argv is visible to `ps`). When an env
   // file is supplied the pane runs `sh -c`, sources it (fail closed), deletes it,
   // then execs the real command. The file path and command are positional args, so
   // nothing is re-parsed by the shell.
-  // `spillArgv` keeps the command and its args off tmux's argv (imsg-capped): the env file
-  // then carries them as `set -- …`, which the sourcing wrapper execs. See `writeSessionEnvFile`.
-  const wrapper = 'f=$1; shift; . "$f" || exit 1; rm -f "$f"; exec "$@"';
   const paneCommand = envFile
-    ? ['sh', '-c', wrapper, 'zcc-env', envFile, ...(spillArgv ? [] : [command, ...args])]
+    ? ['sh', '-c', 'f=$1; shift; . "$f" || exit 1; rm -f "$f"; exec "$@"', 'zcc-env', envFile, command, ...args]
     : [command, ...args];
   // One `-e KEY=VAL` per defined session-scoped var, so each tmux session gets
   // its OWN value instead of inheriting the server-global snapshot.
