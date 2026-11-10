@@ -214,7 +214,7 @@ describe('CLI session workspace previews', () => {
   });
 });
 
-describe.each(['attachments', 'artifacts'] as const)('%s previews', (kind) => {
+describe.each(['attachments', 'artifacts', 'thread-storage'] as const)('%s previews', (kind) => {
   it.each([['photo.bmp', 'image/bmp'], ['photo.AVIF', 'image/avif']])('recognizes the accepted %s image format', (path, mime) => {
     expect(imageContentType(path)).toBe(mime);
   });
@@ -225,7 +225,7 @@ describe.each(['attachments', 'artifacts'] as const)('%s previews', (kind) => {
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), 'thread-local-preview-'));
-    root = kind === 'attachments' ? join(dataDir, kind, 'p1') : join(dataDir, kind);
+    root = kind === 'artifacts' ? join(dataDir, kind) : join(dataDir, kind, kind === 'attachments' ? 'p1' : 't1');
     await mkdir(root, { recursive: true });
     vi.mocked(getConversationThread).mockReturnValue({
       id: 't1', projectId: 'p1', environmentId: 'e1', hostId: 'remote-host'
@@ -278,6 +278,8 @@ describe.each(['attachments', 'artifacts'] as const)('%s previews', (kind) => {
       join(dataDir, 'attachments', 'p2', 'private.png'),
       join(dataDir, 'attachments', 'p1-other', 'private.png'),
       join(dataDir, 'artifacts-other', 'private.png'),
+      join(dataDir, 'thread-storage', 't2', 'private.png'),
+      join(dataDir, 'thread-storage', 't1-other', 'private.png'),
       join(dataDir, 'config.json'),
       `${root}/../../secret.png`,
       root
