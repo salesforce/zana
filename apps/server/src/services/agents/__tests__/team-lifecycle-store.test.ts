@@ -499,22 +499,6 @@ describe('team lifecycle store', () => {
     expect(await restarted.findModernWorkerBinding(reservation.threadId, 'project-1')).toMatchObject({ generation: 1 });
   }));
 
-  it('drops a stale unknown observation so it cannot downgrade a worker bound meanwhile', async () => fixture(async (filePath) => {
-    const store = createTeamLifecycleStore({ filePath });
-    const claimed = await store.claim(modernClaimInput());
-    const reservation = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
-    const reference = { recordId: claimed.record.id, slotId: 'slot-1', generation: 1, threadId: reservation.threadId };
-    // Observer reads the record, then main binds the worker while the status call is in flight.
-    const observedRevision = (await store.get(reference.recordId))!.revision;
-    expect(await store.acknowledgeModernWorker(reference.recordId, reference.slotId, 1, reference.threadId)).toBe(true);
-    expect((await store.reconcileModernWorkers([{ ...reference, state: 'unknown', observedRevision }])).records).toEqual([]);
-    expect(await store.get(reference.recordId)).toMatchObject({ workers: [{ bindingState: 'BOUND', process: 'running' }] });
-    // A fresh read still marks genuinely missing runtime evidence UNCERTAIN.
-    const fresh = (await store.get(reference.recordId))!.revision;
-    await store.reconcileModernWorkers([{ ...reference, state: 'unknown', observedRevision: fresh }]);
-    expect(await store.get(reference.recordId)).toMatchObject({ workers: [{ bindingState: 'UNCERTAIN' }] });
-  }));
-
   it('recovers bound evidence, marks uncertainty, and forbids generic Modern process reaping', async () => fixture(async (filePath) => {
     const store = createTeamLifecycleStore({ filePath });
     const claimed = await store.claim(modernClaimInput());

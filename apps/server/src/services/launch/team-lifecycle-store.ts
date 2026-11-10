@@ -213,13 +213,6 @@ export interface TeamModernWorkerReference {
 /** Runtime must attest the exact binding and generation, never generic liveness. */
 export interface TeamModernWorkerObservation extends TeamModernWorkerReference {
   state: 'bound' | 'terminal' | 'unknown';
-  /**
-   * Record revision the observer read the worker under. An `unknown` observation
-   * is dropped when the record has moved on since (e.g. main bound the worker
-   * while the runtime status call was in flight), so stale absence cannot
-   * downgrade newer authority. Omitted = apply unconditionally.
-   */
-  observedRevision?: number;
 }
 
 export interface TeamModernReconcileResult extends TeamLifecycleReconcileResult {
@@ -830,8 +823,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     if (!Array.isArray(observations) || observations.length > MAX_WORKERS) throw new Error('invalid modern reconciliation batch');
     const bounded = observations.map((observation) => {
       if (!observation || !['bound', 'terminal', 'unknown'].includes(observation.state)) throw new Error('invalid modern observation');
-      const observedRevision = Number.isSafeInteger(observation.observedRevision) ? observation.observedRevision : undefined;
-      return { ...boundedModernReference(observation), state: observation.state, observedRevision };
+      return { ...boundedModernReference(observation), state: observation.state };
     });
     return runExclusive(async () => {
       const snapshot = readState();
@@ -855,8 +847,6 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
           worker.process = 'running';
         } else {
           if (worker.bindingState === 'UNCERTAIN') continue;
-          // Stale absence never downgrades newer authority; the next cycle re-reads.
-          if (observation.observedRevision !== undefined && record.revision !== observation.observedRevision) continue;
           worker.bindingState = 'UNCERTAIN';
         }
         changed.add(record);
