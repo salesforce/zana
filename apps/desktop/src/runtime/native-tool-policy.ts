@@ -109,3 +109,16 @@ export function firstToolPolicyDecider(...deciders: NativeToolPolicyHookDeps['de
 export function warnNativeToolPolicy(message: string): void {
   console.warn(`[native-tool-policy] ${message}`);
 }
+
+/**
+ * Whether a tool-policy readiness inventory demands the native-tool veto.
+ * Only a well-formed inventory with an empty `required` list means "none
+ * demanded"; anything torn (null, non-object, missing or non-array `required`)
+ * fails closed.
+ */
+export function inventoryDemandsVeto(inventory: unknown): boolean {
+  if (!inventory || typeof inventory !== 'object') return true;
+  const required = (inventory as { required?: unknown }).required;
+  if (!Array.isArray(required)) return true;
+  return required.length > 0;
+}

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // PtyManager imports node-pty (real subprocesses). Record argv and whether a
 // spawn ever happened, so a fail-closed refusal can be proven to spawn NOTHING.
@@ -38,6 +38,7 @@ vi.mock('../mcp-config.js', () => ({
 }));
 
 import { PtyManager, SpawnRefusedError } from '../pty.js';
+import { providerFor } from '../harness/registry.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 
 const CONFIG: AppConfig = {
@@ -98,6 +99,41 @@ describe('PtyManager.create — native-tool veto fail-closed (local)', () => {
     mgr.setMcpBaseUrl('http://127.0.0.1:8781');
     const session = mgr.create({ ...LOCAL, nativeToolPolicyRequired: true });
     expect(session).toBeTruthy();
+    expect(spawned).toHaveLength(1);
+  });
+});
+
+// An OpenCode launch whose gate cannot be merged into the config must not start
+// without its veto when a policy is required.
+describe('PtyManager.create — unmergeable native-tool gate config (opencode)', () => {
+  const OPENCODE = { ...LOCAL, profile: 'opencode' as const };
+  beforeEach(() => {
+    spawned.length = 0;
+    vi.spyOn(providerFor('opencode'), 'mergeNativeToolGateConfig').mockImplementation(() => {
+      throw new Error('opencode config is not valid JSON; native tool gate cannot be registered');
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('refuses to spawn when policy is required', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:8781');
+    let err: unknown;
+    try {
+      mgr.create({ ...OPENCODE, nativeToolPolicyRequired: true });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SpawnRefusedError);
+    expect((err as SpawnRefusedError).code).toBe('native-tool-policy-unreachable');
+    expect((err as SpawnRefusedError).message).toContain('could not be merged');
+    expect(spawned).toHaveLength(0);
+  });
+
+  it('still spawns with the config unchanged when policy is not required', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:8781');
+    expect(mgr.create({ ...OPENCODE, nativeToolPolicyRequired: false })).toBeTruthy();
     expect(spawned).toHaveLength(1);
   });
 });

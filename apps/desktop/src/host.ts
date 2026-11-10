@@ -13,6 +13,7 @@ import { createSnapshotNotifications } from './runtime/snapshot-notifications.js
 import {
   createNativeToolPolicyHook,
   firstToolPolicyDecider,
+  inventoryDemandsVeto,
   productRouteToolPolicyDecider,
   productRouteToolPolicyInventory,
   supervisorToolPolicyDecider,
@@ -3499,12 +3500,7 @@ async function resolveNativeToolPolicyRequired(): Promise<boolean> {
   };
   try {
     const inventory = await read();
-    if (!inventory || typeof inventory !== 'object') return true;
-    const required = (inventory as { required?: unknown }).required;
-    // Only a well-formed inventory with an empty `required` list means "no veto demanded".
-    // Anything else ({}, `required: null`) is torn and fails closed.
-    if (!Array.isArray(required)) return true;
-    return required.length > 0;
+    return inventoryDemandsVeto(inventory);
   } catch (err) {
     warnNativeToolPolicy(`tool-policy inventory read failed; failing closed: ${String(err)}`);
     return true;
