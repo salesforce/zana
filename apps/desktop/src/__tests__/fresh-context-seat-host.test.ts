@@ -114,10 +114,12 @@ describe('a fresh-context seat in a pre-authorised plan', () => {
     const oldSession = worker(first, '0:w1:0')!.sessionId!;
     const launchedBefore = first.capacity!.launched;
     const approvalBefore = worker(first, '0:w1:0')!.authorizationId;
-    // the faked pty layer reports no rest state and no exit, so both bounded waits run out on fake timers
+    // the faked pty layer reports no exit, so the exit wait runs out on fake timers; the old session comes to rest first
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
+      h.agentStatus.report(oldSession, 'working');
       const done = recycle(first.id, '0:w1:0');
+      h.agentStatus.report(oldSession, 'idle');
       await vi.advanceTimersByTimeAsync(SEAT_REST_WAIT_MS);
       expect(worker(recordFor(id), '0:w1:0')).toMatchObject({ process: 'authorized', onDemand: true, capacityReleased: false });
       expect(worker(recordFor(id), '0:w1:0')?.sessionId).toBeUndefined();
@@ -125,6 +127,21 @@ describe('a fresh-context seat in a pre-authorised plan', () => {
       h.launchAuthorization().complete(approvalBefore);
       await vi.advanceTimersByTimeAsync(SEAT_EXIT_WAIT_MS);
       return await finishRecycleCheck(done, id, first, launchedBefore, approvalBefore);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('REQ-4: a seat still working when the rest wait runs out keeps its session and the unit', async () => {
+    const id = reqId();
+    expect((await launchPreauthorized(id)).ok).toBe(true);
+    const first = recordFor(id);
+    const oldSession = worker(first, '0:w1:0')!.sessionId!;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      h.agentStatus.report(oldSession, 'working');
+      const done = recycle(first.id, '0:w1:0');
+      await vi.advanceTimersByTimeAsync(SEAT_REST_WAIT_MS);
+      await expect(done).resolves.toEqual({ declined: true });
+      expect(worker(recordFor(id), '0:w1:0')).toMatchObject({ process: 'running', sessionId: oldSession });
     } finally { vi.useRealTimers(); }
   });
 

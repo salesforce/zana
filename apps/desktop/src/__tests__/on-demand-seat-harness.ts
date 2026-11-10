@@ -30,6 +30,7 @@ const h = vi.hoisted(() => {
     authorizations: undefined as any,
     launchAuthorization(): any { return this.authorizations; },
     drainOpts: undefined as any,
+    agentStatus: undefined as any,
     runtime: {
       preflightSquadRuntime: vi.fn<(request: SquadRuntimePreflightRequest) => Promise<SquadRuntimePreflightResult>>(),
       createSquadMember: vi.fn<(request: SquadMemberRuntimeRequest) => Promise<{ threadId: string }>>(),
@@ -155,6 +156,14 @@ vi.mock('@zana-ai/zcc-server/services/execution/execution-delivery-drain', async
     construct(target, args, newTarget) { h.drainOpts = args[0]; return Reflect.construct(target, args, newTarget); }
   });
   return { ...actual, ExecutionDeliveryDrainService: Wrapped };
+});
+
+vi.mock('@zana-ai/zcc-server/services/agents/agent-status', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/agents/agent-status')>();
+  const Wrapped = new Proxy(actual.AgentStatusTracker, {
+    construct(target, args, newTarget) { const made = Reflect.construct(target, args, newTarget); h.agentStatus ??= made; return made; }
+  });
+  return { ...actual, AgentStatusTracker: Wrapped };
 });
 
 vi.mock('electron', () => ({
