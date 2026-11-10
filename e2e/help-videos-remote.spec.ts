@@ -9,6 +9,9 @@ interface ContentRepo { url: string; requests: string[]; offline: boolean; inval
 const test = base.extend<{ contentRepo: ContentRepo }>({
   contentRepo: async ({}, use) => {
     const clip = { ...baselineClip, id: 'published-after-install', title: 'Published without an app update' };
+    const squads = catalogue.videos.filter(video => video.group === 'Squads').map(video => ({
+      ...clip, id: video.id, group: video.group, title: video.title
+    }));
     const files = new Map<string, Buffer>();
     for (const asset of [clip.src, clip.poster, clip.captions]) {
       files.set(`/${asset.path}`, await readFile(fileURLToPath(new URL(`../${asset.path}`, import.meta.url))));
@@ -19,7 +22,7 @@ const test = base.extend<{ contentRepo: ContentRepo }>({
       if (repo.offline) { res.writeHead(503).end(); return; }
       if (req.url === '/content/videos/catalogue.json') {
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify(repo.invalid ? { version: 99 } : { version: 1, videos: [clip, { ...clip, id: 'future-only', title: 'Future only', minAppVersion: '999.0.0' }] }));
+        res.end(JSON.stringify(repo.invalid ? { version: 99 } : { version: 1, videos: [clip, ...squads, { ...clip, id: 'future-only', title: 'Future only', minAppVersion: '999.0.0' }] }));
       } else {
         const bytes = files.get(req.url!);
         if (!bytes) { res.writeHead(404).end(); return; }
@@ -33,12 +36,13 @@ const test = base.extend<{ contentRepo: ContentRepo }>({
   },
   launchEnv: async ({ contentRepo }, use) => { await use({ ZCC_E2E_HELP_VIDEOS_ORIGIN: contentRepo.url }); }
 });
-test.use({ e2e: true, initialConfig: { sponsorPromptDismissed: true, walkthroughCompleted: true } });
+test.use({ e2e: true, isolateBundledCatalog: true, initialConfig: { sponsorPromptDismissed: true, walkthroughCompleted: true } });
 
 test('discovers a content-only video and plays, seeks, captions and saves it through the built host, including offline reuse', async ({ app, contentRepo }, testInfo) => {
   const page = app.window;
   await page.getByTestId('titlebar-help-toggle').click();
   const menu = page.getByRole('dialog', { name: 'Help' });
+  await menu.getByRole('button', { name: /^Getting started, / }).click();
   const published = menu.getByRole('button', { name: 'Play Published without an app update, 0:30' });
   await expect(published).toBeVisible();
   await expect(menu.getByRole('button', { name: /Future only/ })).toHaveCount(0);
@@ -66,6 +70,7 @@ test('discovers a content-only video and plays, seeks, captions and saves it thr
   const downloadsBefore = contentRepo.requests.filter(path => path.endsWith('.mp4')).length;
   await page.reload();
   await page.getByTestId('titlebar-help-toggle').click();
+  await menu.getByRole('button', { name: /^Getting started, / }).click();
   await page.getByRole('button', { name: 'Play Published without an app update, 0:30, watched' }).click();
   await expect.poll(() => player.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeGreaterThan(.2);
   expect(contentRepo.requests.filter(path => path.endsWith('.mp4')).length).toBe(downloadsBefore);
@@ -77,6 +82,7 @@ test('an invalid repository catalogue leaves the bundled offline videos working'
   await page.getByTestId('titlebar-help-toggle').click();
   await expect.poll(() => contentRepo.requests.includes('/content/videos/catalogue.json')).toBe(true);
   await expect(page.getByRole('button', { name: /Play Published without/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Getting started, 2 videos' }).click();
   await page.getByRole('button', { name: /Play Your first project/ }).click();
   const player = page.getByTestId('help-video-player');
   await expect.poll(() => player.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeGreaterThan(.2);
@@ -88,12 +94,43 @@ test('a browser without the Electron bridge uses the same catalogue and media en
     await page.goto(app.window.url());
     expect(await page.evaluate(() => 'cc' in window && window.cc != null)).toBe(false);
     await page.getByTestId('titlebar-help-toggle').click();
+    await page.getByRole('button', { name: /^Getting started, / }).click();
     await page.getByRole('button', { name: 'Play Published without an app update, 0:30' }).click();
     const player = page.getByTestId('help-video-player');
     await expect.poll(() => player.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeGreaterThan(.2);
     const track = await player.locator('track').getAttribute('src');
     expect((await page.request.get(new URL(track!, page.url()).href)).headers()['content-type']).toContain('text/vtt');
   } finally { await page.close(); }
+});
+
+test('keeps a large category scrollable with release notes reachable and only one category expanded', async ({ app, contentRepo }, testInfo) => {
+  const page = app.window;
+  const nativeWindow = await app.electron.browserWindow(page);
+  await nativeWindow.evaluate(win => { win.setSize(1000, 720); win.focus(); win.webContents.focus(); });
+  const help = page.getByTestId('titlebar-help-toggle');
+  await help.click();
+  await expect.poll(() => contentRepo.requests.includes('/content/videos/catalogue.json')).toBe(true);
+  const menu = page.getByRole('dialog', { name: 'Help' });
+  const squads = menu.getByRole('button', { name: 'Squads, 9 videos' });
+  await expect(squads).toHaveAttribute('aria-expanded', 'false');
+  await expect(menu.getByRole('button', { name: /^Play / })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('help-categories-collapsed.png') });
+  await squads.click();
+  await expect(menu.getByRole('button', { name: /^Play / })).toHaveCount(9);
+  await expect(menu.getByRole('button', { name: 'Replay walkthrough' })).toBeInViewport();
+  const scroller = menu.locator('.help-menu-categories');
+  expect(await scroller.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+  const lastClip = menu.getByRole('button', { name: 'Play Build your own Persona and Squad, 0:30' });
+  await lastClip.scrollIntoViewIfNeeded();
+  await expect(lastClip).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath('help-squads-expanded.png') });
+  await menu.getByRole('button', { name: /^Getting started, / }).click();
+  await expect(squads).toHaveAttribute('aria-expanded', 'false');
+  await expect(lastClip).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(help).toBeFocused();
+  await help.click();
+  await expect(squads).toHaveAttribute('aria-expanded', 'false');
 });
 
 function clipFileName() { return baselineClip.fileName; }
