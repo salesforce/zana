@@ -384,7 +384,9 @@ async function handleHostNativeToolPolicy(request: IncomingMessage, response: Se
       hostToolInvocations.remember(`${auth.hostId}\u0000${session.instanceId}\u0000${thread.id}`, input.callId, invocationId);
     }
     sendJson(response, 200, decision);
-  } catch {
+  } catch (error) {
+    // Never log the body: it carries tool input.
+    console.error(`[native-tool-policy] host ${auth.hostId} request failed; denying: ${error instanceof Error ? error.name : 'error'}`);
     deny('native policy unavailable or invalid');
   } finally {
     clearTimeout(bodyTimer); clearTimeout(timer); activeNativeToolPolicies--;

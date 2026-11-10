@@ -15,6 +15,22 @@ describe('PtyInteractionStore', () => {
     return { store, changes };
   }
 
+  it('refuses to accept a response after the deadline even if the timer has not fired', async () => {
+    const { store } = setup();
+    const pending = ask(store);
+    const id = store.list('s1')[0]!.id;
+    const dueAt = store.list('s1')[0]!.expiresAt;
+    vi.setSystemTime(dueAt + 1);
+    expect(() => store.respond({ sessionId: 's1', interactionId: id, value: 1, actor: 'human' })).toThrow('expired');
+    await expect(pending).resolves.toMatchObject({ outcome: 'cancelled', reason: 'timeout' });
+  });
+
+  it.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])('cancels immediately for an unusable timeout %s without registering an entry', async (timeoutMs) => {
+    const { store } = setup();
+    await expect(ask(store, { timeoutMs })).resolves.toMatchObject({ outcome: 'cancelled', reason: 'timeout' });
+    expect(store.list('s1')).toEqual([]);
+  });
+
   it('rejects a session main never reported', () => {
     const store = new PtyInteractionStore();
     expect(() => ask(store)).toThrow('PTY session is not live');

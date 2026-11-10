@@ -128,6 +128,15 @@ describe('plugin api process wiring', () => {
     await expect(handle.api.process.spawn('sleep', ['1'])).rejects.toThrow('stale');
   });
 
+  it.skipIf(!posix)('enforces the per-plugin limit across concurrent spawn calls', async () => {
+    const tracker = createPluginProcessTracker({ pluginId: 'proc-concurrent', maxProcesses: 2 });
+    const settled = await Promise.allSettled([1, 2, 3, 4].map(() => tracker.spawn('sleep', ['30'])));
+    try {
+      expect(settled.filter(row => row.status === 'fulfilled')).toHaveLength(2);
+      expect(settled.filter(row => row.status === 'rejected')).toHaveLength(2);
+    } finally { await tracker.reapAll(); }
+  });
+
   it('exposes the exit promise off the wire and the wait function on it', async () => {
     const handle = createPluginApi('proc-wire', dir);
     const spawned = await handle.api.process.spawn(process.execPath, ['-e', 'process.exit(7)']) as unknown as { pid: number; exited: Promise<number | null>; wait(): Promise<number | null> };

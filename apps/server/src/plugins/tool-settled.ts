@@ -1,5 +1,5 @@
 import type { NativeToolSettledMainRequest } from '@zana-ai/zcc-contracts/runtime';
-import type { ToolSettledContract, ToolSettledState } from '@zana-ai/zcc-domain';
+import type { ToolSettledContract } from '@zana-ai/zcc-domain';
 import { capUtf8, redactPromptText } from './admission-prompt.js';
 import { toolPolicyProviderId } from './native-tool-policy.js';
 import type { PluginService } from './plugin-service.js';

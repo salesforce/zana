@@ -65,13 +65,15 @@ export default async function nativeToolGate() {
 `;
 }
 
-/** Add the gate module to a config document's `plugin` list; the document is returned unchanged if it is not JSON. */
+/** Add the gate module to a config document's `plugin` list. Throws when the document is not a JSON object: an unmerged gate would launch with no veto. */
 export function mergeOpenCodeGatePlugin(configJson: string, gatePath: string): string {
-  try {
-    const parsed = JSON.parse(configJson) as Record<string, unknown>;
-    const existing = Array.isArray(parsed.plugin) ? parsed.plugin : [];
-    return JSON.stringify({ ...parsed, plugin: [...existing, pathToFileURL(gatePath).href] });
-  } catch {
-    return configJson;
+  let parsed: unknown;
+  try { parsed = JSON.parse(configJson); }
+  catch { throw new Error('opencode config is not valid JSON; native tool gate cannot be registered'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('opencode config is not a JSON object; native tool gate cannot be registered');
   }
+  const record = parsed as Record<string, unknown>;
+  const existing = Array.isArray(record.plugin) ? record.plugin : [];
+  return JSON.stringify({ ...record, plugin: [...existing, pathToFileURL(gatePath).href] });
 }

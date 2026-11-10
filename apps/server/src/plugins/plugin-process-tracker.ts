@@ -26,6 +26,7 @@ interface Live { child: ChildProcess; pid: number; exited: Promise<number | null
 const trackers = new Set<{ live: Set<Live> }>();
 let exitHookInstalled = false;
 let globalLive = 0;
+let globalPending = 0;
 
 /** Synchronous last resort when the server process itself goes away: only recorded groups, never by name. */
 function installExitHook(): void {
@@ -74,6 +75,8 @@ export function createPluginProcessTracker(options: {
   const live = new Set<Live>();
   const registration = { live };
   let closed = false;
+  // Slots claimed by spawns still waiting for their 'spawn' event, so concurrent calls cannot all pass the limit check.
+  let pending = 0;
   let reaping: Promise<void> | undefined;
   installExitHook();
   trackers.add(registration);
@@ -89,11 +92,15 @@ export function createPluginProcessTracker(options: {
     async spawn(command, args, spawnOptions) {
       if (closed) throw new Error(`plugin context is stale: ${options.pluginId}`);
       validate(command, args, spawnOptions);
-      if (live.size >= max) throw new Error(`plugin process limit reached (${max})`);
-      if (globalLive >= PLUGIN_PROCESS_GLOBAL_LIMIT) throw new Error('host plugin process limit reached');
+      if (live.size + pending >= max) throw new Error(`plugin process limit reached (${max})`);
+      if (globalLive + globalPending >= PLUGIN_PROCESS_GLOBAL_LIMIT) throw new Error('host plugin process limit reached');
+      pending++; globalPending++;
+      let reserved = true;
+      const unreserve = () => { if (reserved) { reserved = false; pending--; globalPending--; } };
       // Output is discarded, not piped: Electron main can truncate piped child stdout, and a plugin that needs
       // output captures it itself (for example by redirecting to its own 0600 file).
-      const child = spawnFn(command, args, {
+      let child: ChildProcess;
+      try { child = spawnFn(command, args, {
         cwd: spawnOptions?.cwd,
         env: { ...process.env, ...spawnOptions?.env },
         shell: false,
@@ -101,7 +108,7 @@ export function createPluginProcessTracker(options: {
         detached: process.platform !== 'win32',
         windowsHide: true,
         stdio: 'ignore'
-      });
+      }); } catch (error) { unreserve(); throw error; }
       const record: Live = { child, pid: 0, done: false, exited: undefined as unknown as Promise<number | null> };
       record.exited = new Promise<number | null>(resolve => {
         child.once('close', code => { release(record); resolve(code); });
@@ -109,11 +116,11 @@ export function createPluginProcessTracker(options: {
       });
       void record.exited.catch(() => {});
       return await new Promise<PluginProcessHandle>((resolve, reject) => {
-        child.once('error', error => reject(error));
+        child.once('error', error => { unreserve(); reject(error); });
         child.once('spawn', () => {
-          if (typeof child.pid !== 'number') return reject(new Error('process.spawn did not yield a pid'));
+          if (typeof child.pid !== 'number') { unreserve(); return reject(new Error('process.spawn did not yield a pid')); }
           record.pid = child.pid;
-          live.add(record); globalLive++;
+          live.add(record); globalLive++; unreserve();
           // The reap may have started while the spawn event was pending.
           if (closed) { signalGroup(record.pid, 'SIGKILL', child); }
           child.unref();

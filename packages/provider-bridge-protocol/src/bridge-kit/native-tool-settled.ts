@@ -23,8 +23,9 @@ export type NativeToolSettledReport = Omit<NativeToolSettledParams, 'durationMs'
 export function createNativeToolSettledReporter(
   send: (notification: BridgeNativeToolSettledNotification) => void,
   now: () => number = Date.now,
-  capacity = 4_096,
+  capacityLimit = 4_096,
 ) {
+  const capacity = Number.isFinite(capacityLimit) ? Math.max(0, Math.floor(capacityLimit)) : 4_096;
   const starts = new Map<string, number>();
   const key = (threadId: string, callId: string) => `${threadId}\u0000${callId}`;
   return {

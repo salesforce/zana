@@ -10,7 +10,8 @@ export interface ToolInvocationCorrelation {
   take(scope: string, callId: string): string | undefined;
 }
 
-export function createToolInvocationCorrelation(max = 8_192): ToolInvocationCorrelation {
+export function createToolInvocationCorrelation(maxEntries = 8_192): ToolInvocationCorrelation {
+  const max = Number.isFinite(maxEntries) ? Math.max(0, Math.floor(maxEntries)) : 8_192;
   const entries = new Map<string, string>();
   const key = (scope: string, callId: string) => `${scope}\u0000${callId}`;
   return {

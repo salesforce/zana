@@ -581,7 +581,7 @@ export function createPluginApi(
   quiesceHooks.push(() => kv.dispose({ drain: true }));
   // Children spawned through process.spawn die with this plugin generation (dispose, deactivate or worker crash).
   const processTracker = createPluginProcessTracker({ pluginId, log: (level, message) => emitLog(level, message) });
-  disposeHooks.push(() => processTracker.reapAll());
+  // reapAll is mandatory host cleanup, run outside the plugin hook budget in dispose().
   // Plugin link notes are in memory and plugin-reported: they die with this plugin generation (stop, reload, uninstall).
   disposeHooks.push(() => options?.productContext?.peerLinkNotes?.clearPlugin(pluginId));
   disposeHooks.push(() => options?.productContext?.peerConnections?.clearPlugin(pluginId));
@@ -2284,6 +2284,8 @@ export function createPluginApi(
             catch (error) { emitLog('error', `onDispose failed: ${error instanceof Error ? error.message : String(error)}`); }
           }
           disposeHooks.length = 0;
+          try { await processTracker.reapAll(); }
+          catch (error) { emitLog('error', `process reap failed: ${error instanceof Error ? error.message : String(error)}`); }
           for (const handle of sqliteHandles) {
             try { handle.close(); } catch (error) { disposalErrors.push(error); }
           }

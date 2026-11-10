@@ -21,7 +21,7 @@ const REDACTED = '[REDACTED]';
  * `name: value`, and `"name": "value"` spans in free text.
  */
 const SECRET_ASSIGNMENT =
-  /(["']?[\w.-]{0,32}(?:token|secret|password|passwd|key|credential)[\w.-]{0,32}["']?[ \t]{0,4}[:=][ \t]{0,4})("[^"\n]{0,2048}"|'[^'\n]{0,2048}'|[^\s,;"'}]{1,2048})/gi;
+  /(["']?[\w.-]{0,32}(?:token|secret|password|passwd|key|credential)[\w.-]{0,32}["']?[ \t]{0,4}[:=][ \t]{0,4})("[^"\n]*"?|'[^'\n]*'?|[^\s,;"'}]+)/gi;
 const BEARER = /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi;
 const KNOWN_TOKEN =
   /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g;
@@ -38,12 +38,12 @@ export function redactPromptText(text: string): string {
 
 /** Cut to at most `maxBytes` UTF-8 bytes without splitting a code point. */
 export function capUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
-  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return { text, truncated: false };
-  let end = Math.min(text.length, maxBytes);
-  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > maxBytes) end -= 1;
-  // Never end on a lone high surrogate.
-  if (end > 0 && /[\ud800-\udbff]/.test(text[end - 1]!)) end -= 1;
-  return { text: text.slice(0, end), truncated: true };
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= maxBytes) return { text, truncated: false };
+  // Back off UTF-8 continuation bytes (10xxxxxx) so the cut lands on a code-point boundary.
+  let end = maxBytes;
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+  return { text: bytes.subarray(0, end).toString('utf8'), truncated: true };
 }
 
 /** Redact, then cap: the only shape of prompt content a plugin ever receives. */

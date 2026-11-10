@@ -20,7 +20,7 @@ describe('pluginApprovals:request', () => {
   it('signs exactly the binding main showed, for that plugin', async () => {
     const { handle, showSheet } = handler();
     const result = await handle(win(), { ...request, binding: { ...binding, subject: '  Help_Agent ' } });
-    expect(showSheet).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { pluginName: 'Salesforce', request: { binding, title: 'Publish Help_Agent' } });
+    expect(showSheet).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { pluginName: 'Salesforce', request: { binding, title: 'Publish Help_Agent' } }, expect.any(Number));
     expect(result).toEqual({ approved: true, token: expect.any(String), expiresAt: now + 5 * 60_000 });
     if (!result.approved) throw new Error('expected approval');
     const verify = createPluginApprovalVerifier(secret, () => now);

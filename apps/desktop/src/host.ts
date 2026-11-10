@@ -3501,7 +3501,10 @@ async function resolveNativeToolPolicyRequired(): Promise<boolean> {
     const inventory = await read();
     if (!inventory || typeof inventory !== 'object') return true;
     const required = (inventory as { required?: unknown }).required;
-    return Array.isArray(required) && required.length > 0;
+    // Only a well-formed inventory with an empty `required` list means "no veto demanded".
+    // Anything else ({}, `required: null`) is torn and fails closed.
+    if (!Array.isArray(required)) return true;
+    return required.length > 0;
   } catch (err) {
     warnNativeToolPolicy(`tool-policy inventory read failed; failing closed: ${String(err)}`);
     return true;

@@ -24,7 +24,7 @@ export function toolPolicyProviderId(profile: string): string {
  * A native hook allow, remembered briefly so the same call arriving again
  * through the main-owned PTY tool route is not policy-evaluated twice (a
  * second pass could re-ask the human). One-shot, keyed on session + tool name
- * without the host's `mcp__zcc-inbox__` prefix + redacted input hash. Absent record
+ * without the host's `mcp__zcc-inbox__` prefix + input hash (raw input, hashed in-process, never stored or sent). Absent record
  * means the caller evaluates normally, so Codex (whose hook cannot see MCP
  * calls) still gets its single evaluation.
  */
@@ -38,7 +38,7 @@ function nativeAllowKey(sessionId: string, toolName: string, input: unknown): st
   // prefix is equivalent to the bare plugin tool name; any other server's tool
   // of the same name is a different tool and must not inherit the allow.
   const bare = toolName.replace(HOST_MCP_PREFIX, '');
-  const digest = createHash('sha256').update(JSON.stringify(redactToolInput(input)) ?? '').digest('hex');
+  const digest = createHash('sha256').update(JSON.stringify(input) ?? '').digest('hex');
   return `${sessionId}\u0000${bare}\u0000${digest}`;
 }
 
@@ -75,11 +75,12 @@ export async function decideMainOwnedToolPolicy(
   options: { recordAllow?: boolean } = {}
 ): Promise<NativeToolPolicyDecision> {
   if (!plugins) return { action: 'deny', reason: 'plugin service is unavailable' };
+  if (!request.threadId && !request.sessionId) return { action: 'deny', reason: 'native tool call carries no thread or session identity' };
   const decision = await plugins.decideToolPolicy({
     invocationId: request.invocationId,
     // A PTY with no bound thread keeps its session id here, as before, so existing
     // handlers still key on something stable; `surface: "pty"` says it is not a thread.
-    threadId: request.threadId ?? request.sessionId!,
+    threadId: request.threadId ?? request.sessionId as string,
     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
     surface: request.sessionId ? 'pty' : 'modern',
     projectId: request.projectId,

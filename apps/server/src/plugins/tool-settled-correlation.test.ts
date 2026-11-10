@@ -15,6 +15,12 @@ describe('tool invocation correlation', () => {
     expect(c.take('t2', 'call')).toBeUndefined();
   });
 
+  it.each([-1, Number.NaN, Number.NEGATIVE_INFINITY])('terminates on an invalid capacity %s', (capacity) => {
+    const c = createToolInvocationCorrelation(capacity);
+    c.remember('t', 'a', '1');
+    expect(() => c.take('t', 'a')).not.toThrow();
+  });
+
   it('evicts oldest first at capacity', () => {
     const c = createToolInvocationCorrelation(2);
     c.remember('t', 'a', '1');

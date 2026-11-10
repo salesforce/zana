@@ -28,7 +28,9 @@ export async function admitMainOwnedDispatch(
     return refusal.code === 'dispatch_rejected'
       ? { action: 'reject', message: refusal.message.slice(0, 1024) || 'Dispatch rejected' }
       : { action: 'wait', reason: refusal.message.slice(0, 1024) || 'Dispatch is waiting' };
-  } catch {
+  } catch (error) {
+    // Fail closed, but leave a trace. Prompt text and identifiers beyond the project/session never reach the log.
+    console.error(`[dispatch-admission] admission failed; rejecting (project ${request.projectId}, session ${request.sessionId ?? 'none'}): ${error instanceof Error ? error.name : 'error'}`);
     return { action: 'reject', message: 'Plugin dispatch admission unavailable' };
   }
 }

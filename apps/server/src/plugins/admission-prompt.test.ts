@@ -20,6 +20,13 @@ describe('redactPromptText', () => {
     expect(redactPromptText(input)).toBe(expected);
   });
 
+  it('redacts values longer than the old 2048-char bound, quoted, unquoted or unterminated', () => {
+    const long = 'a'.repeat(3_000);
+    expect(redactPromptText(`password="${long}"`)).toBe('password=[REDACTED]');
+    expect(redactPromptText(`password="${long}`)).toBe('password=[REDACTED]');
+    expect(redactPromptText(`token=${long} end`)).toBe('token=[REDACTED] end');
+  });
+
   it('redacts a private key block, including an unterminated one', () => {
     expect(redactPromptText('a -----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY----- b')).toBe('a [REDACTED] b');
     expect(redactPromptText('a -----BEGIN PRIVATE KEY-----\nabc')).toBe('a [REDACTED]');
@@ -45,6 +52,15 @@ describe('capUtf8', () => {
     expect(Buffer.byteLength(cut.text, 'utf8')).toBeLessThanOrEqual(5);
     expect(cut.text).toBe('aé');
     expect(capUtf8('😀😀', 6).text).toBe('😀');
+  });
+
+  it('caps large multibyte text quickly and on a code-point boundary', () => {
+    const started = Date.now();
+    const cut = capUtf8('€'.repeat(40_000), 32_768);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(cut.truncated).toBe(true);
+    expect(Buffer.byteLength(cut.text, 'utf8')).toBe(32_766);
+    expect(cut.text).not.toContain('\ufffd');
   });
 });
 

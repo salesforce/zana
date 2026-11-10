@@ -52,7 +52,8 @@ export function createPluginApprovalHandler(deps: PluginApprovalDeps) {
         if (!app || !app.enabled || app.status !== 'running') return { approved: false, reason: 'invalid' };
         const view = { pluginName: app.name, request: parsed.value };
         const remaining = deadline - Date.now();
-        const outcome = timeoutMs === undefined ? await deps.showSheet(win as BrowserWindow, view) : await deps.showSheet(win as BrowserWindow, view, remaining);
+        // Always bounded: when the race times out the sheet closes with it instead of staying up with its busy guard cleared.
+        const outcome = await deps.showSheet(win as BrowserWindow, view, remaining);
         if (expired || Date.now() >= deadline) return { approved: false, reason: 'timeout' };
         if (outcome.kind !== 'approved' || win.isDestroyed()) return { approved: false, reason: 'cancelled' };
         const expected = parsed.value.binding.confirmText;

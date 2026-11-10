@@ -26,6 +26,13 @@ describe('decideMainOwnedToolPolicy', () => {
     });
   });
 
+  it('denies a request that carries neither a thread nor a session id', async () => {
+    const service = plugins({ action: 'allow' });
+    const { sessionId: _omit, ...anonymous } = call;
+    await expect(decideMainOwnedToolPolicy(service, anonymous)).resolves.toMatchObject({ action: 'deny' });
+    expect(service.decideToolPolicy).not.toHaveBeenCalled();
+  });
+
   it('passes the main-asserted identity through and redacts the input before a plugin sees it', async () => {
     const service = plugins({ action: 'allow' });
     await expect(decideMainOwnedToolPolicy(service, {
@@ -108,6 +115,13 @@ describe('toolPolicyProviderId', () => {
 });
 
 describe('native allow record', () => {
+  it('does not let inputs that differ only in redacted fields share one allow', async () => {
+    resetNativeAllowsForTest();
+    await decideMainOwnedToolPolicy(plugins({ action: 'allow' }), { ...call, input: { command: 'x', token: 'one' } });
+    expect(consumeNativeAllow('session-1', 'Bash', { command: 'x', token: 'two' })).toBe(false);
+    expect(consumeNativeAllow('session-1', 'Bash', { command: 'x', token: 'one' })).toBe(true);
+  });
+
   it('expires, is one-shot, and is bounded', async () => {
     resetNativeAllowsForTest();
     await decideMainOwnedToolPolicy(plugins({ action: 'allow' }), call);

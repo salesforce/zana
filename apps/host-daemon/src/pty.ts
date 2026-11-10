@@ -1561,9 +1561,17 @@ export class PtyManager extends EventEmitter {
       pluginInstructionText && provider.pluginInstructionsViaConfigFile && providerIntegration.mcpConfigFile
         ? this.writeSessionInstructionsFile(sessionId, pluginInstructionText)
         : null;
-    const withGate = (contents: string) => nativeToolGatePath
-      ? provider.mergeNativeToolGateConfig(effectiveProfile, contents, nativeToolGatePath)
-      : contents;
+    const withGate = (contents: string) => {
+      if (!nativeToolGatePath) return contents;
+      try { return provider.mergeNativeToolGateConfig(effectiveProfile, contents, nativeToolGatePath); }
+      catch (error) {
+        if (!nativeToolPolicyRequired) return contents;
+        throw new SpawnRefusedError(
+          'native-tool-policy-unreachable',
+          `tool policy plugin enabled but the native tool gate could not be merged into the launch config: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    };
     const mcpConfigFilePath = providerIntegration.mcpConfigFile
       ? this.writeSessionMcpConfigFile(
           sessionId,

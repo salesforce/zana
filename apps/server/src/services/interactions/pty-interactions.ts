@@ -136,6 +136,9 @@ export class PtyInteractionStore {
       createdAt,
       expiresAt: createdAt + args.timeoutMs
     };
+    if (!Number.isFinite(args.timeoutMs) || args.timeoutMs <= 0) {
+      return Promise.resolve({ outcome: 'cancelled', reason: 'timeout' } as PluginInteractionResult);
+    }
     return new Promise<PluginInteractionResult>((resolve) => {
       const abort = () => this.settle(view.id, { outcome: 'cancelled', reason: 'request-aborted' });
       args.signal?.addEventListener('abort', abort, { once: true });
@@ -162,6 +165,11 @@ export class PtyInteractionStore {
       throw new ThreadCreateError(400, 'invalid_request', 'Interaction response exceeds 64 KiB');
     }
     const entry = this.require(args);
+    if (entry.view.expiresAt <= Date.now()) {
+      // The timer may be delayed; an overdue interaction is never answerable.
+      this.settle(entry.view.id, { outcome: 'cancelled', reason: 'timeout' });
+      throw new ThreadCreateError(409, 'interaction_expired', 'Interaction has expired');
+    }
     const actor = args.actor ?? 'unknown';
     const refusal = humanGateRefusal(entry.view.payload.requireHuman, actor, args.attestation, {
       title: entry.view.payload.title, pluginId: entry.view.origin.pluginId

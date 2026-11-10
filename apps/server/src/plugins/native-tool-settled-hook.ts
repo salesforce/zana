@@ -14,7 +14,8 @@ export interface ToolStartTracker {
 }
 
 /** Bounded, in-memory only: an unmatched start is evicted oldest-first. */
-export function createToolStartTracker(max = 4_096): ToolStartTracker {
+export function createToolStartTracker(maxEntries = 4_096): ToolStartTracker {
+  const max = Number.isFinite(maxEntries) ? Math.max(0, Math.floor(maxEntries)) : 4_096;
   const starts = new Map<string, number>();
   return {
     started(invocationId, at = Date.now()) {

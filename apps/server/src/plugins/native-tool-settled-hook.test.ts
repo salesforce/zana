@@ -21,6 +21,10 @@ describe('ToolStartTracker', () => {
     expect(t.take('a', 250)).toBe(150);
     expect(t.take('a', 300)).toBe(0);
   });
+  it.each([-1, Number.NaN])('terminates on an invalid capacity %s', (capacity) => {
+    const t = createToolStartTracker(capacity);
+    expect(() => t.started('a', 1)).not.toThrow();
+  });
   it('is bounded', () => {
     const t = createToolStartTracker(1);
     t.started('a', 1);

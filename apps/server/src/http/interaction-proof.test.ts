@@ -68,10 +68,15 @@ describe('interaction actor proof', () => {
     });
     it('keeps thread and session proofs in separate domains, even for the same id', () => {
       const verify = createInteractionProofVerifier(secret, () => at);
-      const sessionToken = signInteractionProof(secret, { ...session, sessionId: 'same' }, 'human', 'w', at);
-      expect(verify(sessionToken, { threadId: 'same', interactionId: 'interaction', body: session.body })).toBeNull();
-      const threadToken = signInteractionProof(secret, { threadId: 'same', interactionId: 'interaction', body: session.body }, 'human', 'w', at);
-      expect(verify(threadToken, { ...session, sessionId: 'same' })).toBeNull();
+      const threadBinding = { threadId: 'same', interactionId: 'interaction', body: session.body };
+      const sessionBinding = { ...session, sessionId: 'same' };
+      const sessionToken = signInteractionProof(secret, sessionBinding, 'human', 'window:7', at);
+      expect(verify(sessionToken, threadBinding)).toBeNull();
+      const threadToken = signInteractionProof(secret, threadBinding, 'human', 'window:7', at);
+      expect(verify(threadToken, sessionBinding)).toBeNull();
+      // Each token is valid only against its own owner domain (single-use, so use fresh verifiers).
+      expect(createInteractionProofVerifier(secret, () => at)(sessionToken, sessionBinding)).toBe('human');
+      expect(createInteractionProofVerifier(secret, () => at)(threadToken, threadBinding)).toBe('human');
     });
     it('refuses a binding that names both keys or neither', () => {
       const verify = createInteractionProofVerifier(secret, () => at);

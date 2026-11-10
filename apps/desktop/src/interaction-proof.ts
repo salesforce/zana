@@ -39,7 +39,8 @@ export function createInteractionResponder(deps: {
       `api/v1/${'sessionId' in owner ? 'pty-sessions' : 'threads'}/${encodeURIComponent(owner.sessionId ?? owner.threadId)}/interactions/${encodeURIComponent(input.interactionId)}/respond`, base
     ), { method: 'POST', headers: { 'content-type': 'application/json', [INTERACTION_PROOF_HEADER]: proof }, body,
       redirect: 'error', signal: AbortSignal.timeout(5000) });
-    const result = await response.json() as { message?: string; error?: string; title?: unknown; pluginId?: unknown };
+    // A proxy or empty error body is not JSON; keep the HTTP status instead of a SyntaxError.
+    const result = await response.json().catch(() => ({})) as { message?: string; error?: string; title?: unknown; pluginId?: unknown };
     if (response.status === 403 && result.error === 'native-sheet-required'
       && typeof result.title === 'string' && typeof result.pluginId === 'string') {
       throw new NativeSheetRequiredError(result.title, result.pluginId);

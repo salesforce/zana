@@ -2026,6 +2026,9 @@ function handlePermissionRequest(
       return;
     }
     continuePermissionRequest(session, parsed.data, pending);
+  }).catch(() => {
+    // Fail closed: an unanswered permission would hang the agent.
+    if (session.pendingPermissions.delete(pending)) respondPermission(pending, "deny");
   });
 }
 

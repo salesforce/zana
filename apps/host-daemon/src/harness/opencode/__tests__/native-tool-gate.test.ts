@@ -94,8 +94,10 @@ describe('mergeOpenCodeGatePlugin', () => {
     const merged = JSON.parse(mergeOpenCodeGatePlugin(JSON.stringify({ mcp: { a: 1 }, plugin: ['user-plugin'] }), '/tmp/a b/gate.mjs'));
     expect(merged).toEqual({ mcp: { a: 1 }, plugin: ['user-plugin', 'file:///tmp/a%20b/gate.mjs'] });
   });
-  it('creates the list when absent and passes a non-JSON document through', () => {
+  it('creates the list when absent', () => {
     expect(JSON.parse(mergeOpenCodeGatePlugin('{}', '/g.mjs')).plugin).toEqual(['file:///g.mjs']);
-    expect(mergeOpenCodeGatePlugin('nope', '/g.mjs')).toBe('nope');
+  });
+  it.each(['nope', 'null', '[]', '"text"'])('throws instead of launching without the gate when the config is %s', (doc) => {
+    expect(() => mergeOpenCodeGatePlugin(doc, '/g.mjs')).toThrow('native tool gate cannot be registered');
   });
 });
