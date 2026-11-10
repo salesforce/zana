@@ -1313,121 +1313,54 @@ describe('verifiers start the review inside the clean snapshot', () => {
 
 const fakeRun = () => vi.fn((command: string) => (command === 'fd' ? { status: 0, stdout: 'scripts/a.guard.test.ts\n' } : { status: 0 }));
 
-const testCommandEnvs = (run: ReturnType<typeof vi.fn>, match: (args: string[]) => boolean) =>
-  run.mock.calls.filter(([command, args]) => command === 'pnpm' && match(args)).map(([, , options]) => options?.env);
+type Flow = 'full' | 'fast-selected' | 'fast-broad';
+const FLOWS: Flow[] = ['full', 'fast-selected', 'fast-broad'];
 const testEnvs = (run: ReturnType<typeof vi.fn>) =>
-  testCommandEnvs(run, (args) => args[0] === 'verify:full' || (args[0] === 'exec' && args[1] === 'vitest'));
+  run.mock.calls
+    .filter(([command, args]) => command === 'pnpm' && (args[0] === 'verify:full' || (args[0] === 'exec' && args[1] === 'vitest')))
+    .map(([, , options]) => options?.env);
 const withRoot = (fn: (root: string) => void) => {
   const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
   try { fn(root); } finally { rmSync(root, { recursive: true, force: true }); }
 };
+const runFlow = (flow: Flow, root: string, run: ReturnType<typeof vi.fn>, env: Record<string, string>) => {
+  if (flow === 'full') runFullVerification({ oid: OID, root, run, log: vi.fn(), env });
+  else runFastVerification({ oid: OID, base: BASE, paths: [flow === 'fast-broad' ? 'vitest.config.ts' : 'apps/server/src/service.test.ts'], root, run, log: vi.fn(), env });
+};
 
-describe('test timeout scale in pre-push (#693)', () => {
-
-  it('REQ-3: withTestTimeoutScale adds 3 when unset and keeps a user value', () => {
-    expect(withTestTimeoutScale({ PATH: '/bin' })).toEqual({ PATH: '/bin', ZANA_TEST_TIMEOUT_SCALE: '3' });
-    expect(withTestTimeoutScale({ ZANA_TEST_TIMEOUT_SCALE: '2' }).ZANA_TEST_TIMEOUT_SCALE).toBe('2');
-    const input = { PATH: '/bin' };
-    withTestTimeoutScale(input);
-    expect(input).toEqual({ PATH: '/bin' });
+describe('test timeout scale and retry in pre-push (#693)', () => {
+  it('withTestTimeoutScale adds scale 3 and retry 1 when unset, keeps user values, never mutates input', () => {
+    const input = Object.freeze({ PATH: '/bin' });
+    const shaped = withTestTimeoutScale(input);
+    expect(shaped).toEqual({ PATH: '/bin', ZANA_TEST_TIMEOUT_SCALE: '3', ZANA_TEST_RETRY: '1' });
+    expect(shaped).not.toBe(input);
+    expect(withTestTimeoutScale({ ZANA_TEST_TIMEOUT_SCALE: '2', ZANA_TEST_RETRY: '0' })).toEqual({ ZANA_TEST_TIMEOUT_SCALE: '2', ZANA_TEST_RETRY: '0' });
+    expect(withTestTimeoutScale({ ZANA_TEST_RETRY: '2' })).toMatchObject({ ZANA_TEST_TIMEOUT_SCALE: '3', ZANA_TEST_RETRY: '2' });
   });
 
-  it('REQ-3: full verification runs verify:full with scale 3 and keeps the rest of the env', () => {
-    const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
-    const run = fakeRun();
-    try {
-      runFullVerification({ oid: OID, root, run, log: vi.fn(), env: { PATH: process.env.PATH ?? '', MARKER: 'kept' } });
-      const [env] = testCommandEnvs(run, (args) => args[0] === 'verify:full');
-      expect(env).toMatchObject({ ZANA_TEST_TIMEOUT_SCALE: '3', MARKER: 'kept' });
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-
-  it('REQ-3: full verification keeps the user value', () => {
-    const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
-    const run = fakeRun();
-    try {
-      runFullVerification({ oid: OID, root, run, log: vi.fn(), env: { PATH: process.env.PATH ?? '', ZANA_TEST_TIMEOUT_SCALE: '2' } });
-      const [env] = testCommandEnvs(run, (args) => args[0] === 'verify:full');
-      expect(env?.ZANA_TEST_TIMEOUT_SCALE).toBe('2');
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-
-  it('REQ-3: fast verification scales selected tests, broad changed tests and guard tests', () => {
-    for (const paths of [['apps/server/src/service.test.ts'], ['vitest.config.ts']]) {
-      const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
-      const run = fakeRun();
-      try {
-        runFastVerification({ oid: OID, base: BASE, paths, root, run, log: vi.fn(), env: { PATH: process.env.PATH ?? '' } });
-        const envs = testCommandEnvs(run, (args) => args[0] === 'exec' && args[1] === 'vitest');
-        expect(envs.length).toBeGreaterThanOrEqual(2);
-        for (const env of envs) expect(env?.ZANA_TEST_TIMEOUT_SCALE).toBe('3');
-      } finally { rmSync(root, { recursive: true, force: true }); }
-    }
-  });
-
-  it('REQ-3: fast verification keeps the user value', () => {
-    const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
-    const run = fakeRun();
-    try {
-      runFastVerification({ oid: OID, base: BASE, paths: ['vitest.config.ts'], root, run, log: vi.fn(), env: { PATH: process.env.PATH ?? '', ZANA_TEST_TIMEOUT_SCALE: '4' } });
-      const envs = testCommandEnvs(run, (args) => args[0] === 'exec' && args[1] === 'vitest');
-      for (const env of envs) expect(env?.ZANA_TEST_TIMEOUT_SCALE).toBe('4');
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-});
-
-describe('test timeout scale obligations (#693, CodeNod OBL-001..005)', () => {
-  // OBL-001 (REQ-3): any explicit value, valid or not, is kept; other props are kept.
-  it.each(['2', '5', '', '0', 'invalid'])('OBL-001: keeps explicit %j in every flow and keeps unrelated env', (value) => {
-    expect(withTestTimeoutScale({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value })).toEqual({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value });
-    for (const flow of ['full', 'fast-selected', 'fast-broad'] as const) {
-      withRoot((root) => {
-        const run = fakeRun();
-        const env = { PATH: process.env.PATH ?? '', KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value };
-        if (flow === 'full') runFullVerification({ oid: OID, root, run, log: vi.fn(), env });
-        else runFastVerification({ oid: OID, base: BASE, paths: [flow === 'fast-broad' ? 'vitest.config.ts' : 'apps/server/src/service.test.ts'], root, run, log: vi.fn(), env });
-        const envs = testEnvs(run);
-        expect(envs.length).toBeGreaterThan(0);
-        for (const e of envs) expect(e).toMatchObject({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value });
-      });
-    }
-  });
-
-  // OBL-002 / OBL-003 (REQ-3): the default reaches every test command in every branch, and the caller's env is untouched.
-  it.each(['full', 'fast-selected', 'fast-broad'] as const)('OBL-002/003: %s gives every test command scale 3 without mutating the caller env', (flow) => {
+  it.each(FLOWS)('%s: every test command gets scale 3 and retry 1 without mutating the caller env', (flow) => {
     withRoot((root) => {
       const run = fakeRun();
       const env = { PATH: process.env.PATH ?? '', KEEP: 'x' };
       const before = { ...env };
-      if (flow === 'full') runFullVerification({ oid: OID, root, run, log: vi.fn(), env });
-      else runFastVerification({ oid: OID, base: BASE, paths: [flow === 'fast-broad' ? 'vitest.config.ts' : 'apps/server/src/service.test.ts'], root, run, log: vi.fn(), env });
+      runFlow(flow, root, run, env);
       const envs = testEnvs(run);
       expect(envs).toHaveLength(flow === 'full' ? 1 : 2);
-      for (const e of envs) expect(e).toMatchObject({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: '3' });
+      for (const e of envs) expect(e).toMatchObject({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: '3', ZANA_TEST_RETRY: '1' });
       expect(env).toEqual(before);
     });
   });
 
-  // OBL-004 (REQ-3): a user value of 5 reaches every test command.
-  it.each(['full', 'fast-selected', 'fast-broad'] as const)('OBL-004: %s keeps a user value of 5', (flow) => {
-    withRoot((root) => {
-      const run = fakeRun();
-      const env = { PATH: process.env.PATH ?? '', ZANA_TEST_TIMEOUT_SCALE: '5' };
-      if (flow === 'full') runFullVerification({ oid: OID, root, run, log: vi.fn(), env });
-      else runFastVerification({ oid: OID, base: BASE, paths: [flow === 'fast-broad' ? 'vitest.config.ts' : 'apps/server/src/service.test.ts'], root, run, log: vi.fn(), env });
-      for (const e of testEnvs(run)) expect(e?.ZANA_TEST_TIMEOUT_SCALE).toBe('5');
-    });
-  });
-
-  // OBL-005 (REQ-3): shaping never mutates its input and returns a fresh object.
-  it('OBL-005: withTestTimeoutScale returns a new object and leaves the input unchanged', () => {
-    const unset = Object.freeze({ A: '1' });
-    const set = Object.freeze({ A: '1', ZANA_TEST_TIMEOUT_SCALE: '4' });
-    const shaped = withTestTimeoutScale(unset);
-    expect(shaped).not.toBe(unset);
-    expect(unset).toEqual({ A: '1' });
-    const kept = withTestTimeoutScale(set);
-    expect(kept).not.toBe(set);
-    expect(kept).toEqual(set);
-  });
+  it.each(FLOWS.flatMap((flow) => ['2', '5', '', '0', 'invalid'].map((value) => [flow, value] as const)))(
+    '%s: keeps explicit user values %j for scale and retry',
+    (flow, value) => {
+      withRoot((root) => {
+        const run = fakeRun();
+        runFlow(flow, root, run, { PATH: process.env.PATH ?? '', KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value, ZANA_TEST_RETRY: value });
+        const envs = testEnvs(run);
+        expect(envs.length).toBeGreaterThan(0);
+        for (const e of envs) expect(e).toMatchObject({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value, ZANA_TEST_RETRY: value });
+      });
+    }
+  );
 });

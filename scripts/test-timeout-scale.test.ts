@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseTimeoutScale, scaleTimeout } from './test-timeout-scale.mjs';
+import { parseTestRetry, parseTimeoutScale, scaleTimeout } from './test-timeout-scale.mjs';
 
 // REQ-1, REQ-2: pure helper behaviour.
 describe('parseTimeoutScale', () => {
@@ -46,5 +46,38 @@ describe('vitest.config timeouts', () => {
   });
   it.each(['0', '-3', '6', 'fast', ''])('REQ-2: invalid %j gives today\'s values', async (raw) => {
     expect(await timeouts(raw)).toEqual({ test: 20_000, hook: 20_000 });
+  });
+});
+
+describe('parseTestRetry', () => {
+  it('unset, empty and text mean 0', () => {
+    for (const raw of [undefined, '', 'abc', ' ', '1.5', '-1']) expect(parseTestRetry(raw)).toBe(0);
+  });
+  it('0 to 2 are accepted', () => {
+    for (const n of [0, 1, 2]) expect(parseTestRetry(String(n))).toBe(n);
+  });
+  it('3 or more mean 0', () => {
+    for (const raw of ['3', '10', '100']) expect(parseTestRetry(raw)).toBe(0);
+  });
+});
+
+describe('vitest configs honour ZANA_TEST_RETRY', () => {
+  const original = process.env.ZANA_TEST_RETRY;
+  afterEach(() => {
+    if (original === undefined) delete process.env.ZANA_TEST_RETRY; else process.env.ZANA_TEST_RETRY = original;
+  });
+  async function retries(raw: string | undefined) {
+    if (raw === undefined) delete process.env.ZANA_TEST_RETRY; else process.env.ZANA_TEST_RETRY = raw;
+    vi.resetModules();
+    const root = (await import('../vitest.config')).default;
+    const pi = (await import('../plugins/provider-pi/vitest.config')).default;
+    const tasks = (await import('../plugins/tasks/vitest.config')).default;
+    return [root.test?.retry, pi.test?.retry, tasks.test?.retry];
+  }
+  it('unset keeps today\'s behaviour (0)', async () => {
+    expect(await retries(undefined)).toEqual([0, 0, 0]);
+  });
+  it.each([['1', 1], ['2', 2], ['3', 0], ['x', 0]] as const)('value %j gives %i', async (raw, n) => {
+    expect(await retries(raw)).toEqual([n, n, n]);
   });
 });
