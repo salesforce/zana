@@ -11,7 +11,23 @@ test('the title-bar Help menu keeps page hints and plays the bundled video catal
   await help.click();
   const menu = page.getByRole('dialog', { name: 'Help' });
   await expect(menu.getByRole('switch', { name: /Page hints/ })).toHaveAttribute('aria-checked', 'true');
+  const gettingStarted = menu.getByRole('button', { name: 'Getting started, 2 videos' });
+  const highlights = menu.getByRole('button', { name: 'What’s new · 2.3.0, 1 video' });
+  await expect(gettingStarted).toHaveAttribute('aria-expanded', 'false');
+  await expect(menu.getByRole('button', { name: /^Play / })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('help-menu.png') });
+  await gettingStarted.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(menu.locator('.help-menu-category-toggle').nth(1)).toBeFocused();
+  await highlights.focus();
+  await page.keyboard.press('Enter');
+  await expect(highlights).toHaveAttribute('aria-expanded', 'true');
+  await gettingStarted.click();
+  await expect(highlights).toHaveAttribute('aria-expanded', 'false');
+  await expect(gettingStarted).toHaveAttribute('aria-expanded', 'true');
+  await gettingStarted.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(menu.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:30' })).toBeFocused();
 
   // The repository seam is offline; the shipped media stays on the app origin.
   const origin = new URL(page.url()).origin;
@@ -72,6 +88,8 @@ test('the title-bar Help menu keeps page hints and plays the bundled video catal
 
   await page.reload();
   await help.click();
+  await expect(gettingStarted).toHaveAttribute('aria-expanded', 'false');
+  await gettingStarted.click();
   await expect(menu.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:30, watched' })).toBeVisible();
   await menu.getByRole('button', { name: 'Replay walkthrough' }).click();
   const tour = page.getByTestId('walkthrough-dialog');

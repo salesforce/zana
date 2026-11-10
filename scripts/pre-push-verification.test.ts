@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot } from './pre-push-verification.mjs';
+import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot, withTestTimeoutScale } from './pre-push-verification.mjs';
 
 // Spy on spawnSync while keeping real spawning, so tests can check what the hook starts.
 vi.mock('node:child_process', async (importOriginal) => {
@@ -1309,4 +1309,58 @@ describe('verifiers start the review inside the clean snapshot', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+const fakeRun = () => vi.fn((command: string) => (command === 'fd' ? { status: 0, stdout: 'scripts/a.guard.test.ts\n' } : { status: 0 }));
+
+type Flow = 'full' | 'fast-selected' | 'fast-broad';
+const FLOWS: Flow[] = ['full', 'fast-selected', 'fast-broad'];
+const testEnvs = (run: ReturnType<typeof vi.fn>) =>
+  run.mock.calls
+    .filter(([command, args]) => command === 'pnpm' && (args[0] === 'verify:full' || (args[0] === 'exec' && args[1] === 'vitest')))
+    .map(([, , options]) => options?.env);
+const withRoot = (fn: (root: string) => void) => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-scale-'));
+  try { fn(root); } finally { rmSync(root, { recursive: true, force: true }); }
+};
+const runFlow = (flow: Flow, root: string, run: ReturnType<typeof vi.fn>, env: Record<string, string>) => {
+  if (flow === 'full') runFullVerification({ oid: OID, root, run, log: vi.fn(), env });
+  else runFastVerification({ oid: OID, base: BASE, paths: [flow === 'fast-broad' ? 'vitest.config.ts' : 'apps/server/src/service.test.ts'], root, run, log: vi.fn(), env });
+};
+
+describe('test timeout scale and retry in pre-push (#693)', () => {
+  it('withTestTimeoutScale adds scale 3 and retry 1 when unset, keeps user values, never mutates input', () => {
+    const input = Object.freeze({ PATH: '/bin' });
+    const shaped = withTestTimeoutScale(input);
+    expect(shaped).toEqual({ PATH: '/bin', ZANA_TEST_TIMEOUT_SCALE: '3', ZANA_TEST_RETRY: '1' });
+    expect(shaped).not.toBe(input);
+    expect(withTestTimeoutScale({ ZANA_TEST_TIMEOUT_SCALE: '2', ZANA_TEST_RETRY: '0' })).toEqual({ ZANA_TEST_TIMEOUT_SCALE: '2', ZANA_TEST_RETRY: '0' });
+    expect(withTestTimeoutScale({ ZANA_TEST_RETRY: '2' })).toMatchObject({ ZANA_TEST_TIMEOUT_SCALE: '3', ZANA_TEST_RETRY: '2' });
+  });
+
+  it.each(FLOWS)('%s: every test command gets scale 3 and retry 1 without mutating the caller env', (flow) => {
+    withRoot((root) => {
+      const run = fakeRun();
+      const env = { PATH: process.env.PATH ?? '', KEEP: 'x' };
+      const before = { ...env };
+      runFlow(flow, root, run, env);
+      const envs = testEnvs(run);
+      expect(envs).toHaveLength(flow === 'full' ? 1 : 2);
+      for (const e of envs) expect(e).toMatchObject({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: '3', ZANA_TEST_RETRY: '1' });
+      expect(env).toEqual(before);
+    });
+  });
+
+  it.each(FLOWS.flatMap((flow) => ['2', '5', '', '0', 'invalid'].map((value) => [flow, value] as const)))(
+    '%s: keeps explicit user values %j for scale and retry',
+    (flow, value) => {
+      withRoot((root) => {
+        const run = fakeRun();
+        runFlow(flow, root, run, { PATH: process.env.PATH ?? '', KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value, ZANA_TEST_RETRY: value });
+        const envs = testEnvs(run);
+        expect(envs.length).toBeGreaterThan(0);
+        for (const e of envs) expect(e).toMatchObject({ KEEP: 'x', ZANA_TEST_TIMEOUT_SCALE: value, ZANA_TEST_RETRY: value });
+      });
+    }
+  );
 });

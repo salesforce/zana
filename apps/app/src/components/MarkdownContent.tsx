@@ -19,8 +19,9 @@ import {
   rewriteLocalhostLinkHref
 } from '../lib/localhost-link-rewrite-preference.js';
 import { handleHttpLinkClick } from '../lib/in-app-browser-link-preference.js';
-import { parseInlineFileCodePath, parseLocalFileMarkdownHref, resolveThreadFilePreviewPath } from './markdown-local-file.js';
-import { MarkdownFileLink } from './MarkdownFileLink.js';
+import { parseInlineFileCodePath, resolveThreadFilePreviewPath } from './markdown-local-file.js';
+import { classifyMarkdownFileTarget } from './markdown-file-target.js';
+import { MarkdownFileLink, UnavailableMarkdownFileLink } from './MarkdownFileLink.js';
 import { parseThreadMentionHref, remarkThreadMentions } from './markdown-thread-mentions.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { conversationImageSrc } from '../lib/prompt-attachments.js';
@@ -252,7 +253,8 @@ export const MarkdownContent = memo(function MarkdownContent({
       <div className="inbox-md">
         <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        urlTransform={(url) => transformMarkdownMediaUrl(url, defaultUrlTransform)}
+        urlTransform={(url, key) => key === 'href' && classifyMarkdownFileTarget(url)
+          ? url : transformMarkdownMediaUrl(url, defaultUrlTransform)}
         rehypePlugins={[
           // html-only avoids KaTeX's sibling MathML+HTML trees, which React
           // warns about as an unkeyed list.
@@ -275,25 +277,22 @@ export const MarkdownContent = memo(function MarkdownContent({
                 </a>
               );
             }
-            const localPath = parseLocalFileMarkdownHref(
+            const localTarget = classifyMarkdownFileTarget(
               typeof props.href === 'string' ? props.href : undefined
             );
-            if (localPath) {
-              if (threadId) {
+            if (localTarget) {
+              if (localTarget.kind === 'file' && threadId) {
                 return (
-                  <MarkdownFileLink token={localPath} href={props.href} title={localPath} threadId={threadId} projectId={projectId} hints={filePathHints} link>
+                  <MarkdownFileLink token={localTarget.path} lineNumber={localTarget.lineNumber} href={props.href} title={props.title ?? localTarget.path} threadId={threadId} projectId={projectId} hints={filePathHints} link>
                     {props.children}
                   </MarkdownFileLink>
                 );
               }
               return (
-                <a
-                  {...props}
-                  href={props.href}
-                  onClick={(event) => {
-                    event.preventDefault();
-                  }}
-                />
+                <UnavailableMarkdownFileLink message={localTarget.kind === 'invalid'
+                  ? localTarget.message : 'Open this file link from a thread to preview it.'}>
+                  {props.children}
+                </UnavailableMarkdownFileLink>
               );
             }
             const href = rewriteLocalhostLinkHref({

@@ -1,3 +1,4 @@
+import { splitRecommendedLabel } from '../../../lib/recommended-label.js';
 import type {
   PendingInteractionUserAnswer,
   PendingInteractionUserQuestionQuestion
@@ -57,14 +58,7 @@ export function isQuestionAnswered(
   return answer.selected.length > 0;
 }
 
-const RECOMMENDED_SUFFIX = /\s*[-–—(]\s*recommended\s*\)?\s*$/i;
-
-/** Splits an agent's "Label (Recommended)" convention into a clean label plus a flag. */
-export function splitRecommendedLabel(label: string): { label: string; recommended: boolean } {
-  const stripped = label.replace(RECOMMENDED_SUFFIX, '').trim();
-  if (stripped === label.trim() || !stripped) return { label, recommended: false };
-  return { label: stripped, recommended: true };
-}
+export { splitRecommendedLabel } from '../../../lib/recommended-label.js';
 
 export function recommendedOptionValue(
   question: Pick<PendingInteractionUserQuestionQuestion, 'multiSelect' | 'options'>

@@ -26,6 +26,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 
 const trigger = () => screen.getByTestId('titlebar-help-toggle');
 const hints = () => screen.getByRole('switch', { name: /Page hints/ });
+const category = (group: string) => screen.getByRole('button', { name: name => name.startsWith(`${group}, `) });
 function renderMenu() {
   return render(<HelpProvider><HelpMenu /><HelpToggle /><HelpVideoLibrary /><input aria-label="Outside" /></HelpProvider>);
 }
@@ -34,6 +35,7 @@ it('discovers a remote video, pins its playing cut across refreshes and offers r
   const remote = { ...HELP_VIDEOS[0], id: 'new-tutorial', title: 'New tutorial', revision: 'new', src: '/api/v1/help/videos/assets/new.mp4' };
   useHelpVideos.setState({ videos: [remote, ...HELP_VIDEOS] });
   renderMenu(); fireEvent.click(trigger());
+  fireEvent.click(category('Getting started'));
   fireEvent.click(screen.getByRole('button', { name: 'Play New tutorial, 0:30' }));
   const player = screen.getByTestId('help-video-player');
   expect(player.querySelector('source')?.getAttribute('src')).toBe(remote.src);
@@ -50,6 +52,7 @@ it('falls back to the bundled copy when a remotely revised basic cannot play', (
   const remote = { ...HELP_VIDEOS[0], src: '/api/v1/help/videos/assets/revised.mp4' };
   useHelpVideos.setState({ videos: [remote, ...HELP_VIDEOS.slice(1)] });
   renderMenu(); fireEvent.click(trigger());
+  fireEvent.click(category('Getting started'));
   fireEvent.click(screen.getByRole('button', { name: /Play Your first project/ }));
   fireEvent.error(screen.getByTestId('help-video-player'));
   expect(screen.getByRole('status').textContent).toContain('Playing the offline copy');
@@ -58,6 +61,7 @@ it('falls back to the bundled copy when a remotely revised basic cannot play', (
 
 it('returns keyboard focus to the fullscreen button after leaving video fullscreen', () => {
   renderMenu(); fireEvent.click(trigger());
+  fireEvent.click(category('Getting started'));
   fireEvent.click(screen.getByRole('button', { name: /Play Your first project/ }));
   const player = screen.getByTestId('help-video-player');
   const original = Object.getOwnPropertyDescriptor(document, 'fullscreenElement');
@@ -134,6 +138,7 @@ it('moves through the menu with the arrow keys and wraps', () => {
 it('opens a video, switches clips, tracks watched state and closes back to the trigger', () => {
   renderMenu();
   fireEvent.click(trigger());
+  fireEvent.click(category('What’s new · 2.3.0'));
   fireEvent.click(screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:04' }));
   expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull();
   const player = () => screen.getByTestId('help-video-player') as HTMLVideoElement;
@@ -176,6 +181,7 @@ it('opens a video, switches clips, tracks watched state and closes back to the t
   expect(screen.queryByTestId('help-video-library')).toBeNull();
   expect(document.activeElement).toBe(trigger());
   fireEvent.click(trigger());
+  fireEvent.click(category('Getting started'));
   expect(screen.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:30, watched' })).toBeTruthy();
 });
 
@@ -235,8 +241,79 @@ it('skips the disabled release action during keyboard navigation while notes loa
   ui.getReleaseNotes.mockReturnValueOnce(new Promise(() => {}));
   renderMenu();
   fireEvent.click(trigger());
+  fireEvent.click(category('What’s new · 2.3.0'));
   const lastVideo = screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:04' });
   lastVideo.focus();
   fireEvent.keyDown(lastVideo, { key: 'ArrowDown' });
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Replay walkthrough' }));
+});
+
+it('groups the live catalogue, counts clips and starts with all categories collapsed', () => {
+  const extra = (id: string, group: string) => ({ ...HELP_VIDEOS[0], id, group, title: id });
+  useHelpVideos.setState({ videos: [
+    ...HELP_VIDEOS,
+    extra('agent-build', 'Agentforce'), extra('agent-tests', 'Agentforce'),
+    ...Array.from({ length: 9 }, (_, index) => extra(`squad-${index}`, 'Squads')),
+    extra('new-topic', 'New topic')
+  ] });
+  renderMenu(); fireEvent.click(trigger());
+  const buttons = screen.getAllByRole('button', { expanded: false });
+  expect(buttons.map(button => button.getAttribute('aria-label'))).toEqual([
+    'Getting started, 2 videos', 'Agentforce, 2 videos', 'Squads, 9 videos', 'New topic, 1 video', 'What’s new · 2.3.0, 1 video'
+  ]);
+  for (const button of buttons) {
+    expect(document.getElementById(button.getAttribute('aria-controls')!)?.hidden).toBe(true);
+  }
+  expect(screen.queryByRole('button', { name: /^Play / })).toBeNull();
+  expect(screen.getByText('Build, launch and manage runs')).toBeTruthy();
+  expect(screen.getByText('Build and test your agents')).toBeTruthy();
+  expect(screen.getByText('Explore tutorials and walkthroughs')).toBeTruthy();
+
+  fireEvent.click(category('Squads'));
+  expect(category('Squads').getAttribute('aria-expanded')).toBe('true');
+  expect(screen.getAllByRole('button', { name: /^Play / })).toHaveLength(9);
+  fireEvent.click(category('Agentforce'));
+  expect(category('Squads').getAttribute('aria-expanded')).toBe('false');
+  expect(screen.getAllByRole('button', { name: /^Play / })).toHaveLength(2);
+  fireEvent.click(category('Agentforce'));
+  expect(screen.queryByRole('button', { name: /^Play / })).toBeNull();
+  fireEvent.click(category('New topic'));
+  fireEvent.click(screen.getByRole('button', { name: 'Play new-topic, 0:30' }));
+  expect(screen.getByTestId('help-video-player').getAttribute('aria-label')).toBe('new-topic');
+});
+
+it('updates category counts during refresh and resets expansion when reopening the menu', () => {
+  renderMenu(); fireEvent.click(trigger());
+  fireEvent.click(category('Getting started'));
+  category('Getting started').focus();
+  act(() => useHelpVideos.setState({ videos: [
+    ...HELP_VIDEOS, { ...HELP_VIDEOS[0], id: 'fresh-tutorial', title: 'Fresh tutorial' }
+  ] }));
+  expect(category('Getting started').getAttribute('aria-label')).toBe('Getting started, 3 videos');
+  expect(category('Getting started').getAttribute('aria-expanded')).toBe('true');
+  expect(document.activeElement).toBe(category('Getting started'));
+  expect(screen.getByRole('button', { name: 'Play Fresh tutorial, 0:30' })).toBeTruthy();
+  fireEvent.keyDown(category('Getting started'), { key: 'Escape' });
+  fireEvent.click(trigger());
+  expect(category('Getting started').getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByRole('button', { name: /^Play / })).toBeNull();
+});
+
+it('navigates category headers and expanded clips without focusing collapsed clips', () => {
+  renderMenu(); fireEvent.click(trigger());
+  const gettingStarted = category('Getting started');
+  const highlights = category('What’s new · 2.3.0');
+  gettingStarted.focus();
+  fireEvent.keyDown(gettingStarted, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(highlights);
+  fireEvent.click(gettingStarted);
+  gettingStarted.focus();
+  fireEvent.keyDown(gettingStarted, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: /Play Your first project/ }));
+  fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+  expect(document.activeElement).toBe(gettingStarted);
+  fireEvent.click(highlights);
+  highlights.focus();
+  fireEvent.keyDown(highlights, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:04' }));
 });

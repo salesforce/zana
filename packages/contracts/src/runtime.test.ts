@@ -239,6 +239,14 @@ describe('menubar runtime contracts', () => {
       type: 'menubar-threads-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, localThreadsWorking: 'true'
     }).success).toBe(false);
   });
+
+  it('preserves bounded native thread context and rejects oversized previews', () => {
+    const row = { kind: 'thread', agentId: 't1', threadId: 't1', projectId: 'p1', rowKey: 'thread:t1', projectName: 'Project', title: 'Thread', state: 'blocked', favorite: false, canFavorite: false, canReply: false, createdAt: 1, status: 'active', hasPendingInteraction: true,
+      context: { interactionId: 'i1', createdAt: 2, prompt: 'Which path?', questions: [{ id: 'q', prompt: 'Which path?', multiSelect: false, allowFreeText: true }], lastMessage: { text: 'Tested.', truncated: false } } };
+    expect(MenubarAgentSchema.parse(row)).toEqual(row);
+    expect(MenubarAgentSchema.safeParse({ ...row, context: { ...row.context, lastMessage: { text: 'x'.repeat(4001), truncated: false } } }).success).toBe(false);
+    expect(MenubarAgentSchema.safeParse({ ...row, context: { ...row.context, privateTranscript: 'no' } }).success).toBe(false);
+  });
 });
 
 describe('native tool policy deny reasons', () => {

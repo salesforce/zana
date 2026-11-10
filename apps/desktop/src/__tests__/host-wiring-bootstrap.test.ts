@@ -45,6 +45,8 @@ const h = vi.hoisted(() => {
     browserManager: undefined as any,
     mobileStart: vi.fn(),
     lastWin: undefined as any,
+    windowHandlers: new Map<any, Map<string, ((...a: any[]) => any)[]>>(),
+    companionHost: undefined as ReturnType<typeof import('../companion-host.js').createCompanionHost> | undefined,
     winOptions: [] as any[],
     sent: [] as unknown[][],
     winDestroyed: false,
@@ -78,15 +80,21 @@ vi.mock('electron', () => {
     static fromWebContents() { return null; }
     constructor(options: unknown) {
       h.winOptions.push(options);
+      const handlers = new Map<string, ((...a: any[]) => any)[]>();
       const fallback = { get: (target: Record<string, unknown>, key: string | symbol) =>
         key in target ? target[key as string] : loose() };
-      const win = new Proxy({
+      const win: any = new Proxy({
         id: 1,
         isDestroyed: () => h.winDestroyed,
+        on: (name: string, fn: (...a: any[]) => any) => {
+          handlers.set(name, [...(handlers.get(name) ?? []), fn]);
+          return win;
+        },
         setTitleBarOverlay: (options: unknown) => { h.overlays.push(options); },
         webContents: new Proxy({ id: 2, isDestroyed: () => h.contentsDestroyed(), send: (...a: unknown[]) => { h.sent.push(a); } }, fallback)
       }, fallback);
       h.lastWin = win;
+      h.windowHandlers.set(win, handlers);
       return win;
     }
   }
@@ -101,7 +109,7 @@ vi.mock('electron', () => {
     screen: new Proxy({ getAllDisplays: () => [display], getPrimaryDisplay: () => display }, {
       get: (target, key) => key in target ? target[key as keyof typeof target] : loose()
     }),
-    Menu: { setApplicationMenu: () => {}, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
+    Menu: { setApplicationMenu: () => {}, getApplicationMenu: () => null, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
     nativeImage: { createFromPath: () => loose(), createEmpty: () => loose() },
     powerMonitor: { on: () => {}, off: () => {} },
     powerSaveBlocker: loose(),
@@ -110,6 +118,19 @@ vi.mock('electron', () => {
     systemPreferences: loose(),
     Notification: class { static isSupported() { return false; } },
     clipboard: loose()
+  };
+});
+
+vi.mock('../companion-host.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../companion-host.js')>();
+  return {
+    ...actual,
+    createCompanionHost: (...args: Parameters<typeof actual.createCompanionHost>) => {
+      const host = actual.createCompanionHost(...args);
+      vi.spyOn(host, 'onAppOpened');
+      h.companionHost = host;
+      return host;
+    }
   };
 });
 
@@ -303,6 +324,29 @@ describe('host bootstrap wiring', () => {
     project = project.project;
   }, 30000);
 
+  it('dismisses the companion through window focus, both Dock activation handlers and explicit app opens', () => {
+    const opened = vi.mocked(h.companionHost!.onAppOpened);
+    const win = h.lastWin;
+    const focus = h.windowHandlers.get(win)!.get('focus')!;
+    expect(focus).toHaveLength(1);
+    opened.mockClear();
+    focus[0]();
+    expect(opened).toHaveBeenCalledOnce();
+    expect(opened.mock.calls[0][0]).toBe(win);
+
+    const activate = h.appHandlers.get('activate')!;
+    expect(activate).toHaveLength(2);
+    for (const handler of activate) {
+      opened.mockClear();
+      handler();
+      expect(opened.mock.calls[0]).toEqual([]);
+    }
+
+    opened.mockClear();
+    ctx().showMainWindow();
+    expect(opened.mock.calls[0]).toEqual([]);
+  });
+
   it('re-colours the Windows caption buttons on a Theme change and an OS appearance change', () => {
     const platform = process.platform;
     const config = store.getConfig();
@@ -435,6 +479,8 @@ describe('host bootstrap wiring', () => {
     expect(items.some((i) => i.label === 'View on GitHub')).toBe(true);
     expect(items.find((i) => i.role === 'pasteAndMatchStyle')).toMatchObject({ accelerator: 'CmdOrCtrl+Shift+V' });
     expect(shell).toBeDefined();
+    expect(items.find((i) => i.id === 'companion-enter')).toMatchObject({ visible: false, enabled: false });
+    expect(() => ctx().syncCompanionMenu()).not.toThrow();
   });
 
   it('launches terminals through authorize, revalidate and spawn', async () => {

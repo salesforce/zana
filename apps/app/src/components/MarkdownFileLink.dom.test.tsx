@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({ resolve: vi.fn(), open: vi.fn() }));
@@ -20,7 +20,7 @@ it('shows duplicate basename choices and opens only the selected path', async ()
   const choice = await screen.findByRole('button', { name: 'docs/guide.md' });
   expect(h.resolve).toHaveBeenCalledWith('thread-1', { path: 'guide.md', hints: [] });
   fireEvent.click(choice);
-  expect(h.open).toHaveBeenCalledWith('thread-1', 'docs/guide.md');
+  expect(h.open).toHaveBeenCalledWith('thread-1', 'docs/guide.md', null);
 });
 
 it('shows an incomplete-search message without guessing a file', async () => {
@@ -44,7 +44,7 @@ it('opens a uniquely resolved path and passes thread scope, project and hints', 
   h.resolve.mockResolvedValue({ kind: 'resolved', path: 'docs/guide.md' });
   render(<MarkdownFileLink token="guide.md" threadId="thread-2" projectId="project-2" hints={['docs/guide.md']} />);
   fireEvent.click(screen.getByRole('button', { name: 'Preview guide.md' }));
-  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-2', 'docs/guide.md'));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-2', 'docs/guide.md', null));
   expect(h.resolve).toHaveBeenCalledWith('thread-2', { path: 'guide.md', hints: ['docs/guide.md'], projectId: 'project-2' });
 });
 
@@ -54,7 +54,7 @@ it('reports a missing path and retries after the file becomes available', async 
   render(<MarkdownFileLink token="reports/missing.md" threadId="thread-3" />);
   fireEvent.click(screen.getByRole('button', { name: 'Preview missing.md' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
-  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-3', 'reports/missing.md'));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-3', 'reports/missing.md', null));
 });
 
 it('renders resolver errors and permits retry', async () => {
@@ -76,7 +76,7 @@ it('preserves file URL anchors and resolves their normalized path', async () => 
   expect(link.getAttribute('href')).toBe('file:///D:/repo/docs/guide.md');
   fireEvent.click(link);
   expect(h.resolve).toHaveBeenCalledWith('thread-5', { path: 'D:/repo/docs/guide.md', hints: [] });
-  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-5', 'docs/guide.md'));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith('thread-5', 'docs/guide.md', null));
 });
 
 it('does not allow choices from an old token or thread to open after rerender', async () => {
@@ -136,7 +136,7 @@ it('resolves a bare filename when a single timeline hint is stale and opens the 
     path: 'guide.md',
     hints: ['old/guide.md']
   }));
-  expect(h.open).toHaveBeenCalledWith('thread-1', 'docs/guide.md');
+  expect(h.open).toHaveBeenCalledWith('thread-1', 'docs/guide.md', null);
 });
 
 it('renders three or more duplicate basename choices from server ambiguity', async () => {
@@ -156,4 +156,40 @@ it('renders checkedPath in not_found error message', async () => {
   render(<MarkdownFileLink token="missing.md" threadId="thread-err" />);
   fireEvent.click(screen.getByRole('button', { name: 'Preview missing.md' }));
   expect((await screen.findByRole('status')).textContent).toContain('Could not find missing.md (checked /work/missing.md)');
+});
+
+it.each(['ambiguous', 'incomplete'])('preserves line focus in %s choices', async (kind) => {
+  h.resolve.mockResolvedValue({ kind, paths: ['docs/guide.md', 'examples/guide.md'] });
+  render(<MarkdownFileLink token="guide.md" threadId="t1" lineNumber={9} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Preview guide.md' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'docs/guide.md' }));
+  expect(h.open).toHaveBeenCalledWith('t1', 'docs/guide.md', 9);
+});
+
+it.each(['resolved', 'rejected'])('ignores stale %s requests after line focus changes', async (outcome) => {
+  let resolve!: (value: unknown) => void;
+  let reject!: (error: Error) => void;
+  h.resolve.mockReturnValue(new Promise((yes, no) => { resolve = yes; reject = no; }));
+  const view = render(<MarkdownFileLink token="guide.md" threadId="t1" lineNumber={2} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Preview guide.md' }));
+  view.rerender(<MarkdownFileLink token="guide.md" threadId="t1" lineNumber={3} />);
+  await act(async () => {
+    if (outcome === 'resolved') resolve({ kind: 'resolved', path: 'guide.md' });
+    else reject(new Error('Old error'));
+  });
+  expect(h.open).not.toHaveBeenCalled();
+  expect(screen.queryByRole('status')).toBeNull();
+});
+
+it('prevents repeat and auxiliary navigation while resolving an anchor', async () => {
+  let resolve!: (value: unknown) => void;
+  h.resolve.mockReturnValue(new Promise((yes) => { resolve = yes; }));
+  render(<MarkdownFileLink token="docs/guide.md" threadId="t1" link />);
+  const link = screen.getByRole('link');
+  fireEvent.click(link);
+  expect(fireEvent.click(link)).toBe(false);
+  expect(fireEvent(link, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))).toBe(false);
+  expect(fireEvent(link, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 2 }))).toBe(false);
+  expect(h.resolve).toHaveBeenCalledTimes(1);
+  await act(async () => resolve({ kind: 'resolved', path: 'docs/guide.md' }));
 });

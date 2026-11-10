@@ -385,10 +385,39 @@ describe('git worktree support', () => {
       const res = await createWorktree(main, join(base, 'wt', 'escaped-hooks'), 'zcc/escaped-hooks', undefined, true);
       expect(res).toEqual({
         ok: false,
-        reason: 'cannot preserve executable hook outside configured hooks directory: commit-msg'
+        reason: 'cannot preserve hook outside configured hooks directory: commit-msg'
       });
 
       const linked = (await listWorktrees(main)).find((worktree) => worktree.branch === 'zcc/escaped-hooks');
+      expect(linked).toBeDefined();
+      if (!linked) return;
+      const hooksPath = await execFileP('git', ['config', '--path', '--get', 'core.hooksPath'], {
+        cwd: linked.path,
+        env: cleanGitEnv()
+      });
+      expect(hooksPath.stdout.trim()).toBe(customHooks);
+      await expect(execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], {
+        cwd: linked.path,
+        env: cleanGitEnv()
+      })).rejects.toBeDefined();
+    });
+
+    it('fails protected setup without changing hook policy when a non-executable hook symlink escapes', async () => {
+      const customHooks = join(base, 'custom-hooks-non-exec');
+      const escapedHook = join(base, 'escaped-data');
+      await mkdir(customHooks);
+      await writeFile(escapedHook, 'not-executable-data\n');
+      await symlink(escapedHook, join(customHooks, 'commit-msg'));
+      await chmod(escapedHook, 0o644);
+      await git(main, 'config', 'core.hooksPath', customHooks);
+
+      const res = await createWorktree(main, join(base, 'wt', 'escaped-non-exec'), 'zcc/escaped-non-exec', undefined, true);
+      expect(res).toEqual({
+        ok: false,
+        reason: 'cannot preserve hook outside configured hooks directory: commit-msg'
+      });
+
+      const linked = (await listWorktrees(main)).find((worktree) => worktree.branch === 'zcc/escaped-non-exec');
       expect(linked).toBeDefined();
       if (!linked) return;
       const hooksPath = await execFileP('git', ['config', '--path', '--get', 'core.hooksPath'], {

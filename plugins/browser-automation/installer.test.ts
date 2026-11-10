@@ -9,6 +9,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { scaleTimeout } from "../../scripts/test-timeout-scale.mjs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,9 @@ import {
   type RuntimeRelease,
 } from "./installer.js";
 import { resolveRuntime } from "./runtime-pin.js";
+
+/** Short real waits stretch with ZANA_TEST_TIMEOUT_SCALE on a busy machine (#693). */
+const scaled = (ms: number) => scaleTimeout(ms, process.env.ZANA_TEST_TIMEOUT_SCALE);
 
 const platform = currentPlatform() as RuntimePlatform;
 const version = "1.0.0-test";
@@ -362,7 +366,7 @@ describe("runtime installer", () => {
     const path = join(installRoot(dir), "test.lock");
     const signal = new AbortController().signal;
     await writeFile(path, "not-a-pid");
-    const young = acquireLock(path, AbortSignal.timeout(600));
+    const young = acquireLock(path, AbortSignal.timeout(scaled(600)));
     await expect(young).rejects.toThrow();
     expect(await readFile(path, "utf8")).toBe("not-a-pid");
     const old = new Date(Date.now() - 60_000);
@@ -376,7 +380,7 @@ describe("runtime installer", () => {
       bHeld = true;
       return unlock;
     });
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await new Promise((resolve) => setTimeout(resolve, scaled(400)));
     expect(bHeld).toBe(false);
     await unlockA();
     const unlockB = await b;
@@ -394,7 +398,7 @@ describe("runtime installer", () => {
     await configureNpm({ installDelayMs: 3_000 });
     const controller = new AbortController();
     const pending = install(dir, { signal: controller.signal });
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, scaled(300)));
     controller.abort();
     await expect(pending).rejects.toThrow("cancelled");
     expect(await entries(dir)).toEqual([]);

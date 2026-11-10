@@ -10,8 +10,10 @@ import { NavAccountLink, useNavAccount } from './NavAccount';
 
 const LINKS = [
   { href: '/', label: 'Product' },
+  { href: '/walkthrough/', label: 'Walkthrough' },
   { href: '/extensions/', label: 'Plugins' },
-  { href: '/docs/', label: 'Docs' }
+  { href: '/docs/', label: 'Docs' },
+  { href: '/media-press/', label: 'Media & Press' }
 ];
 
 type Theme = 'light' | 'dark';
@@ -255,6 +257,7 @@ export function Footer() {
             <h2>Product</h2>
             <Link href="/">Home</Link>
             <Link href="/features/">Features</Link>
+            <Link href="/walkthrough/">Walkthrough</Link>
             <Link href="/download/">Download</Link>
             <Link href="/marketplace/">Marketplace</Link>
             <Link href="/dashboard/">Publish</Link>
@@ -267,6 +270,7 @@ export function Footer() {
           </div>
           <div className="foot-col">
             <h2>Resources</h2>
+            <Link href="/media-press/">Media &amp; Press</Link>
             <a href={site.repo}>Source</a>
             <a href={site.releasesRepo}>Releases</a>
             <a href={site.readmeUrl}>README</a>

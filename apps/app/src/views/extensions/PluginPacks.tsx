@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle2, Layers, Package, Settings2 } from 'lucide-react';
 import { Modal } from '../../components/Modal.js';
 import './plugin-packs.css';
@@ -69,9 +70,11 @@ export function PluginPackCards({ packs, mode, onboarding = false, onReview, onF
   </section>;
 }
 
-export function PluginPackReview({ review, inline = false, busy = false, installBlocked = false, error, results, onClose, onInstall, onOpenPlugin }: {
+export function PluginPackReview({ review, inline = false, footerTarget, busy = false, installBlocked = false, error, results, onClose, onInstall, onOpenPlugin }: {
   review: PluginPackReviewModel;
   inline?: boolean;
+  /** Keep inline review actions in the containing wizard's persistent footer. */
+  footerTarget?: HTMLElement | null;
   busy?: boolean;
   installBlocked?: boolean;
   error?: string | null;
@@ -124,7 +127,7 @@ export function PluginPackReview({ review, inline = false, busy = false, install
     {error ? <p role="alert" className="modal-error">{error}</p> : null}
     <p className="ext-pack-trust-note">Selected plugins run with full trust on this computer. Only install plugins from publishers you trust. Each plugin keeps its own settings, sign-in and update schedule.</p>
   </>;
-  return inline ? <section className="ext-pack-inline" aria-label={review.pack.title}>{content}<div className="ext-pack-inline-footer">{footer}</div></section>
+  return inline ? <section className="ext-pack-inline" aria-label={review.pack.title}>{content}{footerTarget ? createPortal(footer, footerTarget) : <div className="ext-pack-inline-footer">{footer}</div>}</section>
     : <Modal title={`Review ${review.pack.title}`} onClose={close} hideClose={busy} closeOnBackdrop={!busy} className="ext-pack-review" footer={footer}>{content}</Modal>;
 }
 

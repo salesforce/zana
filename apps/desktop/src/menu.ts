@@ -50,6 +50,8 @@ export interface MenubarDeps {
   onThreadsChanged?: (listener: () => void) => () => void;
   /** Active app theme, so the popover matches without its own config read. */
   theme: () => 'dark' | 'light';
+  /** Opt-in Command Center mode is on (the footer offers to enter it). */
+  commandCenterEnabled?: () => boolean;
   /** Preload script path (same CJS preload the main window uses). */
   preloadPath: string;
   logger?: (context: string, err: unknown) => void;
@@ -206,7 +208,8 @@ export class MenubarController {
       working,
       scheduleCount: this.deps.scheduler.list().length,
       nextRunAt: this.soonestNextRun(),
-      theme: this.deps.theme()
+      theme: this.deps.theme(),
+      commandCenter: this.deps.commandCenterEnabled?.() === true
     };
   }
 

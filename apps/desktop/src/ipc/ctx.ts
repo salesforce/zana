@@ -35,6 +35,7 @@ export interface IpcCtx {
   cloneAndRegisterProject: any;
   closeSummary: any;
   wrapUpClose: WrapUpCloseService;
+  companion: any;
   conversationHistory: any;
   createInteractiveTerminal: any;
   createLocalExtension: any;
@@ -136,6 +137,7 @@ export interface IpcCtx {
   startTeamJobFromUi: any;
   stopAutonomousRun: any;
   suggestionsStore: any;
+  syncCompanionMenu: any;
   teams: any;
   teamLifecycle: any;
   templates: any;

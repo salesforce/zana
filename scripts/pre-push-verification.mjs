@@ -597,13 +597,28 @@ function prepareSlackAssets(snapshot, run, log, mode) {
   if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
 }
 
+/**
+ * Test commands get a longer timeout scale and one retry of a failed test unless
+ * the user already set them (#693). The scale reaches suites whose vitest config
+ * reads it; the retry also covers explicit per-test timeouts. CI sets neither.
+ */
+const PREPUSH_TEST_TIMEOUT_SCALE = '3';
+const PREPUSH_TEST_RETRY = '1';
+export function withTestTimeoutScale(env) {
+  return {
+    ...env,
+    ZANA_TEST_TIMEOUT_SCALE: env.ZANA_TEST_TIMEOUT_SCALE ?? PREPUSH_TEST_TIMEOUT_SCALE,
+    ZANA_TEST_RETRY: env.ZANA_TEST_RETRY ?? PREPUSH_TEST_RETRY
+  };
+}
+
 export function runFullVerification({ oid, root = process.cwd(), run = spawnCommand, log = console.log, env = process.env, cacheRoot, review }) {
   const time = createPhaseTimer({ env, log });
   return withSnapshot({ oid, mode: 'full', root, run, log, env, time, cacheRoot }, (snapshot) => {
     review?.start(snapshot, oid);
     time('slack-assets', () => prepareSlackAssets(snapshot, run, log, 'full'));
     log('pre-push: full (est. verify:full)');
-    const result = time('verify:full', () => run('pnpm', ['verify:full'], { cwd: snapshot, stdio: 'inherit' }));
+    const result = time('verify:full', () => run('pnpm', ['verify:full'], { cwd: snapshot, stdio: 'inherit', env: withTestTimeoutScale(env) }));
     if (result.status !== 0) throw new Error('verification failed: pnpm verify:full');
   });
 }
@@ -626,21 +641,21 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
     if (needsBroadChangedTests(paths)) {
       time('slack-assets', () => prepareSlackAssets(snapshot, run, log, 'fast'));
       log(`pre-push: fast (est. vitest --changed ${base.slice(0, 12)})`);
-      const changed = time('tests', () => run('pnpm', ['exec', 'vitest', 'run', '--changed', base], { cwd: snapshot, stdio: 'inherit' }));
+      const changed = time('tests', () => run('pnpm', ['exec', 'vitest', 'run', '--changed', base], { cwd: snapshot, stdio: 'inherit', env: withTestTimeoutScale(env) }));
       if (changed.status !== 0) throw new Error('verification failed: vitest --changed');
     } else {
       const tests = selectedTestFiles(inputs, snapshot);
       if (tests.some((test) => test.startsWith(SLACK_BRIDGE))) time('slack-assets', () => prepareSlackAssets(snapshot, run, log, 'fast'));
       if (tests.length) {
         log(`pre-push: fast (est. ${tests.length} changed or colocated test${tests.length === 1 ? '' : 's'})`);
-        const testRun = time('tests', () => run('pnpm', ['exec', 'vitest', 'run', ...tests], { cwd: snapshot, stdio: 'inherit' }));
+        const testRun = time('tests', () => run('pnpm', ['exec', 'vitest', 'run', ...tests], { cwd: snapshot, stdio: 'inherit', env: withTestTimeoutScale(env) }));
         if (testRun.status !== 0) throw new Error('verification failed: selected vitest tests');
       }
     }
     const guards = guardTests(snapshot, run);
     if (guards.length) {
       log(`pre-push: fast (est. ${guards.length} source-text guard tests)`);
-      const guardRun = time('guards', () => run('pnpm', ['exec', 'vitest', 'run', ...guards], { cwd: snapshot, stdio: 'inherit' }));
+      const guardRun = time('guards', () => run('pnpm', ['exec', 'vitest', 'run', ...guards], { cwd: snapshot, stdio: 'inherit', env: withTestTimeoutScale(env) }));
       if (guardRun.status !== 0) throw new Error('verification failed: source-text guard tests');
     }
   });
