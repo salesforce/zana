@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { existsSync, realpathSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import {
   authorizeInstructWorktreePush,
@@ -197,7 +197,7 @@ describe('squad worktree push guard against a real git remote', () => {
     const wt = await guardedWorktree();
     const hooksDir = await git(wt, ['config', '--worktree', '--get', 'core.hooksPath']);
     expect(existsSync(join(hooksDir, 'pre-push'))).toBe(true);
-    expect(hooksDir.startsWith(join(main, '.git', 'worktrees'))).toBe(true);
+    expect(relative(join(main, '.git', 'worktrees'), hooksDir)).toMatch(/^[^/\\]+[/\\]zana-hooks$/u);
     // Guard output is generated, so deleting needs --force only for the dirty bits git sees (none here).
     const removed = await removeWorktree(main, wt, false);
     expect(removed.ok).toBe(true);
@@ -205,6 +205,16 @@ describe('squad worktree push guard against a real git remote', () => {
     expect(existsSync(hooksDir)).toBe(false);
     // The branch stays; the main checkout is still usable and pushable.
     await git(main, ['push', 'origin', 'zcc/guarded']);
+  });
+
+  it('does not proxy directories or data files as executable hooks', async () => {
+    const hooks = join(main, '.git', 'hooks');
+    await mkdir(join(hooks, 'nested'));
+    await writeFile(join(hooks, 'pre-receive'), 'not a hook script\n');
+    const wt = await guardedWorktree();
+    const guardDir = await git(wt, ['config', '--worktree', '--get', 'core.hooksPath']);
+    expect(existsSync(join(guardDir, 'nested'))).toBe(false);
+    expect(existsSync(join(guardDir, 'pre-receive'))).toBe(false);
   });
 
   describe('with a pre-existing core.hooksPath pre-push hook in the main checkout', () => {

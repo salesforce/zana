@@ -21,16 +21,18 @@ function ChoiceButtons({
   paths,
   threadId,
   generation,
-  currentGeneration
+  currentGeneration,
+  lineNumber
 }: {
   paths: string[];
   threadId: string;
   generation: number;
   currentGeneration: { current: number };
+  lineNumber: number | null;
 }) {
   return <>{paths.map((path) => (
     <button key={path} type="button" onClick={() => {
-      if (currentGeneration.current === generation) dispatchThreadOpenFile(threadId, path);
+      if (currentGeneration.current === generation) dispatchThreadOpenFile(threadId, path, lineNumber);
     }}>{path}</button>
   ))}</>;
 }
@@ -44,7 +46,8 @@ function usePreviewResolution(
   token: string,
   threadId: string,
   projectId: string | null | undefined,
-  hints: readonly string[]
+  hints: readonly string[],
+  lineNumber: number | null
 ): { state: LinkState; resolve: () => Promise<void>; generation: { current: number } } {
   const [state, setState] = useState<LinkState>({ kind: 'idle' });
   const generation = useRef(0);
@@ -52,7 +55,7 @@ function usePreviewResolution(
     generation.current += 1;
     setState({ kind: 'idle' });
     return () => { generation.current += 1; };
-  }, [token, threadId, projectId]);
+  }, [token, threadId, projectId, lineNumber]);
 
   const resolve = async () => {
     const request = ++generation.current;
@@ -65,7 +68,7 @@ function usePreviewResolution(
       });
       if (generation.current !== request) return;
       if (result.kind === 'resolved') {
-        dispatchThreadOpenFile(threadId, result.path);
+        dispatchThreadOpenFile(threadId, result.path, lineNumber);
         setState({ kind: 'idle' });
       } else if (result.kind === 'ambiguous') {
         setState({ kind: 'choices', paths: result.paths, generation: request });
@@ -110,6 +113,7 @@ function FileLinkTrigger({
         aria-disabled={loading}
         title={title}
         onClick={(event) => { event.preventDefault(); if (!loading) onResolve(); }}
+        onAuxClick={(event) => { event.preventDefault(); if (event.button === 1 && !loading) onResolve(); }}
       >
         {label}
       </a>
@@ -135,18 +139,20 @@ function ResolutionStatus({
   token,
   threadId,
   generation,
-  onRetry
+  onRetry,
+  lineNumber
 }: {
   state: LinkState;
   token: string;
   threadId: string;
   generation: { current: number };
   onRetry: () => void;
+  lineNumber: number | null;
 }) {
   if (state.kind === 'choices') {
     return (
       <span role="group" aria-label={`Choose a file matching ${token}`}>
-        <ChoiceButtons paths={state.paths} threadId={threadId} generation={state.generation} currentGeneration={generation} />
+        <ChoiceButtons paths={state.paths} threadId={threadId} generation={state.generation} currentGeneration={generation} lineNumber={lineNumber} />
       </span>
     );
   }
@@ -155,7 +161,7 @@ function ResolutionStatus({
       <span role="status">
         {state.paths.length > 0 ? 'Could not check every folder. Choose a result or use a full path.' : 'Could not check every folder. Use a full path.'}
         {state.paths.length > 0 ? (
-          <ChoiceButtons paths={state.paths} threadId={threadId} generation={state.generation} currentGeneration={generation} />
+          <ChoiceButtons paths={state.paths} threadId={threadId} generation={state.generation} currentGeneration={generation} lineNumber={lineNumber} />
         ) : null}
       </span>
     );
@@ -178,7 +184,8 @@ export function MarkdownFileLink({
   hints = [],
   children,
   link = false,
-  href
+  href,
+  lineNumber = null
 }: {
   token: string;
   title?: string;
@@ -188,8 +195,9 @@ export function MarkdownFileLink({
   children?: ReactNode;
   link?: boolean;
   href?: string;
+  lineNumber?: number | null;
 }) {
-  const { state, resolve, generation } = usePreviewResolution(token, threadId, projectId, hints);
+  const { state, resolve, generation } = usePreviewResolution(token, threadId, projectId, hints, lineNumber);
 
   return (
     <span className="inbox-md-file-link-wrap">
@@ -208,8 +216,17 @@ export function MarkdownFileLink({
         token={token}
         threadId={threadId}
         generation={generation}
+        lineNumber={lineNumber}
         onRetry={() => { void resolve(); }}
       />
     </span>
   );
+}
+
+export function UnavailableMarkdownFileLink({ message, children }: { message: string; children?: ReactNode }) {
+  const [visible, setVisible] = useState(false);
+  return <span className="inbox-md-file-link-wrap">
+    <button type="button" className="inbox-md-file-chip" onClick={() => setVisible(true)}>{children}</button>
+    {visible ? <span role="status">{message}</span> : null}
+  </span>;
 }
