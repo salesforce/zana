@@ -55,4 +55,37 @@ describe('ToolPolicyAskCard', () => {
     const { container } = render(<ToolPolicyAskCard data={{ nope: 1 }} pluginId="p" submit={vi.fn()} cancel={vi.fn()} />);
     expect(container.innerHTML).toBe('');
   });
+
+  it('omits the input preview when empty', () => {
+    setup({ data: { ...data, inputPreview: '' } });
+    expect(screen.queryByTestId('tool-policy-ask-input')).toBeNull();
+  });
+
+  it('uses a generic message for non-Error cancel failures', async () => {
+    setup({ cancel: vi.fn(async () => { throw 'x'; }) });
+    fireEvent.click(screen.getByTestId('tool-policy-ask-dismiss'));
+    await screen.findByText('Could not cancel this request.');
+  });
+
+  it('ignores a re-entrant answer or dismiss while one is in flight', async () => {
+    let release!: () => void;
+    const submit = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    const { cancel } = setup({ submit });
+    const busyProps = (id: string) => {
+      const el = screen.getByTestId(id);
+      const key = Object.keys(el).find((k) => k.startsWith('__reactProps'))!;
+      return (el as any)[key] as { onClick: () => void };
+    };
+    fireEvent.click(screen.getByTestId('tool-policy-ask-allow'));
+    await waitFor(() => expect((screen.getByTestId('tool-policy-ask-allow') as HTMLButtonElement).disabled).toBe(true));
+    // React skips onClick on disabled buttons, so invoke the busy-closure handlers directly.
+    const allow = busyProps('tool-policy-ask-allow');
+    const dismiss = busyProps('tool-policy-ask-dismiss');
+    allow.onClick();
+    dismiss.onClick();
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(cancel).not.toHaveBeenCalled();
+    release();
+    await waitFor(() => expect((screen.getByTestId('tool-policy-ask-allow') as HTMLButtonElement).disabled).toBe(false));
+  });
 });

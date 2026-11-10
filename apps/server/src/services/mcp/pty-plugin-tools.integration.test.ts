@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createMemoryInboxStore, createMemorySuggestionsStore } from '@zana-ai/zcc-server';
 import { startMcpServer, type McpServerHandle } from './mcp-server.js';
-import type { PtyPluginTools } from './pty-plugin-tools.js';
+import { registerPtyPluginTools, type PtyPluginTools } from './pty-plugin-tools.js';
 
 const schema = { type: 'object', properties: { city: { type: 'string', enum: ['a', 'b'] }, n: { type: 'integer', minimum: 1 } }, required: ['city'], additionalProperties: false };
 
@@ -96,5 +96,44 @@ describe('plugin tools on a PTY session zcc-inbox route', () => {
     const names = (await (await connect(h.url, 'proj-1/sess-A')).listTools()).tools.map((t) => t.name);
     expect(names).toContain('inbox_push');
     expect(names).not.toContain('weather');
+  });
+
+  it('yields an empty text result for a success with only a non-data image, and "Tool failed" for a failure', async () => {
+    let success = true;
+    const pluginTools = tools({
+      call: vi.fn(async () => ({ success, contentItems: [{ type: 'inputImage' as const, imageUrl: 'https://example.test/x.png' }] })) as never
+    });
+    const h = await boot(pluginTools);
+    const client = await connect(h.url, 'proj-1/sess-A');
+    const ok = await client.callTool({ name: 'weather', arguments: { city: 'a' } }) as { content: unknown[]; isError?: boolean };
+    expect(ok.content).toEqual([{ type: 'text', text: '' }]);
+    expect(ok.isError).toBeFalsy();
+    success = false;
+    const bad = await client.callTool({ name: 'weather', arguments: { city: 'a' } }) as { content: unknown[]; isError?: boolean };
+    expect(bad.content).toEqual([{ type: 'text', text: 'Tool failed' }]);
+    expect(bad.isError).toBe(true);
+  });
+
+  it('logs a non-Error listing failure and registers nothing', async () => {
+    const log = vi.fn();
+    const server = { registerTool: vi.fn() };
+    await registerPtyPluginTools(server as never, {
+      projectId: 'p', sessionId: 'abcdefghijkl', log,
+      pluginTools: { list: vi.fn(async () => { throw 'plain failure'; }), call: vi.fn() } as never
+    });
+    expect(server.registerTool).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('plugin tool listing failed for session abcdefgh: plain failure');
+  });
+
+  it('skips a tool whose registration throws and still registers the rest', async () => {
+    const registered: string[] = [];
+    const server = { registerTool: vi.fn((name: string) => { if (name === 'dup') throw new Error('exists'); registered.push(name); }) };
+    await registerPtyPluginTools(server as never, {
+      projectId: 'p', sessionId: 's',
+      pluginTools: { list: vi.fn(async () => [
+        { name: 'dup', description: '', inputSchema: {} }, { name: 'ok', description: '', inputSchema: {} }
+      ]), call: vi.fn() } as never
+    });
+    expect(registered).toEqual(['ok']);
   });
 });

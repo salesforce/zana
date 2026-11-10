@@ -126,7 +126,7 @@ test('a PTY session shows a plugin request in the Agents monitor and only a huma
     expect(await (await fetch(`${origin}/api/v1/pty-sessions/${sessionId}/interactions`)).json()).toEqual([]);
 
     // The signing secret is not in any process's initial environment (`ps eww` shows that to same-uid processes).
-    const listing = execFileSync('ps', ['eww', '-ax', '-o', 'command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const listing = execFileSync('ps', ['ewwax', '-o', 'command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     // Only this run's processes: other Zana instances on the machine are not ours to judge.
     const ours = listing.split('\n').filter((line) => line.includes(home));
     expect(ours.length).toBeGreaterThan(0);

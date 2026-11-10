@@ -53,6 +53,15 @@ describe('runtime supervisor', () => {
     await expect(runtime.decideToolPolicy({
       invocationId: 'a'.repeat(64), threadId: 'thread-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash', input: {}
     })).rejects.toThrow('plugin host is unavailable');
+    // No plugin host: dispatch proceeds, lifecycle/settled go undelivered, no tools or instructions, tool calls fail, and the veto is not demanded.
+    const ids = { sessionId: 's', projectId: 'p' } as never;
+    await expect(runtime.admitDispatch(ids)).resolves.toEqual({ action: 'proceed' });
+    await expect(runtime.emitPtyLifecycle(ids)).resolves.toEqual({ delivered: false });
+    await expect(runtime.emitToolSettled(ids)).resolves.toEqual({ delivered: false });
+    await expect(runtime.ptySessionInstructions(ids)).resolves.toEqual({ instructions: '' });
+    await expect(runtime.ptySessionTools(ids)).resolves.toEqual({ tools: [] });
+    await expect(runtime.ptySessionToolCall(ids)).rejects.toThrow('plugin host is unavailable');
+    await expect(runtime.toolPolicyReadiness()).resolves.toEqual({ ready: false, required: [], reason: 'plugin host is unavailable' });
     await expect(fetch(runtime.rendererUrl).then((response) => response.text())).resolves.toContain('runtime');
     await expect(fetch(`${runtime.hostUrl}/health`).then((response) => response.json())).resolves.toEqual({ ok: true });
   });

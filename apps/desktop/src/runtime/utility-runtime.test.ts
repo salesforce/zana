@@ -105,3 +105,32 @@ describe('plugins-tool-policy requests', () => {
     child.emit('exit', 1); await orphaned; expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe('PTY plugin-host requests', () => {
+  const body = { sessionId: 's-1', projectId: 'p-1' } as never;
+  it.each([
+    ['plugins-dispatch-admission', 20_000],
+    ['plugins-pty-lifecycle-event', 20_000],
+    ['plugins-tool-settled', 20_000],
+    ['plugins-pty-session-instructions', 20_000],
+    ['plugins-pty-session-tools', 20_000],
+    ['plugins-pty-session-tool-call', 300_000]
+  ] as const)('%s carries the request and its own deadline, and times out', async (operation, budget) => {
+    vi.useFakeTimers(); const { child, runtime } = fixture();
+    const pending = runtime.request(operation, body);
+    const message = child.postMessage.mock.calls[0]![0];
+    expect(message.request).toEqual(body);
+    expect(Date.parse(message.deadlineAt) - Date.now()).toBe(budget);
+    const timeout = expect(pending).rejects.toThrow(`server ${operation} request timed out`);
+    await vi.advanceTimersByTimeAsync(budget); await timeout; expect(vi.getTimerCount()).toBe(0);
+  });
+  it('the tool-policy inventory read has no request body and the short budget', async () => {
+    vi.useFakeTimers(); const { child, runtime } = fixture();
+    const pending = runtime.request('plugins-tool-policy-inventory');
+    const message = child.postMessage.mock.calls[0]![0];
+    expect(message).not.toHaveProperty('request');
+    expect(Date.parse(message.deadlineAt) - Date.now()).toBe(20_000);
+    child.emit('message', { type: 'result', protocolVersion, id: message.id, value: { required: [] } });
+    expect(await pending).toEqual({ required: [] });
+  });
+});

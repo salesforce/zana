@@ -8,6 +8,7 @@ import piApp from '../../../../../../plugins/provider-pi/app.tsx';
 import askApp from '../../../../../../plugins/ask-user-question/app.js';
 import { interpretPluginApp, clearPluginSlots } from '../../../plugins/plugin-slots.js';
 import { product } from '../../../lib/product-client.js';
+import { TOOL_POLICY_ASK_RENDERER_ID } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { ThreadPendingInteractionBanner } from './ThreadPendingInteractionBanner.js';
 
 vi.mock('../../../lib/product-client.js', () => ({ product: { threads: { interactions: {
@@ -252,5 +253,44 @@ describe('host-rendered plugin questions', () => {
         { question: 'Pick a size', selected: ['M'], freeText: '' }
       ] }
     }));
+  });
+});
+
+describe('host-rendered tool-policy ask', () => {
+  const ask = (id: string, data: Record<string, JsonValue>): PluginPendingInteraction => ({
+    id, threadId: 'thr-1', turnId: null, origin: { kind: 'plugin', pluginId: 'policy-plugin', rendererId: TOOL_POLICY_ASK_RENDERER_ID },
+    status: 'pending', payload: { kind: 'plugin', title: 'Ask', data, requireHuman: true }, resolution: null, statusReason: null, createdAt: 1, resolvedAt: null
+  });
+  const card = { kind: 'tool-policy-ask', toolName: 'Bash', prompt: 'Run it?', inputPreview: 'ls' };
+
+  it('renders the native card without any registered plugin slot and answers through main IPC', async () => {
+    const respond = vi.fn(async () => undefined);
+    (window as any).cc = { threads: { interactions: { respond } } };
+    show(ask('ask-1', card));
+    expect(screen.getByTestId('tool-policy-ask-prompt').textContent).toBe('Run it?');
+    fireEvent.click(screen.getByTestId('tool-policy-ask-allow'));
+    await waitFor(() => expect(respond).toHaveBeenCalledWith('thr-1', 'ask-1', { decision: 'allow' }));
+    expect(product.threads.interactions.respond).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the HTTP client without desktop IPC and cancels through the product client', async () => {
+    show(ask('ask-2', card));
+    fireEvent.click(screen.getByTestId('tool-policy-ask-deny'));
+    await waitFor(() => expect(product.threads.interactions.respond).toHaveBeenCalledWith('thr-1', 'ask-2', { decision: 'deny' }));
+    fireEvent.click(screen.getByTestId('tool-policy-ask-dismiss'));
+    await waitFor(() => expect(product.threads.interactions.cancel).toHaveBeenCalledWith('thr-1', 'ask-2'));
+  });
+
+  it('renders nothing for a malformed ask payload instead of a plugin form', () => {
+    const { container } = show(ask('ask-3', { nope: 1 }));
+    expect(screen.queryByTestId('tool-policy-ask-allow')).toBeNull();
+    expect(container.querySelector('[data-testid="thread-pending-banner"]')).toBeNull();
+  });
+
+  it('does not use the native card for other renderer ids', () => {
+    const other = ask('ask-4', card);
+    (other.origin as { rendererId: string }).rendererId = 'something-else';
+    show(other);
+    expect(screen.queryByTestId('tool-policy-ask-allow')).toBeNull();
   });
 });

@@ -23,7 +23,6 @@ import { createNativeToolSettledHook, createToolStartTracker } from '@zana-ai/zc
 import {
   createMainDispatchAdmission,
   dispatchEntryForPrincipal,
-  dispatchOriginForCallerClass,
   dispatchOriginForPrincipal,
   productRouteDispatchAdmissionDecider
 } from './runtime/dispatch-admission.js';
@@ -32,6 +31,21 @@ import { createPtySessionTools, productRoutePtySessionToolCall, productRoutePtyS
 import { createPtyLifecycleEmitter, productRoutePtyLifecycleSink } from './runtime/pty-lifecycle-events.js';
 import { localMetadataProjects, localProjectPathOptions } from '@zana-ai/zcc-server/services/projects/project-metadata';
 import { invokeSharedProduct } from './ipc/shared-product-registry.js';
+import {
+  createAdmittedTerminalReply,
+  createNativeToolPolicyRequiredResolver,
+  createToolWindowResolver,
+  mainSpawnBindings,
+  providerNativeToolPolicyRequired,
+  recordAllowedToolStart,
+  releaseRefusedSquadStart,
+  replyJobTeamPty,
+  resolveLaunchPluginInstructions,
+  supervisedChannel,
+  supervisedOrDevRoute,
+  devProductRoute,
+  prefixedWarn
+} from './runtime/host-plugin-gates.js';
 import { createInteractionResponder } from './interaction-proof.js';
 import { registerInteractionResponseIpc } from './ipc/interaction-response.js';
 import { cliHostProblem, teamHostProblem } from './ipc/cli-host-guard.js';
@@ -3361,9 +3375,7 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
 async function replyToSquadMember(sessionId: string, text: string, correlation?: { assignmentId: string; idempotencyKey: string }): Promise<boolean> {
   const session = ptys.getSession(sessionId);
   if (session) {
-    const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'job-team-dispatch', origin: 'system', promptText: text });
-    if (refusal) return false;
-    return ptys.reply(sessionId, text);
+    return replyJobTeamPty({ admit: admitPtyDispatch, reply: (id, body) => ptys.reply(id, body) }, { id: sessionId, projectId: session.projectId }, text);
   }
   const binding = (await teamLifecycle.list()).flatMap(record => record.state === 'active' ? record.workers : [])
     .find(worker => worker.transport === 'MODERN' && worker.threadId === sessionId && worker.bindingState === 'BOUND'
@@ -3386,7 +3398,7 @@ const productRouteNativeToolPolicy = productRouteToolPolicyDecider({
 const nativeToolStarts = createToolStartTracker();
 export const nativeToolPolicyHook = createNativeToolPolicyHook({
   getSession: (id) => ptys.getSession(id),
-  onAllowed: (invocationId) => nativeToolStarts.started(invocationId),
+  onAllowed: recordAllowedToolStart(nativeToolStarts),
   decider: firstToolPolicyDecider(
     supervisorToolPolicyDecider(() => runtimeSupervisor),
     () => (process.env.ELECTRON_RENDERER_URL ? productRouteNativeToolPolicy : null)
@@ -3398,10 +3410,7 @@ export const nativeToolPolicyHook = createNativeToolPolicyHook({
 // runtime; dev (no supervisor) simply has no sink and the event is dropped.
 export const nativeToolSettledHook = createNativeToolSettledHook({
   getSession: (id) => ptys.getSession(id),
-  sink: () => {
-    const supervisor = runtimeSupervisor;
-    return supervisor ? (request) => supervisor.emitToolSettled(request) : null;
-  },
+  sink: supervisedChannel(() => runtimeSupervisor, 'emitToolSettled'),
   starts: nativeToolStarts,
   log: warnNativeToolPolicy
 });
@@ -3423,8 +3432,8 @@ const productRouteDispatchAdmission = productRouteDispatchAdmissionDecider({
  * (`term.write`) are not dispatches and are never admitted.
  */
 export const admitPtyDispatch = createMainDispatchAdmission({
-  supervised: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.admitDispatch(request) : null),
-  productRoute: () => (process.env.ELECTRON_RENDERER_URL ? productRouteDispatchAdmission : null),
+  supervised: supervisedChannel(() => runtimeSupervisor, 'admitDispatch'),
+  productRoute: devProductRoute(productRouteDispatchAdmission),
   log: warnNativeToolPolicy
 });
 
@@ -3439,9 +3448,9 @@ const productRoutePtyLifecycle = productRoutePtyLifecycleSink({
  * {@link wireBridgeListeners} and the lifecycle hooks; disposed in before-quit.
  */
 export const ptyLifecycle = createPtyLifecycleEmitter({
-  supervised: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.emitPtyLifecycle(request) : null),
-  productRoute: () => (process.env.ELECTRON_RENDERER_URL ? productRoutePtyLifecycle : null),
-  log: (message) => console.warn(`[pty-lifecycle] ${message}`)
+  supervised: supervisedChannel(() => runtimeSupervisor, 'emitPtyLifecycle'),
+  productRoute: devProductRoute(productRoutePtyLifecycle),
+  log: prefixedWarn('pty-lifecycle')
 });
 
 const productRoutePtySessionInstructionsSource = productRoutePtySessionInstructions({
@@ -3454,9 +3463,9 @@ const productRoutePtySessionInstructionsSource = productRoutePtySessionInstructi
  * the plugin host. Additive: any failure launches the session without them.
  */
 export const resolvePtyPluginInstructions = createPtySessionInstructionsResolver({
-  supervised: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.ptySessionInstructions(request) : null),
-  productRoute: () => (process.env.ELECTRON_RENDERER_URL ? productRoutePtySessionInstructionsSource : null),
-  log: (message) => console.warn(`[pty-instructions] ${message}`)
+  supervised: supervisedChannel(() => runtimeSupervisor, 'ptySessionInstructions'),
+  productRoute: devProductRoute(productRoutePtySessionInstructionsSource),
+  log: prefixedWarn('pty-instructions')
 });
 
 const productRoutePtySessionToolsSource = productRoutePtySessionTools({
@@ -3477,11 +3486,9 @@ const productRoutePtySessionToolCallSource = productRoutePtySessionToolCall({
  */
 export const ptyPluginTools = createPtySessionTools({
   getSession: (id) => ptys.getSession(id),
-  listSource: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.ptySessionTools(request)
-    : process.env.ELECTRON_RENDERER_URL ? productRoutePtySessionToolsSource : null),
-  callSource: () => (runtimeSupervisor ? (request) => runtimeSupervisor!.ptySessionToolCall(request)
-    : process.env.ELECTRON_RENDERER_URL ? productRoutePtySessionToolCallSource : null),
-  log: (message) => console.warn(`[pty-plugin-tools] ${message}`)
+  listSource: supervisedOrDevRoute(() => runtimeSupervisor, 'ptySessionTools', productRoutePtySessionToolsSource),
+  callSource: supervisedOrDevRoute(() => runtimeSupervisor, 'ptySessionToolCall', productRoutePtySessionToolCallSource),
+  log: prefixedWarn('pty-plugin-tools')
 });
 
 /**
@@ -3493,20 +3500,11 @@ export const ptyPluginTools = createPtySessionTools({
  * in electron-vite dev. If neither answers, fail closed (treat as required) so a
  * torn or unreachable inventory never silently drops the veto.
  */
-async function resolveNativeToolPolicyRequired(): Promise<boolean> {
-  const read = async (): Promise<unknown> => {
-    if (runtimeSupervisor) return runtimeSupervisor.toolPolicyReadiness();
-    if (process.env.ELECTRON_RENDERER_URL) return productRouteNativeToolPolicyInventory();
-    return null;
-  };
-  try {
-    const inventory = await read();
-    return inventoryDemandsVeto(inventory);
-  } catch (err) {
-    warnNativeToolPolicy(`tool-policy inventory read failed; failing closed: ${String(err)}`);
-    return true;
-  }
-}
+const resolveNativeToolPolicyRequired = createNativeToolPolicyRequiredResolver({
+  source: supervisedOrDevRoute(
+    () => runtimeSupervisor, 'toolPolicyReadiness', productRouteNativeToolPolicyInventory),
+  log: warnNativeToolPolicy
+});
 
 function verifyProductServerCredential(credential: unknown): boolean {
   const expected = productServerCredential;
@@ -4640,14 +4638,12 @@ export function createTerminalConfined(
     // hook, and the pty layer fails closed on this flag when it can't. Absent
     // (an internal caller that didn't resolve it) defaults to required for a
     // provider so the veto is never silently dropped.
-    const nativeToolPolicyRequired =
-      selection.profile !== 'shell' && (opts?.nativeToolPolicyRequired ?? true);
+    const nativeToolPolicyRequired = providerNativeToolPolicyRequired(selection.profile, opts?.nativeToolPolicyRequired);
     const session = ptys.create({
       nativeToolPolicyRequired,
       preallocatedSessionId: opts?.preallocatedSessionId,
-      ...(opts?.pluginInstructions ? { pluginInstructions: opts.pluginInstructions } : {}),
+      ...mainSpawnBindings(opts),
       projectId: req.projectId,
-      ...(opts?.threadId ? { threadId: opts.threadId } : {}),
       profile: selection.profile,
       persona: effectivePersona,
       cwd,
@@ -4981,19 +4977,14 @@ async function launchAuthorizedTerminal(
       // owns tool policy, and the pty layer fails closed on the flag.
       const nativeToolPolicyRequired =
         request.profile !== 'shell' && (await resolveNativeToolPolicyRequired());
-      const pluginInstructions = request.profile === 'shell'
-        ? ''
-        : await resolvePtyPluginInstructions({
-            sessionId: authorizedPlan.sessionId,
-            ...(spawnOpts?.threadId ? { threadId: spawnOpts.threadId } : {}),
-            projectId: request.projectId,
-            profile: request.profile
-          });
+      const pluginInstructions = await resolveLaunchPluginInstructions(resolvePtyPluginInstructions, {
+        sessionId: authorizedPlan.sessionId, threadId: spawnOpts?.threadId, projectId: request.projectId, profile: request.profile
+      });
       const result = createTerminalConfined(request, {
         ...spawnOpts,
         nativeToolPolicyRequired,
         // Main-resolved only; overrides any caller-supplied field.
-        pluginInstructions: pluginInstructions || undefined,
+        pluginInstructions,
         preallocatedSessionId: authorizedPlan.sessionId,
         launchSnapshot: {
           project: authorizedPlan.resolved.project,
@@ -5279,14 +5270,9 @@ async function launchBackgroundTerminal(
         spawnLaunch.cwd,
         authorizedPlan.resolved.config
       );
-      const pluginInstructions = request.profile === 'shell'
-        ? ''
-        : await resolvePtyPluginInstructions({
-            sessionId: authorizedPlan.sessionId,
-            ...(request.threadId ? { threadId: request.threadId } : {}),
-            projectId: request.projectId,
-            profile: request.profile
-          });
+      const pluginInstructions = await resolveLaunchPluginInstructions(resolvePtyPluginInstructions, {
+        sessionId: authorizedPlan.sessionId, threadId: request.threadId, projectId: request.projectId, profile: request.profile
+      });
       spawnAttempted = true;
       // Scheduler/background launches honour the persona skill allowlist exactly like interactive ones.
       const skillSettings = await resolveCliSkillSettings({
@@ -5300,7 +5286,7 @@ async function launchBackgroundTerminal(
       const session = createTerminalFromAuthorizedPlan({
         ...request,
         // Main-resolved only; never carried over from the request.
-        pluginInstructions: pluginInstructions || undefined,
+        pluginInstructions,
         cwd: spawnLaunch.cwd,
         ...(skillSettings ? { skillSettings } : {}),
         projectSettings: authorizedPlan.resolved.projectSettings,
@@ -6513,13 +6499,7 @@ export async function launchTeam(
         if (reservation && message.startsWith(SQUAD_START_REFUSED_PREFIX)) {
           // Admission refused before the runtime created anything: there is no member to stop or
           // verify, so release the reserved slot now rather than holding it as uncertain.
-          try {
-            await teamLifecycleIntegration.reconcileModernWorkers([{ recordId: claim.record.id, slotId,
-              generation: reservation.generation, threadId: reservation.threadId, state: 'terminal' }]);
-          } catch (releaseError) {
-            logMainError(`squad start refusal release failed (thread ${reservation.threadId})`, releaseError);
-            await teamLifecycle.markModernWorkerUncertain(claim.record.id, slotId, reservation.generation, reservation.threadId);
-          }
+          await releaseRefusedSquadStart({ integration: teamLifecycleIntegration, lifecycle: teamLifecycle, logError: logMainError }, { recordId: claim.record.id, slotId, generation: reservation.generation, threadId: reservation.threadId });
           return { ok: false, code: 'DENIED', message };
         }
         if (reservation) await teamLifecycle.markModernWorkerUncertain(claim.record.id, slotId, reservation.generation, reservation.threadId);
@@ -8518,32 +8498,29 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
   return { ok: true };
 }
 
+/* v8 ignore start -- needs the supervised runtime / a real BrowserWindow; createPluginApprovalHandler and showApprovalSheet are unit-tested */
+const listApprovalApps = () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer();
+const showNativeApprovalSheet = (parent: BrowserWindow, view: Parameters<typeof showApprovalSheet>[1], timeoutMs?: number) =>
+  showApprovalSheet(parent, view, (options) => new BrowserWindow(options), timeoutMs);
+/* v8 ignore stop */
+
 const pluginApprovalHandler = createPluginApprovalHandler({
   secret: ensureProductServerCredential,
-  listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
-  showSheet: (parent, view, timeoutMs) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options), timeoutMs),
-    resolveToolWindow: async (threadId, projectId) => {
-      const base = new URL(productServerUrl());
-      if (!['http:', 'https:'].includes(base.protocol) || !['127.0.0.1', 'localhost'].includes(base.hostname)) return null;
-      const project = store.listProjects().find(row => row.id === projectId);
-      const hostId = localHostId();
-      if (!hostId || !project || project.remote || (project.hostId && project.hostId !== hostId)) return null;
-      const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(threadId)}`, base), {
-        redirect: 'error', signal: AbortSignal.timeout(5000)
-      });
-      if (!response.ok) return null;
-      const { thread } = await response.json() as { thread?: { id?: string; projectId?: string; hostId?: string; visibility?: string; archivedAt?: number | null } };
-      if (!thread || thread.id !== threadId || thread.projectId !== projectId || thread.hostId !== hostId
-        || thread.visibility !== 'visible' || thread.archivedAt !== null) return null;
-      const scoped = [...windows.values()].find(row => !row.win.isDestroyed() && (row.threadView?.threadId === threadId || row.projectId === projectId));
-      return scoped?.win ?? mainWindow();
-    }
+  listApps: listApprovalApps,
+  showSheet: showNativeApprovalSheet,
+  resolveToolWindow: createToolWindowResolver<BrowserWindow>({
+    productServerUrl,
+    store,
+    localHostId,
+    windows,
+    mainWindow
+  })
 });
 
 function registerIpc() {
   registerInteractionResponseIpc(safeHandleFromWindow, createInteractionResponder({ serverUrl: productServerUrl, secret: ensureProductServerCredential }), {
-    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
-    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options))
+    listApps: listApprovalApps,
+    showSheet: showNativeApprovalSheet
   });
   registerAgentSoundIpc({ handle: safeHandleFromWindow, files: agentSoundFiles,
     volume: () => store.getConfig().agentSoundVolume, showOpenDialog: (win, options) => dialog.showOpenDialog(win, options) });
@@ -10532,12 +10509,11 @@ async function bootstrapNormal() {
     // Close-idle action uses — one summarize-then-close path for every surface.
     summarizeAndCloseTerminals: (projectId, sessionIds, summarize) =>
       closeSummary.summarizeAndClose(projectId, sessionIds, { summarize }),
-    replyTerminal: async (sessionId, text, callerClass) => {
-      const session = ptys.getSession(sessionId);
-      if (!session) return ptys.reply(sessionId, text);
-      const refusal = await admitPtyDispatch({ sessionId, projectId: session.projectId, entry: 'reply', origin: dispatchOriginForCallerClass(callerClass), promptText: text });
-      return refusal ? { refused: refusal } : ptys.reply(sessionId, text);
-    },
+    replyTerminal: createAdmittedTerminalReply({
+      getSession: (id) => ptys.getSession(id),
+      admit: admitPtyDispatch,
+      reply: (id, text) => ptys.reply(id, text)
+    }),
     getAgentStatus: (sessionId) => agentStatus.get(sessionId),
     isLiveSession: (sessionId) => ptys.getSession(sessionId) !== null,
     // App-attested orchestrator gate: a session is promoted past agent-class

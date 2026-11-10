@@ -51,4 +51,33 @@ describe('admitMainOwnedDispatch', () => {
     const admit = vi.fn().mockRejectedValue(new Error('x'));
     await expect(admitMainOwnedDispatch(ctx(admit), request)).resolves.toMatchObject({ action: 'reject' });
   });
+
+  it('falls back to default messages when a reject or wait carries none', async () => {
+    const rej = vi.fn().mockResolvedValue({ action: 'reject', message: '' });
+    await expect(admitMainOwnedDispatch(ctx(rej), request)).resolves.toEqual({ action: 'reject', message: 'Dispatch rejected' });
+    const wait = vi.fn().mockResolvedValue({ action: 'wait', reason: '', overrideable: false });
+    await expect(admitMainOwnedDispatch(ctx(wait), request)).resolves.toEqual({ action: 'wait', reason: 'Dispatch is waiting' });
+  });
+
+  it.each([
+    ['an Error', new TypeError('boom secret-prompt'), 'TypeError'],
+    ['a non-Error', 'nope', 'error']
+  ])('fails closed and logs only the error name when admission throws %s', async (_n, thrown, name) => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const throwing = { db: {}, get plugins(): never { throw thrown; } } as never;
+    await expect(admitMainOwnedDispatch(throwing, request)).resolves.toEqual({ action: 'reject', message: 'Plugin dispatch admission unavailable' });
+    const line = String(spy.mock.calls[0]![0]);
+    expect(line).toContain(`${name}`);
+    expect(line).toContain('project p1, session s1');
+    expect(line).not.toContain('secret-prompt');
+    spy.mockRestore();
+  });
+
+  it('logs "none" when the failing dispatch has no session', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const throwing = { db: {}, get plugins(): never { throw new Error('x'); } } as never;
+    await admitMainOwnedDispatch(throwing, { projectId: 'p1', entry: 'initial', origin: 'user' });
+    expect(String(spy.mock.calls[0]![0])).toContain('session none');
+    spy.mockRestore();
+  });
 });
