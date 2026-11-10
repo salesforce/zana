@@ -51,7 +51,7 @@ describe('tool policy ask resolution', () => {
     const service = await setup(ASK, ask);
     await expect(service.decideToolPolicy(call())).resolves.toEqual({ action: 'allow' });
     expect(ask).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: 'asker', threadId: 't1', rendererId: TOOL_POLICY_ASK_RENDERER_ID, requireHuman: true,
+      pluginId: 'asker', threadId: 't1', rendererId: TOOL_POLICY_ASK_RENDERER_ID, requireHuman: 'native-sheet',
       timeoutMs: ASK_APPROVAL_MS.default,
       payload: expect.objectContaining({ kind: 'tool-policy-ask', toolName: 'Bash', prompt: 'Run it?' })
     }));

@@ -548,7 +548,8 @@ reasons are capped at 1024 characters.
 A handler may answer `{ action: 'ask', prompt, timeoutMs? }`. The host, not the
 plugin, opens a human approval card showing `prompt` (plain text, capped at 2000
 characters) and a bounded preview of the tool input, in the Agents monitor for a
-PTY session or the thread for a Modern thread. Only an explicit human allow lets
+PTY session or the thread for a Modern thread, then confirms with a sheet drawn
+by the desktop main process (`requireHuman: 'native-sheet'`). Only an explicit human allow lets
 the call continue, and the provider's own permission flow still decides after it.
 A deny, cancel, timeout, session end, missing UI (headless, web), a transport or
 handler error, and any answer that is not from a human all deny. The plugin

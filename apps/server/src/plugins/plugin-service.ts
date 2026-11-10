@@ -892,7 +892,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           title: 'Approve tool call',
           payload: { kind: 'tool-policy-ask', toolName: request.toolName, prompt, inputPreview: preview },
           timeoutMs,
-          requireHuman: true
+          // A tool approval is an unforgeable-human gate: the main-drawn sheet, not window Submit.
+          requireHuman: 'native-sheet'
         });
         if (result.outcome === 'submitted') {
           return result.actor === 'human' && isToolPolicyAskAllow(result.value)
