@@ -427,3 +427,16 @@ it('includes the Squad proposal flow in the job-team E2E runner', async () => {
     vi.doUnmock('./run-electron-e2e.mjs');
   }
 });
+
+it('checks reviewed peer delivery through the built app when its authorization or queue changes', () => {
+  for (const path of [
+    'apps/server/src/services/threads/thread-peer-review.ts',
+    'apps/server/src/services/threads/host-peer-tools.ts',
+    'apps/server/src/http/peer-tool-proof.ts',
+    'apps/server/src/http/peer-tools-api.ts',
+    'apps/desktop/src/runtime/cli-peer-delivery.ts',
+    'apps/app/src/components/thread/timeline/PeerMessageReviews.tsx',
+    'packages/db/src/data/deferred-thread-messages.ts'
+  ]) expect(boundarySpecs([path])).toContain('e2e/thread-peer-communication.spec.ts');
+  expect(boundarySpecs(['docs/readme.md'])).not.toContain('e2e/thread-peer-communication.spec.ts');
+});

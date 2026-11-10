@@ -3,6 +3,9 @@ import { startAgentSoundEvents } from './native/agent-sound-events.js';
 import { AgentSounds } from './native/agent-sounds.js';
 import { AgentSoundFiles } from './native/agent-sound-files.js';
 import { registerAgentSoundIpc } from './native/agent-sound-ipc.js';
+import { createThreadPeerTools } from './runtime/thread-peer-tools.js';
+import { createCliPeerDelivery } from './runtime/cli-peer-delivery.js';
+import { peerMessageHops } from '@zana-ai/zcc-server/services/agents/peer-tool-contract';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -8195,6 +8198,7 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
     || typeof itemId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(itemId)) {
     throw new Error('Invalid queued send');
   }
+  const peerReview = itemId.startsWith('peer_');
   const base = productServerUrl();
   async function readBounded(path: string): Promise<unknown> {
     const response = await fetch(new URL(path, base), { signal: AbortSignal.timeout(5_000) });
@@ -8207,30 +8211,32 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > 128 * 1024) throw new Error('Queued send details are too large');
+        if (size > (peerReview ? 4 * 1024 * 1024 : 128 * 1024)) throw new Error('Queued send details are too large');
         chunks.push(value);
       }
     } finally {
       reader.releaseLock();
-      if (size > 128 * 1024) await response.body.cancel().catch(() => {});
+      if (size > (peerReview ? 4 * 1024 * 1024 : 128 * 1024)) await response.body.cancel().catch(() => {});
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   }
   const threadPath = `api/v1/threads/${encodeURIComponent(threadId)}`;
-  const queuePath = `${threadPath}/next-turn`;
-  async function selectedItem(): Promise<{ id: string; text: string; updatedAt: number }> {
+  const queuePath = `${threadPath}/${peerReview ? 'peer-messages' : 'next-turn'}`;
+  async function selectedItem(): Promise<{ id: string; text: string; updatedAt: number; to?: string }> {
     const result = await readBounded(queuePath);
     if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true
       || !('items' in result) || !Array.isArray(result.items)) throw new Error('Queued send is unavailable');
     const item: unknown = result.items.find((entry: unknown) =>
       entry !== null && typeof entry === 'object' && 'id' in entry && entry.id === itemId);
     if (!item || typeof item !== 'object' || !('id' in item) || item.id !== itemId
-      || !('status' in item) || !['queued', 'failed'].includes(String(item.status))
+      || !('status' in item) || !(peerReview ? ['pending'] : ['queued', 'failed']).includes(String(item.status))
       || !('text' in item) || typeof item.text !== 'string'
-      || !('updatedAt' in item) || typeof item.updatedAt !== 'number') {
+      || !('updatedAt' in item) || typeof item.updatedAt !== 'number'
+      || (peerReview && (!('to' in item) || typeof item.to !== 'string'))) {
       throw new Error('Queued message no longer exists');
     }
-    return { id: item.id as string, text: item.text as string, updatedAt: item.updatedAt as number };
+    return { id: item.id as string, text: item.text as string, updatedAt: item.updatedAt as number,
+      ...(peerReview && 'to' in item ? { to: String(item.to) } : {}) };
   }
   const thread = await readBounded(threadPath);
   if (!thread || typeof thread !== 'object' || !('thread' in thread)
@@ -8245,14 +8251,14 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
     return clean.length > max ? `${clean.slice(0, max)}...` : clean;
   };
   const confirmation = await dialog.showMessageBox(win, {
-    type: 'question', title: 'Send queued message now?',
-    message: `Send queued message to ${preview(thread.thread.title, 80) || 'Untitled thread'}?`,
-    detail: `Message: ${preview(item.text, 240) || '(no text)'}\n\nThis can override a plugin dispatch wait.`,
-    buttons: ['Cancel', 'Send now'], defaultId: 0, cancelId: 0, noLink: true
+    type: 'question', title: peerReview ? 'Deliver peer message?' : 'Send queued message now?',
+    message: peerReview ? `Deliver peer message to ${preview(item.to!, 80)}?` : `Send queued message to ${preview(thread.thread.title, 80) || 'Untitled thread'}?`,
+    detail: peerReview ? `Message: ${preview(item.text, 4000)}\n\nThis starts work using the recipient’s existing tools and permissions. Review the full message in the thread before confirming.` : `Message: ${preview(item.text, 240) || '(no text)'}\n\nThis can override a plugin dispatch wait.`,
+    buttons: ['Cancel', peerReview ? 'Deliver' : 'Send now'], defaultId: 0, cancelId: 0, noLink: true
   });
   if (confirmation.response !== 1 || win.isDestroyed()) throw new Error('Send now was cancelled');
   const current = await selectedItem();
-  if (current.id !== item.id || current.updatedAt !== item.updatedAt || current.text !== item.text) {
+  if (current.id !== item.id || current.updatedAt !== item.updatedAt || current.text !== item.text || current.to !== item.to) {
     throw new Error('Queued message changed; confirm again');
   }
   const proof = signUiSend(ensureProductServerCredential(), threadId, item.id);
@@ -9551,6 +9557,17 @@ async function bootstrapNormal() {
     // server-side from the live pty / status tracker, never trusted from the
     // agent.
     agentRegistry,
+    threadPeerTools: createThreadPeerTools({ serverUrl: productServerUrl, credential: ensureProductServerCredential,
+      caller: sessionId => {
+        const session = ptys.getSession(sessionId);
+        if (!session || teamLaunchSessions.has(sessionId)) return null;
+        const record = agentRegistry.get(sessionId);
+        const lastMessage = agentMessageLog.history().filter(message => message.toSessionId === sessionId).at(-1);
+        return { sessionId, projectId: session.projectId, kind: 'cli-agent',
+          displayName: (record ? agentLabel(record) : session.title || sessionId).slice(0, 200),
+          hops: peerMessageHops(lastMessage?.body ?? '') };
+      }
+    }),
     getSessionCwd: (sessionId: string) => ptys.getSession(sessionId)?.cwd,
     getAgentStatus: (sessionId: string) => agentStatus.get(sessionId),
     getTeamLaunchId: (sessionId: string) => teamLaunchSessions.get(sessionId),
@@ -10258,6 +10275,10 @@ async function bootstrapNormal() {
         ? { ok: true }
         : { ok: false, reason: 'orchestrator may close only sessions in its cohort' };
     },
+    sendPeerMessage: createCliPeerDelivery({ registry: agentRegistry, log: agentMessageLog,
+      enabled: () => store.getConfig().threadCommunicationEnabled !== false,
+      generation: () => store.getConfig().threadCommunicationGeneration ?? 0,
+      status: id => agentStatus.get(id), inject: (id, message) => !wrapUpClose.isWrappingUp(id) && ptys.reply(id, message) }),
     listAgents: () => agentRegistry.list(),
     // Persona catalogue → non-sensitive metadata (id/name/description/profile/
     // model). Read-only; lets the CLI resolve `--persona <name>` against the

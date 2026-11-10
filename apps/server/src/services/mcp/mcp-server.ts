@@ -318,6 +318,7 @@ export interface McpServerOptions {
    * disables those tools entirely (e.g. in tests that don't exercise the mesh).
    */
   agentRegistry?: IAgentRegistryStore;
+  threadPeerTools?: (sessionId: string, name: 'list_agents' | 'find_agent' | 'agent_send', input: unknown) => Promise<unknown>;
   /**
    * Resolve a session's working directory (for the registry record's `cwd`).
    * Server-side, from the live pty — never trusted from the agent. Paired with
@@ -596,6 +597,7 @@ async function buildProjectMcpServer(opts: {
   registerProject?: McpServerOptions['registerProject'];
   cloneProject?: McpServerOptions['cloneProject'];
   createLocalExtension?: McpServerOptions['createLocalExtension'];
+  threadPeerTools?: McpServerOptions['threadPeerTools'];
   agentRegistry?: McpServerOptions['agentRegistry'];
   getSessionCwd?: McpServerOptions['getSessionCwd'];
   getAgentStatus?: McpServerOptions['getAgentStatus'];
@@ -792,7 +794,8 @@ async function buildProjectMcpServer(opts: {
       cwd: opts.getSessionCwd?.(opts.sessionId),
       registry: opts.agentRegistry,
       getAgentStatus: opts.getAgentStatus ?? (() => 'unknown'),
-      teamLaunchId: opts.getTeamLaunchId?.(opts.sessionId)
+      teamLaunchId: opts.getTeamLaunchId?.(opts.sessionId),
+      threadPeers: opts.threadPeerTools ? (name, input) => opts.threadPeerTools!(opts.sessionId!, name, input) : undefined
     });
     // Messaging tools (agent_send / agent_inbox) layer on the registry — only
     // wired when the message log + inject primitive are provided. Audit goes to
@@ -804,7 +807,9 @@ async function buildProjectMcpServer(opts: {
         registry: opts.agentRegistry,
         messageLog: opts.agentMessageLog,
         getAgentStatus: opts.getAgentStatus ?? (() => 'unknown'),
-        injectToSession: opts.injectToSession
+        injectToSession: opts.injectToSession,
+        sendToThread: opts.threadPeerTools && !opts.getTeamLaunchId?.(opts.sessionId)
+          ? input => opts.threadPeerTools!(opts.sessionId!, 'agent_send', input) : undefined
       });
     }
   }
@@ -2054,6 +2059,7 @@ async function handleRequest(
     cloneProject: opts.cloneProject,
     createLocalExtension: opts.createLocalExtension,
     agentRegistry: opts.agentRegistry,
+    threadPeerTools: opts.threadPeerTools,
     getSessionCwd: opts.getSessionCwd,
     getAgentStatus: opts.getAgentStatus,
     getTeamLaunchId: opts.getTeamLaunchId,

@@ -1948,6 +1948,10 @@ export interface AppConfig {
    * grant. Enforced host-side in `broker-caps.ts`.
    */
   extensionLlmEnabled?: boolean;
+  /** Reviewed, same-project thread communication. Enabled unless explicitly disabled. */
+  threadCommunicationEnabled?: boolean;
+  /** Host-owned consent generation; changes invalidate queued peer approvals. */
+  threadCommunicationGeneration?: number;
   /**
    * Path/name of the `cursor-agent` CLI (the Cursor harness). Optional: absent
    * ⇒ the provider falls back to the bare `cursor-agent` on PATH. Same slot

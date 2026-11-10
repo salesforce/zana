@@ -6,6 +6,21 @@ import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domai
 import { createConfigStore } from '@zana-ai/zcc-server';
 
 describe('createConfigStore', () => {
+  it('enables reviewed communication by default and owns the generation across set and replace', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-peer-config-'));
+    const configFile = join(homeDir, 'config.json');
+    const config = createConfigStore({ homeDir, configFile }, {
+      normalizeConfig: input => input, projectConfigCompatibility: input => input,
+      canonicalConfigForWrite: input => input, harnessEnabled: () => true
+    });
+    expect(config.getConfig()).toMatchObject({ threadCommunicationEnabled: true, threadCommunicationGeneration: 0 });
+    expect(config.setConfig({ threadCommunicationEnabled: false, threadCommunicationGeneration: 999 })).toMatchObject({ threadCommunicationEnabled: false, threadCommunicationGeneration: 1 });
+    expect(config.setConfig({ threadCommunicationGeneration: 999 })).toMatchObject({ threadCommunicationGeneration: 1 });
+    expect(config.setConfig({ threadCommunicationEnabled: true })).toMatchObject({ threadCommunicationGeneration: 2 });
+    const { config: current, hash } = config.snapshot();
+    expect(config.replaceConfig({ ...current, threadCommunicationEnabled: false, threadCommunicationGeneration: 999 }, hash)).toMatchObject({ threadCommunicationGeneration: 3 });
+    expect(config.getConfig()).toMatchObject({ threadCommunicationEnabled: false, threadCommunicationGeneration: 3 });
+  });
   it('owns config persistence without Electron and preserves optional resets', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-'));
     const configFile = join(homeDir, '.zcc', 'config.json');

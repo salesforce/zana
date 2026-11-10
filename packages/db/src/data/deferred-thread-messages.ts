@@ -1,5 +1,6 @@
 import type { ZccDatabase } from '../connection.js';
 import { createDeferredThreadMessageId } from '../ids.js';
+import { appendConversationThreadEvent } from './conversation-events.js';
 
 export const DEFERRED_THREAD_MESSAGE_CAP = 50;
 export const DEFERRED_RETRY_DELAYS_MS = [15_000, 60_000, 300_000] as const;
@@ -164,6 +165,9 @@ export function listDueDeferredThreadMessages(
 }
 
 export function isThreadQueueAutoSendPaused(db: ZccDatabase, threadId: string): boolean {
+  const state = db.sqlite.prepare(`SELECT json_extract(payload, '$.paused') AS paused FROM thread_events
+    WHERE thread_id = ? AND type = 'client/queue/state' ORDER BY sequence DESC LIMIT 1`).get(threadId) as { paused: number } | undefined;
+  if (state?.paused === 1) return true;
   const row = db.sqlite.prepare(
     `SELECT COUNT(*) AS count FROM deferred_thread_messages
       WHERE thread_id = ? AND paused = 1`
@@ -171,22 +175,36 @@ export function isThreadQueueAutoSendPaused(db: ZccDatabase, threadId: string): 
   return row.count > 0;
 }
 
+function recordQueueState(db: ZccDatabase, threadId: string, paused: boolean): void {
+  if (!db.sqlite.prepare('SELECT 1 FROM threads WHERE id = ?').get(threadId)) return;
+  const event = appendConversationThreadEvent(db, { threadId, type: 'client/queue/state', payload: { paused } });
+  db.sqlite.prepare("DELETE FROM thread_events WHERE thread_id = ? AND type = 'client/queue/state' AND id <> ?").run(threadId, event.id);
+}
+
 export function pauseDeferredThreadMessagesForThread(db: ZccDatabase, threadId: string): number {
-  const result = db.sqlite.prepare(
-    `UPDATE deferred_thread_messages
+  return db.transaction(() => {
+    recordQueueState(db, threadId, true);
+    db.sqlite.prepare(`UPDATE peer_review_messages SET status = 'pending', revision = revision + 1, updated_at = ?
+      WHERE owner_thread_id = ? AND status = 'approved'`).run(Date.now(), threadId);
+    const result = db.sqlite.prepare(
+      `UPDATE deferred_thread_messages
         SET paused = 1, updated_at = ?
       WHERE thread_id = ?`
-  ).run(Date.now(), threadId);
-  return Number(result.changes ?? 0);
+    ).run(Date.now(), threadId);
+    return Number(result.changes ?? 0);
+  });
 }
 
 export function resumeDeferredThreadMessagesForThread(db: ZccDatabase, threadId: string): number {
-  const result = db.sqlite.prepare(
-    `UPDATE deferred_thread_messages
+  return db.transaction(() => {
+    recordQueueState(db, threadId, false);
+    const result = db.sqlite.prepare(
+      `UPDATE deferred_thread_messages
         SET paused = 0, updated_at = ?
       WHERE thread_id = ?`
-  ).run(Date.now(), threadId);
-  return Number(result.changes ?? 0);
+    ).run(Date.now(), threadId);
+    return Number(result.changes ?? 0);
+  });
 }
 
 export function markDeferredThreadMessageFailed(

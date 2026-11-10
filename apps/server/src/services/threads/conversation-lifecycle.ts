@@ -1,3 +1,4 @@
+import { assertPeerDispatch, getPeerReview, markPeerDelivered, quarantineLegacyPeerMessages } from './thread-peer-review.js';
 import { authorizedServiceTier } from './provider-service-tier.js';
 import { normalizePortableAttachments } from '../projects/portable-attachments.js';
 import { attachmentPathResolverForHost } from '../projects/host-attachments.js';
@@ -126,9 +127,16 @@ export async function sendConversationTurn(
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; retainQueuedRow?: boolean } = {}
+  options: { peerReviewId?: string; senderThreadId?: string; drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; retainQueuedRow?: boolean } = {}
 ): Promise<ConversationThreadRow> {
-  return withConversationSend(ctx.db, threadId, lease => sendConversationTurnWithLease(lease, ctx, threadId, input, mode, execution, options));
+  return withConversationSend(ctx.db, threadId, lease => {
+    if (options.senderThreadId) assertPeerDispatch(ctx, threadId, options.senderThreadId, options.peerReviewId, input);
+    const guarded: ConversationSendLease = options.senderThreadId ? {
+      get cancelled() { return lease.cancelled; }, retain: () => lease.retain(),
+      assertCurrent: () => { lease.assertCurrent(); assertPeerDispatch(ctx, threadId, options.senderThreadId!, options.peerReviewId); }
+    } : lease;
+    return sendConversationTurnWithLease(guarded, ctx, threadId, input, mode, execution, options);
+  });
 }
 
 async function sendConversationTurnWithLease(
@@ -146,7 +154,7 @@ async function sendConversationTurnWithLease(
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; retainQueuedRow?: boolean } = {}
+  options: { peerReviewId?: string; senderThreadId?: string; drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; retainQueuedRow?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -181,7 +189,8 @@ async function sendConversationTurnWithLease(
         input,
         mode,
         execution,
-        admission
+        admission,
+        peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId
       });
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
       return live;
@@ -243,7 +252,7 @@ async function sendConversationTurnWithLease(
   }
   const ghostQueue = shouldQueueGhostActiveSend(ctx, live, mode);
   if (options.compact !== true && isManualCompactionActive(ctx, live.id) && options.drain !== true) {
-    deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
+    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId });
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
@@ -259,7 +268,7 @@ async function sendConversationTurnWithLease(
     || (isSteerSendMode(mode) && awaitsSteerTarget(ctx.db, live))
   );
   if (shouldQueue) {
-    deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
+    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId });
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
@@ -277,7 +286,7 @@ async function sendConversationTurnWithLease(
   live = recoverConversationProviderThreadId(ctx.db, getConversationThread(ctx.db, threadId) ?? live);
   ensureConversationThreadIsWritable(live);
   if (options.drain !== true && mode === 'queue-if-active' && (live.status === 'active' || live.status === 'starting')) {
-    deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
+    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId });
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
@@ -303,6 +312,7 @@ async function sendConversationTurnWithLease(
     ...(execution.model ? { model: execution.model } : {}),
     ...(execution.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {})
   });
+  lease.assertCurrent();
   const steerTurnId = resolvedMode === 'steer'
     ? findOpenConversationTurn(ctx.db, live.id)?.turnId ?? null
     : null;
@@ -319,7 +329,8 @@ async function sendConversationTurnWithLease(
     model: execution?.model,
     reasoningLevel: execution?.reasoningLevel,
     serviceTier,
-    acpMode: execution?.acpMode
+    acpMode: execution?.acpMode,
+    senderThreadId: options.senderThreadId
   });
   const started = applyLoggedConversationLifecycleEvent(ctx, {
     threadId: live.id,
@@ -341,6 +352,7 @@ async function sendConversationTurnWithLease(
     execution: packedExecution,
     clientRequestId,
     input,
+    ...(options.peerReviewId ? { onAccepted: () => markPeerDelivered(ctx, getPeerReview(ctx, options.peerReviewId!)!) } : {}),
     drain: options.drain === true
   });
   const next = getConversationThread(ctx.db, live.id) ?? live;
@@ -379,6 +391,7 @@ async function dispatchTurnSubmit(
     };
     clientRequestId?: string;
     input: unknown;
+    onAccepted?: () => void;
     drain: boolean;
   }
 ): Promise<void> {
@@ -390,7 +403,7 @@ async function dispatchTurnSubmit(
       try {
         startLiveTurnCommand(ctx, {
           hostId: args.thread.hostId, command,
-          onSuccess: result => { try { if (!args.lease.cancelled) onSuccess?.(result); } finally { release(); } },
+          onSuccess: result => { try { args.onAccepted?.(); if (!args.lease.cancelled) onSuccess?.(result); } finally { release(); } },
           onError: (error) => {
             void recoverOrSettleTurnSubmit(ctx, args, error, command.type as 'thread.start' | 'turn.submit').catch(() => undefined).finally(release);
           }
@@ -405,6 +418,7 @@ async function dispatchTurnSubmit(
       const result = await ctx.hostHub.callHostOnlineRpc({
         hostId: args.thread.hostId, command, timeoutMs: LIVE_TURN_COMMAND_TIMEOUT_MS
       });
+      args.onAccepted?.();
       if (!args.lease.cancelled) onSuccess?.(result);
     } catch (error) {
       await recoverOrSettleTurnSubmit(ctx, args, error, command.type as 'thread.start' | 'turn.submit');
@@ -465,6 +479,7 @@ async function recoverOrSettleTurnSubmit(
     };
     clientRequestId?: string;
     input: unknown;
+    onAccepted?: () => void;
     drain: boolean;
   },
   error: unknown,
@@ -508,6 +523,7 @@ async function recoverOrSettleTurnSubmit(
         command,
         timeoutMs: LIVE_TURN_COMMAND_TIMEOUT_MS
       });
+      args.onAccepted?.();
       return;
     } catch (resumeError) {
       settleFailure(resumeError);
@@ -820,8 +836,9 @@ export async function forkConversation(
 
 /** Steer held sends into the live turn; ordinary follow-ups keep waiting for idle. */
 export async function flushHeldConversationSteerSends(ctx: ProductHttpContext, threadId: string): Promise<void> {
+  quarantineLegacyPeerMessages(ctx, threadId);
   const flushed = await flushHeldConversationSteers(ctx, threadId, async (payload) => {
-    await sendConversationTurn(ctx, threadId, payload.input, 'steer', payload.execution, { drain: true, retainQueuedRow: true });
+    await sendConversationTurn(ctx, threadId, payload.input, 'steer', payload.execution, { drain: true, retainQueuedRow: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId });
   });
   const thread = flushed > 0 ? getConversationThread(ctx.db, threadId) : null;
   if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
@@ -836,7 +853,7 @@ export async function flushHeldConversationSends(
   try {
     await flushHeldConversationSteerSends(ctx, threadId);
     await flushDeferredConversationMessages(ctx, threadId, async (payload) => {
-      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, retainQueuedRow: true });
+      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, retainQueuedRow: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId });
     }, options);
   } finally {
     const thread = getConversationThread(ctx.db, threadId);
@@ -872,7 +889,7 @@ export async function sendHeldConversationMessage(
   try {
     await sendDeferredConversationMessage(ctx, threadId, itemId, async (payload) => {
       if (!payload.admission) {
-        await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true });
+        await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId });
         return;
       }
       if (!payload.admission.overrideable) {
@@ -901,7 +918,7 @@ export async function sendHeldConversationMessage(
           'This queued message is stale; a newer wait superseded it'
         );
       }
-      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true });
+      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId });
     }, expectedUpdatedAt);
   } finally {
     const thread = getConversationThread(ctx.db, threadId);

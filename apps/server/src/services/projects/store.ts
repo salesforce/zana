@@ -831,6 +831,10 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.askUserQuestionUiEnabled === 'boolean') {
     normalized.askUserQuestionUiEnabled = input.askUserQuestionUiEnabled;
   }
+  if (typeof input.threadCommunicationEnabled === 'boolean') normalized.threadCommunicationEnabled = input.threadCommunicationEnabled;
+  if (Number.isSafeInteger(input.threadCommunicationGeneration) && input.threadCommunicationGeneration! >= 0) {
+    normalized.threadCommunicationGeneration = input.threadCommunicationGeneration;
+  }
   if (typeof input.extensionLlmEnabled === 'boolean') {
     normalized.extensionLlmEnabled = input.extensionLlmEnabled;
   }

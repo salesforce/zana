@@ -1,5 +1,7 @@
 import { remotePreviewGuidance } from '@zana-ai/zcc-domain';
 import { SHARE_PREVIEW_TOOL, invokeSharePreview } from './host-share-preview-tool.js';
+import { HOST_PEER_TOOLS, HOST_PEER_INSTRUCTION, invokeHostPeerTool } from './host-peer-tools.js';
+import { peerToolNames, type PeerToolName } from '../agents/peer-tool-contract.js';
 /**
  * Host DynamicTools packed onto every conversation session.
  *
@@ -105,7 +107,8 @@ export const HOST_SHARE_TOOL_NAMES = [
   SCHEDULE_DISMISS_NAME,
   LIST_PROJECTS_NAME,
   REGISTER_PROJECT_NAME,
-  CREATE_LOCAL_EXTENSION_NAME
+  CREATE_LOCAL_EXTENSION_NAME,
+  ...peerToolNames
 ] as const;
 
 /** Packed onto conversation sessions only when `inAppAgentTerminalsEnabled`. */
@@ -129,11 +132,6 @@ export const HOST_ADAPT_TOOL_NAMES = [
 
 export const HOST_PTY_ONLY_TOOL_NAMES = [
   'schedule_report',
-  'register_agent',
-  'list_agents',
-  'find_agent',
-  'agent_send',
-  'agent_inbox',
   'close_idle_agents',
   'complete_autonomous_run'
 ] as const;
@@ -145,7 +143,8 @@ const HOST_SESSION_TOOLS: DynamicTool[] = [
   ...HOST_LIBRARY_TOOLS,
   ...HOST_GOAL_TOOLS,
   ...HOST_SCHEDULE_TOOLS,
-  ...HOST_CATALOG_TOOLS
+  ...HOST_CATALOG_TOOLS,
+  ...HOST_PEER_TOOLS
 ];
 
 export const HOST_SESSION_INSTRUCTION = [
@@ -154,7 +153,8 @@ export const HOST_SESSION_INSTRUCTION = [
   HOST_LIBRARY_INSTRUCTION,
   HOST_GOAL_INSTRUCTION,
   HOST_SCHEDULE_INSTRUCTION,
-  HOST_CATALOG_INSTRUCTION
+  HOST_CATALOG_INSTRUCTION,
+  HOST_PEER_INSTRUCTION
 ].join('\n');
 
 const HOST_SESSION_TOOL_NAME_SET = new Set<string>([
@@ -168,7 +168,7 @@ export function isHostSessionTool(name: string): boolean {
 
 export function mergeHostSessionTooling(
   packed: PackedSessionTooling,
-  opts?: { inAppAgentTerminalsEnabled?: boolean; remoteSurface?: { label: string } | null }
+  opts?: { threadCommunicationEnabled?: boolean; inAppAgentTerminalsEnabled?: boolean; remoteSurface?: { label: string } | null }
 ): PackedSessionTooling {
   const pluginTools = (packed.dynamicTools ?? []).filter((tool) => !isHostSessionTool(tool.name));
   const hostTools = opts?.inAppAgentTerminalsEnabled === true
@@ -182,17 +182,18 @@ export function mergeHostSessionTooling(
         HOST_LIBRARY_INSTRUCTION,
         HOST_GOAL_INSTRUCTION,
         HOST_SCHEDULE_INSTRUCTION,
-        HOST_CATALOG_INSTRUCTION
+        HOST_CATALOG_INSTRUCTION,
+        HOST_PEER_INSTRUCTION
       ].join('\n')
     : HOST_SESSION_INSTRUCTION;
   const selectedHostTools = opts?.remoteSurface
     ? hostTools.filter((tool) => tool.name !== 'preview_file' && tool.name !== 'run_in_terminal')
     : hostTools;
-  const tools = [...selectedHostTools, ...pluginTools].slice(0, HOST_SESSION_TOOLS_MAX);
+  const tools = [...selectedHostTools.filter(tool => opts?.threadCommunicationEnabled !== false || !(peerToolNames as readonly string[]).includes(tool.name)), ...pluginTools].slice(0, HOST_SESSION_TOOLS_MAX);
   const guidance = opts?.remoteSurface
-    ? [remotePreviewGuidance(opts.remoteSurface.label), HOST_INBOX_INSTRUCTION, HOST_LIBRARY_INSTRUCTION, HOST_GOAL_INSTRUCTION, HOST_SCHEDULE_INSTRUCTION, HOST_CATALOG_INSTRUCTION].join('\n')
+    ? [remotePreviewGuidance(opts.remoteSurface.label), HOST_INBOX_INSTRUCTION, HOST_LIBRARY_INSTRUCTION, HOST_GOAL_INSTRUCTION, HOST_SCHEDULE_INSTRUCTION, HOST_CATALOG_INSTRUCTION, HOST_PEER_INSTRUCTION].join('\n')
     : hostInstruction;
-  const instructions = [guidance, packed.instructions]
+  const instructions = [opts?.threadCommunicationEnabled === false ? guidance.replace(HOST_PEER_INSTRUCTION, '') : guidance, packed.instructions]
     .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
     .join('\n\n')
     .slice(0, HOST_SESSION_INSTRUCTIONS_MAX)
@@ -208,6 +209,7 @@ export async function invokeHostSessionTool(
   args: { name: string; threadId: string; projectId: string; input: unknown }
 ): Promise<ToolCallResponse> {
   const { name } = args;
+  if ((peerToolNames as readonly string[]).includes(name)) return invokeHostPeerTool(ctx, { ...args, name: name as PeerToolName });
   if (name === 'share_preview') return invokeSharePreview(ctx, args);
   if (name === HOST_PREVIEW_FILE_TOOL_NAME) {
     return invokeHostPreviewFileTool(ctx, args);
