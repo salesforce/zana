@@ -279,3 +279,15 @@ it('propagates a failed checklist save to the inline bundle so it can retry cont
   await act(async () => { await installed(installation); });
   await screen.findByRole('heading', { name: 'Finish connecting your tools' });
 });
+it('uses the access checklist with browser Git sign-in when the profile configures it', async () => {
+  const withAuth = { ...profile, gitAuth: { host: 'git.example.test', method: 'gh-device' as const } };
+  useOnboarding.setState({ profile: withAuth, progress });
+  api.json.mockImplementation(async (path: string) => path === '/onboarding/git/status'
+    ? { status: { host: 'git.example.test', reachable: true, cli: 'available', signedIn: 'yes', login: 'ada' } } : { profile: withAuth });
+  render(<Onboarding profile={withAuth} />);
+  expect(screen.getByText('Corporate network (VPN)')).toBeTruthy();
+  const footer = document.querySelector('.onboarding-footer') as HTMLElement;
+  fireEvent.click(within(footer).getByRole('button', { name: 'Check access and continue' }));
+  await screen.findByRole('button', { name: 'Install fixture bundle' });
+  expect(api.add).toHaveBeenCalledWith('path:/fixture');
+});
