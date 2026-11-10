@@ -28,6 +28,7 @@ const calls: Array<[string, Record<string, unknown>]> = [
   ['execution.work.retry', { ...e, workUnitId: 'u' }],
   ['execution.source.list', e],
   ['execution.source.read', { ...e, sourceId: 's' }],
+  ['execution.plan.register', { ...e, workUnits: [] }],
   ['execution.delivery.pull', {}],
   ['execution.delivery.ack', { deliveryId: 'd', leaseId: 'l', delivered: true }]
 ];
@@ -44,6 +45,17 @@ describe('bound-tool denial recovery text (#691)', () => {
   it('REQ-5: a session bound to another execution gets the same text', async () => {
     const reply = await build({ executionId: 'other', projectId: 'project-1', slotId: 'orchestrator', role: 'orchestrator' }).get('execution.work.answer')!(calls[0]![1]);
     expect(reply.content[0]!.text).toBe(`execution.work.answer failed: ${FIRST} ${RECOVERY}`);
+  });
+
+  it('REQ-5: execution.event and execution.complete from a fenced member without a binding gets the recovery line', async () => {
+    const tools = new Map<string, ToolHandler>();
+    const server = { registerTool: (name: string, _d: unknown, handler: ToolHandler) => { tools.set(name, handler); } };
+    registerExecutionTools(server as never, { sessionId: 'pm', projectId: 'project-1', service: {} as never, validateRouteIdentity: () => true, resolveCohortBinding: () => undefined, memberFence: { bindingId: 'pm', generation: 1 } } as never);
+    const event = await tools.get('execution.event')!({ ...e, eventId: 'ev', type: 'progress', severity: 'info', summary: 's' });
+    expect(event.isError).toBe(true);
+    expect(event.content[0]!.text).toBe(`execution.event failed: ${FIRST} ${RECOVERY}`);
+    const complete = await tools.get('execution.complete')!({ ...e, summary: 's' });
+    expect(complete.content[0]!.text).toBe(`execution.complete failed: ${FIRST} ${RECOVERY}`);
   });
 
   it('REQ-5: a binding from another project gets the same text', async () => {
