@@ -939,6 +939,7 @@ const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?:
 const titleBarOverlays = createWindowsTitleBarOverlays({
   get platform() { return process.platform; },
   windows,
+  repairing: () => startupState.mode === 'repair-required',
   theme: resolveTheme,
   // Lazy: host-loading unit tests mock electron without these.
   electron: () => ({ nativeTheme, systemPreferences }),
@@ -7530,7 +7531,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       : process.platform === 'win32'
       ? {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: titleBarOverlays.current()
+          titleBarOverlay: titleBarOverlays.current({ view, threadView })
         }
       : {
           titleBarStyle: 'hidden' as const
@@ -8734,6 +8735,10 @@ async function runStartupMigration(): Promise<StartupState> {
     const url = rendererUrl();
     if (win && !win.isDestroyed() && url) win.loadURL(url);
   }
+  // The repair screen paints --bg-base and the app shell it reloads into paints
+  // --inset-chrome, so the caption buttons follow the startup state. A window
+  // still in repair keeps --bg-base.
+  titleBarOverlays.refresh();
   return startupState;
 }
 

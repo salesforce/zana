@@ -312,12 +312,13 @@ describe('host bootstrap wiring', () => {
       h.overlays.length = 0;
       theme.mockReturnValue({ ...config, theme: 'light' });
       ctx().refreshTitleBarOverlays();
-      expect(h.overlays).toEqual([{ color: '#f6f8fa', symbolColor: '#57606a', height: 44 }]);
+      // The main window is the inset workspace, whose title bar paints --inset-chrome.
+      expect(h.overlays).toEqual([{ color: '#edf0f4', symbolColor: '#57606a', height: 44 }]);
       // Theme System: bootstrap's listener follows the OS.
       theme.mockReturnValue({ ...config, theme: 'system' });
       h.nativeTheme.shouldUseDarkColors = true;
       h.nativeTheme.emit('updated');
-      expect(h.overlays.at(-1)).toEqual({ color: '#181818', symbolColor: '#8b949e', height: 44 });
+      expect(h.overlays.at(-1)).toEqual({ color: '#131313', symbolColor: '#8b949e', height: 44 });
       expect(h.overlays).toHaveLength(2);
     } finally {
       Object.defineProperty(process, 'platform', { value: platform, configurable: true });
