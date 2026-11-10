@@ -34,9 +34,12 @@ async function pixel(electron: ElectronApplication, page: Page, point: { x: numb
 
 test('companion surfaces block underlying text in both themes while outer margins stay transparent', async ({ app }) => {
   const { window, electron } = app;
+  // Activate the isolated app before entering: synthetic clicks do not activate
+  // NSPanel windows, and background compositing can leave animations paused.
+  await electron.evaluate(({ app }) => app.focus({ steal: true }));
   expect(await window.evaluate(() => window.cc.companion.enter())).toBe(true);
   const rail = await part(electron, 'rail');
-  await rail.getByRole('button', { name: /^Status:/ }).dispatchEvent('click');
+  await rail.getByRole('button', { name: /^Status:/ }).click();
   const panel = await part(electron, 'panel');
   await expect(panel.locator('.cc-card')).toBeVisible();
   await expect.poll(() => panel.locator('.cc-card').evaluate(el =>

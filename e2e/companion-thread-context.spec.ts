@@ -38,6 +38,9 @@ test('thread context clears when resolved and a disconnected error shows its rec
     const r = await fetch(new URL(`/internal/hosts/${path}`, window.url()), { method: 'POST', headers: { 'content-type': 'application/json', 'x-zcc-host-id': auth.hostId, authorization: `Bearer ${auth.hostKey}` }, body: JSON.stringify(body) });
     const b = await r.json(); expect(r.ok, JSON.stringify(b)).toBe(true); return b;
   };
+  // Activating Zana dismisses the companion, so activate the isolated fixture
+  // before entering it. Synthetic panel clicks do not activate a macOS app.
+  await electron.evaluate(({ app }) => app.focus({ steal: true }));
   await window.evaluate(() => window.cc.companion.enter());
   const rail = await part(electron, 'rail');
   const raiseQuestion = (providerRequestId: string) => hostRequest('interactive-request', { sessionId: thread.id, interaction: { threadId: thread.id, turnId: payload!.scope.turnId, providerId: 'fake', providerThreadId: 'fixture', providerRequestId, payload: { kind: 'user_question', questions: [
@@ -47,9 +50,6 @@ test('thread context clears when resolved and a disconnected error shows its rec
   await raiseQuestion('context-question');
   const needs = rail.getByRole('button', { name: /^Needs you:/ });
   await expect(needs).toHaveAttribute('aria-label', /1 needs attention/, { timeout: 15000 });
-  // DOM dispatch does not activate a macOS app like a physical rail click.
-  // Activate this isolated Electron instance before exercising its blur-dismissed panel.
-  await electron.evaluate(({ app }) => app.focus({ steal: true }));
   await needs.dispatchEvent('click');
   const panel = await part(electron, 'panel');
   const row = panel.getByRole('button', { name: /Which route should I take/ });

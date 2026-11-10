@@ -15,6 +15,7 @@ vi.mock('electron', async () => {
     visible = false;
     focused = false;
     ignoreMouse = false;
+    focusable = true;
     bounds: { x: number; y: number; width: number; height: number };
     url = '';
     webContents: { id: number; send: ReturnType<typeof vi.fn>; isDestroyed: () => boolean; setWindowOpenHandler: () => void; on: () => void };
@@ -38,6 +39,7 @@ vi.mock('electron', async () => {
     setAlwaysOnTop() {}
     setVisibleOnAllWorkspaces() {}
     setIgnoreMouseEvents(v: boolean) { this.ignoreMouse = v; }
+    setFocusable(v: boolean) { this.focusable = v; }
     loadURL(u: string) { this.url = u; return Promise.resolve(); }
     loadFile(f: string, o?: { search?: string }) { this.url = `${f}?${o?.search ?? ''}`; return Promise.resolve(); }
   }
@@ -73,11 +75,8 @@ import {
   hideAppWindows,
   snapPlacement,
   tooltipBounds,
-  tooltipHeight,
   threadAgentState,
   TOOLTIP_HEIGHT,
-  TOOLTIP_ROW_HEIGHT,
-  TOOLTIP_ROWS_MAX,
   TOOLTIP_WIDTH,
   type CompanionDeps
 } from './companion.js';
@@ -525,6 +524,51 @@ describe('CompanionController.answer (Rule 1 gates)', () => {
 });
 
 describe('CompanionController deep links', () => {
+  beforeEach(() => { fake.windows.length = 0; });
+
+  it.each([
+    { kind: 'home' }, { kind: 'agents' }, { kind: 'scheduler', taskId: 't1' },
+    { kind: 'session', sessionId: 's1' }, { kind: 'thread', threadId: 't1' },
+    { kind: 'request', requestId: 'inbox:e1' }, { kind: 'request', requestId: 'agent:s1' },
+    { kind: 'request', requestId: 'thread:t1' }
+  ] as const)('dismisses the rail before opening $kind in Zana', async (target) => {
+    const shown = appWindow({ visible: true });
+    const env = setup({
+      appWindows: [shown],
+      sessions: [session({ id: 's1' })],
+      entries: [question({ id: 'e1' })],
+      threads: [thread({ threadId: 't1' })]
+    });
+    env.c.start();
+    await flush();
+    env.c.enter();
+    await flush();
+    env.c.openPanel('agents');
+    const assertDismissed = () => {
+      expect(env.c.isActive()).toBe(false);
+      expect(partWin('rail')!.visible).toBe(false);
+      expect(partWin('panel')!.visible).toBe(false);
+      expect(env.restoreWindows).toHaveBeenCalledWith([shown]);
+    };
+    env.showMainWindow.mockImplementation(assertDismissed);
+    env.openThread.mockImplementation(assertDismissed);
+    env.c.open(target);
+    assertDismissed();
+    env.c.stop();
+  });
+
+  it('keeps the rail available when a navigation target is stale or forged', () => {
+    const env = setup({});
+    env.c.enter();
+    for (const target of [null, { kind: 'session', sessionId: 'missing' }, { kind: 'thread', threadId: 'missing' }, { kind: 'request', requestId: 'inbox:missing' }] as const) {
+      env.c.open(target);
+      expect(env.c.isActive()).toBe(true);
+    }
+    expect(env.showMainWindow).not.toHaveBeenCalled();
+    expect(env.restoreWindows).not.toHaveBeenCalled();
+    env.c.stop();
+  });
+
   it('validates targets against main state before navigating', async () => {
     const env = setup({
       sessions: [session({ id: 's1', projectId: 'p9' })],
@@ -670,6 +714,7 @@ type FakeWin = {
   visible: boolean;
   focused: boolean;
   ignoreMouse: boolean;
+  focusable: boolean;
   url: string;
   bounds: { x: number; y: number; width: number; height: number };
   webContents: { id: number; send: ReturnType<typeof vi.fn> };
@@ -787,6 +832,20 @@ describe('CompanionController windows', () => {
     env.c.enter();
     expect(() => env.c.exit()).not.toThrow();
     expect(env.showMainWindow).toHaveBeenCalledOnce();
+    env.c.stop();
+  });
+
+  it('resumes hidden windows without opening a different navigation target', () => {
+    const shown = appWindow({ visible: true });
+    const env = setup({ appWindows: [shown] });
+    env.c.enter();
+    env.c.resume();
+    expect(env.c.isActive()).toBe(false);
+    expect(partWin('rail')!.visible).toBe(false);
+    expect(env.restoreWindows).toHaveBeenCalledWith([shown]);
+    expect(env.showMainWindow).not.toHaveBeenCalled();
+    env.c.resume();
+    expect(env.restoreWindows).toHaveBeenLastCalledWith([]);
     env.c.stop();
   });
 
@@ -1049,7 +1108,8 @@ describe('CompanionController Modern threads', () => {
       expect.objectContaining({ threadId: 't2', state: 'idle', failure: 'Thread failed' })
     ]);
     env.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
-    expect(env.c.getTooltip()?.rows?.[0]).toMatchObject({ state: 'idle', failure: 'Thread failed: Connection closed' });
+    expect(env.c.getPanelState()).toMatchObject({ kind: 'agents', preview: true });
+    expect(sent(partWin('panel')!, IPC.companion.onSnapshot).at(-1)?.[0]).toMatchObject({ agents: snapshot.agents });
     env.c.open({ kind: 'thread', threadId: 't1' });
     expect(env.openThread).toHaveBeenCalledWith('t1', 'p1');
     env.c.stop();
@@ -1161,58 +1221,115 @@ describe('CompanionController tooltip', () => {
     env.c.stop();
   });
 
-  it('the Agents icon hovers a live preview list, grown to fit', async () => {
+  it('hovers the shared Agents panel without focus and refreshes it in place', async () => {
     const env = setup({ sessions: [session({ id: 's1', title: 'Shell agent' })], states: { s1: 'blocked' }, threads: [thread({ threadId: 't1', title: 'Popover PR' })] });
     env.c.start();
     env.c.enter();
     await flush();
     env.c.tooltip({ label: 'Agents', detail: '1 working', panel: 'agents', y: 60 });
-    const tip = partWin('tooltip')!;
-    expect(env.c.getTooltip()?.rows).toEqual([
-      { title: 'Shell agent', projectName: 'name-p1', state: 'blocked', createdAt: NOW - 60_000, recentlyCompleted: false },
-      { title: 'Popover PR', projectName: 'Proj', state: 'working', createdAt: NOW - 120_000, recentlyCompleted: false }
-    ]);
-    expect(env.c.getTooltip()?.more).toBe(0);
-    expect(tip.bounds.height).toBe(TOOLTIP_HEIGHT + 2 * TOOLTIP_ROW_HEIGHT);
+    const panel = partWin('panel')!;
+    expect(partWin('tooltip')).toBeUndefined();
+    expect(panel).toMatchObject({ visible: true, ignoreMouse: true, focusable: false, focused: false });
+    expect(env.c.getPanelState()).toMatchObject({ kind: 'agents', preview: true });
+    expect(sent(panel, IPC.companion.onSnapshot).at(-1)?.[0]).toMatchObject({
+      agents: [expect.objectContaining({ title: 'Shell agent', state: 'blocked' }), expect.objectContaining({ title: 'Popover PR' })]
+    });
 
     // A new thread while hovering refreshes the preview in place.
     env.threads.list = [...env.threads.list, thread({ threadId: 't2', title: 'Another' })];
     env.threadsChanged();
     await flush();
     await new Promise((r) => setTimeout(r, 150));
-    expect(env.c.getTooltip()?.rows?.map((r) => r.title)).toEqual(['Shell agent', 'Another', 'Popover PR']);
-    expect(sent(tip, IPC.companion.onTooltip).at(-1)?.[0]).toMatchObject({ rows: expect.any(Array) });
+    expect(sent(panel, IPC.companion.onSnapshot).at(-1)?.[0]).toMatchObject({
+      agents: [expect.objectContaining({ title: 'Shell agent' }), expect.objectContaining({ title: 'Another' }), expect.objectContaining({ title: 'Popover PR' })]
+    });
+    expect(partWin('panel')).toBe(panel);
     env.c.stop();
   });
 
-  it('caps the preview and counts the rest; other icons and empty fleets keep the pill', async () => {
-    const many = Array.from({ length: TOOLTIP_ROWS_MAX + 3 }, (_, i) => thread({ threadId: `t${i}` }));
+  it('uses the full Agents snapshot, including empty fleets, and keeps other icons as labels', async () => {
+    const many = Array.from({ length: 9 }, (_, i) => thread({ threadId: `t${i}` }));
     const env = setup({ threads: many });
     env.c.start();
     env.c.enter();
     await flush();
     env.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
-    expect(env.c.getTooltip()?.rows).toHaveLength(TOOLTIP_ROWS_MAX);
-    expect(env.c.getTooltip()?.more).toBe(3);
-    expect(partWin('tooltip')!.bounds.height).toBe(tooltipHeight(TOOLTIP_ROWS_MAX, 3));
+    const panel = partWin('panel')!;
+    expect(sent(panel, IPC.companion.onSnapshot).at(-1)?.[0]).toMatchObject({ agents: expect.any(Array) });
+    expect((sent(panel, IPC.companion.onSnapshot).at(-1)?.[0] as { agents: unknown[] }).agents).toHaveLength(9);
     env.c.tooltip({ label: 'Needs you', panel: 'needs-you', y: 20 });
     expect(env.c.getTooltip()).toEqual({ label: 'Needs you', side: 'right', theme: 'light' });
     expect(partWin('tooltip')!.bounds.height).toBe(TOOLTIP_HEIGHT);
+    expect(panel.visible).toBe(false);
+    expect(env.c.getPanelState()).toBeNull();
     env.c.stop();
 
     const empty = setup({});
     empty.c.enter();
     empty.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
-    expect(empty.c.getTooltip()).not.toHaveProperty('rows');
+    expect(empty.c.getTooltip()).toBeNull();
+    expect(empty.c.getPanelState()).toMatchObject({ kind: 'agents', preview: true });
+    expect(sent(partWin('panel')!, IPC.companion.onSnapshot).at(-1)?.[0]).toMatchObject({ agents: [] });
     empty.c.stop();
   });
 
-  it('sizes the preview window per row', () => {
-    expect(tooltipHeight(0, 0)).toBe(TOOLTIP_HEIGHT);
-    expect(tooltipHeight(2, 0)).toBe(TOOLTIP_HEIGHT + 2 * TOOLTIP_ROW_HEIGHT);
-    expect(tooltipHeight(6, 4)).toBe(TOOLTIP_HEIGHT + 7 * TOOLTIP_ROW_HEIGHT);
-    const b = tooltipBounds({ x: 1380, y: 300, width: 52, height: RAIL_HEIGHT }, WORK, 'right', 60, 260);
-    expect(b.height).toBe(260);
+  it('pins the same window and bounds, ignoring late hover hides, then dismisses on click-away', () => {
+    vi.useFakeTimers();
+    try {
+      const env = setup({});
+      env.c.enter();
+      env.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
+      const panel = partWin('panel')!;
+      const bounds = { ...panel.bounds };
+      panel.emit('blur');
+      vi.advanceTimersByTime(200);
+      expect(panel.visible).toBe(true);
+      const closed = sent(panel, IPC.companion.onPanelClosed).length;
+      env.c.openPanel('agents');
+      expect(partWin('panel')).toBe(panel);
+      expect(panel.bounds).toEqual(bounds);
+      expect(panel).toMatchObject({ visible: true, ignoreMouse: false, focusable: true, focused: true });
+      expect(env.c.getPanelState()).toMatchObject({ kind: 'agents', preview: false });
+      env.c.tooltip(null);
+      env.c.tooltip({ label: 'Scheduler', y: 120 });
+      expect(panel.visible).toBe(true);
+      expect(partWin('tooltip')).toBeUndefined();
+      expect(sent(panel, IPC.companion.onPanelClosed)).toHaveLength(closed);
+      panel.emit('blur');
+      vi.advanceTimersByTime(200);
+      expect(panel.visible).toBe(false);
+      env.c.stop();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('hides previews on leave or invalid hover, and closes them when dragging or exiting', () => {
+    const env = setup({});
+    env.c.enter();
+    for (const hide of [() => env.c.tooltip(null), () => env.c.tooltip({ label: '', y: 60 }), () => env.c.dragStart(), () => env.c.exit()]) {
+      env.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
+      expect(partWin('panel')!.visible).toBe(true);
+      hide();
+      expect(partWin('panel')!.visible).toBe(false);
+      expect(env.c.getPanelState()).toBeNull();
+      env.c.dragEnd();
+    }
+    env.c.stop();
+  });
+
+  it('preserves preview mode across display changes and hides an old label on hover', async () => {
+    const { screen } = (await import('electron')) as unknown as { screen: EventEmitter };
+    const env = setup({});
+    env.c.start();
+    env.c.enter();
+    env.c.tooltip({ label: 'Scheduler', y: 120 });
+    env.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
+    expect(partWin('tooltip')!.visible).toBe(false);
+    env.deps.getPlacement = () => ({ edge: 'left' });
+    screen.emit('display-metrics-changed');
+    expect(env.c.getPanelState()).toMatchObject({ kind: 'agents', railSide: 'left', preview: true });
+    env.c.tooltip(null);
+    expect(partWin('panel')!.visible).toBe(false);
+    env.c.stop();
   });
 
   it('stays hidden while a panel is open', () => {

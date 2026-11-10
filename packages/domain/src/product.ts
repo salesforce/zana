@@ -3205,6 +3205,8 @@ export interface CompanionSnapshot {
 /** What the panel window should show — pushed by main on open/switch. */
 export interface CompanionPanelState {
   kind: CompanionPanelKind;
+  /** Passive Agents hover; clicking the rail pins this same card. Main-owned. */
+  preview?: boolean;
   /** Side of the panel window the rail sits on (the card hugs that side). */
   railSide: CompanionEdge;
   /** Rail top, in px from the panel window's top (the card aligns to it). */
@@ -3217,7 +3219,7 @@ export interface CompanionPanelState {
 export interface CompanionTooltip {
   label: string;
   detail?: string;
-  /** Hovered icon's panel: main attaches a live preview list (Agents / Needs you). */
+  /** Hovered icon's panel: main shows the shared card for Agents. */
   panel?: CompanionPanelKind;
   /** Icon centre, in px from the rail window's top. */
   y: number;

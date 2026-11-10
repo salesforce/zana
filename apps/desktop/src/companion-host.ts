@@ -12,6 +12,7 @@ import { CompanionController, type CompanionDeps } from './companion.js';
 type CompanionHandle = {
   enter(): boolean;
   isActive(): boolean;
+  resume(): void;
   hideBehindRail(win: BrowserWindow): void;
   ownsWindow(win: BrowserWindow | null | undefined): boolean;
 };
@@ -44,6 +45,14 @@ export function createCompanionHost(deps: CompanionHostDeps) {
     enabled,
     enter,
 
+    /** Any return to an app window ends the floating companion mode. */
+    onAppOpened(win?: BrowserWindow) {
+      // Focus notifications can arrive after enter() has hidden the window.
+      if (win && (win.isDestroyed() || !win.isVisible() || win.isMinimized())) return;
+      const companion = deps.companion();
+      if (companion?.isActive()) companion.resume();
+    },
+
     /**
      * Show/hide the Window-menu entry to match the opt-in flag (no menu rebuild).
      * Disabled too: hidden menu items must not remain actionable.
@@ -65,7 +74,7 @@ export function createCompanionHost(deps: CompanionHostDeps) {
 
     /**
      * An app window was minimized: hand off to the rail instead of the Dock.
-     * With the rail already up, a window surfaced by a deep link goes back behind it.
+     * With the rail already up, also hide the minimized window.
      */
     onWindowMinimized(win: BrowserWindow) {
       const companion = deps.companion();

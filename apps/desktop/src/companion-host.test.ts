@@ -2,10 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BrowserWindow, Menu } from 'electron';
 import { COMPANION_MENU_ID, companionControllerDeps, createCompanionController, createCompanionHost, onVisibleParent, type CompanionControllerHost } from './companion-host.js';
 
-const fakeWin = (over: Partial<Record<'destroyed' | 'minimized', boolean>> = {}) =>
+const fakeWin = (over: Partial<Record<'destroyed' | 'minimized' | 'visible', boolean>> = {}) =>
   ({
     isDestroyed: vi.fn(() => over.destroyed === true),
     isMinimized: vi.fn(() => over.minimized === true),
+    isVisible: vi.fn(() => over.visible !== false),
     minimize: vi.fn(),
     restore: vi.fn(),
     showInactive: vi.fn()
@@ -15,6 +16,7 @@ function setup(over: { platform?: NodeJS.Platform; flag?: boolean; active?: bool
   const rail = {
     enter: vi.fn(() => over.entered ?? true),
     isActive: vi.fn(() => over.active === true),
+    resume: vi.fn(),
     hideBehindRail: vi.fn(),
     ownsWindow: vi.fn((w: unknown) => w === railWin)
   };
@@ -103,6 +105,29 @@ describe('createCompanionHost', () => {
     off.host.onWindowMinimized(win);
     expect(off.rail.enter).not.toHaveBeenCalled();
     setup({ noCompanion: true }).host.onWindowMinimized(win);
+  });
+
+  it('dismisses an active companion when the app opens, without re-entering or requiring the flag', () => {
+    for (const flag of [true, false]) {
+      const active = setup({ active: true, flag });
+      active.host.onAppOpened();
+      expect(active.rail.resume).toHaveBeenCalledOnce();
+      expect(active.rail.enter).not.toHaveBeenCalled();
+    }
+    const idle = setup();
+    idle.host.onAppOpened();
+    expect(idle.rail.resume).not.toHaveBeenCalled();
+    expect(() => setup({ noCompanion: true }).host.onAppOpened()).not.toThrow();
+  });
+
+  it('ignores stale focus events for hidden, minimized or destroyed windows', () => {
+    const s = setup({ active: true });
+    for (const over of [{ visible: false }, { minimized: true }, { destroyed: true }]) {
+      s.host.onAppOpened(fakeWin(over));
+      expect(s.rail.resume).not.toHaveBeenCalled();
+    }
+    s.host.onAppOpened(fakeWin());
+    expect(s.rail.resume).toHaveBeenCalledOnce();
   });
 
   it('builds the Window-menu item from the same gate, and its click enters', () => {

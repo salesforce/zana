@@ -133,7 +133,7 @@ export function CompanionPanel() {
       <NeedsYouList pending={pending} snapshot={snapshot} now={now} onOpen={setExpanded} />
     );
   } else if (state.kind === 'agents') {
-    body = <AgentsList snapshot={snapshot} pending={pending} now={now} run={run} />;
+    body = <AgentsList snapshot={snapshot} pending={pending} now={now} run={run} preview={!!state.preview} />;
   } else if (state.kind === 'scheduler') {
     body = <ScheduleList schedules={snapshot.schedules} now={now} run={run} />;
   } else {
@@ -149,9 +149,9 @@ export function CompanionPanel() {
     >
       <div
         ref={cardRef}
-        className={`cc-card${expandedRequest ? ' is-expanded' : ''}`}
+        className={`cc-card${expandedRequest ? ' is-expanded' : ''}${state.preview ? ' is-preview' : ''}`}
         style={{ top }}
-        role="dialog"
+        role={state.preview ? 'tooltip' : 'dialog'}
         aria-label={panelTitle(state.kind)}
       >
         {body}
@@ -243,12 +243,14 @@ function AgentsList({
   snapshot,
   pending,
   now,
-  run
+  run,
+  preview
 }: {
   snapshot: CompanionSnapshot;
   pending: CompanionRequest[];
   now: number;
   run: CompanionAction;
+  preview: boolean;
 }) {
   const groups = groupAgents(snapshot.agents, pending);
   const total = snapshot.agents.length;
@@ -260,7 +262,8 @@ function AgentsList({
         action={
           <button
             type="button"
-            className="cc-icon-btn"
+            className="cc-icon-btn cc-agent-action"
+            disabled={preview}
             title="New agent"
             aria-label="New agent"
             onClick={() => run('open a new agent', () => product.companion.open({ kind: 'home' }))}
@@ -273,13 +276,13 @@ function AgentsList({
         <p className="cc-empty">No agents running.</p>
       ) : (
         <div className="cc-scroll">
-          <AgentGroup label="Needs you" agents={groups.needsYou} now={now} run={run} />
-          <AgentGroup label="Working" agents={groups.working} now={now} run={run} />
-          <AgentGroup label="Idle" agents={groups.idle} now={now} run={run} />
+          <AgentGroup label="Needs you" agents={groups.needsYou} now={now} run={run} preview={preview} />
+          <AgentGroup label="Working" agents={groups.working} now={now} run={run} preview={preview} />
+          <AgentGroup label="Idle" agents={groups.idle} now={now} run={run} preview={preview} />
         </div>
       )}
       <footer className="cc-card-foot">
-        <button type="button" className="cc-link" onClick={() => run('open Agents', () => product.companion.open({ kind: 'agents' }))}>
+        <button type="button" className="cc-link cc-agent-action" disabled={preview} onClick={() => run('open Agents', () => product.companion.open({ kind: 'agents' }))}>
           Open Agents
         </button>
       </footer>
@@ -287,7 +290,7 @@ function AgentsList({
   );
 }
 
-function AgentGroup({ label, agents, now, run }: { label: string; agents: CompanionAgent[]; now: number; run: CompanionAction }) {
+function AgentGroup({ label, agents, now, run, preview }: { label: string; agents: CompanionAgent[]; now: number; run: CompanionAction; preview: boolean }) {
   if (agents.length === 0) return null;
   return (
     <section className="cc-group">
@@ -300,6 +303,7 @@ function AgentGroup({ label, agents, now, run }: { label: string; agents: Compan
             <button
               type="button"
               className="cc-row"
+              disabled={preview}
               title={`${a.title} — ${agentStatusLabel(a)}`}
               onClick={() =>
                 run('open the agent', () => product.companion.open(

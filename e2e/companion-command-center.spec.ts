@@ -80,18 +80,30 @@ test('companion: rail replaces the window, opens one panel, and hands back to Za
     .poll(async () => (await visibleUrls(electron)).map((u) => (u.includes('surface=companion') ? 'rail' : 'app')))
     .toEqual(['rail']);
 
-  // Hover floats the tooltip beside the rail.
+  // Hover shows the actual Agents card, inactive and with action space reserved.
   await rail.getByRole('button', { name: /^Agents:/ }).hover();
-  const tooltip = await waitForCompanion(electron, 'tooltip');
-  await expect(tooltip.locator('.cc-tip-label')).toHaveText('Agents');
-
-  // Agents → its quick panel, the only one open (the tooltip gets out of the way).
-  await rail.getByRole('button', { name: /^Agents:/ }).click();
   const panel = await waitForCompanion(electron, 'panel');
+  const card = panel.locator('.cc-card');
+  await expect(card).toHaveAttribute('role', 'tooltip');
+  await expect(panel.getByText('No agents running.')).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Open Agents', includeHidden: true })).toBeHidden();
+  await expect.poll(() => card.evaluate(el => el.getAnimations().some(a => a.playState === 'running'))).toBe(false);
+  const hoverBounds = await card.boundingBox();
+  const nativePanel = await electron.browserWindow(panel);
+  const hoverWindow = await nativePanel.evaluate(win => ({ bounds: win.getBounds(), focusable: win.isFocusable() }));
+  expect(hoverWindow.focusable).toBe(false);
+
+  // Click pins the same window/card; revealing actions must not move it.
+  await rail.getByRole('button', { name: /^Agents:/ }).click();
+  await expect(card).toHaveAttribute('role', 'dialog');
+  await expect(panel.getByRole('button', { name: 'Open Agents' })).toBeVisible();
+  expect(await card.boundingBox()).toEqual(hoverBounds);
+  expect(await nativePanel.evaluate(win => win.getBounds())).toEqual(hoverWindow.bounds);
+  expect(await nativePanel.evaluate(win => win.isFocusable())).toBe(true);
+  await nativePanel.dispose();
   await expect
     .poll(async () => (await visibleUrls(electron)).filter((u) => u.includes('part=tooltip')).length)
     .toBe(0);
-  const card = panel.locator('.cc-card');
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('aria-label', 'Agents');
   await expect(rail.getByRole('button', { name: /^Agents:/ })).toHaveAttribute('aria-pressed', 'true');
@@ -128,6 +140,32 @@ test('companion: rail replaces the window, opens one panel, and hands back to Za
   await expect
     .poll(async () => (await visibleUrls(electron)).filter((u) => u.includes('surface=companion')).length)
     .toBe(0);
+});
+
+test('companion: reopening Zana from the Dock, another launch or navigation dismisses the rail', async ({ app }) => {
+  const { window, electron } = app;
+  for (const path of ['dock', 'second-instance', 'scheduler'] as const) {
+    await electron.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows().find(w => !w.webContents.getURL().includes('surface='))!.showInactive();
+    });
+    expect(await window.evaluate(() => window.cc.companion.enter())).toBe(true);
+    const rail = await waitForCompanion(electron, 'rail');
+    await expect.poll(async () => (await visibleUrls(electron)).filter(u => u.includes('part=rail')).length).toBe(1);
+    // Opening a companion panel itself must keep the rail available.
+    await rail.getByRole('button', { name: /^Scheduler:/ }).click();
+    const panel = await waitForCompanion(electron, 'panel');
+    await expect(panel.locator('.cc-card')).toHaveAttribute('aria-label', 'Scheduler');
+    if (path === 'scheduler') {
+      await panel.getByRole('button', { name: 'Open Scheduler', exact: true }).dispatchEvent('click');
+    } else {
+      await electron.evaluate(({ app }, path) => {
+        if (path === 'dock') app.emit('activate');
+        else if (path === 'second-instance') app.emit('second-instance', {}, [], '', {});
+      }, path);
+    }
+    await expect.poll(async () => (await visibleUrls(electron)).filter(u => u.includes('surface=companion')).length, { message: `${path} dismisses the companion` }).toBe(0);
+    await expect(panel.locator('.cc-card')).toHaveCount(0);
+  }
 });
 
 test('companion: entering is refused while the opt-in flag is off', async ({ app }) => {
@@ -246,14 +284,28 @@ test.describe('companion Modern threads', () => {
     const agents = rail.getByRole('button', { name: /^Agents:/ });
     await expect(agents).toHaveAttribute('aria-label', /^Agents: 1 working/, { timeout: 20_000 });
 
-    // Hovering the Agents icon floats a live preview of the running agents.
+    // The same grouped card is used for hover and pin, including live rows.
     await agents.hover();
-    const tooltip = await waitForCompanion(electron, 'tooltip');
-    await expect(tooltip.locator('.cc-tip-row', { hasText: 'Rail modern agent' })).toBeVisible();
-
-    // The Agents panel lists the thread too.
-    await agents.click();
     const panel = await waitForCompanion(electron, 'panel');
-    await expect(panel.getByText('Rail modern agent')).toBeVisible();
+    const card = panel.getByRole('tooltip', { name: 'Agents' });
+    const row = panel.locator('.cc-row', { hasText: 'Rail modern agent' });
+    await expect(row).toBeVisible();
+    await expect(row).toBeDisabled();
+    await expect(panel.locator('.cc-group-label')).toHaveText(['Working 1']);
+    await expect.poll(() => card.evaluate(el => el.getAnimations().some(a => a.playState === 'running'))).toBe(false);
+    const hoverBounds = await card.boundingBox();
+    const rowBounds = await row.boundingBox();
+    await panel.evaluate(() => { (window as Window & { originalCard?: Element | null }).originalCard = document.querySelector('.cc-card'); });
+
+    await agents.click();
+    const pinnedCard = panel.getByRole('dialog', { name: 'Agents' });
+    await expect(pinnedCard).toBeVisible();
+    await expect(row).toBeEnabled();
+    expect(await pinnedCard.boundingBox()).toEqual(hoverBounds);
+    expect(await row.boundingBox()).toEqual(rowBounds);
+    expect(await panel.evaluate(() => (window as Window & { originalCard?: Element | null }).originalCard === document.querySelector('.cc-card'))).toBe(true);
+    // The rail's delayed hover hide must not dismiss a panel that is now pinned.
+    await rail.evaluate(() => window.cc.companion.tooltip(null));
+    await expect.poll(async () => (await visibleUrls(electron)).filter(u => u.includes('part=panel')).length).toBe(1);
   });
 });
