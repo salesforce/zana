@@ -158,7 +158,8 @@ describe('buildShimScript (REQ-3, REQ-12)', () => {
   });
 
   it('gives exit 127 when the real binary is missing, and does not call itself', () => {
-    const run = runShim('gh', [['pr', 'create']], ['pr', 'list'], { installReal: false });
+    // A name no system dir provides: CI runners ship /usr/bin/gh, which would be found as the real binary.
+    const run = runShim('zcc-no-such-tool', [['pr', 'create']], ['pr', 'list'], { installReal: false });
     expect(run.status).toBe(127);
     expect(run.marker).toBe('');
   });
