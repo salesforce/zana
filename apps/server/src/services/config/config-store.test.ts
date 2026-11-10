@@ -20,6 +20,13 @@ describe('createConfigStore', () => {
     const { config: current, hash } = config.snapshot();
     expect(config.replaceConfig({ ...current, threadCommunicationEnabled: false, threadCommunicationGeneration: 999 }, hash)).toMatchObject({ threadCommunicationGeneration: 3 });
     expect(config.getConfig()).toMatchObject({ threadCommunicationEnabled: false, threadCommunicationGeneration: 3 });
+    const unchanged = config.snapshot();
+    expect(config.replaceConfig(unchanged.config, unchanged.hash).threadCommunicationGeneration).toBe(3);
+    writeFileSync(configFile, JSON.stringify({ threadCommunicationGeneration: null }));
+    expect(config.setConfig({ threadCommunicationEnabled: false }).threadCommunicationGeneration).toBe(1);
+    writeFileSync(configFile, JSON.stringify({ threadCommunicationGeneration: null }));
+    const legacy = config.snapshot();
+    expect(config.replaceConfig({ ...legacy.config, threadCommunicationEnabled: false }, legacy.hash).threadCommunicationGeneration).toBe(1);
   });
   it('owns config persistence without Electron and preserves optional resets', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-'));

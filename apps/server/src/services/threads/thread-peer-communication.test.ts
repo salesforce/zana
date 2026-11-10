@@ -319,3 +319,9 @@ describe('thread peer communication with durable queue', () => {
     expect(peerEvent(db, sender, PEER_REGISTERED_EVENT)).toBeUndefined();
   });
 });
+
+it('returns a safe failure when a peer directory rejects without an Error', async () => {
+  vi.mocked(ctx.cliAgentOps!.peers!).mockRejectedValueOnce('offline');
+  expect(await invokeHostPeerTool(ctx, { threadId: sender, name: 'list_agents', input: {} }))
+    .toMatchObject({ contentItems: [expect.objectContaining({ text: expect.stringContaining('Peer communication failed') })] });
+});

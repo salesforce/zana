@@ -17,4 +17,6 @@ it('defaults thread communication on and preserves explicit opt-out', () => {
   fireEvent.click(toggle); expect(onUpdate).toHaveBeenLastCalledWith({ threadCommunicationEnabled: true });
   const entry = entries.find(row => row.id === 'experimental.thread-communication')!;
   expect(entry.anchor).toBe('thread-communication');
+  expect(entry.value?.({ config: {} as AppConfig })).toBe('On');
+  expect(entry.value?.({ config: { threadCommunicationEnabled: false } as AppConfig })).toBe('Off');
 });

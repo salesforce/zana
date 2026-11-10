@@ -1234,3 +1234,14 @@ describe('completion sounds and fleet quiet spacing', () => {
     expect(normalizeConfig({ agentSoundSpacingSeconds: Infinity })).not.toHaveProperty('agentSoundSpacingSeconds');
   });
 });
+
+describe('normalizeConfig — thread peer consent', () => {
+  it.each([true, false])('preserves the explicit communication preference %s', threadCommunicationEnabled => {
+    expect(normalizeConfig({ threadCommunicationEnabled, threadCommunicationGeneration: 3 }))
+      .toMatchObject({ threadCommunicationEnabled, threadCommunicationGeneration: 3 });
+  });
+  it.each([undefined, -1, 1.5, Number.NaN, '2'])('rejects invalid generations %s', value => {
+    expect(normalizeConfig({ threadCommunicationEnabled: 'true' as never, threadCommunicationGeneration: value as never }))
+      .not.toHaveProperty('threadCommunicationGeneration');
+  });
+});

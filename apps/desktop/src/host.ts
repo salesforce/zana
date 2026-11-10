@@ -3,9 +3,7 @@ import { startAgentSoundEvents } from './native/agent-sound-events.js';
 import { AgentSounds } from './native/agent-sounds.js';
 import { AgentSoundFiles } from './native/agent-sound-files.js';
 import { registerAgentSoundIpc } from './native/agent-sound-ipc.js';
-import { createThreadPeerTools } from './runtime/thread-peer-tools.js';
-import { createCliPeerDelivery } from './runtime/cli-peer-delivery.js';
-import { peerMessageHops } from '@zana-ai/zcc-server/services/agents/peer-tool-contract';
+import { createThreadPeerRuntime } from './runtime/thread-peer-runtime.js';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -2490,6 +2488,8 @@ const closeSummary = new CloseSummaryService({
 });
 /** "Wrap up before closing" (Experimental): asks resting Claude agents to wrap up before Close with follow-up. */
 const wrapUpClose = createWrapUpClose({ store, ptys, agentStatus, closeSummary, providerCapabilities, isRemoteSession: isTrueSshRemoteSession, suppressesInteractiveBlocked });
+const threadPeerRuntime = createThreadPeerRuntime({ serverUrl: productServerUrl, credential: ensureProductServerCredential,
+  store, ptys, teamLaunchSessions, registry: agentRegistry, log: agentMessageLog, agentStatus, wrapUpClose });
 /** Backs the Inbox "AI Summary" card — reads main's own inbox store (the source
  *  of truth, not the renderer's filtered view) and runs the
  *  `builtin:inbox-summary` micro-call to distill a standup-style digest, whole
@@ -9557,17 +9557,7 @@ async function bootstrapNormal() {
     // server-side from the live pty / status tracker, never trusted from the
     // agent.
     agentRegistry,
-    threadPeerTools: createThreadPeerTools({ serverUrl: productServerUrl, credential: ensureProductServerCredential,
-      caller: sessionId => {
-        const session = ptys.getSession(sessionId);
-        if (!session || teamLaunchSessions.has(sessionId)) return null;
-        const record = agentRegistry.get(sessionId);
-        const lastMessage = agentMessageLog.history().filter(message => message.toSessionId === sessionId).at(-1);
-        return { sessionId, projectId: session.projectId, kind: 'cli-agent',
-          displayName: (record ? agentLabel(record) : session.title || sessionId).slice(0, 200),
-          hops: peerMessageHops(lastMessage?.body ?? '') };
-      }
-    }),
+    threadPeerTools: threadPeerRuntime.threadPeerTools,
     getSessionCwd: (sessionId: string) => ptys.getSession(sessionId)?.cwd,
     getAgentStatus: (sessionId: string) => agentStatus.get(sessionId),
     getTeamLaunchId: (sessionId: string) => teamLaunchSessions.get(sessionId),
@@ -10275,10 +10265,7 @@ async function bootstrapNormal() {
         ? { ok: true }
         : { ok: false, reason: 'orchestrator may close only sessions in its cohort' };
     },
-    sendPeerMessage: createCliPeerDelivery({ registry: agentRegistry, log: agentMessageLog,
-      enabled: () => store.getConfig().threadCommunicationEnabled !== false,
-      generation: () => store.getConfig().threadCommunicationGeneration ?? 0,
-      status: id => agentStatus.get(id), inject: (id, message) => !wrapUpClose.isWrappingUp(id) && ptys.reply(id, message) }),
+    sendPeerMessage: threadPeerRuntime.sendPeerMessage,
     listAgents: () => agentRegistry.list(),
     // Persona catalogue → non-sensitive metadata (id/name/description/profile/
     // model). Read-only; lets the CLI resolve `--persona <name>` against the

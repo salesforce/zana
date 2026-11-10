@@ -70,3 +70,11 @@ describe('host session tool policy', () => {
     );
   });
 });
+
+it('omits peer tools for remote and in-app terminal sessions when disabled', () => {
+  for (const options of [{ remoteSurface: { label: 'remote' } }, { inAppAgentTerminalsEnabled: true }]) {
+    const packed = mergeHostSessionTooling({}, { ...options, threadCommunicationEnabled: false });
+    expect(packed.dynamicTools?.some(tool => tool.name === 'agent_send')).toBe(false);
+    expect(packed.instructions).not.toContain('Threads and CLI Agents can coordinate');
+  }
+});

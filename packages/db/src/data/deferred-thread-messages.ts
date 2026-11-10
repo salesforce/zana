@@ -191,7 +191,7 @@ export function pauseDeferredThreadMessagesForThread(db: ZccDatabase, threadId: 
         SET paused = 1, updated_at = ?
       WHERE thread_id = ?`
     ).run(Date.now(), threadId);
-    return Number(result.changes ?? 0);
+    return Number(result.changes);
   });
 }
 
@@ -203,7 +203,7 @@ export function resumeDeferredThreadMessagesForThread(db: ZccDatabase, threadId:
         SET paused = 0, updated_at = ?
       WHERE thread_id = ?`
     ).run(Date.now(), threadId);
-    return Number(result.changes ?? 0);
+    return Number(result.changes);
   });
 }
 
