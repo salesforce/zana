@@ -305,6 +305,9 @@ export function createBridgeProtocolAdapter(
               ...(command.dynamicTools !== undefined
                 ? { dynamicTools: command.dynamicTools }
                 : {}),
+              ...(command.mcpServers !== undefined
+                ? { mcpServers: command.mcpServers }
+                : {}),
               ...(command.disallowedTools !== undefined
                 ? { disallowedTools: command.disallowedTools }
                 : {}),
@@ -329,6 +332,9 @@ export function createBridgeProtocolAdapter(
               ),
               ...(command.dynamicTools !== undefined
                 ? { dynamicTools: command.dynamicTools }
+                : {}),
+              ...(command.mcpServers !== undefined
+                ? { mcpServers: command.mcpServers }
                 : {}),
               ...(command.disallowedTools !== undefined
                 ? { disallowedTools: command.disallowedTools }
@@ -382,6 +388,9 @@ export function createBridgeProtocolAdapter(
               ),
               ...(command.dynamicTools !== undefined
                 ? { dynamicTools: command.dynamicTools }
+                : {}),
+              ...(command.mcpServers !== undefined
+                ? { mcpServers: command.mcpServers }
                 : {}),
               ...(command.disallowedTools !== undefined
                 ? { disallowedTools: command.disallowedTools }

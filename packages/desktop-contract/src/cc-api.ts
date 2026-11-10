@@ -795,6 +795,8 @@ export interface CcApi {
       get(threadId: string, interactionId: string): Promise<PendingInteraction>;
       resolve(threadId: string, interactionId: string, resolution: PendingInteractionResolution): Promise<PendingInteraction>;
       respond(threadId: string, interactionId: string, value: JsonValue): Promise<PendingInteraction>;
+      /** Answer a PTY session's plugin interaction (the session has no thread). Desktop only: it carries main's human proof. */
+      respondSession?(sessionId: string, interactionId: string, value: JsonValue): Promise<unknown>;
       cancel(threadId: string, interactionId: string): Promise<PendingInteraction>;
     };
     archive(threadId: string): Promise<{ ok: boolean }>;

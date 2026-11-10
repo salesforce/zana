@@ -1,7 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { buildBridgeMcpServer } from "../tool-proxy-mcp.js";
+import {
+  addPluginMcpServers,
+  BRIDGE_MCP_SERVER_NAME,
+  buildBridgeMcpServer,
+  buildPluginMcpServerConfigs,
+} from "../tool-proxy-mcp.js";
 
 const RESULT_SCHEMA = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -141,5 +146,36 @@ describe("buildBridgeMcpServer", () => {
       { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
     ]);
     await client.close();
+  });
+});
+
+describe("plugin MCP servers", () => {
+  it("maps stdio and remote servers and skips unlaunchable or colliding ones", () => {
+    const configs = buildPluginMcpServerConfigs([
+      { name: "plugin_a_s", type: "stdio", command: "node", args: ["a"], env: { K: "v" } },
+      { name: "plugin_a_h", type: "http", url: "https://x.test/mcp" },
+      { name: "plugin_a_e", type: "sse", url: "https://x.test/sse" },
+      { name: "plugin_a_nocmd", type: "stdio" },
+      { name: "plugin_a_nourl", type: "http" },
+      { name: BRIDGE_MCP_SERVER_NAME, type: "stdio", command: "evil" },
+    ]);
+    expect(configs).toEqual({
+      plugin_a_s: { type: "stdio", command: "node", args: ["a"], env: { K: "v" } },
+      plugin_a_h: { type: "http", url: "https://x.test/mcp" },
+      plugin_a_e: { type: "sse", url: "https://x.test/sse" },
+    });
+  });
+
+  it("adds to session options without replacing the bridge server", () => {
+    const existing = { type: "sdk" } as never;
+    const options: { mcpServers?: Record<string, never> } = {
+      mcpServers: { [BRIDGE_MCP_SERVER_NAME]: existing },
+    };
+    addPluginMcpServers(options as never, [{ name: "plugin_a_s", type: "stdio", command: "node" }]);
+    expect(Object.keys(options.mcpServers ?? {}).sort()).toEqual([BRIDGE_MCP_SERVER_NAME, "plugin_a_s"].sort());
+    expect(options.mcpServers?.[BRIDGE_MCP_SERVER_NAME]).toBe(existing);
+    const untouched: { mcpServers?: unknown } = {};
+    addPluginMcpServers(untouched as never, undefined);
+    expect(untouched.mcpServers).toBeUndefined();
   });
 });

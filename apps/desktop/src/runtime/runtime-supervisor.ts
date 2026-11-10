@@ -4,6 +4,7 @@ import { rpcErrorFrom } from '@zana-ai/zcc-contracts/rpc-error';
 import type { ProjectFeedRequest, ProjectFeedResult } from '@zana-ai/zcc-contracts/project-feed';
 import type { LibraryAgentRequest } from '@zana-ai/zcc-contracts/library-agent';
 import type { ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import type { LibraryDocumentRequest } from '@zana-ai/zcc-contracts/library-documents';
 import { enrollHostUtility } from './enroll-host-utility.js';
 import { createProductEventForwarder } from './product-event-forwarder.js';
@@ -41,7 +42,13 @@ import {
   SquadRuntimePreflightResultSchema,
   SquadRuntimeOperationSchema,
   SQUAD_RUNTIME_OPERATION_PATH,
+  type DispatchAdmissionMainRequest,
+  type PtyLifecycleEventMainRequest,
+  type PtySessionInstructionsMainRequest,
+  type PtySessionToolCallMainRequest,
+  type PtySessionToolsMainRequest,
   type NativeToolPolicyRequest,
+  type NativeToolSettledMainRequest,
   type SquadMemberDeliveryRequest,
   type SquadMemberRuntimeRequest,
   type SquadMemberControlRequest,
@@ -184,6 +191,44 @@ export interface RuntimeSupervisor {
    * validates the reply, and this never authorizes anything by itself.
    */
   decideToolPolicy(request: NativeToolPolicyRequest): Promise<unknown>;
+  /**
+   * Ask the plugin dispatch admission about PTY input main is about to forward.
+   * Main asserts the identity; the caller validates the reply and fails closed.
+   */
+  admitDispatch(request: DispatchAdmissionMainRequest): Promise<unknown>;
+  /**
+   * Hand a PTY lifecycle moment to the plugin host. Main asserts the identity from
+   * its live session record; the reply only says whether a plugin service took it.
+   */
+  emitPtyLifecycle(request: PtyLifecycleEventMainRequest): Promise<unknown>;
+  /**
+   * Hand a settled native tool call of a PTY main owns to the plugin host
+   * (OBL-011). Observational: the reply only says whether a plugin service took it.
+   */
+  emitToolSettled(request: NativeToolSettledMainRequest): Promise<unknown>;
+  /**
+   * Ask the plugin host for the standing instructions of a PTY about to spawn.
+   * Main asserts the identity from its launch plan; the caller validates the reply.
+   */
+  ptySessionInstructions(request: PtySessionInstructionsMainRequest): Promise<unknown>;
+  /**
+   * Ask the plugin host which plugin tools one live PTY session may use. Main
+   * asserts the identity from its live session record; the caller validates the reply.
+   */
+  ptySessionTools(request: PtySessionToolsMainRequest): Promise<unknown>;
+  /**
+   * One plugin tool call from a live PTY session: the plugin host applies the
+   * main-owned tool policy and then runs the tool. The caller validates the reply.
+   */
+  ptySessionToolCall(request: PtySessionToolCallMainRequest): Promise<unknown>;
+  /**
+   * Pre-spawn inventory of the plugin tool policy (OBL-018). Main reads it
+   * before every provider-native launch to decide whether the native-tool veto
+   * must be reachable: a non-empty `required` means at least one enabled plugin
+   * owns tool policy, so a spawn that can't reach the hook must fail closed.
+   * Reusing the runtime readiness surface avoids a second per-tool channel.
+   */
+  toolPolicyReadiness(): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -194,6 +239,8 @@ export interface StartRuntimeSupervisorOptions {
   version?: string;
   /** Env vars for the product-server utility only — never the host-daemon, never process.env. */
   extraEnv?: Record<string, string>;
+  /** Delivered to the product-server utility over its start message, never through env. */
+  productServerCredential?: string;
   onUnexpectedExit?: (service: string) => void;
   /** Trusted local activity snapshot; includes hidden workers, excludes remote work. */
   onLocalThreadWork?: (working: boolean) => void;
@@ -457,6 +504,16 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     getPluginSettings: async () => ({ descriptors: {}, values: {} }),
     setPluginSettings: async () => { throw new Error('plugin host is unavailable'); },
     decideToolPolicy: async () => { throw new Error('plugin host is unavailable'); },
+    // No plugin host means no plugin can veto a dispatch.
+    admitDispatch: async () => ({ action: 'proceed' }),
+    emitPtyLifecycle: async () => ({ delivered: false }),
+    emitToolSettled: async () => ({ delivered: false }),
+    ptySessionInstructions: async () => ({ instructions: '' }),
+    ptySessionTools: async () => ({ tools: [] }),
+    ptySessionToolCall: async () => { throw new Error('plugin host is unavailable'); },
+    // No plugin host ⇒ no plugin owns tool policy ⇒ the veto is not demanded.
+    // Empty `required` lets main spawn (there is nothing to fail closed for).
+    toolPolicyReadiness: async () => ({ ready: false, required: [], reason: 'plugin host is unavailable' }),
     async close(): Promise<void> {
       if (hostConnectionRenewal) clearInterval(hostConnectionRenewal);
       await Promise.allSettled([renderer.close(), host.close()]);
@@ -528,6 +585,13 @@ interface UtilityRuntime {
   request(operation: 'plugins-cli-contributions'): Promise<unknown>;
   request(operation: 'plugins-cli-run', pluginId: string, argv: string[], context?: { projectId?: string; threadId?: string; cwd?: string }): Promise<unknown>;
   request(operation: 'plugins-tool-policy', request: NativeToolPolicyRequest): Promise<unknown>;
+  request(operation: 'plugins-dispatch-admission', request: DispatchAdmissionMainRequest): Promise<unknown>;
+  request(operation: 'plugins-pty-lifecycle-event', request: PtyLifecycleEventMainRequest): Promise<unknown>;
+  request(operation: 'plugins-tool-settled', request: NativeToolSettledMainRequest): Promise<unknown>;
+  request(operation: 'plugins-pty-session-instructions', request: PtySessionInstructionsMainRequest): Promise<unknown>;
+  request(operation: 'plugins-pty-session-tools', request: PtySessionToolsMainRequest): Promise<unknown>;
+  request(operation: 'plugins-pty-session-tool-call', request: PtySessionToolCallMainRequest): Promise<unknown>;
+  request(operation: 'plugins-tool-policy-inventory'): Promise<unknown>;
   request(operation: 'marketplace-list'): Promise<unknown>;
   request(operation: 'marketplace-add', url: string): Promise<unknown>;
   request(operation: 'marketplace-refresh', url: string): Promise<unknown>;
@@ -654,6 +718,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
         hostSigningKey: options.signingKey,
         hostBinding: { hostId: host.hostId, instanceId: host.instanceId },
         bundledPluginsRoot: defaultBundledRoot(),
+        ...(options.productServerCredential ? { productServerCredential: options.productServerCredential } : {}),
         version: options.version ?? ''
       }, peerEnv, peerKey);
     } finally { peerKey?.fill(0); }
@@ -753,6 +818,9 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
       return;
     }
     if (parsed.data.type === 'plugin-capabilities') {
+      // The host daemon runs in its own utility process, so its in-memory plugin MCP registry (read when a
+      // Modern session starts) is only populated if the same, already-validated message is forwarded to it.
+      host.child.postMessage(parsed.data);
       for (const listener of pluginCapabilitiesListeners) listener(parsed.data.contributors);
       return;
     }
@@ -907,6 +975,13 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     setPluginSettings: (pluginId, values) => server.request('plugins-settings-set', pluginId, values),
     /* v8 ignore next -- the packaged utility child runs only at the built-Electron boundary (e2e/native-tool-policy-pty.spec.ts) */
     decideToolPolicy: (request) => server.request('plugins-tool-policy', request),
+    admitDispatch: (request) => server.request('plugins-dispatch-admission', request),
+    emitPtyLifecycle: (request) => server.request('plugins-pty-lifecycle-event', request),
+    emitToolSettled: (request) => server.request('plugins-tool-settled', request),
+    ptySessionInstructions: (request) => server.request('plugins-pty-session-instructions', request),
+    ptySessionTools: (request) => server.request('plugins-pty-session-tools', request),
+    ptySessionToolCall: (request) => server.request('plugins-pty-session-tool-call', request),
+    toolPolicyReadiness: () => server.request('plugins-tool-policy-inventory'),
     async relaunchEnrolledHost() {
       if (failed || closing) return { ok: false as const, message: 'Background service stopped. Restart Zana to reconnect.' };
       if (enrollRetry) {
@@ -982,13 +1057,13 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-        ...args: [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, string?] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
+      operation: 'plugins-tool-settled' | 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-dispatch-admission' | 'plugins-pty-lifecycle-event' | 'plugins-pty-session-instructions' | 'plugins-pty-session-tools' | 'plugins-pty-session-tool-call' | 'plugins-tool-policy-inventory' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+        ...args: [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [DispatchAdmissionMainRequest] | [PtyLifecycleEventMainRequest] | [NativeToolSettledMainRequest] | [PtySessionInstructionsMainRequest] | [PtySessionToolsMainRequest] | [PtySessionToolCallMainRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, string?] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
       // Plugin CLI runs and RPCs may wrap slow external CLIs (e.g. `sf agent preview start`, up to 120s), so they get the long budget.
-      const timeoutMs = operation === 'plugins-repair' || operation === 'plugin-packs-install' || operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' || operation === 'plugins-install' || operation === 'plugins-update' || operation === 'plugins-update-all' || operation === 'plugins-outdated' ? 300_000 : 20_000;
+      const timeoutMs = operation === 'plugins-repair' || operation === 'plugin-packs-install' || operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' || operation === 'plugins-install' || operation === 'plugins-update' || operation === 'plugins-update-all' || operation === 'plugins-outdated' ? 300_000 : operation === 'plugins-tool-policy' ? MAX_MAIN_CEILING_MS : operation === 'plugins-pty-session-tool-call' ? 300_000 : 20_000;
       return new Promise<unknown>((resolveResult, rejectResult) => {
         const timer = setTimeout(() => {
           pending.delete(id);
@@ -1006,6 +1081,12 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
           ...(operation === 'library-agent' ? { request: args[0] as LibraryAgentRequest } : {}),
           ...(operation === 'library-document' ? { request: args[0] as LibraryDocumentRequest } : {}),
           ...(operation === 'plugins-tool-policy' ? { request: args[0] as NativeToolPolicyRequest } : {}),
+          ...(operation === 'plugins-dispatch-admission' ? { request: args[0] as DispatchAdmissionMainRequest } : {}),
+          ...(operation === 'plugins-pty-lifecycle-event' ? { request: args[0] as PtyLifecycleEventMainRequest } : {}),
+          ...(operation === 'plugins-tool-settled' ? { request: args[0] as NativeToolSettledMainRequest } : {}),
+          ...(operation === 'plugins-pty-session-instructions' ? { request: args[0] as PtySessionInstructionsMainRequest } : {}),
+          ...(operation === 'plugins-pty-session-tools' ? { request: args[0] as PtySessionToolsMainRequest } : {}),
+          ...(operation === 'plugins-pty-session-tool-call' ? { request: args[0] as PtySessionToolCallMainRequest } : {}),
            ...(operation === 'thread-live' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
              ...((operation === 'squad-member-create' || operation === 'squad-member-activate') ? { request: args[0] as SquadMemberRuntimeRequest } : {}),
             ...(operation === 'squad-member-deliver' ? { request: args[0] as SquadMemberDeliveryRequest } : {}),

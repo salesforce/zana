@@ -20,6 +20,7 @@ import { protectPreviewServer } from '../../../../../services/mobile-relay/prote
  * dependency tree into the Electron main bundle.
  */
 
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -43,6 +44,7 @@ import { resolveDoc } from '../projects/fs.js';
 import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
 import { registerPreviewFileTool } from '../threads/preview-file-mcp-tool.js';
+import { registerPtyPluginTools, type PtyPluginTools } from './pty-plugin-tools.js';
 import { registerRunInTerminalTool } from '../threads/run-in-terminal-mcp-tool.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
 import {
@@ -196,6 +198,14 @@ export interface McpServerOptions {
     sessionId: string,
     body: string
   ) => Promise<{ decision: 'allow' | 'deny'; reason: string } | null>;
+  /**
+   * Called with the raw PostToolUse / PostToolUseFailure event JSON a native-tool
+   * relay forwards after a tool call (OBL-011). OBSERVATIONAL: the route answers
+   * 204 before this runs, never reads its result, and logs a failure without the
+   * body (a tool result can carry secrets). The url path carries identity:
+   * `/hook/toolsettled/:projectId/:sessionId`.
+   */
+  onNativeToolSettledHook?: (projectId: string, sessionId: string, body: string) => void | Promise<void>;
   /**
    * Upper bound (ms) on the whole Native Tool Policy exchange, after which we
    * fail CLOSED (deny) regardless of whether `onNativeToolPolicyHook` has
@@ -555,6 +565,12 @@ export interface McpServerOptions {
   }) => Promise<{ delivered: number; command: string | null; title: string | null }>;
   /** Boolean or live getter so a Settings toggle applies to the next MCP request. */
   inAppAgentTerminalsEnabled?: boolean | (() => boolean);
+  /**
+   * Plugin-contributed tools for the PTY sessions main owns, listed and called
+   * on the per-session route only (never a thread route or a fenced member).
+   * Policy runs behind `call`. Absent ⇒ no plugin tools.
+   */
+  ptyPluginTools?: PtyPluginTools;
 }
 
 export interface McpServerHandle {
@@ -644,6 +660,7 @@ async function buildProjectMcpServer(opts: {
   previewFile?: McpServerOptions['previewFile'];
   runInTerminal?: McpServerOptions['runInTerminal'];
   inAppAgentTerminalsEnabled?: McpServerOptions['inAppAgentTerminalsEnabled'];
+  ptyPluginTools?: McpServerOptions['ptyPluginTools'];
 }): Promise<McpServer> {
   const mcp = new McpServer({ name: 'zcc-inbox', version: '0.1.0' });
   // Member routes are bound by main before this per-request server exists. The
@@ -1039,6 +1056,17 @@ async function buildProjectMcpServer(opts: {
       followupAgentApi: opts.followupAgentApi
     });
   }
+  // Plugin tools of a PTY session come last so a built-in name always wins. A
+  // thread route (Modern has its own plugin tool path) and a fenced automated
+  // member (host-attested catalogue only) never get them.
+  if (opts.sessionId && opts.routeKind !== 'thread' && !opts.memberFence && opts.ptyPluginTools) {
+    await registerPtyPluginTools(mcp, {
+      projectId: opts.projectId,
+      sessionId: opts.sessionId,
+      pluginTools: opts.ptyPluginTools,
+      log: opts.log
+    });
+  }
   return mcp;
 }
 
@@ -1193,6 +1221,31 @@ export function matchContentScreenHookRoute(
   if (projectId === null || sessionId === null) return null;
   return { projectId, sessionId };
 }
+
+/**
+ * Match `/hook/toolsettled/:projectId/:sessionId` — the observational
+ * PostToolUse callback (OBL-011). Exported for unit tests.
+ */
+export function matchToolSettledHookRoute(
+  rawUrl: string | undefined
+): { projectId: string; sessionId: string } | null {
+  if (!rawUrl) return null;
+  let pathname: string;
+  try {
+    pathname = new URL(rawUrl, 'http://127.0.0.1').pathname;
+  } catch {
+    return null;
+  }
+  const m = /^\/hook\/toolsettled\/([^/]+)\/([^/]+)$/.exec(pathname);
+  if (!m) return null;
+  const projectId = safeDecode(m[1]);
+  const sessionId = safeDecode(m[2]);
+  if (projectId === null || sessionId === null) return null;
+  return { projectId, sessionId };
+}
+
+/** Largest settled event body read; a bigger one is drained and dropped (best-effort delivery). */
+export const TOOL_SETTLED_BODY_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
  * Match `/hook/nativetool/:projectId/:sessionId` — the SYNCHRONOUS PreToolUse
@@ -1740,7 +1793,7 @@ async function handleRequest(
     const decisionTimeoutMs =
       typeof opts.nativeToolPolicyDecisionTimeoutMs === 'function'
         ? opts.nativeToolPolicyDecisionTimeoutMs()
-        : opts.nativeToolPolicyDecisionTimeoutMs ?? 8_000;
+        : opts.nativeToolPolicyDecisionTimeoutMs ?? MAX_MAIN_CEILING_MS;
     timeout = setTimeout(() => answerDenied('native tool policy decision timed out'), decisionTimeoutMs);
     const finish = async (body: string) => {
       if (done) return;
@@ -1800,6 +1853,50 @@ async function handleRequest(
       void finish(Buffer.concat(chunks).toString('utf8'));
     });
     req.on('error', () => answerDenied('native tool policy request errored'));
+    return;
+  }
+
+  // Observational PostToolUse callback (OBL-011). The reply never waits on the
+  // handler: 204 goes out as soon as the body is in (or dropped), so a slow or
+  // failing consumer cannot delay the relay or the tool. The body is never logged.
+  const toolSettledRoute = matchToolSettledHookRoute(req.url);
+  if (toolSettledRoute) {
+    if (req.method !== 'POST') {
+      req.resume();
+      res.statusCode = 405;
+      res.setHeader('content-type', 'text/plain; charset=utf-8');
+      res.end('method not allowed');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let dropped = false;
+    req.on('data', (c: Buffer) => {
+      total += c.length;
+      if (dropped) return;
+      if (total > TOOL_SETTLED_BODY_MAX_BYTES) {
+        dropped = true;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      res.statusCode = 204;
+      res.end();
+      if (dropped || !opts.onNativeToolSettledHook) return;
+      const body = Buffer.concat(chunks).toString('utf8');
+      void Promise.resolve()
+        .then(() => opts.onNativeToolSettledHook!(toolSettledRoute.projectId, toolSettledRoute.sessionId, body))
+        // A handler error can echo the body (tool output), so only the fact is logged.
+        .catch(() => log('[mcp] tool-settled-hook handler failed'));
+    });
+    req.on('error', () => {
+      if (!res.headersSent) {
+        res.statusCode = 204;
+        res.end();
+      }
+    });
     return;
   }
 
@@ -2104,7 +2201,8 @@ async function handleRequest(
     scheduleAgentApi: opts.scheduleAgentApi,
     previewFile: opts.previewFile,
     runInTerminal: opts.runInTerminal,
-    inAppAgentTerminalsEnabled: opts.inAppAgentTerminalsEnabled
+    inAppAgentTerminalsEnabled: opts.inAppAgentTerminalsEnabled,
+    ptyPluginTools: opts.ptyPluginTools
   });
 
   // Ensure transport + mcp tear down once the response finishes, even on

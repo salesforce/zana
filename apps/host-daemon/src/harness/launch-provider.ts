@@ -37,7 +37,7 @@ import type { HarnessOption, ProviderCapabilities } from '@zana-ai/zcc-domain/la
 import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
-import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
+import type { HarnessIntegrationAdapter, HarnessMcpServer } from '@zcc/harness-sdk';
 import type { AuthorizedModelTarget, ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
 
 /**
@@ -424,7 +424,7 @@ export interface LaunchProvider {
    * `PtyManager` calls this for every provider when it has a live MCP base URL, so
    * the concrete `-c mcp_servers…` string lives ONLY in the codex provider (Rule 6).
    */
-  mcpArgs(profile: LaunchProfileId, mcpUrl: string): string[];
+  mcpArgs(profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): string[];
 
   /**
    * Argv fragment that applies native per-server or per-tool MCP approval
@@ -456,7 +456,8 @@ export interface LaunchProvider {
    */
   mcpEnv(
     profile: LaunchProfileId,
-    mcpUrl: string
+    mcpUrl: string,
+    servers?: readonly HarnessMcpServer[]
   ): Record<string, string>;
 
   /**
@@ -486,6 +487,57 @@ export interface LaunchProvider {
   guidanceArgs(profile: LaunchProfileId, guidance: string): string[];
 
   /**
+   * Argv fragment that delivers per-session PLUGIN instructions as their own
+   * system-prompt layer. Claude returns an additive `--append-system-prompt`.
+   * Codex returns `[]`: it has one `developer_instructions` value, so the text is
+   * folded into the guidance {@link guidanceArgs} receives. OpenCode returns `[]`
+   * and carries them through its config file ({@link mergePluginInstructionsConfig}).
+   * Cursor and shell have no channel and return `[]`.
+   */
+  pluginInstructionArgs(profile: LaunchProfileId, text: string): string[];
+
+  /**
+   * True when this provider reads plugin instructions from a file named in its
+   * config (OpenCode's `instructions` list). `PtyManager` then writes the text to
+   * a host-owned `0600` file and calls {@link mergePluginInstructionsConfig}.
+   */
+  readonly pluginInstructionsViaConfigFile?: boolean;
+
+  /** Add the instruction file path to a provider config document; identity when unsupported. */
+  mergePluginInstructionsConfig(profile: LaunchProfileId, configJson: string, instructionsPath: string): string;
+
+  /**
+   * True when this provider vetoes native tool calls through a plugin module its
+   * config names (OpenCode's `plugin` list), not through argv or env. `PtyManager`
+   * then writes {@link nativeToolGatePluginSource} to a host-owned `0600` file and
+   * calls {@link mergeNativeToolGateConfig}. The gate is local-only: a remote
+   * launch has no host-local file to name, so it carries no veto.
+   */
+  readonly nativeToolGateViaConfigFile?: boolean;
+
+  /** Module source whose pre-tool hook asks `nativeToolUrl` and blocks anything but an exact allow. */
+  nativeToolGatePluginSource(profile: LaunchProfileId, nativeToolUrl: string): string | null;
+
+  /** Add the gate module path to a provider config document; identity when unsupported. */
+  mergeNativeToolGateConfig(profile: LaunchProfileId, configJson: string, gatePath: string): string;
+
+  /**
+   * True when this provider vetoes native tool calls through a per-session
+   * directory its argv names (see {@link nativeToolGateDirectory}). Local-only:
+   * a remote launch has no host-local directory to name, so it carries no veto.
+   */
+  readonly nativeToolGateViaDirectory?: boolean;
+
+  /**
+   * Files of a per-session gate directory whose pre-tool hook asks
+   * `nativeToolUrl` and blocks anything but an exact allow, plus the argv that
+   * makes the CLI load it from `dir`. `PtyManager` creates `dir` (`0700`),
+   * writes the files (`0600`), and removes the directory on exit.
+   */
+  nativeToolGateDirectory(profile: LaunchProfileId, nativeToolUrl: string, dir: string):
+    { files: ReadonlyArray<{ path: string; contents: string }>; args: string[] } | null;
+
+  /**
    * Argv fragment that wires the launcher's lifecycle hooks into a provider whose
    * CLI carries hook config as command-line ARGS, given the fully-resolved,
    * identity-bearing callback URLs in {@link ProviderHookUrls} — the SAME `/hook/*`
@@ -497,10 +549,12 @@ export interface LaunchProvider {
    * present url — `Stop` (turn end → auto-close/scheduler/goal-loop),
    * `PermissionRequest`+`UserPromptSubmit` (blocked/unblocked status),
    * `UserPromptSubmit` (first-prompt tab naming, forwards stdin), and
-   * `SubagentStart`+`SubagentStop` (live sub-agent count) — PLUS the single global
-   * `--dangerously-bypass-hook-trust` flag (a `-c`-injected hook is untrusted and
-   * won't RUN without it; every hook command is OUR curl to 127.0.0.1, never
-   * agent- or user-supplied). codex delivers each hook's event JSON on the
+   * `SubagentStart`+`SubagentStop` (live sub-agent count) — PLUS hook trust: a
+   * `-c`-injected hook is untrusted and won't RUN without it. When the binary was
+   * probed and verified, one scoped `-c hooks.state={…}` override trusts only the
+   * hooks generated here; otherwise (probe pending/failed, remote launch) the
+   * degraded global `--dangerously-bypass-hook-trust` flag is used. Every hook
+   * command is OUR curl to 127.0.0.1, never agent- or user-supplied. codex delivers each hook's event JSON on the
    * command's STDIN (verified — the binary logs `failed to write hook stdin`), so
    * the first-prompt hook pipes stdin through to the callback exactly like the
    * claude `--data-binary @-` command. That Stop callback is what `PtyManager`'s

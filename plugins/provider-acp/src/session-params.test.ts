@@ -593,3 +593,42 @@ describe("buildAcpSessionParams skill instructions", () => {
     expect(paramsWithOptions({})).not.toHaveProperty("instructions");
   });
 });
+
+describe("buildAcpSessionParams plugin MCP servers", () => {
+  const server = {
+    name: "plugin_demo_srv",
+    type: "http",
+    url: "http://127.0.0.1:1/mcp",
+    env: { TOKEN: "x" },
+  };
+  function build(mcpServers?: (typeof server)[]): AcpSessionParams {
+    return buildAcpSessionParams({
+      additionalWorkspaceWriteRoots: [],
+      cwd: "/workspace",
+      mcpServers,
+      options: { ...BASE_OPTIONS },
+      profile: profileFor({
+        displayName: "Custom ACP",
+        command: "custom-agent",
+        args: ["serve"],
+        env: {},
+      }),
+      providerLabel: "acp-custom",
+      parameterizedModelPicker: false,
+      threadId: "thread-1",
+    });
+  }
+
+  it("copies each server instead of aliasing the caller's objects", () => {
+    const input = [server];
+    const params = build(input);
+    expect(params.mcpServers).toEqual([server]);
+    expect(params.mcpServers?.[0]).not.toBe(server);
+    expect(params.mcpServers).not.toBe(input);
+  });
+
+  it("omits mcpServers when undefined or empty", () => {
+    expect(build(undefined)).not.toHaveProperty("mcpServers");
+    expect(build([])).not.toHaveProperty("mcpServers");
+  });
+});

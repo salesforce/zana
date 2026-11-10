@@ -5,6 +5,7 @@
 
 import { RESERVED_ZCC_CLI_COMMANDS } from '@zana-ai/zcc-domain/thread-runtime';
 import { callControlPlane, isAppRunning } from './control-client.js';
+import { resolveCallerIdentity } from './session-identity.js';
 
 interface CliResult {
   exitCode: number;
@@ -40,14 +41,15 @@ function err(message: string, exitCode = 1): CliResult {
   return { exitCode, stdout: '', stderr: `Error: ${message}\n` };
 }
 
-function pluginCliContextFromEnv(cwd = process.cwd()): {
+async function pluginCliContextFromEnv(cwd = process.cwd()): Promise<{
   cwd: string;
   projectId?: string;
   threadId?: string;
-} {
-  const projectId = process.env.ZCC_PROJECT_ID ?? process.env.BB_PROJECT_ID;
-  const threadId =
-    process.env.ZCC_THREAD_ID ?? process.env.BB_THREAD_ID ?? process.env.ZCC_SESSION_ID;
+}> {
+  const resolved = await resolveCallerIdentity();
+  const projectId = resolved.projectId;
+  // A PTY with no bound thread keeps the session id as its thread, as before.
+  const threadId = resolved.threadId ?? process.env.ZCC_SESSION_ID;
   return {
     cwd,
     ...(projectId ? { projectId } : {}),
@@ -118,7 +120,7 @@ export async function proxyPluginCliCommand(
     op: 'plugin.cli',
     // The desktop permits authenticated plugin commands up to five minutes.
     timeoutMs: 305_000,
-    args: { id: match.pluginId, argv: jsonOutput ? [...argv, '--json'] : argv, ...pluginCliContextFromEnv() }
+    args: { id: match.pluginId, argv: jsonOutput ? [...argv, '--json'] : argv, ...(await pluginCliContextFromEnv()) }
   });
   if (!ran.ok) {
     return err(ran.message ?? ran.code ?? 'plugin CLI failed', 1);
@@ -139,7 +141,7 @@ export async function runExplicitPluginCli(
     dataDir,
     op: 'plugin.cli',
     timeoutMs: 305_000,
-    args: { id: pluginId, argv, ...pluginCliContextFromEnv() }
+    args: { id: pluginId, argv, ...(await pluginCliContextFromEnv()) }
   });
   if (!ran.ok) {
     return err(ran.message ?? ran.code ?? 'plugin CLI failed', 1);

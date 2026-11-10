@@ -1,5 +1,7 @@
 import {
   dynamicToolSchema,
+  SESSION_MCP_SERVERS_MAX,
+  sessionMcpServerSchema,
   initializeParamsSchema,
   instructionModeValues,
   permissionEscalationValues,
@@ -61,6 +63,7 @@ export const claudeThreadStartParamsSchema = z.object({
   providerSubagentsEnabled: z.boolean().optional(),
   instructionMode: bridgeInstructionModeSchema,
   dynamicTools: z.array(dynamicToolSchema).optional(),
+  mcpServers: z.array(sessionMcpServerSchema).max(SESSION_MCP_SERVERS_MAX).optional(),
   disallowedTools: z.array(z.string()).optional(),
   sessionKind: z.enum(["interactive", "automated"]).optional(),
 });

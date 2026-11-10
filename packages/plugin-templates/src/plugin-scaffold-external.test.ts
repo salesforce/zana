@@ -126,9 +126,11 @@ describe('external plugin scaffold tests', () => {
   it('pins the packed SDK version and keeps the pin off file:', async () => {
     const pkg = JSON.parse(await readFile(join(pluginDir, 'package.json'), 'utf8')) as {
       devDependencies?: Record<string, string>;
+      engines?: Record<string, string>;
     };
     expect(pkg.devDependencies?.['@zana-ai/zcc-plugin-sdk']).toBe(PLUGIN_SDK_VERSION);
     expect(pkg.devDependencies?.['@zana-ai/zcc-plugin-sdk']).not.toMatch(/^file:/);
+    expect(pkg.engines?.zccPluginSdk).toBe('>=0.1.0');
     await expect(
       access(join(pluginDir, 'node_modules', '@zana-ai', 'zcc-plugin-sdk', 'dist', 'testing', 'app.js'))
     ).resolves.toBeUndefined();

@@ -24,3 +24,45 @@
 .onboarding-settings-action { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 0; }
 .onboarding-settings-action .settings-help { margin: 4px 0 0; }
 @media (max-width: 650px) { .onboarding-backdrop { padding: 10px; } .onboarding-body { padding: 20px; } .onboarding-header, .onboarding-footer { padding: 14px 20px; } .onboarding-steps { gap: 12px; flex-wrap: wrap; } .onboarding-plugin { flex-wrap: wrap; } .onboarding-finish-actions, .onboarding-bundle-actions { flex-basis: 100%; } .onboarding-bundle-actions .ext-pack-review-summary { flex: 1; } }
+
+/* Employee marketplace access checklist (network → Git sign-in → marketplace). */
+.onboarding-checks { list-style: none; margin: 0; padding: 0; }
+.onboarding-check { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 14px 0; }
+.onboarding-check + .onboarding-check { border-top: 1px solid var(--border); }
+.onboarding-check-text strong { font-size: 13px; }
+.onboarding-check-text .settings-help { margin: 2px 0 0; overflow-wrap: anywhere; }
+.onboarding-check-action { display: flex; align-items: center; gap: 8px; }
+.onboarding-check-extra { grid-column: 2 / -1; min-width: 0; }
+.onboarding-check-icon { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; font-size: 12px; font-weight: 700;
+  border: 1.5px solid var(--border); color: var(--text-muted); background: var(--bg-panel); box-sizing: border-box; }
+.onboarding-check-icon.ok { background: var(--success, #16a34a); border-color: var(--success, #16a34a); color: #fff; }
+.onboarding-check-icon.bad { background: var(--danger, #dc2626); border-color: var(--danger, #dc2626); color: #fff; }
+.onboarding-check-icon.act { border-color: var(--accent); color: var(--accent); }
+.onboarding-check-icon.run { border: 2px solid color-mix(in srgb, var(--accent) 20%, transparent); border-top-color: var(--accent); animation: onboarding-spin .8s linear infinite; }
+.onboarding-check-icon.wait { opacity: .55; }
+@keyframes onboarding-spin { to { transform: rotate(360deg); } }
+.onboarding-device { margin-top: 12px; padding: 16px; border-radius: 9px; background: var(--bg-panel); border: 1px solid var(--border);
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 20px; align-items: center; }
+.onboarding-device-label { font-size: 11px; letter-spacing: .6px; text-transform: uppercase; color: var(--text-muted); }
+.onboarding-device-code { font: 600 26px/1.2 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); letter-spacing: 4px; color: var(--text-primary); user-select: all; }
+.onboarding-device-actions { grid-row: 1 / 3; grid-column: 2; display: flex; flex-direction: column; gap: 8px; }
+.onboarding-device-actions .settings-btn { justify-content: center; }
+.onboarding-device-foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--text-muted); font-size: 12px;
+  border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 6px; }
+.onboarding-device-expiry { margin-left: auto; }
+.onboarding-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: onboarding-pulse 1.2s ease-in-out infinite; }
+@keyframes onboarding-pulse { 50% { opacity: .25; } }
+.onboarding-link { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 2px; color: var(--accent); font: inherit; cursor: pointer; }
+.onboarding-who { display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px 3px 3px; border-radius: 99px; font-size: 12px; font-weight: 600;
+  color: var(--success, #16a34a); background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.onboarding-who > span { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; font-size: 9px; color: #fff; background: var(--success, #16a34a); }
+.onboarding-callout { margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 12px; line-height: 1.55; }
+.onboarding-callout.warn { color: var(--warning, #b45309); background: color-mix(in srgb, var(--warning, #b45309) 12%, transparent); }
+.onboarding-callout.err { color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 10%, transparent); }
+.onboarding-cmd { display: block; margin: 8px 0; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-primary); font-size: 11.5px; }
+.onboarding-details { margin-top: 12px; }
+.onboarding-details summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+.onboarding-git-detail { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; white-space: pre-wrap; }
+@media (max-width: 650px) { .onboarding-check { grid-template-columns: 26px minmax(0, 1fr); } .onboarding-check-action { grid-column: 2; }
+  .onboarding-device { grid-template-columns: 1fr; } .onboarding-device-actions { grid-row: auto; grid-column: 1; flex-direction: row; flex-wrap: wrap; } }
+@media (prefers-reduced-motion: reduce) { .onboarding-check-icon.run, .onboarding-pulse { animation: none; } }

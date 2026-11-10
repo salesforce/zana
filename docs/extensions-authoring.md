@@ -104,7 +104,7 @@ Skills, MCP, and extra notes live in the same `zcc` block (BB’s `bb.skills` sh
 
 - `skills` omitted → default `["skills"]`. `[]` opts out.
 - A skill is `skills/<name>/SKILL.md` (directory name is the skill name).
-- `mcpServers` is ZCC-only (Claude CLI / PTY via `~/.zcc/mcp/<projectId>.json`). Host namespaces keys as `plugin:<id>:<name>`. Conversation threads do not read this map — use `zcc.agents.registerTool` (`parameters`: Zod or JSON Schema). A plugin that must work on both surfaces declares both. There is no runtime `registerMcpServer`.
+- `mcpServers` is ZCC-only. Claude PTY reads it via `~/.zcc/mcp/<projectId>.json`; Codex and OpenCode PTY receive the same selection (`alwaysOn`, or named by a persona) through `-c mcp_servers.*` and their inline/file config, with keys rewritten to `plugin_<id>_<name>`. Modern Claude, Modern Codex and OpenCode ACP receive them through the bridge session (`alwaysOn` only; no persona selection). Cursor PTY, Cursor ACP and Pi do not receive them (Cursor requires its own user approval for MCP servers; Pi has no MCP). The parity matrix is in the SDK reference. Host namespaces keys as `plugin:<id>:<name>`. Use `zcc.agents.registerTool` for tools (which also reaches local PTY sessions through zcc-inbox, under the same tool policy and `configure()` selection) (`parameters`: Zod or JSON Schema). A plugin that must work on both surfaces declares both. There is no runtime `registerMcpServer`.
 - `extra` is an opaque bag. The host does not execute it. Keep `zcc` strict — unknown keys outside `extra` fail install.
 - `requires` lists other plugin ids this plugin consumes via `zcc.services.use`. The host loads those plugins first. A cycle marks both `degraded`. A required plugin that is not running marks the consumer `needs-configuration` (`needs plugin: <id>`).
 
@@ -223,12 +223,35 @@ Migrate to them when a plugin currently works around a missing generic hook:
   Move to the registered agent tool (`agents.registerTool`) for Modern
   threads and `zcc.mcpServers` for PTY/CLI Agent sessions — see
   [Platform hooks](./extensions-sdk-reference.md#platform-hooks) for the
-  full conformance matrix. Other providers (Cursor, OpenCode) have no native
-  hook; `zcc.sdk.capabilities.forThread` reports that honestly rather than a
+  full conformance matrix. Claude, Codex, OpenCode and Cursor PTYs and the
+  Modern Claude and Codex threads carry a native veto; the other surfaces do
+  not, and `zcc.sdk.capabilities.forThread` reports that honestly rather than a
   plugin assuming parity.
 - A `projectTab` that can be unavailable for some projects should register
   `ui.registerProjectTabAvailability` instead of hiding the tab outright —
   users should see a disabled tab with a reason, not a tab that vanishes.
+- On Codex PTY sessions the host injects its lifecycle and native-policy hooks
+  into Codex's session-flags config layer and, for a local Codex binary it has
+  verified, trusts only those generated hooks through a `hooks.state` override.
+  The degraded fallback (probe pending, failed or mismatched, and every remote
+  launch) passes the global `--dangerously-bypass-hook-trust`, which also trusts
+  a user's or project's enabled Codex hooks for the session — see
+  [Native tool policy](./extensions-sdk-reference.md#native-tool-policy-claude--codex-only).
+  Do not rely on the fallback as a security boundary.
+- A tool policy can answer `ask` to have the user decide a single call. The
+  host draws the card, the call waits (10-120 s, 60 s by default) and anything
+  but an explicit human allow denies, so use it sparingly. A PTY has no thread
+  unless main bound one: its `threadId` is the session id, so branch on
+  `surface` and `sessionId` before looking up a thread.
+- `zcc.events.on('tool.settled', ...)` reports how a native tool call ended
+  (`succeeded`, `failed`, `cancelled`, duration, exit code, output size), keyed
+  by the same `invocationId` as `onToolPolicy`. It is observational and best
+  effort. Declare `"toolResults": "preview"` next to `zcc.server` to also receive
+  a redacted 4 KiB `outputPreview`; see
+  [Tool settled events](./extensions-sdk-reference.md#tool-settled-events).
+- `zcc.ui.requestInput` can target a PTY session id shown in the Agents monitor.
+  `zcc.host.projectCall` runs on the project's own machine; a project that
+  exists only on another machine is confined on that machine.
 
 ## Marketplace
 

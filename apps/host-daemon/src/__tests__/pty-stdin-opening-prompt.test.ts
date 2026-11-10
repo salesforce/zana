@@ -45,7 +45,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 import { PtyManager } from '../pty.js';
@@ -70,6 +70,7 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
     try {
       const mgr = new PtyManager();
       mgr.create({
+        nativeToolPolicyRequired: false,
         projectId: 'p1',
         profile: 'mastracode',
         cwd: '/tmp',
@@ -99,6 +100,7 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
     try {
       const mgr = new PtyManager();
       const session = mgr.create({
+        nativeToolPolicyRequired: false,
         projectId: 'p1',
         profile: 'mastracode',
         cwd: '/tmp',
@@ -121,7 +123,7 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
     vi.useFakeTimers();
     try {
       const mgr = new PtyManager();
-      mgr.create({ projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
+      mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
         config: CONFIG, openingPrompt: 'analyse the repo' });
       const proc = spawned[0];
       const emit = (data: string) => [...proc.dataCbs].forEach((cb) => cb(data));
@@ -148,7 +150,7 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
     vi.useFakeTimers();
     try {
       const mgr = new PtyManager();
-      mgr.create({ projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
+      mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
         config: CONFIG, openingPrompt: '  ' });
       expect(spawned[0].dataCbs).toHaveLength(1);
       vi.advanceTimersByTime(60_000);
@@ -164,7 +166,7 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
       const mgr = new PtyManager();
       const data = vi.fn();
       mgr.on('data', data);
-      mgr.create({ projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
+      mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
         config: CONFIG, openingPrompt: 'analyse the repo' });
       vi.advanceTimersByTime(60_000);
       expect(data).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('Initial task was not sent'));
@@ -180,7 +182,7 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
     vi.useFakeTimers();
     try {
       const mgr = new PtyManager();
-      const session = mgr.create({ projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
+      const session = mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
         config: CONFIG, openingPrompt: 'analyse the repo' });
       mgr.close(session.id);
       for (const cb of spawned[0].dataCbs) cb('\x1b[?2004h');
@@ -196,6 +198,7 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
     try {
       const mgr = new PtyManager();
       mgr.create({
+        nativeToolPolicyRequired: false,
         projectId: 'p1',
         profile: 'mastracode',
         cwd: '/tmp',
@@ -210,6 +213,7 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
       expect(spawned[0].writes).toEqual([]);
 
       mgr.create({
+        nativeToolPolicyRequired: false,
         projectId: 'p1',
         profile: 'mastracode',
         cwd: '/tmp',

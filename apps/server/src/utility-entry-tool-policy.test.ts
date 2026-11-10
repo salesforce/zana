@@ -45,7 +45,7 @@ vi.mock('@zana-ai/zcc-process-utils', async original => ({
 
 const call = {
   invocationId: 'b'.repeat(64),
-  threadId: 'session-1',
+  sessionId: 'session-1',
   projectId: 'project-1',
   profile: 'claude-resume',
   toolName: 'Bash',
@@ -110,7 +110,7 @@ describe('main-owned tool policy over the runtime channel', () => {
     h.decide.mockResolvedValueOnce({ action: 'deny', reason: '   ' });
     await expect(decide()).resolves.toMatchObject({ type: 'result', value: { action: 'deny', reason: 'denied by plugin tool policy' } });
     expect(h.decide).toHaveBeenLastCalledWith({
-      invocationId: call.invocationId, threadId: 'session-1', projectId: 'project-1',
+      invocationId: call.invocationId, threadId: 'session-1', sessionId: 'session-1', surface: 'pty', projectId: 'project-1',
       providerId: 'claude-code', toolName: 'Bash', input: { command: 'deploy', token: '[REDACTED]' }
     });
     h.decide.mockResolvedValueOnce({ action: 'allow' });

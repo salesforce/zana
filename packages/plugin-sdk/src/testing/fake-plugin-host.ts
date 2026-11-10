@@ -57,6 +57,7 @@ import type {
   PluginHookName,
   PluginHooks,
   PluginEvents,
+  ToolSettledEvent,
   PluginHttp,
   PluginHttpAuthMode,
   PluginHttpHandler,
@@ -409,6 +410,8 @@ export interface FakePluginBehaviorDrivers {
     event: E,
     payload: PluginThreadEventPayloads[E],
   ): Promise<{ errors: unknown[] }>;
+  /** Deliver a `tool.settled` event to every `zcc.events.on('tool.settled', ...)` handler. */
+  emitToolSettled(event: ToolSettledEvent): Promise<{ errors: unknown[] }>;
   /**
    * Call a registered agent tool the way a provider tool-call would:
    * arguments go through the tool's parse step (zod-validated for zod
@@ -460,7 +463,7 @@ export interface FakePluginLifecycleControls {
 /** Field-by-field identity of an approval binding, as the host signs it. */
 function approvalKey(binding: unknown): string {
   const row = binding && typeof binding === "object" ? (binding as Record<string, unknown>) : {};
-  return JSON.stringify(["action", "target", "targetLabel", "subject", "revision", "confirmText"].map((key) => row[key] ?? ""));
+  return JSON.stringify(["action", "target", "targetLabel", "subject", "revision", "confirmText", "threadId", "invocationId"].map((key) => row[key] ?? ""));
 }
 
 /**
@@ -478,6 +481,8 @@ export interface FakePluginHarness
 }
 
 export interface CreateFakePluginHostOptions {
+  /** Explicit stand-in for main's approval sheet; defaults to unavailable. */
+  requestToolApproval?: PluginUi['requestToolApproval'];
   /** Defaults to "test-plugin". */
   pluginId?: string;
   /**
@@ -1594,17 +1599,25 @@ function createFakePluginHostInternal(
   const approvals = new Map<string, string>();
   let approvalSequence = 0;
   const mentionProviders: FakeMentionProviderRecord[] = [];
+  const requestToolApproval: PluginUi['requestToolApproval'] = async request => {
+    assertLive();
+    return options.requestToolApproval?.(request) ?? { approved: false, reason: 'unavailable' };
+  };
+  const consumeApproval: PluginUi['consumeApproval'] = async request => {
+    assertLive();
+    const token = request && typeof request === 'object' ? request.token : undefined;
+    const approved = typeof token === 'string' ? approvals.get(token) : undefined;
+    if (approved === undefined || approved !== approvalKey(request.binding)) return false;
+    approvals.delete(token as string);
+    return true;
+  };
   const ui: PluginUi = {
     requestInput,
-    async experimental_consumeApproval(request) {
-      assertLive();
-      const token = request && typeof request === "object" ? request.token : undefined;
-      const approved = typeof token === "string" ? approvals.get(token) : undefined;
-      if (approved === undefined) return false;
-      if (approved !== approvalKey(request.binding)) return false;
-      approvals.delete(token as string);
-      return true;
-    },
+    requestToolApproval,
+    requestApproval: requestToolApproval,
+    experimental_requestApproval: requestToolApproval,
+    consumeApproval,
+    experimental_consumeApproval: consumeApproval,
     registerMentionProvider(provider) {
       assertLive();
       const id = provider?.id;
@@ -1943,9 +1956,14 @@ function createFakePluginHostInternal(
     sharedPortDeclarations.length = 0;
   });
 
+  const toolSettledHandlers: Array<(event: ToolSettledEvent) => void | Promise<void>> = [];
   const events: PluginEvents = {
-    on(event, handler) {
+    on(event: PluginThreadEventName | 'tool.settled', handler: never) {
       assertLive();
+      if (event === 'tool.settled') {
+        toolSettledHandlers.push(handler as (event: ToolSettledEvent) => void | Promise<void>);
+        return;
+      }
       const handlers = threadEventHandlers[event];
       if (handlers === undefined) {
         throw new Error(
@@ -1954,9 +1972,9 @@ function createFakePluginHostInternal(
           ).join(", ")}`,
         );
       }
-      handlers.push(handler);
+      (handlers as unknown[]).push(handler);
     },
-  };
+  } as PluginEvents;
 
   const providers: PluginProviders = {
     register(declaration) {
@@ -2028,6 +2046,11 @@ function createFakePluginHostInternal(
     rpc,
     realtime,
     background,
+    process: {
+      async spawn() {
+        throw new Error("process.spawn is not available in the fake plugin host");
+      },
+    },
     cli,
     agents,
     providers,
@@ -2228,7 +2251,7 @@ function createFakePluginHostInternal(
       if (!pending) throw new Error(`no pending interaction "${id}"`);
       clearTimeout(pending.timer);
       pendingInteractions.delete(id);
-      pending.resolve({ outcome: "submitted", value });
+      pending.resolve({ outcome: "submitted", value, actor: 'human' });
     },
     cancelInteraction(id) {
       const pending = pendingInteractions.get(id);
@@ -2531,6 +2554,19 @@ function createFakePluginHostInternal(
         } catch (error) {
           errors.push(error);
           emitLog("warn", `${event} handler failed: ${errorMessage(error)}`);
+        }
+      }
+      return { errors };
+    },
+
+    async emitToolSettled(event) {
+      const errors: unknown[] = [];
+      for (const handler of [...toolSettledHandlers]) {
+        try {
+          await handler(event);
+        } catch (error) {
+          errors.push(error);
+          emitLog("warn", `tool.settled handler failed: ${errorMessage(error)}`);
         }
       }
       return { errors };

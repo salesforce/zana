@@ -12,6 +12,7 @@ import { z } from "zod";
 export const BRIDGE_INBOUND_REQUEST_METHODS = {
   toolCall: "item/tool/call",
   interactionRequest: "interaction/request",
+  nativeToolDecision: "tool/policy/decide",
 } as const;
 
 export type BridgeInboundRequestMethod =
@@ -73,3 +74,39 @@ export type InteractionRequestParams = z.infer<
 
 export const interactionResolutionResultSchema =
   pendingInteractionResolutionSchema;
+
+export const nativeToolDecisionRequestSchema = z.object({
+  threadId: z.string().min(1).max(256),
+  providerThreadId: z.string().min(1).max(256),
+  callId: z.string().min(1).max(512),
+  toolName: z.string().min(1).max(512).regex(/^[^\x00-\x1f\x7f]+$/),
+  input: z.record(z.string(), z.unknown()).refine((input) => {
+    try { return JSON.stringify(input).length <= 256 * 1024; } catch { return false; }
+  }, 'tool input exceeds native policy limit'),
+});
+export const nativeToolDecisionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('allow') }).strict(),
+  z.object({ action: z.literal('deny'), reason: z.string().min(1).max(1024) }).strict(),
+]);
+
+/**
+ * Observational completion of a native tool call (OBL-011). A JSON-RPC
+ * notification, so the bridge never waits on it. `output` is the raw text the
+ * runtime may turn into a redacted preview; it is bounded here and never logged.
+ */
+export const NATIVE_TOOL_SETTLED_METHOD = "tool/policy/settled" as const;
+export const NATIVE_TOOL_SETTLED_OUTPUT_MAX_CHARS = 32768;
+export const nativeToolSettledParamsSchema = z.object({
+  threadId: z.string().min(1).max(256),
+  providerThreadId: z.string().min(1).max(256),
+  callId: z.string().min(1).max(512),
+  toolName: z.string().min(1).max(512).regex(/^[^\x00-\x1f\x7f]+$/),
+  state: z.enum(["succeeded", "failed", "cancelled"]),
+  durationMs: z.number().int().min(0).max(24 * 60 * 60 * 1000),
+  exitCode: z.number().int().optional(),
+  outputBytes: z.number().int().min(0).optional(),
+  output: z.string().max(NATIVE_TOOL_SETTLED_OUTPUT_MAX_CHARS).optional(),
+});
+export type NativeToolSettledParams = z.infer<typeof nativeToolSettledParamsSchema>;
+export type NativeToolDecisionRequest = z.infer<typeof nativeToolDecisionRequestSchema>;
+export type NativeToolDecision = z.infer<typeof nativeToolDecisionSchema>;

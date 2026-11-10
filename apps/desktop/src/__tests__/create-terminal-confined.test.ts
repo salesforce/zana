@@ -55,6 +55,8 @@ const createCalls: Array<{
   remoteToolProxy?: boolean;
   openingPrompt?: string;
   authorizedModel?: unknown;
+  projectId?: string;
+  threadId?: string;
 }> = [];
 
 vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
@@ -71,9 +73,13 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
       remoteToolProxy?: boolean;
       openingPrompt?: string;
       authorizedModel?: unknown;
+      projectId?: string;
+      threadId?: string;
     }) {
       createCalls.push({
         authorizedModel: opts.authorizedModel,
+        projectId: opts.projectId,
+        ...(opts.threadId ? { threadId: opts.threadId } : {}),
         cwd: opts.cwd,
         extraArgs: opts.extraArgs,
         profile: opts.profile,
@@ -393,6 +399,20 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
   beforeEach(() => {
     createCalls.length = 0;
     projects = [PROJECT];
+  });
+
+  it('forwards only the main-supplied thread binding to ptys.create', () => {
+    // A request-borne thread id (renderer/CLI input) is never the binding source.
+    expect(createTerminalConfined({
+      projectId: 'p1', profile: 'claude', cols: 80, rows: 24, threadId: 'forged-thread'
+    } as Parameters<typeof createTerminalConfined>[0]).ok).toBe(true);
+    expect(lastCreate()).not.toHaveProperty('threadId');
+    expect(lastCreate().projectId).toBe('p1');
+    expect(createTerminalConfined(
+      { projectId: 'p1', profile: 'claude', cols: 80, rows: 24, threadId: 'forged-thread' } as Parameters<typeof createTerminalConfined>[0],
+      { threadId: 'main-thread' }
+    ).ok).toBe(true);
+    expect(lastCreate().threadId).toBe('main-thread');
   });
 
   it('forwards only the main-supplied authorized model pin to ptys.create', () => {

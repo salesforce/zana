@@ -43,7 +43,7 @@ import type {
 } from './launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
-import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
+import type { HarnessIntegrationAdapter, HarnessMcpServer } from '@zcc/harness-sdk';
 import { cleanExtraArgs } from './argv-utils.js';
 import { remoteCdPrefix, shellQuoteArgv } from './shell-quote.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from "./target-resolution.js";
@@ -77,14 +77,14 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
         ? this.authInjection(profile as LaunchProfileId, auth)
         : {};
       return {
-        mcpArgs: mcp ? this.mcpArgs(profile as LaunchProfileId, mcp.url) : [],
+        mcpArgs: mcp ? this.mcpArgs(profile as LaunchProfileId, mcp.url, mcp.servers) : [],
         guidanceArgs: mcp && guidance ? this.guidanceArgs(profile as LaunchProfileId, guidance) : [],
         hookArgs: lifecycle ? this.hookArgs(profile as LaunchProfileId, hookUrls) : [],
         authArgs: injection.args ?? [],
         authEnv: injection.env,
-        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url, instructionsFile) : {},
+        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url, mcp.servers, instructionsFile) : {},
         mcpConfigFile: mcp
-          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url, instructionsFile) ?? undefined)
+          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url, mcp.servers, instructionsFile) ?? undefined)
           : undefined
       };
     }
@@ -142,7 +142,7 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    * ARGS (codex). Claude uses the launcher-owned file paths; cursor/shell have
    * no such surface. See the interface doc for the full rationale.
    */
-  mcpArgs(_profile: LaunchProfileId, _mcpUrl: string): string[] {
+  mcpArgs(_profile: LaunchProfileId, _mcpUrl: string, _servers?: readonly HarnessMcpServer[]): string[] {
     return [];
   }
 
@@ -159,6 +159,7 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
   mcpEnv(
     _profile: LaunchProfileId,
     _mcpUrl: string,
+    _servers?: readonly HarnessMcpServer[],
     _instructionsFile?: string
   ): Record<string, string> {
     return {};
@@ -176,6 +177,7 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
   mcpConfigFile(
     _profile: LaunchProfileId,
     _mcpUrl: string,
+    _servers?: readonly HarnessMcpServer[],
     _instructionsFile?: string
   ): { envVar: string; contents: string } | null {
     return null;
@@ -183,6 +185,33 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
 
   guidanceArgs(_profile: LaunchProfileId, _guidance: string): string[] {
     return [];
+  }
+
+  pluginInstructionArgs(_profile: LaunchProfileId, _text: string): string[] {
+    return [];
+  }
+
+  readonly pluginInstructionsViaConfigFile: boolean = false;
+
+  mergePluginInstructionsConfig(_profile: LaunchProfileId, configJson: string, _instructionsPath: string): string {
+    return configJson;
+  }
+
+  readonly nativeToolGateViaConfigFile: boolean = false;
+
+  nativeToolGatePluginSource(_profile: LaunchProfileId, _nativeToolUrl: string): string | null {
+    return null;
+  }
+
+  mergeNativeToolGateConfig(_profile: LaunchProfileId, configJson: string, _gatePath: string): string {
+    return configJson;
+  }
+
+  readonly nativeToolGateViaDirectory: boolean = false;
+
+  nativeToolGateDirectory(_profile: LaunchProfileId, _nativeToolUrl: string, _dir: string):
+    { files: ReadonlyArray<{ path: string; contents: string }>; args: string[] } | null {
+    return null;
   }
 
   hookArgs(_profile: LaunchProfileId, _urls: ProviderHookUrls): string[] {

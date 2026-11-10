@@ -1,4 +1,6 @@
 import type { MessagePort, Worker } from 'node:worker_threads';
+import { AsyncLocalStorage, AsyncResource } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { isMainThread } from 'node:worker_threads';
 import { PLUGIN_INTERACTION_MAX_TIMEOUT_MS } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PeerGrantLease } from '../services/peers/pair-store.js';
@@ -10,6 +12,7 @@ const MAX_PENDING = 64;
 const MAX_FUNCTIONS = 4096;
 const SYNC_BYTES = 16 * 1024 * 1024;
 const CALL_TIMEOUT_MS = 120_000;
+const TOOL_APPROVAL_TIMEOUT_MS = 5 * 60_000;
 // A call carrying a live AbortSignal belongs to its caller and may wait on a person
 // (a tool asking a question), so it is bounded by that signal and the longest
 // interaction a plugin may open instead of the plain RPC deadline.
@@ -92,6 +95,9 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
   const signalRefs = new Map<number, number>();
   let collectedSignals: number[] | null = null;
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void; cancel(error: Error): void }>();
+  // Correlations are bridge-owned capabilities, never SDK-supplied invocation fields.
+  const contexts = new Map<string, AsyncResource>();
+  const incomingContext = new AsyncLocalStorage<string>();
   // Observed async service results cross the bridge in two calls. Keep their
   // one-shot continuation admitted across the gap between those calls.
   const remoteResults = new Set<number>();
@@ -117,7 +123,9 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
         }
       }
       const async = side === 'plugin' || hostCommitFunctions.has(value) || value.__zccPluginOnce === true || value.constructor?.name === 'AsyncFunction' || /^(sdk|host|storage\.kv)(\.|$)/.test(path);
-      return { [TAG]: 'function', side, id, async, once: value.__zccPluginOnce === true || temporaryFunctions.has(value), peerCommit: hostCommitFunctions.has(value) };
+      return { [TAG]: 'function', side, id, async, once: value.__zccPluginOnce === true || temporaryFunctions.has(value), peerCommit: hostCommitFunctions.has(value),
+        ...(/^ui\.(requestToolApproval|requestApproval|experimental_requestApproval)$/.test(path) && side === 'server'
+          ? { approval: true } : {}) };
     }
     if (typeof value === 'bigint') return { [TAG]: 'bigint', value: String(value) };
     if (!value || typeof value !== 'object') return value;
@@ -171,7 +179,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
         remoteResults.add(value.id);
       }
       const invokeResult = (args: any[], observe = false) => {
-        const result = invoke(value.id, args, observe);
+        const result = invoke(value.id, args, observe, undefined, undefined, side === 'plugin' && value.approval === true);
         return value.once ? result.finally(() => remoteResults.delete(value.id)) : result;
       };
       const remote = (...args: any[]) => {
@@ -240,13 +248,16 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
     }
   }
 
-  function invoke(fn: number, args: any[], observe = false, gate?: SharedArrayBuffer, preflight?: () => void): Promise<any> {
+  function invoke(fn: number, args: any[], observe = false, gate?: SharedArrayBuffer, preflight?: () => void, approval = false): Promise<any> {
     if (committing) throw new Error('Plugin commit callback cannot call host APIs');
     try { options?.admitCall?.(); } catch (error) { return Promise.reject(error); }
     if (stopped) return Promise.reject(fault ?? new Error('Plugin runtime stopped'));
     if (pending.size >= MAX_PENDING) return Promise.reject(new Error('Plugin runtime is busy'));
     const id = ++nextId;
     const owner = callerSignal(args);
+    const context = side === 'server' ? randomUUID() : incomingContext.getStore();
+    const resource = side === 'server' ? new AsyncResource('PluginWorkerInvocation', { requireManualDestroy: true }) : undefined;
+    if (resource) contexts.set(context!, resource);
     return new Promise((resolve, reject) => {
       if (gate) activeCommits++;
       let carried: number[] = [];
@@ -256,6 +267,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
       const settle = (finish: () => void) => {
         if (settled) return;
         settled = true; pending.delete(id); clearTimeout(timer); owner?.removeEventListener('abort', onAbort);
+        if (resource) { contexts.delete(context!); resource.emitDestroy(); }
         if (preflight) releaseFunction(functionIds.get(preflight)!);
         // An observed call replies before the remote work ends, so its signals stay live.
         if (!observe) releaseSignals(carried);
@@ -264,7 +276,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
       // Detach replies immediately, but keep the watchdog exemption until quiescence.
       const cancel = (error: Error) => settle(() => rejectFenced(gate, error => finishCall(() => reject(error)), error, id, fn));
       const onAbort = () => cancel(peerCommitFailures.get(owner!) ?? abortError(owner!));
-      const timer = setTimeout(() => cancel(new Error('Plugin callback timed out')), gate ? PEER_WORKER_COMMIT_TIMEOUT_MS : owner ? SIGNALLED_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS);
+      const timer = setTimeout(() => cancel(new Error('Plugin callback timed out')), gate ? PEER_WORKER_COMMIT_TIMEOUT_MS : approval ? TOOL_APPROVAL_TIMEOUT_MS : owner ? SIGNALLED_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS);
       pending.set(id, { resolve: value => settle(() => finishCall(() => resolve(value))), reject: error => settle(() => finishCall(() => reject(error))), cancel });
       try {
         const outer = collectedSignals;
@@ -277,7 +289,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
           for (const signalId of carried) signalRefs.set(signalId, (signalRefs.get(signalId) ?? 0) + 1);
         }
         owner?.addEventListener('abort', onAbort, { once: true });
-        port.postMessage({ kind: 'call', id, fn, args: wire, observe, ...(gate ? { gate, preflight: preflightWire } : {}) }, []);
+        port.postMessage({ kind: 'call', id, fn, args: wire, observe, ...(context ? { context } : {}), ...(gate ? { gate, preflight: preflightWire } : {}) }, []);
       } catch (error) { cancel(error as Error); }
     });
   }
@@ -304,7 +316,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
     Atomics.store(header, 0, 0);
     port.postMessage({ kind: 'api-wait', waiting: true }, []);
     try {
-    port.postMessage({ kind: 'call', fn, args: encode(args), shared }, []);
+    port.postMessage({ kind: 'call', fn, args: encode(args), shared, context: incomingContext.getStore() }, []);
     if (Atomics.wait(header, 0, 0, 10_000) === 'timed-out') {
       const error = new Error('Plugin API call timed out');
       dispose(error);
@@ -349,6 +361,9 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
     if (!callback) { reply(undefined, new Error('Unknown plugin callback')); return; }
     try {
       if (Reflect.get(callback, '__zccPluginOnce') || temporaryIds.has(message.fn)) releaseFunction(message.fn);
+      const context = typeof message.context === 'string' ? message.context : undefined;
+      const resource = side === 'server' && context ? contexts.get(context) : undefined;
+      const call = () => callback(...decode(message.args));
       let result;
       if (message.gate) {
         if (side !== 'plugin' || !options?.commitSync || !(message.gate instanceof SharedArrayBuffer) || message.gate.byteLength !== 16) throw new Error('Invalid plugin commit fence');
@@ -377,7 +392,9 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
             if (!isMainThread) process.exit(1);
           }
         }
-      } else { result = callback(...decode(message.args)); }
+      } else {
+        result = side === 'plugin' && context ? incomingContext.run(context, call) : resource ? resource.runInAsyncScope(call) : call();
+      }
       if (message.observe) {
         if (result && typeof result.then === 'function') {
           const promise = Promise.resolve(result); void promise.catch(() => {});
@@ -397,6 +414,8 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
     remoteResults.clear();
     for (const call of [...pending.values()]) call.cancel(error);
     pending.clear(); functions.clear();
+    for (const resource of contexts.values()) resource.emitDestroy();
+    contexts.clear(); incomingContext.disable();
     temporaryIds.clear();
     for (const remove of removeFunctionListeners.values()) remove();
     removeFunctionListeners.clear();

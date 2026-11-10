@@ -132,6 +132,11 @@
       "source": "./src/launch-provider.ts",
       "default": "./src/launch-provider.ts"
     },
+    "./native-tool-policy-budget": {
+      "types": "./src/native-tool-policy-budget.ts",
+      "source": "./src/native-tool-policy-budget.ts",
+      "default": "./src/native-tool-policy-budget.ts"
+    },
     "./launch-sanitize": {
       "types": "./src/launch-sanitize.ts",
       "source": "./src/launch-sanitize.ts",

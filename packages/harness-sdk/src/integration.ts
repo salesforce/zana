@@ -1,7 +1,20 @@
 /** Provider-neutral host integrations rendered by a harness into native syntax. */
 
+/** An additional MCP server a session carries next to the host's own. */
+export interface HarnessMcpServer {
+  /** Bare config key, already safe for TOML and JSON config. */
+  readonly name: string;
+  readonly type: string;
+  readonly command?: string;
+  readonly args?: readonly string[];
+  readonly url?: string;
+  readonly env?: Readonly<Record<string, string>>;
+}
+
 export interface HarnessMcpConnection {
   readonly url: string;
+  /** Plugin-contributed servers selected for this session by the host. */
+  readonly servers?: readonly HarnessMcpServer[];
 }
 
 export interface HarnessLifecycleEndpoints {

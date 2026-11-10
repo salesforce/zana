@@ -1140,6 +1140,14 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
         <span className="ext-hub-about-val" title={moduleSurface(module, entry).hint}>
           {moduleSurface(module, entry).label}
         </span>
+        {plugin?.toolPolicyTimeoutMs !== undefined && (
+          <>
+            <span className="ext-hub-about-key">Tool policy timeout</span>
+            <span className="ext-hub-about-val" data-testid="plugin-tool-policy-timeout">
+              {plugin.toolPolicyTimeoutMs / 1000} s; expiry denies the tool
+            </span>
+          </>
+        )}
         {entry?.manifest?.version && (
           <>
             <span className="ext-hub-about-key">Version</span>

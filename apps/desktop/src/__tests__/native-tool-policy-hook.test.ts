@@ -82,7 +82,7 @@ describe('native tool policy callback', () => {
     await expect(hook('project-1', 'session-1', JSON.stringify(event))).resolves.toEqual({ decision: 'deny', reason: 'blocked by plugin policy' });
     expect(decide).toHaveBeenCalledWith({
       invocationId: sha(['session-1', turnId, event.tool_use_id, 'Bash', { command: 'pwd' }]),
-      threadId: 'session-1', projectId: 'project-1', profile, toolName: 'Bash', input: { command: 'pwd' }
+      sessionId: 'session-1', projectId: 'project-1', profile, toolName: 'Bash', input: { command: 'pwd' }
     });
   });
 
@@ -115,7 +115,7 @@ describe('native tool policy callback', () => {
       const [url, init] = fetchSpy.mock.calls[0]!;
       expect(new URL(String(url)).pathname).toBe('/api/v1/native-tool-policy');
       expect((init!.headers as Record<string, string>)['x-zcc-native-tool-policy-proof']).toMatch(/^\d{13}\.[a-f0-9]{32}\.[a-f0-9]{64}$/);
-      expect(JSON.parse(init!.body as string)).toMatchObject({ threadId: 'session-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash' });
+      expect(JSON.parse(init!.body as string)).toMatchObject({ sessionId: 'session-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash' });
 
       fetchSpy.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
       await expect(nativeToolPolicyHook('project-1', 'session-1', JSON.stringify(claudeEvent))).resolves.toBeNull();

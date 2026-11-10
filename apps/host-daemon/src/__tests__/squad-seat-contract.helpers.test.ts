@@ -22,8 +22,8 @@ describe('OpenCode instructionsFile', () => {
   const url = 'http://127.0.0.1:1/mcp/p/s';
 
   it('adds the file to instructions in the inline and the file channel', () => {
-    const inline = JSON.parse(p.mcpEnv('opencode', url, '/tmp/x/instr.md').OPENCODE_CONFIG_CONTENT);
-    const file = JSON.parse(p.mcpConfigFile('opencode', url, '/tmp/x/instr.md').contents);
+    const inline = JSON.parse(p.mcpEnv('opencode', url, undefined, '/tmp/x/instr.md').OPENCODE_CONFIG_CONTENT);
+    const file = JSON.parse(p.mcpConfigFile('opencode', url, undefined, '/tmp/x/instr.md').contents);
     expect(inline.instructions).toEqual(['/tmp/x/instr.md']);
     expect(file.instructions).toEqual(['/tmp/x/instr.md']);
     expect(inline.mcp['zcc-inbox'].url).toBe(url);

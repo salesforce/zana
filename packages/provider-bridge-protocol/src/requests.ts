@@ -4,6 +4,8 @@ import {
   dynamicToolSchema,
   instructionModeSchema,
   promptInputSchema,
+  SESSION_MCP_SERVERS_MAX,
+  sessionMcpServerSchema,
 } from "@zana-ai/zcc-domain/thread-runtime";
 import { z } from "zod";
 import { bridgeExecutionOptionsSchema } from "./execution-options.js";
@@ -59,6 +61,7 @@ const sessionConstructionFields = {
   cwd: z.string().min(1),
   options: bridgeExecutionOptionsSchema,
   dynamicTools: z.array(dynamicToolSchema).optional(),
+  mcpServers: z.array(sessionMcpServerSchema).max(SESSION_MCP_SERVERS_MAX).optional(),
   disallowedTools: z.array(z.string().min(1)).optional(),
   instructionMode: instructionModeSchema,
 };

@@ -33,7 +33,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 import { PtyManager } from '../pty.js';
@@ -50,7 +50,7 @@ const CONFIG: AppConfig = {
 
 function setup() {
   const mgr = new PtyManager();
-  const session = mgr.create({ projectId: 'p1', profile: 'shell', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+  const session = mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
   return { mgr, id: session.id, proc: spawned[spawned.length - 1], get: () => mgr.getSession(session.id)! };
 }
 

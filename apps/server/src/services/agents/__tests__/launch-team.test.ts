@@ -142,6 +142,8 @@ vi.mock('@zana-ai/zcc-server/services/agents/team-store', async (importOriginal)
   };
 });
 
+// These suites drive launches, not plugin admission (covered in dispatch-admission tests): admit everything.
+vi.mock('../../../../../desktop/src/runtime/dispatch-admission.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../../../../desktop/src/runtime/dispatch-admission.js')>()), createMainDispatchAdmission: () => async () => null }));
 vi.mock('electron', () => ({
   // index.ts constructs the harness credential store at module scope, which
   // reads `safeStorage`; isEncryptionAvailable:false routes it to its plaintext

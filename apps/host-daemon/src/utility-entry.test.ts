@@ -1,12 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { SERVER_RUNTIME_PROTOCOL_VERSION as protocolVersion } from '@zana-ai/zcc-contracts/runtime';
-const deps = vi.hoisted(() => ({ start: vi.fn(), enroll: vi.fn(), manager: vi.fn(), log: vi.fn(), path: vi.fn(), shutdownCommands: vi.fn() }));
+const deps = vi.hoisted(() => ({ start: vi.fn(), enroll: vi.fn(), manager: vi.fn(), log: vi.fn(), path: vi.fn(), shutdownCommands: vi.fn(), rebuild: vi.fn() }));
 vi.mock('@zana-ai/zcc-process-utils', () => ({ installRuntimeLog: deps.log }));
 vi.mock('@zana-ai/zcc-agent-process-utils', () => ({ shutdownPortableCommands: deps.shutdownCommands }));
 vi.mock('./daemon.js', () => ({ startHostDaemon: deps.start }));
 vi.mock('./local-pty-host.js', () => ({ createLocalPtyTerminalManager: deps.manager }));
 vi.mock('./enroll-runtime.js', () => ({ startEnrolledHostDaemon: deps.enroll }));
 vi.mock('./env.js', () => ({ ensureProcessPath: deps.path }));
+vi.mock('./mcp-config.js', () => ({ rebuildPluginServers: deps.rebuild }));
 const originalPort = (process as any).parentPort;
 const originalExitListeners = process.listeners('exit');
 afterEach(() => {
@@ -96,4 +97,16 @@ it('keeps the inherited PATH when a start message carries no path, so a launchd-
   expect(deps.path).not.toHaveBeenCalled(); expect(process.env.PATH).toBe('/opt/homebrew/bin:/usr/bin:/bin');
   await f.send({ type: 'start', protocolVersion, token: 'fixture', signingKey: 'fixture', hostId: 'private', path: '' });
   expect(deps.path).not.toHaveBeenCalled(); expect(process.env.PATH).toBe('/opt/homebrew/bin:/usr/bin:/bin');
+});
+
+it('rebuilds the daemon plugin MCP registry from a valid, current-protocol capability message and ignores the rest', async () => {
+  const f = await fixture();
+  const contributors = [{ id: 'p', enabled: true, rootDir: '/plugins/p', skillsRootPaths: [], skillNames: [], mcpServers: [{ name: 's', type: 'stdio', command: 'node', alwaysOn: true }] }];
+  await f.send({ type: 'plugin-capabilities', protocolVersion, contributors });
+  expect(deps.rebuild).toHaveBeenCalledWith(contributors);
+  deps.rebuild.mockClear();
+  await f.send({ type: 'plugin-capabilities', protocolVersion: protocolVersion + 1, contributors });
+  await f.send({ type: 'plugin-capabilities', protocolVersion, contributors: [{ ...contributors[0], secret: 1 }] });
+  await f.send({ type: 'plugin-capabilities', protocolVersion });
+  expect(deps.rebuild).not.toHaveBeenCalled();
 });

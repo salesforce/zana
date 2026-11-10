@@ -5,6 +5,7 @@ import {
   type ReasoningLevel,
   type RuntimePermissionPolicy,
   type ServiceTier,
+  type SessionMcpServer,
   buildShellEnvOverrides,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import fs from "node:fs";
@@ -518,7 +519,15 @@ export function toCodexThreadPermissionSettings(
       };
     case "full":
       return {
-        approvalPolicy: "never",
+        // OBL-018/p0-modern-codex-veto: "untrusted" (UnlessTrusted) is the ONLY
+        // approvalPolicy that still raises command + file-change approval requests
+        // (for anything codex does not classify as known-safe) under sandbox:danger-full-access (codex safety.rs returns AskUser BEFORE
+        // the sandbox check). Every other value auto-approves under full access, so
+        // nothing would reach the native-tool veto. The sandbox is UNCHANGED. These
+        // approvals are intercepted and auto-allowed in bridge.ts (decideNativeTool)
+        // so full-access sessions surface no human prompt when no tool-policy plugin
+        // is live; landing this flip WITHOUT that interception is a UX regression.
+        approvalPolicy: "untrusted",
         approvalsReviewer: toCodexApprovalsReviewer(options),
         sandbox: "danger-full-access",
       };
@@ -544,7 +553,9 @@ export function toCodexPermissionSettings(
       };
     case "full":
       return {
-        approvalPolicy: "never",
+        // See toCodexThreadPermissionSettings: "untrusted" keeps danger-full-access
+        // while still raising command/file-change approvals for the veto to intercept.
+        approvalPolicy: "untrusted",
         approvalsReviewer: toCodexApprovalsReviewer(args.options),
         sandbox: "danger-full-access",
         sandboxPolicy: { type: "dangerFullAccess" },
@@ -606,14 +617,15 @@ export function buildCodexConfig(
   args: BuildCodexConfigArgs,
 ): { [key in string]?: JsonValue } | undefined {
   const config: { [key in string]?: JsonValue } = {};
-  if (args.threadId) {
-    config["shell_environment_policy.set.ZCC_THREAD_ID"] = args.threadId;
-  }
   const shellEnvironmentConfig = buildShellEnvironmentPolicyConfig(
     args.options?.envVars,
   );
   if (shellEnvironmentConfig) {
     Object.assign(config, shellEnvironmentConfig);
+  }
+  // Applied after the caller's variables: a session's thread identity is not overridable.
+  if (args.threadId) {
+    config["shell_environment_policy.set.ZCC_THREAD_ID"] = args.threadId;
   }
   if (args.options?.reasoningLevel) {
     config["model_reasoning_effort"] = toCodexReasoningEffort(
@@ -653,4 +665,35 @@ export function toCodexDynamicTools(
     description: tool.description,
     inputSchema: jsonValueSchema.parse(tool.inputSchema),
   }));
+}
+
+const CODEX_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Codex `config` overrides that add plugin-contributed MCP servers to a
+ * session, as the flat dotted keys the rest of `config` uses. Names are
+ * already config-safe keys; a stdio entry without a command and a remote
+ * entry without a url are skipped, and env keys that are not bare keys are
+ * dropped (never quoted). Env values may be secrets: they go only into the
+ * Codex config, never into logs.
+ */
+export function buildCodexMcpServerConfig(
+  servers: readonly SessionMcpServer[] | undefined,
+): { [key in string]?: JsonValue } {
+  const config: { [key in string]?: JsonValue } = {};
+  for (const server of servers ?? []) {
+    if (!/^[A-Za-z0-9_-]+$/.test(server.name)) continue;
+    const base = `mcp_servers.${server.name}`;
+    if (server.type === "stdio") {
+      if (!server.command) continue;
+      config[`${base}.command`] = server.command;
+      if (server.args?.length) config[`${base}.args`] = [...server.args];
+      for (const [key, value] of Object.entries(server.env ?? {})) {
+        if (CODEX_ENV_KEY.test(key)) config[`${base}.env.${key}`] = value;
+      }
+    } else if (server.url) {
+      config[`${base}.url`] = server.url;
+    }
+  }
+  return config;
 }

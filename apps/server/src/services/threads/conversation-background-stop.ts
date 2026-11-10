@@ -69,7 +69,7 @@ export async function stopConversationBackgroundTasks(
       : (item.workflowName ?? item.description).trim())
     .filter(Boolean);
   try {
-    await sendConversationTurn(ctx, thread.id, backgroundStopPrompt(descriptions), 'auto');
+    await sendConversationTurn(ctx, thread.id, backgroundStopPrompt(descriptions), 'auto', undefined, { skipAdmission: true });
   } catch (error) {
     // Nothing was stopped at all: let the route report the real failure.
     if (stopped.length === 0) throw error;

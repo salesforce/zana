@@ -249,8 +249,8 @@ describe('createTerminalConfined — trusted persona layer is NOT sanitized', ()
       cols: 80,
       rows: 24,
       extraArgs: ['--dangerously-skip-permissions', '--model', 'opus']
-    });
-    expect(res.ok).toBe(true);
+    }, { nativeToolPolicyRequired: false });
+    expect(res.ok, JSON.stringify(res)).toBe(true);
     const argv = spawned[0].args;
     // Trusted layer: persona's permission-mode synthesized by pty.ts survives.
     expect(argv).toContain('--permission-mode');
@@ -279,8 +279,8 @@ describe('createTerminalConfined — trusted persona layer is NOT sanitized', ()
         profileSource: 'seeded-default',
         cols: 80,
         rows: 24
-      });
-      expect(res.ok).toBe(true);
+      }, { nativeToolPolicyRequired: false });
+      expect(res.ok, JSON.stringify(res)).toBe(true);
       const argv = spawned[0].args;
       expect(argv).toContain('--permission-mode');
       expect(argv[argv.indexOf('--permission-mode') + 1]).toBe('acceptEdits');
@@ -290,9 +290,9 @@ describe('createTerminalConfined — trusted persona layer is NOT sanitized', ()
   });
 
   it('forwards main-resolved skillSettings into the claude --settings payload, and omits them when absent', () => {
-    const settingsOf = (opts?: Parameters<typeof createTerminalConfined>[1]) => {
+    const settingsOf = (opts: Parameters<typeof createTerminalConfined>[1] = {}) => {
       spawned.length = 0;
-      const res = createTerminalConfined({ projectId: 'p1', profile: 'claude', personaId: 'persona1', cols: 80, rows: 24 }, opts);
+      const res = createTerminalConfined({ projectId: 'p1', profile: 'claude', personaId: 'persona1', cols: 80, rows: 24 }, { nativeToolPolicyRequired: false, ...opts });
       expect(res.ok).toBe(true);
       const args = spawned[0].args as string[];
       const i = args.indexOf('--settings');

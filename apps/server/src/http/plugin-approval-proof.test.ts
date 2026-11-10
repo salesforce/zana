@@ -3,6 +3,7 @@ import {
   createPluginApprovalVerifier,
   parsePluginApprovalBinding,
   parsePluginApprovalRequest,
+  parsePluginToolApprovalRequest,
   PLUGIN_APPROVAL_TTL_MS,
   signPluginApproval
 } from './plugin-approval-proof.js';
@@ -64,7 +65,7 @@ describe('plugin approval tokens', () => {
       expect(verify(token, 'salesforce', { ...binding, [field]: field === 'action' ? 'agent.publish' : `${binding[field]}x` })).toBe(false);
     }
     expect(verify(token, 'salesforce', { ...binding, confirmText: 'prod' })).toBe(false);
-    at = now + PLUGIN_APPROVAL_TTL_MS;
+    at = now + PLUGIN_APPROVAL_TTL_MS - 1;
     expect(verify(token, 'salesforce', binding)).toBe(true);
     expect(verify(token, 'salesforce', binding)).toBe(false);
   });
@@ -72,6 +73,7 @@ describe('plugin approval tokens', () => {
   it('refuse expired, future, forged, malformed and unparseable tokens', () => {
     const verify = createPluginApprovalVerifier(secret, () => now);
     expect(verify(signPluginApproval(secret, 'salesforce', binding, now - PLUGIN_APPROVAL_TTL_MS - 1), 'salesforce', binding)).toBe(false);
+    expect(verify(signPluginApproval(secret, 'salesforce', binding, now - PLUGIN_APPROVAL_TTL_MS), 'salesforce', binding)).toBe(false);
     expect(verify(signPluginApproval(secret, 'salesforce', binding, now + 1), 'salesforce', binding)).toBe(false);
     expect(verify(signPluginApproval('w'.repeat(40), 'salesforce', binding, now), 'salesforce', binding)).toBe(false);
     const valid = signPluginApproval(secret, 'salesforce', binding, now);
@@ -95,10 +97,13 @@ describe('plugin approval tokens', () => {
     const verify = createPluginApprovalVerifier(secret, () => at);
     const first = signPluginApproval(secret, 'salesforce', binding, now);
     expect(verify(first, 'salesforce', binding)).toBe(true);
-    for (let i = 1; i <= 1024; i += 1) {
+    for (let i = 1; i < 1024; i += 1) {
       expect(verify(signPluginApproval(secret, 'salesforce', binding, now), 'salesforce', binding)).toBe(true);
     }
-    // The oldest entry was evicted at the cap, but its age still refuses it later.
+    const overflow = signPluginApproval(secret, 'salesforce', binding, now);
+    expect(verify(overflow, 'salesforce', binding)).toBe(false);
+    expect(verify(first, 'salesforce', binding)).toBe(false);
+    // No live entry is evicted. Expiry frees capacity for fresh proofs only.
     at = now + PLUGIN_APPROVAL_TTL_MS + 1;
     expect(verify(first, 'salesforce', binding)).toBe(false);
     expect(verify(signPluginApproval(secret, 'salesforce', binding, at), 'salesforce', binding)).toBe(true);
@@ -107,5 +112,35 @@ describe('plugin approval tokens', () => {
   it('needs a real secret', () => {
     expect(() => createPluginApprovalVerifier('x'.repeat(31))).toThrow('Invalid desktop UI signing secret');
     expect(createPluginApprovalVerifier('x'.repeat(32))(undefined, 'p', binding)).toBe(false);
+  });
+});
+
+describe('server tool approval bindings', () => {
+  const request = { binding, title: 'Activate', threadId: 't-1', invocationId: 'i-1' };
+  it('requires exact bounded scope and caps wait at five minutes', () => {
+    expect(parsePluginToolApprovalRequest(request)).toMatchObject({ ok: true, value: {
+      timeoutMs: PLUGIN_APPROVAL_TTL_MS, binding: { ...binding, threadId: 't-1', invocationId: 'i-1' }
+    } });
+    for (const raw of [null, [], { ...request, binding: [] }, { ...request, threadId: undefined },
+      { ...request, invocationId: undefined }, { ...request, threadId: 'bad id' },
+      { ...request, binding: { ...binding, threadId: 'other' } },
+      { ...request, binding: { ...binding, invocationId: 'other', threadId: 't-1' } },
+      { ...request, title: '' }, { ...request, summary: 'valid', detail: 'x'.repeat(601) },
+      ...[0, -1, 1.5, '20', PLUGIN_APPROVAL_TTL_MS + 1].map(timeoutMs => ({ ...request, timeoutMs }))]) {
+      expect(parsePluginToolApprovalRequest(raw).ok).toBe(false);
+    }
+    expect(parsePluginToolApprovalRequest({ ...request, detail: 'Explain', timeoutMs: 1 })).toMatchObject({ ok: true, value: { summary: 'Explain', timeoutMs: 1 } });
+  });
+  it('binds thread and invocation separately, including scoped versus button proofs', () => {
+    const scoped = { ...binding, threadId: 't-1', invocationId: 'i-1' };
+    const token = signPluginApproval(secret, 'p', scoped, now);
+    const verify = createPluginApprovalVerifier(secret, () => now);
+    for (const changed of [binding, { ...scoped, threadId: 't-2' }, { ...scoped, invocationId: 'i-2' }, { ...scoped, invocationId: undefined }]) {
+      expect(verify(token, 'p', changed)).toBe(false);
+    }
+    expect(verify(token, 'p', scoped)).toBe(true);
+    expect(verify(token, 'p', scoped)).toBe(false);
+    expect(parsePluginApprovalBinding({ ...binding, invocationId: 'i' }).ok).toBe(false);
+    expect(parsePluginApprovalBinding({ ...binding, threadId: 7 }).ok).toBe(false);
   });
 });

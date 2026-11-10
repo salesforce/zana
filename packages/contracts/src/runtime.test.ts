@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS,
+  DispatchAdmissionMainRequestSchema,
   MenubarAgentSchema,
   NATIVE_TOOL_POLICY_EVENT_MAX_BYTES,
   NATIVE_TOOL_POLICY_INPUT_MAX_CHARS,
   nativeToolPolicyInputFits,
   NATIVE_TOOL_POLICY_REASON_MAX_CHARS,
   NativeToolPolicyDecisionSchema,
+  NativeToolPolicyRequestSchema,
   PRODUCT_EVENT_ARGS_MAX_CHARS,
   PRODUCT_EVENT_ARGS_MAX_COUNT,
   MenubarThreadsChangedMessageSchema,
@@ -115,6 +118,12 @@ describe('server runtime contract', () => {
   it('accepts a redacted plugin app snapshot for renderer registration', () => {
     expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-apps-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, apps: [{ id: 'tasks', name: 'Tasks', description: 'Track work items', icon: 'ListTodo', enabled: true, provenance: 'builtin', status: 'running', appUrl: '/plugins/tasks/assets/dist/renderer.js?v=1', projectTab: { label: 'Tasks', global: false } }] }).success).toBe(true);
     expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-apps-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, apps: [{ id: 'tasks', name: 'Tasks', description: 'Track work items', icon: 'ListTodo', enabled: true, provenance: 'builtin', status: 'running', appUrl: null, rootDir: '/secret' }] }).success).toBe(false);
+  });
+  it('accepts the plugin capability message the utility process actually sends, with its protocol version', () => {
+    const contributor = { id: 'p2-contrib', enabled: true, rootDir: '/plugins/p2-contrib', skillsRootPaths: ['skills'], skillNames: ['p2-skill'], mcpServers: [{ name: 'p2-server', type: 'stdio', command: 'node', args: ['mcp-server.js'], alwaysOn: true }], extra: {} };
+    expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-capabilities', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, contributors: [contributor] }).success).toBe(true);
+    expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-capabilities', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1, contributors: [] }).success).toBe(false);
+    expect(RuntimeOutboundSchema.safeParse({ type: 'plugin-capabilities', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, contributors: [{ ...contributor, secret: 'x' }] }).success).toBe(false);
   });
   it('rejects incompatible utility-process protocol versions before dispatch', () => {
     expect(ServerRuntimeInboundSchema.safeParse({ ...request, protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1, operation: 'projects-list' }).success).toBe(false);
@@ -371,5 +380,29 @@ describe('thread-queue-turn runtime contract', () => {
     expect(ThreadQueueTurnResultSchema.safeParse({ ok: false, reason: 'not-live' }).success).toBe(true);
     expect(ThreadQueueTurnResultSchema.safeParse({ ok: 'yes' }).success).toBe(false);
     expect(ThreadQueueTurnResultSchema.safeParse({ ok: true, extra: 1 }).success).toBe(false);
+  });
+});
+
+describe('NativeToolPolicyRequestSchema identity', () => {
+  const base = { invocationId: 'a'.repeat(64), projectId: 'p', profile: 'codex', toolName: 'Bash', input: {} };
+  it.each([
+    ['session only', { sessionId: 's' }],
+    ['thread only', { threadId: 't' }],
+    ['both', { sessionId: 's', threadId: 't' }]
+  ])('accepts %s', (_label, identity) => {
+    expect(NativeToolPolicyRequestSchema.safeParse({ ...base, ...identity }).success).toBe(true);
+  });
+  it('refuses a request that names neither a session nor a thread', () => {
+    expect(NativeToolPolicyRequestSchema.safeParse(base).success).toBe(false);
+  });
+});
+
+describe('DispatchAdmissionMainRequestSchema prompt', () => {
+  const base = { projectId: 'p1', entry: 'reply', origin: 'user' } as const;
+  it('accepts bounded text and rejects oversized or unknown keys', () => {
+    expect(DispatchAdmissionMainRequestSchema.safeParse(base).success).toBe(true);
+    expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'hi', truncated: true } }).success).toBe(true);
+    expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'x'.repeat(DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS + 1) } }).success).toBe(false);
+    expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'hi', extra: 1 } }).success).toBe(false);
   });
 });

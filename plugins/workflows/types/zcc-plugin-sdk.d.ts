@@ -314,6 +314,240 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     createdAt: number;
   }
 
+  export type PluginThreadEventName =
+    | 'thread.created'
+    | 'thread.active'
+    | 'thread.idle'
+    | 'thread.failed'
+    | 'thread.archived'
+    | 'thread.deleted';
+
+  /** Bump when a breaking shape change lands on {@link PluginThreadEvent}; additive fields do not require a bump. */
+  export const PLUGIN_THREAD_EVENT_SCHEMA_VERSION: number;
+
+  export interface PluginThreadEvent {
+    /** Host-generated event id. Do not derive identity from event content. */
+    id: string;
+    schemaVersion: number;
+    /** Host-assigned, process-local ordering sequence. */
+    sequence: number;
+    /** Host clock timestamp in epoch milliseconds. */
+    timestamp: number;
+    name: PluginThreadEventName;
+    /** The thread record, or for a PTY session with no thread binding, the session id (see `surface`). */
+    threadId: string;
+    projectId?: string;
+    /** Which execution surface produced the event. Absent on older hosts and on some Modern events. */
+    surface?: 'modern' | 'pty';
+    /** The PTY session id; present when `surface` is `pty`. Modern events carry no `sessionId`. */
+    sessionId?: string;
+    thread?: {
+      id: string;
+      title?: string | null;
+      projectId: string;
+      hostId: string;
+      environmentId: string | null;
+      providerId: string;
+      status: string;
+      [key: string]: unknown;
+    };
+    lastAssistantText?: string | null;
+    error?: string | null;
+    providerId?: string;
+    model?: string;
+    reasoningLevel?: string;
+    executionState?: string;
+    hadAttachments?: boolean;
+  }
+
+  /** Where a dispatch lands: a Modern thread or a PTY Electron main owns. */
+  export type DispatchSurface = 'pty' | 'modern';
+  /** Which input path produced the dispatch. */
+  export type DispatchEntry = 'initial' | 'reply' | 'fork' | 'squad-member-start' | 'job-team-dispatch';
+  /** Who produced the text: a person, another agent, or Zana itself. */
+  export type DispatchOrigin = 'user' | 'agent' | 'system';
+
+  /**
+   * Host-owned identity for one dispatch. Prompt content is absent unless the
+   * plugin declares `zcc.promptAccess: true`. A PTY
+   * dispatch carries no `threadId` (an unbound PTY is not a thread), and an
+   * initial dispatch may name neither before the target exists.
+   */
+  export interface PluginDispatchAdmissionRequest {
+    dispatchId: string;
+    threadId?: string;
+    sessionId?: string;
+    projectId: string;
+    generation: number;
+    surface: DispatchSurface;
+    entry: DispatchEntry;
+    origin: DispatchOrigin;
+    /** Only with `zcc.promptAccess: true`, and only where the dispatch carries text (not a fork). */
+    prompt?: DispatchAdmissionPrompt;
+  }
+
+  /** Redacted, capped prompt text of a dispatch. Attachment content is never provided. */
+  export interface DispatchAdmissionPrompt {
+    /** Secret-shaped spans replaced with `[REDACTED]`, then cut to 32 KiB of UTF-8. */
+    text: string;
+    truncated: boolean;
+    attachmentCount: number;
+  }
+
+  /** Terminal state of one native tool invocation. */
+  export type ToolSettledState = 'succeeded' | 'failed' | 'cancelled';
+
+  /**
+   * Best-effort, observational completion of a native tool call, correlated to
+   * the policy request by `invocationId`. Subscribing with
+   * `events.on('tool.settled', ...)` opts in to metadata-only events;
+   * `outputPreview` (secret-shaped spans redacted, capped at 4 KiB of UTF-8) is
+   * present only when the manifest declares `zcc.toolResults: 'preview'`.
+   */
+  export interface ToolSettledEvent {
+    invocationId: string;
+    /** PTY session id; present on the PTY surface. */
+    sessionId?: string;
+    /** Thread id; present on the Modern surface. */
+    threadId?: string;
+    projectId: string;
+    providerId: string;
+    toolName: string;
+    state: ToolSettledState;
+    durationMs: number;
+    exitCode?: number;
+    outputBytes?: number;
+    outputPreview?: string;
+  }
+
+  export type DispatchAdmissionDecision =
+    | { action: 'proceed' }
+    | { action: 'wait'; reason: string; overrideable: boolean; pluginId?: string }
+    | { action: 'reject'; message: string };
+
+  /** Host-owned native-tool invocation identity exposed to policy handlers. Input is redacted before it reaches a plugin. */
+  export interface PluginToolPolicyRequest {
+    invocationId: string;
+    /**
+     * The thread the call belongs to. For `surface: 'pty'` with no thread binding this
+     * is the PTY session id, which is not a thread record: `getThread` finds nothing for it.
+     */
+    threadId: string;
+    /** The terminal session id for a `'pty'` call; absent on `'modern'`. */
+    sessionId?: string;
+    surface?: 'pty' | 'modern';
+    projectId: string;
+    providerId: string;
+    toolName: string;
+    input: Record<string, unknown>;
+  }
+
+  /**
+   * `allow` means "no plugin objects", never approval. `deny` blocks the call
+   * before it runs (reason capped at 1024 characters). `ask` holds the call while
+   * the host shows `prompt` to the user and a human decides; only an explicit human
+   * allow continues. A deny, cancel, timeout, session end, missing UI or any answer
+   * that is not from a human blocks the call; the plugin cannot answer its own ask.
+   * `timeoutMs` is clamped to 10000-120000 ms and defaults to 60000 ms; `prompt` is
+   * plain text capped at 2000 characters.
+   */
+  export type PluginToolPolicyDecision =
+    | { action: 'allow' }
+    | { action: 'deny'; reason: string }
+    | { action: 'ask'; prompt: string; timeoutMs?: number };
+
+  export interface PluginHooks {
+    /** One message-dispatch admission handler per plugin. */
+    on(handler: (request: PluginDispatchAdmissionRequest) => DispatchAdmissionDecision | Promise<DispatchAdmissionDecision>): void;
+    /** Needs `zcc.toolPolicy: true` in the manifest; register during activation. Single handler per plugin. */
+    onToolPolicy(handler: (request: PluginToolPolicyRequest) => PluginToolPolicyDecision | Promise<PluginToolPolicyDecision>): void;
+  }
+
+  export type PluginInteractionActor = 'human' | 'cli' | 'agent' | 'unknown';
+  export type PluginInteractionCancelReason =
+    | 'user' | 'request-aborted' | 'thread-stopped' | 'thread-deleted' | 'plugin-disposed' | 'server-restarted' | 'timeout';
+  export type PluginInteractionResult =
+    | { outcome: 'submitted'; value: unknown; actor: PluginInteractionActor }
+    | { outcome: 'cancelled'; reason: PluginInteractionCancelReason };
+  /**
+   * `threadId` may be a PTY session id for a session shown in the Agents monitor
+   * (see the `interactions` capability). Headless sessions cannot present it.
+   */
+  export interface PluginInteractionRequest {
+    threadId: string;
+    rendererId: string;
+    title: string;
+    payload: unknown;
+    timeoutMs?: number;
+    /**
+     * Default false. `true` requires a single-use response proof from a human in
+     * the Zana window or on a native sheet. `'native-sheet'` requires a sheet
+     * drawn by the desktop main process itself.
+     */
+    requireHuman?: boolean | 'native-sheet';
+  }
+
+  export interface PluginApprovalBinding {
+    threadId?: string;
+    invocationId?: string;
+    action: string;
+    target: string;
+    targetLabel: string;
+    subject: string;
+    revision?: string;
+    confirmText?: string;
+  }
+  export interface PluginApprovalRequest {
+    binding: PluginApprovalBinding;
+    title: string;
+    summary?: string;
+    details?: string[];
+    confirmLabel?: string;
+    tone?: 'default' | 'danger';
+  }
+  export interface PluginToolApprovalRequest extends PluginApprovalRequest {
+    threadId?: string;
+    invocationId?: string;
+    detail?: string;
+    timeoutMs?: number;
+  }
+  export type PluginApprovalResult =
+    | { approved: true; token: string; expiresAt: number }
+    | { approved: false; reason: 'cancelled' | 'denied' | 'timeout' | 'unavailable' | 'busy' | 'invalid' };
+
+  export interface PluginInteractionContract {
+    id: string;
+    pluginId: string;
+    projectId: string;
+    correlationId: string;
+    kind: string;
+    payload: unknown;
+    status: string;
+    generation: number;
+    createdAt: number;
+    updatedAt: number;
+    acknowledgedAt: number | null;
+    terminalAt: number | null;
+    expiresAt: number | null;
+  }
+  export interface PluginInteractions {
+    get(interactionId: string): Promise<PluginInteractionContract | null>;
+    upsert(input: { projectId: string; correlationId: string; kind: string; payload: unknown }): Promise<PluginInteractionContract>;
+    acknowledge(request: { interactionId: string; generation: number }): Promise<PluginInteractionContract>;
+    cancel(request: { interactionId: string; generation: number }): Promise<PluginInteractionContract>;
+  }
+
+  /** Live descriptor from main's registered wiring; an unwired surface reports `available: false` with a reason. */
+  export interface PluginCapabilityDescriptor { id: string; available: boolean; reason?: string }
+  export interface PluginCapabilityIntrospection {
+    forThread(args: { threadId: string }): Promise<{ capabilities: readonly PluginCapabilityDescriptor[] }>;
+    forExecution(args: { executionId: string }): Promise<{ capabilities: readonly PluginCapabilityDescriptor[] }>;
+  }
+
+  /** Loosely typed persona/team contribution; the host validates and namespaces the id as `ext:<pluginId>:<slug>`. */
+  export type PluginPersonaInput = { id?: string; [key: string]: unknown };
+  export type PluginTeamInput = { id?: string; [key: string]: unknown };
+
   export interface ZccPluginApi {
     readonly pluginId: string;
     readonly log: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void };
@@ -369,6 +603,19 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       service(name: string, start: () => void | (() => void) | Promise<void | (() => void)>): void;
       schedule(cron: string, job: () => void | Promise<void>): void;
     };
+    /**
+     * Host-tracked child processes. Each child runs in its own process group with output discarded and no shell.
+     * The host stops every live child (SIGTERM, a short wait, then SIGKILL of the group) when the plugin is disposed,
+     * deactivated, or its worker crashes. At most 8 children per plugin may be live. On Windows there are no process
+     * groups, so only the direct child is stopped. A raw `node:child_process` spawn is NOT tracked and is never reaped.
+     */
+    readonly process: {
+      spawn(
+        command: string,
+        args: string[],
+        options?: { cwd?: string; env?: Record<string, string> }
+      ): Promise<{ readonly pid: number; readonly exited: Promise<number | null> }>;
+    };
     /** Environment for sessions on non-primary machines. Needs `zcc.extra.remoteEnvironment` in the manifest. */
     readonly remoteEnvironment: {
       provide(
@@ -396,13 +643,16 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     readonly agents: {
       contributeInstructions(text: string | ((ctx: { threadId: string; projectId: string }) => string | null)): void;
       contributeSkills(rootPaths: string[]): void;
+      registerPersonas(personas: readonly PluginPersonaInput[]): void;
+      registerTeams(teams: readonly PluginTeamInput[]): void;
       registerTool(registration: {
+        desktopOnly?: boolean | readonly string[];
         name: string;
         description: string;
         parameters?: unknown;
         inputSchema?: unknown;
         instructions?: string;
-        execute(input: unknown, ctx: { threadId: string; projectId: string; signal: AbortSignal }): unknown | Promise<unknown>;
+        execute(input: unknown, ctx: { desktopPresentation?: boolean; threadId: string; projectId: string; signal: AbortSignal }): unknown | Promise<unknown>;
       }): void;
       experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
       experimental_registerPtyHarness(declaration: {
@@ -415,8 +665,14 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       }): { id: string; unregister(): void };
       configure(
         provider: (ctx: {
+          desktopPresentation?: boolean;
+          /** `'pty'` for a PTY launch (Claude, Codex, OpenCode); absent on Modern threads. */
+          surface?: 'pty';
+          /** The PTY session id when `surface` is `pty`; then `threadId` equals it and is not a thread record. */
+          sessionId?: string;
           threadId?: string;
           projectId?: string;
+          pluginMetadata?: Record<string, unknown>;
           origin?: { kind?: 'fork' | null; pluginId?: string | null };
           thread?: {
             id: string;
@@ -447,19 +703,28 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       ): void;
     };
     readonly events: {
-      on(
-        name:
-          | 'thread.created'
-          | 'thread.active'
-          | 'thread.idle'
-          | 'thread.failed'
-          | 'thread.archived'
-          | 'thread.deleted',
-        handler: (event: { name: string; threadId: string; projectId?: string }) => void | Promise<void>
-      ): void;
+      /** Observational completion of native tool calls; `outputPreview` only with `zcc.toolResults: 'preview'`. */
+      on(name: 'tool.settled', handler: (event: ToolSettledEvent) => void | Promise<void>): void;
+      on(name: PluginThreadEventName, handler: (event: PluginThreadEvent) => void | Promise<void>): void;
     };
+    /** Server-owned dispatch admission and native tool policy handlers. */
+    readonly hooks: PluginHooks;
     readonly ui: {
-      requestInput(request: { threadId: string; rendererId: string; title: string; payload: unknown }): Promise<unknown>;
+      /** Await main's human approval sheet during an active registered server tool. Fails closed (`unavailable`) without a desktop. */
+      requestToolApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+      requestApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+      /** @deprecated Use requestToolApproval. */
+      experimental_requestApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+      /** Consume a token once, for this plugin, within five minutes, when the rebuilt binding matches what the user approved. */
+      consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
+      /** @deprecated Use consumeApproval. */
+      experimental_consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
+      requestInput(request: PluginInteractionRequest, options?: { signal?: AbortSignal }): Promise<PluginInteractionResult>;
+      registerProjectTabAvailability(registration: {
+        tabId: string;
+        evaluate(ctx: { projectId: string }): { available: boolean; reason?: string } | Promise<{ available: boolean; reason?: string }>;
+      }): void;
+      readonly interactions: PluginInteractions;
       registerMentionProvider(registration: {
         id: string;
         label: string;
@@ -577,6 +842,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         read(args: { projectIds: string[]; entryId: string; documentIndex?: number }): Promise<PluginSdkInboxReport>;
         push(args: { projectId: string; comments: string }): Promise<{ id: string }>;
       };
+      capabilities: PluginCapabilityIntrospection;
       projects: {
         list(): Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-plugin-sdk').ProjectIcon }>>;
         setIcon(args: { projectId: string; icon: import('@zana-ai/zcc-plugin-sdk').ProjectIcon }): Promise<void>;
@@ -584,6 +850,12 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     };
     readonly host: {
       experimental_call(method: string, input?: unknown): Promise<unknown>;
+      /**
+       * Project-bound host call. Main resolves `projectId` to a machine and root: the machine is
+       * `hostId ?? the project's machine ?? the primary machine`. A project registered only on another
+       * machine runs there, confined on that machine's own project catalogue.
+       */
+      projectCall(request: { projectId: string; hostId?: string; method: string; input?: unknown }): Promise<{ result: unknown }>;
     };
     readonly services: {
       provide(implementation: object): void;
@@ -712,6 +984,11 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     setup: (app: { slots: Record<string, (registration: Record<string, unknown>) => void> }) => void
   ): unknown;
   export function isPluginAppDefinition(value: unknown): boolean;
+  export type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult } from '@zana-ai/zcc-plugin-sdk/server';
+  /** Ask the host to draw an approval sheet for an action started from this plugin's UI. Resolves `unavailable` without a desktop host; fail closed. */
+  export function requestApproval(pluginId: string, request: import('@zana-ai/zcc-plugin-sdk/server').PluginApprovalRequest): Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginApprovalResult>;
+  /** @deprecated Use requestApproval. */
+  export const experimental_requestApproval: typeof requestApproval;
   export function callPluginRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
   export function getPluginSettings(pluginId: string): Promise<{
     descriptors: Record<string, { type: string; label: string }>;

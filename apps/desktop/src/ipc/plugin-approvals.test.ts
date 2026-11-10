@@ -13,14 +13,14 @@ const win = (id = 1, destroyed = false) => ({ id, isDestroyed: () => destroyed }
 function handler(overrides: Partial<PluginApprovalDeps> = {}, outcome: ApprovalSheetOutcome = { kind: 'approved', typed: '' }) {
   const showSheet = vi.fn(async () => outcome);
   const deps: PluginApprovalDeps = { secret: () => secret, listApps: async () => [app], showSheet, now: () => now, ...overrides };
-  return { handle: createPluginApprovalHandler(deps), showSheet };
+  return { handle: createPluginApprovalHandler(deps), showSheet: deps.showSheet };
 }
 
 describe('pluginApprovals:request', () => {
   it('signs exactly the binding main showed, for that plugin', async () => {
     const { handle, showSheet } = handler();
     const result = await handle(win(), { ...request, binding: { ...binding, subject: '  Help_Agent ' } });
-    expect(showSheet).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { pluginName: 'Salesforce', request: { binding, title: 'Publish Help_Agent' } });
+    expect(showSheet).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { pluginName: 'Salesforce', request: { binding, title: 'Publish Help_Agent' } }, expect.any(Number));
     expect(result).toEqual({ approved: true, token: expect.any(String), expiresAt: now + 5 * 60_000 });
     if (!result.approved) throw new Error('expected approval');
     const verify = createPluginApprovalVerifier(secret, () => now);
@@ -89,5 +89,79 @@ describe('pluginApprovals:request', () => {
     const before = Date.now();
     const result = await handle(win(), request);
     expect(result.approved && result.expiresAt).toBeGreaterThanOrEqual(before + 5 * 60_000);
+  });
+});
+
+describe('product-server tool approvals', () => {
+  const toolRequest = { ...request, projectId: 'p-1', threadId: 't-1', invocationId: 'i-1', timeoutMs: 100 };
+  it('rejects scoped renderer requests but signs the resolved tool sheet', async () => {
+    const resolveToolWindow = vi.fn(async () => win());
+    const { handle, showSheet } = handler({ resolveToolWindow });
+    expect(await handle(win(), { ...request, binding: { ...binding, threadId: 't-1', invocationId: 'i-1' } })).toEqual({ approved: false, reason: 'invalid' });
+    const result = await handle.requestToolApproval(toolRequest);
+    expect(resolveToolWindow).toHaveBeenCalledWith('t-1', 'p-1');
+    expect(showSheet).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), {
+      pluginName: app.name, request: { title: request.title, binding: { ...binding, threadId: 't-1', invocationId: 'i-1' } }
+    }, expect.any(Number));
+    if (!result.approved) throw new Error(result.reason);
+    const verify = createPluginApprovalVerifier(secret, () => now);
+    expect(verify(result.token, 'salesforce', binding)).toBe(false);
+    expect(verify(result.token, 'salesforce', { ...binding, threadId: 't-1', invocationId: 'other' })).toBe(false);
+    expect(verify(result.token, 'salesforce', { ...binding, threadId: 't-1', invocationId: 'i-1' })).toBe(true);
+  });
+  it('fails closed on unavailable/destroyed context, bad input and resolver failure', async () => {
+    for (const resolveToolWindow of [undefined, async () => null, async () => win(1, true), async () => { throw new Error('remote'); }]) {
+      const { handle, showSheet } = handler({ resolveToolWindow });
+      expect(await handle.requestToolApproval(toolRequest)).toEqual({ approved: false, reason: 'unavailable' });
+      expect(showSheet).not.toHaveBeenCalled();
+    }
+    const { handle } = handler();
+    for (const raw of [null, {}, { ...toolRequest, projectId: '' }, { ...toolRequest, invocationId: undefined }, { ...toolRequest, timeoutMs: 300001 }]) {
+      expect(await handle.requestToolApproval(raw)).toEqual({ approved: false, reason: 'invalid' });
+    }
+  });
+  it('times out stalled context resolution, listings and late answers; never signs late approval', async () => {
+    const stuck = handler({ resolveToolWindow: () => new Promise(() => {}) });
+    expect(await stuck.handle.requestToolApproval({ ...toolRequest, timeoutMs: 5 })).toEqual({ approved: false, reason: 'timeout' });
+    let answer!: (outcome: ApprovalSheetOutcome) => void;
+    const { handle, showSheet } = handler({ resolveToolWindow: async () => win(), showSheet: vi.fn(() => new Promise(resolve => { answer = resolve; })) });
+    const waiting = handle.requestToolApproval({ ...toolRequest, timeoutMs: 20 });
+    await vi.waitFor(() => expect(showSheet).toHaveBeenCalled());
+    expect(await waiting).toEqual({ approved: false, reason: 'timeout' });
+    answer({ kind: 'approved', typed: '' });
+    await Promise.resolve();
+    const listing = handler({ resolveToolWindow: async () => win(), listApps: () => new Promise(() => {}) });
+    expect(await listing.handle.requestToolApproval({ ...toolRequest, timeoutMs: 5 })).toEqual({ approved: false, reason: 'timeout' });
+    const failing = handler({ resolveToolWindow: async () => win(), listApps: async () => { throw new Error('offline'); } });
+    expect(await failing.handle.requestToolApproval(toolRequest)).toEqual({ approved: false, reason: 'unavailable' });
+  });
+  it('rechecks live window and plugin after approval, refusing changed or failed scope', async () => {
+    for (const current of [null, win(2), win(1, true)]) {
+      const resolveToolWindow = vi.fn().mockResolvedValueOnce(win()).mockResolvedValueOnce(current);
+      const { handle } = handler({ resolveToolWindow });
+      expect(await handle.requestToolApproval(toolRequest)).toEqual({ approved: false, reason: 'unavailable' });
+      expect(resolveToolWindow).toHaveBeenCalledTimes(2);
+    }
+    const broken = handler({ resolveToolWindow: vi.fn().mockResolvedValueOnce(win()).mockRejectedValueOnce(new Error('offline')) });
+    expect(await broken.handle.requestToolApproval(toolRequest)).toEqual({ approved: false, reason: 'unavailable' });
+    for (const apps of [[], [{ ...app, enabled: false }], [{ ...app, status: 'disabled' }]]) {
+      const listApps = vi.fn().mockResolvedValueOnce([app]).mockResolvedValueOnce(apps);
+      expect(await handler({ resolveToolWindow: async () => win(), listApps }).handle.requestToolApproval(toolRequest))
+        .toEqual({ approved: false, reason: 'invalid' });
+    }
+  });
+  it('bounds post-approval validation and rejects approval exactly at the deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const resolveToolWindow = vi.fn().mockResolvedValueOnce(win()).mockImplementationOnce(() => new Promise(() => {}));
+      const pending = handler({ resolveToolWindow }).handle.requestToolApproval(toolRequest);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await pending).toEqual({ approved: false, reason: 'timeout' });
+      const exact = handler({ resolveToolWindow: async () => win(), showSheet: async () => {
+        vi.setSystemTime(Date.now() + 100);
+        return { kind: 'approved', typed: '' };
+      } });
+      expect(await exact.handle.requestToolApproval(toolRequest)).toEqual({ approved: false, reason: 'timeout' });
+    } finally { vi.useRealTimers(); }
   });
 });

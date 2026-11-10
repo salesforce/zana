@@ -46,7 +46,8 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [],
+  sessionPluginMcpServers: () => []
 }));
 
 vi.mock('../tmux.js', async (importOriginal) => {
@@ -177,6 +178,22 @@ describe('Squad seat contract in PtyManager', () => {
       expect((statSync(path).mode & 0o777).toString(8)).toBe('600');
     });
 
+    it('keeps the seat file alongside plugin instructions and removes both when the session ends', () => {
+      create(mgr, 'opencode', personaFor('opencode', { appendSystemPrompt: PERSONA_TEXT }), { pluginInstructions: 'PLUGIN-STANDING-RULE' });
+      const call = spawns[0]!;
+      const inline = JSON.parse(call.env.OPENCODE_CONFIG_CONTENT);
+      const file = JSON.parse(readFileSync(call.env.OPENCODE_CONFIG!, 'utf8'));
+      const seatPath = inline.instructions[0] as string;
+      expect(file.instructions).toHaveLength(2);
+      expect(file.instructions[0]).toBe(seatPath);
+      const pluginPath = file.instructions[1] as string;
+      expect(readFileSync(seatPath, 'utf8')).toContain('PERSONA-ROLE-CONTRACT');
+      expect(readFileSync(pluginPath, 'utf8')).toContain('PLUGIN-STANDING-RULE');
+      call.fireExit();
+      expect(existsSync(seatPath)).toBe(false);
+      expect(existsSync(pluginPath)).toBe(false);
+    });
+
     it('removes the instructions file when the session ends (REQ-10)', () => {
       create(mgr, 'opencode', personaFor('opencode', { appendSystemPrompt: PERSONA_TEXT }));
       const path = JSON.parse(spawns[0]!.env.OPENCODE_CONFIG_CONTENT).instructions[0] as string;
@@ -289,15 +306,17 @@ describe('Squad seat contract in PtyManager', () => {
 
   describe('contract delivery failures (A2, A6)', () => {
     it('fails the spawn instead of dropping the persona when the MCP server is not up (A2)', () => {
+      // No tool-policy plugin, so #713's native-tool fail-closed check stays out of the way.
       const early = new PtyManager();
-      expect(() => create(early, 'codex', personaFor('codex', { appendSystemPrompt: PERSONA_TEXT }))).toThrow(/MCP server is not available/);
-      expect(() => create(early, 'opencode', personaFor('opencode', { appendSystemPrompt: PERSONA_TEXT }))).toThrow(/MCP server is not available/);
+      const noPolicy = { nativeToolPolicyRequired: false };
+      expect(() => create(early, 'codex', personaFor('codex', { appendSystemPrompt: PERSONA_TEXT }), noPolicy)).toThrow(/MCP server is not available/);
+      expect(() => create(early, 'opencode', personaFor('opencode', { appendSystemPrompt: PERSONA_TEXT }), noPolicy)).toThrow(/MCP server is not available/);
       expect(spawns).toHaveLength(0);
     });
 
     it('still launches a seat with no contract text while the MCP server is not up (existing behaviour)', () => {
       const early = new PtyManager();
-      expect(() => create(early, 'codex', personaFor('codex'))).not.toThrow();
+      expect(() => create(early, 'codex', personaFor('codex'), { nativeToolPolicyRequired: false })).not.toThrow();
     });
 
     it('fails the spawn when a seat with contract text targets a non-local execution environment (A6)', () => {

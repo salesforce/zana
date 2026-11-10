@@ -1,6 +1,8 @@
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import type { NativeToolPolicyRequest } from '@zana-ai/zcc-contracts/runtime';
 import {
   NATIVE_TOOL_POLICY_PATH,
+  NATIVE_TOOL_POLICY_INVENTORY_PATH,
   NATIVE_TOOL_POLICY_PROOF_HEADER,
   signNativeToolPolicyRequest
 } from '@zana-ai/zcc-server/http/native-tool-policy-proof';
@@ -35,7 +37,11 @@ export interface ProductRouteToolPolicyDeps {
   /** The product-server credential main shares with the server; PTY children never hold it. */
   credential(): string;
   fetch?: typeof fetch;
-  /** Below the relays' `curl -m 5`, so a hung server still reaches the agent as this route's deny. */
+  /**
+   * Bound on one exchange. The decider keeps this at the largest per-call
+   * ceiling (a human may be deciding an `ask`), still below every relay's own
+   * timeout, so a hung server reaches the agent as main's deny.
+   */
   timeoutMs?: number;
 }
 
@@ -49,6 +55,32 @@ export function productRouteToolPolicyDecider(deps: ProductRouteToolPolicyDeps):
   return async (request) => {
     const body = JSON.stringify(request);
     const response = await (deps.fetch ?? fetch)(new URL(NATIVE_TOOL_POLICY_PATH, deps.serverUrl()), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [NATIVE_TOOL_POLICY_PROOF_HEADER]: signNativeToolPolicyRequest(deps.credential(), body)
+      },
+      body,
+      signal: AbortSignal.timeout(deps.timeoutMs ?? MAX_MAIN_CEILING_MS)
+    });
+    if (!response.ok) throw new Error(`product server answered HTTP ${response.status}`);
+    return await response.json();
+  };
+}
+
+/**
+ * The product server's tool-policy inventory route as a pre-spawn readiness
+ * reader, for electron-vite dev where no runtime supervisor runs (OBL-018). It
+ * posts an empty body signed with the product-server credential so the server
+ * knows main asserted the identity, and returns the readiness shape
+ * (`{ ready, required, reason? }`). The caller decides whether the veto is
+ * demanded; this never authorizes anything. A non-ok response throws so the
+ * caller fails closed.
+ */
+export function productRouteToolPolicyInventory(deps: ProductRouteToolPolicyDeps): () => Promise<unknown> {
+  return async () => {
+    const body = '';
+    const response = await (deps.fetch ?? fetch)(new URL(NATIVE_TOOL_POLICY_INVENTORY_PATH, deps.serverUrl()), {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -76,4 +108,17 @@ export function firstToolPolicyDecider(...deciders: NativeToolPolicyHookDeps['de
 /** Main-process sink for the hook's bounded diagnostics. */
 export function warnNativeToolPolicy(message: string): void {
   console.warn(`[native-tool-policy] ${message}`);
+}
+
+/**
+ * Whether a tool-policy readiness inventory demands the native-tool veto.
+ * Only a well-formed inventory with an empty `required` list means "none
+ * demanded"; anything torn (null, non-object, missing or non-array `required`)
+ * fails closed.
+ */
+export function inventoryDemandsVeto(inventory: unknown): boolean {
+  if (!inventory || typeof inventory !== 'object') return true;
+  const required = (inventory as { required?: unknown }).required;
+  if (!Array.isArray(required)) return true;
+  return required.length > 0;
 }

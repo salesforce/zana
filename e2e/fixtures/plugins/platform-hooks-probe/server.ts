@@ -16,15 +16,17 @@ type DispatchSelection =
   | { kind: 'wait'; overrideable: boolean; reason: string }
   | { kind: 'reject'; message: string };
 
-type ToolPolicySelection = 'allow' | 'deny';
+type ToolPolicySelection = 'allow' | 'deny' | 'ask';
 
 type ToolPolicyEventRow = {
   invocationId: string;
   threadId: string;
+  sessionId?: string;
+  surface?: string;
   projectId: string;
   providerId: string;
   toolName: string;
-  state: 'allowed' | 'denied';
+  state: 'allowed' | 'denied' | 'asked';
   at: number;
 };
 const TOOL_POLICY_EVENTS_MAX = 50;
@@ -59,15 +61,30 @@ type LifecycleRow = {
   threadId: string;
   origin: string;
   visibility: string;
+  surface?: string;
+  sessionId?: string;
+  projectId?: string;
+  providerId?: string;
+  bootId?: string;
 };
 
 export default function plugin(zcc: ZccPluginApi) {
   zcc.log.info('platform-hooks-probe loaded');
 
   let dispatchSelection: DispatchSelection = { kind: 'proceed' };
-  let dispatchEvents: Array<{ dispatchId: string; generation: number; decision: DispatchAdmissionDecision }> = [];
+  let dispatchEvents: Array<{
+    dispatchId: string;
+    generation: number;
+    decision: DispatchAdmissionDecision;
+    surface?: string;
+    entry?: string;
+    origin?: string;
+    sessionId?: string;
+    threadId?: string;
+  }> = [];
   let toolPolicySelection: ToolPolicySelection = 'allow';
   let toolPolicyDenyReason = DEFAULT_TOOL_POLICY_DENY_REASON;
+  let toolPolicyAskTimeoutMs: number | undefined;
   let toolPolicyEvents: ToolPolicyEventRow[] = [];
 
   function markerSource(projectId: string) {
@@ -193,7 +210,8 @@ export default function plugin(zcc: ZccPluginApi) {
       threadId,
       rendererId: 'platform-hooks-probe-pending',
       title: 'Platform Hooks Probe: confirm action',
-      payload: { kind: 'probe-confirmation' }
+      payload: { kind: 'probe-confirmation' },
+      requireHuman: (args as { requireHuman?: boolean | 'native-sheet' })?.requireHuman ?? false
     });
   });
 
@@ -216,7 +234,12 @@ export default function plugin(zcc: ZccPluginApi) {
     const event = {
       dispatchId: request.dispatchId,
       generation: request.generation,
-      decision
+      decision,
+      surface: request.surface,
+      entry: request.entry,
+      origin: request.origin,
+      ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+      ...(request.threadId ? { threadId: request.threadId } : {})
     };
     dispatchEvents = [...dispatchEvents, event].slice(-DISPATCH_EVENTS_MAX);
     zcc.realtime.publish('hooks-probe-dispatch-event', event);
@@ -224,12 +247,16 @@ export default function plugin(zcc: ZccPluginApi) {
   });
 
   zcc.rpc.method('setToolPolicySelection', (args) => {
-    const record = args as { selection?: unknown; reason?: unknown } | undefined;
-    const selection = record?.selection === 'deny' ? 'deny' : record?.selection === 'allow' ? 'allow' : undefined;
+    const record = args as { selection?: unknown; reason?: unknown; timeoutMs?: unknown } | undefined;
+    const selection = record?.selection === 'deny' ? 'deny'
+      : record?.selection === 'allow' ? 'allow'
+        : record?.selection === 'ask' ? 'ask' : undefined;
     if (!selection || (record?.reason !== undefined && typeof record.reason !== 'string')) {
       throw new Error('invalid tool policy selection');
     }
     toolPolicySelection = selection;
+    // `ask` mode: the approval window the plugin requests (the host clamps it).
+    toolPolicyAskTimeoutMs = selection === 'ask' && typeof record?.timeoutMs === 'number' ? record.timeoutMs : undefined;
     // Returned exactly as given, so a spec observes the host's own normalisation.
     toolPolicyDenyReason = selection === 'deny' && typeof record?.reason === 'string'
       ? record.reason
@@ -245,15 +272,19 @@ export default function plugin(zcc: ZccPluginApi) {
 
   zcc.hooks.onToolPolicy((request: PluginToolPolicyRequest) => {
     const selection = toolPolicySelection;
-    const state: ToolPolicyEventRow['state'] = selection === 'allow' ? 'allowed' : 'denied';
+    const state: ToolPolicyEventRow['state'] = selection === 'allow' ? 'allowed' : selection === 'ask' ? 'asked' : 'denied';
     const decision: PluginToolPolicyDecision = selection === 'allow'
       ? { action: 'allow' }
-      : { action: 'deny', reason: toolPolicyDenyReason };
+      : selection === 'ask'
+        ? { action: 'ask', prompt: `Allow ${request.toolName}?`, ...(toolPolicyAskTimeoutMs === undefined ? {} : { timeoutMs: toolPolicyAskTimeoutMs }) }
+        : { action: 'deny', reason: toolPolicyDenyReason };
     toolPolicyEvents = [
       ...toolPolicyEvents,
       {
         invocationId: request.invocationId,
         threadId: request.threadId,
+        ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+        ...(request.surface ? { surface: request.surface } : {}),
         projectId: request.projectId,
         providerId: request.providerId,
         toolName: request.toolName,
@@ -382,6 +413,31 @@ export default function plugin(zcc: ZccPluginApi) {
     }
   });
 
+  // Per-session guidance: configure() runs for every Modern turn and every PTY
+  // launch. Each call is recorded so a spec can prove the context it received.
+  // The tool list is returned explicitly so enabling configure() never narrows
+  // the Modern tool surface.
+  let sessionInstructionText = '';
+  const configureSeen: Array<{ surface: string; sessionId: string; threadId: string; projectId: string; providerId: string }> = [];
+  zcc.agents.configure((ctx) => {
+    configureSeen.push({
+      surface: ctx.surface ?? 'modern',
+      sessionId: ctx.sessionId ?? '',
+      threadId: ctx.threadId,
+      projectId: ctx.projectId,
+      providerId: ctx.provider?.id ?? ''
+    });
+    if (configureSeen.length > 50) configureSeen.shift();
+    return { tools: ['platform_hooks_probe_marker'], ...(sessionInstructionText ? { instructions: sessionInstructionText } : {}) };
+  });
+  zcc.rpc.method('sessionInstructionsSet', (args) => {
+    const text = (args as { text?: unknown } | undefined)?.text;
+    sessionInstructionText = typeof text === 'string' ? text : '';
+    configureSeen.length = 0;
+    return { ok: true };
+  });
+  zcc.rpc.method('sessionInstructionsSeen', () => configureSeen);
+
   zcc.rpc.method('capabilitiesForThread', async (args) => {
     const threadId = typeof (args as { threadId?: unknown } | undefined)?.threadId === 'string'
       ? (args as { threadId: string }).threadId
@@ -415,7 +471,12 @@ export default function plugin(zcc: ZccPluginApi) {
         occurredAt: event.timestamp,
         threadId: event.threadId,
         origin: name,
-        visibility: event.thread?.visibility ?? 'unknown'
+        visibility: event.thread?.visibility ?? 'unknown',
+        ...(event.surface ? { surface: event.surface } : {}),
+        ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+        ...(event.projectId ? { projectId: event.projectId } : {}),
+        ...(event.providerId ? { providerId: event.providerId } : {}),
+        ...(event.bootId ? { bootId: event.bootId } : {})
       });
     });
   }
@@ -453,6 +514,7 @@ export default function plugin(zcc: ZccPluginApi) {
     dispatchSelection = { kind: 'proceed' };
     dispatchEvents = [];
     toolPolicySelection = 'allow';
+    toolPolicyAskTimeoutMs = undefined;
     toolPolicyDenyReason = DEFAULT_TOOL_POLICY_DENY_REASON;
     toolPolicyEvents = [];
     return { ok: true };

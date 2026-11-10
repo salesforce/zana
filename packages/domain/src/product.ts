@@ -1458,11 +1458,15 @@ export interface CliPlanFile {
 
 export interface TerminalSession {
   id: string;
+  /** Host-stamped launch wiring; absent on older sessions, which fail closed. */
+  capabilitySurface?: import('./contracts.js').CapabilitySurfaceKey;
   /** Execution owner for a terminal hosted by an enrolled machine. */
   hostId?: string;
   /** Opaque main-owned capability used to restore/reconnect this launch. */
   restoreCapabilityId?: string;
   projectId: string;
+  /** Main-stamped thread binding, when main resolved one at spawn. */
+  threadId?: string;
   title: string;
   profile: LaunchProfileId;
   cwd: string;
@@ -6231,6 +6235,8 @@ export interface PluginAppEntry {
   availableVersion?: string;
   /** Plugin declares `zcc.peers: true` (it links to other installs). */
   peers?: boolean;
+  /** Tool-policy decision deadline (ms, clamped 1000-9000) for plugins that declare `zcc.toolPolicy`. */
+  toolPolicyTimeoutMs?: number;
   updateCheck?: PluginUpdateStatus;
   updatePolicy?: PluginUpdatePolicy;
   projectTab?: {

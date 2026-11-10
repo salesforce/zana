@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { PromptInput, RuntimePermissionPolicy } from "@zana-ai/zcc-domain/thread-runtime";
 import {
   buildCodexConfig,
+  buildCodexMcpServerConfig,
   combineWorkspaceWriteRoots,
   gitWritableRootsForWorkspace,
   resolveCodexInstructionOverrides,
@@ -503,14 +504,17 @@ function permissionSettings(
 }
 
 describe("codex permission settings", () => {
-  it("defaults full permission scope to unreviewed danger-full-access", () => {
+  it("raises command/file-change approvals under danger-full-access for the native veto", () => {
+    // p0-modern-codex-veto: "untrusted" is the only approvalPolicy that still raises
+    // command + file-change approvals under danger-full-access (so the bridge native
+    // veto can intercept them); the sandbox itself is unchanged.
     expect(toCodexThreadPermissionSettings(FULL_OPTIONS)).toEqual({
-      approvalPolicy: "never",
+      approvalPolicy: "untrusted",
       approvalsReviewer: "user",
       sandbox: "danger-full-access",
     });
     expect(permissionSettings(FULL_OPTIONS)).toEqual({
-      approvalPolicy: "never",
+      approvalPolicy: "untrusted",
       approvalsReviewer: "user",
       sandbox: "danger-full-access",
       sandboxPolicy: { type: "dangerFullAccess" },
@@ -605,6 +609,19 @@ function configFor(options: CodexSessionOptions) {
     options,
   });
 }
+
+describe("buildCodexConfig identity", () => {
+  it("keeps the session thread id when the caller's variables name another", () => {
+    const config = configFor({
+      ...FULL_OPTIONS,
+      envVars: { ZCC_THREAD_ID: "other", ZCC_PROJECT_ID: "proj-1" },
+    });
+    expect(config).toMatchObject({
+      "shell_environment_policy.set.ZCC_THREAD_ID": "bb-thread-1",
+      "shell_environment_policy.set.ZCC_PROJECT_ID": "proj-1",
+    });
+  });
+});
 
 describe("buildCodexConfig", () => {
   it("disables provider user-input requests without overriding web search", () => {
@@ -808,4 +825,23 @@ it("adds thread identity only when supplied without leaking the previous environ
   const config = buildCodexConfig({ gitWritableRoots: [] });
   expect(config).not.toHaveProperty("shell_environment_policy.set.ZCC_THREAD_ID");
   expect(config).not.toHaveProperty("shell_environment_policy.set.BB_THREAD_ID");
+});
+
+describe("buildCodexMcpServerConfig", () => {
+  it("emits flat dotted keys, drops unlaunchable servers and non-bare env keys", () => {
+    expect(
+      buildCodexMcpServerConfig([
+        { name: "plugin_a_s", type: "stdio", command: "node", args: ["a.js"], env: { TOKEN: "t", "bad key": "x" } },
+        { name: "plugin_a_h", type: "http", url: "https://x.test/mcp" },
+        { name: "plugin_a_nocmd", type: "stdio" },
+        { name: "bad name", type: "stdio", command: "node" },
+      ]),
+    ).toEqual({
+      "mcp_servers.plugin_a_s.command": "node",
+      "mcp_servers.plugin_a_s.args": ["a.js"],
+      "mcp_servers.plugin_a_s.env.TOKEN": "t",
+      "mcp_servers.plugin_a_h.url": "https://x.test/mcp",
+    });
+    expect(buildCodexMcpServerConfig(undefined)).toEqual({});
+  });
 });
