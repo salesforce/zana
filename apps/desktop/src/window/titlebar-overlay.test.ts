@@ -69,8 +69,15 @@ describe('Windows title bar overlay colours', () => {
   });
 
   it('sit on the surface every window kind paints under them, at the Windows title bar height', () => {
-    // App.tsx puts the desktop shell in the inset workspace; compact layout never applies on desktop.
+    // App.tsx puts the shell in the inset workspace unless the layout is compact, and the
+    // compact layout never applies on the desktop surface (every Electron window's preload
+    // exposes the desktop bridge), so a narrowed main or project window keeps
+    // --inset-chrome. If desktop windows could go compact, their title bar would paint
+    // --bg-base and the overlay would need to follow the layout.
     expect(appSource).toMatch(/!mobileNavigation\.isCompact \? ' shell-inset' : ''/);
+    expect(appSource).toMatch(/const mobileNavigation = useMobileNavigation\(\);/);
+    expect(appSourceFile('components/MobileShellChrome.tsx')).toMatch(/const isCompact = useCompactLayout\(\);/);
+    expect(appSourceFile('hooks/useCompactLayout.ts')).toMatch(/return getAppSurface\(\) !== 'desktop' && /);
     expect(token('.plugin-view-shell', 'background')).toBe('var(--bg-base)');
     // The repair screen paints nothing itself, so it shows html/body's --bg-base (window-theme.test.ts).
     expect(token('.startup-repair', 'background')).toBeUndefined();
