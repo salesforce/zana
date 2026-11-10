@@ -1775,10 +1775,11 @@ export class ExecutionService {
     stateOrClaimGeneration: string, questionData: Record<string, unknown>
   ): Promise<void> {
     this.fireHumanBlocker(record, blocker);
-    await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration });
+    // The Inbox entry goes first so a failing coordinator wake cannot keep the blocker from the person.
     void this.appendHumanBlockerNotice(record, blocker, questionData).catch((err) => {
       console.error('Failed to append linked inbox entry for execution blocker', err);
     });
+    await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration });
   }
 
   /**
@@ -2197,7 +2198,9 @@ export class ExecutionService {
           ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true)
           : {};
         const persistedBlocker = record.blockers?.find((candidate) => candidate.id === blocker.id);
-        if (persistedBlocker) await this.announceHumanBlocker(record, persistedBlocker, workUnitId, String(claim?.claimGeneration ?? record.state), questionData);
+        const generation = String(claim?.claimGeneration ?? record.state);
+        if (persistedBlocker) await this.announceHumanBlocker(record, persistedBlocker, workUnitId, generation, questionData);
+        else await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration: generation });
       }
     }
     return result;
@@ -2632,7 +2635,7 @@ export class ExecutionService {
     const recoveryText = {
       objective: reserved.request.objective,
       header: 'Recovery run: completed read-only work must not be repeated.',
-      sections: [completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.'],
+      sections: [completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.', ...splitLoopNotes(units)],
       pinnedSection: unresolvedBlockers
         ? `Unresolved human input from the timed-out run:\n${unresolvedBlockers}\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.`
         : undefined,
@@ -3909,4 +3912,14 @@ function invalidBound(error: unknown) {
 
 function terminalBound(record: ExecutionRecord) {
   return { ok: false as const, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
+}
+
+/** One line per review loop the recovery splits (one half finished): it continues as plain units, so say so. */
+function splitLoopNotes(units: NonNullable<ExecutionRecord['workUnits']>): string[] {
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+  return units.flatMap((review) => {
+    const fix = review.loop ? byId.get(review.loop.fixUnitId) : undefined;
+    if (!review.loop || !fix || (review.state === 'COMPLETED') === (fix.state === 'COMPLETED')) return [];
+    return [`Review loop ${review.id} was interrupted in round ${review.loopRound ?? 1}; it continues as plain units, so check by hand that ${fix.id}'s changes were re-reviewed.`];
+  });
 }

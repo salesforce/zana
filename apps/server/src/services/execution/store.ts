@@ -1061,17 +1061,17 @@ function grantLoopRound(record: ExecutionRecord, review: ExecutionWorkUnit, time
 }
 
 /** Whether `dependency` lets `asker` start: a loop holds back everything except its own fix unit until the review passes. */
-function dependencySatisfied(record: ExecutionRecord, dependency: ExecutionWorkUnit, asker: ExecutionWorkUnit): boolean {
+function dependencySatisfied(reviewOf: ReadonlyMap<string, ExecutionWorkUnit>, dependency: ExecutionWorkUnit, asker: ExecutionWorkUnit): boolean {
   if (dependency.state !== 'COMPLETED') return false;
   if (dependency.loop && asker.id !== dependency.loop.fixUnitId && loopVerdictOf(dependency) !== 'PASS') return false;
-  const review = loopReviewOf(record, dependency.id);
+  const review = reviewOf.get(dependency.id);
   return !review || review.state === 'COMPLETED' && loopVerdictOf(review) === 'PASS';
 }
 
 /** Whether `dependency` can never satisfy a dependant: it failed, was skipped, or is the fix unit of a dead review. */
-function dependencyDead(record: ExecutionRecord, dependency: ExecutionWorkUnit): boolean {
+function dependencyDead(reviewOf: ReadonlyMap<string, ExecutionWorkUnit>, dependency: ExecutionWorkUnit): boolean {
   if (dependency.state === 'FAILED' || dependency.state === 'SKIPPED') return true;
-  const review = loopReviewOf(record, dependency.id);
+  const review = reviewOf.get(dependency.id);
   return review !== undefined && (review.state === 'FAILED' || review.state === 'SKIPPED');
 }
 
@@ -3917,6 +3917,7 @@ function assertAuthorizedSlot(record: ExecutionRecord, slotId: string): void {
 function deriveReadiness(record: ExecutionRecord, recoverSkipped = false): void {
   const units = record.workUnits ?? [];
   const byId = new Map(units.map((unit) => [unit.id, unit]));
+  const reviewOf = new Map(units.filter((unit) => unit.loop).map((unit) => [unit.loop!.fixUnitId, unit]));
   if (recoverSkipped) {
     for (const unit of units) if (unit.state === 'SKIPPED') unit.state = 'PENDING';
   }
@@ -3928,10 +3929,10 @@ function deriveReadiness(record: ExecutionRecord, recoverSkipped = false): void 
       const dependencies = unit.dependencies.map((dependency) => byId.get(dependency));
       if (dependencies.some((dependency) => !dependency)) continue;
       const knownDependencies = dependencies.filter((dependency): dependency is ExecutionWorkUnit => dependency !== undefined);
-      if (knownDependencies.some((dependency) => dependencyDead(record, dependency))) {
+      if (knownDependencies.some((dependency) => dependencyDead(reviewOf, dependency))) {
         unit.state = 'SKIPPED';
         changed = true;
-      } else if (knownDependencies.every((dependency) => dependencySatisfied(record, dependency, unit))) {
+      } else if (knownDependencies.every((dependency) => dependencySatisfied(reviewOf, dependency, unit))) {
         unit.state = 'READY';
         changed = true;
       }

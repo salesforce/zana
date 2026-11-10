@@ -81,7 +81,7 @@ describe('state file validation of loop fields', () => {
 });
 
 describe('a failed review in a later round', () => {
-  it('skips the dependants of a fix unit that already ran, then a retry restores them', async () => fixture(async (filePath) => {
+  it('skips the dependants of a fix unit that already ran when a later-round review fails', async () => fixture(async (filePath) => {
     const store = await open(filePath, units(3));
     await finish(store, 'r', { verdict: 'CHANGES' });
     await finish(store, 'f');
@@ -140,6 +140,7 @@ describe('recovering a timed-out run with a loop', () => {
     const successor = (await store.get('execution-2'))!;
     expect(successor.workUnits?.map((u) => u.id)).toEqual(['f', 'a']);
     expect(successor.workUnits?.every((u) => !('loop' in u) && !('loopRound' in u))).toBe(true);
+    expect(successor.request.objective).toContain('Review loop r was interrupted in round 1');
   }));
 
   it('drops the loop when its fix unit already finished and only the reopened review is left', async () => fixture(async (filePath) => {

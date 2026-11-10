@@ -403,17 +403,43 @@ export function validateLoops(units: readonly AdmissionWorkUnitInput[]): void {
     if (!fix.dependencies.includes(review.id)) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} must depend on ${review.id}`);
     if (targets.has(fixId)) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} is already the target of another loop`);
     if (fix.loop?.fixUnitId === review.id) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} loops back at the review`);
-    const gated = fix.dependencies.find((dependency) => dependency !== review.id && dependsOn(byId, dependency, review.id));
-    if (gated) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} depends on ${gated}, which waits for ${review.id} to pass, so the loop could never run`);
+    if (fix.loop) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} has a loop of its own; nested loops are not supported`);
     targets.add(fixId);
   }
+  const cycle = loopGateCycle(units);
+  if (cycle) throw new PlanValidationError('dag', `loop gates make ${cycle} wait for itself, so the loop could never run`);
 }
 
-/** Whether `unitId` depends, directly or through other units, on `targetId`. */
-function dependsOn(byId: ReadonlyMap<string, AdmissionWorkUnitInput>, unitId: string, targetId: string, seen = new Set<string>()): boolean {
-  if (seen.has(unitId)) return false;
-  seen.add(unitId);
-  return (byId.get(unitId)?.dependencies ?? []).some((dependency) => dependency === targetId || dependsOn(byId, dependency, targetId, seen));
+/**
+ * A loop holds every other dependant of its review until the review passes, and the review can only pass
+ * after its fix unit ran. So each such dependant waits, in the worst case, for the fix unit. Returns a unit
+ * on a cycle of the plan's dependencies plus those gate edges, or undefined.
+ */
+function loopGateCycle(units: readonly AdmissionWorkUnitInput[]): string | undefined {
+  const edges = new Map(units.map((unit) => [unit.id, new Set(unit.dependencies)]));
+  for (const review of units) {
+    if (!review.loop) continue;
+    for (const dependant of units) {
+      if (dependant.id !== review.loop.fixUnitId && dependant.dependencies.includes(review.id)) edges.get(dependant.id)!.add(review.loop.fixUnitId);
+    }
+  }
+  const state = new Map<string, 'open' | 'done'>();
+  const visit = (id: string): string | undefined => {
+    if (state.get(id) === 'done') return undefined;
+    if (state.get(id) === 'open') return id;
+    state.set(id, 'open');
+    for (const next of edges.get(id) ?? []) {
+      const found = visit(next);
+      if (found) return found;
+    }
+    state.set(id, 'done');
+    return undefined;
+  };
+  for (const unit of units) {
+    const found = visit(unit.id);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function normalizeLoop(loop: WorkUnitLoopV1 | undefined, unitId: string): WorkUnitLoopV1 | undefined {

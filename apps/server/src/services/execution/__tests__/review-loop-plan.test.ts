@@ -162,4 +162,29 @@ describe('REQ-3 / REQ-6 loop-control deadlock (CodeNod COR-002, OBL-004)', () =>
       u('f', ['r', 'd'])
     ])).toThrow(/loop/i);
   });
+
+  it('rejects two loops whose fix units each wait for the other review to pass', () => {
+    expect(() => normalizeExecutionPlan([
+      u('r1', [], { version: 1, fixUnitId: 'f1', until: 'PASS', max: 2 }),
+      u('r2', [], { version: 1, fixUnitId: 'f2', until: 'PASS', max: 2 }),
+      u('f1', ['r1', 'r2']),
+      u('f2', ['r1', 'r2'])
+    ])).toThrow(/loop/i);
+  });
+
+  it('rejects a fix unit that carries a loop of its own (chained loops)', () => {
+    expect(() => normalizeExecutionPlan([
+      u('r1', [], { version: 1, fixUnitId: 'r2', until: 'PASS', max: 2 }),
+      u('r2', ['r1'], { version: 1, fixUnitId: 'f', until: 'PASS', max: 2 }),
+      u('f', ['r2'])
+    ])).toThrow(/nested|loop/i);
+  });
+
+  it('still accepts a plain review, fix and acceptance chain', () => {
+    expect(() => normalizeExecutionPlan([
+      u('r', [], { version: 1, fixUnitId: 'f', until: 'PASS', max: 2 }),
+      u('f', ['r']),
+      u('a', ['f'])
+    ])).not.toThrow();
+  });
 });
