@@ -1,3 +1,4 @@
+import { answerReceipt } from '../answer-receipt.js';
 import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -2631,9 +2632,14 @@ describe('SquadExecutionService', () => {
     const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
     await service.dispatchReady(coordinator);
     await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Which file?', audience: 'coordinator' });
-    await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
-    await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    const first = await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    const second = await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
     expect((await store.get('execution-1'))?.deliveries).toHaveLength(1);
+    // #691 REQ-3: the real replay result yields the same receipt, with the original delivery id
+    const receipt = answerReceipt(first, 'blocker');
+    expect(receipt).toMatchObject({ ok: true, executionId: 'execution-1', blockerId: 'blocker', pending: true });
+    expect(receipt?.deliveryId).toEqual(expect.any(String));
+    expect(answerReceipt(second, 'blocker')).toEqual(receipt);
   }));
 
   // --- Stuck-coordinator escalation sweep (Fix B): a coordinator self-heal ask the

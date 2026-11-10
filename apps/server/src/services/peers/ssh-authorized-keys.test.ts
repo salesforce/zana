@@ -222,7 +222,12 @@ describe('SshAuthorizedKeys', () => {
     const real = (ak as unknown as { commit: (...a: unknown[]) => Promise<boolean> }).commit.bind(ak);
     let n = 0;
     vi.spyOn(ak as unknown as { commit: (...a: unknown[]) => Promise<boolean> }, 'commit').mockImplementation(async (...args) => {
-      n++; await writeFile(file, `${original}# churn ${n}\n`); return real(...args);
+      n++;
+      await writeFile(file, `${original}# churn ${n}\n`);
+      // Each external edit must have a distinct signature, including on coarse filesystems.
+      const changedAt = new Date(Date.now() + n * 1_000);
+      await utimes(file, changedAt, changedAt);
+      return real(...args);
     });
     await expect(ak.upsert(base({ linkId: 'new', pub: key('N') }))).rejects.toMatchObject({ message: 'ssh_auth_refused' });
     expect(n).toBe(3);

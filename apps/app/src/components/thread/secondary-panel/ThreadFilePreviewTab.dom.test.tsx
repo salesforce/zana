@@ -172,7 +172,8 @@ describe('file opener host preview lifetime', () => {
     mocks.readFile.mockResolvedValue({ ok: true, content: 'one\ntwo\nthree' });
     const view = render(<ThreadFilePreviewTab path="guide.md" lineNumber={2} />);
     await view.findByTestId('thread-file-preview-focus-line');
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    // The scroll runs in a passive effect, which can flush after the element appears.
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
     view.rerender(<ThreadFilePreviewTab path="guide.md" lineNumber={2} />);
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     view.rerender(<ThreadFilePreviewTab path="guide.md" lineNumber={3} />);

@@ -219,9 +219,12 @@ export function createAttachedProductPluginService(
     bundledRoot: opts?.bundledRoot ?? defaultBundledRoot(),
     pluginHostArtifacts: ctx.pluginHostArtifacts,
     ...(opts?.hostAgentToolSource ? { hostAgentToolSource: opts.hostAgentToolSource } : {}),
-    requestPluginInteraction: (args) => ctx.pendingInteractions.requestPluginInteraction(args),
+    requestPluginInteraction: (args) => getConversationThread(ctx.db, args.threadId) || !ctx.ptyInteractions.hasSession(args.threadId)
+      ? ctx.pendingInteractions.requestPluginInteraction(args)
+      : ctx.ptyInteractions.request({ ...args, sessionId: args.threadId }),
     interruptPluginInteractions: (pluginId) => {
       ctx.pendingInteractions.interruptPluginInteractions(pluginId);
+      ctx.ptyInteractions.interruptForPlugin(pluginId);
     },
     consumePluginApproval: ({ pluginId, token, binding }) => ctx.verifyPluginApproval?.(token, pluginId, binding) ?? false,
     getInteraction: async ({ pluginId, interactionId }) => {
@@ -270,7 +273,9 @@ export function createAttachedProductPluginService(
         ctx,
         threadId,
         [{ type: 'text', text: prompt, mentions: [], ...(visibility ? { visibility } : {}) }],
-        mode ?? 'start'
+        mode ?? 'start',
+        undefined,
+        { origin: 'system' }
       );
       return { id: thread.id };
     },
@@ -350,7 +355,8 @@ export function createAttachedProductPluginService(
         visibility,
         originPluginId: pluginId,
         agentContextSeed,
-        title
+        title,
+        origin: 'system'
       });
       return { id: thread.id };
     },
@@ -433,6 +439,7 @@ export function createAttachedProductPluginService(
           title: title?.trim() || `Plugin: ${pluginId}`,
           parentThreadId,
           originPluginId: pluginId,
+          origin: 'system',
           ...(visibility ? { visibility } : {}),
           ...(environment ? { environment } : {}),
           ...(hostId ? { hostId } : {}),

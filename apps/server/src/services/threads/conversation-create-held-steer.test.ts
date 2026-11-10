@@ -67,3 +67,52 @@ describe('steering a thread that is still starting', () => {
     await vi.waitFor(() => expect(listDeferredThreadMessages(db, threadId)).toEqual([]));
   });
 });
+
+describe('admission of a thread create', () => {
+  const create = (id: string, extra: Record<string, unknown> = {}) =>
+    createConversationFromRequest(ctx, { id, projectId: 'p', providerId: 'test-provider', input: ['go'], ...extra });
+  const admit = () => ctx.plugins!.admitDispatch as unknown as ReturnType<typeof vi.fn>;
+
+  it('admits the opening prompt as an initial modern dispatch before provisioning anything', async () => {
+    await create(threadId);
+    await vi.waitFor(() => expect(releaseStart).toBeTypeOf('function'));
+    expect(admit()).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p', surface: 'modern', entry: 'initial', origin: 'user' }));
+    expect(admit().mock.calls[0]![0].threadId).toBeUndefined();
+  });
+
+  it('hands admission the opening text and attachment count', async () => {
+    await create(threadId, { input: ['go', 'now'], promptInput: [{ type: 'text', text: 'go', mentions: [] }, { type: 'localFile', path: '/tmp/a.txt', name: 'a.txt' }] });
+    const prompt = admit().mock.calls[0]![0].prompt;
+    expect(prompt).toEqual({ text: expect.stringContaining('go'), truncated: false, attachmentCount: 1 });
+  });
+
+  it('carries a system origin for plugin and automated creates', async () => {
+    await create(threadId, { origin: 'system' });
+    expect(admit()).toHaveBeenCalledWith(expect.objectContaining({ entry: 'initial', origin: 'system' }));
+  });
+
+  it('refuses a rejected create and spawns nothing', async () => {
+    admit().mockResolvedValueOnce({ action: 'reject', message: 'not now' });
+    await expect(create(threadId)).rejects.toMatchObject({ status: 409, code: 'dispatch_rejected', message: 'not now' });
+    expect(getConversationThread(db, threadId)).toBeNull();
+    expect(commands).toEqual([]);
+  });
+
+  it('refuses a create on a wait, since it cannot be held', async () => {
+    admit().mockResolvedValueOnce({ action: 'wait', reason: 'capacity', overrideable: true });
+    await expect(create(threadId)).rejects.toMatchObject({ status: 409, code: 'dispatch_waiting' });
+    expect(getConversationThread(db, threadId)).toBeNull();
+    expect(commands).toEqual([]);
+  });
+
+  it('fails closed when admission throws', async () => {
+    admit().mockRejectedValueOnce(new Error('plugin down'));
+    await expect(create(threadId)).rejects.toMatchObject({ code: 'dispatch_rejected' });
+    expect(commands).toEqual([]);
+  });
+
+  it('does not admit a main-authorized squad member create here', async () => {
+    await createConversationFromRequest(ctx, { id: threadId, projectId: 'p', providerId: 'test-provider', input: ['go'] }, { source: 'main-authorized', projectId: 'p' }).catch(() => undefined);
+    expect(admit()).not.toHaveBeenCalled();
+  });
+});

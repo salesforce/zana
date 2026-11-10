@@ -16,7 +16,8 @@ export const SESSION_CALLBACK_ENV_KEYS = [
   'ZCC_TOOLACTIVITY_URL',
   'ZCC_OVERSEER_URL',
   'ZCC_CONTENTSCREEN_URL',
-  'ZCC_NATIVETOOL_URL'
+  'ZCC_NATIVETOOL_URL',
+  'ZCC_TOOLSETTLED_URL'
 ] as const;
 
 /**
@@ -53,7 +54,12 @@ export function stripInheritedSessionCallbacks(env: Record<string, string | unde
  * in `ps`); delivered to the pane through a 0600 env file instead, so a 2nd+ pane
  * in a long-lived tmux server cannot inherit the first session's identity.
  */
-export const SESSION_IDENTITY_ENV_KEYS = ['ZCC_SESSION_ID', 'ZCC_SESSION_TOKEN'] as const;
+export const SESSION_IDENTITY_ENV_KEYS = [
+  'ZCC_SESSION_ID',
+  'ZCC_SESSION_TOKEN',
+  'ZCC_PROJECT_ID',
+  'ZCC_THREAD_ID'
+] as const;
 
 let sessionEnvDir: string | undefined;
 
@@ -81,11 +87,16 @@ function shSingleQuote(value: string): string {
  * Created 0600 with O_EXCL so a planted symlink or file is rejected. The pane
  * command sources then deletes it (see `buildLocalTmuxCommand`).
  */
-export function writeSessionEnvFile(sessionId: string, vars: Record<string, string | undefined>): string {
+export function writeSessionEnvFile(
+  sessionId: string,
+  vars: Record<string, string | undefined>,
+  /** Command and args to run, for a launch too large for tmux's argv: the pane's `exec "$@"` runs them. */
+  spillArgv?: readonly string[]
+): string {
   const path = sessionEnvFilePath(sessionId);
   const body = Object.entries(vars)
     .map(([key, value]) => (value === undefined ? `unset ${key}\n` : `export ${key}=${shSingleQuote(value)}\n`))
-    .join('');
+    .join('') + (spillArgv ? `set -- ${spillArgv.map(shSingleQuote).join(' ')}\n` : '');
   try {
     unlinkSync(path); // stale file from a prior launch of the same session id
   } catch {

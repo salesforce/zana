@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { providerFor } from '../registry.js';
+import { CodexProvider } from '../codex/provider.js';
 
 describe('HarnessIntegrationAdapter compatibility bridge', () => {
   it('preserves Codex MCP, guidance, hooks, and auth channels', () => {
@@ -15,6 +16,19 @@ describe('HarnessIntegrationAdapter compatibility bridge', () => {
     expect(result.hookArgs).toContain('--dangerously-bypass-hook-trust');
     expect(result.authArgs).toContain('model_provider="zcc"');
     expect(result.authEnv).toEqual({ ZCC_CODEX_KEY: 'secret' });
+  });
+
+  it('Codex scoped hook trust drops the bypass flag from the compatibility bridge', () => {
+    const provider = new CodexProvider();
+    provider.setBinaryResolverForTests((command) => command);
+    provider.setHookTrustMode('scoped', 'codex');
+    provider.resolveLaunch('codex', {} as never, false);
+    const result = provider.integration.configure({
+      profile: 'codex',
+      lifecycle: { stop: 'http://127.0.0.1/hook/stop/p/s' }
+    });
+    expect(result.hookArgs).not.toContain('--dangerously-bypass-hook-trust');
+    expect(result.hookArgs.some((arg) => arg.startsWith('hooks.state='))).toBe(true);
   });
 
   it('preserves OpenCode MCP environment injection', () => {

@@ -29,9 +29,11 @@ import {
   type PendingInteractionResolution
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { HostDaemonInteractiveRequestResponse } from '@zana-ai/zcc-host-daemon-contract';
+import type { InteractionActor } from '@zana-ai/zcc-domain';
 import { HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHub } from '../../http/product-hub.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
+import { humanGateRefusal, type RequireHuman } from './human-gate.js';
 import { toPendingInteraction } from './pending-interaction-serialization.js';
 import { snapshotApprovedPlan } from '../threads/conversation-plan.js';
 import { appendPendingInteractionTimelineEvent } from './pending-interaction-timeline.js';
@@ -50,7 +52,7 @@ export type PluginInteractionCancelReason =
   | 'timeout';
 
 export type PluginInteractionResult =
-  | { outcome: 'submitted'; value: JsonValue }
+  | { outcome: 'submitted'; value: JsonValue; actor: InteractionActor }
   | { outcome: 'cancelled'; reason: PluginInteractionCancelReason };
 
 interface PluginInteractionWaiter {
@@ -248,6 +250,7 @@ export class PendingInteractionLifecycle {
     title: string;
     payload: JsonValue;
     timeoutMs: number;
+    requireHuman?: RequireHuman;
     signal?: AbortSignal;
   }): Promise<PluginInteractionResult> {
     const thread = getConversationThread(this.deps.db, args.threadId);
@@ -276,7 +279,8 @@ export class PendingInteractionLifecycle {
         payload: JSON.stringify({
           kind: 'plugin',
           title: args.title,
-          data: args.payload
+          data: args.payload,
+          requireHuman: args.requireHuman ?? false
         })
       });
     });
@@ -334,6 +338,8 @@ export class PendingInteractionLifecycle {
     interactionId: string;
     threadId: string;
     value: JsonValue;
+    actor?: InteractionActor;
+    attestation?: 'window' | 'sheet';
   }): PendingInteraction {
     if (jsonByteLength(args.value) > PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES) {
       throw new ThreadCreateError(400, 'invalid_request', 'Interaction response exceeds 64 KiB');
@@ -343,13 +349,18 @@ export class PendingInteractionLifecycle {
       throw new ThreadCreateError(400, 'invalid_request', 'Plugin interaction expected');
     }
     if (current.status !== 'pending') throw conflict(current);
+    const actor = args.actor ?? 'unknown';
+    const refusal = humanGateRefusal(current.payload.requireHuman, actor, args.attestation, {
+      title: current.payload.title, pluginId: current.origin.pluginId
+    });
+    if (refusal) throw refusal;
     const updated = setPendingInteractionResolved(this.deps.db, {
       id: current.id,
-      resolution: JSON.stringify({ kind: 'plugin_submitted' })
+      resolution: JSON.stringify({ kind: 'plugin_submitted', actor })
     });
     if (!updated) throw conflict(this.requireInteraction(current.id));
     const interaction = toPendingInteraction(updated);
-    this.settlePluginWaiter(interaction.id, { outcome: 'submitted', value: args.value });
+    this.settlePluginWaiter(interaction.id, { outcome: 'submitted', value: args.value, actor });
     this.settleTerminal(interaction);
     return interaction;
   }

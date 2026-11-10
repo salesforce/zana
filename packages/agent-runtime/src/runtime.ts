@@ -11,6 +11,7 @@ import {
 } from "@zana-ai/zcc-domain/thread-runtime";
 import type {
   DynamicTool,
+  SessionMcpServer,
   InstructionMode,
   ProviderErrorCategory,
   ThreadEvent,
@@ -25,6 +26,9 @@ import {
   BRIDGE_JSON_RPC_ERRORS,
   ThreadEventGrammar,
   providerHealthResultSchema,
+  type NativeToolDecisionRequest,
+  NATIVE_TOOL_SETTLED_METHOD,
+  nativeToolSettledParamsSchema,
 } from "@zana-ai/zcc-provider-bridge-protocol";
 import {
   JsonRpcResponseError,
@@ -69,6 +73,8 @@ import type {
   AgentRuntime,
   AgentRuntimeBridgeLaunch,
   AgentRuntimeExecutionOptions,
+  AgentRuntimeNativeToolDecisionRequest,
+  AgentRuntimeNativeToolSettled,
   AgentRuntimeOptions,
   AgentRuntimeProviderRecoveryHint,
   ReapedIdleProviderSession,
@@ -245,6 +251,7 @@ interface ThreadRuntimeConfig {
    */
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
   disallowedTools?: readonly string[];
   environmentId: string;
   instructionMode: InstructionMode;
@@ -845,6 +852,24 @@ function createAgentRuntimeInternal(
     return resolvedThreadId;
   }
 
+  function resolveNativeToolIdentity(proc: ProviderProcess, request: NativeToolDecisionRequest): AgentRuntimeNativeToolDecisionRequest | null {
+    try {
+      const threadId = resolveBbThreadIdForProcess(proc, request.providerThreadId);
+      if (!threadId || threadId !== request.threadId) return null;
+      const config = threadRuntimeConfigs.get(threadId);
+      const session = threadIdentityRegistry.getProviderSession(threadId);
+      if (!config?.projectId || !session || config.processKey !== proc.processKey
+        || config.providerId !== proc.providerId || session.providerId !== proc.providerId
+        || proc.adapter.id !== proc.providerId || session.providerThreadId !== request.providerThreadId
+        || proc.child.killed || proc.expectedShutdownExpectations > 0
+        || requireProviderProcessForThread(threadId) !== proc) return null;
+      return { ...request, threadId, providerThreadId: session.providerThreadId,
+        providerId: session.providerId, projectId: config.projectId, environmentId: config.environmentId };
+    } catch {
+      return null;
+    }
+  }
+
   function requireProviderRequestPlan(
     args: RequireProviderRequestPlanArgs,
   ): ProviderRequestCommandPlan {
@@ -1141,6 +1166,9 @@ function createAgentRuntimeInternal(
       ...(currentConfig.dynamicTools !== undefined
         ? { dynamicTools: currentConfig.dynamicTools }
         : {}),
+      ...(currentConfig.mcpServers !== undefined
+        ? { mcpServers: currentConfig.mcpServers }
+        : {}),
       ...(currentConfig.disallowedTools !== undefined
         ? { disallowedTools: currentConfig.disallowedTools }
         : {}),
@@ -1296,6 +1324,7 @@ function createAgentRuntimeInternal(
         skillRoots: providerSkillRoots,
       }),
       dynamicTools: currentConfig.dynamicTools,
+      mcpServers: currentConfig.mcpServers,
       disallowedTools: currentConfig.disallowedTools,
       instructionMode: currentConfig.instructionMode,
       ...(currentConfig.sessionKind !== undefined
@@ -1501,6 +1530,26 @@ function createAgentRuntimeInternal(
       return;
     }
 
+    if (
+      parsedLine.kind === "notification" &&
+      parsedLine.notificationMethod === NATIVE_TOOL_SETTLED_METHOD
+    ) {
+      // Observational (OBL-011): never reaches the adapter, never awaited, never logged.
+      const parsed = nativeToolSettledParamsSchema.safeParse(parsedLine.parsed.params);
+      if (parsed.success && options.onNativeToolSettled) {
+        const identity = resolveNativeToolIdentity(proc, { ...parsed.data, input: {} });
+        if (identity) {
+          const { input: _input, ...scoped } = identity;
+          try {
+            options.onNativeToolSettled({ ...parsed.data, ...scoped } as AgentRuntimeNativeToolSettled);
+          } catch {
+            // Dropped on purpose.
+          }
+        }
+      }
+      return;
+    }
+
     if (parsedLine.kind === "request") {
       handleRuntimeProviderRequest({
         getActiveTurnId: (threadId) => turnState.getActiveTurnId(threadId),
@@ -1508,6 +1557,13 @@ function createAgentRuntimeInternal(
           threadRuntimeConfigs.get(threadId)?.options,
         onInteractiveRequest: options.onInteractiveRequest,
         onToolCall: options.onToolCall,
+        onNativeToolDecision: options.onNativeToolDecision ? async (request, signal) => {
+          const config = threadRuntimeConfigs.get(request.threadId);
+          const decision = await options.onNativeToolDecision!(request, signal);
+          return threadRuntimeConfigs.get(request.threadId) !== config
+            ? { action: 'deny', reason: 'native policy session replaced' } : decision;
+        } : undefined,
+        resolveNativeToolIdentity: request => resolveNativeToolIdentity(proc, request),
         parsedId: parsedLine.parsedId,
         parsedMethod: parsedLine.parsedMethod,
         providerProcess: proc,
@@ -1694,6 +1750,7 @@ function createAgentRuntimeInternal(
       options: execOpts,
       instructions,
       dynamicTools,
+      mcpServers,
       disallowedTools,
       instructionMode = "append",
       sessionKind,
@@ -1738,6 +1795,7 @@ function createAgentRuntimeInternal(
           setThreadRuntimeConfig(threadId, {
             ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
             dynamicTools,
+            mcpServers,
             disallowedTools,
             environmentId,
             instructionMode,
@@ -1780,6 +1838,7 @@ function createAgentRuntimeInternal(
                   : {}),
                 options: providerExecutionContext,
                 dynamicTools,
+                mcpServers,
                 disallowedTools,
                 instructionMode,
                 ...(sessionKind !== undefined ? { sessionKind } : {}),
@@ -1790,6 +1849,7 @@ function createAgentRuntimeInternal(
                 cwd: options.workspacePath,
                 options: providerExecutionContext,
                 dynamicTools,
+                mcpServers,
                 disallowedTools,
                 instructionMode,
                 ...(sessionKind !== undefined ? { sessionKind } : {}),
@@ -1909,6 +1969,7 @@ function createAgentRuntimeInternal(
       options: execOpts,
       instructions,
       dynamicTools,
+      mcpServers,
       disallowedTools,
       instructionMode = "append",
     }) {
@@ -1987,6 +2048,7 @@ function createAgentRuntimeInternal(
                 skillRoots: providerSkillRoots,
               }),
               dynamicTools,
+              mcpServers,
               disallowedTools,
               instructionMode,
             };
@@ -2097,6 +2159,7 @@ function createAgentRuntimeInternal(
       options: execOpts,
       instructions,
       dynamicTools,
+      mcpServers,
       disallowedTools,
       instructionMode = "append",
       sessionKind,
@@ -2140,6 +2203,7 @@ function createAgentRuntimeInternal(
           setThreadRuntimeConfig(threadId, {
             ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
             dynamicTools,
+            mcpServers,
             disallowedTools,
             environmentId,
             instructionMode,
@@ -2182,6 +2246,7 @@ function createAgentRuntimeInternal(
               skillRoots: providerSkillRoots,
             }),
             dynamicTools,
+            mcpServers,
             disallowedTools,
             instructionMode,
             ...(sessionKind !== undefined ? { sessionKind } : {}),

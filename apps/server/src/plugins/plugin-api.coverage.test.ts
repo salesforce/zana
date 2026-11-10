@@ -76,8 +76,8 @@ describe('plugin host registration contracts', () => {
     await expect(handle.api.sdk.capabilities.forExecution({ executionId: '' })).rejects.toThrow('executionId is required');
     const { capabilities } = await handle.api.sdk.capabilities.forThread({ threadId: 'unknown' });
     expect(capabilities).toContainEqual({ id: 'tool-before-native', available: false, reason: 'no thread resolved' });
-    expect(capabilities).toContainEqual({ id: 'project-rpc', available: false });
-    expect(capabilities).toContainEqual({ id: 'interactions', available: false });
+    expect(capabilities).toContainEqual({ id: 'project-rpc', available: false, reason: 'Project RPC host wiring unavailable' });
+    expect(capabilities).toContainEqual({ id: 'interactions', available: false, reason: 'no thread resolved' });
     expect((await handle.api.sdk.capabilities.forExecution({ executionId: 'exec' })).capabilities).toEqual(capabilities);
   });
 

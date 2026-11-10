@@ -46,6 +46,7 @@ function makeController(opts: {
   threads?: MenubarThreadAgent[];
   listThreads?: () => Promise<MenubarThreadAgent[]>;
   onThreadsChanged?: (listener: () => void) => () => void;
+  commandCenter?: boolean;
 }) {
   const deps: MenubarDeps = {
     ptys: {
@@ -71,6 +72,7 @@ function makeController(opts: {
     listThreads: opts.listThreads ?? (opts.threads ? async () => opts.threads! : undefined),
     onThreadsChanged: opts.onThreadsChanged,
     theme: () => 'dark',
+    commandCenterEnabled: opts.commandCenter === undefined ? undefined : () => opts.commandCenter === true,
     preloadPath: '/preload.js'
   };
   return new MenubarController(deps);
@@ -245,6 +247,14 @@ describe('MenubarController modern threads', () => {
     await vi.waitFor(() => expect(c.buildSnapshot().agents.map((row) => row.rowKey)).toEqual(['thread:modern']));
     expect(listThreads).toHaveBeenCalledTimes(2);
     c.stop();
+  });
+});
+
+describe('MenubarController Command Center entry', () => {
+  it('offers the footer entry only when the opt-in flag is on', () => {
+    expect(makeController({ sessions: [], states: {} }).buildSnapshot().commandCenter).toBe(false);
+    expect(makeController({ sessions: [], states: {}, commandCenter: false }).buildSnapshot().commandCenter).toBe(false);
+    expect(makeController({ sessions: [], states: {}, commandCenter: true }).buildSnapshot().commandCenter).toBe(true);
   });
 });
 

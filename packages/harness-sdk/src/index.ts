@@ -34,7 +34,8 @@ export type {
   HarnessIntegrationContribution,
   HarnessIntegrationRequest,
   HarnessLifecycleEndpoints,
-  HarnessMcpConnection
+  HarnessMcpConnection,
+  HarnessMcpServer
 } from './integration.js';
 
 export type {

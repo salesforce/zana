@@ -84,7 +84,7 @@ it('forwards the primary selection and validates optional launch fields', async 
 
 it.each([
   ['NOT_FOUND', 404], ['unknown-session', 404], ['CANCELLED', 403], ['FORBIDDEN_AGENT', 403],
-  ['host_disconnected', 502], ['UNAVAILABLE', 502], ['BAD_ARGS', 400], ['INVALID', 400], ['DENIED', 400]
+  ['DISPATCH_REJECTED', 409], ['DISPATCH_WAITING', 409], ['host_disconnected', 502], ['UNAVAILABLE', 502], ['BAD_ARGS', 400], ['INVALID', 400], ['DENIED', 400]
 ])('preserves %s authorization failures across create, list, get, and stop', async (code, httpStatus) => {
   const ops = await boot();
   const failure = { ok: false, code, message: 'denied' };

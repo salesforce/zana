@@ -83,8 +83,8 @@ export function buildPiSessionParams(
   return {
     cwd: args.cwd,
     shellEnvOverrides: {
-      ZCC_THREAD_ID: args.threadId,
       ...buildShellEnvOverrides(args.options.envVars),
+      ZCC_THREAD_ID: args.threadId,
     },
     trustSystemCertificates: trustsSystemCertificates(args.options),
     ...(instructions

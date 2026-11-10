@@ -43,7 +43,25 @@ export const SERIAL_TEST_FILES: readonly string[] = [
   'apps/server/src/services/extensions/__tests__/local-extension-hot-reload.integration.test.ts',
   // These fixtures create thousands of files or execute a fake SSH filesystem.
   'apps/server/src/services/projects/__tests__/fs-scan.test.ts',
-  'apps/host-daemon/src/remote-fs.test.ts'
+  'apps/host-daemon/src/remote-fs.test.ts',
+  // 24 MiB plugin-worker transfers are CPU-bound and hit a 5 s limit on a busy machine (#693).
+  'apps/server/src/plugins/isolated-plugin-runtime.test.ts',
+  // Real authenticated gateway on loopback with 8 MiB bodies under a 3 s request timeout.
+  'services/mobile-relay/relay.test.ts',
+  // Appends megabytes of 250k-character titles to check the retention bounds.
+  'apps/server/src/services/feed/project-feed.test.ts',
+  // Pairing loops use real timers under an explicit 20 s test timeout.
+  'plugins/design-docs/src/server/pairing.test.ts',
+  // Applies 24 MiB of design-doc files through the production worker fence.
+  'plugins/design-docs/src/server/peer-apply-fence.test.ts',
+  // The SDK launch-health probe runs fake executables through an imported helper.
+  'plugins/provider-acp/src/bridge/acp-health.test.ts',
+  // Drives a real fake ACP agent child process through an imported helper.
+  'plugins/provider-acp/src/bridge/bridge.test.ts',
+  // Runs real git through the imported runGit helper.
+  'packages/host-workspace/src/worktree-start-point.test.ts',
+  // Creates hundreds of file-store records and transitions in a single file.
+  'apps/server/src/services/execution/__tests__/execution-store.test.ts'
 ];
 
 /** Never test sources; skipping them keeps the scan fast. The projects' own

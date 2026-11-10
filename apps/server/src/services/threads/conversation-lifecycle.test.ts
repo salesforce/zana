@@ -2419,6 +2419,31 @@ describe('dispatch admission override (OBL-003)', () => {
     expect(createDeferredThreadMessage).not.toHaveBeenCalled();
   });
 
+  it('admits a send with the thread identity, surface, entry and origin', async () => {
+    vi.mocked(getDispatchAdmissionGeneration).mockReturnValueOnce(null);
+    const admit = vi.fn().mockResolvedValue({ action: 'proceed' });
+    const context = { ...ctx(vi.fn().mockResolvedValue({ threadId: thread.id, accepted: true })), plugins: { admitDispatch: admit, emitThreadEvent: vi.fn().mockResolvedValue(undefined) } } as unknown as ProductHttpContext;
+    await sendConversationTurn(context, thread.id, 'hello', 'auto', undefined, { origin: 'system' });
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: thread.id, projectId: thread.projectId, surface: 'modern', entry: 'reply', origin: 'system',
+      prompt: { text: 'hello', truncated: false, attachmentCount: 0 }
+    }));
+  });
+
+  it('refuses a fork on a plugin reject and creates nothing', async () => {
+    const admit = vi.fn().mockResolvedValue({ action: 'reject', message: 'no forks' });
+    const context = { ...ctx(vi.fn()), plugins: { admitDispatch: admit } } as unknown as ProductHttpContext;
+    await expect(forkConversation(context, thread.id)).rejects.toMatchObject({ status: 409, code: 'dispatch_rejected', message: 'no forks' });
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({ threadId: thread.id, surface: 'modern', entry: 'fork', origin: 'user' }));
+  });
+
+  it('refuses a fork on a plugin wait rather than holding it', async () => {
+    const admit = vi.fn().mockResolvedValue({ action: 'wait', reason: 'capacity', overrideable: true });
+    const context = { ...ctx(vi.fn()), plugins: { admitDispatch: admit } } as unknown as ProductHttpContext;
+    await expect(forkConversation(context, thread.id, { origin: 'system' })).rejects.toMatchObject({ status: 409, code: 'dispatch_waiting' });
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({ entry: 'fork', origin: 'system' }));
+  });
+
   it('Send-now override with the matching generation succeeds and audits outcome accepted', async () => {
     const row = queuedAdmissionRow({ generation: 3, overrideable: true, reason: 'capacity', pluginId: 'platform-hooks-probe' });
     vi.mocked(getDeferredThreadMessage).mockReturnValue(row);

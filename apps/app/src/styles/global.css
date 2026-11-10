@@ -36127,8 +36127,10 @@ body.split-frame-guard webview {
   padding-bottom: 8px;
 }
 
-/* Tall prompts must scroll away instead of painting over the agent's reply.
-   Resize observation enables pinning only while the prompt fits in half the pane. */
+/* Tall prompts and turns that would cover the reply in a shortened pane must
+   scroll away in normal flow instead of painting over the agent's reply.
+   Resize observation enables pinning only while the prompt fits in half the pane
+   and the reply can scroll clear without overlap. */
 .thread-timeline-current-turn > .thread-timeline-item.is-user[data-sticky-prompt] {
   position: sticky;
   top: 0;

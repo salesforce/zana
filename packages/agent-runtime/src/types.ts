@@ -3,6 +3,7 @@ import type {
   AvailableModel,
   ClientTurnRequestId,
   DynamicTool,
+  SessionMcpServer,
   InstructionMode,
   JsonObject,
   PendingInteractionCreate,
@@ -16,7 +17,19 @@ import type {
   ToolCallResponse,
 } from "@zana-ai/zcc-domain/thread-runtime";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
-import type { ProviderHealthResult } from "@zana-ai/zcc-provider-bridge-protocol";
+import type { NativeToolDecision, NativeToolDecisionRequest, NativeToolSettledParams, ProviderHealthResult } from "@zana-ai/zcc-provider-bridge-protocol";
+
+export type AgentRuntimeNativeToolDecisionRequest = NativeToolDecisionRequest & {
+  providerId: string;
+  projectId: string;
+  environmentId: string;
+};
+
+export type AgentRuntimeNativeToolSettled = NativeToolSettledParams & {
+  providerId: string;
+  projectId: string;
+  environmentId: string;
+};
 
 export type AgentRuntimeShellEnvironment = Record<string, string>;
 
@@ -138,6 +151,15 @@ export interface AgentRuntimeOptions {
    *  `threadId` is always the ZCC thread id and `providerThreadId` is always present. */
   onToolCall: (request: ToolCallRequest) => Promise<ToolCallResponse>;
 
+  /** Native-tool veto, scoped from the live provider process and thread records. */
+  onNativeToolDecision?: (
+    request: AgentRuntimeNativeToolDecisionRequest,
+    signal: AbortSignal,
+  ) => Promise<NativeToolDecision>;
+
+  /** Observational completion of a native tool call (OBL-011), scoped like the veto. Fire-and-forget: never awaited. */
+  onNativeToolSettled?: (event: AgentRuntimeNativeToolSettled) => void;
+
   /** Called when a provider pauses for user permission or approval.
    *  The runtime converts provider-native requests into zcc's shared pending-interaction contract. */
   onInteractiveRequest?: (
@@ -236,6 +258,7 @@ export interface StartThreadArgs {
   options: AgentRuntimeExecutionOptions;
   instructions?: string;
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
   /** Absent means interactive. Bridges enforce automated isolation themselves. */
@@ -273,6 +296,7 @@ export interface PrepareThreadRewindArgs {
   options: AgentRuntimeExecutionOptions;
   instructions?: string;
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
 }
@@ -298,6 +322,7 @@ export interface ResumeThreadArgs {
   options: AgentRuntimeExecutionOptions;
   instructions?: string;
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
   /** Absent means interactive. Bridges enforce automated isolation themselves. */

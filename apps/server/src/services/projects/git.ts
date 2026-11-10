@@ -8,6 +8,7 @@ import {
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
+import { isExecutableGitHook } from './git-hook-mode.js';
 import type {
   GitBranch,
   GitCommit,
@@ -666,12 +667,13 @@ async function configureWorktreeProtection(toplevel: string, worktreePath: strin
         continue;
       }
       const stat = lstatSync(resolvedHook);
-      if (!stat.isFile() || !(stat.mode & 0o111)) continue;
+      if (!stat.isFile()) continue;
       // Replacing core.hooksPath would otherwise silently disable this hook.
       // A proxy may only execute a target still confined to its configured directory.
       if (!isWithinPath(resolvedHook, previousHooksDir)) {
-        return { ok: false, reason: `cannot preserve executable hook outside configured hooks directory: ${hook}` };
+        return { ok: false, reason: `cannot preserve hook outside configured hooks directory: ${hook}` };
       }
+      if (!isExecutableGitHook(resolvedHook, stat.mode)) continue;
       preservedHooks.set(hook, resolvedHook);
     }
     mkdirSync(zanaHooksPath, { recursive: true, mode: 0o700 });

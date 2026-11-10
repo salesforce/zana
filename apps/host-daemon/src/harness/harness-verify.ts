@@ -4,17 +4,17 @@
  */
 
 import { runProviderCliCommand } from '../provider-cli-health.js';
-import { accessSync, constants, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
-import { augmentPath, augmentPathWithNodePrefixes, fallbackDirs, nodePrefixBinDirs } from '../env.js';
+import { nodePrefixBinDirs } from '../env.js';
+import { resolveHarnessCommand, verificationSearchPath } from './harness-command.js';
 import { HARNESS_REGISTRATIONS } from './registry.js';
 import {
   UNVERSIONED_HARNESS,
   comparableCliVersion,
   resolveProbedHarnessVersion
 } from './version-floor.js';
+
+export { resolveHarnessCommand, verificationSearchPath, type ResolveHarnessCommandOptions } from './harness-command.js';
 
 export {
   UNVERSIONED_HARNESS,
@@ -38,66 +38,6 @@ function runVersion(
       ok: result.errorMessage === null && result.exitCode === 0,
       out: result.stdout.trim() || result.stderr.trim()
     }));
-}
-
-function isExecutableFile(candidatePath: string): boolean {
-  try {
-    accessSync(candidatePath, constants.X_OK);
-    return statSync(candidatePath).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function wellKnownHarnessPaths(command: string, home: string): string[] {
-  return [
-    ...fallbackDirs(home).map((dir) => join(dir, command)),
-    ...nodePrefixBinDirs(home).map((dir) => join(dir, command)),
-    join(home, `.${command}`, 'local', command)
-  ];
-}
-
-export interface ResolveHarnessCommandOptions {
-  home?: string;
-  uid?: number;
-}
-
-/**
- * Resolve a basename harness command against PATH, then well-known native
- * install locations. Finder/Dock and the electron-vite sandbox often omit
- * `~/.local/bin`, so `execFile('claude')` returns ENOENT even when the CLI is
- * installed. Absolute overrides that exist and are executable stay as-is; a
- * missing or non-executable override (stale `harnesses.byId.*.binary`) falls
- * back to PATH search by basename so CLI Agents still launch.
- */
-export function resolveHarnessCommand(
-  command: string,
-  pathEnv = process.env.PATH,
-  options: ResolveHarnessCommandOptions = {}
-): string {
-  if (!command) return command;
-  const original = command;
-  if (isAbsolute(command) || command.includes('/') || command.includes('\\')) {
-    if (isExecutableFile(command)) return command;
-    command = command.replace(/.*[/\\]/, '') || command;
-  }
-  const names = process.platform === 'win32' && !/\.(exe|cmd|bat|com)$/i.test(command)
-    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((ext) => command + ext.toLowerCase())
-    : [command];
-  for (const dir of (pathEnv ?? '').split(delimiter)) {
-    if (!dir) continue;
-    for (const name of names) {
-      const candidate = join(dir.replace(/^"|"$/g, ''), name);
-      if (isExecutableFile(candidate)) return candidate;
-    }
-  }
-  const uid = options.uid ?? process.getuid?.();
-  if (uid === 0) return original;
-  const home = options.home ?? homedir();
-  for (const candidate of names.flatMap((name) => wellKnownHarnessPaths(name, home))) {
-    if (isExecutableFile(candidate)) return candidate;
-  }
-  return original;
 }
 
 /**
@@ -188,10 +128,6 @@ async function verifyHarnessRegistration(
     normalizedVersion,
     installHint: verification.installHint
   };
-}
-
-function verificationSearchPath(): string {
-  return augmentPathWithNodePrefixes(augmentPath(process.env.PATH));
 }
 
 async function verifyHarness(

@@ -38,7 +38,8 @@ it('keeps database transactions local, supports callbacks, settings, KV and disp
   }`);
   await f.runtime.started; expect(await f.rpc.get('read')!({})).toEqual({ row: { value: 'one' }, kv: 'value', greeting: 'hi' });
   expect(await f.handle.extraInstructionProviders[0]({ threadId: 't', projectId: 'p' })).toBe('thread t');
-  f.runtime.dispose(); await expect(f.rpc.get('read')!({})).rejects.toThrow('stopped');
+  expect(f.runtime.isAlive()).toBe(true);
+  f.runtime.dispose(); expect(f.runtime.isAlive()).toBe(false); await expect(f.rpc.get('read')!({})).rejects.toThrow('stopped');
 });
 it('bounds synchronous factory and top-level import CPU work without blocking the server', async () => {
   let ticks = 0; const timer = setInterval(() => ticks++, 10);

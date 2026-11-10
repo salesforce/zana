@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
-import { DOCS } from '@/lib/docs';
-import { site } from '@/lib/site';
+import { DOCS } from '../lib/docs';
+import { site } from '../lib/site';
 
 /**
  * Static routes + every published docs slug. Absolute URLs are resolved against
@@ -18,6 +18,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
     '/marketplace/',
     '/download/',
     '/features/',
+    '/walkthrough/',
+    '/media-press/',
     '/docs/'
   ];
   const docPaths = DOCS.map((d) => `/docs/${d.slug}/`);

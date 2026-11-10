@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { site } from '../lib/site';
 import { TourVideo } from './components/TourVideo';
 import { AgentCityDemo } from './components/AgentCityDemo';
+import { AgentArchitecture } from './components/AgentArchitecture';
 
 export const metadata: Metadata = {
   title: 'Zana — Your agents. Your projects. One clear view.',
@@ -119,6 +120,7 @@ export default function Home() {
               </p>
             </div>
             <TourVideo />
+            <p className="fairy-walkthrough-link"><Link className="text-link" href="/walkthrough/">New to Zana? Take the walkthrough <span aria-hidden="true">→</span></Link></p>
             <ul className="fairy-benefits" aria-label="Why use Zana">
               <li><h3>Every project in reach.</h3><p>Keep sessions with the project they belong to.</p></li>
               <li><h3>Know what needs you.</h3><p>See working, idle, and waiting agents together.</p></li>
@@ -126,6 +128,8 @@ export default function Home() {
             </ul>
           </div>
         </section>
+
+        <AgentArchitecture />
 
         <section className="fairy-plugin-teaser" aria-labelledby="plugins-heading">
           <div className="wrap">

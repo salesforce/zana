@@ -183,6 +183,8 @@ export function emitHardenedLifecycle(event: PluginThreadEventInput): PluginThre
     name: event.name,
     threadId: event.threadId,
     ...(event.projectId !== undefined ? { projectId: event.projectId } : {}),
+    surface: event.surface ?? 'modern',
+    ...(event.sessionId !== undefined ? { sessionId: event.sessionId } : {}),
     ...(event.thread !== undefined ? { thread: event.thread } : {}),
     ...(event.lastAssistantText !== undefined
       ? { lastAssistantText: redactAndBoundLifecycleText(event.lastAssistantText) }

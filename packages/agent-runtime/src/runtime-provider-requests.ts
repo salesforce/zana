@@ -1,6 +1,8 @@
 import type { ChildProcess } from "node:child_process";
+import { RELAY_BACKSTOP_MS } from "@zana-ai/zcc-domain/native-tool-policy-budget";
 import type {
   AgentRuntimeExecutionOptions,
+  AgentRuntimeNativeToolDecisionRequest,
   AgentRuntimeOptions,
 } from "./types.js";
 import type {
@@ -20,6 +22,13 @@ import {
   sendProviderResponseEncodeErrorIfKnown,
 } from "@zana-ai/zcc-provider-bridge-protocol/bridge-kit";
 import { shouldAutoDenyInteractiveRequest } from "@zana-ai/zcc-provider-bridge-protocol/bridge-kit";
+import {
+  BRIDGE_INBOUND_REQUEST_METHODS,
+  nativeToolDecisionRequestSchema,
+  nativeToolDecisionSchema,
+  type NativeToolDecision,
+  type NativeToolDecisionRequest,
+} from "@zana-ai/zcc-provider-bridge-protocol";
 
 export type RuntimeProviderRequestKind = "interactive request" | "tool call";
 
@@ -50,6 +59,10 @@ export interface HandleRuntimeProviderRequestArgs extends RuntimeProviderRequest
   ) => AgentRuntimeExecutionOptions | undefined;
   onInteractiveRequest: AgentRuntimeOptions["onInteractiveRequest"];
   onToolCall: AgentRuntimeOptions["onToolCall"];
+  onNativeToolDecision?: AgentRuntimeOptions["onNativeToolDecision"];
+  resolveNativeToolIdentity?: (
+    request: NativeToolDecisionRequest,
+  ) => AgentRuntimeNativeToolDecisionRequest | null;
   resolveThreadId: (
     args: ResolveRuntimeProviderRequestThreadIdArgs,
   ) => string | null;
@@ -389,6 +402,10 @@ function handleInteractiveProviderRequest(
 export function handleRuntimeProviderRequest(
   args: HandleRuntimeProviderRequestArgs,
 ): void {
+  if (args.parsedMethod === BRIDGE_INBOUND_REQUEST_METHODS.nativeToolDecision) {
+    void handleNativeToolDecision(args);
+    return;
+  }
   if (handleToolCallProviderRequest(args)) {
     return;
   }
@@ -402,4 +419,38 @@ export function handleRuntimeProviderRequest(
     message: `Unsupported provider request "${args.parsedMethod}"`,
     code: -32601,
   });
+}
+
+async function handleNativeToolDecision(args: HandleRuntimeProviderRequestArgs): Promise<void> {
+  const deny = (reason: string): NativeToolDecision => ({ action: "deny", reason });
+  let decision = deny("native policy unavailable or invalid");
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const parsed = nativeToolDecisionRequestSchema.safeParse(args.rawRequest.params);
+    const identity = parsed.success ? args.resolveNativeToolIdentity?.(parsed.data) : null;
+    if (parsed.success && identity && args.onNativeToolDecision) {
+      const response = await Promise.race([
+        Promise.resolve().then(() => args.onNativeToolDecision!(identity, controller.signal)),
+        new Promise<NativeToolDecision>(resolve => {
+          timer = setTimeout(() => {
+            controller.abort();
+            resolve(deny("native policy timed out"));
+          }, RELAY_BACKSTOP_MS);
+        }),
+      ]);
+      const result = nativeToolDecisionSchema.safeParse(response);
+      const current = args.resolveNativeToolIdentity?.(parsed.data);
+      if (result.success && current && current.threadId === identity.threadId
+        && current.providerThreadId === identity.providerThreadId
+        && current.providerId === identity.providerId && current.projectId === identity.projectId
+        && current.environmentId === identity.environmentId) decision = result.data;
+    }
+  } catch {
+    // A policy failure never falls back to the provider's permission defaults.
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+  sendJsonRpcResult({ child: args.providerProcess.child, id: args.parsedId, result: decision });
 }

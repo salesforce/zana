@@ -458,7 +458,9 @@ function packageJson(
     type: 'module',
     engines: {
       zcc: `>=${opts.zccVersion}`,
-      zccPluginSdk: `>=${opts.pluginSdkVersion}`
+      // Plugin API compatibility starts at the public host baseline, not the
+      // package version used to install this scaffold.
+      zccPluginSdk: '>=0.1.0'
     },
     zcc,
     ...(extra?.scripts ? { scripts: extra.scripts } : {}),

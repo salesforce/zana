@@ -34,7 +34,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: () => '/tmp/proj1/.mcp.json',
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 vi.mock('../tmux.js', async importOriginal => ({
@@ -67,6 +67,7 @@ function routing(adapter: string, target: Record<string, unknown>): HarnessModel
 function spawn(profile: LaunchProfileId, harnessRouting?: HarnessModelRoutingV1): SpawnCall {
   const manager = new PtyManager();
   manager.create({
+    nativeToolPolicyRequired: false,
     projectId: 'proj1',
     profile,
     cwd: '/tmp/work',
@@ -159,7 +160,7 @@ describe('structured providers final local argv', () => {
   });
 
   it.each([false, true])('emits an explicit dynamic provider/model pair verbatim (remote=%s)', remote => {
-    new PtyManager().create({
+    new PtyManager().create({ nativeToolPolicyRequired: false,
       projectId: 'proj1', profile: 'opencode', cwd: '/tmp/work', cols: 80, rows: 24, config: CONFIG,
       harnessRouting: routing('opencode', {
         providerTargetId: 'new-install-provider', modelTargetId: 'new-install-provider/model-v2'
@@ -176,6 +177,7 @@ describe('structured providers final local argv', () => {
     // id: each spawn uses its own pin verbatim; no keyed state links them.
     const create = (targetId?: string) => {
       new PtyManager().create({
+        nativeToolPolicyRequired: false,
         projectId: 'proj1', profile: 'opencode', cwd: '/tmp/shared-worktree', cols: 80, rows: 24, config: CONFIG,
         harnessRouting: routing('opencode', { modelLevel: 'low' }),
         ...(targetId ? { authorizedModel: { adapterId: 'opencode', level: 'low' as const, targetId } } : {})
@@ -192,6 +194,7 @@ describe('structured providers final local argv', () => {
 
   it('a native role still suppresses an authorized model pin', () => {
     new PtyManager().create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1', profile: 'opencode', cwd: '/tmp/shared-worktree', cols: 80, rows: 24, config: CONFIG,
       harnessRouting: routing('opencode', { modelLevel: 'low', roleTargetId: 'reviewer' }),
       authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'fixture-provider/gpt-7-luna' }
@@ -200,7 +203,7 @@ describe('structured providers final local argv', () => {
   });
 
   it.each([false, true])('launches a native role with an unsupported persona tier (remote=%s)', remote => {
-    new PtyManager().create({
+    new PtyManager().create({ nativeToolPolicyRequired: false,
       projectId: 'proj1', profile: 'opencode', cwd: '/tmp/work', cols: 80, rows: 24, config: CONFIG,
       persona: { id: 'p', name: 'P', modelLevel: 'low' },
       harnessRouting: routing('opencode', { roleTargetId: 'reviewer' }),
@@ -272,6 +275,7 @@ describe('structured providers final local argv', () => {
     // ANY source (per-tab / persona / project / global), not just per-tab.
     const manager = new PtyManager();
     manager.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'opencode',
       cwd: '/tmp/work',
@@ -290,6 +294,7 @@ describe('structured providers final local argv', () => {
   it('keeps PI provider/model/thinking project settings in final argv', () => {
     const manager = new PtyManager();
     manager.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'pi',
       cwd: '/tmp/work',
@@ -316,6 +321,7 @@ describe('structured providers remote blocking', () => {
     spawns.length = 0;
     const manager = new PtyManager();
     expect(() => manager.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'pi',
       cwd: '/tmp/work',
@@ -337,6 +343,7 @@ describe('cliPlanIntent session stamp', () => {
   it('stamps local Claude Plan without changing Plan argv', () => {
     const manager = new PtyManager();
     const session = manager.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp/work',
@@ -352,6 +359,7 @@ describe('cliPlanIntent session stamp', () => {
   it('stamps local Cursor Plan and OpenCode --agent plan', () => {
     const manager = new PtyManager();
     expect(manager.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'cursor',
       cwd: '/tmp/work',
@@ -361,6 +369,7 @@ describe('cliPlanIntent session stamp', () => {
       harnessRouting: routing('cursor', { executionState: 'plan' })
     }).cliPlanIntent).toBe(true);
     expect(manager.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'opencode',
       cwd: '/tmp/work',
@@ -374,6 +383,7 @@ describe('cliPlanIntent session stamp', () => {
   it('does not stamp default Agent or Codex Plan', () => {
     const manager = new PtyManager();
     expect(manager.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp/work',
@@ -382,6 +392,7 @@ describe('cliPlanIntent session stamp', () => {
       config: CONFIG
     }).cliPlanIntent).toBeUndefined();
     expect(manager.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'codex',
       cwd: '/tmp/work',

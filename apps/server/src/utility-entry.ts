@@ -40,6 +40,11 @@ import { activateSquadMemberConversation, completeSquadMemberDelivery, createSqu
 import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
+import { admitMainOwnedDispatch } from './plugins/dispatch-admission.js';
+import { emitMainOwnedPtyLifecycle } from './plugins/pty-session-events.js';
+import { emitMainOwnedToolSettled } from './plugins/tool-settled.js';
+import { resolveMainOwnedPtyInstructions } from './plugins/pty-session-instructions.js';
+import { callMainOwnedPtyTool, listMainOwnedPtyTools } from './plugins/pty-session-tools.js';
 import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
 import { hasLocalThreadWork } from './services/threads/local-thread-work.js';
 import { holdThreadProviderStartup } from './services/threads/thread-provider-catalog.js';
@@ -59,7 +64,8 @@ interface ParentPortLike {
 const utilityParentPort = (process as unknown as { parentPort?: ParentPortLike }).parentPort;
 if (!utilityParentPort) throw new Error('server utility entry requires an Electron utility process');
 const parentPort: ParentPortLike = utilityParentPort;
-const uiSendSecret = process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
+// Legacy/dev launchers may still supply it via env; the desktop sends it in the start message instead.
+let uiSendSecret = process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
 retainProductServerCredential(uiSendSecret);
 delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
 const peerKeyProvider = consumePeerBootKey();
@@ -99,6 +105,10 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
   if (message.type === 'start' && message.rendererRoot && !close) {
     let releaseProviderStartup: (() => void) | null = null;
     try {
+      if (message.productServerCredential) {
+        uiSendSecret = message.productServerCredential;
+        retainProductServerCredential(uiSendSecret);
+      }
       installRuntimeLog(message.dataDir, 'server', import.meta.url);
       diagnostics.start();
       version = message.version ?? '';
@@ -658,6 +668,68 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
         id: message.id,
         value: await decideMainOwnedToolPolicy(productContext?.plugins, message.request)
+      });
+    }
+    if (message.operation === 'plugins-tool-settled') {
+      // OBL-011: observational; the reply only says whether a plugin service took it.
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: emitMainOwnedToolSettled(productContext?.plugins, message.request)
+      });
+    }
+    if (message.operation === 'plugins-dispatch-admission') {
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await admitMainOwnedDispatch(productContext ?? undefined, message.request)
+      });
+    }
+    if (message.operation === 'plugins-pty-lifecycle-event') {
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: emitMainOwnedPtyLifecycle(productContext ?? undefined, message.request)
+      });
+    }
+    if (message.operation === 'plugins-pty-session-instructions') {
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await resolveMainOwnedPtyInstructions(productContext?.plugins, message.request)
+      });
+    }
+    if (message.operation === 'plugins-pty-session-tools') {
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await listMainOwnedPtyTools(productContext?.plugins, message.request)
+      });
+    }
+    if (message.operation === 'plugins-pty-session-tool-call') {
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await callMainOwnedPtyTool(productContext?.plugins, message.request)
+      });
+    }
+    if (message.operation === 'plugins-tool-policy-inventory') {
+      // Pre-spawn readiness (OBL-018). No plugin service yet, or stopped, reads
+      // as not-ready with an empty `required`, so main treats the veto as not
+      // demanded rather than refusing a launch during startup.
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: productContext?.plugins
+          ? await productContext.plugins.toolPolicyReadiness()
+          : { ready: false, required: [], reason: 'plugin service is unavailable' }
       });
     }
     if (message.operation === 'plugins-cli-run') {

@@ -294,3 +294,41 @@ describe('rebuildPluginServers', () => {
     expect(body.mcpServers['plugin:evil:x']).toBeUndefined();
   });
 });
+
+describe('sessionPluginMcpServers (one enablement rule across surfaces)', () => {
+  afterAll(() => {
+    mod.rebuildPluginServers([]);
+  });
+
+  const contributor = (id: string, enabled: boolean) => ({
+    id,
+    enabled,
+    rootDir: fakeHome,
+    mcpServers: [
+      { name: 'auto', type: 'stdio', command: 'node', alwaysOn: true },
+      { name: 'manual', type: 'http', url: 'https://example.test/mcp' }
+    ]
+  });
+
+  it('selects exactly the servers the Claude .mcp.json carries', () => {
+    mod.rebuildPluginServers([contributor('a-b', true)]);
+    const names = (extra?: string[]) => mod.sessionPluginMcpServers(extra).map((s) => s.name);
+    expect(names()).toEqual(['plugin_a-b_auto']);
+    expect(names(['plugin:a-b:manual'])).toEqual(['plugin_a-b_manual', 'plugin_a-b_auto']);
+    const body = JSON.parse(readFileSync(mod.ensureMcpConfigForProjectSync('proj-rule', ['plugin:a-b:manual']), 'utf8'));
+    expect(Object.keys(body.mcpServers).filter((k) => k !== 'zcc-inbox').sort()).toEqual(['plugin:a-b:auto', 'plugin:a-b:manual']);
+  });
+
+  it('drops a disabled plugin and ignores unknown names', () => {
+    mod.rebuildPluginServers([contributor('off', false)]);
+    expect(mod.sessionPluginMcpServers(['plugin:off:auto', 'nope'])).toEqual([]);
+  });
+
+  it('returns copies so a caller cannot mutate the registry', () => {
+    mod.rebuildPluginServers([{ ...contributor('cp', true), mcpServers: [{ name: 'x', type: 'stdio', command: 'node', args: ['a'], env: { K: 'v' }, alwaysOn: true }] }]);
+    const [server] = mod.sessionPluginMcpServers();
+    server.args!.push('b');
+    server.env!.K = 'changed';
+    expect(mod.sessionPluginMcpServers()[0]).toMatchObject({ args: ['a'], env: { K: 'v' } });
+  });
+});

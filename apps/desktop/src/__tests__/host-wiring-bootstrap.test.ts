@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 
 /**
  * Drives host.ts through a real `bootstrapNormal()` with Electron and the
@@ -44,7 +44,10 @@ const h = vi.hoisted(() => {
     controlPlaneDeps: undefined as any,
     browserManager: undefined as any,
     mobileStart: vi.fn(),
+    admission: vi.fn(async (_request: unknown): Promise<{ code: string; message: string } | null> => null),
     lastWin: undefined as any,
+    windowHandlers: new Map<any, Map<string, ((...a: any[]) => any)[]>>(),
+    companionHost: undefined as ReturnType<typeof import('../companion-host.js').createCompanionHost> | undefined,
     winOptions: [] as any[],
     sent: [] as unknown[][],
     winDestroyed: false,
@@ -56,6 +59,8 @@ const h = vi.hoisted(() => {
   };
 });
 
+// These suites drive launches, not plugin admission (covered in dispatch-admission tests): admit everything.
+vi.mock('../runtime/dispatch-admission.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../runtime/dispatch-admission.js')>()), createMainDispatchAdmission: () => (request: unknown) => h.admission(request) }));
 vi.mock('../native/agent-sound-events.js', () => ({ startAgentSoundEvents: vi.fn(() => vi.fn()) }));
 
 vi.mock('electron', () => {
@@ -78,15 +83,21 @@ vi.mock('electron', () => {
     static fromWebContents() { return null; }
     constructor(options: unknown) {
       h.winOptions.push(options);
+      const handlers = new Map<string, ((...a: any[]) => any)[]>();
       const fallback = { get: (target: Record<string, unknown>, key: string | symbol) =>
         key in target ? target[key as string] : loose() };
-      const win = new Proxy({
+      const win: any = new Proxy({
         id: 1,
         isDestroyed: () => h.winDestroyed,
+        on: (name: string, fn: (...a: any[]) => any) => {
+          handlers.set(name, [...(handlers.get(name) ?? []), fn]);
+          return win;
+        },
         setTitleBarOverlay: (options: unknown) => { h.overlays.push(options); },
         webContents: new Proxy({ id: 2, isDestroyed: () => h.contentsDestroyed(), send: (...a: unknown[]) => { h.sent.push(a); } }, fallback)
       }, fallback);
       h.lastWin = win;
+      h.windowHandlers.set(win, handlers);
       return win;
     }
   }
@@ -101,7 +112,7 @@ vi.mock('electron', () => {
     screen: new Proxy({ getAllDisplays: () => [display], getPrimaryDisplay: () => display }, {
       get: (target, key) => key in target ? target[key as keyof typeof target] : loose()
     }),
-    Menu: { setApplicationMenu: () => {}, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
+    Menu: { setApplicationMenu: () => {}, getApplicationMenu: () => null, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
     nativeImage: { createFromPath: () => loose(), createEmpty: () => loose() },
     powerMonitor: { on: () => {}, off: () => {} },
     powerSaveBlocker: loose(),
@@ -110,6 +121,19 @@ vi.mock('electron', () => {
     systemPreferences: loose(),
     Notification: class { static isSupported() { return false; } },
     clipboard: loose()
+  };
+});
+
+vi.mock('../companion-host.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../companion-host.js')>();
+  return {
+    ...actual,
+    createCompanionHost: (...args: Parameters<typeof actual.createCompanionHost>) => {
+      const host = actual.createCompanionHost(...args);
+      vi.spyOn(host, 'onAppOpened');
+      h.companionHost = host;
+      return host;
+    }
   };
 });
 
@@ -303,6 +327,29 @@ describe('host bootstrap wiring', () => {
     project = project.project;
   }, 30000);
 
+  it('dismisses the companion through window focus, both Dock activation handlers and explicit app opens', () => {
+    const opened = vi.mocked(h.companionHost!.onAppOpened);
+    const win = h.lastWin;
+    const focus = h.windowHandlers.get(win)!.get('focus')!;
+    expect(focus).toHaveLength(1);
+    opened.mockClear();
+    focus[0]();
+    expect(opened).toHaveBeenCalledOnce();
+    expect(opened.mock.calls[0][0]).toBe(win);
+
+    const activate = h.appHandlers.get('activate')!;
+    expect(activate).toHaveLength(2);
+    for (const handler of activate) {
+      opened.mockClear();
+      handler();
+      expect(opened.mock.calls[0]).toEqual([]);
+    }
+
+    opened.mockClear();
+    ctx().showMainWindow();
+    expect(opened.mock.calls[0]).toEqual([]);
+  });
+
   it('re-colours the Windows caption buttons on a Theme change and an OS appearance change', () => {
     const platform = process.platform;
     const config = store.getConfig();
@@ -435,6 +482,8 @@ describe('host bootstrap wiring', () => {
     expect(items.some((i) => i.label === 'View on GitHub')).toBe(true);
     expect(items.find((i) => i.role === 'pasteAndMatchStyle')).toMatchObject({ accelerator: 'CmdOrCtrl+Shift+V' });
     expect(shell).toBeDefined();
+    expect(items.find((i) => i.id === 'companion-enter')).toMatchObject({ visible: false, enabled: false });
+    expect(() => ctx().syncCompanionMenu()).not.toThrow();
   });
 
   it('launches terminals through authorize, revalidate and spawn', async () => {
@@ -497,6 +546,59 @@ describe('host bootstrap wiring', () => {
     expect(spy).toHaveBeenCalledTimes(3);
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ profile: 'cursor', cwd: project.path }));
     spy.mockRestore();
+  });
+
+  describe('PTY dispatch admission', () => {
+    beforeEach(() => { h.admission.mockReset(); h.admission.mockResolvedValue(null); });
+
+    it('admits an interactive opening prompt as initial/user before spawning', async () => {
+      const { result, spawn } = await launchAndCapture({ profile: 'shell', prompt: 'do the thing' });
+      expect(result).toMatchObject({ ok: true });
+      expect(spawn).toBeDefined();
+      expect(h.admission).toHaveBeenCalledWith({ projectId: project.id, entry: 'initial', origin: 'user', promptText: 'do the thing' });
+    });
+
+    it('refuses the launch with the plugin code and spawns nothing when admission refuses', async () => {
+      h.admission.mockResolvedValue({ code: 'DISPATCH_REJECTED', message: 'blocked by policy' });
+      const { result } = await launchAndCapture({ profile: 'shell', prompt: 'do the thing' });
+      expect(result).toEqual({ ok: false, code: 'DISPATCH_REJECTED', message: 'blocked by policy' });
+    });
+
+    it('does not admit a launch with no opening prompt', async () => {
+      await launchAndCapture({ profile: 'shell' });
+      await launchAndCapture({ profile: 'shell', prompt: '   ' });
+      expect(h.admission).not.toHaveBeenCalled();
+    });
+
+    it('does not admit a restore of existing work', async () => {
+      await launchAndCapture({ profile: 'shell', prompt: 'continue', resumeSessionId: 'r1' });
+      expect(h.admission).not.toHaveBeenCalled();
+    });
+
+    it('admits a Job Team slot as job-team-dispatch/system', async () => {
+      await ctx().launchAuthorizedTerminal(
+        { projectId: project.id, profile: 'shell', cols: 80, rows: 24, prompt: 'task' },
+        { kind: 'team', id: 'team:t1' }
+      );
+      expect(h.admission).toHaveBeenCalledWith({ projectId: project.id, entry: 'job-team-dispatch', origin: 'system', promptText: 'task' });
+    });
+
+    it('admits a control-plane reply against the session main holds and reports a refusal', async () => {
+      const { spawn } = await launchAndCapture({ profile: 'shell' });
+      expect(spawn).toBeDefined();
+      const sessionId = h.ptys.createCalls.at(-1) && h.ptys.list()[0]?.id;
+      expect(sessionId).toBeTruthy();
+      const replyTerminal = h.controlPlaneDeps.replyTerminal;
+      h.admission.mockResolvedValue({ code: 'DISPATCH_WAITING', message: 'busy' });
+      await expect(replyTerminal(sessionId, 'hi', 'operator')).resolves.toEqual({ refused: { code: 'DISPATCH_WAITING', message: 'busy' } });
+      expect(h.admission).toHaveBeenCalledWith({ sessionId, projectId: project.id, entry: 'reply', origin: 'user', promptText: 'hi' });
+      // An agent on the same-uid control socket is never labelled as the human.
+      await replyTerminal(sessionId, 'hi', 'agent');
+      expect(h.admission).toHaveBeenLastCalledWith({ sessionId, projectId: project.id, entry: 'reply', origin: 'agent', promptText: 'hi' });
+      h.admission.mockResolvedValue(null);
+      expect(await replyTerminal('ghost', 'hi')).toBeFalsy();
+      expect(h.admission).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('runs a spawn lifecycle and records a follow-up execution on the restore capability', async () => {

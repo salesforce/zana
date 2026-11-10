@@ -509,6 +509,10 @@ function AppShell() {
         case 'app:openSettings':
           ui.toggleSettings();
           return;
+        case 'app:openHome':
+          // Command Center "+": land on home, where a new agent starts.
+          ui.setNav('home');
+          return;
         case 'app:toggleInbox':
           ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
           return;

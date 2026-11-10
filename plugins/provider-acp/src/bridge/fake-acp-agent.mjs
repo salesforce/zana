@@ -82,6 +82,8 @@
  *                            → emit the prompt text as the first
  *                              agent_message_chunk (Mastra Code echo), then
  *                              "Hi."
+ * - FAKE_ACP_PERMISSION_BARE → `1`: request permission with an empty toolCall;
+ *                              `locations`: toolCall with only file locations
  * - FAKE_ACP_PROMPT_ERROR=1  → reject every session/prompt request
  * - FAKE_ACP_COMPACT_STOP_REASON
  *                            → stop reason returned for /compact
@@ -508,6 +510,22 @@ function captureMcpServers(message) {
     : [];
 }
 
+// FAKE_ACP_PERMISSION_BARE: `1` requests permission with an empty toolCall;
+// `locations` sends a toolCall carrying only file locations.
+function permissionToolCall() {
+  const bare = process.env.FAKE_ACP_PERMISSION_BARE;
+  if (bare === "1") return {};
+  if (bare === "locations") {
+    return { locations: [{ path: "/tmp/scratch/file.txt", line: 3 }] };
+  }
+  return {
+    toolCallId: "perm-tool-1",
+    title: "Run rm",
+    kind: "execute",
+    rawInput: { command: "rm -rf /tmp/scratch" },
+  };
+}
+
 async function handlePrompt(message) {
   activePromptId = message.id;
   const text = promptText(message.params?.prompt);
@@ -558,12 +576,7 @@ async function handlePrompt(message) {
     try {
       const result = await requestClient("session/request_permission", {
         sessionId: activeSessionId,
-        toolCall: {
-          toolCallId: "perm-tool-1",
-          title: "Run rm",
-          kind: "execute",
-          rawInput: { command: "rm -rf /tmp/scratch" },
-        },
+        toolCall: permissionToolCall(),
         options: [
           { optionId: "yes", name: "Allow", kind: "allow_once" },
           { optionId: "always", name: "Always allow", kind: "allow_always" },

@@ -198,3 +198,16 @@ it('exposes Squad proposal review through its dedicated teams IPC channel', asyn
   await api.teams.reviewProposal('proposal-1');
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.teams.reviewProposal, 'proposal-1');
 });
+
+it('answers a pending interaction through main IPC by thread or by session, never the server', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({ ok: true });
+  await api.threads.interactions.respond('thread-1', 'int-1', { decision: 'allow' });
+  expect(electron.invoke).toHaveBeenLastCalledWith('interactions:respond', { threadId: 'thread-1', interactionId: 'int-1', value: { decision: 'allow' } });
+  await api.threads.interactions.respondSession('sess-1', 'int-2', true);
+  expect(electron.invoke).toHaveBeenLastCalledWith('interactions:respond', { sessionId: 'sess-1', interactionId: 'int-2', value: true });
+  electron.invoke.mockRejectedValueOnce(new Error('Human proof required'));
+  await expect(api.threads.interactions.respond('thread-1', 'int-3', null)).rejects.toThrow('Human proof required');
+});

@@ -48,6 +48,8 @@ const h = vi.hoisted(() => {
 vi.stubEnv('ZCC_DATA_DIR', h.root);
 vi.stubEnv('ZCC_EXECUTION_STORE', 'json');
 
+// These suites drive launches, not plugin admission (covered in dispatch-admission tests): admit everything.
+vi.mock('../runtime/dispatch-admission.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../runtime/dispatch-admission.js')>()), createMainDispatchAdmission: () => async () => null }));
 vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
   PtyManager: class {
     setMcpBaseUrl() {}
