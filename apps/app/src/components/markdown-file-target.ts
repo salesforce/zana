@@ -43,6 +43,13 @@ function splitFileLine(href: string): { path: string; lineNumber: number | null 
   return Number.isSafeInteger(lineNumber) ? { path, lineNumber } : null;
 }
 
+/**
+ * Decodes URL percent-encoding for file paths. In Markdown hrefs, spaces and
+ * special characters like '%' are percent-encoded (e.g. '%20' for space, '%25'
+ * for a literal '%', '%2520' for literal '%20' in a filename). Malformed percent
+ * sequences (such as a bare '%' in '100%.md') or directory traversal (%2e%2e)
+ * fail decoding and are classified as invalid targets.
+ */
 function decodeFilePath(raw: string): string | null {
   if (/[\u0000-\u001f\u007f?]/u.test(raw) || /%2f|%5c/iu.test(raw)) return null;
   const path = decodeURIComponent(raw);

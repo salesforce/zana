@@ -24,6 +24,8 @@ describe('assistant Markdown file targets', () => {
     ['file.abcdefghijkl:7', 'file.abcdefghijkl', 7],
     ['/Users/Me/a..b.md', '/Users/Me/a..b.md', null],
     ['/Users/Me/a%2520b.md', '/Users/Me/a%20b.md', null],
+    ['/Users/Me/100%25.md', '/Users/Me/100%.md', null],
+    ['./docs/100%25.md', './docs/100%.md', null],
     ['guide.md:7', 'guide.md', 7],
     ['guide.md#L7', 'guide.md', 7],
     ['/Users/Me/guide.md#heading', '/Users/Me/guide.md', null],
@@ -37,7 +39,7 @@ describe('assistant Markdown file targets', () => {
     'D:guide.md', '/D:guide.md', 'file://server/share/a.md', 'file:/Users/me/a.md',
     '/Users/me/../a.md', 'file:///Users/me/%2e%2e/a.md', 'file:///D:\\repo\\..\\a.md',
     '/Users/me/a%2fb.md', '/Users/me/a%5cb.md', '/Users/me/a%00b.md',
-    '/Users/me/a%ZZ.md', '/Users/me/a.md:0', '/Users/me/a.md:-2',
+    '/Users/me/a%ZZ.md', '/Users/me/100%.md', './docs/100%.md', '/Users/me/a.md:0', '/Users/me/a.md:-2',
     '/Users/me/a.md:9007199254740992', '/Users/me/a.md#L0', '/Users/me/a.md#L12bad',
     '/Users/me/a.md:2#L3', '/Users/me/a.md?query=1', '/Users/me/a\nb.md'
   ])('reports invalid local target %s', (href) => {
