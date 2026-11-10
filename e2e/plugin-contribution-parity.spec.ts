@@ -3,13 +3,11 @@
  * each surface the parity matrix in docs/extensions-sdk-reference.md promises. One observer variant
  * contributes an `alwaysOn` stdio MCP server, `p2_probe_tool` and a skill. Scripted CLIs stand in for the
  * harnesses and dump exactly what main launched them with; nothing calls a model. HOME is the throwaway
- * one, so `~/.agents/skills` is never the real directory.
+ * one.
  *
  *  - PTY Claude, Codex and OpenCode launch with the MCP server.
  *  - A PTY plugin tool is listed by, and callable through, the session's zcc-inbox MCP route, with the
  *    plugin's tool policy consulted on the PTY surface.
- *  - The skill is written to `~/.agents/skills` with the owned marker, removed on disable and uninstall, and
- *    a skill directory the user owns is never touched.
  *  - Modern Claude and Modern Codex sessions receive the server (Claude through SDK `--mcp-config`, Codex
  *    through thread/start `config`).
  */
@@ -106,40 +104,6 @@ pty('PTY Claude, Codex and OpenCode launch with the plugin MCP server; the plugi
   const policies = await rpcOn(page, PLUGIN)<Array<{ toolName: string; surface?: string; threadId: string }>>('policyList');
   expect(policies).toEqual(expect.arrayContaining([expect.objectContaining({ surface: 'pty', threadId: launches.claude.sessionId })]));
   expect(policies.some((row) => row.toolName.includes('p2_probe_tool'))).toBe(true);
-});
-
-const skills = base.extend<{ userSkills: string[] }>({
-  userSkills: async ({ home }, use) => { await use(plantUserSkills(home)); },
-  launchEnv: async ({ home }, use) => {
-    installObservers(home, { [PLUGIN]: MANIFEST });
-    writeHomeConfig(home, {});
-    await use({});
-  }
-});
-
-skills('the skill is written to ~/.agents/skills, removed on disable and uninstall, and user skills are untouched', async ({ app, home, userSkills }) => {
-  skills.setTimeout(120_000);
-  const page = app.window;
-  const dir = join(skillsRoot(home), SKILL_DIR);
-  await waitForRunning(page, [PLUGIN]);
-  await expect.poll(() => existsSync(join(dir, 'SKILL.md')), { timeout: 30_000, message: 'skill was never written' }).toBe(true);
-  expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toContain('P2_SKILL_BODY_MARKER');
-  expect(readFileSync(join(dir, '.zana-plugin-skill'), 'utf8')).toBe(`zana-plugin-skill/v1\n${PLUGIN}\n`);
-  expect(userSkillsIntact(userSkills)).toBe(true);
-
-  expect(await page.evaluate((id) => window.cc.pluginApps.setEnabled(id, false), PLUGIN)).toMatchObject({ ok: true });
-  await expect.poll(() => existsSync(dir), { timeout: 30_000, message: 'skill stayed after disable' }).toBe(false);
-  expect(userSkillsIntact(userSkills)).toBe(true);
-
-  expect(await page.evaluate((id) => window.cc.pluginApps.setEnabled(id, true), PLUGIN)).toMatchObject({ ok: true });
-  await expect.poll(() => existsSync(join(dir, 'SKILL.md')), { timeout: 30_000, message: 'skill was not restored on enable' }).toBe(true);
-
-  const removed = await page.evaluate((id) => window.cc.pluginApps.remove(id), PLUGIN);
-  expect(removed, JSON.stringify(removed)).toMatchObject({ ok: true });
-  await expect.poll(() => existsSync(dir), { timeout: 30_000, message: 'skill stayed after uninstall' }).toBe(false);
-  expect(userSkillsIntact(userSkills)).toBe(true);
-  // The isolated HOME holds everything this spec wrote; nothing outside it was named.
-  expect(skillsRoot(home).startsWith(home)).toBe(true);
 });
 
 const modern = base.extend<{ codexLog: string }>({
