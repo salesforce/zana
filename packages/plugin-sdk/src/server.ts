@@ -232,8 +232,6 @@ export interface PluginThreadEvent {
   id: string;
   /** {@link PLUGIN_THREAD_EVENT_SCHEMA_VERSION} at emission time, so a consumer can detect a future breaking shape change. */
   schemaVersion: number;
-  /** Host-generated id for this server process, constant until restart. `sequence` is only comparable within one `bootId`; there is no continuity across a change. */
-  bootId: string;
   /** Host-assigned, process-local ordering sequence. */
   sequence: number;
   /** Host clock timestamp in epoch milliseconds. */
@@ -265,7 +263,7 @@ export interface PluginThreadEvent {
 }
 
 /** Input accepted by core before it adds trusted lifecycle metadata. */
-export type PluginThreadEventInput = Omit<PluginThreadEvent, 'id' | 'schemaVersion' | 'bootId' | 'sequence' | 'timestamp'>;
+export type PluginThreadEventInput = Omit<PluginThreadEvent, 'id' | 'schemaVersion' | 'sequence' | 'timestamp'>;
 
 /**
  * Best-effort, observational completion of a native tool call (Claude/Codex,
