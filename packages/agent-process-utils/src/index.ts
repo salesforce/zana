@@ -5,7 +5,7 @@ export {
   removeUnlessRealDirectory,
 } from "./remove-tree.js";
 export * from "./temp-dir-sweep.js";
-import type { ChildProcess, StdioOptions } from "node:child_process";
+import { spawn as nodeSpawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
@@ -116,7 +116,7 @@ type UncaughtExceptionMonitorHandler = (
 export function spawnPortableProcess(
   request: PortableSpawnRequest,
 ): PortableChildProcess {
-  return crossSpawn(request.command, request.args, {
+  const child = crossSpawn(request.command, request.args, {
     cwd: request.cwd,
     // Windows has no process groups to kill (see supportsProcessGroups), and
     // DETACHED_PROCESS leaves the child with no console, so the cmd.exe that
@@ -129,6 +129,94 @@ export function spawnPortableProcess(
     // console window. No effect on macOS or Linux.
     windowsHide: true,
   });
+  installWindowsProcessTreeKill(child);
+  return child;
+}
+
+/** What a Windows tree kill reads from its host; injectable so tests run on every OS. */
+export interface ProcessTreeKillHost {
+  platform: NodeJS.Platform;
+  execPath: string;
+  spawnTaskkill: (args: readonly string[]) => ChildProcess;
+}
+
+const defaultProcessTreeKillHost: ProcessTreeKillHost = {
+  get platform() { return process.platform; },
+  get execPath() { return process.execPath; },
+  // An argument array and no shell: the PID is the only input, and nothing
+  // parses it but taskkill itself.
+  spawnTaskkill: (args) =>
+    nodeSpawn(windowsTaskkillPath(), [...args], {
+      shell: false,
+      stdio: "ignore",
+      windowsHide: true,
+    }),
+};
+
+const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
+
+function windowsTaskkillPath(): string {
+  const root = process.env.SystemRoot ?? process.env.windir;
+  return root ? join(root, "System32", "taskkill.exe") : "taskkill.exe";
+}
+
+function sameExecutable(file: string | undefined, execPath: string): boolean {
+  return !!file && resolve(file).toLowerCase() === resolve(execPath).toLowerCase();
+}
+
+/**
+ * Make `child.kill()` stop the child's whole process tree on Windows.
+ *
+ * Windows has no process groups, and `kill()` ends only the root. For an agent
+ * CLI installed as a `.cmd` shim that root is the cmd.exe cross-spawn wraps it
+ * in, so node.exe and the CLI kept running (and holding memory) until the
+ * process that spawned them exited. `taskkill /T /F` ends the tree; it walks
+ * descendants from the root PID, so the root is left to it and killed only
+ * when taskkill fails. Every signal is a hard stop there, as `kill()` already
+ * is on Windows.
+ *
+ * A root running this runtime's own executable keeps the plain kill: libuv
+ * puts each child of a Node process in a kill-on-close job, so its own
+ * descendants end with it. POSIX is unchanged.
+ */
+export function installWindowsProcessTreeKill(
+  child: ChildProcess,
+  host: ProcessTreeKillHost = defaultProcessTreeKillHost,
+): void {
+  if (host.platform !== "win32" || sameExecutable(child.spawnfile, host.execPath)) return;
+  const killRoot = child.kill.bind(child);
+  child.kill = (signal?: NodeJS.Signals | number): boolean => {
+    // A reaped child's PID is free for reuse; never hand it to taskkill.
+    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+      return killRoot(signal);
+    }
+    const fallback = (): void => {
+      try { killRoot(signal); } catch { /* Already gone. */ }
+    };
+    let taskkill: ChildProcess;
+    try {
+      taskkill = host.spawnTaskkill(["/PID", String(child.pid), "/T", "/F"]);
+    } catch {
+      return killRoot(signal);
+    }
+    const timer = setTimeout(() => {
+      try { taskkill.kill(); } catch { /* Already gone. */ }
+    }, WINDOWS_TASKKILL_TIMEOUT_MS);
+    timer.unref?.();
+    taskkill.once("error", () => {
+      clearTimeout(timer);
+      fallback();
+    });
+    taskkill.once("exit", (code) => {
+      clearTimeout(timer);
+      // 128: the root already exited. A no-op for a reaped child; ends a root
+      // taskkill could not reach.
+      if (code !== 0) fallback();
+    });
+    // The stop was sent, as `kill()` reports for a delivered signal.
+    (child as { killed: boolean }).killed = true;
+    return true;
+  };
 }
 
 function assertPortablePipedProcess(
