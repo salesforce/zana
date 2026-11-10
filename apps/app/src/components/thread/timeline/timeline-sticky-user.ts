@@ -34,10 +34,26 @@ interface StickyPromptItem {
   turn: HTMLElement | null;
 }
 
+/**
+ * Sum the heights of non-prompt rows in the turn directly.
+ * Excludes inter-row margin/gap and other prompt rows so spacing
+ * does not distort the overlap calculation.
+ */
+function measureReplyHeight(turn: HTMLElement): number {
+  let height = 0;
+  for (let i = 0; i < turn.children.length; i++) {
+    const child = turn.children[i];
+    if (child instanceof HTMLElement && !child.classList.contains('is-user')) {
+      height += child.offsetHeight;
+    }
+  }
+  return height;
+}
+
 function shouldPinPrompt(item: StickyPromptItem, paneHeight: number): boolean {
   const height = item.prompt.offsetHeight;
   if (height <= 0 || height > paneHeight / 2) return false;
-  const replyHeight = item.turn ? Math.max(0, item.turn.offsetHeight - height) : 0;
+  const replyHeight = item.turn ? measureReplyHeight(item.turn) : 0;
   return !promptOverlapsReply(height, replyHeight, paneHeight);
 }
 
@@ -63,11 +79,25 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
     turn: prompt.parentElement as HTMLElement | null
   }));
 
-  // Fast O(1) lookup from either prompt or turn element back to its item
-  const itemByTarget = new Map<HTMLElement, StickyPromptItem>();
+  // Fast O(1) lookup from either prompt or turn element back to its item(s).
+  // A turn can contain multiple prompts if queued/steered turns ever co-locate,
+  // so a turn element maps to all items within it.
+  const itemsByTarget = new Map<HTMLElement, StickyPromptItem[]>();
   for (const item of items) {
-    itemByTarget.set(item.prompt, item);
-    if (item.turn) itemByTarget.set(item.turn, item);
+    const promptItems = itemsByTarget.get(item.prompt);
+    if (promptItems) {
+      promptItems.push(item);
+    } else {
+      itemsByTarget.set(item.prompt, [item]);
+    }
+    if (item.turn) {
+      const turnItems = itemsByTarget.get(item.turn);
+      if (turnItems) {
+        turnItems.push(item);
+      } else {
+        itemsByTarget.set(item.turn, [item]);
+      }
+    }
   }
 
   let cachedPaneHeight = pane.clientHeight;
@@ -77,27 +107,53 @@ export function observeStickyUserPrompts(pane: HTMLElement): () => void {
     // Pass 1: measure layout properties in batch without DOM mutation to avoid layout thrashing
     const fits = items.map((item) => shouldPinPrompt(item, cachedPaneHeight));
     // Pass 2: apply DOM attribute updates only when the state changes
-    prompts.forEach((prompt, index) => applyPinState(prompt, fits[index]!));
+    items.forEach((item, index) => applyPinState(item.prompt, fits[index]!));
   };
 
   // When individual replies stream or expand, re-evaluate only the affected turn
   // in O(1) rather than re-measuring all historical turns on every streamed frame.
   const onResize: ResizeObserverCallback = (entries) => {
-    if (!entries || entries.length === 0 || entries.some((e) => e.target === pane)) {
+    if (entries.some((e) => e.target === pane)) {
       updateAll();
       return;
     }
+
+    // Deduplicate affected items across entries
+    const affected = new Set<StickyPromptItem>();
     for (const entry of entries) {
-      const item = itemByTarget.get(entry.target as HTMLElement);
-      if (item) applyPinState(item.prompt, shouldPinPrompt(item, cachedPaneHeight));
+      const targetItems = itemsByTarget.get(entry.target as HTMLElement);
+      if (targetItems) {
+        for (const item of targetItems) {
+          affected.add(item);
+        }
+      }
+    }
+    if (affected.size === 0) return;
+
+    // Pass 1: measure layout properties in batch without DOM mutation to avoid layout thrashing
+    const pendingUpdates: Array<{ prompt: HTMLElement; shouldPin: boolean }> = [];
+    for (const item of affected) {
+      pendingUpdates.push({
+        prompt: item.prompt,
+        shouldPin: shouldPinPrompt(item, cachedPaneHeight)
+      });
+    }
+
+    // Pass 2: apply DOM attribute updates only when the state changes
+    for (const { prompt, shouldPin } of pendingUpdates) {
+      applyPinState(prompt, shouldPin);
     }
   };
 
   const observer = new ResizeObserver(onResize);
   observer.observe(pane);
+  const observedTurns = new Set<HTMLElement>();
   for (const { prompt, turn } of items) {
     observer.observe(prompt);
-    if (turn) observer.observe(turn);
+    if (turn && !observedTurns.has(turn)) {
+      observedTurns.add(turn);
+      observer.observe(turn);
+    }
   }
   // Measure before paint, then re-evaluate on expansion, image load, or resize.
   updateAll();

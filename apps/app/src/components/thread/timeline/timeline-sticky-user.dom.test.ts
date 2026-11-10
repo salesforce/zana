@@ -9,12 +9,19 @@ function fixture(heights: number[], viewport = 600, replyHeights?: number[]) {
   pane.innerHTML = heights.map(() => '<div class="thread-timeline-current-turn"><div class="thread-timeline-item is-user"></div><div class="thread-timeline-item is-assistant"></div></div>').join('');
   const prompts = Array.from(pane.querySelectorAll<HTMLElement>('.is-user'));
   const turns = Array.from(pane.querySelectorAll<HTMLElement>('.thread-timeline-current-turn'));
+  const replies = Array.from(pane.querySelectorAll<HTMLElement>('.is-assistant'));
   const size = { viewport, heights, replyHeights: replyHeights ?? heights.map(() => 0) };
   Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => size.viewport });
   prompts.forEach((prompt, index) => {
     Object.defineProperty(prompt, 'offsetHeight', {
       configurable: true,
       get: () => size.heights[index]
+    });
+  });
+  replies.forEach((reply, index) => {
+    Object.defineProperty(reply, 'offsetHeight', {
+      configurable: true,
+      get: () => size.replyHeights[index]
     });
   });
   turns.forEach((turn, index) => {
@@ -30,7 +37,7 @@ function fixture(heights: number[], viewport = 600, replyHeights?: number[]) {
     observe = observe;
     disconnect = disconnect;
     constructor(callback: ResizeObserverCallback) {
-      resize = (entries) => callback(entries ?? [], this as unknown as ResizeObserver);
+      resize = (entries) => callback(entries ?? [{ target: pane } as ResizeObserverEntry], this as unknown as ResizeObserver);
     }
   });
   const dispose = observeStickyUserPrompts(pane);
@@ -39,6 +46,7 @@ function fixture(heights: number[], viewport = 600, replyHeights?: number[]) {
     pane,
     prompts,
     turns,
+    replies,
     size,
     observe,
     disconnect,
@@ -154,16 +162,24 @@ describe('prompt pinning', () => {
     const f = fixture([100, 100, 100], 300, [150, 150, 150]);
     expect(f.pinned()).toEqual([true, true, true]);
 
-    // Spy on turn 0 and turn 1 offsetHeight to ensure they are NOT read during turn 2 resize
+    // Spy on turn 0 and turn 1 items to ensure they are NOT read during turn 2 resize
     let turn0Read = false;
     let turn1Read = false;
-    Object.defineProperty(f.turns[0], 'offsetHeight', {
+    Object.defineProperty(f.replies[0]!, 'offsetHeight', {
       configurable: true,
-      get: () => { turn0Read = true; return 250; }
+      get: () => { turn0Read = true; return 150; }
     });
-    Object.defineProperty(f.turns[1], 'offsetHeight', {
+    Object.defineProperty(f.replies[1]!, 'offsetHeight', {
       configurable: true,
-      get: () => { turn1Read = true; return 250; }
+      get: () => { turn1Read = true; return 150; }
+    });
+    Object.defineProperty(f.prompts[0]!, 'offsetHeight', {
+      configurable: true,
+      get: () => { turn0Read = true; return 100; }
+    });
+    Object.defineProperty(f.prompts[1]!, 'offsetHeight', {
+      configurable: true,
+      get: () => { turn1Read = true; return 100; }
     });
 
     // Turn 2 grows during streaming to 250px (turn 350px > 300px, reply 250px <= 400px -> unpins)
@@ -173,6 +189,112 @@ describe('prompt pinning', () => {
     expect(f.pinned()).toEqual([true, true, false]);
     expect(turn0Read).toBe(false);
     expect(turn1Read).toBe(false);
+    f.dispose();
+  });
+
+  it('measures reply height directly so inter-row margin does not shift overlap boundary', () => {
+    // Pane 300, prompt 100, reply 200.
+    // prompt + reply = 300 <= paneHeight (300).
+    // If turn offsetHeight includes 12px margin (100 + 12 + 200 = 312 > 300),
+    // a naive turn.offsetHeight - prompt.offsetHeight would calculate reply as 212px,
+    // which would cause turn (100 + 212 = 312 > 300) to be treated as overlapping and unpinned!
+    // Measuring the reply row directly (200px) correctly keeps it pinned.
+    const f = fixture([100], 300, [200]);
+    Object.defineProperty(f.turns[0]!, 'offsetHeight', {
+      configurable: true,
+      get: () => 312
+    });
+    f.resize(f.turns[0]!);
+    expect(f.pinned()).toEqual([true]);
+    f.dispose();
+  });
+
+  it('supports multiple user prompts in a single turn without counting them as reply height', () => {
+    const pane = document.createElement('div');
+    pane.innerHTML = `
+      <div class="thread-timeline-current-turn">
+        <div class="thread-timeline-item is-user" id="p1"></div>
+        <div class="thread-timeline-item is-user" id="p2"></div>
+        <div class="thread-timeline-item is-assistant" id="r1"></div>
+      </div>
+    `;
+    const prompts = Array.from(pane.querySelectorAll<HTMLElement>('.is-user'));
+    const turn = pane.querySelector<HTMLElement>('.thread-timeline-current-turn')!;
+    const reply = pane.querySelector<HTMLElement>('.is-assistant')!;
+
+    Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => 400 });
+    // p1 = 60px, p2 = 80px, reply = 150px
+    Object.defineProperty(prompts[0]!, 'offsetHeight', { configurable: true, get: () => 60 });
+    Object.defineProperty(prompts[1]!, 'offsetHeight', { configurable: true, get: () => 80 });
+    Object.defineProperty(reply, 'offsetHeight', { configurable: true, get: () => 150 });
+
+    let resizeCallback: ResizeObserverCallback = () => {};
+    vi.stubGlobal('ResizeObserver', class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+      constructor(cb: ResizeObserverCallback) { resizeCallback = cb; }
+    });
+
+    const dispose = observeStickyUserPrompts(pane);
+    // In a 400px pane:
+    // For p1 (60px): reply is 150px. 60 + 150 = 210 <= 400 -> fits, pinned.
+    // For p2 (80px): reply is 150px. 80 + 150 = 230 <= 400 -> fits, pinned.
+    expect(prompts.map((p) => p.hasAttribute('data-sticky-prompt'))).toEqual([true, true]);
+
+    // Now reply grows to 350px:
+    // For p1 (60px): 60 + 350 = 410 > 400, reply 350 <= 460 -> overlaps, unpins.
+    // For p2 (80px): 80 + 350 = 430 > 400, reply 350 <= 480 -> overlaps, unpins.
+    Object.defineProperty(reply, 'offsetHeight', { configurable: true, get: () => 350 });
+    resizeCallback([{ target: turn } as ResizeObserverEntry], {} as ResizeObserver);
+
+    // Both prompts in that turn must be re-evaluated and unpinned
+    expect(prompts.map((p) => p.hasAttribute('data-sticky-prompt'))).toEqual([false, false]);
+    dispose();
+  });
+
+  it('batches layout reads before attribute writes when multiple entries resize in one callback', () => {
+    const f = fixture([100, 100], 300, [150, 150]);
+    const operations: string[] = [];
+
+    for (let i = 0; i < 2; i++) {
+      const prompt = f.prompts[i]!;
+      const reply = f.replies[i]!;
+      const origPromptHeight = Object.getOwnPropertyDescriptor(prompt, 'offsetHeight')!;
+      Object.defineProperty(prompt, 'offsetHeight', {
+        configurable: true,
+        get: () => {
+          operations.push(`read:prompt:${i}`);
+          return origPromptHeight.get!.call(prompt);
+        }
+      });
+      const origReplyHeight = Object.getOwnPropertyDescriptor(reply, 'offsetHeight')!;
+      Object.defineProperty(reply, 'offsetHeight', {
+        configurable: true,
+        get: () => {
+          operations.push(`read:reply:${i}`);
+          return origReplyHeight.get!.call(reply);
+        }
+      });
+      const origToggle = prompt.toggleAttribute.bind(prompt);
+      prompt.toggleAttribute = vi.fn((name: string, force?: boolean) => {
+        operations.push(`write:prompt:${i}`);
+        return origToggle(name, force);
+      });
+    }
+
+    // Both turns grow to 250px so they unpin
+    f.size.replyHeights[0] = 250;
+    f.size.replyHeights[1] = 250;
+    operations.length = 0;
+
+    f.resize(f.turns[0]!, f.turns[1]!);
+
+    const firstWriteIndex = operations.findIndex((op) => op.startsWith('write:'));
+    const lastReadIndex = operations.map((op, idx) => ({ op, idx })).filter((x) => x.op.startsWith('read:')).pop()?.idx ?? -1;
+    expect(firstWriteIndex).toBeGreaterThan(-1);
+    expect(lastReadIndex).toBeGreaterThan(-1);
+    expect(firstWriteIndex).toBeGreaterThan(lastReadIndex);
+
     f.dispose();
   });
 
