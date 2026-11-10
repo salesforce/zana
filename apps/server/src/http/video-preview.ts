@@ -11,9 +11,8 @@ import { authorizeProjectRelPath, ProjectFsError } from './project-fs-via-host.j
 import { isSafeRelPath } from './library-via-host.js';
 import { confinePathToRoot } from '../services/threads/thread-path-confine.js';
 import { threadStorageRoot } from '../services/threads/thread-storage.js';
-import { projectAttachmentDir } from '../services/projects/attachments.js';
 import { resolveProjectHost } from './project-host.js';
-import { matchPreviewRootsAsync, trustedFoldersForTarget } from '../services/threads/preview-root-policy.js';
+import { effectivePreviewRootsFor, matchPreviewRootsAsync } from '../services/threads/preview-root-policy.js';
 
 export type RangeReader = (offset: number, length: number) => Promise<HostReadFileResult>;
 
@@ -39,16 +38,13 @@ export async function previewFileReader(ctx: ProductHttpContext, params: URLSear
     const rel = knownRel ?? confined(root, candidate);
     return (offset, length) => readConfinedFileRange(root, rel, offset, length);
   };
-  // Server-owned attachments plus the user's trusted folders (local targets only).
+  // Server-owned roots plus the user's trusted folders (local targets only).
   const localMatch = async (
-    target: { thread: { hostId?: string | null } | null; projectId: string },
+    target: { thread: { id?: string; hostId?: string | null } | null; projectId: string },
     attachmentProjectId: string | null | undefined
   ): Promise<RangeReader | null> => {
     if (!isAbsolute(candidate)) return null;
-    const roots = [
-      ...(attachmentProjectId ? [{ path: projectAttachmentDir(ctx.dataDir, attachmentProjectId), trusted: false }] : []),
-      ...trustedFoldersForTarget(ctx, target).map((path) => ({ path, trusted: true }))
-    ];
+    const roots = effectivePreviewRootsFor(ctx, target, attachmentProjectId);
     const match = (await matchPreviewRootsAsync(roots, candidate))[0];
     return match ? localReader(match.root, match.rel) : null;
   };

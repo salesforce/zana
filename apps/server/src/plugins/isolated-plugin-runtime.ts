@@ -72,8 +72,15 @@ export function createIsolatedPluginRuntime(options: {
     if (count !== commitCount) { commitCount = count; commitProgressAt = now; }
     return count > 0 && now - commitProgressAt < PEER_WORKER_COMMIT_TIMEOUT_MS + 5_000;
   };
+  const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? PLUGIN_HEARTBEAT_TIMEOUT_MS;
+  let lastWatchdogCheck = Date.now();
   const watchdog = setInterval(() => {
-    if (ready && !commitGraceActive(Date.now()) && !(apiWaitStarted !== undefined && Date.now() - apiWaitStarted < 10_000) && Date.now() - lastHeartbeat > (options.heartbeatTimeoutMs ?? PLUGIN_HEARTBEAT_TIMEOUT_MS)) fail(new Error('Plugin event loop stopped responding'));
+    const now = Date.now();
+    // Sleep and a stalled server delay this timer as well as worker messages. Give
+    // queued heartbeats a bounded chance to arrive before blaming the worker.
+    if (now - lastWatchdogCheck > Math.max(1_000, heartbeatTimeoutMs)) lastHeartbeat = now;
+    lastWatchdogCheck = now;
+    if (ready && !commitGraceActive(now) && !(apiWaitStarted !== undefined && now - apiWaitStarted < 10_000) && now - lastHeartbeat > heartbeatTimeoutMs) fail(new Error('Plugin event loop stopped responding'));
   }, 250);
   watchdog.unref();
   let termination: Promise<void> | undefined;

@@ -43,6 +43,7 @@ import {
   type PluginRpcClient,
   type PluginSdkApp,
   type PluginSettingsSectionRegistration,
+  type PluginNotificationSoundProviderRegistration,
   type PluginSettingsState,
   type PluginSidebarFooterActionRegistration,
   type ExperimentalSidebarNavigationRegistration,
@@ -918,6 +919,7 @@ export function installTestPluginRuntime(): void {
 export interface CapturedPluginApp {
   homepageSections: PluginHomepageSectionRegistration[];
   settingsSections: PluginSettingsSectionRegistration[];
+  notificationSoundProviders: PluginNotificationSoundProviderRegistration[];
   appOverlays: ExperimentalAppOverlayRegistration[];
   navPanels: PluginNavPanelRegistration[];
   threadPanelActions: PluginThreadPanelActionRegistration[];

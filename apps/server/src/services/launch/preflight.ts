@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { enforcedSkillAllowlist, isOrchestratorSlotId, skillAllowlistCovers, uninstalledAllowlistSkills } from '@zana-ai/zcc-domain/product';
 import { launchDigest } from './digest.js';
 import { projectIdentityDigest } from './commit-revalidation.js';
 import type { LaunchAuthorizationBinding, LaunchConsumerKind, LaunchPrincipalRef } from './types.js';
-import type { HarnessExecutionTarget, HarnessProfilePosture, HarnessScope } from '@zana-ai/zcc-domain/harness-adapter';
+import type { HarnessExecutionTarget, HarnessProfilePosture, HarnessScope, ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import type { ExecutionEvidenceFixture } from '@zana-ai/zcc-host-daemon/harness/execution-evidence';
 import { evaluateExecutionEvidence } from '@zana-ai/zcc-host-daemon/harness/execution-evidence';
 import type {
@@ -16,7 +17,7 @@ import type { WorkUnitRoutingV1 } from '../execution/routing-policy.js';
 import type { WorkUnitLoopV1, WorkUnitRequirementsV1 } from '../execution/store.js';
 import type { WorkOutputDeclarationV1 } from '../execution/contracts.js';
 import { canonicalJson, LOOP_VERDICT_OUTPUT, validOutputDeclaration } from '../execution/contracts.js';
-import { evaluateSlotEligibility, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
+import { evaluateSlotEligibility, LEVEL_UNMET_REASON, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
 
 export type AdmissionCheckStatus = 'PASS' | 'FAIL' | 'SKIPPED' | 'UNKNOWN';
 
@@ -92,7 +93,7 @@ export interface TeamAdmissionInput {
   budget?: AdmissionBudgetV1;
   inventory?: AdmissionCapabilityInventoryV1;
   /** Main-derived pre-spawn facts for already-authorized Team slots. */
-  slotRoutes?: readonly SlotRouteSnapshotV1[];
+  slotRoutes?: readonly SlotRoute[];
   /** False keeps routing checks as advisory, matching a Team with enforcement off. */
   enforceRouting?: boolean;
   now?: number;
@@ -129,6 +130,68 @@ export interface TeamAdmissionResultV1 {
   checks: AdmissionCheck[];
   /** Failed capability reads prevent launch without claiming named capabilities are missing. */
   availabilityUnknown?: { failedSources: readonly ('skills' | 'mcpServers')[] };
+  /** Advisory tier-fit warnings. Never affects `ready` or the digest; omitted when there are none. */
+  tierFit?: { findings: readonly TierFitFinding[] };
+}
+
+/** Slot route facts as consumed by tier-fit analysis. */
+export type SlotRoute = SlotRouteSnapshotV1 & {
+  /** Resolved skill allowlist for this slot. Absent = every skill (PASS); never `capabilities`. */
+  skillAllowlist?: readonly string[];
+};
+/** The part of a work unit tier-fit analysis reads. */
+export type PlanUnitRouting = Pick<AdmissionWorkUnitInput, 'id' | 'routing'>;
+
+export interface TierFitFinding {
+  unitId: string;
+  kind: 'over-tiered' | 'under-tiered' | 'no-eligible-slot';
+  detail: string;
+}
+
+const TIER_LEVELS: readonly ModelLevel[] = ['low', 'medium', 'high', 'extra-high'];
+
+/**
+ * Advisory plan-time tier fit. Warnings only: it never produces a FAIL and never gates registration.
+ * - no-eligible-slot: no worker slot qualifies for the unit and not merely because of its level.
+ * - under-tiered: the only thing keeping every slot out is the unit's minimum level (roster tops out below it).
+ * - over-tiered: the unit declares a minimum level but its cheapest qualified slot sits above it.
+ * A unit with unknown route facts (UNKNOWN eligibility) or no routing yields no finding.
+ */
+export function summarizePlanTierFit(
+  units: readonly PlanUnitRouting[],
+  slotRoutes: readonly SlotRoute[],
+  now: number = Date.now()
+): { findings: readonly TierFitFinding[] } {
+  const workers = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
+  const findings: TierFitFinding[] = [];
+  for (const unit of units) {
+    if (!unit.routing) continue;
+    const results = workers.map((slot) => ({ slot, result: evaluateSlotEligibility(unit.routing, slot, now) }));
+    const passing = results.filter(({ result }) => result.status === 'PASS');
+    if (passing.length === 0) {
+      if (results.some(({ result }) => result.status === 'UNKNOWN')) continue;
+      const levelOnly = results.length > 0 && results.every(({ result }) => result.reasons.length === 1 && result.reasons[0] === LEVEL_UNMET_REASON);
+      findings.push(levelOnly
+        ? { unitId: unit.id, kind: 'under-tiered', detail: `work unit ${unit.id} needs at least ${unit.routing.minimumLevel} but the highest worker slot is ${highestLevel(workers) ?? 'unknown'}` }
+        : { unitId: unit.id, kind: 'no-eligible-slot', detail: `work unit ${unit.id} has no worker slot that qualifies` });
+      continue;
+    }
+    const needed = unit.routing.minimumLevel ? TIER_LEVELS.indexOf(unit.routing.minimumLevel) : -1;
+    if (needed < 0) continue;
+    const levels = passing.map(({ slot }) => slot.level ? TIER_LEVELS.indexOf(slot.level) : -1);
+    if (levels.some((level) => level < 0)) continue;
+    const cheapest = Math.min(...levels);
+    if (cheapest > needed) {
+      findings.push({ unitId: unit.id, kind: 'over-tiered', detail: `work unit ${unit.id} needs ${unit.routing.minimumLevel} but its cheapest qualified slot is ${TIER_LEVELS[cheapest]}` });
+    }
+  }
+  return { findings };
+}
+
+function highestLevel(slots: readonly SlotRoute[]): ModelLevel | undefined {
+  let best = -1;
+  for (const slot of slots) if (slot.level) best = Math.max(best, TIER_LEVELS.indexOf(slot.level));
+  return best < 0 ? undefined : TIER_LEVELS[best];
 }
 
 const MAX_ADMISSION_REQUIREMENTS = 100;
@@ -178,11 +241,14 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
   for (const unit of normalizedPlan ?? []) {
     workUnitCapabilityChecks(unit, input.inventory, inventoryFresh, failedSources, add);
   }
+  for (const unit of normalizedPlan ?? []) {
+    skillReachChecks(unit, input.slotRoutes, add);
+  }
   modelHealthChecks(requiredModels, input.inventory?.models, inventoryFresh, add);
   healthChecks('PROVIDER_HEALTH', requiredProviders, input.inventory?.providers, inventoryFresh, add);
   for (const unit of normalizedPlan ?? []) {
     if (!unit.routing) continue;
-    const eligible = (input.slotRoutes ?? []).filter((slot) => !slot.slotId.startsWith('orchestrator:'))
+    const eligible = (input.slotRoutes ?? []).filter((slot) => !isOrchestratorSlotId(slot.slotId))
       .map((slot) => evaluateSlotEligibility(unit.routing, slot, now));
     const status: AdmissionCheckStatus = eligible.some((result) => result.status === 'PASS') ? 'PASS'
       : eligible.some((result) => result.status === 'UNKNOWN') ? 'UNKNOWN' : 'FAIL';
@@ -227,7 +293,7 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
       providers: [...input.inventory.providers].sort((a, b) => a.id.localeCompare(b.id)),
       sourceStatuses: input.inventory.sourceStatuses?.slice().sort((a, b) => a.source.localeCompare(b.source))
     },
-    slotRoutes: input.slotRoutes?.map(({ observedAt: _observedAt, ...slot }) => ({ ...slot, capabilities: slot.capabilities?.slice().sort(), modalities: slot.modalities?.slice().sort() }))
+    slotRoutes: input.slotRoutes?.map(({ observedAt: _observedAt, skillAllowlist, ...slot }) => ({ ...slot, capabilities: slot.capabilities?.slice().sort(), modalities: slot.modalities?.slice().sort(), ...(skillAllowlist ? { skillAllowlist: skillAllowlist.slice().sort() } : {}) }))
       .sort((a, b) => a.slotId.localeCompare(b.slotId))
   };
   // A failed read only matters when a requirement depends on that source (its
@@ -236,9 +302,12 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
   const availabilityUnknown = ([['skills', 'SKILL_AVAILABLE'], ['mcpServers', 'MCP_AVAILABLE']] as const)
     .filter(([source, code]) => failedSources.has(source) && checks.some((check) => check.code === code && check.required && check.status === 'UNKNOWN'))
     .map(([source]) => source);
+  const tierFit = normalizedPlan && input.slotRoutes
+    ? summarizePlanTierFit(normalizedPlan, input.slotRoutes, now) : undefined;
   return {
     version: 1, ready, digest: launchDigest({ version: 1, identity, estimate, checks }), estimate, checks,
-    ...(availabilityUnknown.length ? { availabilityUnknown: { failedSources: availabilityUnknown } } : {})
+    ...(availabilityUnknown.length ? { availabilityUnknown: { failedSources: availabilityUnknown } } : {}),
+    ...(tierFit?.findings.length ? { tierFit } : {})
   };
 }
 
@@ -503,6 +572,49 @@ function workUnitCapabilityChecks(
         : `work unit ${unit.id} ${label} are available`
     });
   }
+}
+
+/**
+ * Per-slot skill reach for `requires.skills`. A slot without `skillAllowlist` reaches every skill.
+ * No worker slot able to reach a required skill is a hard FAIL naming the gap; only some slots able
+ * is an advisory (non-required) serialization warning. Name-based, so it needs no inventory: whether
+ * the skill is installed is the separate SKILL_AVAILABLE check (unknown inventory stays UNKNOWN there).
+ */
+function skillReachChecks(
+  unit: AdmissionWorkUnitInput,
+  slotRoutes: readonly SlotRoute[] | undefined,
+  add: (check: AdmissionCheck) => void
+): void {
+  const skills = unit.requires?.skills;
+  const workers = (slotRoutes ?? []).filter((slot) => !isOrchestratorSlotId(slot.slotId));
+  if (!skills?.length || !workers.some((slot) => enforcedSkillAllowlist(slot) !== undefined)) return;
+  const unreachable: string[] = [];
+  for (const skill of skills) {
+    const able = workers.filter((slot) => skillAllowlistCovers(enforcedSkillAllowlist(slot), skill)).length;
+    if (able === 0) unreachable.push(skill);
+    else if (able < workers.length) {
+      add({ code: 'SKILL_AVAILABLE', status: 'UNKNOWN', required: false, subject: unit.id,
+        message: `work unit ${unit.id} skill ${skill} is reachable by ${able} of ${workers.length} worker slots; work may serialize` });
+    }
+  }
+  // Dispatch needs ONE slot covering every required skill; per-skill reach alone can leave the unit READY forever.
+  if (!unreachable.length && skills.length > 1 && !workers.some((slot) => skills.every((skill) => skillAllowlistCovers(enforcedSkillAllowlist(slot), skill)))) {
+    add({ code: 'SKILL_AVAILABLE', status: 'FAIL', required: true, subject: unit.id, unavailable: [...skills],
+      message: `work unit ${unit.id} requirement unavailable: no single worker slot allows all required skills: ${skills.join(', ')}` });
+  }
+  if (unreachable.length) {
+    add({ code: 'SKILL_AVAILABLE', status: 'FAIL', required: true, subject: unit.id, unavailable: unreachable,
+      message: `work unit ${unit.id} requirement unavailable: skills no worker slot allows: ${unreachable.join(', ')}` });
+  }
+}
+
+/** Advisory Team-save warning text for allowlist entries naming no installed skill; unknown inventory warns nothing. */
+export function uninstalledSkillWarnings(
+  allowlist: readonly string[] | undefined,
+  inventory: readonly { name: string; available?: boolean; enabled?: boolean }[] | undefined
+): string[] {
+  const installed = inventory?.filter((item) => item.available !== false && item.enabled !== false).map((item) => item.name);
+  return uninstalledAllowlistSkills(allowlist, installed).map((name) => `allowlisted skill ${name} is not installed`);
 }
 
 function healthChecks(

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { createProductHttpContext, type ProductHttpContext } from './product-context.js';
+import { signPeerToolRequest } from './peer-tool-proof.js';
 import { signUiSend } from './ui-send-proof.js';
 
 const secret = 'desktop-only-boot-secret-of-at-least-32-bytes';
@@ -26,12 +27,17 @@ it.each([
 ])('fails closed when UI send secret is $name', ({ secret: uiSendSecret }) => {
   dataDir = mkdtempSync(join(tmpdir(), 'zcc-ui-send-context-'));
   ctx = createProductHttpContext({ dataDir, origins: { serverPort: 0 }, uiSendSecret });
+  expect(ctx.verifyPeerTool).toBeUndefined();
   expect(ctx.verifyUiSend(signUiSend(secret, 'thread', 'item'), 'thread', 'item')).toBe(false);
 });
 
 it('accepts only signed, single-use UI sends with a configured boot secret', () => {
   dataDir = mkdtempSync(join(tmpdir(), 'zcc-ui-send-context-'));
   ctx = createProductHttpContext({ dataDir, origins: { serverPort: 0 }, uiSendSecret: secret });
+  const body = JSON.stringify({ name: 'list_agents' });
+  const peerProof = signPeerToolRequest(secret, body);
+  expect(ctx.verifyPeerTool?.(peerProof, body)).toBe(true);
+  expect(ctx.verifyPeerTool?.(peerProof, body)).toBe(false);
   const proof = signUiSend(secret, 'thread', 'item');
   expect(ctx.verifyUiSend(proof, 'thread', 'other-item')).toBe(false);
   expect(ctx.verifyUiSend(proof, 'thread', 'item')).toBe(true);

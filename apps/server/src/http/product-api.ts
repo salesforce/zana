@@ -1,3 +1,5 @@
+import { handleThreadPeerReviewApi } from './thread-peer-review-api.js';
+import { handlePeerToolsApi } from './peer-tools-api.js';
 import { listNativeCapabilities } from "../services/skills/native-capabilities.js";
 import { handleHelpVideosApi } from './help-videos-api.js';
 import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
@@ -589,6 +591,8 @@ export async function handleProductHttp(
     if (await handleMachineProjectApi(request, response, ctx, path, method)) return true;
     if (await handleNotificationsApi(request, response, ctx, path, method, requestUrl)) return true;
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
+    if (await handlePeerToolsApi(request, response, ctx, path, method)) return true;
+    if (await handleThreadPeerReviewApi(request, response, ctx, path, method)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {
       sendJson(response, 200, { projects: ctx.projects.list() });

@@ -29,7 +29,7 @@ vi.mock('./thread-provider-catalog.js', () => ({
 vi.mock('./conversation-execution-mode.js', () => ({ claudeCodePermissionModeForTurn: vi.fn() }));
 vi.mock('./thread-permission-mode.js', () => ({ threadPermissionMode: vi.fn(() => 'auto') }));
 vi.mock('./thread-last-execution.js', () => ({ readLastThreadExecution: vi.fn(() => ({})) }));
-vi.mock('./thread-automated-skill-selection.js', () => ({ threadAutomatedSkillIds: vi.fn(() => undefined) }));
+vi.mock('./thread-automated-skill-selection.js', () => ({ threadAutomatedSkillIds: vi.fn(() => undefined), threadSkillSelection: vi.fn(() => ({})) }));
 
 import { resumeConversationStrict, StrictResumeError } from './conversation-host-rpc.js';
 

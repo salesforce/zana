@@ -32,6 +32,7 @@ export async function packConversationSessionTooling(
     args
   );
   return mergeHostSessionTooling(packed, {
+    threadCommunicationEnabled: ctx.config?.getConfig?.().threadCommunicationEnabled !== false,
     remoteSurface: ctx.db ? remoteInteractionSurface(ctx.db, args.threadId) : null,
     inAppAgentTerminalsEnabled: ctx.config?.getConfig?.().inAppAgentTerminalsEnabled === true
   });

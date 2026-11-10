@@ -66,7 +66,7 @@ it('rechecks configuration and volume at fire time', () => {
   sounds.observe('a', 'working'); sounds.observe('a', 'idle'); settle();
   expect(play).toHaveBeenCalledExactlyOnceWith('idle', 100);
 });
-it('coalesces fleet bursts separately for each chime and allows later notifications', () => {
+it('coalesces fleet bursts but prioritizes input requests over idle chimes', () => {
   for (const id of ['a', 'b']) { sounds.observe(id, 'working'); sounds.observe(id, 'blocked'); }
   expect(play).toHaveBeenCalledOnce();
   sounds.observe('c', 'working'); sounds.observe('c', 'idle'); settle();
@@ -98,4 +98,32 @@ describe('volume normalization', () => {
   it.each([[undefined, 50], [null, 50], ['80', 50], [NaN, 50], [Infinity, 50], [-1, 0], [101, 100], [43.6, 44]])('%j becomes %s', (input, expected) => {
     expect(normalizeAgentSoundVolume(input)).toBe(expected);
   });
+});
+
+it('cancels built-in idle sounds when a plugin owns audio and honors the explicit master', () => {
+  sounds.observe('a', 'working'); sounds.observe('a', 'idle');
+  Object.assign(config, { notificationSoundProvider: 'other/voice' }); sounds.refresh(); settle(); expect(play).not.toHaveBeenCalled();
+  sounds.observe('a', 'blocked'); expect(play).not.toHaveBeenCalled();
+  Object.assign(config, { notificationSoundProvider: 'builtin', notificationSoundsEnabled: false });
+  sounds.observe('a', 'working'); sounds.observe('a', 'blocked'); expect(play).not.toHaveBeenCalled();
+  Object.assign(config, { notificationSoundsEnabled: true });
+  sounds.observe('a', 'working'); sounds.observe('a', 'blocked'); expect(play).toHaveBeenCalledWith('needs-you', 50);
+});
+
+it('keeps explicit completion separate from idle, coalesces a confirmed completion with pending idle, and never replays baselines', () => {
+  config.agentSoundDone = true;
+  sounds.observe('restored', 'done'); expect(play).not.toHaveBeenCalled();
+  sounds.observe('a', 'working'); sounds.observe('a', 'idle'); sounds.observe('a', 'done'); settle();
+  expect(play).toHaveBeenCalledExactlyOnceWith('done', 50);
+  sounds.observe('a', 'idle'); settle(); expect(play).toHaveBeenCalledOnce();
+  sounds.observe('a', 'working'); sounds.observe('a', 'done'); expect(play).toHaveBeenCalledTimes(2);
+});
+it('uses fleet-wide quiet spacing across different events and rechecks it for future cues', () => {
+  config.agentSoundDone = true; config.agentSoundSpacingSeconds = 10;
+  sounds.observe('a', 'working'); sounds.observe('a', 'done');
+  sounds.observe('b', 'working'); sounds.observe('b', 'blocked'); expect(play).toHaveBeenCalledTimes(2);
+  sounds.observe('b', 'working'); sounds.observe('b', 'blocked'); expect(play).toHaveBeenCalledTimes(2);
+  vi.advanceTimersByTime(10_000); sounds.observe('b', 'working'); sounds.observe('b', 'blocked'); expect(play).toHaveBeenCalledTimes(3);
+  config.agentSoundSpacingSeconds = NaN; vi.advanceTimersByTime(2_000);
+  sounds.observe('a', 'working'); sounds.observe('a', 'done'); expect(play).toHaveBeenCalledTimes(4);
 });

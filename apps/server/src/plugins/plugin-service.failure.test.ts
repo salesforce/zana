@@ -75,11 +75,11 @@ describe('plugin service responsiveness failures', () => {
     vi.useRealTimers();
   });
 
-  it('restarts a watchdog-stalled plugin once the backoff expires', async () => {
+  it.each(['Plugin event loop stopped responding', 'Plugin API call timed out'])('restarts a plugin after %s once the backoff expires', async message => {
     vi.useFakeTimers();
     const { service, plugin } = fixture();
     const row = await service.install(plugin);
-    state.runtimes[0].options.onFailure(Error('Plugin event loop stopped responding'));
+    state.runtimes[0].options.onFailure(Error(message));
     await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('degraded'));
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('running'));

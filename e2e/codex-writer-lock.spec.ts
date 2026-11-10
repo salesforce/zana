@@ -47,6 +47,43 @@ test.afterEach(async ({ app }, info) => {
   await info.attach('thread-state', { body: JSON.stringify(data, null, 2), contentType: 'application/json' });
 });
 
+for (const codexErrorInfo of ['modelNotFound', { futureVariant: {} }]) {
+  test(`Codex terminal error ${JSON.stringify(codexErrorInfo)} settles through built Electron`, async ({ app }) => {
+    const { window, home } = app;
+    const error = { message: 'Fixture terminal failure', codexErrorInfo, additionalDetails: null };
+    writeFileSync(join(home, 'codex-script.json'), JSON.stringify({ turns: [[
+      { method: 'turn/started', params: { threadId: 'fixture', turn: { id: 'turn-fx-1', status: 'inProgress' } } },
+      { method: 'error', params: { threadId: 'fixture', turnId: 'turn-fx-1', error, willRetry: false } },
+      { method: 'turn/completed', params: { threadId: 'fixture', turn: { id: 'turn-fx-1', status: 'failed', error } } },
+    ]] }));
+    const root = join(home, 'codex-error-project');
+    mkdirSync(root);
+    const threadId = await window.evaluate(async path => {
+      const project = await window.cc.projects.add(path);
+      if (!project.ok) throw new Error(project.message);
+      const response = await fetch('/api/v1/threads', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: project.value.id, providerId: 'codex', input: 'Fail this turn', permissionMode: 'full' }) });
+      if (!response.ok) throw new Error(await response.text());
+      return (await response.json()).thread.id as string;
+    }, root);
+    await window.evaluate(id => {
+      history.pushState({}, '', `/threads/${id}`);
+      dispatchEvent(new PopStateEvent('popstate'));
+    }, threadId);
+    const timeline = window.getByTestId('thread-timeline');
+    if (codexErrorInfo === 'modelNotFound') {
+      await timeline.getByRole('button', { name: 'Provider rejected request', exact: true }).click();
+    }
+    await expect(timeline).toContainText('Fixture terminal failure');
+    await expect.poll(() => window.evaluate(async id => {
+      const response = await fetch(`/api/v1/threads/${id}`);
+      if (!response.ok) throw new Error(await response.text());
+      return (await response.json()).thread.status;
+    }, threadId)).toBe('error');
+    await expect(window.getByTestId('thread-command-input')).toBeEditable();
+  });
+}
+
 test('Codex writer contention retries through the built provider and composer', async ({ app }) => {
   test.setTimeout(120_000);
   const { window, home } = app;

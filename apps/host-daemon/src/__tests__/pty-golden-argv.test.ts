@@ -377,6 +377,20 @@ describe('golden argv — auto-mode + overseer variants', () => {
     expect(normalize({ args: call.args, sessionEnv: pickSessionEnv(call.env) })).toMatchSnapshot();
   });
 
+  it('skillSettings ride the --settings payload without disturbing the unset case', () => {
+    const run = (skillSettings?: { skillOverrides: Record<string, 'off'> }) => {
+      spawns.length = 0;
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl(MCP_BASE);
+      mgr.create({ projectId: 'proj1', profile: 'claude', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG, ...(skillSettings ? { skillSettings } : {}) });
+      const args = spawns[0].args as string[];
+      const i = args.indexOf('--settings');
+      return i >= 0 ? JSON.parse(args[i + 1] as string) : {};
+    };
+    expect(run().skillOverrides).toBeUndefined();
+    expect(run({ skillOverrides: { drop: 'off' } }).skillOverrides).toEqual({ drop: 'off' });
+  });
+
   it('auto-mode classifier trust block via config lists', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl(MCP_BASE);
@@ -664,6 +678,21 @@ describe('inherited parent-session callback env', () => {
       expect(call.env.ZCC_MCP_URL).toContain(`${MCP_BASE}/mcp/proj1/${session.id}/`);
       expect(call.env.ZCC_NOTIFY_URL).toContain(session.id);
     });
+  });
+
+  it('remote claude launch carries skillSettings in the remote command only when set', () => {
+    const run = (skillSettings?: { skillOverrides: Record<string, 'off'> }) => {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl(MCP_BASE);
+      mgr.create({
+        projectId: 'proj1', profile: 'claude', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG,
+        remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' },
+        ...(skillSettings ? { skillSettings } : {})
+      });
+      return (spawns[spawns.length - 1]!.args as string[]).join(' ');
+    };
+    expect(run()).not.toContain('skillOverrides');
+    expect(run({ skillOverrides: { dropme: 'off' } })).toContain('dropme');
   });
 
   it('a remote ssh launch does not carry the parent callback URLs on the local ssh env', () => {

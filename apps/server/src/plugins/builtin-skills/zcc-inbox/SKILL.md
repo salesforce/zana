@@ -56,7 +56,7 @@ use. Add `notify: true` so the run reports back to you.
 
 | User says (examples) | Path | Tools |
 |---|---|---|
-| "build it with X" | Review first | `squad_plan_check` → `list_teams` → `squad_launch` with `mode: 'review'` |
+| "build it with X" | Review first | `squad_plan_check` → `list_teams` → `squad_plan_check` with `teamId` (advisory `tierFit`) → `squad_launch` with `mode: 'review'` |
 | "run this with X now" | Start now | `squad_launch` with `mode: 'now'` |
 | Anything else, or unclear | Review first | `squad_launch` with `mode: 'review'` |
 

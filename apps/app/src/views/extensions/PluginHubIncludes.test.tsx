@@ -251,3 +251,11 @@ describe('PluginHubIncludes', () => {
     expect(screen.getByText('Side-panel tabs (1)')).toBeTruthy();
   });
 });
+
+it('lists registered sound providers as a plugin contribution', () => {
+  interpretPluginApp('hello', definePluginApp(app => {
+    app.slots.notificationSoundProvider({ id: 'alerts', title: 'Hello sounds', component: () => null, mount: () => () => {} });
+  }));
+  render(<MemoryRouter><PluginHubIncludes plugin={{ id: 'hello', name: 'Hello', icon: 'Puzzle', description: '', enabled: true, provenance: 'direct', status: 'running', appUrl: null }} /></MemoryRouter>);
+  expect(screen.getByText('Notification sound providers (1)')).toBeTruthy();
+});

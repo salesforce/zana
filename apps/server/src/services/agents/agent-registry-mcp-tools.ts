@@ -102,6 +102,7 @@ export const findAgentInputSchema = {
 };
 
 export interface RegisterAgentToolsOpts {
+  threadPeers?: (name: 'list_agents' | 'find_agent', input: unknown) => Promise<unknown>;
   /** Originating session id, from the URL route. Server-filled identity. */
   sessionId: string;
   /** Originating project id, from the URL route. Server-filled identity. */
@@ -150,13 +151,21 @@ export function registerAgentRegistryTools(server: McpServer, opts: RegisterAgen
     { description: REGISTER_AGENT_DESCRIPTION, inputSchema: registerAgentInputSchema },
     async ({ handle, role, capabilities }) => {
       try {
+        // Native threads share the public handle namespace. Resolve collisions
+        // before the CLI registry applies its own session-local deduplication.
+        let chosen = handle;
+        if (!teamLaunchId && opts.threadPeers) {
+          const threads = await opts.threadPeers('list_agents', {}).catch(() => []);
+          const taken = new Set(Array.isArray(threads) ? threads.map(peer => peer.handle) : []);
+          for (let suffix = 2; taken.has(chosen); suffix++) chosen = `${handle}-${suffix}`;
+        }
         const record = registry.upsert({
           sessionId,
           projectId,
           // The session is live (the route resolved), but guard anyway: an
           // empty cwd is harmless metadata, never an identity decision.
           cwd: cwd ?? '',
-          handle,
+          handle: chosen,
           role,
           capabilities,
           teamLaunchId
@@ -189,7 +198,9 @@ export function registerAgentRegistryTools(server: McpServer, opts: RegisterAgen
           // show peers from the same squad (unless widening to all projects).
           .filter((r) => allProjects || !teamLaunchId || r.teamLaunchId === teamLaunchId)
           .map(toPeerView);
-        return { content: [{ type: 'text' as const, text: JSON.stringify(peers, null, 2) }] };
+        const threads = !teamLaunchId && opts.threadPeers
+          ? await opts.threadPeers('list_agents', { allProjects }).catch(() => []) : [];
+        return { content: [{ type: 'text' as const, text: JSON.stringify([...peers, ...(Array.isArray(threads) ? threads : [])].slice(0, 200), null, 2) }] };
       } catch (err) {
         return toolError('list_agents', err);
       }
@@ -211,7 +222,9 @@ export function registerAgentRegistryTools(server: McpServer, opts: RegisterAgen
           })
           .filter((r) => r.sessionId !== sessionId)
           .map(toPeerView);
-        return { content: [{ type: 'text' as const, text: JSON.stringify(matches, null, 2) }] };
+        const threads = !teamLaunchId && opts.threadPeers
+          ? await opts.threadPeers('find_agent', { handle, role, capability, allProjects }).catch(() => []) : [];
+        return { content: [{ type: 'text' as const, text: JSON.stringify([...matches, ...(Array.isArray(threads) ? threads : [])].slice(0, 200), null, 2) }] };
       } catch (err) {
         return toolError('find_agent', err);
       }

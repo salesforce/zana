@@ -34,7 +34,7 @@ const queued = { ok: true, items: [{ id: 'selected', status: 'queued', text: 'Tr
 function stubReads(queue: unknown = queued, threadResult: unknown = thread) {
   const fetchMock = vi.fn(async (url: URL, init?: RequestInit) => {
     if (init?.method === 'POST') return Response.json({ ok: true });
-    return Response.json(url.pathname.endsWith('/next-turn') ? queue : threadResult);
+    return Response.json(url.pathname.endsWith('/next-turn') || url.pathname.endsWith('/peer-messages') ? queue : threadResult);
   });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
@@ -43,6 +43,14 @@ function stubReads(queue: unknown = queued, threadResult: unknown = thread) {
 describe('native queued-send confirmation', () => {
   beforeEach(() => { vi.clearAllMocks(); showMessageBox.mockResolvedValue({ response: 1 }); });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.clearAllMocks(); });
+  it('confirms server-owned peer content and signs the exact peer ID and revision', async () => {
+    const fetchMock = stubReads({ ok: true, items: [{ id: 'peer_1', status: 'pending', text: 'Review parser.ts', updatedAt: 7, to: 'CLI Reviewer' }] });
+    await expect(sendQueuedMessageNow(win, 'thread-1', 'peer_1')).resolves.toEqual({ ok: true });
+    expect(showMessageBox.mock.calls[0][1]).toMatchObject({ title: 'Deliver peer message?', message: 'Deliver peer message to CLI Reviewer?', buttons: ['Cancel', 'Deliver'], detail: expect.stringContaining('existing tools and permissions') });
+    expect(signUiSend).toHaveBeenCalledWith(expect.any(String), 'thread-1', 'peer_1');
+    expect(fetchMock.mock.calls.at(-1)![0].pathname).toBe('/api/v1/threads/thread-1/peer-messages/peer_1/send');
+    expect(fetchMock.mock.calls.at(-1)![1]?.body).toBe(JSON.stringify({ confirmed: true, expectedUpdatedAt: 7 }));
+  });
 
   it('stamps phone approval with main credentials and the mobile surface', () => {
     expect(signMobileQueuedSend('thread-1', 'selected')).toBe('signed-proof');

@@ -1,0 +1,1 @@
+{ "mcpServers": { "fixture-mcp": { "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server.cjs"] } } }

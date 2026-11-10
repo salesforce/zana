@@ -1,9 +1,9 @@
-import { isDurableCoordination, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, isOrchestratorSlotId, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, LOOP_LIMIT_BLOCKER_PREFIX, slotRouteSnapshot, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, unitSlotEligibility, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -14,7 +14,6 @@ import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-watchdog.js';
 import { PlanReadinessWatchdog, type PlanReadinessExpiryReason } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
-import { evaluateSlotEligibility } from './routing-policy.js';
 import { transitionCircuit, type CircuitState } from './retry-policy.js';
 import { usageCursorIdentity, usageRollup, validateStructuredJson, validateStructuredResult, type ExecutionUsageObservationV1, type UsageSampleKind } from './contracts.js';
 import { CoordinatorWakeConfirmations, type CoordinatorWakeConfirmation, type PendingWakeConfirmation } from './coordinator-wake-confirmation.js';
@@ -416,7 +415,7 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
   const orchestratorSessionId = launchResult?.orchestratorSessionId || lifecycle.orchestratorSessionId;
 
   const workers = lifecycle.workers || launchResult?.workers;
-  const orchestratorWorker = workers?.find((w: any) => w.slotId === 'orchestrator' || w.slotId?.startsWith('orchestrator:'));
+  const orchestratorWorker = workers?.find((w: any) => w.slotId && isOrchestratorSlotId(w.slotId));
   const orchestratorAuthorizationId = orchestratorWorker?.authorizationId || lifecycle.orchestratorAuthorizationId;
 
   return {
@@ -939,7 +938,8 @@ export class ExecutionService {
         slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
         level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
         modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
-        observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
+        observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
+        ...(model.skillAllowlist === undefined ? {} : { skillAllowlist: model.skillAllowlist })
       }))
     };
   }
@@ -1284,7 +1284,7 @@ export class ExecutionService {
       // EVERY distinct worker slot has been exhausted (or a single-worker team) does
       // the store throw here and we fall through to the human block below.
       try {
-        await this.deps.store.reassignKickoffToFreshSlot(reclaimed.id, unit.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(reclaimed) === true });
+        await this.deps.store.reassignKickoffToFreshSlot(reclaimed.id, unit.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(reclaimed) === true, ...await this.deferredDispatchOpts(reclaimed) });
         changed = true;
         continue; // reassigned to a fresh slot — the caller's cascadeDispatch redispatches it
       } catch (error) {
@@ -1680,7 +1680,7 @@ export class ExecutionService {
     }
     try {
       const routed = await this.refreshRouteFacts(record);
-      const { record: updated, assignments } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true });
+      const { record: updated, assignments } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true, ...await this.deferredDispatchOpts(routed) });
       await this.pushAssignments(updated, assignments);
       await this.maybeAutoFinalize(updated.id);
       return { ok: true as const, value: updated };
@@ -1851,6 +1851,24 @@ export class ExecutionService {
   }
 
   /**
+   * Seats that start on demand and have not started (D11): authorized, CLI, no session.
+   * Dispatch ranks them after live seats at equal price. A failed lifecycle read is
+   * best-effort: no deferred hint, so selection falls back to price then roster order.
+   */
+  private async deferredDispatchOpts(record: ExecutionRecord): Promise<{ deferredSlotIds?: ReadonlySet<string> }> {
+    try {
+      const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+      const ids = (lifecycle?.workers ?? [])
+        .filter((worker) => worker.projectId === record.projectId && worker.process === 'authorized' && !worker.sessionId && worker.onDemand === true && (worker as { transport?: string }).transport !== 'MODERN')
+        .flatMap((worker) => worker.slotId ? [worker.slotId] : []);
+      return ids.length ? { deferredSlotIds: new Set(ids) } : {};
+    } catch (error) {
+      (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution ${record.id} deferred-seat lookup failed (team launch ${record.teamLaunchRequestId}); dispatching without deferred hint`, error);
+      return {};
+    }
+  }
+
+  /**
    * After a unit closes (freeing a slot and satisfying dependents), auto-assign
    * the newly-ready units and push them — the engine schedules the DAG so the
    * coordinator stays out of the per-unit relay. Best-effort: a cascade failure
@@ -1864,7 +1882,8 @@ export class ExecutionService {
       if (existing.resourceBlock || this.checkUsageBudget(existing)) return;
       const routed = await this.refreshRouteFacts(existing);
       const { record, assignments } = await this.deps.store.dispatchReady(routed.id, {
-        ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true
+        ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true,
+        ...await this.deferredDispatchOpts(routed)
       });
       await this.pushAssignments(record, assignments);
       if (this.deps.routingEnforcementEnabled?.(record) === true) await this.maybeAutoFinalize(record.id);
@@ -2011,7 +2030,7 @@ export class ExecutionService {
     const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
     const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
     if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization
-      && evaluateSlotEligibility(unit.routing, slotRouteSnapshot(authorization, model)).status !== 'PASS') return 'release';
+      && unitSlotEligibility(unit, authorization, model).status !== 'PASS') return 'release';
     return { sessionId: worker.sessionId };
   }
 
@@ -2997,7 +3016,7 @@ export class ExecutionService {
       try {
         const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
         const slotId = value.deliveries?.find(delivery => delivery.id === deliveryId)?.slotId;
-        const sessionId = slotId === 'orchestrator' || slotId?.startsWith('orchestrator:')
+        const sessionId = slotId && isOrchestratorSlotId(slotId)
           ? lifecycle?.orchestratorSessionId
           : lifecycle?.workers?.find(worker => worker.slotId === slotId && worker.projectId === record.projectId)?.sessionId;
         if (sessionId) this.deps.triggerDeliveryDrain?.(sessionId);
@@ -3372,7 +3391,7 @@ export class ExecutionService {
     const rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
     const lifecycle = extractLifecycleInfo(rawLifecycle);
     let targetSessionId: string | undefined;
-    if (blocker.slotId === 'orchestrator' || blocker.slotId.startsWith('orchestrator:')) {
+    if (isOrchestratorSlotId(blocker.slotId)) {
       targetSessionId = lifecycle?.orchestratorSessionId;
     } else {
       const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === blocker.slotId && candidate.projectId === record.projectId);
