@@ -23,7 +23,10 @@ export function humanBlockerDenial(record: ExecutionRecord, blocker: Pick<Blocke
   const intent = record.noticeIntents?.find((candidate) => candidate.blockerId === blocker.id);
   const prefix = 'blocker requires owner resolution: the owner answers it in the Inbox';
   const subject = displayedSubject(record);
-  if (intent?.inboxItemId) return `${prefix} card "${subject}" (Inbox entry ${intent.inboxItemId}). Tell the owner to answer that card; do not retry.`;
-  if (intent?.status === 'PENDING') return `${prefix} once its card appears (blocker ${blocker.id}). Tell the owner to answer that card when it shows up; do not retry.`;
-  return `${prefix} card "${subject}" (blocker ${blocker.id}). Tell the owner to answer that card; do not retry.`;
+  const ids = `blocker ${blocker.id}, execution ${record.id}`;
+  // Same answer path as the Execution board's respond (ExecutionJobDetails -> executionBoard.respond -> respondToBlocker).
+  const board = `if there is none, answer blocker ${blocker.id} from the Squad's Execution board`;
+  if (intent?.inboxItemId) return `${prefix} card "${subject}" (Inbox entry ${intent.inboxItemId}, ${ids}). Tell the owner to answer that card; do not retry.`;
+  if (intent?.status === 'PENDING') return `${prefix} once its card appears (${ids}). Tell the owner to answer that card when it shows up; ${board}; do not retry.`;
+  return `${prefix}: look for the card "${subject}" (${ids}); ${board}. Tell the owner this; do not retry.`;
 }

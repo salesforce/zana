@@ -136,7 +136,8 @@ describe('SquadExecutionService API-error recovery hooks', () => {
 
     expect(denied).toMatchObject({ ok: false, code: 'DENIED' });
     const message = (denied as { message: string }).message;
-    expect(message).toContain(`card "Build release" (blocker ${blocker.id})`);
+    expect(message).toContain(`look for the card "Build release" (blocker ${blocker.id}, execution execution-1)`);
+    expect(message).toContain("from the Squad's Execution board");
     expect(message).not.toContain('once its card appears');
     expect((await store.get('execution-1'))?.deliveries ?? []).toEqual([]);
   }));
