@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   CMD_COMMAND_LINE_LIMIT,
@@ -130,7 +131,78 @@ describe('windowsDirectLaunch', () => {
   });
 });
 
+describe('windowsDirectLaunch with package-manager shims', () => {
+  const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'windows-shims');
+  // A global npm folder like %APPDATA%\npm, with codex installed under it.
+  const npmDir = join(root, "npm o'brien");
+  const codexJs = join(npmDir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  mkdirSync(dirname(codexJs), { recursive: true });
+  writeFileSync(codexJs, '');
+  const codexCmd = join(npmDir, 'codex.cmd');
+  copyFileSync(join(fixtures, 'npm-codex.cmd'), codexCmd);
+  const nodeDir = join(root, 'nodejs');
+  mkdirSync(nodeDir);
+  const node = join(nodeDir, 'node.exe');
+  writeFileSync(node, 'MZ');
+  const env = { PATH: `${npmDir};${nodeDir}`, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
+  const args = ['-c', 'developer_instructions="a & b | c %PATH% ^ \u2019x\u2019"', 'say hi'];
+
+  it('runs the real npm codex.cmd as node.exe <codex.js> with every argument verbatim', () => {
+    expect(windowsDirectLaunch(codexCmd, args, 'win32', env)).toEqual({ command: node, args: [codexJs, ...args] });
+  });
+
+  it('prefers node.exe next to the shim, as the shim does', () => {
+    const local = join(npmDir, 'node.exe');
+    writeFileSync(local, 'MZ');
+    try {
+      expect(windowsDirectLaunch(codexCmd, ['x'], 'win32', env)).toEqual({ command: local, args: [codexJs, 'x'] });
+    } finally {
+      rmSync(local);
+    }
+  });
+
+  it('carries the pnpm NODE_PATH in env', () => {
+    const pnpmBin = join(root, 'proj', 'node_modules', '.bin');
+    const cli = join(pnpmBin, '..', '@fixture', 'echo-cli', 'bin', 'echo-cli.js');
+    mkdirSync(dirname(cli), { recursive: true });
+    mkdirSync(pnpmBin, { recursive: true });
+    writeFileSync(cli, '');
+    const shimPath = join(pnpmBin, 'echo-cli.CMD');
+    copyFileSync(join(fixtures, 'pnpm-node-path.cmd'), shimPath);
+    const launch = windowsDirectLaunch(shimPath, ['x'], 'win32', env);
+    expect(launch).toMatchObject({ command: node, args: [cli, 'x'] });
+    expect(launch.env?.NODE_PATH).toMatch(/^C:\\proj\\node_modules\\\.pnpm\\@fixture\+echo-cli@file/);
+  });
+
+  it('keeps the shim when node can only be found as a node.cmd, or not at all, or the script is gone', () => {
+    const nvm = join(root, 'nvm');
+    mkdirSync(nvm);
+    writeFileSync(join(nvm, 'node.cmd'), '@echo off');
+    expect(windowsDirectLaunch(codexCmd, ['x'], 'win32', { PATH: `${nvm};${nodeDir}` })).toEqual({ command: codexCmd, args: ['x'] });
+    expect(windowsDirectLaunch(codexCmd, ['x'], 'win32', { PATH: npmDir })).toEqual({ command: codexCmd, args: ['x'] });
+    const orphan = join(root, 'orphan', 'codex.cmd');
+    mkdirSync(dirname(orphan));
+    copyFileSync(join(fixtures, 'npm-codex.cmd'), orphan);
+    expect(windowsDirectLaunch(orphan, ['x'], 'win32', env)).toEqual({ command: orphan, args: ['x'] });
+  });
+
+  it('keeps a /bin/sh shim on cmd.exe', () => {
+    const sh = join(npmDir, 'run.cmd');
+    copyFileSync(join(fixtures, 'npm-sh.cmd'), sh);
+    expect(windowsDirectLaunch(sh, ['x'], 'win32', env)).toEqual({ command: sh, args: ['x'] });
+  });
+
+  it.each(['darwin', 'linux'] as const)('is identity on %s', (platform) => {
+    expect(windowsDirectLaunch(codexCmd, ['x'], platform, env)).toEqual({ command: codexCmd, args: ['x'] });
+  });
+});
+
 describe('forwardingShimTarget cache', () => {
+  it('returns null for a package-manager shim', () => {
+    const path = shim(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'windows-shims', 'npm-exe.cmd'), 'utf8'));
+    expect(forwardingShimTarget(path)).toBeNull();
+  });
+
   it('re-reads a shim after it changes and caches a miss', () => {
     const path = shim('@echo off\r\nsetlocal\r\n');
     expect(forwardingShimTarget(path)).toBeNull();

@@ -2202,13 +2202,19 @@ export class PtyManager extends EventEmitter {
       microVmMemoryMib: opts.microVmMemoryMib
     };
     const wrapped = execEnv.wrap({ command, args: fullArgs }, envCtx);
-    // On Windows a trivial `.cmd` forwarder (`@"…\claude.exe" %*`) earlier on
-    // PATH than the exe would route the launch through cmd.exe and its
-    // 8191-character cap; run the exe it forwards to instead. Identity off win32.
-    const inner = {
-      ...wrapped,
-      ...windowsDirectLaunch(resolveHarnessCommand(wrapped.command, env.PATH), wrapped.args)
-    };
+    // On Windows a `.cmd` shim would route the launch through cmd.exe and its
+    // 8191-character cap: a trivial forwarder (`@"…\claude.exe" %*`) earlier
+    // on PATH than the exe, or an npm/pnpm/yarn shim (`codex.cmd`, which runs
+    // `node.exe <script> %*`). Run the program it runs instead, with the env
+    // change the shim makes (pnpm's NODE_PATH). Identity off win32.
+    const { env: shimEnv, ...direct } = windowsDirectLaunch(
+      resolveHarnessCommand(wrapped.command, env.PATH),
+      wrapped.args,
+      process.platform,
+      env
+    );
+    if (shimEnv) Object.assign(env, shimEnv);
+    const inner = { ...wrapped, ...direct };
     const isolationStatus = execEnv.status(envCtx);
     // Callback-env rewrite: identity for local/sandbox (a sandboxed process shares
     // the host loopback, so the 127.0.0.1 callbacks resolve unchanged). Invoked

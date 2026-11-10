@@ -10,7 +10,9 @@
  * characters and passes arguments without a shell.
  *
  * - {@link windowsDirectLaunch} replaces a trivial forwarding shim with the
- *   executable it forwards to, keeping the shim's literal leading arguments.
+ *   executable it forwards to, keeping the shim's literal leading arguments,
+ *   and a package-manager shim (npm, pnpm, yarn: `codex.cmd`) with the
+ *   `node.exe <script>` it runs (see `windows-npm-shim.ts`).
  * - {@link assertWindowsCommandLineFits} fails before spawning, with a message
  *   naming the limit, when the command line still can't fit.
  *
@@ -19,13 +21,18 @@
 
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
+import { isFile, packageManagerShimLaunch, parsePackageManagerShim, type PackageManagerShim } from './windows-npm-shim.js';
 
 /** cmd.exe's maximum command-line length. */
 export const CMD_COMMAND_LINE_LIMIT = 8191;
 /** CreateProcess's maximum command-line length in characters, excluding the terminating NUL. */
 export const CREATE_PROCESS_COMMAND_LINE_LIMIT = 32766;
-/** Forwarding shims are a few hundred bytes; anything larger isn't one. */
-export const SHIM_READ_CAP = 4096;
+/**
+ * Shims are a few hundred bytes; a pnpm shim repeats its `NODE_PATH` (three
+ * store paths) twice, about 1 KB on a typical checkout. Anything larger isn't a
+ * shim this module unwraps.
+ */
+export const SHIM_READ_CAP = 16_384;
 const SHIM_CACHE_MAX = 64;
 
 const BATCH_RE = /\.(cmd|bat)$/i;
@@ -33,6 +40,8 @@ const BATCH_RE = /\.(cmd|bat)$/i;
 export interface WindowsLaunch {
   command: string;
   args: string[];
+  /** Environment changes the unwrapped shim would have made (pnpm's `NODE_PATH`). */
+  env?: Record<string, string>;
 }
 
 export interface ShimTarget {
@@ -40,10 +49,15 @@ export interface ShimTarget {
   leadingArgs: string[];
 }
 
+/** What a shim's text parsed as: a one-line forwarder or a package-manager template. */
+type ParsedShim =
+  | { kind: 'forward'; target: ShimTarget }
+  | { kind: 'package-manager'; shim: PackageManagerShim };
+
 interface CacheEntry {
   mtimeMs: number;
   size: number;
-  target: ShimTarget | null;
+  parsed: ParsedShim | null;
 }
 
 const shimCache = new Map<string, CacheEntry>();
@@ -51,14 +65,6 @@ const shimCache = new Map<string, CacheEntry>();
 /** Test-only: forget memoised shim parses. */
 export function resetWindowsShimCacheForTests(): void {
   shimCache.clear();
-}
-
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
 }
 
 function readHead(path: string, size: number): string {
@@ -158,11 +164,10 @@ export function parseForwardingShim(text: string, shimPath: string): ShimTarget 
 
 /**
  * Parse `shimPath`, memoised by path + mtime + size (bounded), so repeated
- * launches cost two `stat`s. Shims over {@link SHIM_READ_CAP} bytes aren't
- * read. The target's existence is checked on every call, not cached, so an
- * exe installed or removed after the first launch is seen.
+ * launches cost one `stat`. Shims over {@link SHIM_READ_CAP} bytes aren't
+ * read. Only the text parse is cached; callers check the files it names.
  */
-export function forwardingShimTarget(shimPath: string): ShimTarget | null {
+function parsedShim(shimPath: string): ParsedShim | null {
   let stat;
   try {
     stat = statSync(shimPath);
@@ -170,38 +175,57 @@ export function forwardingShimTarget(shimPath: string): ShimTarget | null {
     return null;
   }
   const cached = shimCache.get(shimPath);
-  let target: ShimTarget | null;
-  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-    target = cached.target;
-  } else {
-    target = null;
-    if (stat.isFile() && stat.size <= SHIM_READ_CAP) {
-      try {
-        target = parseShimText(readHead(shimPath, stat.size), shimPath);
-      } catch {
-        target = null;
-      }
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.parsed;
+  let parsed: ParsedShim | null = null;
+  if (stat.isFile() && stat.size <= SHIM_READ_CAP) {
+    try {
+      const text = readHead(shimPath, stat.size);
+      const target = parseShimText(text, shimPath);
+      const shim = target ? null : parsePackageManagerShim(text, dirname(shimPath));
+      parsed = target ? { kind: 'forward', target } : shim ? { kind: 'package-manager', shim } : null;
+    } catch {
+      parsed = null;
     }
-    if (!cached && shimCache.size >= SHIM_CACHE_MAX) shimCache.delete(shimCache.keys().next().value!);
-    shimCache.set(shimPath, { mtimeMs: stat.mtimeMs, size: stat.size, target });
   }
-  return target && isFile(target.command) ? target : null;
+  if (!cached && shimCache.size >= SHIM_CACHE_MAX) shimCache.delete(shimCache.keys().next().value!);
+  shimCache.set(shimPath, { mtimeMs: stat.mtimeMs, size: stat.size, parsed });
+  return parsed;
 }
 
 /**
- * On win32, swap a trivial `.cmd`/`.bat` forwarder for the `.exe` it runs, so
- * the spawn skips cmd.exe (its 8191-character cap and argument re-parsing).
- * Any other command, and every command off win32, is returned unchanged.
+ * The exe a trivial forwarding shim runs, memoised (see {@link parsedShim}).
+ * The target's existence is checked on every call, not cached, so an exe
+ * installed or removed after the first launch is seen.
+ */
+export function forwardingShimTarget(shimPath: string): ShimTarget | null {
+  const parsed = parsedShim(shimPath);
+  return parsed?.kind === 'forward' && isFile(parsed.target.command) ? parsed.target : null;
+}
+
+/**
+ * On win32, swap a `.cmd`/`.bat` shim for the program it runs, so the spawn
+ * skips cmd.exe (its 8191-character cap and argument re-parsing):
+ * - a trivial forwarder becomes the `.exe` it forwards to;
+ * - a package-manager shim becomes `node.exe <script>`, with node resolved as
+ *   the shim does (its own folder's `node.exe`, else the first `node` on
+ *   `env.PATH`), plus any `NODE_PATH` it sets, in `env` of the result.
+ * Any other command, any shim whose files are missing, and every command off
+ * win32, is returned unchanged. `env` is the launch environment.
  */
 export function windowsDirectLaunch(
   command: string,
   args: string[],
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env
 ): WindowsLaunch {
   if (platform !== 'win32' || !BATCH_RE.test(command)) return { command, args };
-  const target = forwardingShimTarget(command);
-  if (!target) return { command, args };
-  return { command: target.command, args: [...target.leadingArgs, ...args] };
+  const parsed = parsedShim(command);
+  if (parsed?.kind === 'forward') {
+    const { target } = parsed;
+    return isFile(target.command) ? { command: target.command, args: [...target.leadingArgs, ...args] } : { command, args };
+  }
+  if (parsed?.kind !== 'package-manager') return { command, args };
+  return packageManagerShimLaunch(parsed.shim, args, env) ?? { command, args };
 }
 
 /**
