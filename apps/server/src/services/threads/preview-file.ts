@@ -110,7 +110,8 @@ export function openThreadFilePreview(deps: PreviewFileDeps, input: PreviewFileI
     const roots = effectivePreviewRoots(
       deps.dataDir,
       thread?.projectId,
-      deps.trustedPreviewFolders?.({ thread, projectId }) ?? []
+      deps.trustedPreviewFolders?.({ thread, projectId }) ?? [],
+      thread?.id
     );
     // Actual reads enforce realpath containment and byte caps separately.
     const match = matchPreviewRoots(roots, input.path)[0];

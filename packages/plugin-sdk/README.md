@@ -18,11 +18,33 @@ export default definePluginApp((app) => {
 });
 ```
 
-V1 slots: `navPanel`, `settingsSection`, `homepageSection`, `projectTab`,
+V1 slots: `navPanel`, `settingsSection`, `notificationSoundProvider`, `homepageSection`, `projectTab`,
 `sidebarFooterAction`, `projectStatusbarItem`, `pendingInteraction`. Experimental slots include
 `experimental_createProjectAction` (Add project menu) and
 `experimental_projectMenuAction` (Organize / row overflow). Open **Plugin Guide**
 for the full surface map.
+
+Background content scripts can observe generic agent activity without a page
+being open. Feature-detect the optional
+`context.experimental_observeAgents(listener)` and
+`context.experimental_onSignal(channel, listener)` methods. The first delivers
+an initial snapshot and changes from the main shell's existing stores, capped
+at 1,000 visible agents: ID, thread/CLI kind, and
+working/idle/needs-you/unknown state. It carries no prompts or output, and idle
+does not claim success. Treat `ready: false` as unavailable and reset any
+transition baseline; scoped windows remain unready. The second receives only
+this plugin's realtime channel. Both return an unsubscribe function and are
+also released on the script's abort signal. Return your own disposer for timers,
+audio and other resources, and coordinate across windows for effects that
+should happen only once. Older hosts omit these APIs.
+
+Users can select their own MP3, WAV, or OGG directly in Settings → Notifications,
+without installing or building a plugin. Sound Studio (`plugins/agent-sounds/`)
+is an optional forkable example for audio collections and custom playback rules. Users choose one notificationSoundProvider in
+Settings → Notifications; the host master gates that provider and built-in
+chimes. Legacy independent content scripts must migrate to participate. See the public
+[background activity and sound-plugin guide](../../docs/extensions-sdk-reference.md#background-activity-and-sound-plugins)
+for the contract and lifecycle.
 
 Question plugins should use the host's shared question UI instead of custom form controls.
 Register `pendingInteraction({ id, questionForm })`, where `questionForm(interaction)`
@@ -154,3 +176,11 @@ metadata. Compact display does not reduce model tokens. See `docs/context-refere
 ### Browser toolbar actions
 
 Register `app.slots.experimental_browserToolbarAction({ id, title, component })` to mount a control in each thread browser toolbar. The component receives `PluginBrowserToolbarActionProps`: a desktop-only `page` (`evaluate`, `onMessage`) and a thread-scoped `composer` (`insert`, `update`, `onSubmitted`, `focus`). Page expressions can use `bridge.postMessage(data)`; messages are untrusted and must be schema-validated by the plugin. Evaluation defaults to an isolated world, with an explicit main-world option for framework inspection. Main confines operations to an existing tab owned by the sender window and thread and refuses active control leases. Keep a reference's plugin source id equal to the supplied `pluginId`; update/remove uses that plugin's resource id. See `docs/thread-annotations.md` for lifecycle and limits.
+
+Sound plugins register app.slots.notificationSoundProvider({ id, title, component, mount }).
+Controls appear in Settings → Notifications; only the selected provider mounts
+while the host master is on. Provider changes leave playback off. Configure
+links inspect settings without enabling audio. Return a disposer and honor
+signal abort; do not duplicate the player in general contentScripts. Ordinary
+settingsSection remains on the plugin hub Configure page. See the SDK reference
+for migration, missing-provider behavior and cross-window playback ownership.

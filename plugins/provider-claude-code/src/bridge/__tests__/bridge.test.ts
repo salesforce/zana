@@ -1041,6 +1041,16 @@ describe("bridge", () => {
     expect(options).not.toHaveProperty("skills");
   });
 
+  it("passes a skills allowlist through to the session options, including empty", () => {
+    const base = {
+      chromeEnabled: false, workflowsEnabled: false, baseInstructions: "x", cwd: "/tmp/worktree",
+      instructionMode: "append" as const, getPermissionEscalation: () => "ask" as const,
+      permissionMode: "default" as const, permissionScope: "workspace" as const,
+    };
+    expect(buildSessionOptions({ ...base, skills: ["review"] }, {}).skills).toEqual(["review"]);
+    expect(buildSessionOptions({ ...base, skills: [] }, {}).skills).toEqual([]);
+  });
+
   it("passes the resolved Claude permission mode through to the session", () => {
     const options = buildSessionOptions(
       {

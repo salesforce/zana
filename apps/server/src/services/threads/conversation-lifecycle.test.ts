@@ -17,6 +17,8 @@ import {
   settleLiveTurnCommandFailure
 } from './conversation-turn-settlement.js';
 import { LIVE_TURN_COMMAND_TIMEOUT_MS } from '../../http/host-hub.js';
+import * as providerValidation from './provider-model-validation.js';
+import * as peerReview from './thread-peer-review.js';
 import { settleDanglingBackgroundTasksForStoppedThread } from './conversation-background-task-reconciliation.js';
 
 // Lifecycle projection is independent of the indexed marker persistence seam,
@@ -298,6 +300,41 @@ afterEach(() => {
 });
 
 describe('durable queue acknowledgment', () => {
+  it.each(['accepted', 'rejected'])('records actual peer acceptance when an in-flight RPC is %s after Stop', async outcome => {
+    const approval = { id: 'peer_1' } as peerReview.PeerReview;
+    const policy = vi.spyOn(peerReview, 'assertPeerDispatch').mockReturnValue(approval);
+    const lookup = vi.spyOn(peerReview, 'getPeerReview').mockReturnValue(approval);
+    const delivered = vi.spyOn(peerReview, 'markPeerDelivered').mockImplementation(() => {});
+    let accept!: (value: unknown) => void, reject!: (error: Error) => void;
+    const rpc = vi.fn(({ command }: { command: { type: string } }) => command.type === 'turn.submit'
+      ? new Promise((resolve, fail) => { accept = resolve; reject = fail; }) : Promise.resolve({}));
+    try {
+      const context = ctx(rpc);
+      const sending = sendConversationTurn(context, thread.id, 'reviewed peer message', 'auto', undefined,
+        { drain: true, senderThreadId: 'source', peerReviewId: 'peer_1' }).catch(() => undefined);
+      await vi.waitFor(() => expect(accept).toBeTypeOf('function'));
+      await stopConversation(context, thread.id);
+      if (outcome === 'accepted') accept({ accepted: true }); else reject(new Error('interrupted before acceptance'));
+      await sending;
+      expect(delivered).toHaveBeenCalledTimes(outcome === 'accepted' ? 1 : 0);
+    } finally { policy.mockRestore(); lookup.mockRestore(); delivered.mockRestore(); }
+  });
+  it('does not record a prompt when Stop arrives during model validation', async () => {
+    let release!: () => void;
+    const validation = vi.spyOn(providerValidation, 'validateProviderModelSelection').mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    try {
+      const rpc = vi.fn(async (_input: { command: { type: string } }) => ({}));
+      const context = ctx(rpc);
+      vi.mocked(appendConversationThreadEvent).mockClear();
+      const sending = sendConversationTurn(context, thread.id, 'held during validation');
+      const rejected = expect(sending).rejects.toMatchObject({ code: 'send_cancelled' });
+      await vi.waitFor(() => expect(validation).toHaveBeenCalled());
+      await stopConversation(context, thread.id);
+      release(); await rejected;
+      expect(vi.mocked(appendConversationThreadEvent).mock.calls.some(([, event]) => event.type === 'client/turn/requested')).toBe(false);
+      expect(rpc.mock.calls.some(([call]) => (call as { command: { type: string } }).command.type === 'turn.submit')).toBe(false);
+    } finally { validation.mockRestore(); }
+  });
   it('waits for acceptance and propagates host rejection to the queue owner', async () => {
     let reject!: (error: Error) => void;
     const rpc = vi.fn(() => new Promise((_, fail) => { reject = fail; }));

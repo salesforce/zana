@@ -670,6 +670,20 @@ describe('DesignDocStore — docs', () => {
     }
   });
 
+  it('keeps the review method out of built-in agent instructions and asks for one coverage check', () => {
+    const store = makeStore();
+    const checkLine = '- Before finishing, check that the design and execution plan cover every acceptance criterion.';
+    const agentFiles = ['product', 'research', 'issue'].map((key) => {
+      const file = store.templateByKey(key)?.files.find((candidate) => candidate.path === 'AGENTS.md');
+      expect(file, `${key}/AGENTS.md`).toBeDefined();
+      return { key, content: file!.content };
+    });
+    for (const { key, content } of agentFiles) {
+      expect(content, `${key}/AGENTS.md`).not.toMatch(/multi-lens|substantive review|equivalent independent reviewers/i);
+      expect(content.split(checkLine).length - 1, `${key}/AGENTS.md`).toBe(1);
+    }
+  });
+
   it('creates from explicit files, picks a markdown entry, and rejects bad input', () => {
     const store = makeStore();
     const doc = store.create(

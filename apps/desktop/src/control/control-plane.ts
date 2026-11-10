@@ -38,6 +38,7 @@
  */
 
 import { createServer, type Server, type Socket } from 'node:net';
+import type { CliPeerSend } from '@zana-ai/zcc-server/http/cli-agent-ops';
 import { chmodSync, mkdirSync, rmSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { dirname } from 'node:path';
@@ -180,6 +181,7 @@ export interface ControlPlaneDeps {
     capabilities?: string[];
     cwd: string;
   }>;
+  sendPeerMessage?: (input: CliPeerSend) => { ok: true; id: string; delivered: boolean } | { ok: false; error: string };
   /**
    * Send a peer message (mirrors agent_send: resolve handle/id, inject-if-idle,
    * queue). `handle` in the result is the resolved label actually addressed
@@ -297,6 +299,8 @@ const AGENT_ALLOWED_OPS = new Set<string>([
  * and do not skip confirm based on a forgeable args.source field.
  */
 const PRODUCT_SERVER_ALLOWED_OPS = new Set<string>([
+  'agent.list',
+  'agent.peer.send',
   'product.invoke',
   'harness.models.invalidate',
   'term.create',
@@ -362,6 +366,7 @@ const KNOWN_OPS = new Set<string>([
   'term.close-summary',
   'term.reply',
   'agent.send',
+  'agent.peer.send',
   'session.status',
   'sched.runNow',
   'sched.setEnabled',
@@ -700,6 +705,19 @@ export async function dispatchOp(
       return r.ok
         ? { ok: true, value: { delivered: r.delivered, handle: r.handle, id: r.id } }
         : { ok: false, code: 'SEND_FAILED', message: r.error };
+    }
+    case 'agent.peer.send': {
+      if (caller.class !== 'product-server' || !deps.sendPeerMessage) return { ok: false, code: 'FORBIDDEN', message: 'Product server authority required' };
+      const to = str(args.to), projectId = str(args.projectId), fromSessionId = str(args.fromSessionId);
+      const fromHandle = str(args.fromHandle), message = str(args.message);
+      if (!to || !projectId || !fromSessionId || !fromHandle || !message || message.length > MAX_REPLY
+        || [to, projectId, fromSessionId, fromHandle].some(value => value.length > 200)) {
+        return { ok: false, code: 'BAD_ARGS', message: 'Bounded sender, recipient, project and message required' };
+      }
+      if (!Number.isSafeInteger(args.generation) || Number(args.generation) < 0) return { ok: false, code: 'BAD_ARGS', message: 'Review generation required' };
+      const result = deps.sendPeerMessage({ to, projectId, fromSessionId, fromHandle, message, generation: Number(args.generation) });
+      return result.ok ? { ok: true, value: { id: result.id, delivered: result.delivered } }
+        : { ok: false, code: 'SEND_FAILED', message: result.error };
     }
     case 'sched.get':
     case 'sched.reload':

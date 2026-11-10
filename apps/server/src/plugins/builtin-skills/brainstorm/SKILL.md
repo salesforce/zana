@@ -98,11 +98,15 @@ The steps below are the review-first path.
 
 1. Use the design and plan files you already wrote or read in this conversation,
    wherever they are: this project, your home folder (a doc vault, `~/.zcc/library`)
-   or the clone root. Do not copy them.
+   or the clone root. Do not copy them; pass their exact paths. Text that is not on disk can be passed by value as `attachments: [{ name, text }]`.
 2. Check the plan with `squad_plan_check` (`{ path }` of the plan file). Fix it
    until it passes.
 3. Call `list_teams` and pick the Squad the user names. When its `canInferPlan`
-   is false, propose with `planning: 'provided'`.
+   is false, propose with `planning: 'provided'`. Then re-run
+   `squad_plan_check` with `{ path, teamId }`: a `tierFit` result is advisory (it
+   never blocks) and flags units that are over-tiered, under-tiered, or have no
+   eligible slot for that Squad. Mention any findings to the user and adjust the
+   plan if they are right.
 4. Call `squad_launch` with `mode: 'review'`, the `teamId`, a short `goal`, and the exact absolute
    paths of those files as `sources`. (`squad_propose` is the older name for the same review launch.) If a path is refused (`SOURCE_NOT_ALLOWED`),
    tell the user why. Never move a file out of a protected location (`~/.ssh`,

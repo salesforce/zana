@@ -78,6 +78,10 @@ export const SQUAD_PROPOSAL_LIMITS = {
   planTextBytes: 1_048_576,
   maxPendingPerProject: 20,
   maxRecords: 200,
+  /** All private attachment copies kept for pending proposals, measured from disk. */
+  maxStagedBytes: 64 * 1024 * 1024,
+  /** A proposal still `staging` after this long is abandoned. */
+  stagingTimeoutMs: 10 * 60 * 1000,
   ttlMs: 7 * 24 * 60 * 60 * 1000,
   reportChars: 2048,
   ptyQuietMs: 30_000,
@@ -91,11 +95,26 @@ export type SquadProposalErrorCode =
   | 'PROPOSER_IN_SQUAD' | 'TOO_MANY_PROPOSALS' | 'NOT_FOUND' | 'EXPIRED' | 'NOT_PENDING'
   | 'SOURCE_UNREADABLE';
 
+export interface SquadAttachmentInput {
+  name: string;
+  text: string;
+}
+
+/** How an attachment's name was used: unchanged, numbered after a clash, or folded into an identical one. */
+export interface SquadAttachmentMapping {
+  given: string;
+  used: string;
+  /** Name of the kept attachment this one duplicated (same name, same content). */
+  deduplicated?: string;
+}
+
 export interface SquadProposalInput {
   teamId: string;
   goal: string;
   planning?: SquadPlanning;
   sources?: string[];
+  /** Text handed over by value (agent sessions only); shares the sources budget and becomes a source. */
+  attachments?: SquadAttachmentInput[];
   title?: string;
   summary?: string;
   /** Request a completion Inbox notice for an agent-started Squad. */
@@ -116,6 +135,8 @@ export interface SquadProposalSource {
   bytes: number;
   /** The file is outside the project (under HOME or the clone root); absent for files inside it. */
   outsideProject?: boolean;
+  /** The file is a private copy of agent-supplied text kept for this proposal, not a file in the Project. */
+  attachment?: boolean;
 }
 
 export interface SquadPlanStep {
@@ -136,7 +157,10 @@ export interface SquadProposalRecord {
   title?: string;
   summary?: string;
   planSteps?: SquadPlanStep[];
-  state: 'pending' | 'launched' | 'dismissed' | 'expired';
+  /** `staging`: attachments are still being written; not yet shown or launchable. */
+  state: 'staging' | 'pending' | 'launched' | 'dismissed' | 'expired';
+  /** Present when the proposal holds private copies of attachments (their folder name is the proposal id). */
+  staged?: { bytes: number };
   inboxEntryId?: string;
   executionId?: string;
   createdAt: number;
@@ -162,7 +186,8 @@ export const squadProposalRecordSchema = z.object({
     path: z.string().min(1),
     relPath: z.string().min(1),
     bytes: z.number().int().nonnegative(),
-    outsideProject: z.boolean().optional()
+    outsideProject: z.boolean().optional(),
+    attachment: z.boolean().optional()
   })),
   title: z.string().optional(),
   summary: z.string().optional(),
@@ -172,7 +197,8 @@ export const squadProposalRecordSchema = z.object({
     dependencies: z.array(z.string()),
     writeScope: z.array(z.string())
   })).optional(),
-  state: z.enum(['pending', 'launched', 'dismissed', 'expired']),
+  state: z.enum(['staging', 'pending', 'launched', 'dismissed', 'expired']),
+  staged: z.object({ bytes: z.number().int().nonnegative() }).optional(),
   inboxEntryId: z.string().optional(),
   executionId: z.string().optional(),
   createdAt: timestamp,
@@ -189,6 +215,8 @@ export interface SquadProposalResult {
   planning: SquadPlanning;
   plan: { steps: Array<{ id: string; title: string }> } | null;
   sources: Array<{ path: string; bytes: number; outsideProject?: boolean }>;
+  /** One entry per attachment given, in order; absent when none were given. */
+  attachments?: SquadAttachmentMapping[];
   expiresAt: number;
 }
 
@@ -202,6 +230,7 @@ export interface SquadLaunchNowResult {
   planning: SquadPlanning;
   plan: SquadProposalResult['plan'];
   sources: SquadProposalResult['sources'];
+  attachments?: SquadAttachmentMapping[];
 }
 
 /** Refusals a Squad start without review adds to the proposal ones. */
@@ -212,9 +241,20 @@ export type SquadLaunchNowErrorCode =
 export const LAUNCH_REVIEW_REQUIRED_MESSAGE =
   "This Squad requires review before launch. Use squad_launch with mode 'review' so the user can Launch it from the Inbox.";
 
+/** Advisory tier-fit finding for a checked plan against a Squad's roster. Never changes pass/fail. */
+export interface SquadPlanTierFitFinding {
+  unitId: string;
+  kind: 'over-tiered' | 'under-tiered' | 'no-eligible-slot';
+  detail: string;
+}
+
 export type SquadPlanCheckResult =
-  | { ok: true; steps: SquadPlanStep[] }
+  | { ok: true; steps: SquadPlanStep[]; /** Advisory warnings; present only when a teamId was given and there are findings. */ tierFit?: { findings: SquadPlanTierFitFinding[] } }
   | { ok: false; reason: string };
+
+/** Shown wherever a reviewer sees attached content: it is a private copy, so later edits to the original are not picked up. */
+export const SQUAD_ATTACHMENT_FROZEN_NOTE =
+  'Attached content was captured when this launch was prepared. Anything changed after that is not included, and the Squad will use only the captured version.';
 
 /** Safe renderer projection that pre-fills the composer from a proposal. */
 export interface SquadLaunchPrefill {
@@ -226,7 +266,7 @@ export interface SquadLaunchPrefill {
   title?: string;
   summary?: string;
   /** `path` and `outsideProject` are set for a file outside the project, so the composer can show where it is. */
-  sources: Array<{ id: string; name: string; byteSize: number; expiresAt: number; path?: string; outsideProject?: boolean }>;
+  sources: Array<{ id: string; name: string; byteSize: number; expiresAt: number; path?: string; outsideProject?: boolean; attachment?: true }>;
   proposerTitle?: string;
   planStepCount?: number;
 }

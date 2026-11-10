@@ -1,5 +1,6 @@
 import {
   Settings2,
+  Bell,
   Sparkles,
   FlaskConical,
   Bot,
@@ -55,6 +56,7 @@ export const SETTINGS_SECTIONS: Array<{
   projectScoped?: boolean;
 }> = [
   { id: 'global', label: 'Preferences', icon: Settings2, desc: 'Appearance, tools, and diagnostics.', group: 'config' },
+  { id: 'notifications', label: 'Notifications', icon: Bell, desc: 'Sound providers and notification behavior on this computer.', group: 'config' },
   { id: 'composer', label: 'Composer', icon: PenLine, desc: 'Launch surfaces, send mode, and prompt box', group: 'config' },
   { id: 'keyboard', label: 'Shortcuts', icon: Keyboard, desc: 'Remap chords and view all shortcuts', group: 'config' },
   { id: 'inbox', label: 'Inbox', icon: Inbox, desc: 'Guidance, tool trust, and PDF export', group: 'config' },
@@ -100,6 +102,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'performance-work', label: 'Current work' },
     { id: 'performance-connection', label: 'Connection & diagnostics' }
   ],
+  notifications: [{ id: 'agent-sounds', label: 'Sounds' }],
   agents: [
     { id: 'agent-guidance', label: 'Agent guidance' },
     { id: 'git-worktrees', label: 'Git worktrees' },

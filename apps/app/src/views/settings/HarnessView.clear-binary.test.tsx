@@ -7,6 +7,8 @@ import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapt
 import { HarnessView } from './HarnessView.js';
 import { resetThreadModelCatalog } from '../../components/thread/pickers/thread-model-catalog.js';
 
+vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: () => null }));
+
 const state = vi.hoisted(() => ({
   rows: [] as HarnessVerifyResult[],
   refresh: vi.fn(async () => undefined),

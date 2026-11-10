@@ -128,6 +128,8 @@ export function createConfigStore(
     autoModeEnabled: true,
     tmuxScope: 'all',
     menubarPopoverEnabled: true,
+    threadCommunicationEnabled: true,
+    threadCommunicationGeneration: 0,
     localExtensionHotReloadEnabled: true,
     trustZccToolsEnabled: true,
     injectProductGuidance: true,
@@ -205,7 +207,11 @@ export function createConfigStore(
       }));
       // A changed file fails the expected-hash check, so carrying the current
       // disk's plugin overrides never resurrects a stale copy.
-      writeConfig(deps.canonicalConfigForWrite(normalized), { value: readJsonRaw<unknown>({}).value, hash: expectedHash });
+      const disk = readJsonRaw<Partial<AppConfig>>({});
+      const current = hydrate(disk.value);
+      normalized.threadCommunicationGeneration = (current.threadCommunicationGeneration ?? 0)
+        + (current.threadCommunicationEnabled !== normalized.threadCommunicationEnabled ? 1 : 0);
+      writeConfig(deps.canonicalConfigForWrite(normalized), { value: disk.value, hash: expectedHash });
       return normalized;
     },
     setConfig(patch: Partial<AppConfig>): AppConfig {
@@ -220,6 +226,8 @@ export function createConfigStore(
         normalizedPatch
       );
       const committed = deps.canonicalConfigForWrite(next);
+      committed.threadCommunicationGeneration = (current.threadCommunicationGeneration ?? 0)
+        + (current.threadCommunicationEnabled !== next.threadCommunicationEnabled ? 1 : 0);
       writeConfig(committed, disk);
       return hydrate(committed);
     },

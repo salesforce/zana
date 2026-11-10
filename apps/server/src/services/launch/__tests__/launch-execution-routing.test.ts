@@ -31,7 +31,7 @@ describe('production execution routing preflight', () => {
     expect(provider.discoverRoleTargets).not.toHaveBeenCalled(); expect(provider.discoverModelTargets).not.toHaveBeenCalled();
   });
 
-  it('does not infer an OpenCode portable level from opaque model names', async () => {
+  it('maps an OpenCode portable level through the seeded name rules, not a static table', async () => {
     const provider = new OpenCodeProvider();
     const discovery = { roles: vi.fn(async () => []), models: vi.fn(async () => [
       'fixture-provider/gpt-7-luna', 'fixture-provider/gpt-7-terra', 'fixture-provider/gpt-7-sol'
@@ -41,9 +41,10 @@ describe('production execution routing preflight', () => {
       config: config(), profile: 'opencode', projectId: 'p', projectPath: '/selected/source', scope: 'local',
       mode: 'interactive', idempotencyKey: 'live-level', persona: { id: 'p', name: 'P', modelLevel: 'low' }
     }, services)).resolves.toEqual({
-      decision: 'blocked', reason: 'OpenCode does not support low model level.'
+      decision: 'allowed', scope: 'local',
+      modelPin: { adapterId: 'opencode', level: 'low', targetId: 'fixture-provider/gpt-7-luna' }
     });
-    expect(discovery.models).not.toHaveBeenCalled();
+    expect(discovery.models).toHaveBeenCalled();
     expect(provider.adapter.descriptor.targets?.modelLevelMapping?.low).toBeUndefined();
   });
   const deps = () => ({

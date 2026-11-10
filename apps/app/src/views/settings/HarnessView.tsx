@@ -40,6 +40,7 @@ import {
 } from '../../components/thread/pickers/harness-login.js';
 import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 import { ModelRefreshControl } from './ModelRefreshControl.js';
+import { RegisteredHarnesses } from './RegisteredHarnesses.js';
 import { RevealContext } from '@/lib/settings-search/reveal';
 import {
   BUILTIN_THREAD_PROVIDERS,
@@ -53,6 +54,7 @@ import {
   threadProviderSearchId,
   type ThreadProviderListItem
 } from '@/lib/settings-search/providers/harness';
+import { HarnessModelTiers, usesTierRules } from './HarnessModelTiers.js';
 import './harness-settings.css';
 
 const USE_HARNESS_DEFAULT = { id: '', label: 'Use harness default' } as const;
@@ -128,7 +130,7 @@ function StatusBadge({ h, enabled }: { h: HarnessVerifyResult; enabled: boolean 
   );
 }
 
-function LoginBadge({ login }: { login: HarnessLoginStatus }) {
+export function LoginBadge({ login }: { login: HarnessLoginStatus }) {
   if (login.state === 'checking') {
     return (
       <span className="opener-row-status opener-row-status--muted" title={`Checking ${login.loginCommand}`}>
@@ -137,14 +139,18 @@ function LoginBadge({ login }: { login: HarnessLoginStatus }) {
     );
   }
   if (login.state === 'sign_in_required') {
+    const hint = `Not signed in. Run "${login.loginCommand}" in a terminal, then click Check status.`;
     return (
-      <span
-        className="opener-row-status opener-row-status--warn"
-        title={`Run ${login.loginCommand}, then Check`}
-      >
-        <AlertTriangle size={13} />
-        sign in
-      </span>
+      <>
+        <span className="opener-row-status opener-row-status--warn" title={hint}>
+          <AlertTriangle size={13} />
+          sign in
+        </span>
+        {/* Visible, not hover-only: the command is the fix. */}
+        <code className="opener-row-status opener-row-status--muted" title={hint} data-testid="harness-login-command">
+          {login.loginCommand}
+        </code>
+      </>
     );
   }
   if (login.state === 'unverified') {
@@ -497,6 +503,7 @@ function HarnessRow({
               {executionStateField}
             </HarnessOptionsGroup>
           ) : null}
+          <HarnessModelTiers family={h.family} label={h.label} descriptor={descriptor} config={config} onUpdate={onUpdate} />
           {advanced}
           {h.family === 'opencode' ? (
             <HarnessOptionsGroup title="Project agents">
@@ -753,7 +760,7 @@ export function HarnessView({
 }: {
   config: AppConfig;
   onConfigDraft: (config: AppConfig) => void;
-  onUpdate: (patch: Partial<AppConfig>) => Promise<void>;
+  onUpdate: (patch: Partial<AppConfig>, options?: { throwOnError?: boolean }) => Promise<void>;
 }) {
   const status = useData((s) => s.harnessStatus);
   const refresh = useData((s) => s.refreshHarnessStatus);
@@ -1084,6 +1091,7 @@ export function HarnessView({
 
   return (
     <div className="harness-settings">
+    <RegisteredHarnesses config={config} status={status} hostId={thisMachineId} hostName={thisMachine?.name} onUpdate={onUpdate} onRefreshStatus={() => runCheck(false)} checkingStatus={checking} />
     <Section
       searchId="harness.installed-harnesses"
       anchorId="harness-status"

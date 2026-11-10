@@ -24,6 +24,7 @@ export interface IpcCtx {
   agentMessageLog: any;
   agentRegistry: any;
   agentStatus: any;
+  agentSounds: import('../native/agent-sounds.js').AgentSounds;
   displayAgentState: any;
   autoCloseIdle: any;
   autonomousRuns: any;

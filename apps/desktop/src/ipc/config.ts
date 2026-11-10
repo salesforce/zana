@@ -36,6 +36,7 @@ export function registerConfigIpc(): void {
       } = patch;
       const previous = store.getConfig();
       const next = presentAppConfig(store.setConfig(safePatch));
+      if (patch.agentSoundIdle !== undefined || patch.notificationSoundProvider !== undefined || patch.notificationSoundsEnabled !== undefined) ctx.agentSounds.refresh();
       if (mainClaudeBinary(previous) !== mainClaudeBinary(next)) ctx.invalidateLlmReuse();
       reconcileHarnessConfig(previous, next, {
         invalidate: () => { harnessVerifyState.cache = undefined; }

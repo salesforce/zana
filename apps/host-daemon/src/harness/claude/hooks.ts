@@ -2,6 +2,7 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { ProviderCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import { randomUUID } from 'node:crypto';
+import type { SkillSettings } from '../registration.js';
 import { nativeToolRelayTail } from '../native-tool-relay.js';
 
 export type NativeToolHookState = 'announced' | 'awaiting-decision' | 'allowed' | 'denied' | 'executing' | 'succeeded' | 'failed' | 'cancelled';
@@ -104,6 +105,8 @@ export interface ClaudeHookSettings {
   readonly contentScreenCurlMaxSec?: number;
   readonly nativeTool?: boolean;
   readonly autoMode?: Record<string, unknown>;
+  /** Skill allowlist trimming; keys are appended only when set. */
+  readonly skillSettings?: SkillSettings;
 }
 
 /**
@@ -278,7 +281,15 @@ export function buildClaudeHookSettings(opts: ClaudeHookSettings): string {
 
   const settings: Record<string, unknown> = { hooks };
   if (opts.autoMode) settings.autoMode = opts.autoMode;
+  Object.assign(settings, skillSettingsKeys(opts.skillSettings));
   return JSON.stringify(settings);
+}
+
+function skillSettingsKeys(skill: SkillSettings | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (skill?.skillOverrides && Object.keys(skill.skillOverrides).length) out.skillOverrides = skill.skillOverrides;
+  if (skill?.enabledPlugins && Object.keys(skill.enabledPlugins).length) out.enabledPlugins = skill.enabledPlugins;
+  return out;
 }
 
 export function buildClaudeAutoModeSettings(config: AppConfig): Record<string, unknown> | undefined {
@@ -309,6 +320,7 @@ export function renderClaudeLifecycle(input: {
   readonly autoModeActive: boolean;
   readonly callbacks: ClaudeLifecycleCallbacks;
   readonly scope: 'local' | 'remote';
+  readonly skillSettings?: SkillSettings;
 }): ClaudeLifecycleContribution {
   if (!input.caps.injectsClaudeMcpConfig) return { args: [], env: {} };
 
@@ -335,6 +347,7 @@ export function renderClaudeLifecycle(input: {
   const autoMode = !remote && input.autoModeActive
     ? buildClaudeAutoModeSettings(input.config)
     : undefined;
+  const skillKeys = skillSettingsKeys(input.skillSettings);
   const wantsAnyHook = stop || notify || firstPrompt || subagents || toolActivity || overseer || contentScreen || nativeTool;
   const settings = wantsAnyHook || autoMode
     ? buildClaudeHookSettings({
@@ -349,9 +362,12 @@ export function renderClaudeLifecycle(input: {
       overseerMode !== 'off' && input.config.overseerDeepTierEnabled === true ? 28 : 10,
     contentScreen,
     nativeTool,
-    autoMode
+    autoMode,
+    skillSettings: input.skillSettings
       })
-    : undefined;
+    : Object.keys(skillKeys).length
+      ? JSON.stringify(skillKeys)
+      : undefined;
   const env: Record<string, string> = {};
   if (input.autoModeActive) env.CLAUDE_CODE_ENABLE_AUTO_MODE = '1';
   if (remote) {
@@ -368,5 +384,11 @@ export function renderClaudeLifecycle(input: {
   if (overseer && input.callbacks.overseer) env.ZCC_OVERSEER_URL = input.callbacks.overseer;
   if (contentScreen && input.callbacks.contentScreen) env.ZCC_CONTENTSCREEN_URL = input.callbacks.contentScreen;
   if (nativeTool && input.callbacks.nativeTool) env.ZCC_NATIVETOOL_URL = input.callbacks.nativeTool;
-  return { args: settings ? ['--settings', settings] : [], env };
+  return {
+    args: [
+      ...(settings ? ['--settings', settings] : []),
+      ...(input.skillSettings?.strictMcp ? ['--strict-mcp-config'] : [])
+    ],
+    env
+  };
 }

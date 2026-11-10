@@ -56,7 +56,7 @@ use. Add `notify: true` so the run reports back to you.
 
 | User says (examples) | Path | Tools |
 |---|---|---|
-| "build it with X" | Review first | `squad_plan_check` → `list_teams` → `squad_launch` with `mode: 'review'` |
+| "build it with X" | Review first | `squad_plan_check` → `list_teams` → `squad_plan_check` with `teamId` (advisory `tierFit`) → `squad_launch` with `mode: 'review'` |
 | "run this with X now" | Start now | `squad_launch` with `mode: 'now'` |
 | Anything else, or unclear | Review first | `squad_launch` with `mode: 'review'` |
 
@@ -65,6 +65,6 @@ infer it from urgency or from "go ahead". Say which path you took, in one line.
 After Start you will receive a
 `[Squad report]` when the run finishes or needs a human answer. Don't poll in
 a loop. Answer with `execution.respond { executionId, expectedStateVersion, blockerId, message }`.
-For review-first, pass sources by their exact paths (do not copy them), then call
+For review-first, pass sources by their exact paths (do not copy files that exist on disk) and any text that exists only in this conversation as `attachments: [{ name, text }]`, then call
 `squad_launch` with `mode: 'review'`; do not call `execution.start`. Use `mode: 'now'` to build a design only
 when the user explicitly asks to start now.

@@ -1,4 +1,9 @@
 import { launchFailure } from './launch-pre-spawn.js';
+import { startAgentSoundEvents } from './native/agent-sound-events.js';
+import { AgentSounds } from './native/agent-sounds.js';
+import { AgentSoundFiles } from './native/agent-sound-files.js';
+import { registerAgentSoundIpc } from './native/agent-sound-ipc.js';
+import { createThreadPeerRuntime } from './runtime/thread-peer-runtime.js';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -56,7 +61,7 @@ import { resolveIconPath } from './resolve-icon-path.js';
 import { createProductRouteSquadRuntime, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { createRuntimeRecovery } from './runtime/runtime-recovery.js';
 import { createTeamProductOps } from './team-product-ops.js';
-import { jobCoordinatorPrompt, type RosterEntry } from './team-coordinator-prompt.js';
+import { jobCoordinatorPrompt, rosterWithTiers, type RosterEntry } from './team-coordinator-prompt.js';
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
@@ -103,6 +108,10 @@ import { providerCapabilities, harnessFamilyOf, isClaudeProfile, isCodexProfile,
 import { canonicalThreadProviderId, getThreadProvider, personaEffortForProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
+import { narrowAutomatedSkillIds, providerSkillAllowlist, resolvePersonaSkillSelection } from '@zana-ai/zcc-server/services/threads/persona-skill-selection';
+import { resolveSkillSettings } from '@zana-ai/zcc-host-daemon/skill-allowlist-settings';
+import type { SkillSettings } from '@zana-ai/zcc-host-daemon/harness/registration';
+import { effectiveSkills, isOrchestratorSlotId } from '@zana-ai/zcc-domain/product';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { AgentLivenessCache } from '@zana-ai/zcc-host-daemon/harness/agent-liveness';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
@@ -110,7 +119,7 @@ import { projectIdentityDigest, projectsForStoreRevision, revalidateLaunchCommit
 import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/authorization';
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
-import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
+import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch, summarizePlanTierFit } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
 import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, deferredSeatsOf, lateSeatApprovalProblem, onDemandLaunchProblem, preissuedDeadlineMatches, seatApprovalWindow } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
@@ -125,7 +134,7 @@ import { createExecutionStore, isUserOwnedSquadWorktree, WORK_CLAIM_LEASE_MS, ty
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
-import type { ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
+import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector, suppressesInteractiveBlocked } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
@@ -148,7 +157,7 @@ import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-st
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
-import { liveScopedProviderFor } from './team-model-routing.js';
+import { liveScopedProviderFor, memoizedLiveScopedProviderFor, resolveSlotModel } from './team-model-routing.js';
 import { decideTeamRoutingEnforcement } from './team-routing-enforcement.js';
 import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
@@ -313,6 +322,7 @@ import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
 import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
 import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
 import { createSquadProposalStore } from './squad-proposals/store.js';
+import { createStagingStore, SQUAD_STAGING_DIR_NAME, SQUAD_STAGING_PARENT_DIR_NAME } from './squad-proposals/staging.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
 import { goalMentionPaths } from './squad-proposals/sources.js';
@@ -930,6 +940,7 @@ const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?:
 const titleBarOverlays = createWindowsTitleBarOverlays({
   get platform() { return process.platform; },
   windows,
+  repairing: () => startupState.mode === 'repair-required',
   theme: resolveTheme,
   // Lazy: host-loading unit tests mock electron without these.
   electron: () => ({ nativeTheme, systemPreferences }),
@@ -2338,6 +2349,19 @@ const mailDrain = new AgentMailDrainService({
   reply: replyToSquadMember,
   isReplyIdempotent: sessionId => !ptys.getSession(sessionId)
 });
+let stopAgentSoundEvents: (() => void) | undefined;
+const agentSoundFiles = new AgentSoundFiles(join(app.getPath('userData'), 'notification-sounds'));
+const agentSounds = new AgentSounds({
+  config: () => store.getConfig(),
+  play: (kind, volume) => {
+    const win = unscopedWindow() ?? [...windows.values()].find(({ win }) => !win.isDestroyed() && !win.webContents.isDestroyed())?.win;
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      const clip = agentSoundFiles.current(kind);
+      win.webContents.send(IPC.app.onAgentSound, kind, volume, ...(clip ? [clip] : []));
+    }
+  }
+});
+
 /**
  * Keep-awake: hold a `prevent-app-suspension` power-save block while any agent
  * is actively `working`, so locking the Mac (which doesn't kill us) can't let
@@ -2466,6 +2490,8 @@ const closeSummary = new CloseSummaryService({
 });
 /** "Wrap up before closing" (Experimental): asks resting Claude agents to wrap up before Close with follow-up. */
 const wrapUpClose = createWrapUpClose({ store, ptys, agentStatus, closeSummary, providerCapabilities, isRemoteSession: isTrueSshRemoteSession, suppressesInteractiveBlocked });
+const threadPeerRuntime = createThreadPeerRuntime({ serverUrl: productServerUrl, credential: ensureProductServerCredential,
+  store, ptys, teamLaunchSessions, registry: agentRegistry, log: agentMessageLog, agentStatus, wrapUpClose });
 /** Backs the Inbox "AI Summary" card — reads main's own inbox store (the source
  *  of truth, not the renderer's filtered view) and runs the
  *  `builtin:inbox-summary` micro-call to distill a standup-style digest, whole
@@ -4197,6 +4223,65 @@ export function revalidateEffectiveLaunch(
 }
 
 /**
+ * Resolve the persona's skill allowlist into Claude CLI `--settings` trimming on the
+ * machine that runs the agent (local fs, or the project's ssh host). Same main-side
+ * resolver as the Modern path. `undefined` = unrestricted or not applicable; an
+ * unreadable inventory is logged, surfaced as an inbox notice, and the launch
+ * proceeds unrestricted (a context filter, not a gate).
+ */
+export async function resolveCliSkillSettings(input: {
+  profile: CreateTerminalRequest['profile'];
+  req: Pick<CreateTerminalRequest, 'cohort' | 'projectId'>;
+  project: Project;
+  config: AppConfig;
+  persona: Persona | undefined;
+  cwd: string | undefined;
+}): Promise<SkillSettings | undefined> {
+  if (!input.persona) return undefined;
+  const team = input.req.cohort ? teams.list().find((candidate) => candidate.id === input.req.cohort?.teamId) : undefined;
+  const slotRole = input.req.cohort?.role ?? 'worker';
+  if (!isClaudeProfile(input.profile)) {
+    // Only Claude honours a skill allowlist at launch; tell the user rather than launch silently unrestricted.
+    if (input.profile !== 'shell' && effectiveSkills(team, input.persona, slotRole) !== undefined) {
+      void inboxStore
+        .append({
+          projectId: input.project.id,
+          projectLabel: input.project.name,
+          subject: 'Skill restriction not enforced',
+          comments: `Persona "${input.persona.name}" restricts skills, but the ${input.profile} agent does not support skill restriction. It launched with all of its skills available.`,
+          dedupeKey: `skill-restriction-unsupported:${input.project.id}:${input.persona.id}:${input.profile}`
+        })
+        .catch((err) => logMainError('cli skill allowlist unsupported inbox', err));
+    }
+    return undefined;
+  }
+  const mapped = resolvePersonaSkillSelection(electronZccDataDir(), team, input.persona, slotRole);
+  const allowlist = providerSkillAllowlist(mapped.automatedSkillIds, mapped.allowedSkillNames);
+  if (allowlist === undefined) return undefined;
+  const useRemoteTools = usesCliRemoteToolProxy(input.project, input.req as CreateTerminalRequest, input.config);
+  const remote = useRemoteTools ? undefined : stampedProjectRemote(input.project, input.config.remoteDefaultPath);
+  const result = await resolveSkillSettings({ allowlist, cwd: input.cwd, ...(remote ? { remote } : {}) });
+  if (result.unavailable) {
+    logMainError('cli skill allowlist', new Error(result.unavailable));
+    // Visible, not just logged: the launch proceeds unrestricted, so tell the user via the inbox.
+    void inboxStore
+      .append({
+        projectId: input.project.id,
+        projectLabel: input.project.name,
+        subject: 'Skill restriction skipped',
+        comments: `Skill restriction skipped: skill inventory unreadable (${result.unavailable}). The agent launched with all skills available.`,
+        dedupeKey: `skill-restriction-skipped:${input.project.id}:${input.persona.id}`
+      })
+      .catch((err) => logMainError('cli skill allowlist inbox', err));
+  }
+  if (result.disabledMixedPlugins.length) {
+    logMainInfo('cli skill allowlist', `disabled whole plugins (incl. hooks/MCP/agents): ${result.disabledMixedPlugins.join(', ')}`);
+  }
+  if (result.bestEffortPlugins.length) logMainInfo('cli skill allowlist', `best-effort (not trimmable): ${result.bestEffortPlugins.join(', ')}`);
+  return result.settings;
+}
+
+/**
  * Spawn a terminal with the cwd confined to its project (CLAUDE.md #2). Shared
  * by the `terminals:create` IPC handler AND the CLI control plane so there is
  * exactly ONE copy of the confinement gate — a renderer- or CLI-supplied `cwd`
@@ -4245,6 +4330,8 @@ export function createTerminalConfined(
      * runtime-host lane all receive it in the assembled argv); never from `req`.
      */
     authorizedModel?: AuthorizedModelTarget;
+    /** MAIN-only: resolved skill-allowlist trimming for the CLI settings payload. Never from `req`. */
+    skillSettings?: SkillSettings;
   }
 ): Result<TerminalSession> {
   // Cheap PATH repair so Electron CLI Agent spawns resolve `claude` /
@@ -4389,6 +4476,7 @@ export function createTerminalConfined(
       openingPrompt,
       harnessRouting: req.harnessRouting,
       authorizedModel: opts?.authorizedModel,
+      ...(opts?.skillSettings ? { skillSettings: opts.skillSettings } : {}),
       title: req.title,
       remote: useRemoteTools ? undefined : stampedProjectRemote(project, launchConfig.remoteDefaultPath),
       remoteToolProxy: useRemoteTools || undefined,
@@ -4682,6 +4770,16 @@ async function launchAuthorizedTerminal(
         authorizedPlan.resolved.effectiveLaunch.cwd,
         authorizedPlan.resolved.config
       );
+      const skillSettings = await resolveCliSkillSettings({
+        profile: selection.profile,
+        req: request,
+        project: authorizedPlan.resolved.project,
+        config: authorizedPlan.resolved.config,
+        persona: selection.personaId
+          ? authorizedPlan.resolved.personas.find((candidate) => candidate.id === selection.personaId)
+          : authorizedPlan.resolved.frameworkPersona,
+        cwd: authorizedPlan.resolved.effectiveLaunch.cwd
+      });
       const spawn = async () => {
       const result = createTerminalConfined(request, {
         ...spawnOpts,
@@ -4695,7 +4793,8 @@ async function launchAuthorizedTerminal(
         },
         effectiveLaunch: authorizedPlan.resolved.effectiveLaunch,
         // Bound into finalPlan.digest; never re-mapped at spawn.
-        authorizedModel: finalPlan.executionAuthorization.modelPin
+        authorizedModel: finalPlan.executionAuthorization.modelPin,
+        skillSettings
       });
       if (!result.ok) throw new LaunchSpawnError(result.code, result.message);
       spawnLifecycle?.onSessionCreated?.(result.value);
@@ -4970,9 +5069,19 @@ async function launchBackgroundTerminal(
         authorizedPlan.resolved.config
       );
       spawnAttempted = true;
+      // Scheduler/background launches honour the persona skill allowlist exactly like interactive ones.
+      const skillSettings = await resolveCliSkillSettings({
+        profile: authorizedPlan.request.profile,
+        req: { cohort: authorizedPlan.request.cohort, projectId: authorizedPlan.request.projectId },
+        project: authorizedPlan.resolved.project,
+        config: authorizedPlan.resolved.config,
+        persona: authorizedPlan.request.persona,
+        cwd: spawnLaunch.cwd
+      });
       const session = createTerminalFromAuthorizedPlan({
         ...request,
         cwd: spawnLaunch.cwd,
+        ...(skillSettings ? { skillSettings } : {}),
         projectSettings: authorizedPlan.resolved.projectSettings,
         preallocatedSessionId: authorizedPlan.sessionId,
         // Always the digest-bound preflight value — overrides any caller field.
@@ -5227,6 +5336,31 @@ const desktopNativeRecovery = createDesktopNativeRecovery({
   }
 });
 
+/** Advisory only: surface tier-fit warnings for a submitted plan; never blocks registration. */
+export function logPlanTierFit(
+  executionId: string,
+  workUnits: readonly ExecutionWorkUnitInput[],
+  resolvedModels: readonly ResolvedModelSnapshotV1[] | undefined
+): void {
+  if (!resolvedModels?.length) return;
+  const { findings } = summarizePlanTierFit(workUnits, resolvedModels.map((model) => ({ ...model, personaId: model.personaId ?? '' })));
+  if (findings.length === 0) return;
+  logMainInfo('plan tier fit', `execution ${executionId}: ${findings.map((finding) => `${finding.kind}: ${finding.detail}`).join('; ')}`);
+}
+
+/** Plan fact for admission: the slot's resolved skill allowlist; absent for an unrestricted slot. */
+export function slotSkillAllowlistFact(
+  team: Pick<Team, 'leanWorkers'> | undefined,
+  personaSnapshot: readonly Pick<Persona, 'id' | 'skills'>[],
+  personaId: string | undefined,
+  slotId: string
+): { skillAllowlist?: string[] } {
+  const persona = personaSnapshot.find((candidate) => candidate.id === personaId);
+  if (!persona) return {};
+  const skillAllowlist = effectiveSkills(team, persona, isOrchestratorSlotId(slotId) ? 'orchestrator' : 'worker');
+  return skillAllowlist === undefined ? {} : { skillAllowlist };
+}
+
 /** Resolve Team slot route facts in main before durable execution is claimed. */
 async function resolveTeamModelSnapshots(
   projectId: string,
@@ -5252,10 +5386,10 @@ async function resolveTeamModelSnapshots(
     const input = { config, persona, projectSettings, profile, extraArgs: [], scope: launchExecutionScope(project, {}, config) };
     // Slots resolve concurrently: each gets its own live-inventory view.
     const provider = team.transport === 'MODERN' ? sharedProvider : await liveScopedProviderFor(sharedProvider, { cwd: project.path, config });
-    const model = resolveModelTarget(provider, input);
-    const role = resolveRoleTarget(provider, input);
-    const roleOwnedModel = !!role.targetId && provider.nativeRolePinsModel;
-    const target = provider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === model.targetId);
+    const { model, provider: routedProvider } = await resolveSlotModel(provider, input, { cwd: project.path, config });
+    const role = resolveRoleTarget(routedProvider, input);
+    const roleOwnedModel = !!role.targetId && routedProvider.nativeRolePinsModel;
+    const target = routedProvider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === model.targetId);
     const verifiedProvider = verified.find((candidate) => candidate.family === provider.adapter.descriptor.id);
     const providerAvailable = provider.adapter.descriptor.id === 'shell'
       || (verifiedProvider?.enabled === true && verifiedProvider.installed);
@@ -5270,7 +5404,9 @@ async function resolveTeamModelSnapshots(
       health: providerAvailable ? 'available' as const : 'unknown' as const,
       observedAt,
       maxAgeMs: 30_000,
-      ...(roleOwnedModel ? { roleOwnedModel: true } : {})
+      ...(roleOwnedModel ? { roleOwnedModel: true } : {}),
+      // Dispatch-time skill reach: absent for an unrestricted slot so those records stay byte-identical.
+      ...slotSkillAllowlistFact(team, personaSnapshot, slot.personaId, slots[index].slotId)
     };
   }));
 }
@@ -5371,7 +5507,7 @@ export function authorizeTeamLaunch(
     }
   }
   // Seats that start on demand keep this approval until they start (see on-demand-seat.ts).
-  const waitingSlotIds = new Set(deferredSeatsOf(team, expectedSlots.map((slot) => ({ ...slot, role: slot.slotId.startsWith('orchestrator:') ? 'orchestrator' as const : 'worker' as const }))).map((slot) => slot.slotId));
+  const waitingSlotIds = new Set(deferredSeatsOf(team, expectedSlots.map((slot) => ({ ...slot, role: isOrchestratorSlotId(slot.slotId) ? 'orchestrator' as const : 'worker' as const }))).map((slot) => slot.slotId));
   for (const [index, expected] of expectedSlots.entries()) {
     const persona = known.get(expected.personaId)!;
     const window = seatApprovalWindow(waitingSlotIds.has(expected.slotId), authorizedAt, { expiresAt, deadlineAt });
@@ -5379,7 +5515,7 @@ export function authorizeTeamLaunch(
     const projection = slotRecoveryLaunch({
       nativeRecovery: requestedRecovery,
       slotId: expected.slotId,
-      role: expected.slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker',
+      role: isOrchestratorSlotId(expected.slotId) ? 'orchestrator' : 'worker',
       personaId: expected.personaId,
       profile: profileFor(persona)
     });
@@ -5409,7 +5545,7 @@ export function authorizeTeamLaunch(
       // Only a snapshot that passed the current slot's identity fence reaches
       // the launch payload. launchTeam consumes this main-issued slot data.
       ...((projection.recoveryResume || modernSnapshotIdentityOk(team, requestedRecovery, expected.slotId,
-        expected.slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker', expected.personaId, profileFor(persona)))
+        isOrchestratorSlotId(expected.slotId) ? 'orchestrator' : 'worker', expected.personaId, profileFor(persona)))
         && requestedRecovery ? { nativeRecovery: requestedRecovery } : {})
     });
   }
@@ -5877,7 +6013,9 @@ export async function launchTeam(
   if (expectedSlots.length > runLimit) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${runLimit}` };
   }
-  const modernSlots = new Map<string, { providerId: string; model?: string; reasoningLevel?: Persona['reasoningLevel']; permissionMode?: 'accept-edits' | 'auto' | 'full'; systemPrompt?: string }>();
+  const modernSlots = new Map<string, { providerId: string; model?: string; reasoningLevel?: Persona['reasoningLevel']; permissionMode?: 'accept-edits' | 'auto' | 'full'; systemPrompt?: string;
+    /** Main-resolved persona skill allowlist; `{}` = unrestricted. An empty array is restrictive, not unset. */
+    skills: { automatedSkillIds?: string[]; allowedSkillNames?: string[] } }>();
   let modernHostId: string | undefined;
   if (team.transport === 'MODERN') {
     try {
@@ -5904,7 +6042,8 @@ export async function launchTeam(
         const permissionMode = unrestricted || persona.permissionMode === 'bypassPermissions' ? 'full' as const
           : wantsAuto && supportsAuto ? 'auto' as const : 'accept-edits' as const;
         modernSlots.set(slot.slotId, { providerId,
-          model: resolveModelTarget(provider, input).targetId, reasoningLevel: personaEffortForProvider(providerId, persona.reasoningLevel), permissionMode, systemPrompt: persona.appendSystemPrompt });
+          model: resolveModelTarget(provider, input).targetId, reasoningLevel: personaEffortForProvider(providerId, persona.reasoningLevel), permissionMode, systemPrompt: persona.appendSystemPrompt,
+          skills: resolvePersonaSkillSelection(electronZccDataDir(), team, persona, slot.role) });
       }
       const preflight = await squadRuntime().preflightSquadRuntime({ projectId: targetProjectId,
         ...(project.hostId ? { hostId: project.hostId } : {}), providerIds: [...new Set([...modernSlots.values()].map(slot => slot.providerId))],
@@ -6122,7 +6261,10 @@ export async function launchTeam(
           projectId: targetProjectId, teamId: team.id, cohortId, hostId: modernHostId!, providerId: selected.providerId,
           role: expectedSlot.role, worktreePath: effective.cwd, executionId: structured?.executionId,
           model: selected.model, reasoningLevel: selected.reasoningLevel, permissionMode: selected.permissionMode,
-          automatedSkillIds: structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds,
+          // A persona allowlist only narrows the explicit authorized selection (default none); it never adds catalog skills.
+          // `allowedSkillNames` is present only for a restricted persona (an empty array still restricts).
+          automatedSkillIds: narrowAutomatedSkillIds(structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds, selected.skills.automatedSkillIds),
+          ...(selected.skills.allowedSkillNames === undefined ? {} : { allowedSkillNames: selected.skills.allowedSkillNames }),
           prompt: [selected.systemPrompt, !durableCoordination ? personaSnapshot.find(persona => persona.id === personaId)?.initialPrompt : undefined,
              request.prompt ?? 'Await squad instructions.'].filter(Boolean).join('\n\n'), title: (request.title ?? personaName(personaId)).slice(0, 120) };
         const created = await squadRuntime().createSquadMember(runtimeRequest);
@@ -6339,7 +6481,7 @@ export async function launchTeam(
     // Modern has no host file reader but a bound `execution.plan.register` tool, so
     // it gets the register-once kickoff and no handoff file at all.
     const planTransport = planAuthoringTransportOf(team.transport);
-    const { planFilePath, planWriteAbsPaths, sourceFilePath } = durableCoordination && !planReady && structured?.executionId && planTransport === 'cli'
+    const { planFilePath, planWriteAbsPaths, sourceFilePath } = durableCoordination && !planReady && structured?.executionId && planTransport === 'cli' && !project.remote
       ? await prepareCoordinatorHandoff({
           executionId: structured.executionId,
           projectId: targetProjectId,
@@ -6369,7 +6511,7 @@ export async function launchTeam(
           structuredTask: structuredOrchestratorTask,
           executionId: structured.executionId,
           job: structured.jobContext,
-          roster,
+          roster: rosterWithTiers(roster, seededRecord?.resolvedModels),
            planReady,
             recoveryResume: orchestratorRecovery.recoveryResume,
           workUnits: seededWorkUnits,
@@ -6636,8 +6778,14 @@ export async function queueThreadTurnForProposal(threadId: string, projectId: st
   }
 }
 
+/** Private copies of attachments kept for pending proposals; under a data folder the source policy lets through. */
+const squadAttachmentStaging = createStagingStore({ root: join(electronZccDataDir(), SQUAD_STAGING_PARENT_DIR_NAME, SQUAD_STAGING_DIR_NAME) });
+const SQUAD_STAGING_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let squadStagingSweepTimer: NodeJS.Timeout | null = null;
+
 const squadProposalServiceDeps: SquadProposalServiceDeps = {
   store: squadProposalStore,
+  staging: squadAttachmentStaging,
   enabled: teamExecutionEnabled,
   lookupProposer,
   projects: { get: (id) => store.listProjects().find((project) => project.id === id) },
@@ -6663,11 +6811,11 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
     // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
     activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
     executionState: async (executionId) => (await executionStore.get(executionId))?.state,
-    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths }, ctx) => {
+    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths, attachments }, ctx) => {
       const sourceBases = squadSourceBases();
       return launchSquad(squadNowLaunchDeps, {
         teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary, completionInboxNotice,
-        sourceCapabilityIds: [], sourcePaths,
+        sourceCapabilityIds: [], sourcePaths, ...(attachments?.length ? { attachments } : {}),
         goalSources: await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
       }, ctx);
     }
@@ -6678,7 +6826,20 @@ export const squadProposalService = createSquadProposalService(squadProposalServ
 // proven the caller live (fail closed), so this view skips the second lookup.
 const squadPlanCheckService = createSquadProposalService({
   ...squadProposalServiceDeps,
-  lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false })
+  lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false }),
+  // Advisory tier fit against the Squad's roster; planless runs keep their roster untouched.
+  planTierFit: async (projectId, teamId, workUnits) => {
+    try {
+      const team = teams.list().find((candidate) => candidate.id === teamId);
+      if (!team) return [];
+      const models = await resolveTeamModelSnapshots(projectId, { teamId, slots: expandTeamSlots(team).map(() => ({ initialTask: '' })) });
+      return summarizePlanTierFit(workUnits as ExecutionWorkUnitInput[], models.map((model) => ({ ...model, personaId: model.personaId ?? '' }))).findings;
+    } catch (err) {
+      // Advisory only: a provider or catalog lookup failure must not reject squad_plan_check.
+      logMainError(`squad_plan_check tierFit (team ${teamId})`, err);
+      return [];
+    }
+  }
 });
 
 export const squadProposalNotifier = createSquadProposalNotifier({
@@ -6759,7 +6920,7 @@ export function squadProposalMcpDeps() {
   return {
     proposeSquad: (route: { projectId: string; sessionId: string }, input: SquadProposalInput) => squadProposalService.propose(route, input),
     launchSquadNow: (route: { projectId: string; sessionId: string }, input: SquadProposalInput) => squadProposalService.launchSquadNow(route, input),
-    checkSquadPlan: (route: { projectId: string }, input: { path?: string; text?: string }) => squadPlanCheckService.checkPlan({ ...route, sessionId: '' }, input)
+    checkSquadPlan: (route: { projectId: string }, input: { path?: string; text?: string; teamId?: string }) => squadPlanCheckService.checkPlan({ ...route, sessionId: '' }, input)
   };
 }
 
@@ -6848,7 +7009,7 @@ const squadExecutionService = new SquadExecutionService({
   , routingEnforcementEnabled: (record) => {
     const workerSlotIds = (record.authorizationContext?.slots ?? [])
       .map((slot) => slot.slotId)
-      .filter((slotId) => !slotId.startsWith('orchestrator:'));
+      .filter((slotId) => !isOrchestratorSlotId(slotId));
     // Startup dispatch can run before launch authorization records its worker
     // roster. Do not freeze advisory routing before route facts exist.
     if (workerSlotIds.length === 0) return false;
@@ -6904,16 +7065,17 @@ const squadExecutionService = new SquadExecutionService({
       return [provider.adapter.descriptor.id, provider] as const;
     }));
     const requiredProviders = [...providers.keys()].sort();
-    const requiredModels = slotPersonas.flatMap((persona) => {
+    // One live listing per harness for the whole admission, however many slots share it.
+    const liveView = memoizedLiveScopedProviderFor();
+    const requiredModels = (await Promise.all(slotPersonas.map(async (persona) => {
       const profile = profileForAdmission(persona);
-      const provider = providerFor(profile);
       const resolutionInput = { config, persona, projectSettings, profile, extraArgs: [], scope: project ? launchExecutionScope(project, {}, config) : 'local' as const };
-      const model = resolveModelTarget(provider, resolutionInput);
+      const { model, provider } = await resolveSlotModel(providerFor(profile), resolutionInput, { cwd: project?.path ?? process.cwd(), config }, liveView);
       const role = resolveRoleTarget(provider, resolutionInput);
       return model.targetId && !(role.targetId && provider.nativeRolePinsModel)
         ? [{ id: model.targetId, provider: provider.adapter.descriptor.id }]
         : [];
-    }).sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
+    }))).flat().sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
     const { requiredSkills, personaMcpServers, inventoryMcpServers } = teamAdmissionRequirements(slotPersonas, request.workUnits);
     const inventory = await collectTeamAdmissionInventory({ requiredSkills, requiredMcpServers: inventoryMcpServers, requiredModels, requiredProviders }, {
       listSkills: () => project ? listSkills({ projectPath: project.path, projectId }) : Promise.resolve([]),
@@ -6968,10 +7130,14 @@ const squadExecutionService = new SquadExecutionService({
       slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
       level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
       modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
-      observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
+      observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
+      ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId)
     }));
-    const workerRoutes = slotRoutes.filter((slot) => !slot.slotId.startsWith('orchestrator:'));
+    const workerRoutes = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
     const routingRequested = team?.routingEnforced ?? config.teamRoutingEnforcementEnabled === true;
+    // Advisory mode passes an explicit false so ROUTE_ELIGIBILITY stays non-required;
+    // tier-fit findings are warnings and never change `ready`.
+    const enforceRouting: boolean = routingRequested && workerRoutes.length > 0 && workerRoutes.every((slot) => !!slot.level);
     return {
       workUnits: request.workUnits,
       requireCompletePlan: isDurableCoordination(request.coordinationMode),
@@ -6980,14 +7146,17 @@ const squadExecutionService = new SquadExecutionService({
       initialTasks: request.slots.map((slot) => slot.initialTask),
       sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0),
       requiredMcpServers: personaMcpServers, requiredModels, requiredProviders, inventory, slotRoutes,
-      enforceRouting: routingRequested && workerRoutes.length > 0 && workerRoutes.every((slot) => !!slot.level)
+      enforceRouting
     };
   }
-  , authorizePlanRegistration: (record, workUnits, submitter) => planCorrection.authorizeRegistration(
+  , authorizePlanRegistration: (record, workUnits, submitter) => {
+    if (submitter) logPlanTierFit(record.id, workUnits, record.resolvedModels);
+    return planCorrection.authorizeRegistration(
     record.id,
     workUnits,
     planCorrectionSubmitter(record, submitter, (projectId) => store.listProjects().find((candidate) => candidate.id === projectId)?.path)
-  )
+    );
+  }
   , now: Date.now
 });
 
@@ -7371,7 +7540,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       : process.platform === 'win32'
       ? {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: titleBarOverlays.current()
+          titleBarOverlay: titleBarOverlays.current({ view, threadView })
         }
       : {
           titleBarStyle: 'hidden' as const
@@ -7722,6 +7891,7 @@ function wireBridgeListeners() {
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
     keepAwake.remove(sessionId);
+    agentSounds.remove(`cli:${sessionId}`);
     // Release Flow B/C plan-handoff state and remove the transient `.zana/`
     // handoff files when the coordinator exits (Rule 3 / Rule 5).
     void cleanupOrchestratorOnExit(squadSessionExit, exitedSession);
@@ -7872,6 +8042,9 @@ function wireBridgeListeners() {
     squadExecutionService.observeCoordinatorState(sessionId, state);
     wrapUpClose.observe(sessionId, state);
     const session = ptys.getSession(sessionId);
+    if (session && !session.scheduled && !session.headless) {
+      agentSounds.observe(`cli:${sessionId}`, displayAgentState(sessionId, state));
+    } else agentSounds.remove(`cli:${sessionId}`);
     if (session) captureNativeRecoverySnapshot(session);
     if (state === 'idle' && session) {
       onOrchestratorIdle({
@@ -8035,6 +8208,7 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
     || typeof itemId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(itemId)) {
     throw new Error('Invalid queued send');
   }
+  const peerReview = itemId.startsWith('peer_');
   const base = productServerUrl();
   async function readBounded(path: string): Promise<unknown> {
     const response = await fetch(new URL(path, base), { signal: AbortSignal.timeout(5_000) });
@@ -8047,30 +8221,32 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > 128 * 1024) throw new Error('Queued send details are too large');
+        if (size > (peerReview ? 4 * 1024 * 1024 : 128 * 1024)) throw new Error('Queued send details are too large');
         chunks.push(value);
       }
     } finally {
       reader.releaseLock();
-      if (size > 128 * 1024) await response.body.cancel().catch(() => {});
+      if (size > (peerReview ? 4 * 1024 * 1024 : 128 * 1024)) await response.body.cancel().catch(() => {});
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   }
   const threadPath = `api/v1/threads/${encodeURIComponent(threadId)}`;
-  const queuePath = `${threadPath}/next-turn`;
-  async function selectedItem(): Promise<{ id: string; text: string; updatedAt: number }> {
+  const queuePath = `${threadPath}/${peerReview ? 'peer-messages' : 'next-turn'}`;
+  async function selectedItem(): Promise<{ id: string; text: string; updatedAt: number; to?: string }> {
     const result = await readBounded(queuePath);
     if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true
       || !('items' in result) || !Array.isArray(result.items)) throw new Error('Queued send is unavailable');
     const item: unknown = result.items.find((entry: unknown) =>
       entry !== null && typeof entry === 'object' && 'id' in entry && entry.id === itemId);
     if (!item || typeof item !== 'object' || !('id' in item) || item.id !== itemId
-      || !('status' in item) || !['queued', 'failed'].includes(String(item.status))
+      || !('status' in item) || !(peerReview ? ['pending'] : ['queued', 'failed']).includes(String(item.status))
       || !('text' in item) || typeof item.text !== 'string'
-      || !('updatedAt' in item) || typeof item.updatedAt !== 'number') {
+      || !('updatedAt' in item) || typeof item.updatedAt !== 'number'
+      || (peerReview && (!('to' in item) || typeof item.to !== 'string'))) {
       throw new Error('Queued message no longer exists');
     }
-    return { id: item.id as string, text: item.text as string, updatedAt: item.updatedAt as number };
+    return { id: item.id as string, text: item.text as string, updatedAt: item.updatedAt as number,
+      ...(peerReview && 'to' in item ? { to: String(item.to) } : {}) };
   }
   const thread = await readBounded(threadPath);
   if (!thread || typeof thread !== 'object' || !('thread' in thread)
@@ -8085,14 +8261,14 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
     return clean.length > max ? `${clean.slice(0, max)}...` : clean;
   };
   const confirmation = await dialog.showMessageBox(win, {
-    type: 'question', title: 'Send queued message now?',
-    message: `Send queued message to ${preview(thread.thread.title, 80) || 'Untitled thread'}?`,
-    detail: `Message: ${preview(item.text, 240) || '(no text)'}\n\nThis can override a plugin dispatch wait.`,
-    buttons: ['Cancel', 'Send now'], defaultId: 0, cancelId: 0, noLink: true
+    type: 'question', title: peerReview ? 'Deliver peer message?' : 'Send queued message now?',
+    message: peerReview ? `Deliver peer message to ${preview(item.to!, 80)}?` : `Send queued message to ${preview(thread.thread.title, 80) || 'Untitled thread'}?`,
+    detail: peerReview ? `Message: ${preview(item.text, 4000)}\n\nThis starts work using the recipient’s existing tools and permissions. Review the full message in the thread before confirming.` : `Message: ${preview(item.text, 240) || '(no text)'}\n\nThis can override a plugin dispatch wait.`,
+    buttons: ['Cancel', peerReview ? 'Deliver' : 'Send now'], defaultId: 0, cancelId: 0, noLink: true
   });
   if (confirmation.response !== 1 || win.isDestroyed()) throw new Error('Send now was cancelled');
   const current = await selectedItem();
-  if (current.id !== item.id || current.updatedAt !== item.updatedAt || current.text !== item.text) {
+  if (current.id !== item.id || current.updatedAt !== item.updatedAt || current.text !== item.text || current.to !== item.to) {
     throw new Error('Queued message changed; confirm again');
   }
   const proof = signUiSend(ensureProductServerCredential(), threadId, item.id);
@@ -8107,6 +8283,8 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
 }
 
 function registerIpc() {
+  registerAgentSoundIpc({ handle: safeHandleFromWindow, files: agentSoundFiles,
+    volume: () => store.getConfig().agentSoundVolume, showOpenDialog: (win, options) => dialog.showOpenDialog(win, options) });
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
@@ -8194,6 +8372,7 @@ function registerIpc() {
     get invalidateLlmReuse() { return invalidateLlmReuse; },
     get isTeamWorkerRestore() { return isTeamWorkerRestore; },
     get keepAwake() { return keepAwake; },
+    get agentSounds() { return agentSounds; },
     get launchAuthorizedTerminal() { return launchAuthorizedTerminal; },
     get launchAutonomousTeam() { return launchAutonomousTeam; },
     get launchTeam() { return launchTeam; },
@@ -8565,6 +8744,10 @@ async function runStartupMigration(): Promise<StartupState> {
     const url = rendererUrl();
     if (win && !win.isDestroyed() && url) win.loadURL(url);
   }
+  // The repair screen paints --bg-base and the app shell it reloads into paints
+  // --inset-chrome, so the caption buttons follow the startup state. A window
+  // still in repair keeps --bg-base.
+  titleBarOverlays.refresh();
   return startupState;
 }
 
@@ -8594,6 +8777,13 @@ async function bootstrapNormal() {
     } finally {
       await recoverSquadStateAtBoot({ squadFollowUpClaims, squadWorktreeRuntime, squadExecutionService, planCorrection, logError: logMainError });
       await squadProposalService.sweepExpired().catch((error) => logMainError('squad proposals sweepExpired', error));
+      const sweepStaged = () => squadProposalService.sweepStaged().catch((error) => logMainError('squad proposals sweepStaged', error));
+      await sweepStaged();
+      // Registered once at init (bootstrap runs once) and cleared in before-quit (Rule 3).
+      if (!squadStagingSweepTimer) {
+        squadStagingSweepTimer = setInterval(() => { void sweepStaged(); }, SQUAD_STAGING_SWEEP_INTERVAL_MS);
+        squadStagingSweepTimer.unref?.();
+      }
     }
   } catch (error) {
     // A corrupt recovery record must surface the repair flow, not permanently
@@ -9381,6 +9571,7 @@ async function bootstrapNormal() {
     // server-side from the live pty / status tracker, never trusted from the
     // agent.
     agentRegistry,
+    threadPeerTools: threadPeerRuntime.threadPeerTools,
     getSessionCwd: (sessionId: string) => ptys.getSession(sessionId)?.cwd,
     getAgentStatus: (sessionId: string) => agentStatus.get(sessionId),
     getTeamLaunchId: (sessionId: string) => teamLaunchSessions.get(sessionId),
@@ -9793,6 +9984,8 @@ async function bootstrapNormal() {
     normalBootstrapStarted = false;
     throw error;
   }
+  await agentSoundFiles.ready;
+  stopAgentSoundEvents ??= startAgentSoundEvents(productServerUrl(), agentSounds);
   // Subscribe only after the supervised origin exists. A healthy stream at the
   // legacy :8780 fallback could belong to another running app and never reconnect.
   // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
@@ -10086,6 +10279,7 @@ async function bootstrapNormal() {
         ? { ok: true }
         : { ok: false, reason: 'orchestrator may close only sessions in its cohort' };
     },
+    sendPeerMessage: threadPeerRuntime.sendPeerMessage,
     listAgents: () => agentRegistry.list(),
     // Persona catalogue → non-sensitive metadata (id/name/description/profile/
     // model). Read-only; lets the CLI resolve `--persona <name>` against the
@@ -10258,6 +10452,7 @@ app.on('before-quit', (event) => {
   stopSkillsWatchers();
   stopExtensionsWatcher();
   localExtensionWatcher.shutdown();
+  if (squadStagingSweepTimer) { clearInterval(squadStagingSweepTimer); squadStagingSweepTimer = null; }
   // Kill every out-of-process extension child (P3-A). Electron also reaps a
   // utilityProcess on app quit, but tear down explicitly so teardown() runs and
   // no orphan lingers if quit is slow. Fire-and-forget — quitting won't block.
@@ -10291,6 +10486,9 @@ app.on('before-quit', (event) => {
   }
   // Release any held power-save block + pending grace timer (Rule 3).
   keepAwake.shutdown();
+  stopAgentSoundEvents?.();
+  stopAgentSoundEvents = undefined;
+  agentSounds.shutdown();
   // Release the loud-tier inbox subscription (Rule 3).
   offLoudInboxAppended?.();
   offLoudInboxAppended = null;

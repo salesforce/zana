@@ -62,7 +62,7 @@ Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enable
 
 ## Verification triggers
 
-Triggers: Job Team launch surfaces; thread/CLI Agent lifecycle and configuration (spawn, stop, mode, reasoning, permissions, plugin catalog injection: `PtyManager.create()`, `term.create`, `/api/v1/cli-agents`, `acpMode` / `reasoningLevel` / `permissionMode`, `harnessRouting`, `zcc thread` / `zcc agent`); memory CLI (`contributeInstructions`, `zcc memory`); BrowserView / `zcc browser`; OpenCode discovery; packaged plugin runtime and plugin authoring; Windows title bar overlay (`titleBarOverlay`, `--bg-base` / `--titlebar-h`). Touching any of these requires reading [docs/live-zana-verification.md](docs/live-zana-verification.md) for the exact command before claiming verification.
+Triggers: Job Team launch surfaces; thread/CLI Agent lifecycle and configuration (spawn, stop, mode, reasoning, permissions, plugin catalog injection: `PtyManager.create()`, `term.create`, `/api/v1/cli-agents`, `acpMode` / `reasoningLevel` / `permissionMode`, `harnessRouting`, `zcc thread` / `zcc agent`); memory CLI (`contributeInstructions`, `zcc memory`); BrowserView / `zcc browser`; OpenCode discovery; packaged plugin runtime and plugin authoring; Windows title bar overlay (`titleBarOverlay`, title bar `--bg-base` / `--inset-chrome` / `--titlebar-h`). Touching any of these requires reading [docs/live-zana-verification.md](docs/live-zana-verification.md) for the exact command before claiming verification.
 
 ## Coupling index
 

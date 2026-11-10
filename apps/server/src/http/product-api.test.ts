@@ -1,3 +1,4 @@
+import { signPeerToolRequest, PEER_TOOL_PATH, PEER_TOOL_PROOF_HEADER } from './peer-tool-proof.js';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,6 +67,24 @@ afterEach(async () => {
 });
 
 describe('product HTTP', () => {
+  it('serves host-owned onboarding metadata through the product API origin guard', async () => {
+    const profile = { id: 'employees', organization: 'Example', question: 'Employee?', prerequisite: 'Connect first.', marketplaceSource: 'path:/fixture' };
+    vi.stubEnv('ZCC_ONBOARDING_PROFILE', JSON.stringify(profile));
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-onboarding-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const url = `${server.url}api/v1/onboarding/profile`;
+
+    const response = await fetch(url, { headers: { Origin: 'http://127.0.0.1:5173' } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
+    expect(await response.json()).toEqual({ profile });
+
+    const blocked = await fetch(url, { headers: { Origin: 'https://evil.example' } });
+    expect(blocked.status).toBe(403);
+    expect(blocked.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
   it('validates project moves and preserves status codes at the HTTP boundary', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-move-'));
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [
@@ -3722,4 +3741,18 @@ describe('product HTTP thread background stop', () => {
       await expect(idle.json()).resolves.toMatchObject({ error: 'not-running' });
     }
   });
+});
+
+it('routes signed main peer requests and rejects unsigned renderer requests', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-peer-'));
+  const secret = 'product-peer-test-secret-at-least-32-bytes';
+  server = await startTestProductServer({ dataDir, origins: { serverPort: 0 }, uiSendSecret: secret });
+  const body = JSON.stringify({ caller: { sessionId: 'cli', projectId: 'p', kind: 'cli-agent', displayName: 'Reviewer' }, name: 'list_agents', input: {} });
+  const url = new URL(PEER_TOOL_PATH, server.url);
+  const unsigned = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+  expect(unsigned.status).toBe(403);
+  const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json',
+    [PEER_TOOL_PROOF_HEADER]: signPeerToolRequest(secret, body) }, body });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ok: true, value: [] });
 });

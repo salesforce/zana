@@ -778,6 +778,37 @@ describe('launchTeam Modern structured path', () => {
     expect(created.filter((_, index) => index !== 1).every((request) => request.automatedSkillIds === undefined)).toBe(true);
   });
 
+  it('carries the resolved persona skill allowlist on the modern runtime request', async () => {
+    h.personas = [persona('orch'), persona('w1', { skills: ['ext:fmt'] }), persona('w2', { skills: [] })];
+    expect((await launchTeam('team1', 'p1', structuredReq())).ok).toBe(true);
+    const created = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const w1 = created.filter((request) => request.role === 'worker' && request.allowedSkillNames?.includes('ext:fmt'));
+    expect(w1.length).toBeGreaterThan(0);
+    // The empty persona list is restricted (defined), not unset.
+    expect(created.some((request) => Array.isArray(request.allowedSkillNames) && request.allowedSkillNames.length === 0)).toBe(true);
+    // The unrestricted orchestrator carries no allowlist.
+    expect(created.some((request) => request.allowedSkillNames === undefined)).toBe(true);
+  });
+
+  it('leanWorkers: unset-skills workers get only zcc-inbox; explicit skills and the orchestrator are unaffected', async () => {
+    h.personas = [persona('orch'), persona('w1'), persona('w2', { skills: ['ext:fmt'] })];
+    h.teams[0] = { ...h.teams[0], leanWorkers: true };
+    expect((await launchTeam('team1', 'p1', structuredReq())).ok).toBe(true);
+    const created = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const names = (request: any): string[] => [...(request.allowedSkillNames ?? []), ...(request.automatedSkillIds ?? []).map((id: string) => id.slice(id.lastIndexOf('/') + 1))];
+    const orch = created.filter((request) => request.role === 'orchestrator');
+    expect(orch.length).toBeGreaterThan(0);
+    expect(orch.every((request) => request.allowedSkillNames === undefined && request.automatedSkillIds === undefined)).toBe(true);
+    const workers = created.filter((request) => request.role === 'worker');
+    // Restricted never widens: an automated member's injected-skill default is none, so the
+    // lean/explicit allowlist narrows that baseline and adds no catalog ids (incl. zcc-inbox).
+    expect(workers.every((request) => Array.isArray(request.allowedSkillNames))).toBe(true);
+    expect(workers.every((request) => Array.isArray(request.automatedSkillIds) && request.automatedSkillIds.length === 0)).toBe(true);
+    expect(workers.some((request) => request.allowedSkillNames.length === 0)).toBe(true);
+    expect(workers.some((request) => request.allowedSkillNames.includes('ext:fmt'))).toBe(true);
+    expect(names(workers[0]).every((name: string) => name !== 'review')).toBe(true);
+  });
+
   it.each(['runtime', 'provider'] as const)('refuses %s preflight for every slot before any ACP create or PTY', async (refusal) => {
     h.personas[2] = persona('w2', { baseProfile: 'opencode' });
     const req = structuredReq();
@@ -1588,5 +1619,21 @@ describe('Squad seat marker on restart and restore (#675, REQ-11)', () => {
     };
     await relaunchSquadWorker(deps as never, sess as never);
     expect((launchAuthorizedTerminal.mock.calls[0] as any[])[2]).toMatchObject({ preallocatedSessionId: 'w1', squadSeat: true });
+  });
+});
+
+describe('slotSkillAllowlistFact', () => {
+  const { slotSkillAllowlistFact } = host;
+  const personas = [{ id: 'r', skills: ['x'] }, { id: 'u' }];
+  it('returns the persona allowlist plus always-allowed skills', () => {
+    expect(slotSkillAllowlistFact(undefined, personas, 'r', '0:r:0').skillAllowlist).toEqual(expect.arrayContaining(['x', 'zcc-inbox']));
+  });
+  it('is empty for unrestricted, unknown persona, and lean orchestrator', () => {
+    expect(slotSkillAllowlistFact(undefined, personas, 'u', '0:u:0')).toEqual({});
+    expect(slotSkillAllowlistFact(undefined, personas, 'nope', '0:n:0')).toEqual({});
+    expect(slotSkillAllowlistFact({ leanWorkers: true }, personas, 'u', 'orchestrator:u')).toEqual({});
+  });
+  it('lean workers restrict worker slots to the always-allowed list', () => {
+    expect(slotSkillAllowlistFact({ leanWorkers: true }, personas, 'u', '0:u:0').skillAllowlist).toEqual(['zcc-inbox']);
   });
 });

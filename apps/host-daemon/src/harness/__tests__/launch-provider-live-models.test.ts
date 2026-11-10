@@ -45,8 +45,8 @@ describe('launch-scoped live model inventory', () => {
       targetId: 'fixture-provider/gpt-7-luna', level: 'low', contribution: { args: ['--model', 'fixture-provider/gpt-7-luna'] }
     });
     // A pin for another level or adapter never re-routes this launch.
-    expect(() => resolveModelTarget(shared, { ...input, authorizedModel: { ...pin, level: 'high' } })).toThrow('does not support low model level');
-    expect(() => resolveModelTarget(shared, { ...input, authorizedModel: { ...pin, adapterId: 'codex' } })).toThrow('does not support low model level');
+    expect(() => resolveModelTarget(shared, { ...input, strictTier: true, authorizedModel: { ...pin, level: 'high' } })).toThrow('does not support low model level');
+    expect(() => resolveModelTarget(shared, { ...input, strictTier: true, authorizedModel: { ...pin, adapterId: 'codex' } })).toThrow('does not support low model level');
     // Explicit ids stay verbatim regardless of a pin.
     expect(resolveModelTarget(shared, {
       ...input,

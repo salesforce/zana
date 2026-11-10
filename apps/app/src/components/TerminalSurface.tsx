@@ -168,7 +168,12 @@ export function TerminalSurface() {
     monitorSessionId,
     threadPanelSessionId,
     projectTerminalsPaneId,
-    splitLayout
+    splitLayout,
+    // A round trip through a page without the split workspace (Settings)
+    // unmounts the anchor with the node inside it, and the targets above can
+    // be unchanged on the way back. Re-resolve on every route change so the
+    // node lands in the freshly mounted anchor instead of staying detached.
+    location.pathname
   ]);
 
   // Build a tab-id → area map for the layout. The agent modal wins: when open,

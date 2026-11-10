@@ -206,6 +206,8 @@ export interface LaunchOptions {
   initialConfig?: Record<string, unknown>;
   /** Explicit opt-in for tests that intentionally invoke an authenticated Claude. */
   allowLiveClaude?: boolean;
+  /** Explicit opt-in for tests that intentionally invoke real OpenCode/Codex/Cursor binaries. */
+  allowLiveHarnesses?: boolean;
 }
 
 /**
@@ -259,7 +261,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   };
   // `claude doctor` and legacy fallbacks use PATH instead of claudeBinary.
   // Keep the guard ahead of inherited CLI directories for deterministic tests.
-  const isolatedPath = isolatedClaudePath(env.PATH, opts.allowLiveClaude);
+  const isolatedPath = isolatedClaudePath(env.PATH, opts.allowLiveClaude || opts.allowLiveHarnesses);
   if (isolatedPath !== undefined) env.PATH = isolatedPath;
   // A parent `electron-vite dev` / leftover diagnostic must not steal this
   // unpackaged E2E boot onto the live renderer or product server.
@@ -439,6 +441,7 @@ export const test = base.extend<Fixtures>({
       env,
       initialConfig,
       allowLiveClaude: seedClaudeAuth,
+      allowLiveHarnesses: seedOpenCodeAuth,
     });
     try {
       await use(handle);

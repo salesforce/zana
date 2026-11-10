@@ -48,7 +48,7 @@ Below that:
 
 | Section | What it shows |
 |---|---|
-| **Sources** | Files attached to the run, or "No execution sources." |
+| **Sources** | Files and attachments passed to the run, or "No execution sources." |
 | **Work units** | How many steps are complete, and the progress percentage. |
 | **Assignments** | Each step and the worker it is assigned to, with its state. |
 | **Progress** | A list of events. Open one for detail. |

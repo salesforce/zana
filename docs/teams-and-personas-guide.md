@@ -358,7 +358,14 @@ Rules: the Squad always runs in the proposing session's Project. Its files can b
 in that Project, your home folder (for example a doc vault or `~/.zcc/library`) or
 the clone root. A file outside the Project shows its full path, marked "outside the
 Project", on the card and in the composer, so you see what leaves the checkout
-before Launch. A file is attached either through the proposal's `sources` or by
+before Launch. Text that is not on disk is passed by value as `attachments: [{ name, text }]`
+(shared budget with sources: 16 items, 4 MiB each, 16 MiB total; names are NFC-normalised,
+clash case-insensitively, are deduplicated when identical and otherwise numbered "(n)";
+the result maps `{ given, used, deduplicated? }`). In review mode attachments are kept as
+private owner-only unencrypted copies under the Zana data folder until launched, dismissed
+or expired (64 MiB total). The card says: "Attached content was captured when this launch
+was prepared. Anything changed after that is not included, and the Squad will use only
+the captured version." A file is attached either through the proposal's `sources` or by
 name in the goal; a goal that names a file outside the Project is refused, and the
 agent is told to pass it in `sources` so it shows on the card. Some locations are always refused, for proposals and for paths
 named in any Squad goal:

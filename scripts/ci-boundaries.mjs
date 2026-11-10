@@ -11,6 +11,7 @@ export function boundarySpecs(paths) {
     if (/threads|thread-view|agent-runtime|provider-bridge|provider-(acp|codex)|host-hub|control-sdk/.test(path)) add('thread-plan-ux', 'thread-refresh-progress', 'provider-bridge-framing', 'thread-loading');
     if (/plugin-host-artifact|plugin-service|build-plugin-host|prepare-plugin-runtime|before-pack-plugins|provider-(acp|codex|claude-code)|electron-builder|release\.yml/.test(path)) add('packaged-provider-startup');
     if (/plugin-recovery|plugin-service|DevelopmentView|before-pack-plugins|release\.yml/.test(path)) add('development-recovery');
+    if (/thread-peer-|host-peer-tools|peer-tool-|peer-tools-api|cli-peer-delivery|PeerMessage|peer-message|deferred-thread-messages/.test(path)) add('thread-peer-communication');
     if (/conversation-(pruning|output|history-maintenance)/.test(path)) add('thread-history-pruning');
     if (/inbox|feed-categories/.test(path)) add('inbox-read-persistence');
     if (/plugins\/tasks\//.test(path)) add('tasks-bb-parity', 'mobile-tasks');
@@ -28,6 +29,9 @@ export function boundarySpecs(paths) {
     // #416: a Squad engineer that stops on an API error is nudged, restarted, then handed to the user.
     if (/services\/execution\/(worker-api-error-recovery|service|store|projection)\.ts|squad-worker-restart|worker-api-error-recovery-wiring|api-error-resume-wiring|harness\/claude\/interaction-hooks|ExecutionJobDetails/.test(path)) add('job-team-api-error-recovery');
     if (/build-plugin-(app|server)\.ts/.test(path)) add('plugin-authoring-live');
+    if (/^(?:plugins\/agent-sounds\/|apps\/app\/src\/plugins\/(?:agent-activity|PluginContentScriptsHost)\.|packages\/plugin-sdk\/src\/(?:app-contract|app)\.ts$)/.test(path)) add('sound-studio-plugin');
+    if (/^(?:apps\/desktop\/src\/native\/agent-sound|apps\/app\/src\/views\/settings\/(?:AgentSoundSettings|NotificationsSettingsView)|apps\/app\/src\/plugins\/notification-sounds|packages\/domain\/src\/notification-sounds)/.test(path)) add('agent-notification-sounds', 'custom-notification-sounds');
+    if (/^(?:apps\/app\/src\/plugins\/(?:notification-sounds|PluginContentScriptsHost)|apps\/app\/src\/views\/settings\/NotificationsSettingsView|packages\/plugin-sdk\/src\/(?:app-contract|internal\/plugin-app-collector))/.test(path)) add('notification-sound-providers');
     if (/plugins\/design-docs\/src\/server\/(sync-store|peer-protocol)|(?:^|\/)isolated-plugin-runtime|e2e\/fixtures\/peer-design-docs-worker/.test(path)) add('peer-data-boundary');
     if (/opencode/.test(path)) add('opencode-launch-boundary');
     if (/desktop-browser/.test(path)) add('desktop-browser-broker');

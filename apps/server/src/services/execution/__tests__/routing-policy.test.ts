@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateSlotEligibility } from '../routing-policy.js';
+import { compareCheapestFit, evaluateSlotEligibility, LEVEL_UNMET_REASON, NOMINAL_CONTEXT_BYTES, slotRankingPriceUsd } from '../routing-policy.js';
 
 const slot = {
   slotId: 'slot-1', personaId: 'reviewer', provider: 'claude', model: 'sonnet', level: 'medium' as const,
@@ -50,5 +50,49 @@ describe('evaluateSlotEligibility', () => {
     expect(evaluateSlotEligibility({ version: 1, requiredRole: 'reviewer' }, {
       ...slot, model: undefined, level: undefined, roleOwnedModel: true
     }, 200)).toMatchObject({ status: 'PASS' });
+  });
+});
+
+describe('slotRankingPriceUsd', () => {
+  const priced = { provider: 'claude', model: 'claude-haiku-4' };
+  it('uses the nominal size when no estimate is given, and an explicit size otherwise', () => {
+    expect(slotRankingPriceUsd(priced)).toBe(slotRankingPriceUsd(priced, NOMINAL_CONTEXT_BYTES));
+    expect(slotRankingPriceUsd(priced, NOMINAL_CONTEXT_BYTES * 4)!).toBeGreaterThan(slotRankingPriceUsd(priced)!);
+    expect(slotRankingPriceUsd(priced, 0)).not.toBe(slotRankingPriceUsd(priced));
+  });
+  it('is undefined with missing provider/model or an uncatalogued model', () => {
+    expect(slotRankingPriceUsd({})).toBeUndefined();
+    expect(slotRankingPriceUsd({ provider: 'claude' })).toBeUndefined();
+    expect(slotRankingPriceUsd({ model: 'claude-haiku-4' })).toBeUndefined();
+    expect(slotRankingPriceUsd({ provider: 'nope', model: 'nope' })).toBeUndefined();
+  });
+});
+
+describe('compareCheapestFit', () => {
+  it('orders by price, unpriced last, equal prices tie', () => {
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1 }, { slotId: 'b', priceUsd: 2 })).toBeLessThan(0);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 2 }, { slotId: 'b', priceUsd: 1 })).toBeGreaterThan(0);
+    expect(compareCheapestFit({ slotId: 'a' }, { slotId: 'b', priceUsd: 9 })).toBe(1);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 9 }, { slotId: 'b' })).toBe(-1);
+    expect(compareCheapestFit({ slotId: 'a' }, { slotId: 'b' })).toBe(0);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1 }, { slotId: 'b', priceUsd: 1 })).toBe(0);
+  });
+  it('ranks live before deferred only at equal price', () => {
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1 }, { slotId: 'b', priceUsd: 1, deferred: true })).toBeLessThan(0);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1, deferred: true }, { slotId: 'b', priceUsd: 1 })).toBeGreaterThan(0);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 2, deferred: false }, { slotId: 'b', priceUsd: 1, deferred: true })).toBeGreaterThan(0);
+  });
+  it('deprioritises the just-finished slot last, after price and live/deferred', () => {
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1 }, { slotId: 'b', priceUsd: 1 }, 'a')).toBeGreaterThan(0);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1 }, { slotId: 'b', priceUsd: 1 }, 'b')).toBeLessThan(0);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1 }, { slotId: 'b', priceUsd: 2 }, 'a')).toBeLessThan(0);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1, deferred: true }, { slotId: 'b', priceUsd: 1 }, 'b')).toBeGreaterThan(0);
+    expect(compareCheapestFit({ slotId: 'a', priceUsd: 1 }, { slotId: 'b', priceUsd: 1 }, 'c')).toBe(0);
+  });
+});
+
+describe('LEVEL_UNMET_REASON', () => {
+  it('is the exact reason evaluateSlotEligibility emits for a level shortfall', () => {
+    expect(evaluateSlotEligibility({ version: 1, minimumLevel: 'high' }, slot, 200).reasons).toEqual([LEVEL_UNMET_REASON]);
   });
 });

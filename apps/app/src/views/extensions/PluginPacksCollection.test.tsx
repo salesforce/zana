@@ -29,6 +29,29 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 const open = async () => { fireEvent.click(await screen.findByRole('button', { name: 'Review pack' })); return screen.findByRole('dialog', { name: 'Review Team essentials' }); };
+it('filters onboarding by source and reports success only after the user finishes review', async () => {
+  const onInstalled = vi.fn(), onReviewChange = vi.fn();
+  const view = render(<PluginPacksCollection mode="browse" marketplaceSource="git:other/catalog" onInstalled={onInstalled} onReviewChange={onReviewChange} />);
+  await screen.findByText(/No bundles are currently available/);
+  view.rerender(<PluginPacksCollection mode="browse" marketplaceSource={identity.marketplaceSource} onInstalled={onInstalled} onReviewChange={onReviewChange} />);
+  await open(); expect(onReviewChange).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); expect(onInstalled).not.toHaveBeenCalled();
+  await open(); fireEvent.click(screen.getByRole('button', { name: 'Install selected plugins' }));
+  await screen.findByRole('button', { name: 'Done' }); expect(onInstalled).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  expect(onReviewChange).toHaveBeenLastCalledWith(false); expect(onInstalled).toHaveBeenCalledWith(saved());
+});
+it('delegates settings navigation with the completed installation to an embedding setup flow', async () => {
+  const onOpenPlugin = vi.fn();
+  render(<PluginPacksCollection mode="browse" onOpenPlugin={onOpenPlugin} />);
+  await open(); fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+  expect(onOpenPlugin).toHaveBeenLastCalledWith('existing', null);
+  expect(api.navigate).not.toHaveBeenCalled();
+  await open(); fireEvent.click(screen.getByRole('button', { name: 'Install selected plugins' }));
+  await screen.findByRole('button', { name: 'Done' });
+  fireEvent.click(within(screen.getByTestId('plugin-pack-member-new')).getByRole('button', { name: 'Open settings' }));
+  expect(onOpenPlugin).toHaveBeenLastCalledWith('new', saved());
+});
 it('discovers packs after catalogue mutations and background seed completion, and releases subscriptions', async () => {
   api.list.mockResolvedValueOnce([]);
   const view = render(<PluginPacksCollection mode="browse" catalogRevision={0} />);
@@ -290,4 +313,97 @@ it('does not show a successful saved pack when an all-installed review is reject
   expect(screen.queryByText('Pack saved. Manage each plugin below.')).toBeNull();
   expect((screen.getByRole('button', { name: 'Save pack' }) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+});
+
+it('opens the sole onboarding bundle inline and advances immediately after installation', async () => {
+  const onInstalled = vi.fn(), onReviewChange = vi.fn(), onBusyChange = vi.fn();
+  const view = render(<PluginPacksCollection mode="browse" presentation="onboarding" marketplaceSource={identity.marketplaceSource} onInstalled={onInstalled} onReviewChange={onReviewChange} onBusyChange={onBusyChange} />);
+  expect(screen.queryByText(/No bundles/)).toBeNull();
+  await screen.findByRole('button', { name: 'Install and continue' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Review pack' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Open settings' })).toBeNull();
+  expect(onReviewChange).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Install and continue' }));
+  await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(saved()));
+  expect(api.install).toHaveBeenCalledWith({ identity, planId: plan.planId, pluginIds: ['existing', 'new'] });
+  expect(onBusyChange).toHaveBeenCalledWith(true);
+  view.unmount(); expect(onBusyChange).toHaveBeenLastCalledWith(false);
+});
+it('continues an already installed onboarding bundle without offering installation', async () => {
+  api.plan.mockResolvedValue({ ...plan, members: plan.members.map(member => ({ ...member, status: 'installed' })) });
+  const onInstalled = vi.fn();
+  render(<PluginPacksCollection mode="browse" presentation="onboarding" onInstalled={onInstalled} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue setup' }));
+  await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(saved()));
+  expect(api.install).toHaveBeenCalledWith({ identity, planId: plan.planId, pluginIds: ['existing', 'new'] });
+  expect(screen.queryByRole('button', { name: 'Save pack' })).toBeNull();
+});
+it('retries saving onboarding progress without replaying a consumed installation plan', async () => {
+  const onInstalled = vi.fn().mockRejectedValueOnce(new Error('Could not save setup')).mockResolvedValue(undefined);
+  render(<PluginPacksCollection mode="browse" presentation="onboarding" onInstalled={onInstalled} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Install and continue' }));
+  await screen.findByText('Could not save setup');
+  fireEvent.click(screen.getByRole('button', { name: 'Continue setup' }));
+  await waitFor(() => expect(onInstalled).toHaveBeenCalledTimes(2));
+  expect(api.install).toHaveBeenCalledOnce();
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+it('lets onboarding choose between bundles without nested reviews or automatic installation', async () => {
+  const second = { ...catalog, identity: { ...identity, packId: 'other' }, pack: { ...catalog.pack, id: 'other', displayName: 'Other bundle' } };
+  api.list.mockResolvedValue([catalog, second]);
+  render(<PluginPacksCollection mode="browse" presentation="onboarding" />);
+  const choices = await screen.findAllByRole('button', { name: 'Choose bundle' });
+  expect(api.plan).not.toHaveBeenCalled();
+  fireEvent.click(choices[0]!);
+  await screen.findByRole('button', { name: 'Install and continue' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Choose another bundle' }));
+  expect(screen.getAllByRole('button', { name: 'Choose bundle' })).toHaveLength(2);
+  expect(api.install).not.toHaveBeenCalled();
+});
+it('recovers inline planning and installation failures by requesting a fresh plan', async () => {
+  api.plan.mockRejectedValueOnce(new Error('Offline')).mockResolvedValue(plan);
+  api.install.mockRejectedValueOnce(new Error('Plan expired')).mockResolvedValue(saved());
+  const onInstalled = vi.fn();
+  render(<PluginPacksCollection mode="browse" presentation="onboarding" onInstalled={onInstalled} />);
+  await screen.findByText('Plugin packs: Offline');
+  expect(api.plan).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole('button', { name: 'Reload bundle' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Install and continue' }));
+  await screen.findByText('Plan expired Reload the bundle to retry.');
+  expect((screen.getByRole('button', { name: 'Install and continue' }) as HTMLButtonElement).disabled).toBe(true);
+  api.plan.mockResolvedValue({ ...plan, planId: 'fresh-plan' });
+  fireEvent.click(screen.getByRole('button', { name: 'Reload bundle' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Install and continue' }));
+  await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(saved()));
+  expect(api.install).toHaveBeenLastCalledWith({ identity, planId: 'fresh-plan', pluginIds: ['existing', 'new'] });
+});
+it('keeps inline partial failures retryable and advances only after every selected plugin succeeds', async () => {
+  api.install.mockResolvedValueOnce(saved(true)).mockResolvedValue(saved());
+  const onInstalled = vi.fn();
+  render(<PluginPacksCollection mode="browse" presentation="onboarding" onInstalled={onInstalled} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Install and continue' }));
+  const retry = await screen.findByRole('button', { name: 'Retry failed plugins' });
+  await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+  expect(onInstalled).not.toHaveBeenCalled();
+  fireEvent.click(retry);
+  await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(saved()));
+  expect(api.install).toHaveBeenLastCalledWith({ identity, planId: plan.planId, pluginIds: ['new'] });
+});
+it('preserves the installed selection while retrying a failed onboarding save', async () => {
+  const installation = saved();
+  installation.members[1] = { ...installation.members[1]!, selected: false, status: 'skipped' };
+  api.install.mockResolvedValue(installation);
+  const onInstalled = vi.fn().mockRejectedValueOnce(new Error('Disk full')).mockResolvedValue(undefined);
+  render(<PluginPacksCollection mode="browse" presentation="onboarding" onInstalled={onInstalled} />);
+  await screen.findByRole('button', { name: 'Install and continue' });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Include New tool' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue setup' }));
+  await screen.findByText('Disk full');
+  expect((screen.getByRole('checkbox', { name: 'Include New tool' }) as HTMLInputElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Continue setup' }));
+  await waitFor(() => expect(onInstalled).toHaveBeenCalledTimes(2));
+  expect(onInstalled).toHaveBeenLastCalledWith(installation);
+  expect(api.install).toHaveBeenCalledOnce();
 });

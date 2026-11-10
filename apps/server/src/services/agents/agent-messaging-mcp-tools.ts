@@ -69,6 +69,7 @@ export const agentInboxInputSchema = {
 };
 
 export interface RegisterMessagingToolsOpts {
+  sendToThread?: (input: { to: string; message: string; allProjects?: boolean }) => Promise<unknown>;
   /** Originating session id, from the URL route. Server-filled identity. */
   sessionId: string;
   /** Originating project id, from the URL route. Server-filled identity. */
@@ -108,6 +109,10 @@ export function registerAgentMessagingTools(
           // allProjects was set — otherwise handle-scoping could be bypassed by
           // passing the id directly.
           if (byId && (allProjects || byId.projectId === projectId)) target = byId;
+        }
+        if (!target && opts.sendToThread) {
+          const result = await opts.sendToThread({ to, message, allProjects });
+          return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
         }
         if (!target) {
           return toolError(

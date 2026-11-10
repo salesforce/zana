@@ -26,8 +26,12 @@ function artifactState(root: string) {
   }));
 }
 
-for (const runtimeOnly of [false, true]) {
-test.describe(runtimeOnly ? 'compiled runtime' : 'retained source compatibility', () => {
+for (const { runtimeOnly, rebuildBuiltin } of [
+  { runtimeOnly: false, rebuildBuiltin: false },
+  { runtimeOnly: true, rebuildBuiltin: false },
+  { runtimeOnly: true, rebuildBuiltin: true }
+]) {
+test.describe(rebuildBuiltin ? 'compiled runtime with development rebuilding' : runtimeOnly ? 'compiled runtime' : 'retained source compatibility', () => {
 test.use({
   initialConfig: { sponsorPromptDismissed: true },
   launchEnv: async ({ home }, use) => {
@@ -54,7 +58,7 @@ test.use({
     writeFileSync(join(home, 'provider-artifacts.json'), JSON.stringify({ root, before: artifactState(root) }));
     await use({
       ZCC_BUNDLED_PLUGINS_DIR: root,
-      ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: '0',
+      ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: rebuildBuiltin ? '1' : '0',
       NODE_PATH: ''
     });
   }

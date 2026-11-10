@@ -15,6 +15,14 @@ vi.mock('@zana-ai/zcc-db', () => ({
 import { appendConversationThreadEvent } from '@zana-ai/zcc-db';
 
 describe('appendClientTurnRequested', () => {
+  it('persists peer identity as agent context rather than user authorization', () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    appendClientTurnRequested({ db: {}, hub: { emit: vi.fn() } } as never, {
+      threadId: 'recipient', prompt: ['Review this change'], kind: 'new-turn', senderThreadId: 'sender'
+    });
+    expect(vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload).toMatchObject({ initiator: 'agent', senderThreadId: 'sender' });
+    vi.mocked(appendConversationThreadEvent).mockClear();
+  });
   it('stores a client/turn/requested event with the user prompt', () => {
     const emit = vi.fn();
     appendClientTurnRequested(

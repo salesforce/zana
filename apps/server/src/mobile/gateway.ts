@@ -246,7 +246,7 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
       if (Number(req.headers['content-length'] ?? 0) > MAX_BODY)
         return json(res, 413, { error: 'Body too large' });
       const queuedSend = req.method === 'POST' && !machine
-        ? url.pathname.match(/^\/api\/v1\/threads\/([a-zA-Z0-9_-]{1,128})\/next-turn\/([a-zA-Z0-9_-]{1,128})\/send$/)
+        ? url.pathname.match(/^\/api\/v1\/threads\/([a-zA-Z0-9_-]{1,128})\/(?:next-turn|peer-messages)\/([a-zA-Z0-9_-]{1,128})\/send$/)
         : null;
       let confirmedSendBody: string | undefined;
       if (queuedSend) {

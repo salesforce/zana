@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import {
   mkdir,
   mkdtemp,
@@ -278,6 +279,21 @@ function importerIsInsidePlugin(importer: string, rootDir: string): boolean {
   return containedIn(rootDir, importer);
 }
 
+/**
+ * A published plugin's host entry is the bundle itself. Rebuilding that file
+ * prepends the Node banner onto a bundle that already has it.
+ */
+export function isPublishedHostArtifact(rootDir: string, hostEntry: string): boolean {
+  const artifact = resolve(rootDir, 'dist', 'host.js');
+  const entry = resolve(rootDir, hostEntry);
+  if (entry === artifact) return true;
+  try {
+    return realpathSync(entry) === realpathSync(artifact);
+  } catch {
+    return false;
+  }
+}
+
 /** Build the optional Node host entry into a self-contained remote artifact. */
 export async function buildPluginHost(
   rootDir: string,
@@ -287,10 +303,14 @@ export async function buildPluginHost(
   const { hostEntry, packageName, pluginVersion } = await readPluginHostConfig(rootDir);
   const pluginRoot = await realpath(rootDir);
   const distDir = join(rootDir, 'dist');
-  await mkdir(distDir, { recursive: true });
   const jsPath = join(distDir, 'host.js');
   const mapPath = join(distDir, 'host.js.map');
   const metaPath = join(distDir, 'host.meta.json');
+  if (isPublishedHostArtifact(rootDir, hostEntry)) {
+    const artifactDigest = createHash('sha256').update(await readFile(jsPath)).digest('hex');
+    return { jsPath, mapPath, metaPath, artifactDigest };
+  }
+  await mkdir(distDir, { recursive: true });
   await removeStaleHostStageDirectories(distDir);
   const stageDir = await mkdtemp(join(distDir, HOST_STAGE_DIRECTORY_PREFIX));
   try {

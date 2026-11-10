@@ -156,7 +156,9 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
   await capture('harness-narrow.png');
   await cli.click();
   await claudeSettings.click();
-  await expect(binary).toHaveValue('claude');
+  // The default 'claude' is stored but shown as an empty field with a placeholder, so a cleared field stays visibly cleared.
+  await expect(binary).toHaveValue('');
+  await expect(binary).toHaveAttribute('placeholder', 'claude');
   await expect.poll(() => settingsPanel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await claudeSettings.evaluate((el) => el.scrollIntoView({ block: 'start' }));
   await capture('cli-options-narrow.png');

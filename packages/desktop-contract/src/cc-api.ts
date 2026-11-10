@@ -1315,6 +1315,10 @@ export interface CcApi {
     }>;
   };
   app: {
+    previewAgentSound?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<void>;
+    getAgentSoundFiles?(): Promise<import('@zana-ai/zcc-domain/product').AgentSoundFilesSelection>;
+    chooseAgentSoundFile?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<{ name: string } | null>;
+    clearAgentSoundFile?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<void>;
     performance(): Promise<import('./performance.js').RuntimePerformanceSnapshot | null>;
     onMenuEvent(cb: (event: string) => void): () => void;
     homedir(): Promise<string>;

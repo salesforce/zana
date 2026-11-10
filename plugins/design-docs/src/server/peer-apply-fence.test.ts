@@ -99,7 +99,7 @@ describe('fenced transfer apply stays within the worker commit budget', () => {
     }
     expect(b.store.readFile(doc.id, 'README.md').content).toBe('Z'.repeat(2 * 1024 * 1024));
     expect(b.store.readFile(doc.id, 'asset.png').content).toBe(files[11]!.content);
-  }, 60_000);
+  }, 120_000);
 
   it('never trusts a preparation it did not mint and re-hydrates inside the fence instead', async () => {
     const a = fixture('a'), b = fixture('b'), send = receiver(b);

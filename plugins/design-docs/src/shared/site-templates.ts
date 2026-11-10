@@ -13,7 +13,7 @@ const HEAD = `<!doctype html>
 <script src="zcc-kit/site.js"></script>
 </head>`;
 
-export const REPORT_INDEX = `${HEAD}
+export const REPORT_INDEX_CONTENT = `${HEAD}
 <body>
 <header class="site-header">
   <a class="brand" href="#summary"><span class="brand-mark" aria-hidden="true">R</span><span class="brand-text"><strong>{{title}}</strong><span>Report</span></span></a>
@@ -126,7 +126,7 @@ export const REPORT_INDEX = `${HEAD}
 </html>
 `;
 
-export const REPORT_WEEKLY_CSV = `week,Option A,Option B
+export const REPORT_WEEKLY_CSV_CONTENT = `week,Option A,Option B
 W1,0.52,0.47
 W2,0.55,0.49
 W3,0.58,0.50
@@ -137,7 +137,7 @@ W7,0.65,0.60
 W8,0.69,0.61
 `;
 
-export const HTML_DESIGN_INDEX = `${HEAD}
+export const HTML_DESIGN_INDEX_CONTENT = `${HEAD}
 <body>
 <header class="site-header">
   <a class="brand" href="#context"><span class="brand-mark" aria-hidden="true">D</span><span class="brand-text"><strong>{{title}}</strong><span>Design doc</span></span></a>
