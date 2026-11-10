@@ -11,7 +11,7 @@ const exec = promisify(execFile);
 const fixture = fileURLToPath(new URL('./fixtures/plugins/platform-hooks-probe', import.meta.url));
 const pluginId = 'platform-hooks-probe';
 
-test('human-required gates reject HTTP/agent CLI; real UI and operator CLI record human actors', async ({ home }) => {
+test('human-required gates reject HTTP/agent CLI; real UI records human, operator CLI never does', async ({ home }) => {
   test.setTimeout(180_000);
   await build({ entryPoints: [join(fixture, 'app.tsx')], outfile: join(fixture, 'dist/app.js'), bundle: true,
     format: 'esm', platform: 'browser', jsx: 'automatic', plugins: [runtimeShimPlugin()] });
@@ -77,9 +77,17 @@ test('human-required gates reject HTTP/agent CLI; real UI and operator CLI recor
     const refused = await cli(id, true);
     expect(refused.code, refused.stderr).toBe(5);
     expect(refused.stderr).toContain('Human proof required');
+    // The control socket is reachable by any same-uid process, so the operator CLI is never a human.
+    const operator = await cli(id, false);
+    expect(operator.code, operator.stderr).toBe(5);
+    expect(operator.stderr).toContain('Human proof required');
+    await banner.getByRole('button', { name: 'Submit', exact: true }).click();
+    await expect.poll(result).toMatchObject({ actor: 'human' });
+    // Without a human gate the operator CLI may answer, and is recorded as the CLI.
+    id = await ask(false);
     const accepted = await cli(id, false);
     expect(accepted.code, accepted.stderr).toBe(0);
-    await expect.poll(result).toMatchObject({ actor: 'human' });
+    await expect.poll(result).toMatchObject({ actor: 'cli' });
     for (const actor of ['agent', 'unknown']) {
       id = await ask(false);
       expect((await respond(id, actor === 'agent' ? { 'x-zcc-caller-credential': 'agent-token' } : {})).status).toBe(200);

@@ -16,6 +16,7 @@ import type { Page } from '@playwright/test';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { buildPluginHost } from '../packages/plugin-build/src/build-plugin-host.js';
 import { cleanupTmuxEnvironment } from './fixtures/tmux-isolation.js';
+import { answerApprovalSheet } from './fixtures/core-peer-use.js';
 
 const FIXTURE_DIR = fileURLToPath(new URL('./fixtures/plugins/platform-hooks-probe', import.meta.url));
 const MODEL_CLI = fileURLToPath(new URL('./fixtures/claude-model-cli.cjs', import.meta.url));
@@ -203,7 +204,7 @@ async function launchProbe(home: string, profile: 'claude' | 'codex', stubSource
       }, session).catch(() => undefined);
       await shutdown();
     };
-    return { win, home, stubDir, ...session, ...probeApi(win, stubDir, session.sessionId), cleanup, stderr: () => stderr };
+    return { app, win, home, stubDir, ...session, ...probeApi(win, stubDir, session.sessionId), cleanup, stderr: () => stderr };
   } catch (error) {
     await shutdown();
     throw error;
@@ -232,6 +233,20 @@ function startProbe(probe: Probe, label: string, toolUseId: string): Promise<Pro
 async function waitForAsk(probe: Probe): Promise<PendingAsk> {
   await expect.poll(async () => (await pendingAsk(probe)).length, { timeout: 20_000, message: 'the approval never opened' }).toBe(1);
   return (await pendingAsk(probe))[0]!;
+}
+
+
+/**
+ * A human answers a tool approval. The ask demands main's own confirmation sheet, so the window's
+ * respond call blocks until the sheet is approved; the decision itself travels in the value.
+ */
+async function decide(probe: Probe, id: string, decision: 'allow' | 'deny'): Promise<void> {
+  const responding = probe.win.evaluate(
+    ({ sessionId, id, decision }) => window.cc.threads.interactions.respondSession(sessionId, id, { decision }),
+    { sessionId: probe.sessionId, id, decision }
+  );
+  await answerApprovalSheet(probe.app, 'Approve tool call', 'approve');
+  await responding;
 }
 
 const reasonOf = (result: ProbeResult) => (JSON.parse(result.stdout) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string } }).hookSpecificOutput;
@@ -264,7 +279,7 @@ test('a human approving a host-rendered ask after 20 s lets the PTY tool call th
     // The relay is still waiting well past the old 5 s budget.
     await new Promise((resolve) => setTimeout(resolve, 20_000));
     expect(existsSync(join(probe.stubDir, 'approve.out.json'))).toBe(false);
-    await probe.win.evaluate(({ sessionId, id }) => window.cc.threads.interactions.respondSession(sessionId, id, { decision: 'allow' }), { sessionId: probe.sessionId, id: ask.id });
+    await decide(probe, ask.id, 'allow');
 
     const result = await running;
     expect(result, `${JSON.stringify(result)}\n${probe.stderr()}`).toMatchObject({ status: 0, stdout: '' });
@@ -282,7 +297,7 @@ test('deny, cancel and an unanswered ask all deny the PTY tool call', async ({ h
 
     const denied = startProbe(probe, 'deny', 'toolu_ask_deny');
     const first = await waitForAsk(probe);
-    await probe.win.evaluate(({ sessionId, id }) => window.cc.threads.interactions.respondSession(sessionId, id, { decision: 'deny' }), { sessionId: probe.sessionId, id: first.id });
+    await decide(probe, first.id, 'deny');
     expect(reasonOf(await denied)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'Tool call was not approved' });
 
     const cancelled = startProbe(probe, 'cancel', 'toolu_ask_cancel');
@@ -315,7 +330,7 @@ test('a PTY plugin tool call the human already approved natively is not asked ag
     // 1. The CLI's PreToolUse hook asks; the human approves.
     const hook = probe.probe('native', { ...claudeEvent(probe, 'toolu_single_eval'), tool_name: `mcp__zcc-inbox__${tool}`, tool_input: {} });
     const ask = await waitForAsk(probe);
-    await probe.win.evaluate(({ sessionId, id }) => window.cc.threads.interactions.respondSession(sessionId, id, { decision: 'allow' }), { sessionId: probe.sessionId, id: ask.id });
+    await decide(probe, ask.id, 'allow');
     expect(await hook).toMatchObject({ status: 0, stdout: '' });
     expect(await probe.rows()).toHaveLength(1);
 

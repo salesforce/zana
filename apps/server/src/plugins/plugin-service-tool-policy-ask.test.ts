@@ -52,9 +52,12 @@ describe('tool policy ask resolution', () => {
     await expect(service.decideToolPolicy(call())).resolves.toEqual({ action: 'allow' });
     expect(ask).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: 'asker', threadId: 't1', rendererId: TOOL_POLICY_ASK_RENDERER_ID, requireHuman: 'native-sheet',
-      timeoutMs: ASK_APPROVAL_MS.default,
       payload: expect.objectContaining({ kind: 'tool-policy-ask', toolName: 'Bash', prompt: 'Run it?' })
     }));
+    // The ask timeout is the budget minus time already spent queuing, so allow a little slack.
+    const sent = ask.mock.calls[0]![0] as { timeoutMs: number };
+    expect(sent.timeoutMs).toBeLessThanOrEqual(ASK_APPROVAL_MS.default);
+    expect(sent.timeoutMs).toBeGreaterThan(ASK_APPROVAL_MS.default - 5_000);
   });
 
   it('caches the final human decision per invocation so a replay does not re-ask', async () => {
