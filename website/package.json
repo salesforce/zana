@@ -15,7 +15,7 @@
     "lint": "next lint",
     "db:generate": "npm run db:generate:sqlite && npm run db:generate:pg",
     "db:generate:sqlite": "drizzle-kit generate",
-    "db:generate:pg": "DRIZZLE_DIALECT=pg drizzle-kit generate",
+    "db:generate:pg": "cross-env DRIZZLE_DIALECT=pg drizzle-kit generate",
     "db:migrate": "node -e \"const p='./lib/db/migrate.mjs'; import(p).catch(e=>{ if(e.code==='ERR_MODULE_NOT_FOUND'){console.log('db:migrate: lib/db/migrate.mjs not present yet (Phase 1) — skipping.'); process.exit(0);} throw e; })\"",
     "test": "vitest run"
   },
@@ -38,6 +38,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "better-sqlite3": "^12.11.1",
+    "cross-env": "^10.1.0",
     "drizzle-kit": "^0.31.10",
     "postcss": "^8.5.26",
     "sharp": "^0.35.3",

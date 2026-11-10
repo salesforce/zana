@@ -258,6 +258,7 @@ zcc live cleanup --stale
 ```
 
 Run live scripts from a host shell: `unset ZCC_SESSION_ID && pnpm live:mode-reasoning && pnpm live:memory`.
+On Windows they also run from cmd.exe (`set ZCC_SESSION_ID=` first) and PowerShell (`Remove-Item Env:ZCC_SESSION_ID`); see `docs/live-zana-verification.md`.
 
 ### CLI Agent scenarios (`pnpm live:cli-scenarios`)
 
