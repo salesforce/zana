@@ -14,6 +14,7 @@ import { EXECUTION_FAILURE_CODES, EXECUTION_FAILURE_DETAIL_MAX_CHARS } from '@za
 import { LAUNCH_REVIEW_REQUIRED_MESSAGE, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import { MAX_EXECUTION_PLAN_BYTES, validOutputDeclaration } from './contracts.js';
 import { assembledResultProjection } from './projection.js';
+import { answerReceipt } from './answer-receipt.js';
 
 const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
@@ -359,6 +360,8 @@ export async function readStartRequestFile(
   return parsed.data;
 }
 
+const BINDING_RECOVERY_HINT = 'If your session restarted, call execution.whoami to see this session\'s binding, then ask the Squad owner to recover the coordinator from the Squad panel. Do not retry with another execution id.';
+
 /** Compact reply for the work outcome tools: the full record is 80-113 KB in real runs. */
 export function outcomeAck(record: ExecutionRecord, workUnitId: string) {
   const units = record.workUnits ?? [];
@@ -399,7 +402,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       && (!options.sessionId || !await options.validateRecoveryBinding?.(options.sessionId, resolved))) return undefined;
     return resolved;
   };
-  const boundDenied = (name: string) => ({ isError: true as const, content: [{ type: 'text' as const, text: `${name} failed: session is not bound to this execution.` }] });
+  const boundDenied = (name: string) => ({ isError: true as const, content: [{ type: 'text' as const, text: `${name} failed: session is not bound to this execution. ${BINDING_RECOVERY_HINT}` }] });
   const wrongAuthority = (name: string) => ({
     isError: true as const,
     content: [{ type: 'text' as const, text: JSON.stringify({
@@ -507,7 +510,9 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
   register('execution.work.answer', { description: 'Coordinator answers a coordinator-directed blocker (one raised with audience "coordinator"). The answer is delivered to the blocked worker, which resumes automatically. Not for human-audience blockers.', inputSchema: executionWorkAnswerSchema }, async ({ executionId, blockerId, answer }) => {
     if (!await authorized()) return denied('execution.work.answer'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.answer');
-    return boundResult('execution.work.answer', await options.service.answerBlockerByCoordinator(bound, blockerId, answer));
+    const answered = await options.service.answerBlockerByCoordinator(bound, blockerId, answer);
+    const receipt = answerReceipt(answered, blockerId);
+    return receipt ? { content: [{ type: 'text' as const, text: JSON.stringify(receipt) }] } : boundResult('execution.work.answer', answered);
   });
   register('execution.work.release', { description: 'Release one assigned work unit.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, claimId, claimGeneration }) => {
     if (!await authorized()) return denied('execution.work.release'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.release');
