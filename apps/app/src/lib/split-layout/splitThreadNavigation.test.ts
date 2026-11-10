@@ -83,6 +83,10 @@ describe('splitThreadNavigation', () => {
     expect(isSplitWorkspacePath('/inbox')).toBe(true);
     expect(paneContentForPathname('/inbox')).toEqual({ kind: 'inbox' });
     expect(paneContentRoute({ kind: 'inbox' })).toBe('/inbox');
+    expect(isSplitWorkspacePath('/projects/p1/inbox')).toBe(true);
+    expect(paneContentForPathname('/projects/p1/inbox')).toEqual({ kind: 'inbox', projectId: 'p1' });
+    expect(paneContentRoute({ kind: 'inbox', projectId: 'p1' })).toBe('/projects/p1/inbox');
+    expect(paneContentRoute({ kind: 'inbox', projectId: 'a/b' })).toBe('/projects/a%2Fb/inbox');
     expect(paneContentForPathname('/extensions/plugins/docs')).toBeNull();
     expect(isSplitWorkspacePath('/threads/abc')).toBe(true);
     expect(isSplitWorkspacePath('/plugins/docs/panel')).toBe(true);

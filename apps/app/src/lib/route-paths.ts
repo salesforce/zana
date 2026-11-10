@@ -28,6 +28,7 @@ export const TOOLS_HUB_PAGE_ROUTE_PATH = '/extensions/pages/:pluginId/:pageId/*'
 
 export const PROJECT_ROUTE_PATH = '/projects/:projectId';
 export const PROJECT_SETTINGS_ROUTE_PATH = '/projects/:projectId/settings';
+export const PROJECT_INBOX_ROUTE_PATH = '/projects/:projectId/inbox';
 export const PROJECT_NEW_THREAD_ROUTE_PATH = '/projects/:projectId/threads/new';
 export const PROJECT_THREAD_ROUTE_PATH = '/projects/:projectId/threads/:threadId';
 export const PROJECT_SESSION_ROUTE_PATH = '/projects/:projectId/sessions/:sessionId';
@@ -58,6 +59,7 @@ export const PROJECT_MODE_SET = new Set<string>(PROJECT_MODES);
 /** First path segments under `/projects/:id/` that are not project-view modes. */
 export const PROJECT_VIEW_RESERVED_SEGMENTS = new Set([
   'settings',
+  'inbox',
   'threads',
   'sessions',
   'schedules'
@@ -90,6 +92,11 @@ export function getRootRoutePath(): string {
 
 export function getInboxRoutePath(): string {
   return INBOX_ROUTE_PATH;
+}
+
+/** The Inbox scoped to one project: the project rail's Inbox. */
+export function getProjectInboxRoutePath(projectId: string): string {
+  return `/projects/${encodeURIComponent(projectId)}/inbox`;
 }
 
 export function getAgentsRoutePath(): string {
@@ -225,6 +232,10 @@ export function isSettingsRoutePath(pathname: string): boolean {
     pathname === SETTINGS_ROUTE_PATH ||
     matchPath(`${SETTINGS_ROUTE_PATH}/*`, pathname) !== null
   );
+}
+
+export function isProjectInboxRoutePath(pathname: string): boolean {
+  return matchPath(PROJECT_INBOX_ROUTE_PATH, pathname) !== null;
 }
 
 export function isProjectRoutePath(pathname: string): boolean {
@@ -367,6 +378,7 @@ const baseRoutePatterns: readonly string[] = [
   TOOLS_HUB_PAGE_ROUTE_PATH,
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
+  PROJECT_INBOX_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
   PROJECT_THREAD_ROUTE_PATH,
   PROJECT_SESSION_ROUTE_PATH,

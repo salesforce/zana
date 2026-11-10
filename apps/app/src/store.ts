@@ -70,6 +70,7 @@ import {
   getFollowUpsRoutePath,
   getNavRoutePath,
   getPluginDetailRoutePath,
+  getProjectInboxRoutePath,
   getProjectSettingsRoutePath,
   getProjectModeRoutePath,
   getScheduleRoutePath,
@@ -996,6 +997,16 @@ function decodeDestination(path: string) {
   return decodeRoutePath(url.pathname, url.hash, url.search);
 }
 
+/**
+ * The project the shell is drilled into, if it still exists. A focus left
+ * behind by a removed project is cleared by App; don't route into it (its
+ * Settings or Inbox) in the meantime.
+ */
+function liveFocusedProjectId(s: Pick<UiState, 'focusedProjectId'>): string | null {
+  const id = s.focusedProjectId;
+  return id && useData.getState().projects.some((p) => p.id === id) ? id : null;
+}
+
 function applyDestination(
   set: (partial: Partial<UiState> | ((s: UiState) => Partial<UiState>)) => void,
   path: string,
@@ -1167,12 +1178,16 @@ export const useUi = create<UiState>((set, get) => ({
   // is the right "home" when you click in. Switching to global/project scope
   // happens inside the panel via setSchedulerTab, so this only resets on
   // re-entry, not when the user navigates the scope rail.
-  setNav: (nav) =>
+  setNav: (nav) => {
+    // Drilled into a project, the Inbox is that project's Inbox route, so
+    // route memory (Ctrl+, twice, Back) can return to it.
+    const inboxProjectId = nav === 'inbox' ? liveFocusedProjectId(get()) : null;
     applyDestination(
       set,
-      getNavRoutePath(nav),
+      inboxProjectId ? getProjectInboxRoutePath(inboxProjectId) : getNavRoutePath(nav),
       nav === 'scheduler' ? { schedulerTab: 'overview' } : undefined
-    ),
+    );
+  },
   inboxTab: 'feed',
   setInboxTab: (inboxTab) => set({ inboxTab: inboxTab === 'saved' ? 'saved' : 'feed' }),
   inboxGrouping: 'project',
@@ -1265,12 +1280,7 @@ export const useUi = create<UiState>((set, get) => ({
   },
   toggleSettings: () => {
     const s = get();
-    // A focus left behind by a removed project is cleared by App; don't route
-    // to its Settings in the meantime.
-    const projectId =
-      s.focusedProjectId && useData.getState().projects.some((p) => p.id === s.focusedProjectId)
-        ? s.focusedProjectId
-        : null;
+    const projectId = liveFocusedProjectId(s);
     if (s.nav !== 'settings') {
       if (projectId) s.openProjectSettings(projectId);
       else s.setNav('settings');

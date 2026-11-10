@@ -14,6 +14,8 @@ export type PaneContent =
     }
   | {
       kind: 'inbox';
+      /** Set for a project's Inbox (`/projects/:id/inbox`). */
+      projectId?: string | null;
     }
   | {
       kind: 'agents';

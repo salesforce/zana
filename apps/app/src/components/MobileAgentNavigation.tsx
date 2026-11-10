@@ -4,7 +4,7 @@ import { ArrowLeft, Ellipsis, Inbox, LayoutGrid, MessageSquare, Search, SquarePe
 import { useAgentStatus, useData, useUnreadInboxCount } from '../store';
 import { useThreads } from '../thread-store';
 import { useEnsureThreads } from '../hooks/useEnsureThreads';
-import { getAgentsRoutePath, getInboxRoutePath, getNewThreadRoutePath, getProjectRoutePath, sessionIdFromPath, threadIdFromPath } from '../lib/route-paths';
+import { getAgentsRoutePath, getInboxRoutePath, getNewThreadRoutePath, getProjectInboxRoutePath, getProjectRoutePath, sessionIdFromPath, threadIdFromPath } from '../lib/route-paths';
 import { useMobileNavDismiss } from './mobile-nav-context';
 import { filterMobileAgents, mobileAgentItems, type MobileAgentItem } from './mobile-agent-items';
 import { MobileAgentRow } from './MobileAgentRow';
@@ -36,7 +36,7 @@ function AgentNavigation({ projectId, children }: { projectId?: string; children
   const unreadInbox = useUnreadInboxCount();
   const agentsPath = getAgentsRoutePath();
   const agentsActive = pathname === agentsPath || pathname.startsWith(`${agentsPath}/`);
-  const inboxPath = getInboxRoutePath();
+  const inboxPath = projectId ? getProjectInboxRoutePath(projectId) : getInboxRoutePath();
   const inboxActive = pathname === inboxPath || pathname.startsWith(`${inboxPath}/`);
   const activeThreadId = threadIdFromPath(pathname);
   const activeSessionId = sessionIdFromPath(pathname);

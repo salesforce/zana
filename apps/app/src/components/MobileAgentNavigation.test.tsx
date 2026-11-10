@@ -118,10 +118,17 @@ it.each([[0, null], [12, '12'], [120, '99+']] as const)('opens Inbox and present
   expect(inbox.getAttribute('aria-current')).toBe('page');
 });
 
-it('marks Inbox active on its subpages and keeps its existing route in a project window', () => {
-  mount({ path: '/inbox/saved', projectId: 'p' });
+it('marks Inbox active on its subpages', () => {
+  mount({ path: '/inbox/saved' });
   expect(screen.getByTestId('mobile-nav-inbox').getAttribute('aria-current')).toBe('page');
   expect(screen.getByTestId('mobile-nav-inbox').getAttribute('href')).toBe('/inbox');
+});
+
+it("opens the project's Inbox route in a project window", () => {
+  // A project window's route lock sends a plain `/inbox` back to the project home.
+  mount({ path: '/projects/p/inbox', projectId: 'p' });
+  expect(screen.getByTestId('mobile-nav-inbox').getAttribute('aria-current')).toBe('page');
+  expect(screen.getByTestId('mobile-nav-inbox').getAttribute('href')).toBe('/projects/p/inbox');
 });
 
 it('opens and leaves More without losing focus or the search', () => {

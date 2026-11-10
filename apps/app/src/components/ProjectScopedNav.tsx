@@ -38,7 +38,7 @@ import { useProjectTabAvailability } from '../hooks/useProjectTabAvailability.js
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import {
-  getInboxRoutePath,
+  getProjectInboxRoutePath,
   getNewThreadRoutePath,
   getProjectModeRoutePath,
   getProjectSettingsRoutePath,
@@ -176,11 +176,11 @@ export function ProjectScopedNav({
       id: 'inbox',
       label: 'Inbox',
       icon: <Inbox size={16} />,
-      to: getInboxRoutePath(),
+      to: getProjectInboxRoutePath(project.id),
       testId: 'project-nav-inbox',
       active: nav === 'inbox',
       title: 'Inbox for this project',
-      splitContent: { kind: 'inbox' },
+      splitContent: { kind: 'inbox', projectId: project.id },
       badge:
         unreadInbox > 0 ? (
           <SidebarCountBadge

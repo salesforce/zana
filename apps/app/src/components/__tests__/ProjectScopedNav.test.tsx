@@ -196,7 +196,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).not.toContain('>Workspace<');
     expect(markup).not.toContain('>System<');
     expect(markup).toContain('data-testid="project-nav-inbox"');
-    expect(markup).toContain('href="/inbox"');
+    expect(markup).toContain('href="/projects/proj-1/inbox"');
     expect(markup).toContain('href="/projects/proj-1"');
     expect(markup).toContain('href="/projects/proj-1/terminals"');
     expect(markup).toContain('href="/projects/proj-1/scheduler"');
@@ -378,7 +378,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(source).toContain('getProjectModeRoutePath(project.id, item.mode)');
     expect(source).toContain('testId: `project-nav-${item.mode}`');
     expect(source).toContain("splitContent: { kind: 'project-view', projectId: project.id, mode: item.mode }");
-    expect(source).toContain('splitContent: { kind: \'inbox\' }');
+    expect(source).toContain("splitContent: { kind: 'inbox', projectId: project.id }");
     expect(source).toContain('splitContent: { kind: \'project-view\', projectId: project.id, mode: m.id }');
     expect(source).toContain('splitContent: { kind: \'project-view\', projectId: project.id, mode: railId }');
     expect(source).toContain('PROJECT_NAV_ORDER_KEY');

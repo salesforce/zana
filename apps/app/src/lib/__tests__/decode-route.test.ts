@@ -5,6 +5,10 @@ describe('decodeRoutePath', () => {
   it.each([
     ['/', { nav: 'home', focusedProjectId: null }],
     ['/inbox', { nav: 'inbox' }],
+    [
+      '/projects/p1/inbox',
+      { nav: 'inbox', focusedProjectId: 'p1', projectMode: null, isProjectFocused: false }
+    ],
     ['/agents', { nav: 'agents' }],
     ['/threads/new', { nav: 'agents' }],
     ['/threads/abc', { nav: 'agents' }],
@@ -157,6 +161,12 @@ describe('decodeRoutePath', () => {
     expect(
       scopedWindowLockReplace({ pathname: '/projects/p1', search: '?projectId=p1', hash: '' }, 'p1')
     ).toBeNull();
+    expect(
+      scopedWindowLockReplace({ pathname: '/projects/p1/inbox', search: '?projectId=p1', hash: '' }, 'p1')
+    ).toBeNull();
+    expect(
+      scopedWindowLockReplace({ pathname: '/projects/p2/inbox', search: '?projectId=p1', hash: '' }, 'p1')
+    ).toEqual({ pathname: '/projects/p1', search: '?projectId=p1', hash: '' });
     expect(
       scopedWindowLockReplace({ pathname: '/projects/p1/threads/new', search: '', hash: '' }, 'p1')
     ).toBeNull();
