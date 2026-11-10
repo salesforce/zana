@@ -25,9 +25,10 @@ describe('window background colours', () => {
     expect(css).toMatch(/\nhtml,\s*body,\s*#root \{[^}]*background: var\(--bg-base\);/);
   });
 
-  it('are the colours the Windows caption buttons sit on', () => {
-    expect(WINDOWS_TITLEBAR_OVERLAY_COLORS.dark.color).toBe(BG_BASE.dark);
-    expect(WINDOWS_TITLEBAR_OVERLAY_COLORS.light.color).toBe(BG_BASE.light);
+  it('are the colours the Windows caption buttons sit on in thread view, plugin view and repair windows', () => {
+    // Main and project windows paint the inset workspace's --inset-chrome instead (titlebar-overlay.test.ts).
+    expect(WINDOWS_TITLEBAR_OVERLAY_COLORS['bg-base'].dark.color).toBe(BG_BASE.dark);
+    expect(WINDOWS_TITLEBAR_OVERLAY_COLORS['bg-base'].light.color).toBe(BG_BASE.light);
   });
 });
 
