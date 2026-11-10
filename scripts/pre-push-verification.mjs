@@ -598,13 +598,18 @@ function prepareSlackAssets(snapshot, run, log, mode) {
 }
 
 /**
- * Test commands get a longer timeout scale unless the user already set one (#693).
- * It reaches suites whose vitest config extends the root one; plugins/tasks (fixed 60 s)
- * and provider-pi keep their own timeouts.
+ * Test commands get a longer timeout scale and one retry of a failed test unless
+ * the user already set them (#693). The scale reaches suites whose vitest config
+ * reads it; the retry also covers explicit per-test timeouts. CI sets neither.
  */
 const PREPUSH_TEST_TIMEOUT_SCALE = '3';
+const PREPUSH_TEST_RETRY = '1';
 export function withTestTimeoutScale(env) {
-  return env.ZANA_TEST_TIMEOUT_SCALE === undefined ? { ...env, ZANA_TEST_TIMEOUT_SCALE: PREPUSH_TEST_TIMEOUT_SCALE } : { ...env };
+  return {
+    ...env,
+    ZANA_TEST_TIMEOUT_SCALE: env.ZANA_TEST_TIMEOUT_SCALE ?? PREPUSH_TEST_TIMEOUT_SCALE,
+    ZANA_TEST_RETRY: env.ZANA_TEST_RETRY ?? PREPUSH_TEST_RETRY
+  };
 }
 
 export function runFullVerification({ oid, root = process.cwd(), run = spawnCommand, log = console.log, env = process.env, cacheRoot, review }) {

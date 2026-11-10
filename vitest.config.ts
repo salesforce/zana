@@ -4,7 +4,7 @@ import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { serialTestFiles } from './vitest.serial';
 import DurationSequencer from './scripts/ci-unit-sequencer';
-import { scaleTimeout } from './scripts/test-timeout-scale.mjs';
+import { parseTestRetry, scaleTimeout } from './scripts/test-timeout-scale.mjs';
 
 const DEFAULT_TIMEOUT_MS = scaleTimeout(20_000, process.env.ZANA_TEST_TIMEOUT_SCALE);
 
@@ -126,6 +126,8 @@ export default defineConfig({
     // ZANA_TEST_TIMEOUT_SCALE (1 to 5) multiplies both on a busy machine; unset keeps today's values.
     testTimeout: DEFAULT_TIMEOUT_MS,
     hookTimeout: DEFAULT_TIMEOUT_MS,
+    // ZANA_TEST_RETRY (0 to 2) re-runs a failed test; pre-push sets 1, CI leaves it unset (0).
+    retry: parseTestRetry(process.env.ZANA_TEST_RETRY),
     // Root runs plugins/tasks tests without that package's vitest config.
     // Inline the bubble menu so its tippy.js import uses the ESM alias above.
     server: {
