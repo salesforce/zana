@@ -82,45 +82,54 @@ function isInertLine(line: string): boolean {
 
 const TOKEN_RE = /^"([^"]*)"(?=\s|$)|^([^\s"]+)(?=\s|$)/;
 
+interface Token {
+  value: string;
+  quoted: boolean;
+}
+
 /**
  * Split the forwarding line into tokens: each either `"quoted"` or a bare run
  * without spaces or quotes. Returns null on anything else (unbalanced quotes).
  */
-function tokenize(line: string): string[] | null {
-  const tokens: string[] = [];
+function tokenize(line: string): Token[] | null {
+  const tokens: Token[] = [];
   let rest = line;
   while (rest.length) {
     const m = rest.match(TOKEN_RE);
     if (!m) return null;
-    tokens.push(m[1] ?? m[2]!);
+    tokens.push(m[1] !== undefined ? { value: m[1], quoted: true } : { value: m[2]!, quoted: false });
     rest = rest.slice(m[0].length).trimStart();
   }
   return tokens;
 }
 
-/** Characters cmd.exe would expand or treat as syntax. */
-const UNSAFE_TOKEN_RE = /[%!^&|<>()]/;
+/** Characters cmd.exe expands or treats as syntax outside double quotes. */
+const UNSAFE_BARE_RE = /[%!^&|<>()]/;
+/**
+ * Inside double quotes cmd.exe takes `^&|<>()` literally (so
+ * `"C:\Program Files (x86)\…"` is fine) but still expands `%` and `!`.
+ */
+const UNSAFE_QUOTED_RE = /[%!]/;
 const DP0 = '%~dp0';
 
 /**
  * Resolve `%~dp0` (the shim's own folder, with a trailing separator) at the
- * start of a token. Any other `%` or cmd syntax makes the shim non-trivial.
+ * start of a token. Any other expansion, or cmd syntax outside quotes, makes
+ * the shim non-trivial.
  */
-function expandToken(token: string, shimDir: string): string | null {
-  const local = token.slice(0, DP0.length).toLowerCase() === DP0;
-  const rest = local ? token.slice(DP0.length) : token;
-  if (!rest || UNSAFE_TOKEN_RE.test(rest)) return null;
+function expandToken({ value, quoted }: Token, shimDir: string): string | null {
+  const local = value.slice(0, DP0.length).toLowerCase() === DP0;
+  const rest = local ? value.slice(DP0.length) : value;
+  if (!rest || (quoted ? UNSAFE_QUOTED_RE : UNSAFE_BARE_RE).test(rest)) return null;
   return local ? normalize(join(shimDir, rest)) : rest;
 }
 
 /**
- * Parse a trivial forwarding shim: inert lines (`@echo off`, `rem`, `::`,
- * blank) plus exactly one line `@?<exe> [<literal arg>…] %*`. The target must
- * be an absolute (or `%~dp0`-relative) existing `.exe`; literal args may not
- * contain `%`, `!` or cmd syntax. Anything else returns null, and the shim
- * runs as before.
+ * The shim's text-only parse: its target and literal args, without checking
+ * that the target exists. Cached by {@link forwardingShimTarget}, which
+ * re-checks the target on every lookup.
  */
-export function parseForwardingShim(text: string, shimPath: string): ShimTarget | null {
+function parseShimText(text: string, shimPath: string): ShimTarget | null {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => !isInertLine(l));
   if (lines.length !== 1) return null;
   const line = lines[0]!.replace(/^@/, '');
@@ -131,13 +140,27 @@ export function parseForwardingShim(text: string, shimPath: string): ShimTarget 
   const expanded = tokens.map((t) => expandToken(t, shimDir));
   if (expanded.some((t) => t === null)) return null;
   const [command, ...leadingArgs] = expanded as string[];
-  if (!/\.exe$/i.test(command!) || !isAbsolute(command!) || !isFile(command!)) return null;
+  if (!/\.exe$/i.test(command!) || !isAbsolute(command!)) return null;
   return { command: command!, leadingArgs };
 }
 
 /**
+ * Parse a trivial forwarding shim: inert lines (`@echo off`, `rem`, `::`,
+ * blank) plus exactly one line `@?<exe> [<literal arg>…] %*`. The target must
+ * be an absolute (or `%~dp0`-relative) existing `.exe`. Quoted tokens may not
+ * contain `%` or `!`; bare tokens may not contain those or cmd syntax.
+ * Anything else returns null, and the shim runs as before.
+ */
+export function parseForwardingShim(text: string, shimPath: string): ShimTarget | null {
+  const target = parseShimText(text, shimPath);
+  return target && isFile(target.command) ? target : null;
+}
+
+/**
  * Parse `shimPath`, memoised by path + mtime + size (bounded), so repeated
- * launches cost one `stat`. Shims over {@link SHIM_READ_CAP} bytes aren't read.
+ * launches cost two `stat`s. Shims over {@link SHIM_READ_CAP} bytes aren't
+ * read. The target's existence is checked on every call, not cached, so an
+ * exe installed or removed after the first launch is seen.
  */
 export function forwardingShimTarget(shimPath: string): ShimTarget | null {
   let stat;
@@ -147,18 +170,22 @@ export function forwardingShimTarget(shimPath: string): ShimTarget | null {
     return null;
   }
   const cached = shimCache.get(shimPath);
-  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.target;
-  let target: ShimTarget | null = null;
-  if (stat.isFile() && stat.size <= SHIM_READ_CAP) {
-    try {
-      target = parseForwardingShim(readHead(shimPath, stat.size), shimPath);
-    } catch {
-      target = null;
+  let target: ShimTarget | null;
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    target = cached.target;
+  } else {
+    target = null;
+    if (stat.isFile() && stat.size <= SHIM_READ_CAP) {
+      try {
+        target = parseShimText(readHead(shimPath, stat.size), shimPath);
+      } catch {
+        target = null;
+      }
     }
+    if (!cached && shimCache.size >= SHIM_CACHE_MAX) shimCache.delete(shimCache.keys().next().value!);
+    shimCache.set(shimPath, { mtimeMs: stat.mtimeMs, size: stat.size, target });
   }
-  if (!cached && shimCache.size >= SHIM_CACHE_MAX) shimCache.delete(shimCache.keys().next().value!);
-  shimCache.set(shimPath, { mtimeMs: stat.mtimeMs, size: stat.size, target });
-  return target;
+  return target && isFile(target.command) ? target : null;
 }
 
 /**
@@ -179,7 +206,9 @@ export function windowsDirectLaunch(
 
 /**
  * Length of the command line node-pty builds for `file` + `args` on Windows
- * (its `argsToCommandLine`: MSVC argv quoting, copied from winpty).
+ * (its `argsToCommandLine`: MSVC argv quoting, copied from winpty), in UTF-16
+ * code units, the unit of both the CreateProcess and cmd.exe limits. Indexing
+ * by code unit, as node-pty does, counts a surrogate pair (an emoji) as 2.
  */
 export function windowsCommandLineLength(file: string, args: readonly string[]): number {
   let total = 0;
@@ -191,7 +220,8 @@ export function windowsCommandLineLength(file: string, args: readonly string[]):
     const closes = arg[arg.length - 1] === '"';
     const quote = arg === '' || (/[ \t]/.test(arg) && arg.length > 1 && (opens !== closes || (!opens && !closes)));
     let bs = 0;
-    for (const ch of arg) {
+    for (let j = 0; j < arg.length; j++) {
+      const ch = arg[j];
       if (ch === '\\') bs++;
       else if (ch === '"') { total += bs * 2 + 2; bs = 0; }
       else { total += bs + 1; bs = 0; }

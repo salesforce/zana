@@ -58,7 +58,30 @@ describe('parseForwardingShim', () => {
     });
   });
 
+  it('accepts cmd syntax characters inside quotes, like a "Program Files (x86)" target', () => {
+    const x86 = join(root, 'Program Files (x86)', 'Tool');
+    mkdirSync(x86, { recursive: true });
+    const tool = join(x86, 'claude.exe');
+    writeFileSync(tool, 'MZ');
+    expect(parseForwardingShim(`@"${tool}" "a & b | (c)" %*`, at)).toEqual({
+      command: tool,
+      leadingArgs: ['a & b | (c)']
+    });
+  });
+
+  it('rejects the same characters outside quotes', () => {
+    // No space in the folder, so the target can be a bare token.
+    const bare = join(root, 'paren(x86)');
+    mkdirSync(bare, { recursive: true });
+    const tool = join(bare, 'claude.exe');
+    writeFileSync(tool, 'MZ');
+    expect(parseForwardingShim(`@${tool} %*`, at)).toBeNull();
+    expect(parseForwardingShim(`@"${tool}" %*`, at)).toEqual({ command: tool, leadingArgs: [] });
+  });
+
   it.each([
+    ['an environment variable inside quotes', `@"${exe}" "%USERPROFILE%" %*`],
+    ['delayed expansion inside quotes', `@"${exe}" "!X!" %*`],
     ['no %* forwarding', `@"${exe}"`],
     ['two commands', `@echo off\r\nset X=1\r\n"${exe}" %*`],
     ['an environment variable in an argument', `@"${exe}" --home %USERPROFILE% %*`],
@@ -118,6 +141,24 @@ describe('forwardingShimTarget cache', () => {
     expect(forwardingShimTarget(path)).toEqual({ command: exe, leadingArgs: [] });
   });
 
+  it('falls back to the shim when its target is removed after a cached hit', () => {
+    const target = join(binDir, 'removed.exe');
+    writeFileSync(target, 'MZ');
+    const path = shim(`@"${target}" %*`);
+    expect(forwardingShimTarget(path)).toEqual({ command: target, leadingArgs: [] });
+    rmSync(target);
+    expect(forwardingShimTarget(path)).toBeNull();
+    expect(windowsDirectLaunch(path, ['-p'], 'win32')).toEqual({ command: path, args: ['-p'] });
+  });
+
+  it('unwraps a shim once its target is installed after a cached miss', () => {
+    const target = join(binDir, 'later.exe');
+    const path = shim(`@"${target}" %*`);
+    expect(forwardingShimTarget(path)).toBeNull();
+    writeFileSync(target, 'MZ');
+    expect(forwardingShimTarget(path)).toEqual({ command: target, leadingArgs: [] });
+  });
+
   it('stays bounded when many shims are seen', () => {
     const first = shim(`@"${exe}" %*`);
     expect(forwardingShimTarget(first)).not.toBeNull();
@@ -137,7 +178,9 @@ describe('windowsCommandLineLength', () => {
     [[]],
     [['plain', 'two words', '', 'tab\there']],
     [['"already quoted"', '"lopsided', 'ends"', 'a"b', 'trail\\', 'sp ace\\', 'x\\\\"y', '{"k":"v w"}']],
-    [['--append-system-prompt', 'You are running inside Zana.\nUse "inbox_push".\\n C:\\Users\\x y\\']]
+    [['--append-system-prompt', 'You are running inside Zana.\nUse "inbox_push".\\n C:\\Users\\x y\\']],
+    // Astral characters are surrogate pairs: two UTF-16 units each.
+    [['x\u{1F600}y', 'emoji \u{1F600} "\u{1F680}"\\', '\u{1F600}']]
   ])('matches node-pty argsToCommandLine for %j', (args) => {
     const file = 'C:\\Program Files\\Claude\\claude.exe';
     expect(windowsCommandLineLength(file, args)).toBe(argsToCommandLine(file, args).length);
@@ -162,6 +205,16 @@ describe('assertWindowsCommandLineFits', () => {
     expect(() => assertWindowsCommandLineFits(exePath, [fits], 'win32')).not.toThrow();
     expect(() => assertWindowsCommandLineFits(exePath, [fits + 'x'], 'win32')).toThrow(
       /^Cannot start C:\\bin\\claude\.exe: its command line is 32767 characters, over the Windows limit of 32766\.$/
+    );
+  });
+
+  it('counts an emoji as two characters at the batch limit', () => {
+    const cmd = 'C:\\bin\\claude.cmd';
+    // 8190 UTF-16 units: one under the limit, so one emoji (two units) goes over.
+    const almost = pad(CMD_COMMAND_LINE_LIMIT - cmd.length - 2);
+    expect(() => assertWindowsCommandLineFits(cmd, [almost + 'x'], 'win32')).not.toThrow();
+    expect(() => assertWindowsCommandLineFits(cmd, [almost + '\u{1F600}'], 'win32')).toThrow(
+      /its command line is 8192 characters, over the Windows limit of 8191/
     );
   });
 
