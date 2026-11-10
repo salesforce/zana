@@ -55,6 +55,7 @@ describe('Fairy page journeys', () => {
       '/download/',
       '#demo',
       '/features/',
+      '/walkthrough/',
       '/marketplace/',
       '/extensions/getting-started/',
       '/docs/getting-started/'
@@ -127,6 +128,8 @@ describe('shared navigation', () => {
   });
   it.each([
     '/features/',
+    '/walkthrough/',
+    '/media-press/',
     '/extensions/',
     '/marketplace/',
     '/dashboard/',
@@ -138,9 +141,13 @@ describe('shared navigation', () => {
     expect(current?.textContent).toBe(
       path.startsWith('/features')
         ? 'Product'
-        : path.startsWith('/docs')
-          ? 'Docs'
-          : 'Plugins'
+        : path.startsWith('/walkthrough')
+          ? 'Walkthrough'
+          : path.startsWith('/media-press')
+            ? 'Media & Press'
+            : path.startsWith('/docs')
+              ? 'Docs'
+              : 'Plugins'
     );
     expect(screen.getByLabelText(/Star on GitHub/)).toBeTruthy();
     const login = await screen.findByRole('link', { name: 'Log in' });
@@ -153,6 +160,8 @@ describe('shared navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
     expect(document.getElementById('mobile-menu')).not.toBeNull();
     const mobileLogin = document.querySelector('#mobile-menu a[href="/connect/"]');
+    expect(document.querySelector('#mobile-menu a[href="/walkthrough/"]')?.textContent).toBe('Walkthrough');
+    expect(document.querySelector('#mobile-menu a[href="/media-press/"]')?.textContent).toBe('Media & Press');
     expect(mobileLogin?.textContent).toBe('Log in');
     expect(mobileLogin?.previousElementSibling?.textContent).toBe('Download');
     fireEvent.click(
@@ -186,6 +195,8 @@ describe('shared navigation', () => {
   });
   it('keeps publishing, marketplace and source links discoverable in the footer', () => {
     render(createElement(Footer));
+    expect(screen.getByRole('link', { name: 'Walkthrough' }).getAttribute('href')).toBe('/walkthrough/');
+    expect(screen.getByRole('link', { name: 'Media & Press' }).getAttribute('href')).toBe('/media-press/');
     expect(
       screen.getByRole('link', { name: 'Publish' }).getAttribute('href')
     ).toBe('/dashboard/');
