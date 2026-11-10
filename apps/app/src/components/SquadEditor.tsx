@@ -7,6 +7,8 @@ import { usePersonas, useData, useUi } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { personaIcon } from '../lib/profileIcon.js';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
+import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
+import { uninstalledAllowlistSkills } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { SquadTransportChip } from './SquadTransportChip.js';
@@ -161,6 +163,7 @@ function TeamDetail({
                       ×{Math.max(1, Math.min(TEAM_SLOT_MAX, slot.quantity ?? 1))}
                     </span>
                   )}
+                  {!isOrch && slot.startOnDemand === true && <span className="scheduler-pill">Starts when needed</span>}
                 </li>
               );
             })}
@@ -218,6 +221,8 @@ interface SlotDraft {
   personaId: string;
   quantity: number;
   label: string;
+  /** Keep this seat closed until the engine has a first unit for it. */
+  startOnDemand: boolean;
 }
 
 /** The create/edit form. */
@@ -262,6 +267,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   );
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
   const [retainOrchestrator, setRetainOrchestrator] = useState(team?.retainOrchestrator === true);
+  const [leanWorkers, setLeanWorkers] = useState(team?.leanWorkers === true);
   const [transport, setTransport] = useState<SquadTransport>(team?.transport ?? 'CLI');
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(team?.defaultPlanning ?? '');
   const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(team?.launchApproval ?? '');
@@ -269,7 +275,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     const base = (team?.slots ?? []).map((s) => ({
       personaId: s.personaId,
       quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)),
-      label: s.label ?? ''
+      label: s.label ?? '',
+      startOnDemand: s.startOnDemand === true
     }));
     // A squad may name its orchestrator as a persona that is NOT among the
     // worker slots (launch gives the orchestrator its own tab regardless — see
@@ -278,7 +285,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     // form. Saving folds it into `slots`; expansion dedupes it back out.
     const orchId = team?.orchestratorPersonaId;
     if (orchId && !base.some((s) => s.personaId === orchId)) {
-      base.unshift({ personaId: orchId, quantity: 1, label: '' });
+      base.unshift({ personaId: orchId, quantity: 1, label: '', startOnDemand: false });
     }
     return base;
   });
@@ -293,7 +300,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       personas.find((p) => !slots.some((s) => s.personaId === p.id))?.id ??
       personas[0]?.id ??
       '';
-    setSlots((prev) => [...prev, { personaId: firstUnused, quantity: 1, label: '' }]);
+    setSlots((prev) => [...prev, { personaId: firstUnused, quantity: 1, label: '', startOnDemand: false }]);
   };
 
   const updateSlot = (idx: number, patch: Partial<SlotDraft>) => {
@@ -323,6 +330,27 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   };
 
   const personaById = useMemo(() => new Map(allPersonas.map((p) => [p.id, p])), [allPersonas]);
+  // Worker personas that set their own skills keep them under lean workers (explicit list wins).
+  const workerPersonasWithSkills = useMemo(() => {
+    const unique = new Map<string, (typeof slots)[number]>();
+    for (const s of slots) {
+      if (s.personaId !== orchestratorPersonaId && personaById.get(s.personaId)?.skills !== undefined) unique.set(s.personaId, s);
+    }
+    return [...unique.values()];
+  }, [slots, orchestratorPersonaId, personaById]);
+
+  // Advisory only (never gates save): member personas whose skill allowlist names uninstalled skills.
+  const restrictedMembers = useMemo(
+    () => slots.map((s) => personaById.get(s.personaId)).filter((p): p is Persona => !!p?.skills?.length),
+    [slots, personaById]
+  );
+  const installedSkills = useInstalledSkillNames(restrictedMembers.length > 0);
+  const membersWithMissingSkills = useMemo(
+    () => [...new Map(restrictedMembers.map((p) => [p.id, p])).values()]
+      .map((p) => ({ name: p.name, missing: uninstalledAllowlistSkills(p.skills, installedSkills) }))
+      .filter((m) => m.missing.length > 0),
+    [restrictedMembers, installedSkills]
+  );
 
   const save = async () => {
     if (!canSave) return;
@@ -332,7 +360,9 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       .map((s) => ({
         personaId: s.personaId.trim(),
         quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity || 1)),
-        ...(s.label.trim() ? { label: s.label.trim() } : {})
+        ...(s.label.trim() ? { label: s.label.trim() } : {}),
+        // On-demand seats need the engine of a plan-driven CLI squad; never store the flag otherwise.
+        ...(s.startOnDemand && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {})
       }));
     // Keep orchestrator only if it's still one of the slots.
     const orch =
@@ -351,6 +381,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       worktreeOnComplete,
       routingEnforced,
       retainOrchestrator,
+      ...(leanWorkers ? { leanWorkers: true as const } : {}),
       transport,
       ...(defaultPlanning ? { defaultPlanning } : {}),
       ...(launchApproval ? { launchApproval } : {}),
@@ -547,6 +578,16 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                         aria-label="Tab count"
                       />
                     </span>
+                    {transport !== 'MODERN' && orchestratorPersonaId !== slot.personaId && (
+                      <label className="team-slot-on-demand">
+                        <input
+                          type="checkbox"
+                          checked={slot.startOnDemand}
+                          onChange={(e) => updateSlot(idx, { startOnDemand: e.target.checked })}
+                        />
+                        Start only when its first unit is ready
+                      </label>
+                    )}
                     <button
                       type="button"
                       className={`icon-button team-slot-orch-toggle composer-control-tooltip ${orchestratorPersonaId === slot.personaId ? 'is-active' : ''}`}
@@ -574,6 +615,11 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                 );
               })}
             </ul>
+          )}
+          {transport !== 'MODERN' && slots.length > 0 && (
+            <p className="settings-help">
+              The seat stays closed until the engine has work for it, so a late review or QA seat doesn't use a session while it waits. Plan-driven Squads only.
+            </p>
           )}
         </div>
 
@@ -680,6 +726,31 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
             Keeps the orchestrator open after a successful run. Workers still close; stopping or failing the run closes all agents.
           </p>
         </div>
+
+        <div className="scheduler-form-field">
+          <label className="scheduler-checkbox-row">
+            <input
+              type="checkbox"
+              checked={leanWorkers}
+              onChange={(event) => setLeanWorkers(event.target.checked)}
+            />
+            Lean workers
+          </label>
+          <p className="settings-help">
+            Workers start with only the zcc-inbox skill, which makes their first model call smaller. The orchestrator is unaffected. A context filter, not a security boundary.
+          </p>
+          {leanWorkers && workerPersonasWithSkills.length > 0 && (
+            <p className="settings-help" data-testid="team-lean-persona-skills-notice">
+              This persona's skills apply even when lean is on: {workerPersonasWithSkills.map((s) => personaById.get(s.personaId)?.name ?? s.personaId).join(', ')}.
+            </p>
+          )}
+        </div>
+
+        {membersWithMissingSkills.length > 0 && (
+          <p className="settings-help" role="status" data-testid="team-uninstalled-skills-warning">
+            Allowlisted skills not installed: {membersWithMissingSkills.map((m) => `${m.name} (${m.missing.join(', ')})`).join('; ')}. You can still save; launches will warn until they are installed.
+          </p>
+        )}
 
         <div className="scheduler-form-field">
           <label htmlFor="team-default-planning">Default planning</label>

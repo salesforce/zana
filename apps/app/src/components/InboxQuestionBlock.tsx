@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CornerDownLeft, MessageSquare } from 'lucide-react';
 import type { InboxEntry, InboxQuestion } from '@zana-ai/zcc-domain/product';
+import { answerFor, buildReply as buildQuestionReply, emptyQState, type QState } from '../lib/inbox-answer.js';
 import { replyToInboxEntry, useInboxAnswered } from '../store.js';
 import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
 import { MarkdownContent } from './MarkdownContent.js';
@@ -31,33 +32,7 @@ import { platformShortcut } from '../lib/platformShortcut.js';
  * (the user declined). ⌘/Ctrl+Enter submits when everything is answered.
  */
 
-/** Per-question answer state, one entry per question in the card. */
-export interface QState {
-  /** Selected option ids (a Set even in radio mode, holding 0 or 1). */
-  selected: Set<string>;
-  otherText: string;
-  otherActive: boolean;
-}
-
-export const emptyQState = (): QState => ({ selected: new Set(), otherText: '', otherActive: false });
-
-/**
- * Build one question's answer string from its state. Radio joins to one label;
- * multi joins with newlines. The Other text is appended when active + non-empty
- * (and is the whole answer in radio mode).
- */
-export function answerFor(question: InboxQuestion, st: QState): string {
-  const multi = question.multiSelect === true;
-  const chosen = question.options.filter((o) => st.selected.has(o.id)).map((o) => o.label);
-  const other = st.otherActive && st.otherText.trim() ? st.otherText.trim() : '';
-  if (multi) {
-    const parts = [...chosen];
-    if (other) parts.push(other);
-    return parts.join(', ');
-  }
-  if (st.otherActive && other) return other;
-  return chosen[0] ?? '';
-}
+export { emptyQState, answerFor, type QState } from '../lib/inbox-answer.js';
 
 export function QuestionBlock({
   entry,
@@ -156,12 +131,7 @@ export function QuestionBlock({
   // What actually gets injected. One question → its raw answer (unchanged from
   // the single-question behaviour). Many → a labelled block so the agent can tell
   // the answers apart.
-  const buildReply = (): string => {
-    if (!isMulti) return answers[0] ?? '';
-    return questions
-      .map((q, i) => `Q${i + 1}: ${q.prompt ?? ''}\nA: ${answers[i]}`)
-      .join('\n\n');
-  };
+  const buildReply = (): string => buildQuestionReply(questions, answers);
 
   function hostOptionId(): string | undefined {
     if (questions.length !== 1 || questions[0]?.multiSelect || states[0]?.otherActive) return undefined;

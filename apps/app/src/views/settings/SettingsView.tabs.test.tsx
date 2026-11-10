@@ -33,6 +33,7 @@ vi.mock('@/components/settings/ScopeControl', () => ({ ScopeControl: stub('scope
 vi.mock('@/views/settings/GlobalView', () => ({ GlobalTab: stub('global') }));
 vi.mock('@/views/settings/TerminalSettingsView', () => ({ TerminalTab: stub('terminal') }));
 vi.mock('@/views/settings/AgentsSettingsView', () => ({ AgentsTab: stub('agents') }));
+vi.mock('./NotificationsSettingsView.js', () => ({ NotificationsSettingsView: stub('notifications') }));
 vi.mock('@/views/settings/HarnessView', () => ({ HarnessTab: stub('harness') }));
 vi.mock('@/views/settings/EditorView', () => ({ EditorTab: stub('editor') }));
 vi.mock('@/views/settings/ExperimentalView', () => ({ ExperimentalTab: stub('experimental') }));
@@ -67,7 +68,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 const TABS: SettingsTab[] = [
-  'global', 'composer', 'keyboard', 'terminal', 'agents', 'prompts', 'harness', 'editor',
+  'global', 'composer', 'keyboard', 'terminal', 'notifications', 'agents', 'prompts', 'harness', 'editor',
   'personas', 'squads', 'usage', 'performance', 'development', 'experimental', 'about', 'machines',
   'connectivity', 'remote-access', 'peers', 'phone', 'inbox', 'browser', 'project'
 ];
@@ -229,4 +230,31 @@ it('opens project files through the homedir-resolved path', async () => {
   expect(product.openers.openIn).toHaveBeenCalledWith('cursor', '/home/u/a.txt');
   await act(async () => { h.props.project.onSaved(); });
   expect(screen.getByText('Saved')).toBeTruthy();
+});
+
+it('lets harness default saves surface config persistence failures', async () => {
+  useUi.setState({ settingsTab: 'harness', settingsAnchor: null });
+  h.setMock.mockRejectedValue(new Error('config unavailable'));
+  mount();
+  await screen.findByText('tab-harness');
+  await act(async () => {
+    await expect(h.props.harness.onUpdate({ defaultHarness: 'codex' }, { throwOnError: true })).rejects.toThrow('config unavailable');
+  });
+  expect(h.props.harness.config.defaultHarness).toBeUndefined();
+  expect(screen.queryByText('Saved')).toBeNull();
+});
+
+it('persists Notifications changes and propagates save failures to its controls', async () => {
+  useUi.setState({ settingsTab: 'notifications', settingsAnchor: null });
+  mount();
+  await screen.findByText('tab-notifications');
+  const patch = { notificationSoundProvider: 'example/alerts', notificationSoundsEnabled: false };
+  await act(async () => { await h.props.notifications.onUpdate(patch); });
+  expect(h.setMock).toHaveBeenCalledWith(patch);
+  expect(h.props.notifications.config).toMatchObject(patch);
+  h.setMock.mockRejectedValueOnce(new Error('config unavailable'));
+  await act(async () => {
+    await expect(h.props.notifications.onUpdate({ notificationSoundsEnabled: true })).rejects.toThrow('config unavailable');
+  });
+  expect(h.props.notifications.config.notificationSoundsEnabled).toBe(false);
 });

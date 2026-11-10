@@ -3,15 +3,17 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
-const api = vi.hoisted(() => ({ apps: [] as PluginAppEntry[], modules: [] as Array<{ id: string; title: string; icon: string; loadError?: string }>, settings: vi.fn(), save: vi.fn(), reload: vi.fn(), remove: vi.fn(), toggle: vi.fn(), toast: vi.fn() }));
+const api = vi.hoisted(() => ({ apps: [] as PluginAppEntry[], modules: [] as Array<{ id: string; title: string; icon: string; loadError?: string }>, settings: vi.fn(), save: vi.fn(), reload: vi.fn(), reloadApp: vi.fn(), remove: vi.fn(), toggle: vi.fn(), toast: vi.fn() }));
 vi.mock('@/modules', () => ({ useMergedModules: () => api.modules }));
 vi.mock('@/modules/ModulePanelHost', () => ({ getHost: vi.fn() }));
 vi.mock('@/lib/app-surface', () => ({ hasDesktopBridge: () => true }));
 vi.mock('@/hooks/useCompactLayout', () => ({ useCompactLayout: () => false }));
-vi.mock('@/plugins/plugin-app-loader', () => ({ reconcilePluginApps: vi.fn() }));
+vi.mock('@/plugins/plugin-app-loader', () => ({ reconcilePluginApps: vi.fn(), reloadPluginApp: api.reloadApp }));
 vi.mock('@/plugins/PluginSettingsSections', () => ({ PluginSettingsSections: () => <input aria-label="Plugin connection filter" /> }));
 vi.mock('@/lib/product-client', () => ({ product: {
+  threads: { providers: async () => ({ providers: [] }) },
   extensions: { list: async () => [], onChanged: () => () => {}, marketplaceList: async () => ({ ok: true, value: [] }) },
+  threads: { providers: async () => ({ providers: [] }) },
   pluginApps: { list: async () => api.apps, onChanged: () => () => {}, getSettings: api.settings, setSettings: api.save, reload: api.reload, remove: api.remove, setEnabled: api.toggle }
 } }));
 import { useUi } from '@/store';
@@ -26,11 +28,12 @@ beforeEach(() => {
   api.settings.mockResolvedValue({ descriptors: { name: { type: 'string', label: 'Name' } }, values: { name: 'Before' } });
   api.save.mockImplementation(async (_id, values) => ({ descriptors: { name: { type: 'string', label: 'Name' } }, values }));
   api.reload.mockResolvedValue({ ok: true }); api.remove.mockResolvedValue({ ok: true }); api.toggle.mockResolvedValue({ ok: true });
+  api.reloadApp.mockResolvedValue(undefined);
   useUi.setState({ settingsExtensionId: 'example', selectedProjectId: null, pushToast: api.toast,
     setExtensionsTab: () => useUi.setState({ settingsExtensionId: null }) });
   Element.prototype.scrollIntoView = vi.fn();
 });
-afterEach(() => { cleanup(); clearPluginSlots('example'); });
+afterEach(() => { cleanup(); clearPluginSlots('example'); clearPluginSlots('other'); });
 it('shows real settings on a full page, saves through the existing API, and returns to the list', async () => {
   setup();
   await screen.findByRole('tab', { name: 'Settings', exact: true });
@@ -88,10 +91,14 @@ it('requires confirmation to uninstall, reports failures, and lets Escape dismis
   await screen.findByText('Remove denied'); expect(api.remove).toHaveBeenCalledWith('example');
 });
 
-it('keeps renderer failures visible before selecting any detail section', async () => {
+it('offers renderer recovery before selecting any detail section', async () => {
   api.modules = [{ id: 'example', title: 'Example', icon: 'Box', loadError: 'Renderer could not load' }];
   setup();
-  expect((await screen.findByRole('alert')).textContent).toBe('Renderer could not load');
+  await screen.findByRole('heading', { name: 'Example couldn’t load' });
+  fireEvent.click(inspector().getByText('Technical details', { exact: true }));
+  expect(inspector().getByText('Renderer could not load')).toBeTruthy();
+  fireEvent.click(inspector().getByRole('button', { name: 'Reload plugin', exact: true }));
+  await waitFor(() => expect(api.reloadApp).toHaveBeenCalledExactlyOnceWith('example'));
   expect(inspector().getByRole('tab', { name: 'Overview', exact: true }).getAttribute('aria-selected')).toBe('true');
 });
 
@@ -156,4 +163,16 @@ it('shows the tool policy timeout only for plugins that report one', async () =>
   expect(screen.getByTestId('plugin-tool-policy-timeout').textContent).toContain('7.5 s');
   view.unmount(); api.apps = [plugin()]; setup(); await screen.findByRole('region', { name: 'Installed plugin' });
   expect(screen.queryByTestId('plugin-tool-policy-timeout')).toBeNull();
+});
+
+it('links a sound plugin to its Notifications controls and excludes other plugin providers', async () => {
+  for (const id of ['example', 'other']) interpretPluginApp(id, definePluginApp(app => {
+    app.slots.notificationSoundProvider({ id: 'alerts', title: `${id} sounds`, component: () => null, mount: () => () => {} });
+  }));
+  setup();
+  const link = await screen.findByRole('link', { name: 'Configure sounds →' });
+  expect(link.getAttribute('href')).toBe('/settings/notifications?provider=example%2Falerts#agent-sounds');
+  expect(screen.getByText('example sounds is configured in Settings → Notifications.')).toBeTruthy();
+  expect(screen.queryByText('other sounds is configured in Settings → Notifications.')).toBeNull();
+  expect(screen.getByText('Notification sound providers (1)')).toBeTruthy();
 });

@@ -6,12 +6,14 @@ import type {
 } from '@zana-ai/zcc-contracts/host-rpc';
 import { provisionCommandFor } from '../services/threads/spawn-environment-provision.js';
 import {
+  appendConversationThreadEvent,
   createEnvironment,
   createThread,
   getEnvironment,
   getPrimaryHost,
   getThread,
   listExecutionHosts,
+  patchThreadPluginMetadata,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   updateThreadStatus,
@@ -28,11 +30,15 @@ import type {
   Project,
   SessionCohort
 } from '@zana-ai/zcc-domain/product';
+import { BUILTIN_PERSONA_SKILLS, sanitizePersonaSkills } from '@zana-ai/zcc-domain/product';
+import { MODERN_SQUAD_PRIVATE_NAMESPACE } from '@zana-ai/zcc-domain/squad-origin';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
+import { threadScope } from '@zana-ai/zcc-domain/thread-runtime';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import type { ProductHttpContext } from './product-context.js';
 import { unmanagedAttachRefusal } from '../services/threads/workspace-path-claims.js';
 import { managedPathOnHost } from '../services/threads/host-managed-path.js';
+import { providerSkillAllowlist, resolvePersonaSkillSelection } from '../services/threads/persona-skill-selection.js';
 import { threadStartCwd } from '../services/threads/thread-start-cwd.js';
 import { resolvePersonalTargetPathOnHost } from '../services/threads/host-personal-path.js';
 import {
@@ -139,11 +145,140 @@ function compactPersona(persona: Persona): CompactPersona {
   };
 }
 
-function resolvePersona(ctx: ProductHttpContext, personaId?: string): ReturnType<typeof compactPersona> | undefined {
+function findPersona(ctx: ProductHttpContext, personaId?: string): Persona | undefined {
   if (!personaId) return undefined;
   const personas = listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[];
-  const persona = personas.find((row) => row.id === personaId);
+  return personas.find((row) => row.id === personaId);
+}
+
+function resolvePersona(ctx: ProductHttpContext, personaId?: string): ReturnType<typeof compactPersona> | undefined {
+  const persona = findPersona(ctx, personaId);
   return persona ? compactPersona(persona) : undefined;
+}
+
+type PersonaSkillSource =
+  | { kind: 'none' }
+  | { kind: 'unresolvable' }
+  | { kind: 'found'; skills: string[] | undefined };
+
+/**
+ * Runtime child: the Electron-bound PersonaStore is not importable here. Same precedence
+ * (project > user > built-in); a user/project file shadows a built-in and always wins.
+ * `unresolvable` = the persona may carry a skill allowlist we cannot read on this path
+ * (extension personas live only in the desktop registry; remote-project personas are remote).
+ */
+function resolvePersonaSkillSource(
+  ctx: ProductHttpContext,
+  personaId: string | undefined,
+  project?: Pick<Project, 'path' | 'remote'>
+): PersonaSkillSource {
+  if (!personaId) return { kind: 'none' };
+  if (personaId.startsWith('ext:')) return { kind: 'unresolvable' };
+  const raw = (project && !project.remote
+    ? (listJsonFiles(join(project.path, '.zcc', 'personas')) as Persona[]).find((row) => row.id === personaId)
+    : undefined) ?? findPersona(ctx, personaId);
+  if (raw) {
+    // Malformed value is skipped (treated as unset), matching the PersonaStore sanitizer.
+    return { kind: 'found', skills: sanitizePersonaSkills(raw.skills) ?? undefined };
+  }
+  if (Object.hasOwn(BUILTIN_PERSONA_SKILLS, personaId)) {
+    return { kind: 'found', skills: [...BUILTIN_PERSONA_SKILLS[personaId]] };
+  }
+  return project?.remote ? { kind: 'unresolvable' } : { kind: 'none' };
+}
+
+/**
+ * Non-fatal notice when a supplied persona's skill allowlist could not be applied on this path
+ * (the thread launches unrestricted). Undefined when resolved, unknown, or unrestricted.
+ */
+export function personaSkillAllowlistNotice(
+  ctx: ProductHttpContext,
+  personaId?: string,
+  project?: Pick<Project, 'path' | 'remote'>
+): string | undefined {
+  if (resolvePersonaSkillSource(ctx, personaId, project).kind !== 'unresolvable') return undefined;
+  return `Persona "${personaId}" skill allowlist could not be applied on this launch path; the thread started without a persona skill restriction.`;
+}
+
+/**
+ * Main-resolved skill selection for a persona-launched thread (no Team, so no lean mode).
+ * `{}` when the persona is unknown, unresolvable here, or unrestricted; the renderer never
+ * supplies the list. Unresolvable personas are surfaced via `personaSkillAllowlistNotice`.
+ */
+export function personaThreadSkillFields(
+  ctx: ProductHttpContext,
+  personaId?: string,
+  project?: Pick<Project, 'path' | 'remote'>
+): { automatedSkillIds?: string[]; allowedSkillNames?: string[]; providerOptions?: Record<string, unknown> } {
+  const source = resolvePersonaSkillSource(ctx, personaId, project);
+  if (source.kind !== 'found') return {};
+  const skills = source.skills;
+  const persona = { skills };
+  let selection: ReturnType<typeof resolvePersonaSkillSelection>;
+  try {
+    selection = resolvePersonaSkillSelection(ctx.dataDir, undefined, persona, 'worker');
+  } catch (error) {
+    throw new ThreadCreateError(400, 'invalid-persona-skills', error instanceof Error ? error.message : 'invalid persona skills');
+  }
+  const { automatedSkillIds, allowedSkillNames } = selection;
+  if (automatedSkillIds === undefined && allowedSkillNames === undefined) return {};
+  const skillAllowlist = providerSkillAllowlist(automatedSkillIds, allowedSkillNames);
+  return {
+    ...(automatedSkillIds !== undefined ? { automatedSkillIds } : {}),
+    ...(allowedSkillNames !== undefined ? { allowedSkillNames } : {}),
+    ...(skillAllowlist !== undefined ? { providerOptions: { skillAllowlist } } : {})
+  };
+}
+
+/**
+ * Surface the persona-skill notice as a visible, non-fatal `system/operation` timeline event.
+ * Never blocks the launch: any failure to record it is swallowed.
+ */
+export function emitPersonaSkillNotice(ctx: ProductHttpContext, threadId: string, message: string | undefined): void {
+  if (!message) return;
+  try {
+    const stored = appendConversationThreadEvent(ctx.db, {
+      threadId,
+      type: 'system/operation',
+      payload: {
+        type: 'system/operation',
+        threadId,
+        scope: threadScope(),
+        operation: 'persona_skill_allowlist',
+        status: 'warning',
+        message,
+        operationId: `persona-skill-allowlist:${threadId}`
+      }
+    });
+    ctx.hub.emit('threads:event', {
+      threadId: stored.threadId,
+      sequence: stored.sequence,
+      kind: 'thread.event',
+      type: stored.type,
+      payload: stored.payload
+    });
+  } catch (error) {
+    // Advisory only: never fail the launch, but leave a trace that the notice was not recorded.
+    console.warn(`[zcc] persona skill notice not recorded for thread ${threadId}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export function persistThreadSkillSelection(
+  ctx: ProductHttpContext,
+  threadId: string,
+  fields: { automatedSkillIds?: string[]; allowedSkillNames?: string[] }
+): void {
+  if (fields.automatedSkillIds === undefined && fields.allowedSkillNames === undefined) return;
+  const result = patchThreadPluginMetadata(ctx.db, {
+    threadId,
+    pluginId: MODERN_SQUAD_PRIVATE_NAMESPACE,
+    set: {
+      ...(fields.automatedSkillIds !== undefined ? { automatedSkillIds: fields.automatedSkillIds } : {}),
+      ...(fields.allowedSkillNames !== undefined ? { allowedSkillNames: fields.allowedSkillNames } : {})
+    },
+    remove: []
+  });
+  if (!result.ok) throw new ThreadCreateError(400, 'invalid-persona-skills', 'persona skill selection exceeds metadata limit');
 }
 
 function mapHostError(error: unknown): ThreadCreateError {
@@ -396,6 +531,10 @@ async function startThreadOnHost(
     }
   }
   const remoteToolProxy = isRemoteToolProxyActive(args.project, args.hostId);
+  const skillFields = personaThreadSkillFields(ctx, args.input.personaId, args.project);
+  // Persist with the thread so resume and later turns (read from metadata) stay restricted.
+  persistThreadSkillSelection(ctx, args.thread.id, skillFields);
+  emitPersonaSkillNotice(ctx, args.thread.id, personaSkillAllowlistNotice(ctx, args.input.personaId, args.project));
   await ctx.hostHub.callHostOnlineRpc<ThreadStartResult>({
     hostId: args.hostId,
     command: {
@@ -415,6 +554,7 @@ async function startThreadOnHost(
       extraArgs: args.input.extraArgs,
       harnessRouting: args.input.harnessRouting,
       persona: resolvePersona(ctx, args.input.personaId),
+      ...skillFields,
       headless: args.input.headless,
       scheduled: args.input.scheduled,
       autoCloseOnFinish: args.input.autoCloseOnFinish,

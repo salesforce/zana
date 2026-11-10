@@ -5,6 +5,7 @@ import { LibraryAgentRequestSchema } from './library-agent.js';
 import { LibraryDocumentRequestSchema } from './library-documents.js';
 import { SHARED_PRODUCT_EVENTS } from './shared-product.js';
 import { z } from 'zod';
+import { pendingInteractionUserQuestionQuestionSchema, USER_QUESTION_MAX_QUESTIONS } from '@zana-ai/zcc-domain/thread-runtime';
 import { ProjectIdSchema, SessionIdSchema, PROJECT_ICONS } from '@zana-ai/zcc-domain';
 import { pluginPackIdentitySchema, pluginPackInstallRequestSchema } from '@zana-ai/zcc-domain';
 import { TerminalRequestCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
@@ -26,7 +27,7 @@ export const PRODUCT_EVENT_SNAPSHOT_CHANNELS: ReadonlySet<string> = new Set([
   'config:onChanged', 'scheduler:onChanged', 'scheduler:groups:onChanged', 'scheduler:onTemplatesChanged', 'goals:onChanged',
   'followups:onChanged', 'personas:onChanged', 'teams:onChanged', 'quickPrompts:onChanged', 'extensions:onChanged'
 ]);
-export const SERVER_RUNTIME_PROTOCOL_VERSION = 17;
+export const SERVER_RUNTIME_PROTOCOL_VERSION = 18;
 const ServerRuntimeProtocolVersionSchema = z.literal(SERVER_RUNTIME_PROTOCOL_VERSION);
 const RequestIdSchema = z.string().uuid();
 const DeadlineSchema = z.string().datetime();
@@ -65,7 +66,14 @@ export const MenubarAgentSchema = z.discriminatedUnion('kind', [
     kind: z.literal('thread'),
     threadId: z.string().min(1).max(256),
     status: z.string().max(128),
-    hasPendingInteraction: z.boolean()
+    hasPendingInteraction: z.boolean(),
+    context: z.object({
+      interactionId: z.string().min(1).max(256),
+      createdAt: z.number().int().nonnegative(),
+      prompt: z.string().max(4000),
+      questions: z.array(pendingInteractionUserQuestionQuestionSchema).max(USER_QUESTION_MAX_QUESTIONS).optional(),
+      lastMessage: z.object({ text: z.string().max(4000), truncated: z.boolean() }).strict().optional()
+    }).strict().optional()
   }).strict()
 ]);
 export const MenubarThreadsListResultSchema = z.object({
@@ -367,7 +375,9 @@ export const SquadMemberRuntimeRequestSchema = z.object({
   reasoningLevel: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max', 'ultracode']).optional(),
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   /** Main-authorized automated catalog selection. Never renderer input. */
-  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional(),
+  /** Main-authorized user/plugin skill names (allowlist entries matching no catalog id). Never renderer input. */
+  allowedSkillNames: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 export type SquadMemberRuntimeRequest = z.infer<typeof SquadMemberRuntimeRequestSchema>;
 

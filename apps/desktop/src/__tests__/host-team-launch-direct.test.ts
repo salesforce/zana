@@ -199,10 +199,10 @@ beforeEach(() => {
   threadProviderHandles = [
     registerThreadProvider('test', { id: 'claude-code', displayName: 'Claude Code',
       capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
-        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'] }, composerActions: [] }),
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'], reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }, composerActions: [] }),
     registerThreadProvider('test', { id: 'acp-opencode', displayName: 'OpenCode',
       capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
-        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'] }, composerActions: [] })
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'], reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }, composerActions: [] })
   ];
   seq += 1;
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
@@ -666,6 +666,40 @@ describe('launchTeam Modern structured path', () => {
     });
   });
 
+  it('passes a persona reasoning effort to its Modern squad seats and leaves other seats unset (#584)', async () => {
+    h.personas[1] = persona('w1', { reasoningLevel: 'high' });
+    const req = structuredReq();
+    const result = await launchTeam('team1', 'p1', req);
+    expect(result).toMatchObject({ ok: true, value: { failedSlots: [] } });
+    if (!result.ok) return;
+    const creates = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const effortBySlot = new Map(result.value.workers.map((worker) => [worker.slotId,
+      creates.find((request) => request.bindingId === worker.sessionId)?.reasoningLevel]));
+    // Both seats of the persona that sets an effort carry it; the seats of the personas that do not stay unset.
+    expect(effortBySlot.get('0:w1:0')).toBe('high');
+    expect(effortBySlot.get('0:w1:1')).toBe('high');
+    expect(effortBySlot.get('1:w2:0')).toBeUndefined();
+    expect(creates.find((request) => request.role === 'orchestrator')?.reasoningLevel).toBeUndefined();
+    // The effort is also recorded in the durable persona snapshot, so a resumed seat keeps it.
+    const record = lifecycle(req.launchRequestId);
+    const snapshotEffort = (slotId: string) => record.workers.find((worker) => worker.slotId === slotId)?.modernContext?.personaSnapshot.reasoningLevel;
+    expect(snapshotEffort('0:w1:0')).toBe('high');
+    expect(snapshotEffort('0:w1:1')).toBe('high');
+    expect(snapshotEffort('1:w2:0')).toBeUndefined();
+  });
+
+  it('passes a persona reasoning effort to a non-Claude Modern seat whose provider declares it (#584)', async () => {
+    h.personas[1] = persona('w1', { baseProfile: 'opencode', reasoningLevel: 'high' });
+    const req = structuredReq();
+    const result = await launchTeam('team1', 'p1', req);
+    expect(result).toMatchObject({ ok: true, value: { failedSlots: [] } });
+    const creates = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const opencode = creates.filter((request) => request.providerId === 'acp-opencode');
+    expect(opencode.length).toBeGreaterThan(0);
+    expect(opencode.every((request) => request.reasoningLevel === 'high')).toBe(true);
+    expect(creates.filter((request) => request.providerId === 'claude-code').every((request) => request.reasoningLevel === undefined)).toBe(true);
+  });
+
   it.each([
     ['claude', 'claude-code'],
     ['opencode', 'acp-opencode']
@@ -743,6 +777,37 @@ describe('launchTeam Modern structured path', () => {
     const created = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
     expect(created[1].automatedSkillIds).toEqual(automatedSkillIds);
     expect(created.filter((_, index) => index !== 1).every((request) => request.automatedSkillIds === undefined)).toBe(true);
+  });
+
+  it('carries the resolved persona skill allowlist on the modern runtime request', async () => {
+    h.personas = [persona('orch'), persona('w1', { skills: ['ext:fmt'] }), persona('w2', { skills: [] })];
+    expect((await launchTeam('team1', 'p1', structuredReq())).ok).toBe(true);
+    const created = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const w1 = created.filter((request) => request.role === 'worker' && request.allowedSkillNames?.includes('ext:fmt'));
+    expect(w1.length).toBeGreaterThan(0);
+    // The empty persona list is restricted (defined), not unset.
+    expect(created.some((request) => Array.isArray(request.allowedSkillNames) && request.allowedSkillNames.length === 0)).toBe(true);
+    // The unrestricted orchestrator carries no allowlist.
+    expect(created.some((request) => request.allowedSkillNames === undefined)).toBe(true);
+  });
+
+  it('leanWorkers: unset-skills workers get only zcc-inbox; explicit skills and the orchestrator are unaffected', async () => {
+    h.personas = [persona('orch'), persona('w1'), persona('w2', { skills: ['ext:fmt'] })];
+    h.teams[0] = { ...h.teams[0], leanWorkers: true };
+    expect((await launchTeam('team1', 'p1', structuredReq())).ok).toBe(true);
+    const created = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const names = (request: any): string[] => [...(request.allowedSkillNames ?? []), ...(request.automatedSkillIds ?? []).map((id: string) => id.slice(id.lastIndexOf('/') + 1))];
+    const orch = created.filter((request) => request.role === 'orchestrator');
+    expect(orch.length).toBeGreaterThan(0);
+    expect(orch.every((request) => request.allowedSkillNames === undefined && request.automatedSkillIds === undefined)).toBe(true);
+    const workers = created.filter((request) => request.role === 'worker');
+    // Restricted never widens: an automated member's injected-skill default is none, so the
+    // lean/explicit allowlist narrows that baseline and adds no catalog ids (incl. zcc-inbox).
+    expect(workers.every((request) => Array.isArray(request.allowedSkillNames))).toBe(true);
+    expect(workers.every((request) => Array.isArray(request.automatedSkillIds) && request.automatedSkillIds.length === 0)).toBe(true);
+    expect(workers.some((request) => request.allowedSkillNames.length === 0)).toBe(true);
+    expect(workers.some((request) => request.allowedSkillNames.includes('ext:fmt'))).toBe(true);
+    expect(names(workers[0]).every((name: string) => name !== 'review')).toBe(true);
   });
 
   it.each(['runtime', 'provider'] as const)('refuses %s preflight for every slot before any ACP create or PTY', async (refusal) => {
@@ -1381,5 +1446,21 @@ describe('launchTeam CLI planless durable coordinator plan-file grant (B2)', () 
     h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
     const { orchestrator } = await launchPlanless();
     expect(orchestrator.authoredPlanPaths).toBeUndefined();
+  });
+});
+
+describe('slotSkillAllowlistFact', () => {
+  const { slotSkillAllowlistFact } = host;
+  const personas = [{ id: 'r', skills: ['x'] }, { id: 'u' }];
+  it('returns the persona allowlist plus always-allowed skills', () => {
+    expect(slotSkillAllowlistFact(undefined, personas, 'r', '0:r:0').skillAllowlist).toEqual(expect.arrayContaining(['x', 'zcc-inbox']));
+  });
+  it('is empty for unrestricted, unknown persona, and lean orchestrator', () => {
+    expect(slotSkillAllowlistFact(undefined, personas, 'u', '0:u:0')).toEqual({});
+    expect(slotSkillAllowlistFact(undefined, personas, 'nope', '0:n:0')).toEqual({});
+    expect(slotSkillAllowlistFact({ leanWorkers: true }, personas, 'u', 'orchestrator:u')).toEqual({});
+  });
+  it('lean workers restrict worker slots to the always-allowed list', () => {
+    expect(slotSkillAllowlistFact({ leanWorkers: true }, personas, 'u', '0:u:0').skillAllowlist).toEqual(['zcc-inbox']);
   });
 });

@@ -113,7 +113,15 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
         { id: 'o1-mini', label: 'o1 Mini', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
         { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION }
       ],
-      modelLevelMapping: { low: 'gpt-4o-mini', medium: 'gpt-4o', high: 'gpt-4o', 'extra-high': 'o1' },
+      modelLevelMapping: { low: undefined, medium: undefined, high: undefined, 'extra-high': undefined },
+      // Name terms first (they track new releases); exact catalog ids last so a harness with no live
+      // inventory still lands on a sensible model ('mini' alone would rank o1-mini above gpt-4o-mini).
+      defaultModelTierRules: {
+        low: ['luna', 'gpt-4o-mini', 'mini'],
+        medium: ['terra', 'gpt-4o'],
+        high: ['sol', 'gpt-5.5'],
+        'extra-high': ['sol', 'gpt-5.5']
+      },
       executionStateMapping: {
         plan: 'read-only + on-request',
         interactive: 'workspace-write + on-request',
@@ -213,7 +221,6 @@ export class CodexProvider extends BaseLaunchProvider {
       CODEX_EVIDENCE_VERSION,
       (id, scope) => codexEvidence(id, scope, 'Live Codex model/list catalog and -m contribution verified.')
     );
-    const defaultModel = models[0]?.id;
     return {
       ...CODEX_ADAPTER,
       evidence,
@@ -222,12 +229,6 @@ export class CodexProvider extends BaseLaunchProvider {
         targets: {
           ...CODEX_ADAPTER.descriptor.targets!,
           models,
-          modelLevelMapping: {
-            low: models.find((model) => /mini/i.test(model.id))?.id ?? defaultModel,
-            medium: defaultModel,
-            high: defaultModel,
-            'extra-high': defaultModel
-          }
         }
       }
     };
@@ -472,7 +473,12 @@ export class CodexProvider extends BaseLaunchProvider {
     // otherwise conflict with the bypass), keeping only `-m`. Parity with how
     // claude-yolo drops `--permission-mode`.
     const modelValue = persona.model || persona.harnessRouting?.byAdapter?.codex?.modelTargetId || persona.harnessRouting?.byAdapter?.codex?.compatibility?.model;
-    return codexOptionArgs(modelValue, undefined, undefined);
+    // Persona reasoning effort → codex's `model_reasoning_effort` config key
+    // (the same key the Codex thread provider sets). The persona levels are a
+    // subset of codex's, so the value passes through unchanged. `-c` is a global
+    // option, valid before or after `resume`. Absent = no flag.
+    const effort = persona.reasoningLevel ? ['-c', `model_reasoning_effort=${tomlValue(persona.reasoningLevel)}`] : [];
+    return [...codexOptionArgs(modelValue, undefined, undefined), ...effort];
   }
 
   /** Project-settings twin of {@link personaArgs}; same codex flag dialect. */

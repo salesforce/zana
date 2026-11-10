@@ -7,7 +7,9 @@ import { PluginThemePicker, PluginThreadListPicker } from '@/plugins/PluginAppea
 import { DoctorSection } from '@/components/settings/DoctorSection';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { CliSkillsSettings } from './CliSkillsSettings';
+import { TrustedPreviewFoldersSection } from './TrustedPreviewFoldersSection';
 import { useSplitWorkspace } from '@/lib/split-layout/store';
+import { OnboardingSettingsAction } from '@/components/onboarding/Onboarding';
 
 interface GlobalTabProps {
   config: AppConfig;
@@ -49,6 +51,8 @@ export function GlobalView({
 
       <CliSkillsSettings />
 
+      <TrustedPreviewFoldersSection config={config} />
+
       <Section
         anchorId="debug"
         searchId="global.debug-intro"
@@ -72,6 +76,7 @@ export function GlobalView({
       </Section>
 
       <Section title="Help" searchId="global.help-intro">
+        <OnboardingSettingsAction />
         <SettingsActionRow
           searchId="global.replay-walkthrough"
           label="Replay walkthrough"

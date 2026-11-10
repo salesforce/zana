@@ -1,0 +1,24 @@
+{
+  "name": "@zcc-ext/agent-sounds",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Sound Studio",
+    "description": "Bring your own agent sounds, import OpenPeon packs, and tune notification rules.",
+    "branding": {
+      "icon": "Volume2"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "scripts": {
+    "build": "zcc plugin build .",
+    "test": "vitest run"
+  },
+  "license": "MIT"
+}

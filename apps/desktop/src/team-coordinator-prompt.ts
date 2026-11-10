@@ -1,5 +1,6 @@
 import type { Persona, Team, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
+import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import type { PlanAuthoringTransport } from '@zana-ai/zcc-domain/squad-proposal';
 
 /**
@@ -67,7 +68,7 @@ function fileHandoffKickoffLines(input: { planFilePath: string; sourceFilePath?:
         ? ` The execution source requirements are mirrored to \`${input.sourceFilePath}\` — read that file with your file-read tool to gather requirements. Do NOT call \`execution.source.list\` or \`execution.source.read\`.`
         : ' Derive bounded generic work units from the goal and available context; if that context cannot support a bounded plan, fail clearly without writing a speculative plan.'
     }`,
-    `- Write your COMPLETE portable-executable plan to \`${input.planFilePath}\` with your file-write tool: one H3 \`id: Title <!-- executable-step -->\` heading per work unit, each carrying the fixed label bullets (Depends on, Execution class, Mode, Read scope, Write scope, Excludes, Work, Verification, Completion criteria, Stop conditions, Outputs / handoff). Every mutating unit needs a non-empty Write scope and Verification.`,
+    `- Write your COMPLETE portable-executable plan to \`${input.planFilePath}\` with your file-write tool: one H3 \`id: Title <!-- executable-step -->\` heading per work unit, each carrying the fixed label bullets (Depends on, Execution class (exactly Routine, Standard, or Expert; no other value), Mode, Read scope, Write scope, Excludes, Work, Verification, Completion criteria, Stop conditions, Outputs / handoff). Every mutating unit needs a non-empty Write scope and Verification.`,
     '- Then end your turn. The host reads that file, registers the DAG, and AUTOMATICALLY dispatches ready units (re-dispatching as work completes). Do NOT call `execution.plan.register`, `execution.work.dispatch_ready`, or `execution.work.assign`, and do not assign units yourself (no per-unit `agent_send`). Never assign work to the orchestrator slot.',
     '- Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
     '- Do not call `execution.source.list` or `execution.source.read`.',
@@ -144,13 +145,39 @@ function legacyMcpKickoffLines(hasSources: boolean): string[] {
  *    plan with a single `execution.plan.register`; the host auto-dispatches on
  *    register, so the coordinator STILL never calls `dispatch_ready`.
  */
+/** A seat is either running (has a session id) or waiting to start; never neither. */
+export type RosterEntry = { slotId: string; label: string; /** Model tier of the seat, when known; drives the tier roster. */ tier?: ModelLevel } & ({ sessionId: string; startsWhenNeeded?: undefined } | { startsWhenNeeded: true; sessionId?: undefined });
+
+/** Attach each seat's resolved model tier (by slot id) to its roster entry; entries without a known tier are untouched. */
+export function rosterWithTiers(roster: readonly RosterEntry[], routes: readonly { slotId: string; level?: ModelLevel }[] | undefined): RosterEntry[] {
+  const levels = new Map((routes ?? []).filter((route) => route.level).map((route) => [route.slotId, route.level as ModelLevel]));
+  return roster.map((entry) => {
+    const tier = levels.get(entry.slotId);
+    return tier ? { ...entry, tier } : entry;
+  });
+}
+
+/**
+ * Advisory tier roster plus the cost rule. Empty when no seat has a known tier, so a
+ * Team without tier facts gets a byte-identical prompt.
+ */
+function tierRosterBlock(roster: readonly RosterEntry[]): string {
+  const tiered = roster.filter((worker) => worker.tier);
+  if (tiered.length === 0) return '';
+  return [
+    'Worker tiers (cheaper tiers cost less per unit; tiering is advisory):',
+    ...tiered.map((worker) => `- ${worker.label}, slot \`${worker.slotId}\`: ${worker.tier}${worker.startsWhenNeeded ? ' (starts when needed)' : ' (running)'}`),
+    'Give each work unit the lowest sufficient Execution class (Routine, Standard, or Expert) and, where you set `routing.minimumLevel`, the lowest tier that can do the work. Reserve higher tiers for ambiguous, high-risk, or adjudicative units.'
+  ].join('\n');
+}
+
 export function jobCoordinatorPrompt(input: {
   team: Team;
   persona?: Persona;
   structuredTask?: string;
   executionId?: string;
   job: NonNullable<TeamLaunchRequestInput['jobContext']>;
-  roster: Array<{ sessionId: string; slotId: string; label: string }>;
+  roster: Array<RosterEntry>;
   /**
    * Host-computed plan readiness. TRUE when the durable record already carries a
    * valid seeded work DAG (Flow A: good plan provided). The host dispatches those
@@ -197,7 +224,15 @@ export function jobCoordinatorPrompt(input: {
 }): string {
   const sources = input.job.sourceBundle?.sources ?? [];
   const sourceMetadata = JSON.stringify(sources.length ? sources : []);
-  const rosterLines = input.roster.map((worker) => `- ${worker.label} — session \`${worker.sessionId}\`, slot \`${worker.slotId}\``);
+  const running = input.roster.filter((worker) => worker.sessionId);
+  const rosterLines = running.map((worker) => `- ${worker.label} — session \`${worker.sessionId}\`, slot \`${worker.slotId}\``);
+  const waiting = input.roster.filter((worker) => worker.startsWhenNeeded);
+  const waitingBlock = waiting.length === 0 ? '' : [
+    'Seats that start when their first unit is ready (not running yet, so no session id):',
+    ...waiting.map((worker) => `- ${worker.label}, slot \`${worker.slotId}\``),
+    'The engine starts each of these seats when it assigns its first unit. Do not message them or wait for them to appear; assign work to their slots as normal.'
+  ].join('\n');
+  const tierBlock = tierRosterBlock(input.roster);
   const hasSources = sources.length > 0;
   // One of four kickoff arms, keyed on host-computed plan readiness then on
   // whether a plan-file handoff path was provided. Each arm is a named helper; the
@@ -213,7 +248,9 @@ export function jobCoordinatorPrompt(input: {
     : legacyMcpKickoffLines(hasSources);
   return [
     `You are coordinator of Team "${input.team.name}"${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Your coordinator identity, execution binding, and worker roster are already host-bound. Do not discover, register, recover, or replace them during normal kickoff.`,
-    `Workers are already running:\n${rosterLines.join('\n') || '- No workers.'}`,
+    `Workers are already running:\n${rosterLines.join('\n') || (waiting.length ? '- No workers are running yet.' : '- No workers.')}`,
+    ...(waitingBlock ? [waitingBlock] : []),
+    ...(tierBlock ? [tierBlock] : []),
     ...(input.recoveryResume ? [
       'Recovery resume: this coordinator reopened its trusted native session for this same execution slot.',
       // A planless run has no retained plan to resume: a plan this session
@@ -244,7 +281,7 @@ export function jobCoordinatorPrompt(input: {
       '- Scheduling is host-managed: a pre-registered plan is already dispatched, and registering a plan auto-dispatches its ready units. Do NOT call `execution.work.dispatch_ready` yourself; the engine assigns and re-dispatches ready units to workers. End the turn and remain parked after any authoring. Do not relay assignments or routine results with `agent_send`. Never let workers independently execute the whole goal.',
       '- Record meaningful progress and outcomes with `execution.event`. Route human-required questions through `execution.work.block`, never event-only blockers or AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.',
       '- Report outcomes through unit results: workers put the outcome in the `result` of `execution.work.complete`. Ordinary unit results are not artifacts; no artifact tools are available to this cohort.',
-       '- On an explicit wake notification, resolve or escalate only that human blocker, semantic conflict, or policy escalation. Do not resume routine coordination. A `SEMANTIC_CONFLICT` wake that names a work unit and a `blockerId=<id>` is a worker asking YOU to decide one plan/spec detail so it can finish: make the decision from the goal and available context and answer it with `execution.work.answer` (that blockerId + your concrete answer) — the worker resumes automatically, so this is how you make a thin plan executable rather than stalling it. Reserve human escalation (leave it, or raise it yourself) for a genuine human-only decision or credential.',
+       '- On an explicit wake notification, resolve or escalate only that human blocker, semantic conflict, or policy escalation. Do not resume routine coordination. A `SEMANTIC_CONFLICT` wake that names a work unit and a `blockerId=<id>` is a worker asking YOU to decide one plan/spec detail so it can finish: make the decision from the goal and available context and answer it with `execution.work.answer` (that blockerId + your concrete answer) — the worker resumes automatically, so this is how you make a thin plan executable rather than stalling it. Reserve human escalation (leave it, or raise it yourself) for a genuine human-only decision or credential. Never call `execution.work.answer` on a human blocker: it is denied, so tell the owner to answer the Inbox card named in the denial or the blocker notice.',
        '- On an explicit health or escalation wake, call `execution.snapshot` once for this host-bound execution before deciding. This bounded snapshot is diagnostic-only; do not poll it during kickoff or routine progress. Do not call `execution.status` or `execution.list`: they are owner-history tools and return `WRONG_AUTHORITY` for a bound cohort.',
       '- Terminal status and summary are assembled mechanically from durable work outcomes, policy state, events, and artifacts. Optional narrative may augment that record but never gates settlement.'
     ].join('\n')

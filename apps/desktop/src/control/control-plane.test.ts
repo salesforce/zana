@@ -231,6 +231,37 @@ function makeDeps(over: Partial<ControlPlaneDeps> = {}): ControlPlaneDeps {
   };
 }
 
+describe('thread peer control authority', () => {
+  const input = { to: 'cli-1', projectId: 'p1', fromSessionId: 'thread-1', fromHandle: 'builder', message: 'review this', generation: 0 };
+  it('recognizes peer operations and authenticates the product server', () => {
+    for (const op of ['agent.list', 'agent.peer.send']) {
+      expect(authorizeRequest({ ...EXPECTED, op, callerCredential: 'server-only' }, EXPECTED, undefined, undefined,
+        credential => credential === 'server-only')).toMatchObject({ ok: true, caller: 'product-server' });
+    }
+    expect(authorizeRequest({ ...EXPECTED, op: 'agent.peer.send', callerSessionId: 'agent-1' }, EXPECTED))
+      .toMatchObject({ ok: false, code: 'FORBIDDEN_AGENT' });
+  });
+  it('requires product-server authority even when dispatched directly', async () => {
+    const sendPeerMessage = vi.fn(() => ({ ok: true as const, id: 'm1', delivered: false }));
+    for (const caller of ['operator', 'agent', 'orchestrator'] as const) {
+      expect(await dispatchOp('agent.peer.send', input, makeDeps({ sendPeerMessage }), { class: caller })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    }
+    expect(sendPeerMessage).not.toHaveBeenCalled();
+    expect(await dispatchOp('agent.peer.send', input, makeDeps(), { class: 'product-server' })).toMatchObject({ ok: false });
+  });
+  it('validates bounded input and reports successful and refused deliveries', async () => {
+    const sendPeerMessage = vi.fn(() => ({ ok: true as const, id: 'm1', delivered: false }));
+    const deps = makeDeps({ sendPeerMessage });
+    for (const invalid of [{}, { ...input, to: 'x'.repeat(201) }, { ...input, message: 'x'.repeat(16_001) }, { ...input, fromSessionId: 123 }]) {
+      expect(await dispatchOp('agent.peer.send', invalid, deps, { class: 'product-server' })).toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    }
+    expect(await dispatchOp('agent.peer.send', input, deps, { class: 'product-server' })).toEqual({ ok: true, value: { id: 'm1', delivered: false } });
+    expect(sendPeerMessage).toHaveBeenCalledWith(input);
+    expect(await dispatchOp('agent.peer.send', input, makeDeps({ sendPeerMessage: () => ({ ok: false, error: 'gone' }) }), { class: 'product-server' }))
+      .toEqual({ ok: false, code: 'SEND_FAILED', message: 'gone' });
+  });
+});
+
 describe('dispatchOp', () => {
   it('returns the authoritative team, agent and schedule inventories', async () => {
     const agents = [{ sessionId: 's1', projectId: 'p1', handle: 'reviewer', cwd: '/tmp/p1', role: 'qa' }];

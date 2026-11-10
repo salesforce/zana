@@ -75,15 +75,29 @@ describe('plugin service responsiveness failures', () => {
     vi.useRealTimers();
   });
 
-  it('restarts a watchdog-stalled plugin once the backoff expires', async () => {
+  it.each(['Plugin event loop stopped responding', 'Plugin API call timed out'])('restarts a plugin after %s once the backoff expires', async message => {
     vi.useFakeTimers();
     const { service, plugin } = fixture();
     const row = await service.install(plugin);
-    state.runtimes[0].options.onFailure(Error('Plugin event loop stopped responding'));
+    state.runtimes[0].options.onFailure(Error(message));
     await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('degraded'));
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('running'));
     expect(state.runtimes).toHaveLength(2);
+    vi.useRealTimers();
+  });
+
+  it('keeps a watchdog-stalled plugin required and logs no "unavailable" warning while its retry is pending', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { service, plugin } = fixture();
+    const row = await service.install(plugin);
+    state.runtimes[0].options.onFailure(Error('Plugin event loop stopped responding'));
+    await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('degraded'));
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('failed to activate'))).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(service.get(row.id)?.status).toBe('running'));
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('failed to activate'))).toHaveLength(0);
     vi.useRealTimers();
   });
 

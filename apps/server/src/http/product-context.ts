@@ -1,3 +1,4 @@
+import { createPeerToolVerifier } from './peer-tool-proof.js';
 import { createMachineProjectSync, type MachineProjectSync } from '../services/hosts/machine-project-sync.js';
 import { HelpVideoCatalogueService } from '../services/help-video-catalogue.js';
 import { closeThreadReads } from '../services/threads/thread-reads.js';
@@ -191,6 +192,7 @@ export interface ProductHttpContext {
   /** Consumes main's proof on a native tool policy request (native-tool-policy-proof.ts). Absent or secretless servers refuse every one. */
   verifyNativeToolPolicy?: (token: unknown, body: string) => boolean;
   verifyInteractionProof?: (token: unknown, binding: InteractionProofBinding) => import('./interaction-proof.js').VerifiedInteractionProof | null;
+  verifyPeerTool?: (token: unknown, body: string) => boolean;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void | Promise<void>;
@@ -695,6 +697,7 @@ export function createProductHttpContext(
     },
     verifyNativeToolPolicy,
     verifyInteractionProof,
+    verifyPeerTool: options.uiSendSecret && options.uiSendSecret.length >= 32 ? createPeerToolVerifier(options.uiSendSecret) : undefined,
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
       if (disposed) return remoteProjectReconciler.dispose();

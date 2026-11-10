@@ -137,7 +137,7 @@ export interface DesignDocsApi {
   templateDelete(template: string): Promise<void>;
   templatesRestoreBuiltins(): Promise<TemplateInfo[]>;
   templatesExport(keys?: string[]): Promise<{ bundleText: string }>;
-  templatesImport(bundleText: string): Promise<DesignDocDetail[]>;
+  templatesImport(bundleText: string): Promise<{ imported: DesignDocDetail[]; skipped: number }>;
   projects(): Promise<ProjectInfo[]>;
   /** Deleted projects' last names, already labelled "<name> (project removed)". */
   removedProjects(): Promise<Array<{ id: string; label: string }>>;

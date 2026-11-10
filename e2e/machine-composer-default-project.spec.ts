@@ -111,9 +111,20 @@ test('Default Project discovers remote models and machine renames survive pairin
     const overview = win.getByRole('dialog', { name: originalName, exact: true });
     await expect(overview.getByRole('button', { name: 'api-service', exact: true })).toBeVisible();
     await win.screenshot({ path: testInfo.outputPath('machine-project-overview.png') });
-    await overview.getByRole('button', { name: 'Close', exact: true }).click();
+    await overview.getByRole('button', { name: 'Default Project', exact: true }).click();
+    await expect(overview).toHaveCount(0);
+    await expect(win).toHaveURL(`${origin}/projects/${scratch.value.id}`);
 
+    await navigate('/agents');
     await remoteGroup.getByRole('button', { name: 'Open Default Project', exact: true }).click();
+    await expect(win).toHaveURL(`${origin}/projects/${scratch.value.id}`);
+    await navigate('/agents');
+    const primaryHost = (await api('/hosts')).body.find((host: any) => host.isPrimary);
+    await win.locator(`[data-machine-id="${primaryHost.id}"]`).getByRole('button', { name: 'Open Default Project', exact: true }).click();
+    await expect(win).toHaveURL(`${origin}/projects/${scratch.value.id}`);
+    await navigate('/agents');
+    await remoteGroup.getByRole('button', { name: 'New agent in Default Project', exact: true }).click();
+    await expect(win).toHaveURL(`${origin}/threads/new?locationProject=${scratch.value.id}&host=${grant.hostId}`);
     const composer = win.locator('.new-thread-view .thread-command-composer');
     const input = composer.getByTestId('thread-command-input');
     await input.fill('Run a task on my remote machine');

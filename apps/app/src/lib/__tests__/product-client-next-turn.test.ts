@@ -101,3 +101,18 @@ it('saves a queued-message edit with the revision it was based on and surfaces t
   await expect(product.threads.updateNextTurn('thread', 'item', { text: 'x' })).rejects.toMatchObject({ status: 409, code: 'queued-send-dispatching' });
   await expect(product.threads.holdNextTurnForEdit('thread', 'item')).rejects.toMatchObject({ status: 404, code: 'unknown-queued-send' });
 });
+
+it('reviews a pending peer message from a phone and rejects an already approved item', async () => {
+  const confirm = vi.fn(() => true);
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(Response.json({ items: [{ id: 'peer_1', text: 'Review this', status: 'pending', updatedAt: 4 }] }))
+    .mockResolvedValueOnce(Response.json({ ok: true }))
+    .mockResolvedValueOnce(Response.json({ items: [{ id: 'peer_1', text: 'Review this', status: 'approved', updatedAt: 4 }] }));
+  vi.stubGlobal('window', { confirm }); vi.stubGlobal('fetch', fetch);
+  await expect(product.threads.sendNextTurn('thread', 'peer_1')).resolves.toEqual({ ok: true });
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining('recipient’s existing tools and permissions'));
+  expect(fetch.mock.calls[0][0]).toBe('/api/v1/threads/thread/peer-messages');
+  expect(fetch.mock.calls[1][0]).toBe('/api/v1/threads/thread/peer-messages/peer_1/send');
+  await expect(product.threads.sendNextTurn('thread', 'peer_1')).rejects.toThrow('unavailable');
+  expect(confirm).toHaveBeenCalledOnce();
+});

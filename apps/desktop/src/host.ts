@@ -1,5 +1,10 @@
 import { launchFailure } from './launch-pre-spawn.js';
 import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
+import { startAgentSoundEvents } from './native/agent-sound-events.js';
+import { AgentSounds } from './native/agent-sounds.js';
+import { AgentSoundFiles } from './native/agent-sound-files.js';
+import { registerAgentSoundIpc } from './native/agent-sound-ipc.js';
+import { createThreadPeerRuntime } from './runtime/thread-peer-runtime.js';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -70,7 +75,7 @@ import { resolveIconPath } from './resolve-icon-path.js';
 import { createProductRouteSquadRuntime, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { createRuntimeRecovery } from './runtime/runtime-recovery.js';
 import { createTeamProductOps } from './team-product-ops.js';
-import { jobCoordinatorPrompt } from './team-coordinator-prompt.js';
+import { jobCoordinatorPrompt, rosterWithTiers, type RosterEntry } from './team-coordinator-prompt.js';
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
@@ -114,9 +119,13 @@ import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
 import { teamRunNamerInput } from './team-run-title.js';
 import { MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, harnessFamilyOf, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
-import { canonicalThreadProviderId, getThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
+import { canonicalThreadProviderId, getThreadProvider, personaEffortForProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
+import { narrowAutomatedSkillIds, providerSkillAllowlist, resolvePersonaSkillSelection } from '@zana-ai/zcc-server/services/threads/persona-skill-selection';
+import { resolveSkillSettings } from '@zana-ai/zcc-host-daemon/skill-allowlist-settings';
+import type { SkillSettings } from '@zana-ai/zcc-host-daemon/harness/registration';
+import { effectiveSkills, isOrchestratorSlotId } from '@zana-ai/zcc-domain/product';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { AgentLivenessCache } from '@zana-ai/zcc-host-daemon/harness/agent-liveness';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
@@ -124,8 +133,9 @@ import { projectIdentityDigest, projectsForStoreRevision, revalidateLaunchCommit
 import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/authorization';
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
-import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
+import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch, summarizePlanTierFit } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
+import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, deferredSeatsOf, lateSeatApprovalProblem, onDemandLaunchProblem, preissuedDeadlineMatches, seatApprovalWindow } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -137,7 +147,7 @@ import { createExecutionStore, isUserOwnedSquadWorktree, WORK_CLAIM_LEASE_MS, ty
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
-import type { ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
+import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector, suppressesInteractiveBlocked } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
@@ -160,7 +170,7 @@ import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-st
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
-import { liveScopedProviderFor } from './team-model-routing.js';
+import { liveScopedProviderFor, memoizedLiveScopedProviderFor, resolveSlotModel } from './team-model-routing.js';
 import { decideTeamRoutingEnforcement } from './team-routing-enforcement.js';
 import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
@@ -325,6 +335,7 @@ import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
 import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
 import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
 import { createSquadProposalStore } from './squad-proposals/store.js';
+import { createStagingStore, SQUAD_STAGING_DIR_NAME, SQUAD_STAGING_PARENT_DIR_NAME } from './squad-proposals/staging.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
 import { goalMentionPaths } from './squad-proposals/sources.js';
@@ -348,6 +359,8 @@ import { listAllFollowUps, saveFollowUp, deleteFollowUp, validateFollowUpFile } 
 import { readClaudeLoops } from '@zana-ai/zcc-server/services/misc/claude-loops-store';
 import { TrayController } from './tray.js';
 import { MenubarController, isRepliable } from './menu.js';
+import { CompanionController } from './companion.js';
+import { createCompanionController, createCompanionHost, onVisibleParent } from './companion-host.js';
 import { createUpdater, type Updater } from './updater.js';
 import { getReleaseNotes } from './release-notes.js';
 import { compareVersions } from '@zana-ai/zcc-extension-sdk';
@@ -942,6 +955,7 @@ const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?:
 const titleBarOverlays = createWindowsTitleBarOverlays({
   get platform() { return process.platform; },
   windows,
+  repairing: () => startupState.mode === 'repair-required',
   theme: resolveTheme,
   // Lazy: host-loading unit tests mock electron without these.
   electron: () => ({ nativeTheme, systemPreferences }),
@@ -1213,6 +1227,20 @@ async function withPreparedNativeSession<T extends { profile: LaunchProfileId; r
 
 const launchAuthorizationBySession = new Map<string, string>();
 const launchPrincipals = new Map<string, LaunchPrincipal>();
+/** Spawners for Squad seats that start on demand, keyed by lifecycle record; empty unless a team opts in. */
+const deferredSeats = createDeferredSeatRegistry({
+  log: (message, error) => logMainError(message, error),
+  // No spawner for this run (the app restarted, or the run ended): fail the seat once, visibly, so its units are not re-offered forever.
+  onOrphan: async (recordId, slotId) => {
+    const current = await teamLifecycle.get(recordId);
+    // A run that is already ending is finished by its own teardown, not by this message.
+    if (current?.state !== 'active' || current.workers.find((worker) => worker.slotId === slotId)?.sessionId !== undefined) return;
+    // The seat is failed and the engine then takes it out of rotation: its unit goes to another seat or to a person.
+    const failed = await teamLifecycle.failDeferredSeat(recordId, slotId,
+      'This seat could not start because the app restarted and lost track of it. Resume the run to start it.');
+    if (failed) teamLifecycleIntegration.track(failed);
+  }
+});
 const launchAuthorization = new LaunchAuthorizationService({
   resolvePrincipal: (id) => launchPrincipals.get(id)
 });
@@ -1488,6 +1516,20 @@ const goals = new GoalManager();
 const followups = new FollowUpManager();
 let tray: TrayController | null = null;
 let menubar: MenubarController | null = null;
+/** Command Center rail + quick panel (opt-in, `companionEnabled`). */
+let companion: CompanionController | null = null;
+const companionHost = createCompanionHost({
+  platform: process.platform,
+  flag: () => store.getConfig().companionEnabled === true,
+  companion: () => companion,
+  focusedWindow: () => BrowserWindow.getFocusedWindow(),
+  mainWindow: () => mainWindow(),
+  applicationMenu: () => Menu.getApplicationMenu(),
+  refreshTray: () => tray?.refreshSurface()
+});
+const companionEnabled = companionHost.enabled;
+const syncCompanionMenu = companionHost.syncMenu;
+const focusedAppWindow = companionHost.focusedAppWindow;
 
 /** macOS + config flag: the frameless-card menu-bar popover is the tray surface. */
 function menubarPopoverEnabled(): boolean {
@@ -2338,6 +2380,19 @@ const mailDrain = new AgentMailDrainService({
   reply: replyToSquadMember,
   isReplyIdempotent: sessionId => !ptys.getSession(sessionId)
 });
+let stopAgentSoundEvents: (() => void) | undefined;
+const agentSoundFiles = new AgentSoundFiles(join(app.getPath('userData'), 'notification-sounds'));
+const agentSounds = new AgentSounds({
+  config: () => store.getConfig(),
+  play: (kind, volume) => {
+    const win = unscopedWindow() ?? [...windows.values()].find(({ win }) => !win.isDestroyed() && !win.webContents.isDestroyed())?.win;
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      const clip = agentSoundFiles.current(kind);
+      win.webContents.send(IPC.app.onAgentSound, kind, volume, ...(clip ? [clip] : []));
+    }
+  }
+});
+
 /**
  * Keep-awake: hold a `prevent-app-suspension` power-save block while any agent
  * is actively `working`, so locking the Mac (which doesn't kill us) can't let
@@ -2466,6 +2521,8 @@ const closeSummary = new CloseSummaryService({
 });
 /** "Wrap up before closing" (Experimental): asks resting Claude agents to wrap up before Close with follow-up. */
 const wrapUpClose = createWrapUpClose({ store, ptys, agentStatus, closeSummary, providerCapabilities, isRemoteSession: isTrueSshRemoteSession, suppressesInteractiveBlocked });
+const threadPeerRuntime = createThreadPeerRuntime({ serverUrl: productServerUrl, credential: ensureProductServerCredential,
+  store, ptys, teamLaunchSessions, registry: agentRegistry, log: agentMessageLog, agentStatus, wrapUpClose });
 /** Backs the Inbox "AI Summary" card — reads main's own inbox store (the source
  *  of truth, not the renderer's filtered view) and runs the
  *  `builtin:inbox-summary` micro-call to distill a standup-style digest, whole
@@ -3285,11 +3342,11 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
              observations.push({ ...reference, state: status.status === 'stopped' ? 'terminal' : status.live ? 'bound' : 'unknown' });
            }
           if (status.live) {
-            executionDeliveryDrain.observe(worker.sessionId, status.status === 'idle' ? 'idle' : 'working');
+            if (worker.sessionId) executionDeliveryDrain.observe(worker.sessionId, status.status === 'idle' ? 'idle' : 'working');
             if (status.eventSequence > (previous?.eventSequence ?? 0) && status.status === 'active' && worker.modernContext?.executionId) {
               await squadExecutionService.renewWorkerLease(worker.modernContext.executionId, worker.slotId);
             }
-          } else executionDeliveryDrain.remove(worker.sessionId);
+          } else if (worker.sessionId) executionDeliveryDrain.remove(worker.sessionId);
           if (status.status === 'stopped') { modernMemberStatus.delete(reference.threadId); modernStatusFailureLogged.delete(reference.threadId); }
         } catch (error) {
           if (!modernStatusFailureLogged.has(reference.threadId)) {
@@ -3680,7 +3737,7 @@ function safeSend(channel: string, ...args: unknown[]) {
  * main window when nothing is focused (e.g. the menu fired while unfocused).
  */
 function sendToFocused(channel: string, ...args: unknown[]) {
-  const target = BrowserWindow.getFocusedWindow() ?? mainWindow();
+  const target = focusedAppWindow();
   /* v8 ignore next -- menu routing runs in built Electron; routeMenu is unit-tested */
   if (pluginViews.routeMenu(target, channel, args) || threadViews.routeMenu(target, channel, args)) return;
   if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return;
@@ -4328,6 +4385,65 @@ export function revalidateEffectiveLaunch(
 }
 
 /**
+ * Resolve the persona's skill allowlist into Claude CLI `--settings` trimming on the
+ * machine that runs the agent (local fs, or the project's ssh host). Same main-side
+ * resolver as the Modern path. `undefined` = unrestricted or not applicable; an
+ * unreadable inventory is logged, surfaced as an inbox notice, and the launch
+ * proceeds unrestricted (a context filter, not a gate).
+ */
+export async function resolveCliSkillSettings(input: {
+  profile: CreateTerminalRequest['profile'];
+  req: Pick<CreateTerminalRequest, 'cohort' | 'projectId'>;
+  project: Project;
+  config: AppConfig;
+  persona: Persona | undefined;
+  cwd: string | undefined;
+}): Promise<SkillSettings | undefined> {
+  if (!input.persona) return undefined;
+  const team = input.req.cohort ? teams.list().find((candidate) => candidate.id === input.req.cohort?.teamId) : undefined;
+  const slotRole = input.req.cohort?.role ?? 'worker';
+  if (!isClaudeProfile(input.profile)) {
+    // Only Claude honours a skill allowlist at launch; tell the user rather than launch silently unrestricted.
+    if (input.profile !== 'shell' && effectiveSkills(team, input.persona, slotRole) !== undefined) {
+      void inboxStore
+        .append({
+          projectId: input.project.id,
+          projectLabel: input.project.name,
+          subject: 'Skill restriction not enforced',
+          comments: `Persona "${input.persona.name}" restricts skills, but the ${input.profile} agent does not support skill restriction. It launched with all of its skills available.`,
+          dedupeKey: `skill-restriction-unsupported:${input.project.id}:${input.persona.id}:${input.profile}`
+        })
+        .catch((err) => logMainError('cli skill allowlist unsupported inbox', err));
+    }
+    return undefined;
+  }
+  const mapped = resolvePersonaSkillSelection(electronZccDataDir(), team, input.persona, slotRole);
+  const allowlist = providerSkillAllowlist(mapped.automatedSkillIds, mapped.allowedSkillNames);
+  if (allowlist === undefined) return undefined;
+  const useRemoteTools = usesCliRemoteToolProxy(input.project, input.req as CreateTerminalRequest, input.config);
+  const remote = useRemoteTools ? undefined : stampedProjectRemote(input.project, input.config.remoteDefaultPath);
+  const result = await resolveSkillSettings({ allowlist, cwd: input.cwd, ...(remote ? { remote } : {}) });
+  if (result.unavailable) {
+    logMainError('cli skill allowlist', new Error(result.unavailable));
+    // Visible, not just logged: the launch proceeds unrestricted, so tell the user via the inbox.
+    void inboxStore
+      .append({
+        projectId: input.project.id,
+        projectLabel: input.project.name,
+        subject: 'Skill restriction skipped',
+        comments: `Skill restriction skipped: skill inventory unreadable (${result.unavailable}). The agent launched with all skills available.`,
+        dedupeKey: `skill-restriction-skipped:${input.project.id}:${input.persona.id}`
+      })
+      .catch((err) => logMainError('cli skill allowlist inbox', err));
+  }
+  if (result.disabledMixedPlugins.length) {
+    logMainInfo('cli skill allowlist', `disabled whole plugins (incl. hooks/MCP/agents): ${result.disabledMixedPlugins.join(', ')}`);
+  }
+  if (result.bestEffortPlugins.length) logMainInfo('cli skill allowlist', `best-effort (not trimmable): ${result.bestEffortPlugins.join(', ')}`);
+  return result.settings;
+}
+
+/**
  * Spawn a terminal with the cwd confined to its project (CLAUDE.md #2). Shared
  * by the `terminals:create` IPC handler AND the CLI control plane so there is
  * exactly ONE copy of the confinement gate — a renderer- or CLI-supplied `cwd`
@@ -4393,6 +4509,8 @@ export function createTerminalConfined(
      * runtime-host lane all receive it in the assembled argv); never from `req`.
      */
     authorizedModel?: AuthorizedModelTarget;
+    /** MAIN-only: resolved skill-allowlist trimming for the CLI settings payload. Never from `req`. */
+    skillSettings?: SkillSettings;
   }
 ): Result<TerminalSession> {
   // Cheap PATH repair so Electron CLI Agent spawns resolve `claude` /
@@ -4550,6 +4668,7 @@ export function createTerminalConfined(
       openingPrompt,
       harnessRouting: req.harnessRouting,
       authorizedModel: opts?.authorizedModel,
+      ...(opts?.skillSettings ? { skillSettings: opts.skillSettings } : {}),
       title: req.title,
       remote: useRemoteTools ? undefined : stampedProjectRemote(project, launchConfig.remoteDefaultPath),
       remoteToolProxy: useRemoteTools || undefined,
@@ -4854,6 +4973,16 @@ async function launchAuthorizedTerminal(
         authorizedPlan.resolved.effectiveLaunch.cwd,
         authorizedPlan.resolved.config
       );
+      const skillSettings = await resolveCliSkillSettings({
+        profile: selection.profile,
+        req: request,
+        project: authorizedPlan.resolved.project,
+        config: authorizedPlan.resolved.config,
+        persona: selection.personaId
+          ? authorizedPlan.resolved.personas.find((candidate) => candidate.id === selection.personaId)
+          : authorizedPlan.resolved.frameworkPersona,
+        cwd: authorizedPlan.resolved.effectiveLaunch.cwd
+      });
       const spawn = async () => {
       // Resolve the native-tool veto gate here (async) so the sync
       // createTerminalConfined can consume it (OBL-018). Shell launches need no
@@ -4884,7 +5013,8 @@ async function launchAuthorizedTerminal(
         },
         effectiveLaunch: authorizedPlan.resolved.effectiveLaunch,
         // Bound into finalPlan.digest; never re-mapped at spawn.
-        authorizedModel: finalPlan.executionAuthorization.modelPin
+        authorizedModel: finalPlan.executionAuthorization.modelPin,
+        skillSettings
       });
       if (!result.ok) throw new LaunchSpawnError(result.code, result.message);
       spawnLifecycle?.onSessionCreated?.(result.value);
@@ -5167,11 +5297,21 @@ async function launchBackgroundTerminal(
             profile: request.profile
           });
       spawnAttempted = true;
+      // Scheduler/background launches honour the persona skill allowlist exactly like interactive ones.
+      const skillSettings = await resolveCliSkillSettings({
+        profile: authorizedPlan.request.profile,
+        req: { cohort: authorizedPlan.request.cohort, projectId: authorizedPlan.request.projectId },
+        project: authorizedPlan.resolved.project,
+        config: authorizedPlan.resolved.config,
+        persona: authorizedPlan.request.persona,
+        cwd: spawnLaunch.cwd
+      });
       const session = createTerminalFromAuthorizedPlan({
         ...request,
         // Main-resolved only; never carried over from the request.
         pluginInstructions: pluginInstructions || undefined,
         cwd: spawnLaunch.cwd,
+        ...(skillSettings ? { skillSettings } : {}),
         projectSettings: authorizedPlan.resolved.projectSettings,
         preallocatedSessionId: authorizedPlan.sessionId,
         // Always the digest-bound preflight value — overrides any caller field.
@@ -5236,7 +5376,7 @@ function currentLaunchCapacityUsage(): number {
  */
 function orchestratorPrompt(
   team: Team,
-  roster: Array<{ sessionId: string; slotId: string; label: string }>,
+  roster: RosterEntry[],
   goal?: string
 ): string {
   const base = team.initialPrompt?.trim() ?? '';
@@ -5257,7 +5397,7 @@ function orchestratorPrompt(
   if (roster.length === 0) {
     return [base, goalBriefing].filter(Boolean).join('\n\n');
   }
-  const lines = roster.map((r) => `- ${r.label} — session \`${r.sessionId}\``);
+  const lines = roster.filter((r) => r.sessionId).map((r) => `- ${r.label} — session \`${r.sessionId}\``);
   const briefing = [
     `You are the orchestrator of the "${team.name}" team. Your workers are already running:`,
     ...lines,
@@ -5414,6 +5554,7 @@ const desktopNativeRecovery = createDesktopNativeRecovery({
   personas,
   expandTeamSlots,
   resolveTeamProfile: resolvedTeamProfile,
+  neverStartedSlots: (record) => teamLifecycle.neverStartedSlotsSync(record.callerPrincipalId, record.teamLaunchRequestId),
   modernSlotExpectation: (record, project, profile) => {
     // Main-side existence check: a Modern resume needs the retained checkout on disk.
     try {
@@ -5424,6 +5565,31 @@ const desktopNativeRecovery = createDesktopNativeRecovery({
     } catch { return undefined; }
   }
 });
+
+/** Advisory only: surface tier-fit warnings for a submitted plan; never blocks registration. */
+export function logPlanTierFit(
+  executionId: string,
+  workUnits: readonly ExecutionWorkUnitInput[],
+  resolvedModels: readonly ResolvedModelSnapshotV1[] | undefined
+): void {
+  if (!resolvedModels?.length) return;
+  const { findings } = summarizePlanTierFit(workUnits, resolvedModels.map((model) => ({ ...model, personaId: model.personaId ?? '' })));
+  if (findings.length === 0) return;
+  logMainInfo('plan tier fit', `execution ${executionId}: ${findings.map((finding) => `${finding.kind}: ${finding.detail}`).join('; ')}`);
+}
+
+/** Plan fact for admission: the slot's resolved skill allowlist; absent for an unrestricted slot. */
+export function slotSkillAllowlistFact(
+  team: Pick<Team, 'leanWorkers'> | undefined,
+  personaSnapshot: readonly Pick<Persona, 'id' | 'skills'>[],
+  personaId: string | undefined,
+  slotId: string
+): { skillAllowlist?: string[] } {
+  const persona = personaSnapshot.find((candidate) => candidate.id === personaId);
+  if (!persona) return {};
+  const skillAllowlist = effectiveSkills(team, persona, isOrchestratorSlotId(slotId) ? 'orchestrator' : 'worker');
+  return skillAllowlist === undefined ? {} : { skillAllowlist };
+}
 
 /** Resolve Team slot route facts in main before durable execution is claimed. */
 async function resolveTeamModelSnapshots(
@@ -5450,10 +5616,10 @@ async function resolveTeamModelSnapshots(
     const input = { config, persona, projectSettings, profile, extraArgs: [], scope: launchExecutionScope(project, {}, config) };
     // Slots resolve concurrently: each gets its own live-inventory view.
     const provider = team.transport === 'MODERN' ? sharedProvider : await liveScopedProviderFor(sharedProvider, { cwd: project.path, config });
-    const model = resolveModelTarget(provider, input);
-    const role = resolveRoleTarget(provider, input);
-    const roleOwnedModel = !!role.targetId && provider.nativeRolePinsModel;
-    const target = provider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === model.targetId);
+    const { model, provider: routedProvider } = await resolveSlotModel(provider, input, { cwd: project.path, config });
+    const role = resolveRoleTarget(routedProvider, input);
+    const roleOwnedModel = !!role.targetId && routedProvider.nativeRolePinsModel;
+    const target = routedProvider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === model.targetId);
     const verifiedProvider = verified.find((candidate) => candidate.family === provider.adapter.descriptor.id);
     const providerAvailable = provider.adapter.descriptor.id === 'shell'
       || (verifiedProvider?.enabled === true && verifiedProvider.installed);
@@ -5468,7 +5634,9 @@ async function resolveTeamModelSnapshots(
       health: providerAvailable ? 'available' as const : 'unknown' as const,
       observedAt,
       maxAgeMs: 30_000,
-      ...(roleOwnedModel ? { roleOwnedModel: true } : {})
+      ...(roleOwnedModel ? { roleOwnedModel: true } : {}),
+      // Dispatch-time skill reach: absent for an unrestricted slot so those records stay byte-identical.
+      ...slotSkillAllowlistFact(team, personaSnapshot, slot.personaId, slots[index].slotId)
     };
   }));
 }
@@ -5568,13 +5736,16 @@ export function authorizeTeamLaunch(
       return { ok: false, code: 'DENIED', message: `unknown persona: ${expected.personaId}` };
     }
   }
+  // Seats that start on demand keep this approval until they start (see on-demand-seat.ts).
+  const waitingSlotIds = new Set(deferredSeatsOf(team, expectedSlots.map((slot) => ({ ...slot, role: isOrchestratorSlotId(slot.slotId) ? 'orchestrator' as const : 'worker' as const }))).map((slot) => slot.slotId));
   for (const [index, expected] of expectedSlots.entries()) {
     const persona = known.get(expected.personaId)!;
+    const window = seatApprovalWindow(waitingSlotIds.has(expected.slotId), authorizedAt, { expiresAt, deadlineAt });
     const requestedRecovery = nativeRecovery?.find((snapshot) => snapshot.slotId === expected.slotId);
     const projection = slotRecoveryLaunch({
       nativeRecovery: requestedRecovery,
       slotId: expected.slotId,
-      role: expected.slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker',
+      role: isOrchestratorSlotId(expected.slotId) ? 'orchestrator' : 'worker',
       personaId: expected.personaId,
       profile: profileFor(persona)
     });
@@ -5585,13 +5756,13 @@ export function authorizeTeamLaunch(
       ...(slots[index].automatedSkillIds === undefined ? {} : { automatedSkillIds: slots[index].automatedSkillIds }),
       scope: launchExecutionScope(project, {}, store.getConfig()),
       storeRevision: launchDigest({ team, personas: personaSnapshot }),
-      projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt
+      projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt: window.expiresAt, deadlineAt: window.deadlineAt
       , admissionDigest
     };
     const decision = launchAuthorization.authorize({
       principal: principalRef, projectId: project.id,
       launchDigest: launchDigest({ principal: principalRef, projectId: project.id, binding }),
-      binding, expiresAt
+      binding, expiresAt: window.expiresAt
     });
     if (decision.decision === 'denied') {
       for (const slot of authorized) launchAuthorization.revoke(slot.authorizationId);
@@ -5604,7 +5775,7 @@ export function authorizeTeamLaunch(
       // Only a snapshot that passed the current slot's identity fence reaches
       // the launch payload. launchTeam consumes this main-issued slot data.
       ...((projection.recoveryResume || modernSnapshotIdentityOk(team, requestedRecovery, expected.slotId,
-        expected.slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker', expected.personaId, profileFor(persona)))
+        isOrchestratorSlotId(expected.slotId) ? 'orchestrator' : 'worker', expected.personaId, profileFor(persona)))
         && requestedRecovery ? { nativeRecovery: requestedRecovery } : {})
     });
   }
@@ -5888,7 +6059,7 @@ export async function launchTeam(
   const workerCeiling = hasOrchestrator ? MAX_TABS_PER_LAUNCH - 1 : MAX_TABS_PER_LAUNCH;
   let launched = 0;
   // Roster handed to the orchestrator: each opened worker's id + display label.
-  const roster: Array<{ sessionId: string; slotId: string; label: string }> = [];
+  const roster: RosterEntry[] = [];
   const workers: TeamLaunchedWorker[] = [];
   const failedSlots: TeamFailedWorkerSlot[] = [];
   const launchRequestId = structured?.launchRequestId ?? randomUUID();
@@ -6010,6 +6181,8 @@ export async function launchTeam(
       workerSessionIds: replay.value.workerSessionIds ?? []
     } };
   }
+  const onDemandSeats = deferredSeatsOf(team, expectedSlots);
+  const waitingSlotIds = new Set(onDemandSeats.map((seat) => seat.slotId));
   if (structured?.requirePreauthorization) {
     const currentStoreRevision = launchDigest({ team, personas: personaSnapshot });
     const currentProjectIdentity = projectIdentityDigest(project);
@@ -6033,9 +6206,7 @@ export async function launchTeam(
         || binding.profileId !== expectedProfile
         || binding.scope !== launchExecutionScope(project, {}, currentConfig)
         || binding.autonomous !== autonomous
-        || (structured.policy?.deadlineMs === undefined
-          ? binding.deadlineAt !== undefined
-          : binding.deadlineAt !== binding.expiresAt - TEAM_AUTHORIZATION_TTL_MS + structured.policy.deadlineMs)
+        || !preissuedDeadlineMatches(waitingSlotIds.has(expected.slotId), binding, structured.policy?.deadlineMs, TEAM_AUTHORIZATION_TTL_MS)
         || binding.initialTaskDigest !== launchDigest(requested.initialTask)
         || launchDigest(binding.automatedSkillIds ?? []) !== launchDigest(requested.automatedSkillIds ?? [])
         || binding.storeRevision !== currentStoreRevision
@@ -6054,18 +6225,27 @@ export async function launchTeam(
         return { ok: false, code: 'DENIED', message: valid.reason };
       }
     }
-    launchDeadlineAt = launchAuthorization.get(structured.slots[0].authorizationId!)?.binding.deadlineAt;
+    // A waiting seat's approval has no launch deadline, so read it from a seat that starts now.
+    const startingNow = structured.slots.find((slot) => !waitingSlotIds.has(slot.slotId)) ?? structured.slots[0];
+    launchDeadlineAt = launchAuthorization.get(startingNow.authorizationId!)?.binding.deadlineAt;
     if (launchDeadlineAt !== undefined && launchDeadlineAt <= Date.now()) {
       revokeRequestAuthorizations();
       return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'team launch deadline elapsed before spawn' };
     }
+  }
+  const onDemandProblem = onDemandLaunchProblem(team, onDemandSeats, { durable: durableCoordination, structured: !!structured });
+  if (onDemandProblem) {
+    revokeRequestAuthorizations();
+    return { ok: false, code: 'UNSUPPORTED', message: onDemandProblem };
   }
   const runLimit = Math.min(structured?.policy?.maxLaunches ?? 32, 32);
   const concurrentLimit = Math.min(structured?.policy?.maxConcurrent ?? runLimit, runLimit);
   if (expectedSlots.length > runLimit) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${runLimit}` };
   }
-  const modernSlots = new Map<string, { providerId: string; model?: string; permissionMode?: 'accept-edits' | 'auto' | 'full'; systemPrompt?: string }>();
+  const modernSlots = new Map<string, { providerId: string; model?: string; reasoningLevel?: Persona['reasoningLevel']; permissionMode?: 'accept-edits' | 'auto' | 'full'; systemPrompt?: string;
+    /** Main-resolved persona skill allowlist; `{}` = unrestricted. An empty array is restrictive, not unset. */
+    skills: { automatedSkillIds?: string[]; allowedSkillNames?: string[] } }>();
   let modernHostId: string | undefined;
   if (team.transport === 'MODERN') {
     try {
@@ -6092,7 +6272,8 @@ export async function launchTeam(
         const permissionMode = unrestricted || persona.permissionMode === 'bypassPermissions' ? 'full' as const
           : wantsAuto && supportsAuto ? 'auto' as const : 'accept-edits' as const;
         modernSlots.set(slot.slotId, { providerId,
-          model: resolveModelTarget(provider, input).targetId, permissionMode, systemPrompt: persona.appendSystemPrompt });
+          model: resolveModelTarget(provider, input).targetId, reasoningLevel: personaEffortForProvider(providerId, persona.reasoningLevel), permissionMode, systemPrompt: persona.appendSystemPrompt,
+          skills: resolvePersonaSkillSelection(electronZccDataDir(), team, persona, slot.role) });
       }
       const preflight = await squadRuntime().preflightSquadRuntime({ projectId: targetProjectId,
         ...(project.hostId ? { hostId: project.hostId } : {}), providerIds: [...new Set([...modernSlots.values()].map(slot => slot.providerId))],
@@ -6149,10 +6330,24 @@ export async function launchTeam(
     request: CreateTerminalRequest,
     tabNamerPrompt: string | null,
     /** MAIN-only spawn extras for the CLI path (Modern ignores them). */
-    spawnExtras?: { authoredPlanPaths?: readonly string[] }
+    spawnExtras?: { authoredPlanPaths?: readonly string[] },
+    /**
+     * A seat started after launch. In a pre-authorized plan it starts under the approval it got at launch
+     * (kept with a run-length expiry, see seatApprovalWindow) and nothing new is minted; when that approval has
+     * expired or was revoked the seat is refused (DENIED). Without pre-authorization a fresh one is minted, as for
+     * every seat of such a launch.
+     * The seat is started from `team`, `personaSnapshot`, `project` and `currentConfig` as captured at launch, so a
+     * persona or team edited since then does not change a seat that has not started yet; this is deliberate, the
+     * run keeps the configuration it was approved with.
+     */
+    lateSeat = false
   ): Promise<Result<{ id: string }>> => {
     const { slotId, personaId } = expectedSlot;
     let authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
+    const approvalProblem = lateSeat && structured?.requirePreauthorization
+      ? lateSeatApprovalProblem(authorizationId ? launchAuthorization.get(authorizationId) : undefined, Date.now())
+      : undefined;
+    if (approvalProblem) return { ok: false, code: 'DENIED', message: approvalProblem };
     if (!structured?.requirePreauthorization) {
       const profileId = profileFor(personaId);
       const expiresAt = Date.now() + TEAM_AUTHORIZATION_TTL_MS;
@@ -6172,7 +6367,7 @@ export async function launchTeam(
         }),
         scope: launchExecutionScope(project, request, currentConfig),
         storeRevision: launchDigest({ team, personas: personaSnapshot }),
-         projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt: launchDeadlineAt
+         projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt: lateSeat ? undefined : launchDeadlineAt
       };
       const authorized = launchAuthorization.authorize({
         principal: teamPrincipalRef, projectId: targetProjectId,
@@ -6187,7 +6382,7 @@ export async function launchTeam(
     const accountIdentity = provider.authKey(profileFor(personaId)) ?? 'ambient';
     const releaseColdStart = await teamColdStarts.acquire(`${provider.id}:${accountIdentity}`, async () => {
       const current = await teamLifecycle.get(claim.record.id);
-      return current?.state !== 'active' || current.outcome.status !== 'in-progress';
+      return coldStartCanceled(current, lateSeat);
     });
     if (!releaseColdStart) {
       if (authorizationId) launchAuthorization.revoke(authorizationId);
@@ -6221,7 +6416,7 @@ export async function launchTeam(
           modernContext: { teamId: team.id, cohortId, role: expectedSlot.role, projectId: targetProjectId,
             hostId: modernHostId!, providerId: selected.providerId, worktreePath: effective.cwd,
             ...(structured?.executionId ? { executionId: structured.executionId } : {}),
-            personaSnapshot: { id: personaId, profile: profileFor(personaId), model: selected.model,
+            personaSnapshot: { id: personaId, profile: profileFor(personaId), model: selected.model, reasoningLevel: selected.reasoningLevel,
               permissionMode: selected.permissionMode, systemPrompt: selected.systemPrompt } }
         });
         teamLifecycleIntegration.track(record);
@@ -6291,8 +6486,11 @@ export async function launchTeam(
         const runtimeRequest = { bindingId: reservation.threadId, generation: reservation.generation,
           projectId: targetProjectId, teamId: team.id, cohortId, hostId: modernHostId!, providerId: selected.providerId,
           role: expectedSlot.role, worktreePath: effective.cwd, executionId: structured?.executionId,
-          model: selected.model, permissionMode: selected.permissionMode,
-          automatedSkillIds: structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds,
+          model: selected.model, reasoningLevel: selected.reasoningLevel, permissionMode: selected.permissionMode,
+          // A persona allowlist only narrows the explicit authorized selection (default none); it never adds catalog skills.
+          // `allowedSkillNames` is present only for a restricted persona (an empty array still restricts).
+          automatedSkillIds: narrowAutomatedSkillIds(structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds, selected.skills.automatedSkillIds),
+          ...(selected.skills.allowedSkillNames === undefined ? {} : { allowedSkillNames: selected.skills.allowedSkillNames }),
           prompt: [selected.systemPrompt, !durableCoordination ? personaSnapshot.find(persona => persona.id === personaId)?.initialPrompt : undefined,
              request.prompt ?? 'Await squad instructions.'].filter(Boolean).join('\n\n'), title: (request.title ?? personaName(personaId)).slice(0, 120) };
         const created = await squadRuntime().createSquadMember(runtimeRequest);
@@ -6350,14 +6548,16 @@ export async function launchTeam(
        { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...spawnExtras },
        team.id,
        async (identity) => {
-         const record = await teamLifecycle.addWorker(claim.record.id, {
-           sessionId: identity.sessionId, authorizationId: identity.authorizationId, cohortId,
-           slotId, personaId, projectId: targetProjectId, process: 'spawning', attention: 'active', task: 'unknown',
-           delivery: initialTaskDeliveryState(
-             providerFor(profileFor(personaId)),
-             project.remote ? 'remote' : 'local'
-           )
-         });
+         const delivery = initialTaskDeliveryState(
+           providerFor(profileFor(personaId)),
+           project.remote ? 'remote' : 'local'
+         );
+         const record = await (lateSeat
+           ? teamLifecycle.bindDeferredWorker(claim.record.id, slotId, { sessionId: identity.sessionId, authorizationId: identity.authorizationId, delivery })
+           : teamLifecycle.addWorker(claim.record.id, {
+               sessionId: identity.sessionId, authorizationId: identity.authorizationId, cohortId,
+               slotId, personaId, projectId: targetProjectId, process: 'spawning', attention: 'active', task: 'unknown', delivery
+             }));
          durableIdentity = identity;
          teamLifecycleIntegration.track(record);
         },
@@ -6397,24 +6597,9 @@ export async function launchTeam(
     return result;
   };
 
-  for (const expectedSlot of expectedSlots.filter((slot) => slot.role === 'worker')) {
+  /** Open one worker seat's session. `lateSeat` is a seat that starts on demand, after the launch call has returned. */
+  const startWorkerSeat = (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean) => {
      const { slotId, personaId, label: slotLabel } = expectedSlot;
-     if (!known.has(personaId)) {
-       const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
-       if (authorizationId) launchAuthorization.revoke(authorizationId);
-       failedSlots.push({ slotId, personaId, reason: 'unknown persona' });
-       continue;
-     }
-     const bindingFailure = taskBindingFailure(personaId);
-     if (bindingFailure) {
-       const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
-       if (authorizationId) launchAuthorization.revoke(authorizationId);
-       failedSlots.push({ slotId, personaId, reason: bindingFailure });
-       continue;
-     }
-      const repeatIndex = Number(slotId.slice(slotId.lastIndexOf(':') + 1));
-      const rowIndex = Number(slotId.slice(0, slotId.indexOf(':')));
-      const quantity = Math.max(1, Math.min(TEAM_SLOT_MAX, team.slots[rowIndex]?.quantity ?? 1));
        // Job/Team identity belongs to ZCC, not whichever harness happens to
        // provide an OSC title or registration hook. Every worker gets a stable
        // host-owned label before the harness starts.
@@ -6423,7 +6608,7 @@ export async function launchTeam(
        const workerTask = durableCoordination
          ? jobWorkerPrompt({ executionId: structured?.executionId, slotId, label, personaName: personaName(personaId), ...(recovery.recoveryResume ? { recoveryResume: true } : {}) })
           : taskFor(slotId);
-       const res = await launchSlot(expectedSlot,
+       return launchSlot(expectedSlot,
           {
             projectId: targetProjectId,
             profile: recovery.profile,
@@ -6447,8 +6632,45 @@ export async function launchTeam(
             },
             title: label
          },
-         null
+         null,
+         undefined,
+         lateSeat
         );
+  };
+
+  const deferredSlotIds: string[] = [];
+  for (const expectedSlot of expectedSlots.filter((slot) => slot.role === 'worker')) {
+     const { slotId, personaId, label: slotLabel } = expectedSlot;
+     if (!known.has(personaId)) {
+       const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
+       if (authorizationId) launchAuthorization.revoke(authorizationId);
+       failedSlots.push({ slotId, personaId, reason: 'unknown persona' });
+       continue;
+     }
+     const bindingFailure = taskBindingFailure(personaId);
+     if (bindingFailure) {
+       const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
+       if (authorizationId) launchAuthorization.revoke(authorizationId);
+       failedSlots.push({ slotId, personaId, reason: bindingFailure });
+       continue;
+     }
+      const repeatIndex = Number(slotId.slice(slotId.lastIndexOf(':') + 1));
+      const rowIndex = Number(slotId.slice(0, slotId.indexOf(':')));
+      const quantity = Math.max(1, Math.min(TEAM_SLOT_MAX, team.slots[rowIndex]?.quantity ?? 1));
+       const label = slotLabel || personaName(personaId) || slotId;
+       if (onDemandSeats.includes(expectedSlot)) {
+         // Started later by the engine (see deferredSeats); only the lifecycle record and roster know it now.
+         deferredSlotIds.push(slotId);
+         // A pre-authorized seat keeps its launch approval id, so it starts under it and the run can withdraw it.
+         const waitingApprovalId = structured?.requirePreauthorization ? structured.slots.find((slot) => slot.slotId === slotId)?.authorizationId : undefined;
+         teamLifecycleIntegration.track(await teamLifecycle.addDeferredWorker(claim.record.id, {
+           authorizationId: waitingApprovalId ?? randomUUID(), cohortId, slotId, personaId, projectId: targetProjectId,
+           attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
+         }));
+         roster.push({ slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label, startsWhenNeeded: true });
+         continue;
+       }
+       const res = await startWorkerSeat(expectedSlot, false);
        if (res.ok) {
         launched += 1;
         // quantity>1 → suffix so two tabs of one slot are distinguishable in the
@@ -6465,6 +6687,16 @@ export async function launchTeam(
          failedSlots.push({ slotId, personaId, reason: res.message });
        }
   }
+
+  deferredSeats.register(claim.record.id, deferredSlotIds, createDeferredSeatHooks({
+    recordId: claim.record.id,
+    lifecycle: teamLifecycle,
+    startSeat: (slotId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true),
+    closeSession: terminateSession,
+    track: teamLifecycleIntegration.track,
+    onStarted: (sessionId) => teamLaunchSessions.set(sessionId, cohortId),
+    revokeWaiting: () => revokeWaitingApprovals(deferredSlotIds)
+  }));
 
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
   // a declared slot or a standalone persona id, it opens exactly once here.
@@ -6493,7 +6725,7 @@ export async function launchTeam(
     // Modern has no host file reader but a bound `execution.plan.register` tool, so
     // it gets the register-once kickoff and no handoff file at all.
     const planTransport = planAuthoringTransportOf(team.transport);
-    const { planFilePath, planWriteAbsPaths, sourceFilePath } = durableCoordination && !planReady && structured?.executionId && planTransport === 'cli'
+    const { planFilePath, planWriteAbsPaths, sourceFilePath } = durableCoordination && !planReady && structured?.executionId && planTransport === 'cli' && !project.remote
       ? await prepareCoordinatorHandoff({
           executionId: structured.executionId,
           projectId: targetProjectId,
@@ -6523,7 +6755,7 @@ export async function launchTeam(
           structuredTask: structuredOrchestratorTask,
           executionId: structured.executionId,
           job: structured.jobContext,
-          roster,
+          roster: rosterWithTiers(roster, seededRecord?.resolvedModels),
            planReady,
             recoveryResume: orchestratorRecovery.recoveryResume,
           workUnits: seededWorkUnits,
@@ -6591,6 +6823,7 @@ export async function launchTeam(
 
   const result: LaunchTeamResult = { launchRequestId, launched, cohortId, workers, failedSlots, orchestratorSessionId, workerSessionIds };
   if (durableCoordination && !orchestratorSessionId) {
+    deferredSeats.release(claim.record.id);
     await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
   }
   const operationResult: Result<LaunchTeamResult> = durableCoordination && !orchestratorSessionId
@@ -6605,6 +6838,16 @@ export async function launchTeam(
   const lifecycleRecord = await teamLifecycle.get(claim.record.id);
   if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
   return operationResult;
+
+  /** Withdraw the launch approvals still held by seats that never started (run released its spawner). */
+  function revokeWaitingApprovals(slotIds: readonly string[]): void {
+    if (!structured?.requirePreauthorization) return;
+    for (const slot of structured.slots) {
+      if (!slotIds.includes(slot.slotId) || !slot.authorizationId) continue;
+      const authorization = launchAuthorization.get(slot.authorizationId);
+      if (authorization?.state === 'authorized' && authorization.principal.id === teamPrincipalRef.id) launchAuthorization.revoke(slot.authorizationId);
+    }
+  }
 
   function revokeRequestAuthorizations(): void {
     if (!structured) return;
@@ -6626,6 +6869,7 @@ export async function cancelTeamLaunch(
   }
   let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   const record = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
+  if (record) deferredSeats.release(record.id);
   if (record?.workers.some(worker => worker.transport === 'MODERN' && !worker.capacityReleased)) {
     await reconcileModernMembers([record]);
     canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
@@ -6778,8 +7022,14 @@ export async function queueThreadTurnForProposal(threadId: string, projectId: st
   }
 }
 
+/** Private copies of attachments kept for pending proposals; under a data folder the source policy lets through. */
+const squadAttachmentStaging = createStagingStore({ root: join(electronZccDataDir(), SQUAD_STAGING_PARENT_DIR_NAME, SQUAD_STAGING_DIR_NAME) });
+const SQUAD_STAGING_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let squadStagingSweepTimer: NodeJS.Timeout | null = null;
+
 const squadProposalServiceDeps: SquadProposalServiceDeps = {
   store: squadProposalStore,
+  staging: squadAttachmentStaging,
   enabled: teamExecutionEnabled,
   lookupProposer,
   projects: { get: (id) => store.listProjects().find((project) => project.id === id) },
@@ -6805,11 +7055,11 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
     // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
     activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
     executionState: async (executionId) => (await executionStore.get(executionId))?.state,
-    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths }, ctx) => {
+    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths, attachments }, ctx) => {
       const sourceBases = squadSourceBases();
       return launchSquad(squadNowLaunchDeps, {
         teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary, completionInboxNotice,
-        sourceCapabilityIds: [], sourcePaths,
+        sourceCapabilityIds: [], sourcePaths, ...(attachments?.length ? { attachments } : {}),
         goalSources: await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
       }, ctx);
     }
@@ -6820,7 +7070,20 @@ export const squadProposalService = createSquadProposalService(squadProposalServ
 // proven the caller live (fail closed), so this view skips the second lookup.
 const squadPlanCheckService = createSquadProposalService({
   ...squadProposalServiceDeps,
-  lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false })
+  lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false }),
+  // Advisory tier fit against the Squad's roster; planless runs keep their roster untouched.
+  planTierFit: async (projectId, teamId, workUnits) => {
+    try {
+      const team = teams.list().find((candidate) => candidate.id === teamId);
+      if (!team) return [];
+      const models = await resolveTeamModelSnapshots(projectId, { teamId, slots: expandTeamSlots(team).map(() => ({ initialTask: '' })) });
+      return summarizePlanTierFit(workUnits as ExecutionWorkUnitInput[], models.map((model) => ({ ...model, personaId: model.personaId ?? '' }))).findings;
+    } catch (err) {
+      // Advisory only: a provider or catalog lookup failure must not reject squad_plan_check.
+      logMainError(`squad_plan_check tierFit (team ${teamId})`, err);
+      return [];
+    }
+  }
 });
 
 export const squadProposalNotifier = createSquadProposalNotifier({
@@ -6853,6 +7116,15 @@ inboxActionRegistry.register(SQUAD_LAUNCH_PROPOSAL_ACTION, squadProposalService.
  * awaited: delivery (thread liveness, queued turns) must never hold up the engine's
  * terminal path. The notifier never throws.
  */
+/** A finished, stopped, failed or dismissed run keeps no spawner for seats that never started. */
+async function releaseDeferredSeatsOf(record: { callerPrincipalId: string; teamLaunchRequestId: string }): Promise<void> {
+  const lifecycle = await teamLifecycle.findRequest(record.callerPrincipalId, record.teamLaunchRequestId).catch((error) => {
+    logMainError(`could not look up the lifecycle record of ${record.teamLaunchRequestId} to release its on-demand seats`, error);
+    return undefined;
+  });
+  if (lifecycle) deferredSeats.release(lifecycle.id);
+}
+
 export async function handleSquadTerminalWithReport(
   record: Parameters<typeof squadWorktreeRuntime.handleSquadWorktreeTerminal>[0]
 ): Promise<SquadWorktreeTerminalOutcome | undefined> {
@@ -6892,7 +7164,7 @@ export function squadProposalMcpDeps() {
   return {
     proposeSquad: (route: { projectId: string; sessionId: string }, input: SquadProposalInput) => squadProposalService.propose(route, input),
     launchSquadNow: (route: { projectId: string; sessionId: string }, input: SquadProposalInput) => squadProposalService.launchSquadNow(route, input),
-    checkSquadPlan: (route: { projectId: string }, input: { path?: string; text?: string }) => squadPlanCheckService.checkPlan({ ...route, sessionId: '' }, input)
+    checkSquadPlan: (route: { projectId: string }, input: { path?: string; text?: string; teamId?: string }) => squadPlanCheckService.checkPlan({ ...route, sessionId: '' }, input)
   };
 }
 
@@ -6918,6 +7190,7 @@ const squadExecutionService = new SquadExecutionService({
    confirmsWakeConsumption: (sessionId) => !!ptys.getSession(sessionId),
     deliverToWorker: (sessionId, text) => ptys.getSession(sessionId)
       ? workerInjector.deliver(sessionId, text) : replyToSquadMember(sessionId, text),
+   spawnDeferredWorker: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
    deliverAssignment: async (sessionId, text, correlation) => {
      const execution = await executionStore.get(correlation.executionId);
      if (!execution) return { state: 'rejected' };
@@ -6948,7 +7221,10 @@ const squadExecutionService = new SquadExecutionService({
   withExecutionLifecycleLock: withSquadWorktreeLifecycleLock,
   mayResumeRetainedWorktree: (executionId) => !squadWorktreeHasActiveFollowUp(executionId),
   prepareSquadWorktree: squadWorktreeRuntime.prepareSquadWorktree,
-  onTerminal: async (record) => { await handleSquadTerminalWithReport(record); },
+  onTerminal: async (record) => {
+    await releaseDeferredSeatsOf(record);
+    await handleSquadTerminalWithReport(record);
+  },
   onHumanBlocker: (record, blocker) => squadProposalNotifier.onHumanBlocker(record, blocker),
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
@@ -6977,7 +7253,7 @@ const squadExecutionService = new SquadExecutionService({
   , routingEnforcementEnabled: (record) => {
     const workerSlotIds = (record.authorizationContext?.slots ?? [])
       .map((slot) => slot.slotId)
-      .filter((slotId) => !slotId.startsWith('orchestrator:'));
+      .filter((slotId) => !isOrchestratorSlotId(slotId));
     // Startup dispatch can run before launch authorization records its worker
     // roster. Do not freeze advisory routing before route facts exist.
     if (workerSlotIds.length === 0) return false;
@@ -7033,16 +7309,17 @@ const squadExecutionService = new SquadExecutionService({
       return [provider.adapter.descriptor.id, provider] as const;
     }));
     const requiredProviders = [...providers.keys()].sort();
-    const requiredModels = slotPersonas.flatMap((persona) => {
+    // One live listing per harness for the whole admission, however many slots share it.
+    const liveView = memoizedLiveScopedProviderFor();
+    const requiredModels = (await Promise.all(slotPersonas.map(async (persona) => {
       const profile = profileForAdmission(persona);
-      const provider = providerFor(profile);
       const resolutionInput = { config, persona, projectSettings, profile, extraArgs: [], scope: project ? launchExecutionScope(project, {}, config) : 'local' as const };
-      const model = resolveModelTarget(provider, resolutionInput);
+      const { model, provider } = await resolveSlotModel(providerFor(profile), resolutionInput, { cwd: project?.path ?? process.cwd(), config }, liveView);
       const role = resolveRoleTarget(provider, resolutionInput);
       return model.targetId && !(role.targetId && provider.nativeRolePinsModel)
         ? [{ id: model.targetId, provider: provider.adapter.descriptor.id }]
         : [];
-    }).sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
+    }))).flat().sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
     const { requiredSkills, personaMcpServers, inventoryMcpServers } = teamAdmissionRequirements(slotPersonas, request.workUnits);
     const inventory = await collectTeamAdmissionInventory({ requiredSkills, requiredMcpServers: inventoryMcpServers, requiredModels, requiredProviders }, {
       listSkills: () => project ? listSkills({ projectPath: project.path, projectId }) : Promise.resolve([]),
@@ -7097,10 +7374,14 @@ const squadExecutionService = new SquadExecutionService({
       slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
       level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
       modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
-      observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
+      observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
+      ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId)
     }));
-    const workerRoutes = slotRoutes.filter((slot) => !slot.slotId.startsWith('orchestrator:'));
+    const workerRoutes = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
     const routingRequested = team?.routingEnforced ?? config.teamRoutingEnforcementEnabled === true;
+    // Advisory mode passes an explicit false so ROUTE_ELIGIBILITY stays non-required;
+    // tier-fit findings are warnings and never change `ready`.
+    const enforceRouting: boolean = routingRequested && workerRoutes.length > 0 && workerRoutes.every((slot) => !!slot.level);
     return {
       workUnits: request.workUnits,
       requireCompletePlan: isDurableCoordination(request.coordinationMode),
@@ -7109,14 +7390,17 @@ const squadExecutionService = new SquadExecutionService({
       initialTasks: request.slots.map((slot) => slot.initialTask),
       sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0),
       requiredMcpServers: personaMcpServers, requiredModels, requiredProviders, inventory, slotRoutes,
-      enforceRouting: routingRequested && workerRoutes.length > 0 && workerRoutes.every((slot) => !!slot.level)
+      enforceRouting
     };
   }
-  , authorizePlanRegistration: (record, workUnits, submitter) => planCorrection.authorizeRegistration(
+  , authorizePlanRegistration: (record, workUnits, submitter) => {
+    if (submitter) logPlanTierFit(record.id, workUnits, record.resolvedModels);
+    return planCorrection.authorizeRegistration(
     record.id,
     workUnits,
     planCorrectionSubmitter(record, submitter, (projectId) => store.listProjects().find((candidate) => candidate.id === projectId)?.path)
-  )
+    );
+  }
   , now: Date.now
 });
 
@@ -7500,7 +7784,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       : process.platform === 'win32'
       ? {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: titleBarOverlays.current()
+          titleBarOverlay: titleBarOverlays.current({ view, threadView })
         }
       : {
           titleBarStyle: 'hidden' as const
@@ -7654,6 +7938,11 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       controller.flushForClose();
     });
   }
+
+  // Command Center opt-in: the yellow traffic light / ⌘M hand off to the rail
+  // instead of the Dock (enter() hides the minimized window too). With the rail
+  // already up, a window surfaced by a deep link goes back behind it.
+  win.on('minimize', () => companionHost.onWindowMinimized(win));
 
   // Push OS-level fullscreen transitions to the renderer that's actually IN
   // this window (not every window — each has its own fullscreen state), so a
@@ -7852,6 +8141,7 @@ function wireBridgeListeners() {
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
     keepAwake.remove(sessionId);
+    agentSounds.remove(`cli:${sessionId}`);
     // Release Flow B/C plan-handoff state and remove the transient `.zana/`
     // handoff files when the coordinator exits (Rule 3 / Rule 5).
     void cleanupOrchestratorOnExit(squadSessionExit, exitedSession);
@@ -8003,6 +8293,9 @@ function wireBridgeListeners() {
     squadExecutionService.observeCoordinatorState(sessionId, state);
     wrapUpClose.observe(sessionId, state);
     const session = ptys.getSession(sessionId);
+    if (session && !session.scheduled && !session.headless) {
+      agentSounds.observe(`cli:${sessionId}`, displayAgentState(sessionId, state));
+    } else agentSounds.remove(`cli:${sessionId}`);
     if (session) captureNativeRecoverySnapshot(session);
     if (state === 'idle' && session) {
       onOrchestratorIdle({
@@ -8166,6 +8459,7 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
     || typeof itemId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(itemId)) {
     throw new Error('Invalid queued send');
   }
+  const peerReview = itemId.startsWith('peer_');
   const base = productServerUrl();
   async function readBounded(path: string): Promise<unknown> {
     const response = await fetch(new URL(path, base), { signal: AbortSignal.timeout(5_000) });
@@ -8178,30 +8472,32 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > 128 * 1024) throw new Error('Queued send details are too large');
+        if (size > (peerReview ? 4 * 1024 * 1024 : 128 * 1024)) throw new Error('Queued send details are too large');
         chunks.push(value);
       }
     } finally {
       reader.releaseLock();
-      if (size > 128 * 1024) await response.body.cancel().catch(() => {});
+      if (size > (peerReview ? 4 * 1024 * 1024 : 128 * 1024)) await response.body.cancel().catch(() => {});
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   }
   const threadPath = `api/v1/threads/${encodeURIComponent(threadId)}`;
-  const queuePath = `${threadPath}/next-turn`;
-  async function selectedItem(): Promise<{ id: string; text: string; updatedAt: number }> {
+  const queuePath = `${threadPath}/${peerReview ? 'peer-messages' : 'next-turn'}`;
+  async function selectedItem(): Promise<{ id: string; text: string; updatedAt: number; to?: string }> {
     const result = await readBounded(queuePath);
     if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true
       || !('items' in result) || !Array.isArray(result.items)) throw new Error('Queued send is unavailable');
     const item: unknown = result.items.find((entry: unknown) =>
       entry !== null && typeof entry === 'object' && 'id' in entry && entry.id === itemId);
     if (!item || typeof item !== 'object' || !('id' in item) || item.id !== itemId
-      || !('status' in item) || !['queued', 'failed'].includes(String(item.status))
+      || !('status' in item) || !(peerReview ? ['pending'] : ['queued', 'failed']).includes(String(item.status))
       || !('text' in item) || typeof item.text !== 'string'
-      || !('updatedAt' in item) || typeof item.updatedAt !== 'number') {
+      || !('updatedAt' in item) || typeof item.updatedAt !== 'number'
+      || (peerReview && (!('to' in item) || typeof item.to !== 'string'))) {
       throw new Error('Queued message no longer exists');
     }
-    return { id: item.id as string, text: item.text as string, updatedAt: item.updatedAt as number };
+    return { id: item.id as string, text: item.text as string, updatedAt: item.updatedAt as number,
+      ...(peerReview && 'to' in item ? { to: String(item.to) } : {}) };
   }
   const thread = await readBounded(threadPath);
   if (!thread || typeof thread !== 'object' || !('thread' in thread)
@@ -8216,14 +8512,14 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
     return clean.length > max ? `${clean.slice(0, max)}...` : clean;
   };
   const confirmation = await dialog.showMessageBox(win, {
-    type: 'question', title: 'Send queued message now?',
-    message: `Send queued message to ${preview(thread.thread.title, 80) || 'Untitled thread'}?`,
-    detail: `Message: ${preview(item.text, 240) || '(no text)'}\n\nThis can override a plugin dispatch wait.`,
-    buttons: ['Cancel', 'Send now'], defaultId: 0, cancelId: 0, noLink: true
+    type: 'question', title: peerReview ? 'Deliver peer message?' : 'Send queued message now?',
+    message: peerReview ? `Deliver peer message to ${preview(item.to!, 80)}?` : `Send queued message to ${preview(thread.thread.title, 80) || 'Untitled thread'}?`,
+    detail: peerReview ? `Message: ${preview(item.text, 4000)}\n\nThis starts work using the recipient’s existing tools and permissions. Review the full message in the thread before confirming.` : `Message: ${preview(item.text, 240) || '(no text)'}\n\nThis can override a plugin dispatch wait.`,
+    buttons: ['Cancel', peerReview ? 'Deliver' : 'Send now'], defaultId: 0, cancelId: 0, noLink: true
   });
   if (confirmation.response !== 1 || win.isDestroyed()) throw new Error('Send now was cancelled');
   const current = await selectedItem();
-  if (current.id !== item.id || current.updatedAt !== item.updatedAt || current.text !== item.text) {
+  if (current.id !== item.id || current.updatedAt !== item.updatedAt || current.text !== item.text || current.to !== item.to) {
     throw new Error('Queued message changed; confirm again');
   }
   const proof = signUiSend(ensureProductServerCredential(), threadId, item.id);
@@ -8264,6 +8560,8 @@ function registerIpc() {
     listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
     showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options))
   });
+  registerAgentSoundIpc({ handle: safeHandleFromWindow, files: agentSoundFiles,
+    volume: () => store.getConfig().agentSoundVolume, showOpenDialog: (win, options) => dialog.showOpenDialog(win, options) });
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
@@ -8303,6 +8601,7 @@ function registerIpc() {
     get cloneAndRegisterProject() { return cloneAndRegisterProject; },
     get closeSummary() { return closeSummary; },
     get wrapUpClose() { return wrapUpClose; },
+    get companion() { return companion; },
     get conversationHistory() { return conversationHistory; },
     get createInteractiveTerminal() { return createInteractiveTerminal; },
     get createLocalExtension() { return createLocalExtension; },
@@ -8348,6 +8647,7 @@ function registerIpc() {
     get isTeamWorkerRestore() { return isTeamWorkerRestore; },
     get keepAwake() { return keepAwake; },
     get admitPtyDispatch() { return admitPtyDispatch; },
+    get agentSounds() { return agentSounds; },
     get launchAuthorizedTerminal() { return launchAuthorizedTerminal; },
     get launchAutonomousTeam() { return launchAutonomousTeam; },
     get launchTeam() { return launchTeam; },
@@ -8411,6 +8711,7 @@ function registerIpc() {
     get startTeamJobFromUi() { return startTeamJobFromUi; },
     get stopAutonomousRun() { return stopAutonomousRun; },
     get suggestionsStore() { return suggestionsStore; },
+    get syncCompanionMenu() { return syncCompanionMenu; },
     get teams() { return teams; },
     get teamLifecycle() { return teamLifecycle; },
     get templates() { return templates; },
@@ -8525,7 +8826,7 @@ function buildAppMenu() {
           label: 'Reset Zoom',
           accelerator: 'CmdOrCtrl+0',
           click: () => {
-            const win = BrowserWindow.getFocusedWindow() ?? mainWindow();
+            const win = focusedAppWindow();
             if (win && !win.isDestroyed()) win.webContents.setZoomFactor(DEFAULT_RENDERER_ZOOM_FACTOR);
           }
         },
@@ -8539,6 +8840,7 @@ function buildAppMenu() {
       label: 'Window',
       submenu: [
         { role: 'minimize' },
+        companionHost.menuItem(),
         { role: 'zoom' },
         ...(isMac
           ? ([
@@ -8719,6 +9021,10 @@ async function runStartupMigration(): Promise<StartupState> {
     const url = rendererUrl();
     if (win && !win.isDestroyed() && url) win.loadURL(url);
   }
+  // The repair screen paints --bg-base and the app shell it reloads into paints
+  // --inset-chrome, so the caption buttons follow the startup state. A window
+  // still in repair keeps --bg-base.
+  titleBarOverlays.refresh();
   return startupState;
 }
 
@@ -8748,6 +9054,13 @@ async function bootstrapNormal() {
     } finally {
       await recoverSquadStateAtBoot({ squadFollowUpClaims, squadWorktreeRuntime, squadExecutionService, planCorrection, logError: logMainError });
       await squadProposalService.sweepExpired().catch((error) => logMainError('squad proposals sweepExpired', error));
+      const sweepStaged = () => squadProposalService.sweepStaged().catch((error) => logMainError('squad proposals sweepStaged', error));
+      await sweepStaged();
+      // Registered once at init (bootstrap runs once) and cleared in before-quit (Rule 3).
+      if (!squadStagingSweepTimer) {
+        squadStagingSweepTimer = setInterval(() => { void sweepStaged(); }, SQUAD_STAGING_SWEEP_INTERVAL_MS);
+        squadStagingSweepTimer.unref?.();
+      }
     }
   } catch (error) {
     // A corrupt recovery record must surface the repair flow, not permanently
@@ -8997,9 +9310,31 @@ async function bootstrapNormal() {
       listThreads: listMenubarThreads,
       onThreadsChanged: (listener) => runtimeSupervisor?.onMenubarThreadsChanged(listener) ?? (() => {}),
       theme: () => resolveTheme(),
+      commandCenterEnabled: companionEnabled,
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
     });
+    companion = createCompanionController(process.platform, {
+      ptys,
+      scheduler,
+      agentStatus,
+      inboxStore,
+      store,
+      triageCache: lastTriageBySession,
+      listThreads: listMenubarThreads,
+      runtime: () => runtimeSupervisor,
+      windows,
+      ensureMainWindowReady,
+      openThread: openMenubarThread,
+      theme: resolveTheme,
+      isEnabled: companionEnabled,
+      showMainWindow,
+      e2e: E2E_LAUNCH,
+      sendToApp: safeSend,
+      preloadPath: join(__dirname, '../preload/index.js'),
+      logger: logMainError
+    });
+    companion?.start();
     tray = new TrayController({
       scheduler,
       ptys,
@@ -9014,6 +9349,7 @@ async function bootstrapNormal() {
       openScheduler: (taskId) => safeSend('app:openScheduler', taskId),
       popover: menubar,
       popoverEnabled: menubarPopoverEnabled,
+      commandCenter: { enabled: companionEnabled, enter: companionHost.enter },
       logger: logMainError
     });
     tray.start();
@@ -9539,6 +9875,7 @@ async function bootstrapNormal() {
     // server-side from the live pty / status tracker, never trusted from the
     // agent.
     agentRegistry,
+    threadPeerTools: threadPeerRuntime.threadPeerTools,
     getSessionCwd: (sessionId: string) => ptys.getSession(sessionId)?.cwd,
     getAgentStatus: (sessionId: string) => agentStatus.get(sessionId),
     getTeamLaunchId: (sessionId: string) => teamLaunchSessions.get(sessionId),
@@ -9951,6 +10288,8 @@ async function bootstrapNormal() {
     normalBootstrapStarted = false;
     throw error;
   }
+  await agentSoundFiles.ready;
+  stopAgentSoundEvents ??= startAgentSoundEvents(productServerUrl(), agentSounds);
   // Subscribe only after the supervised origin exists. A healthy stream at the
   // legacy :8780 fallback could belong to another running app and never reconnect.
   // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
@@ -10251,6 +10590,7 @@ async function bootstrapNormal() {
         ? { ok: true }
         : { ok: false, reason: 'orchestrator may close only sessions in its cohort' };
     },
+    sendPeerMessage: threadPeerRuntime.sendPeerMessage,
     listAgents: () => agentRegistry.list(),
     // Persona catalogue → non-sensitive metadata (id/name/description/profile/
     // model). Read-only; lets the CLI resolve `--persona <name>` against the
@@ -10370,8 +10710,7 @@ const quitGuard = createQuitGuard({
         ? 'Agent activity could not be checked. Quitting will interrupt any running agents and terminate terminals.'
         : 'Quitting will interrupt running agents and terminate terminals, including background sessions.'
     };
-    const parent = mainWindow();
-    const result = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    const result = await onVisibleParent(mainWindow(), (win) => dialog.showMessageBox(win, opts), () => dialog.showMessageBox(opts));
     return result.response === 0;
   },
   quit: () => app.quit(),
@@ -10409,6 +10748,8 @@ app.on('before-quit', (event) => {
   menubar = null;
   stopTitleBarOverlayTheme?.();
   stopTitleBarOverlayTheme = null;
+  companion?.stop();
+  companion = null;
   templates.stop();
   quickPrompts.stop();
   promptRegistry.stop();
@@ -10424,6 +10765,7 @@ app.on('before-quit', (event) => {
   stopSkillsWatchers();
   stopExtensionsWatcher();
   localExtensionWatcher.shutdown();
+  if (squadStagingSweepTimer) { clearInterval(squadStagingSweepTimer); squadStagingSweepTimer = null; }
   // Kill every out-of-process extension child (P3-A). Electron also reaps a
   // utilityProcess on app quit, but tear down explicitly so teardown() runs and
   // no orphan lingers if quit is slow. Fire-and-forget — quitting won't block.
@@ -10457,6 +10799,9 @@ app.on('before-quit', (event) => {
   }
   // Release any held power-save block + pending grace timer (Rule 3).
   keepAwake.shutdown();
+  stopAgentSoundEvents?.();
+  stopAgentSoundEvents = undefined;
+  agentSounds.shutdown();
   // Release the loud-tier inbox subscription (Rule 3).
   offLoudInboxAppended?.();
   offLoudInboxAppended = null;

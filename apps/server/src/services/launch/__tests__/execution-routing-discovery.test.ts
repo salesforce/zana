@@ -165,16 +165,15 @@ describe('execution routing pins the resolved model id per launch (OC1)', () => 
     expect(Object.isFrozen(authorized.executionAuthorization.modelPin)).toBe(true);
   });
 
-  it('a project whose inventory lacks the tier is blocked without affecting a concurrent launch', async () => {
+  it('a project whose inventory lacks the tier launches on the harness default without affecting a concurrent launch', async () => {
     const shared = tieredFixtureProvider();
     const probeA = deferred<readonly string[] | undefined>();
     shared.discoverModelTargets = vi.fn(({ cwd }: { cwd: string }) => (
       cwd === '/proj/a' ? probeA.promise : Promise.resolve(['fixture-provider/grok-4.6'])
     ));
     const a = launch(shared, 'a', '/proj/a');
-    await expect(launch(shared, 'c', '/proj/c')).resolves.toEqual({
-      decision: 'blocked', reason: 'OpenCode does not support low model level.'
-    });
+    // No model matches the tier, so the harness default model is used (no pin).
+    await expect(launch(shared, 'c', '/proj/c')).resolves.toEqual({ decision: 'allowed', scope: 'local' });
     probeA.resolve(A_INVENTORY);
     expect(spawnArgs(await a, '/proj/a')).toContain('--model fixture-provider/gpt-7-luna');
   });

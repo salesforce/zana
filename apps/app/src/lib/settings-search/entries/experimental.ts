@@ -8,6 +8,16 @@ const VOICE_MODELS = ['gpt-transcribe (Codex)', 'whisper-1', 'gpt-4o-transcribe'
 
 export const entries: readonly SettingsSearchEntry[] = [
   {
+    id: 'experimental.thread-communication-section', section: 'experimental', anchor: 'thread-communication',
+    label: 'Thread communication', kind: 'subsection', help: 'Threads can exchange messages with threads and CLI Agents in the same project. Every message waits for your review before delivery. Existing CLI-to-CLI messaging keeps its current behavior.',
+    keywords: ['peer', 'messaging', 'collaboration', 'agent_send']
+  },
+  {
+    id: 'experimental.thread-communication', section: 'experimental', anchor: 'thread-communication',
+    label: 'Enable thread communication', kind: 'setting', value: onOff(c => c.threadCommunicationEnabled, true), help: 'Enabled by default. Review a message in the thread and choose Deliver or Discard. Delivery can start work using the recipient’s existing tools and permissions. Turning this off blocks new sends and pending delivery; turning it on again requires fresh review.',
+    keywords: ['peer', 'messaging', 'review', 'deliver', 'discard']
+  },
+  {
     id: 'experimental.provider-service-tiers',
     section: 'experimental',
     anchor: 'provider-service-tiers',
@@ -222,6 +232,25 @@ export const entries: readonly SettingsSearchEntry[] = [
     keywords: ['menubar', 'tray', 'dropdown'],
     kind: 'setting',
     value: onOff((c) => c.menubarPopoverEnabled, true)
+  },
+  {
+    id: 'experimental.command-center-section',
+    section: 'experimental',
+    anchor: 'command-center',
+    label: 'Command Center (macOS)',
+    help: "Adds “Minimize to Command Center” (⌘M) to the Window menu, the menu-bar icon and the sidebar. Instead of minimizing to the Dock, the window collapses to a slim floating rail on the screen edge that shows who needs you, what's working and your schedules — and lets you answer agent questions without reopening the app. Off by default.",
+    keywords: ['companion', 'rail', 'minimize', 'floating', 'side bar'],
+    kind: 'subsection'
+  },
+  {
+    id: 'experimental.command-center',
+    section: 'experimental',
+    anchor: 'command-center',
+    label: 'Enable Command Center mode',
+    help: 'When disabled, the entry points are hidden and an open rail is closed (the main window comes back).',
+    keywords: ['companion', 'rail', 'minimize to command center'],
+    kind: 'setting',
+    value: onOff((c) => c.companionEnabled, false)
   }
 ];
 

@@ -1,6 +1,4 @@
 import { win32 } from 'node:path';
-import { stat } from 'node:fs/promises';
-import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type { HostFileMetadataResult, HostListPathsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { getConversationThread, getEnvironment } from '@zana-ai/zcc-db';
 import type { PreviewPathRequest, PreviewPathResult } from '@zana-ai/zcc-server-contract';
@@ -8,7 +6,7 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import { ProjectFsError } from '../../http/project-fs-via-host.js';
 import { isSafeRelPath } from '../../http/library-via-host.js';
 import { confinePathToRoot, threadPathApi } from './thread-path-confine.js';
-import { threadLocalPreviewRoots } from './thread-preview-roots.js';
+import { effectivePreviewRootsFor, openLocalPreviewFile } from './preview-root-policy.js';
 
 const LOOKUP_LIMIT = 50;
 const LOOKUP_TIMEOUT_MS = 5000;
@@ -171,26 +169,17 @@ function createHostLookup(
 
 async function resolveLocalPreviewPath(
   ctx: ProductHttpContext,
-  projectId: string | null,
+  target: { thread: { hostId?: string | null } | null; projectId: string | null },
   requested: string
 ): Promise<string | null> {
   const dataPaths = threadPathApi(ctx.dataDir);
   if (!dataPaths.isAbsolute(requested)) return null;
-  for (const root of threadLocalPreviewRoots(ctx.dataDir, projectId)) {
-    const relPath = confinePathToRoot(root, requested);
-    if (!relPath || !isSafeRelPath(relPath)) continue;
-    const realPath = await resolveContainedReal(root, relPath);
-    if (!realPath) throw new ProjectFsError(404, 'path_not_found', 'file not found');
-    try {
-      const s = await stat(realPath);
-      if (!s.isFile()) throw new ProjectFsError(404, 'path_not_found', 'file not found');
-    } catch (error) {
-      if (error instanceof ProjectFsError) throw error;
-      throw new ProjectFsError(404, 'path_not_found', 'file not found');
-    }
-    return requested;
-  }
-  return null;
+  const opened = await openLocalPreviewFile(effectivePreviewRootsFor(ctx, target), requested);
+  if (opened.kind === 'outside') return null;
+  if (opened.kind === 'missing') throw new ProjectFsError(404, 'path_not_found', 'file not found');
+  // Resolution only proves the file is openable; the content read re-authorizes.
+  await opened.file.handle.close();
+  return requested;
 }
 
 /** Resolve a Markdown file token against the thread's authoritative checkout. */
@@ -213,7 +202,11 @@ export async function resolveThreadPreviewPath(
     ? (thread.environmentId ? getEnvironment(ctx.db, thread.environmentId)?.path : null)
     : project?.path;
   const requested = input.path;
-  const localPath = await resolveLocalPreviewPath(ctx, thread?.projectId ?? project?.id ?? null, requested);
+  const localPath = await resolveLocalPreviewPath(
+    ctx,
+    { thread: thread ?? null, projectId: thread?.projectId ?? project?.id ?? null },
+    requested
+  );
   if (localPath) return { kind: 'resolved', path: localPath };
   if (!root) throw new ProjectFsError(409, 'environment_not_ready', 'environment is not provisioned');
   const hostId = thread ? thread.hostId : ctx.hostHub.resolveHostId(project?.hostId);

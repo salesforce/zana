@@ -105,6 +105,32 @@ it('tolerates bounded synchronous plugin work by default and still fails a wedge
   f.runtime.dispose();
 });
 
+it('allows a heartbeat after the server resumes without hiding a worker that stays hung', async () => {
+  vi.useFakeTimers();
+  const f = start();
+  // Jump wall time without running timers, as on laptop sleep or a server stall.
+  vi.setSystemTime(Date.now() + 60_000);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(f.onFailure).not.toHaveBeenCalled();
+  f.worker.emit('message', { kind: 'heartbeat' });
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(f.onFailure).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(250);
+  expect(f.onFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'Plugin event loop stopped responding' }));
+  await f.runtime.dispose();
+});
+
+it('bounds the resume allowance even when no queued heartbeat arrives', async () => {
+  vi.useFakeTimers();
+  const f = start();
+  vi.setSystemTime(Date.now() + 60_000);
+  await vi.advanceTimersByTimeAsync(1_250);
+  expect(f.onFailure).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(250);
+  expect(f.onFailure).toHaveBeenCalledOnce();
+  await f.runtime.dispose();
+});
+
 it('exempts an in-flight peer commit from the heartbeat check only for a bounded grace', async () => {
   vi.useFakeTimers();
   const f = start();

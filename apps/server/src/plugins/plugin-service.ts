@@ -91,6 +91,7 @@ import {
   sameToolPolicyStamp,
   type ToolPolicyClassification,
   type ToolPolicyDecisionStamp,
+  isUnavailableNonEnforcer,
   type ToolPolicyInventoryEntry
 } from './plugin-tool-policy-state.js';
 import { createPluginUninstalledStore, pluginUninstalledPath } from './plugin-uninstalled.js';
@@ -709,6 +710,26 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const pendingToolPolicy = new Map<string, ToolPolicyClassification>();
   let toolPolicyReadFailure: string | null = null;
 
+  // A stored `degraded` row only counts as terminal when no activation is in
+  // flight and no automatic (watchdog) retry is scheduled.
+  function effectiveActivationStatus(row: InstalledPluginRow): string {
+    if (row.status === 'degraded' && (pendingToolPolicy.has(row.id) || recoveryTimers.has(row.id))) return 'starting';
+    return row.status;
+  }
+
+  const warnedUnavailable = new Set<string>();
+  function warnOnDegradedTransitions(rows: Map<string, ToolPolicyInventoryEntry>): void {
+    for (const entry of rows.values()) {
+      const dropped = entry.enabled && isUnavailableNonEnforcer(entry) && entry.toolPolicy === 'unknown';
+      if (dropped && !warnedUnavailable.has(entry.pluginId)) {
+        warnedUnavailable.add(entry.pluginId);
+        console.warn(`[plugins] ${entry.pluginId} failed to activate and is unavailable; it does not block native tools`);
+      } else if (!dropped) {
+        warnedUnavailable.delete(entry.pluginId);
+      }
+    }
+  }
+
   function refreshToolPolicyInventory(): void {
     const result = store.readStrict();
     if ('error' in result) {
@@ -722,13 +743,15 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       pluginId: row.id,
       enabled: row.enabled,
       hasServer: Boolean(row.serverEntry),
-      toolPolicy: classifyRowToolPolicy(row)
+      toolPolicy: classifyRowToolPolicy(row),
+      status: effectiveActivationStatus(row)
     }]));
     for (const [pluginId, toolPolicy] of pendingToolPolicy) {
       const row = rows.get(pluginId);
-      if (row) rows.set(pluginId, { ...row, toolPolicy });
-      else rows.set(pluginId, { pluginId, enabled: true, hasServer: true, toolPolicy });
+      if (row) rows.set(pluginId, { ...row, toolPolicy, status: 'starting' });
+      else rows.set(pluginId, { pluginId, enabled: true, hasServer: true, toolPolicy, status: 'starting' });
     }
+    warnOnDegradedTransitions(rows);
     toolPolicyInventory.replace({
       source: result.status === 'valid-empty' ? 'valid-empty' : 'loaded',
       entries: [...rows.values()]
@@ -804,6 +827,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     const required = result.file.plugins
       .filter((row) => row.enabled && (row.toolPolicy === 'true' || (row.toolPolicy !== 'false' && Boolean(row.serverEntry))))
+      .filter((row) => !isUnavailableNonEnforcer({ toolPolicy: row.toolPolicy ?? 'unknown', status: effectiveActivationStatus(row) }))
       .map((row): PluginToolPolicyReadinessEntry => {
         const current = live.get(row.id);
         return {
@@ -1848,9 +1872,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
               const degraded = withToolPolicy({ ...row, status: 'degraded' as const, statusDetail: error.message }, declared);
               live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
               await store.upsert(degraded);
+              // Schedule the retry before publishing, so the row is never advertised as terminal while a retry is pending.
+              if ((error.message === WATCHDOG_FAILURE_MESSAGE || error.message === 'Plugin API call timed out') && isCurrent(row.id, epoch)) scheduleWatchdogRecovery(row.id);
               refreshToolPolicyInventory();
               if (!isCurrent(row.id, epoch)) return;
-              if (error.message === WATCHDOG_FAILURE_MESSAGE) scheduleWatchdogRecovery(row.id);
               await emitCapabilities();
               if (!isCurrent(row.id, epoch)) return;
               await emitAppsChanged();

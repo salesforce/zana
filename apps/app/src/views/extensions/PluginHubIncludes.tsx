@@ -3,7 +3,8 @@ import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { Link } from 'react-router-dom';
 import { navPanelListsInExtensionsHub, navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
 import { getPluginRegistrationSets, subscribePluginSlots } from '@/plugins/plugin-slots';
-import { getSkillsRoutePath } from '@/lib/route-paths';
+import { getSettingsRoutePath, getSkillsRoutePath } from '@/lib/route-paths';
+import { useRegisteredThreadProviders } from '../../hooks/useRegisteredThreadProviders.js';
 
 function slotLinesFromSet(set: ReturnType<typeof getPluginRegistrationSets>[number] | undefined): string[] {
   if (!set) return [];
@@ -19,6 +20,7 @@ function slotLinesFromSet(set: ReturnType<typeof getPluginRegistrationSets>[numb
   if (set.projectTabs.length) lines.push(`Project tabs (${set.projectTabs.length})`);
   if (set.projectMenuActions.length) lines.push(`Project menus (${set.projectMenuActions.length})`);
   if (set.createProjectActions.length) lines.push(`Create project (${set.createProjectActions.length})`);
+  if (set.notificationSoundProviders.length) lines.push(`Notification sound providers (${set.notificationSoundProviders.length})`);
   if (set.settingsSections.length) lines.push(`Settings sections (${set.settingsSections.length})`);
   if (set.homepageSections.length) lines.push(`Home sections (${set.homepageSections.length})`);
   if (set.sidebarFooterActions.length) lines.push(`Sidebar footer actions (${set.sidebarFooterActions.length})`);
@@ -41,18 +43,27 @@ function slotLinesFromSet(set: ReturnType<typeof getPluginRegistrationSets>[numb
 }
 
 export function PluginHubIncludes({ plugin }: { plugin: PluginAppEntry }) {
+  const { providers } = useRegisteredThreadProviders();
+  const harnesses = providers.filter((provider) => provider.pluginId === plugin.id);
   const sets = useSyncExternalStore(subscribePluginSlots, getPluginRegistrationSets, getPluginRegistrationSets);
   const lines = slotLinesFromSet(sets.find((row) => row.pluginId === plugin.id));
   const skills = plugin.skillNames ?? [];
   const mcp = plugin.mcpServers ?? [];
   const cli = plugin.cliNames ?? [];
-  if (lines.length === 0 && skills.length === 0 && mcp.length === 0 && cli.length === 0) {
+  if (lines.length === 0 && skills.length === 0 && mcp.length === 0 && cli.length === 0 && harnesses.length === 0) {
     return null;
   }
   return (
     <section className="ext-plugin-section" data-testid="plugin-includes">
-      <h3>Capabilities</h3>
+      <h3>Adds to Zana</h3>
       <dl className="ext-plugin-table">
+        {harnesses.length > 0 ? <div>
+          <dt>AI harnesses</dt>
+          <dd>{harnesses.map((provider, index) => <span key={provider.id}>
+            {index > 0 ? ', ' : null}
+            <Link to={getSettingsRoutePath('harness')}>{provider.displayName}</Link>
+          </span>)}</dd>
+        </div> : null}
         {lines.map((line) => (
           <div key={line}>
             <dt>{line.replace(/\s+\(.*\)/, '').split(' (')[0] ?? line}</dt>

@@ -7,6 +7,12 @@ export type ToolPolicyInventoryEntry = {
   enabled: boolean;
   hasServer: boolean;
   toolPolicy: ToolPolicyClassification;
+  /**
+   * Activation status. `degraded` here means a TERMINAL failure: callers must
+   * report an activation that is pending or has an automatic retry scheduled as
+   * `starting` so the plugin stays required (no fail-open during startup).
+   */
+  status?: string;
 };
 
 export type ToolPolicyInventorySnapshot = {
@@ -19,6 +25,7 @@ export type ToolPolicyRequiredGeneration = {
   pluginId: string;
   toolPolicy: Extract<ToolPolicyClassification, 'true' | 'unknown'>;
   generationId: string | null;
+  status?: string | null;
 };
 
 export type ToolPolicyDecisionStamp = {
@@ -102,9 +109,19 @@ export function createToolPolicyInventoryState(initial?: ToolPolicyInventorySnap
   };
 }
 
+/**
+ * A terminally failed plugin whose policy is still `unknown` never registered a
+ * handler (a registered handler persists `true` monotonically), so it enforces
+ * nothing and must not block other tools. A degraded `true` plugin is a genuine
+ * enforcer that cannot enforce and stays required (fail closed).
+ */
+export function isUnavailableNonEnforcer(entry: { toolPolicy?: string | null; status?: string }): boolean {
+  return entry.status === 'degraded' && entry.toolPolicy !== 'true' && entry.toolPolicy !== 'false';
+}
+
 export function requiredPolicyPluginIds(snapshot: ToolPolicyInventorySnapshot): string[] {
   return snapshot.entries
-    .filter((entry) => entry.enabled && (entry.toolPolicy === 'true' || entry.toolPolicy === 'unknown'))
+    .filter((entry) => entry.enabled && (entry.toolPolicy === 'true' || entry.toolPolicy === 'unknown') && !isUnavailableNonEnforcer(entry))
     .map((entry) => entry.pluginId);
 }
 
@@ -120,6 +137,7 @@ export function captureToolPolicyStamp(
         return Object.freeze({
           pluginId,
           toolPolicy: entry.toolPolicy as Extract<ToolPolicyClassification, 'true' | 'unknown'>,
+          status: entry.status ?? null,
           generationId: generationIds.get(pluginId) ?? null
         });
       })
@@ -135,6 +153,7 @@ export function sameToolPolicyStamp(left: ToolPolicyDecisionStamp, right: ToolPo
       other.pluginId === entry.pluginId
       && other.toolPolicy === entry.toolPolicy
       && other.generationId === entry.generationId
+      && (other.status ?? null) === (entry.status ?? null)
     );
   });
 }

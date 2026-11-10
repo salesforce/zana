@@ -108,6 +108,31 @@ it('selects the Squad proposal specs for proposal, team and composer seams', () 
   }
 });
 
+it('selects sound playback for the plugin and generic activity SDK seams', () => {
+  for (const path of [
+    'plugins/agent-sounds/runtime.ts',
+    'plugins/agent-sounds/player.ts',
+    'apps/app/src/plugins/agent-activity.ts',
+    'apps/app/src/plugins/PluginContentScriptsHost.tsx',
+    'packages/plugin-sdk/src/app-contract.ts',
+    'packages/plugin-sdk/src/app.ts'
+  ]) expect(boundarySpecs([path])).toContain('e2e/sound-studio-plugin.spec.ts');
+  for (const path of ['docs/extensions-sdk-reference.md', 'plugins/other-plugin/app.tsx', 'packages/plugin-sdk/src/server.ts']) {
+    expect(boundarySpecs([path])).not.toContain('e2e/sound-studio-plugin.spec.ts');
+  }
+});
+
+it('selects native audio imports and provider ownership at their production boundaries', () => {
+  for (const path of ['apps/desktop/src/native/agent-sound-files.ts', 'apps/desktop/src/native/agent-sound-ipc.ts', 'apps/desktop/src/native/agent-sound-events.ts', 'apps/app/src/views/settings/AgentSoundSettings.tsx']) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/agent-notification-sounds.spec.ts', 'e2e/custom-notification-sounds.spec.ts']));
+  }
+  for (const path of ['apps/app/src/plugins/notification-sounds.ts', 'apps/app/src/plugins/PluginContentScriptsHost.tsx', 'apps/app/src/views/settings/NotificationsSettingsView.tsx', 'packages/plugin-sdk/src/internal/plugin-app-collector.ts']) {
+    expect(boundarySpecs([path])).toContain('e2e/notification-sound-providers.spec.ts');
+  }
+  expect(boundarySpecs(['docs/sounds.md'])).toEqual([]);
+  expect(boundarySpecs(['apps/app/src/views/settings/TerminalSettings.tsx'])).not.toContain('e2e/custom-notification-sounds.spec.ts');
+});
+
 it('selects the close-with-follow-up spec for the close summary seams', () => {
   for (const path of [
     'apps/server/src/services/followups/close-summary.ts',
@@ -401,4 +426,17 @@ it('includes the Squad proposal flow in the job-team E2E runner', async () => {
     process.exitCode = previousExitCode;
     vi.doUnmock('./run-electron-e2e.mjs');
   }
+});
+
+it('checks reviewed peer delivery through the built app when its authorization or queue changes', () => {
+  for (const path of [
+    'apps/server/src/services/threads/thread-peer-review.ts',
+    'apps/server/src/services/threads/host-peer-tools.ts',
+    'apps/server/src/http/peer-tool-proof.ts',
+    'apps/server/src/http/peer-tools-api.ts',
+    'apps/desktop/src/runtime/cli-peer-delivery.ts',
+    'apps/app/src/components/thread/timeline/PeerMessageReviews.tsx',
+    'packages/db/src/data/deferred-thread-messages.ts'
+  ]) expect(boundarySpecs([path])).toContain('e2e/thread-peer-communication.spec.ts');
+  expect(boundarySpecs(['docs/readme.md'])).not.toContain('e2e/thread-peer-communication.spec.ts');
 });

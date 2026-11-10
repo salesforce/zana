@@ -181,6 +181,8 @@ export const IPC = {
   config: {
     get: 'config:get',
     set: 'config:set',
+    addTrustedPreviewFolder: 'config:addTrustedPreviewFolder',
+    removeTrustedPreviewFolder: 'config:removeTrustedPreviewFolder',
     /** Broadcast to EVERY window after a `config:set` so other windows
      *  (per-project windows, the focus window) refresh their mirrored config
      *  flags live — without it a feature toggled off in one window keeps
@@ -549,6 +551,11 @@ export const IPC = {
     onLink: 'deepLinks:onLink',
   },
   app: {
+    previewAgentSound: 'app:previewAgentSound',
+    getAgentSoundFiles: 'app:getAgentSoundFiles',
+    chooseAgentSoundFile: 'app:chooseAgentSoundFile',
+    clearAgentSoundFile: 'app:clearAgentSoundFile',
+    onAgentSound: 'app:onAgentSound',
     performance: 'app:performance',
     homedir: 'app:homedir',
     version: 'app:version',
@@ -582,6 +589,32 @@ export const IPC = {
     open: 'menubar:open',
     hide: 'menubar:hide',
     quit: 'menubar:quit'
+  },
+  /**
+   * Command Center companion (the floating edge rail + its quick panel). Every
+   * verb is accepted only from the companion's own windows and re-authorized in
+   * main against its own inbox/pty/scheduler state (Rule 1). `onSnapshot` /
+   * `onPanel` / `onPanelClosed` are main→companion pushes. See
+   * `apps/desktop/src/companion.ts`.
+   */
+  companion: {
+    request: 'companion:request',
+    onSnapshot: 'companion:onSnapshot',
+    enter: 'companion:enter',
+    exit: 'companion:exit',
+    openPanel: 'companion:openPanel',
+    closePanel: 'companion:closePanel',
+    panelState: 'companion:panelState',
+    onPanel: 'companion:onPanel',
+    onPanelClosed: 'companion:onPanelClosed',
+    tooltip: 'companion:tooltip',
+    onTooltip: 'companion:onTooltip',
+    tooltipState: 'companion:tooltipState',
+    dragStart: 'companion:dragStart',
+    dragEnd: 'companion:dragEnd',
+    answer: 'companion:answer',
+    open: 'companion:open',
+    runSchedule: 'companion:runSchedule'
   },
   /**
    * Multi-window control. `openProject` asks main to open (or focus) a window

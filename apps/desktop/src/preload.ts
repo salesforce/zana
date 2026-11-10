@@ -1,3 +1,4 @@
+import { playAgentSound } from './native/agent-sound-player.js';
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { parseRpcErrorEnvelope, rpcErrorFrom } from '@zana-ai/zcc-contracts/rpc-error';
@@ -44,6 +45,12 @@ seedDocumentTheme(process.argv, globalThis.document, globalThis.MutationObserver
 // the concurrent-tab reality (mirrors the `setMaxListeners(50)` convention used
 // across the main-side stores).
 ipcRenderer.setMaxListeners(50);
+// Main chooses exactly one window, so multiple project windows never double-play.
+ipcRenderer.on(IPC.app.onAgentSound, (_event, kind, volume, clip) => {
+  if ((kind === 'done' || kind === 'idle' || kind === 'needs-you') && typeof volume === 'number') {
+    void playAgentSound(kind, volume, clip).catch(error => console.warn('[agent sound]', error));
+  }
+});
 import type {
   AgentMessage,
   AgentState,
@@ -60,6 +67,12 @@ import type {
   LlmPromptEntry,
   McpServerEntry,
   MenubarSnapshot,
+  CompanionOpenTarget,
+  CompanionPanelKind,
+  CompanionPanelState,
+  CompanionSnapshot,
+  CompanionTooltip,
+  CompanionTooltipView,
   Persona,
   PluginAppEntry,
   PluginEntry,
@@ -738,6 +751,8 @@ const api: CcApi = {
   config: {
     get: () => ipcRenderer.invoke(IPC.config.get),
     set: (patch) => ipcRenderer.invoke(IPC.config.set, patch),
+    addTrustedPreviewFolder: () => ipcRenderer.invoke(IPC.config.addTrustedPreviewFolder),
+    removeTrustedPreviewFolder: (path) => ipcRenderer.invoke(IPC.config.removeTrustedPreviewFolder, path),
     onChanged: (cb) => {
       const handler = (_e: unknown, config: AppConfig) => cb(config);
       ipcRenderer.on(IPC.config.onChanged, handler);
@@ -1291,6 +1306,14 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.modules.replyHostDialog, requestId, answer)
   },
   app: {
+    previewAgentSound: async (kind) => {
+      const result = await ipcRenderer.invoke(IPC.app.previewAgentSound, kind);
+      if (!result || typeof result.volume !== 'number') throw new Error('Sound preview unavailable');
+      await playAgentSound(kind, result.volume, result.clip);
+    },
+    getAgentSoundFiles: () => ipcRenderer.invoke(IPC.app.getAgentSoundFiles),
+    chooseAgentSoundFile: kind => ipcRenderer.invoke(IPC.app.chooseAgentSoundFile, kind),
+    clearAgentSoundFile: kind => ipcRenderer.invoke(IPC.app.clearAgentSoundFile, kind),
     onMenuEvent: (cb: (event: string) => void) => {
       const events = [
         'app:openSettings',
@@ -1299,7 +1322,8 @@ const api: CcApi = {
         'app:closeTab',
         'app:toggleProjectView',
         'app:openPalette',
-        'app:openShortcuts'
+        'app:openShortcuts',
+        'app:openHome'
       ];
       const handlers = events.map((name) => {
         const h = () => cb(name);
@@ -1369,6 +1393,43 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.menubar.open, view),
     hide: () => ipcRenderer.invoke(IPC.menubar.hide),
     quit: () => ipcRenderer.invoke(IPC.menubar.quit)
+  },
+  companion: {
+    request: () => ipcRenderer.invoke(IPC.companion.request),
+    onSnapshot: (cb: (snapshot: CompanionSnapshot) => void) => {
+      const handler = (_e: unknown, snapshot: CompanionSnapshot) => cb(snapshot);
+      ipcRenderer.on(IPC.companion.onSnapshot, handler);
+      return () => ipcRenderer.off(IPC.companion.onSnapshot, handler);
+    },
+    enter: () => ipcRenderer.invoke(IPC.companion.enter),
+    exit: () => ipcRenderer.invoke(IPC.companion.exit),
+    openPanel: (kind: CompanionPanelKind, focusRequestId?: string) =>
+      ipcRenderer.invoke(IPC.companion.openPanel, kind, focusRequestId),
+    closePanel: () => ipcRenderer.invoke(IPC.companion.closePanel),
+    panelState: () => ipcRenderer.invoke(IPC.companion.panelState),
+    onPanel: (cb: (state: CompanionPanelState) => void) => {
+      const handler = (_e: unknown, state: CompanionPanelState) => cb(state);
+      ipcRenderer.on(IPC.companion.onPanel, handler);
+      return () => ipcRenderer.off(IPC.companion.onPanel, handler);
+    },
+    onPanelClosed: (cb: () => void) => {
+      const handler = () => cb();
+      ipcRenderer.on(IPC.companion.onPanelClosed, handler);
+      return () => ipcRenderer.off(IPC.companion.onPanelClosed, handler);
+    },
+    tooltip: (tip: CompanionTooltip | null) => ipcRenderer.invoke(IPC.companion.tooltip, tip),
+    onTooltip: (cb: (tip: CompanionTooltipView | null) => void) => {
+      const handler = (_e: unknown, tip: CompanionTooltipView | null) => cb(tip);
+      ipcRenderer.on(IPC.companion.onTooltip, handler);
+      return () => ipcRenderer.off(IPC.companion.onTooltip, handler);
+    },
+    tooltipState: () => ipcRenderer.invoke(IPC.companion.tooltipState),
+    dragStart: () => ipcRenderer.invoke(IPC.companion.dragStart),
+    dragEnd: () => ipcRenderer.invoke(IPC.companion.dragEnd),
+    answer: (requestId: string, text: string) =>
+      ipcRenderer.invoke(IPC.companion.answer, requestId, text),
+    open: (target: CompanionOpenTarget) => ipcRenderer.invoke(IPC.companion.open, target),
+    runSchedule: (taskId: string) => ipcRenderer.invoke(IPC.companion.runSchedule, taskId)
   },
   windows: {
     openProject: (projectId: string) =>
@@ -1461,7 +1522,8 @@ contextBridge.exposeInMainWorld('zccDesktop', {
   app: api.app,
   windows: api.windows,
   updates: api.updates,
-  menubar: api.menubar
+  menubar: api.menubar,
+  companion: api.companion
 });
 
 // E2E test-observability bridge (GATED). Exposed ONLY when main launched this

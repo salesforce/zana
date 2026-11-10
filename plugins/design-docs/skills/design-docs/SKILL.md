@@ -93,11 +93,6 @@ agents read templates and add a template's files to an existing doc (CLI: `templ
 An export is a JSON template bundle. Import accepts that bundle only. Templates
 are not design docs: agents do not list or receive them as project context.
 
-## Agent prompts
-
-Agent prompts tell agents to follow `<!-- AI Instructions -->` template comments
-in doc files. Agents read these as guidance on what to fill in, validate or refine.
-
 ## Peer docs
 
 When syncing peer docs whose Project is not mapped locally, they appear under
@@ -107,11 +102,12 @@ show '<name> (project removed)' in the doc list.
 ## Workflow
 
 1. **Read first.** Call `design_doc_read` and note each file's `revision`.
+   If the doc has an `AGENTS.md`, read it and follow it: it holds instructions
+   for working on that doc and is never published.
    When the user `@`-mentions a doc, its manifest and entry file are already
    in your context.
 2. **Edit surgically.** Use `edits` with exact `oldText` for changes. Rewrite a
-   whole file only to create it or restructure it completely. Follow
-   `<!-- AI Instructions -->` comments in templates.
+   whole file only to create it or restructure it completely.
 3. **Always pass `baseRevision`.** It is the revision you read. Use
    `baseRevision: 0` to assert that a file is new. A conflict means the user
    edited it meanwhile. Re-read, reapply your change on top, and never

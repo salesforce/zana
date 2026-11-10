@@ -15,7 +15,7 @@ import { DesktopOnlyPlugin } from './DesktopOnlyPlugin.js';
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FolderOpen,
   ExternalLink,
@@ -51,6 +51,8 @@ import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { installedSource } from './plugin-presentation.js';
 import { PluginDetailPage } from './PluginDetailPage.js';
 import { PluginSettingsForm } from '@/plugins/PluginDefinedSettings';
+import { listNotificationSoundProviders } from '../../plugins/plugin-slots.js';
+import { soundProviderSettingsHref } from '../../plugins/notification-sounds.js';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginHubIncludes } from './PluginHubIncludes.js';
@@ -62,6 +64,7 @@ import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
 import { InstalledPluginCollection } from './InstalledPluginCollection.js';
 import { PluginPacksCollection } from './PluginPacksCollection.js';
 import { summarizePluginHealthDetail } from './plugin-health.js';
+import { PluginLoadFailure } from '../../plugins/PluginLoadFailure.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
@@ -597,6 +600,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
     listSettingsSections,
     listSettingsSections
   ).filter((section) => section.pluginId === module.id);
+  const soundProviders = useSyncExternalStore(subscribePluginSlots, listNotificationSoundProviders, listNotificationSoundProviders).filter(provider => provider.pluginId === module.id);
   const hasSlotSettings = slotSettings.length > 0;
   const [settingsArea, setSettingsArea] = useState<'plugin' | 'configuration'>('plugin');
   const [catalog, setCatalog] = useState<MarketplaceEntry[]>([]);
@@ -656,8 +660,10 @@ function ExtensionDetail({ row }: { row: HubRow }) {
   return (
     <>
       <AboutCard row={row} installation={detailTab === 'installation'} onConfigure={configure} onManage={() => setDetailTab('installation')} />
+      {soundProviders.map(provider => <div key={provider.id} className="ext-plugin-section"><Link className="btn" to={soundProviderSettingsHref(provider)}>Configure sounds →</Link><p className="settings-help">{provider.title} is configured in Settings → Notifications.</p></div>)}
       {plugin?.description ? <PluginOverviewLead description={plugin.description} /> : null}
-      {module.loadError ? <p className="modal-error" role="alert">{module.loadError}</p> : null}
+      {module.loadError && plugin ? <PluginLoadFailure pluginId={module.id} name={module.title} detail={module.loadError} />
+        : module.loadError ? <p className="modal-error" role="alert">{module.loadError}</p> : null}
       <nav className="ext-plugin-detail-tabs" role="tablist" aria-label="Plugin detail sections" onKeyDown={(event) => {
         const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
         if (!direction && event.key !== 'Home' && event.key !== 'End') return;

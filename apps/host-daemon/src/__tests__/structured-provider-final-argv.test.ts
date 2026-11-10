@@ -187,8 +187,9 @@ describe('structured providers final local argv', () => {
     expect(create('fixture-provider/gpt-7-luna')).toEqual(expect.arrayContaining(['--model', 'fixture-provider/gpt-7-luna']));
     expect(create('fixture-provider/gpt-8-luna')).toEqual(expect.arrayContaining(['--model', 'fixture-provider/gpt-8-luna']));
     expect(create('fixture-provider/gpt-7-luna')).not.toContain('fixture-provider/gpt-8-luna');
-    // Inventory names cannot authorize an unconfigured portable tier.
-    expect(() => create()).toThrow('does not support low model level');
+    // A spawn never re-maps a tier against an inventory its preflight did not authorize:
+    // with no pin it launches on the harness default model.
+    expect(create()).not.toContain('--model');
   });
 
   it('a native role still suppresses an authorized model pin', () => {

@@ -6,7 +6,7 @@ import { PLUGIN_INTERACTION_MAX_TIMEOUT_MS } from '@zana-ai/zcc-domain/thread-ru
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginPeerCommit, createPluginWorkerBridge, PEER_WORKER_COMMIT_TIMEOUT_MS } from './plugin-worker-bridge';
 const closes: (() => void)[] = [];
-afterEach(() => { closes.splice(0).forEach(close => close()); });
+afterEach(() => { closes.splice(0).forEach(close => close()); vi.restoreAllMocks(); });
 function pair() { const ports = new MessageChannel(); const a = createPluginWorkerBridge(ports.port1, 'server'), b = createPluginWorkerBridge(ports.port2, 'plugin'); closes.push(() => { a.dispose(); b.dispose(); ports.port1.close(); ports.port2.close(); }); return { a, b, ports }; }
 it('roundtrips callbacks, bound methods, types, undefined and exceptions', async () => {
   const { a, b } = pair(); const object = { n: 3, async echo(input: unknown) { return { n: this.n, input }; }, async fail() { throw Object.assign(new Error('no'), { code: 'E_NO' }); } };
@@ -49,6 +49,36 @@ it('supports synchronous worker-side responses and refuses reuse after a deadlin
   } };
   const bridge = createPluginWorkerBridge(port, 'plugin'); closes.push(() => bridge.dispose()); const fn = bridge.decode({ __zcc_plugin_wire: 'function', side: 'server', id: 1, async: false });
   expect(fn()).toBe(7); response = { error: { message: 'bad API' } }; expect(() => fn()).toThrow('bad API');
+});
+
+it('reports a synchronous API timeout to the parent and retires all bridge calls', async () => {
+  const port = { on: vi.fn(), off: vi.fn(), postMessage: vi.fn() };
+  const bridge = createPluginWorkerBridge(port, 'plugin');
+  closes.push(() => bridge.dispose());
+  const fn = (async: boolean) => bridge.decode({ __zcc_plugin_wire: 'function', side: 'server', id: 1, async });
+  const sync = fn(false), remote = fn(true);
+  const pending = remote().catch((error: Error) => error);
+  bridge.encode(() => {});
+  vi.spyOn(Atomics, 'wait').mockReturnValueOnce('timed-out');
+  expect(() => sync()).toThrow('Plugin API call timed out');
+  expect(port.postMessage).toHaveBeenCalledWith({ kind: 'failure', message: 'Plugin API call timed out' }, []);
+  expect(port.off).toHaveBeenCalledWith('message', expect.any(Function));
+  expect(await pending).toMatchObject({ message: 'Plugin API call timed out' });
+  expect(bridge.isBusy()).toBe(false);
+  expect(bridge.retainedFunctions).toBe(0);
+  expect(() => sync()).toThrow('Plugin API call timed out');
+  await expect(remote()).rejects.toThrow('Plugin API call timed out');
+  expect(Atomics.wait).toHaveBeenCalledOnce();
+});
+
+it('retains the shutdown reason for callbacks invoked after disposal', async () => {
+  const { a, b } = pair();
+  const remote = a.decode(b.encode(() => 1));
+  const error = Error('Plugin event loop stopped responding');
+  a.dispose(error);
+  a.dispose();
+  expect(a.fault).toBe(error);
+  await expect(remote()).rejects.toBe(error);
 });
 it('releases signal slots after cancellation and rejects a raw oversized reply', async () => {
   const { a, b } = pair(); for (let i = 0; i < 1100; i++) { const controller = new AbortController(); a.encode(controller.signal); controller.abort(); }

@@ -1,0 +1,57 @@
+[
+  {
+    "id": "intro",
+    "caption": "A Squad is a team of AI agents",
+    "line": "A Squad is a small team of AI agents working on one goal together."
+  },
+  {
+    "id": "persona",
+    "caption": "Persona: a role, a model tier, instructions",
+    "line": "A Persona is one agent profile: a role, a model tier, and instructions."
+  },
+  {
+    "id": "squad",
+    "caption": "Squad: a named group of Personas",
+    "line": "A Squad is a named group of Personas. Each Persona fills a slot, and each slot becomes a worker in the run."
+  },
+  {
+    "id": "orchestrator",
+    "caption": "The Orchestrator plans; workers take steps",
+    "line": "One of them, the Orchestrator, plans the work and keeps it moving. The others are workers that each take steps."
+  },
+  {
+    "id": "builtin",
+    "caption": "Five built-in Squads, ready to use",
+    "line": "Zana ships five built-in Squads, so you can start without building anything."
+  },
+  {
+    "id": "when",
+    "caption": "Squad: work that splits into pieces. Single agent: small, step-by-step tasks",
+    "line": "Reach for a Squad when the work splits into pieces that can run side by side. For small, step-by-step tasks, a single agent is simpler."
+  },
+  {
+    "id": "flow",
+    "caption": "Flow view: each agent, its status, and hand-offs",
+    "line": "While a Squad runs, Flow view shows each agent, its status, and how work is handed off. Here, the run is waiting on you."
+  },
+  {
+    "id": "ask",
+    "caption": "A Squad that needs a decision asks in your Inbox",
+    "line": "When a Squad needs a decision, it asks in your Inbox."
+  },
+  {
+    "id": "done",
+    "caption": "Answer, and it carries on; the result is posted to the Inbox",
+    "line": "Answer it, and the Squad carries on. When it finishes, the result is posted to the Inbox too."
+  },
+  {
+    "id": "details",
+    "caption": "Squad details: what each agent did",
+    "line": "Open Squad details to see what each agent did."
+  },
+  {
+    "id": "close",
+    "caption": "A person reviews the result",
+    "line": "A finished run isn't a guarantee. A person reviews the result, so always read it yourself."
+  }
+]

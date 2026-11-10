@@ -47,6 +47,7 @@ import { linuxCiElectronArgs, linuxCiElectronEnv } from './linux-electron-launch
 import { dropInheritedKeychainEnv, isolatedClaudePath, isolatedKeychainEnv, writeAppConfig } from './app-config.js';
 import { isolateTmuxEnvironment, cleanupTmuxEnvironment } from './tmux-isolation.js';
 import { seedOpenCodeAuthState } from './opencode-auth.js';
+import { parseRecordSize } from '../sdk/demo-video-core.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_ENTRY = join(process.env.ZCC_E2E_APP_ROOT || REPO_ROOT, 'out/main/index.js');
@@ -205,6 +206,8 @@ export interface LaunchOptions {
   initialConfig?: Record<string, unknown>;
   /** Explicit opt-in for tests that intentionally invoke an authenticated Claude. */
   allowLiveClaude?: boolean;
+  /** Explicit opt-in for tests that intentionally invoke real OpenCode/Codex/Cursor binaries. */
+  allowLiveHarnesses?: boolean;
 }
 
 /**
@@ -258,7 +261,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   };
   // `claude doctor` and legacy fallbacks use PATH instead of claudeBinary.
   // Keep the guard ahead of inherited CLI directories for deterministic tests.
-  const isolatedPath = isolatedClaudePath(env.PATH, opts.allowLiveClaude);
+  const isolatedPath = isolatedClaudePath(env.PATH, opts.allowLiveClaude || opts.allowLiveHarnesses);
   if (isolatedPath !== undefined) env.PATH = isolatedPath;
   // A parent `electron-vite dev` / leftover diagnostic must not steal this
   // unpackaged E2E boot onto the live renderer or product server.
@@ -281,8 +284,9 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     // at runtime, or macOS pops a real Keychain prompt on a headless E2E run.
     args: [...linuxCiElectronArgs(), '--use-mock-keychain', `--user-data-dir=${userDataDir}`, ...(!packagedExecutable ? [launchEntry] : [])],
     env: isolateTmuxEnvironment(home, env),
-    // Opt-in screen recording for demos: ZCC_E2E_RECORD_VIDEO=<absolute dir>.
-    ...(process.env.ZCC_E2E_RECORD_VIDEO ? { recordVideo: { dir: process.env.ZCC_E2E_RECORD_VIDEO, size: { width: 1440, height: 900 } } } : {}),
+    // Opt-in screen recording for demos: ZCC_E2E_RECORD_VIDEO=<absolute dir>, optionally
+    // ZCC_E2E_RECORD_SIZE=1920x1080 (default 1440x900).
+    ...(process.env.ZCC_E2E_RECORD_VIDEO ? { recordVideo: { dir: process.env.ZCC_E2E_RECORD_VIDEO, size: parseRecordSize(process.env.ZCC_E2E_RECORD_SIZE) } } : {}),
     timeout: 60_000
   });
   let stderrTail = '';
@@ -437,6 +441,7 @@ export const test = base.extend<Fixtures>({
       env,
       initialConfig,
       allowLiveClaude: seedClaudeAuth,
+      allowLiveHarnesses: seedOpenCodeAuth,
     });
     try {
       await use(handle);

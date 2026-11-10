@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -168,8 +169,9 @@ export async function startFakePiBridge(
       harness.restore();
       vi.unstubAllEnvs();
       // A cancelled turn's final file write can race recursive fixture removal.
-      // Retry transient filesystem contention, and still fail if it persists.
-      rmSync(workspaceDir, {
+      // Yield during bounded retries so pending writes can finish. Persistent
+      // filesystem contention still fails teardown.
+      await rm(workspaceDir, {
         recursive: true,
         force: true,
         maxRetries: 10,

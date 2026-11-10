@@ -25,7 +25,8 @@ import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import type { PluginRegistrationSet } from '@zana-ai/zcc-plugin-sdk';
 import { isPluginAppDefinition } from '@zana-ai/zcc-plugin-sdk';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
-import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
+import { PluginLoadFailure } from './PluginLoadFailure.js';
+import { clearPluginSlots, getPluginRegistrationSets, interpretPluginApp } from './plugin-slots.js';
 import { evictHost } from '../modules/ModulePanelHost.js';
 
 export interface PluginAppModule extends AppModule {
@@ -55,17 +56,33 @@ type PluginAppImporter = (url: string) => Promise<{ default?: unknown }>;
 const importPluginApp: PluginAppImporter = (url) => import(/* @vite-ignore */ url);
 
 /**
- * Record a failed plugin-app import for the Plugins hub. Do not attach a
- * `panel` — the sidebar treats any panel as a global nav destination, and most
- * plugin apps never registered one (settings, pendingInteraction, provider
- * icons). The hub already renders `loadError` on the detail pane.
+ * Replace previously registered pages with host recovery UI, preserving their
+ * paths and placement. Drop every executable plugin contribution. A first-load
+ * failure has no known pages, so it stays in the hub without inventing a rail row.
  */
 function errorModule(entry: PluginAppEntry, message: string): PluginAppModule {
+  const previous = getPluginRegistrationSets().find((set) => set.pluginId === entry.id);
+  const component = () => React.createElement(PluginLoadFailure, { pluginId: entry.id, name: entry.name, detail: message });
+  const recovered = interpretPluginApp(entry.id, {
+    __zccPluginApp: true,
+    setup(app: { slots: {
+      navPanel(registration: object): void;
+      projectTab(registration: object): void;
+    } }) {
+      for (const panel of previous?.navPanels ?? []) {
+        app.slots.navPanel({ id: panel.id, title: panel.title, icon: panel.icon, path: panel.path, placement: panel.placement, component });
+      }
+      for (const tab of previous?.projectTabs ?? []) {
+        app.slots.projectTab({ id: tab.id, label: tab.label, icon: tab.icon, order: tab.order, global: tab.global, component });
+      }
+    }
+  }, entry.name);
   return {
     id: entry.id,
     title: entry.name,
     icon: entry.icon,
     projectTab: entry.projectTab,
+    ...moduleFromSet(entry, recovered),
     loadError: message
   };
 }
@@ -146,14 +163,12 @@ async function loadPluginApp(
       clearPluginSlots(entry.id);
       return { module: null, runtimeLoaded: false };
     }
-    clearPluginSlots(entry.id);
     return {
       module: errorModule(entry, 'Bundle did not default-export a plugin app.'),
       runtimeLoaded: false
     };
   } catch (error) {
     if (!isCurrent()) return { module: null, runtimeLoaded: false };
-    clearPluginSlots(entry.id);
     return {
       module: errorModule(entry, error instanceof Error ? error.message : String(error)),
       runtimeLoaded: false
@@ -163,6 +178,7 @@ async function loadPluginApp(
 
 let reconcileSequence = 0;
 let activePluginIds = new Set<string>();
+let retrySequence = 0;
 const appliedAppUrls = new Map<string, string>();
 const loadedOutcomes = new Map<string, PluginAppLoadOutcome>();
 
@@ -183,24 +199,41 @@ export function pluginAppIsLoadable(
  */
 export async function reconcilePluginApps(
   entries: readonly PluginAppEntry[],
-  options: { importer?: PluginAppImporter } = {},
+  options: { importer?: PluginAppImporter; retryPluginId?: string } = {},
   sequence = ++reconcileSequence
 ): Promise<void> {
-  const wanted = entries.filter(pluginAppIsLoadable);
+  if (sequence !== reconcileSequence) return;
+  const wanted = entries.filter((entry) => pluginAppIsLoadable(entry) || (
+    entry.enabled && entry.status === 'degraded' &&
+    getPluginRegistrationSets().some((set) => set.pluginId === entry.id && (set.navPanels.length > 0 || set.projectTabs.length > 0))
+  ));
   const wantedIds = new Set(wanted.map((entry) => entry.id));
   const importer = options.importer ?? importPluginApp;
   const modules: PluginAppModule[] = [];
   const runtimeLoadedIds = new Set<string>();
 
   for (const entry of wanted) {
+    if (!pluginAppIsLoadable(entry)) {
+      const outcome = { module: errorModule(entry, entry.statusDetail || 'Plugin is not running.'), runtimeLoaded: false };
+      loadedOutcomes.set(entry.id, outcome);
+      appliedAppUrls.delete(entry.id);
+      modules.push(outcome.module);
+      continue;
+    }
     const url = entry.appUrl as string;
-    if (appliedAppUrls.get(entry.id) === url && loadedOutcomes.has(entry.id)) {
+    // The host's change event may already have loaded the new generation. Only
+    // bypass a failed import, so a healthy page does not mount twice per reload.
+    const retry = options.retryPluginId === entry.id && Boolean(loadedOutcomes.get(entry.id)?.module?.loadError);
+    if (!retry && appliedAppUrls.get(entry.id) === url && loadedOutcomes.has(entry.id)) {
       const previous = loadedOutcomes.get(entry.id)!;
       if (previous.module) modules.push(previous.module);
       if (previous.runtimeLoaded) runtimeLoadedIds.add(entry.id);
       continue;
     }
-    const outcome = await loadPluginApp(entry, importer, () => sequence === reconcileSequence);
+    // ESM caches rejected imports too. An explicit retry needs a fresh URL even
+    // when the server returns the same generation. Other plugins stay mounted.
+    const importEntry = retry ? { ...entry, appUrl: `${url}${url.includes('?') ? '&' : '?'}zccRetry=${++retrySequence}` } : entry;
+    const outcome = await loadPluginApp(importEntry, importer, () => sequence === reconcileSequence);
     if (sequence !== reconcileSequence) return;
     appliedAppUrls.set(entry.id, url);
     loadedOutcomes.set(entry.id, outcome);
@@ -219,6 +252,22 @@ export async function reconcilePluginApps(
   }
   activePluginIds = wantedIds;
   usePluginAppModules.getState().setSnapshot(modules, runtimeLoadedIds);
+}
+
+/** Rebuild/reload through the authorized host, then verify the browser import. */
+export async function reloadPluginApp(pluginId: string): Promise<void> {
+  const result = await product.pluginApps.reload(pluginId);
+  if (!result.ok) throw new Error(result.message || 'Reload failed');
+  const sequence = ++reconcileSequence;
+  const entries = await product.pluginApps.list();
+  await reconcilePluginApps(entries, { retryPluginId: pluginId }, sequence);
+  if (sequence !== reconcileSequence) return;
+  const current = entries.find((entry) => entry.id === pluginId);
+  if (!current || !current.enabled || (current.status !== 'running' && current.status !== 'needs-configuration')) {
+    throw new Error(current?.statusDetail || 'Plugin is not running. Review its status in Plugins.');
+  }
+  const error = usePluginAppModules.getState().modules.find((module) => module.id === pluginId)?.loadError;
+  if (error) throw new Error(error);
 }
 
 /**

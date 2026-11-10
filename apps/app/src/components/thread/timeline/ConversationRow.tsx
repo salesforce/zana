@@ -1,4 +1,6 @@
 import { validPromptReferences, relocatePromptReferences } from '@zana-ai/zcc-domain/thread-runtime';
+import { peerMessageDisplay } from './peer-message.js';
+import { PeerMessageSource } from './PeerMessageSource.js';
 import { compactReferenceText, ContextReferenceMessage } from '../../composer/ContextReferenceMessage.js';
 import { memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
@@ -27,7 +29,7 @@ import { resolveIcon } from '../../../lib/resolveIcon.js';
 import { product } from '../../../lib/product-client.js';
 import { readTrimmedSelection } from '../secondary-panel/SecondaryPanelSelectionActions.js';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
-import { conversationFilePreviewPaths } from '../../markdown-local-file.js';
+import { conversationFilePreviewPaths, isPreviewableConversationPath } from '../../markdown-local-file.js';
 import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSignal.js';
 import { ThreadOpenFilePreviewButton } from './TimelineTitleView.js';
 import { ThreadImageLightbox } from './ThreadImageLightbox.js';
@@ -90,7 +92,8 @@ export const ConversationRow = memo(function ConversationRow({
   const [saving, setSaving] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
   const references = useMemo(() => validPromptReferences(row.text ?? '', row.role === 'user' ? row.references : undefined), [row]);
-  const extracted = useMemo(() => extractInlineThreadImages(compactReferenceText(row.text ?? '', references)), [row.text, references]);
+  const peer = peerMessageDisplay(row);
+  const extracted = useMemo(() => extractInlineThreadImages(compactReferenceText(peer?.text ?? row.text ?? '', references)), [peer?.text, row.text, references]);
   const text = extracted.text.trim();
   // User prompts collapse by rendered height (mobile has its own preview) and
   // keep a render cap for huge pastes; assistant replies always render in full.
@@ -133,9 +136,11 @@ export const ConversationRow = memo(function ConversationRow({
     return items;
   }, [imageRefs, projectId]);
   const fileNames = row.role === 'user' ? (row.attachments?.localFilePaths ?? []) : [];
+  const previewRoots = row.previewRoots;
   const previewPaths = useMemo(
-    () => conversationFilePreviewPaths(row.text ?? '', fileNames),
-    [fileNames, row.text]
+    () => conversationFilePreviewPaths(row.text ?? '', fileNames)
+      .filter((path) => fileNames.includes(path) || isPreviewableConversationPath(path, previewRoots)),
+    [fileNames, previewRoots, row.text]
   );
   const actions = useSyncExternalStore(subscribePluginSlots, listMessageActions, listMessageActions);
   const streamingSplit = useMemo(
@@ -234,6 +239,7 @@ export const ConversationRow = memo(function ConversationRow({
         </span>
       ) : null}
       <div className="thread-timeline-bubble">
+        {peer ? <PeerMessageSource peer={peer} /> : null}
         <MobileMessagePreview
           enabled={mobileUser && !editing}
           expanded={expanded}

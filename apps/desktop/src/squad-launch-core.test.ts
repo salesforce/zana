@@ -592,4 +592,37 @@ describe('session sources through the real registry', () => {
     });
     expect(result).toMatchObject({ ok: false, code: 'UNSUPPORTED_SOURCE' });
   }));
+  it('snapshots attachments beside a path source, suffixing a clash and reporting the mapping', async () => withFiles(async (dir) => {
+    const result = await createSquadSourceSnapshotter(registryIn(dir))({ kind: 'session', sessionId: 'agent-session' }, {
+      projectId: 'p1', launchRequestId: 'agent:3', sourceCapabilityIds: [], sourcePaths: [join(dir, 'project', 'plan.md')],
+      goalSourceDescriptors: [], policy: await policyIn(dir),
+      attachments: [{ name: 'plan.md', text: '# attached' }, { name: 'extra.md', text: 'x' }]
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      attachmentMapping: [{ index: 0, given: 'plan.md', used: 'plan (1).md' }, { index: 1, given: 'extra.md', used: 'extra.md' }]
+    });
+    const names = (result as { sourceBundle: SquadSourceBundle }).sourceBundle.sources.map((source) => source.name);
+    expect(names).toEqual(['plan.md', 'plan (1).md', 'extra.md']);
+  }));
+
+  it('refuses attachments for a window provider and an unsafe attachment name', async () => withFiles(async (dir) => {
+    const snapshot = createSquadSourceSnapshotter(registryIn(dir));
+    const base = { projectId: 'p1', launchRequestId: 'agent:4', sourceCapabilityIds: [], sourcePaths: [], goalSourceDescriptors: [], policy: await policyIn(dir) };
+    expect(await snapshot({ kind: 'window', windowId: 7 }, { ...base, attachments: [{ name: 'a.md', text: 'a' }] }))
+      .toMatchObject({ ok: false, code: 'INVALID_CAPABILITY' });
+    expect(await snapshot({ kind: 'session', sessionId: 's' }, { ...base, attachments: [{ name: '../a.md', text: 'a' }] }))
+      .toMatchObject({ ok: false, code: 'UNSUPPORTED_SOURCE' });
+  }));
+
+  it('passes attachments through launchSquad and reports the mapping', async () => {
+    const mapping = [{ index: 0, given: 'a.md', used: 'a.md' }];
+    const { deps } = makeDeps({ snapshotSources: vi.fn(async () => ({ ok: true as const, attachmentMapping: mapping })) });
+    const onAttachmentMapping = vi.fn();
+    await launchSquad(deps, makeInput({ attachments: [{ name: 'a.md', text: 'a' }] }), {
+      sources: { kind: 'session', sessionId: 's' }, owner: { principalId: 's' }, onAttachmentMapping
+    });
+    expect(deps.snapshotSources).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ attachments: [{ name: 'a.md', text: 'a' }] }));
+    expect(onAttachmentMapping).toHaveBeenCalledWith(mapping);
+  });
 });

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-const h = vi.hoisted(() => ({ thread: null as any, environment: null as any }));
+const h = vi.hoisted(() => ({ thread: null as any, environment: null as any, primary: 'local-host' }));
 vi.mock('@zana-ai/zcc-db', () => ({
   getConversationThread: () => h.thread,
-  getEnvironment: () => h.environment
+  getEnvironment: () => h.environment,
+  getPrimaryHost: () => ({ id: h.primary })
 }));
 import { resolvePreviewPathCandidate, resolveThreadPreviewPath } from './thread-preview-resolution.js';
 
@@ -250,6 +251,36 @@ describe('resolveThreadPreviewPath', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it('resolves absolute Markdown links inside the owning thread storage without a host checkout', async () => {
+    ctx.dataDir = mkdtempSync(join(tmpdir(), 'preview-thread-storage-'));
+    h.thread.environmentId = null;
+    const path = join(ctx.dataDir, 'thread-storage', 'thread-1', 'recording', 'index.html');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '<h1>Recording and results</h1>');
+    await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path }))
+      .resolves.toEqual({ kind: 'resolved', path });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects other threads, sibling prefixes and symlink escapes from thread storage', async () => {
+    ctx.dataDir = mkdtempSync(join(tmpdir(), 'preview-thread-storage-'));
+    const root = join(ctx.dataDir, 'thread-storage', 'thread-1');
+    mkdirSync(root, { recursive: true });
+    const privatePath = join(ctx.dataDir, 'private.html');
+    writeFileSync(privatePath, 'private');
+    symlinkSync(privatePath, join(root, 'escape.html'));
+    for (const path of [
+      join(ctx.dataDir, 'thread-storage', 'thread-2', 'index.html'),
+      join(ctx.dataDir, 'thread-storage', 'thread-1-other', 'index.html')
+    ]) {
+      await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path }))
+        .rejects.toMatchObject({ status: 403, code: 'path-escape' });
+    }
+    await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path: join(root, 'escape.html') }))
+      .rejects.toMatchObject({ status: 404, code: 'path_not_found' });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it('resolves attachments under the product data dir for project-only previews', async () => {
     h.thread = null;
     ctx.toProjects = vi.fn(() => [{ id: 'project-1', path: '/srv/checkouts/project-1', remote: false, hostId: 'linux-host' }]);
@@ -362,5 +393,60 @@ describe('resolveThreadPreviewPath', () => {
     const missingPath = join(dataDir, 'attachments', 'project-1', 'missing.png');
     await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path: missingPath }))
       .rejects.toMatchObject({ status: 404, code: 'path_not_found' });
+  });
+
+  describe('trusted preview folders', () => {
+    let trusted: string;
+    let file: string;
+    beforeEach(() => {
+      trusted = realpathSync(mkdtempSync(join(tmpdir(), 'preview-trusted-')));
+      file = join(trusted, 'notes.md');
+      writeFileSync(file, 'hi');
+      mkdirSync(join(trusted, 'dir'));
+      ctx.dataDir = realpathSync(mkdtempSync(join(tmpdir(), 'preview-trusted-data-')));
+      ctx.config = { getConfig: () => ({ trustedPreviewFolders: [trusted] }) };
+      ctx.toProjects = vi.fn(() => [{ id: 'project-1', path: '/srv/p', remote: false }]);
+      h.thread = { ...h.thread, hostId: 'local-host' };
+    });
+
+    it('resolves an absolute file in a trusted folder for a local thread without a host call', async () => {
+      await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path: file })).resolves.toEqual({ kind: 'resolved', path: file });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it('resolves for a local project-only owner', async () => {
+      h.thread = null;
+      ctx.toProjects = vi.fn(() => [{ id: 'project-1', path: '/srv/p', remote: false }]);
+      await expect(resolveThreadPreviewPath(ctx, 'orphan', { path: file, projectId: 'project-1' }))
+        .resolves.toEqual({ kind: 'resolved', path: file });
+    });
+
+    it('does not apply to remote threads, remote projects, or without configuration', async () => {
+      h.thread = { ...h.thread, hostId: 'linux-host' };
+      rpc.mockRejectedValue({ code: 'path_not_found' });
+      await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path: file })).rejects.toBeDefined();
+      h.thread = { ...h.thread, hostId: 'local-host' };
+      ctx.toProjects = vi.fn(() => [{ id: 'project-1', path: '/srv/p', remote: true }]);
+      await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path: file })).rejects.toBeDefined();
+      ctx.toProjects = vi.fn(() => [{ id: 'project-1', path: '/srv/p', remote: false }]);
+      ctx.config = { getConfig: () => ({}) };
+      await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path: file })).rejects.toBeDefined();
+      h.thread = null;
+      ctx.config = { getConfig: () => ({ trustedPreviewFolders: [trusted] }) };
+      ctx.toProjects = vi.fn(() => [{ id: 'project-1', path: '/srv/p', remote: true }]);
+      await expect(resolveThreadPreviewPath(ctx, 'orphan', { path: file, projectId: 'project-1' }))
+        .rejects.toMatchObject({ code: 'unknown-thread' });
+    });
+
+    it('404s for directories, missing files and symlinks leaving the folder; outside paths fall through to host', async () => {
+      const secret = join(ctx.dataDir, 'secret.md');
+      writeFileSync(secret, 's');
+      symlinkSync(secret, join(trusted, 'leak.md'));
+      for (const path of [join(trusted, 'dir'), join(trusted, 'gone.md'), join(trusted, 'leak.md')]) {
+        await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path })).rejects.toMatchObject({ status: 404, code: 'path_not_found' });
+      }
+      expect(rpc).not.toHaveBeenCalled();
+      await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path: secret })).rejects.toMatchObject({ status: 403 });
+    });
   });
 });

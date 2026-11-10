@@ -42,6 +42,7 @@ Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enable
 - Never use `TINYNOD_SKIP_HOOK` to hide findings. It skips TinyNod only; Zana verification still runs.
 - The full pre-hook skip is a separate permission. If used, list every skipped gate (Zana verification and TinyNod).
 - Never run `tinynod hooks install` or change global `core.hooksPath`; Zana owns `.githooks`.
+- To exercise the pre-push hook or the TinyNod adapter without pushing, follow "Test the hook without pushing" in the guide. Do not read, print, or curl with the TinyNod key; the hook reads its own config.
 
 ## Product Design Rules
 
@@ -61,7 +62,7 @@ Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enable
 
 ## Verification triggers
 
-Triggers: Job Team launch surfaces; thread/CLI Agent lifecycle and configuration (spawn, stop, mode, reasoning, permissions, plugin catalog injection: `PtyManager.create()`, `term.create`, `/api/v1/cli-agents`, `acpMode` / `reasoningLevel` / `permissionMode`, `harnessRouting`, `zcc thread` / `zcc agent`); memory CLI (`contributeInstructions`, `zcc memory`); BrowserView / `zcc browser`; OpenCode discovery; packaged plugin runtime and plugin authoring; Windows title bar overlay (`titleBarOverlay`, `--bg-base` / `--titlebar-h`). Touching any of these requires reading [docs/live-zana-verification.md](docs/live-zana-verification.md) for the exact command before claiming verification.
+Triggers: Job Team launch surfaces; thread/CLI Agent lifecycle and configuration (spawn, stop, mode, reasoning, permissions, plugin catalog injection: `PtyManager.create()`, `term.create`, `/api/v1/cli-agents`, `acpMode` / `reasoningLevel` / `permissionMode`, `harnessRouting`, `zcc thread` / `zcc agent`); memory CLI (`contributeInstructions`, `zcc memory`); BrowserView / `zcc browser`; OpenCode discovery; packaged plugin runtime and plugin authoring; Windows title bar overlay (`titleBarOverlay`, title bar `--bg-base` / `--inset-chrome` / `--titlebar-h`). Touching any of these requires reading [docs/live-zana-verification.md](docs/live-zana-verification.md) for the exact command before claiming verification.
 
 ## Coupling index
 

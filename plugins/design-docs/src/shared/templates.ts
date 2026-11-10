@@ -3,7 +3,8 @@
  * substituted at creation time (escaped in HTML pages). A template opens on
  * its `entryPath`, else on `README.md`.
  */
-import { HTML_DESIGN_INDEX, REPORT_INDEX, REPORT_WEEKLY_CSV } from './site-templates.js';
+import { ISSUE_AGENTS_CONTENT, ISSUE_MD_CONTENT, ISSUE_RESEARCH_MD_CONTENT, PLAN_MD_CONTENT, PRODUCT_AGENTS_CONTENT, RESEARCH_AGENTS_CONTENT, RESEARCH_MD_CONTENT } from './template-docs.js';
+import { HTML_DESIGN_INDEX_CONTENT, REPORT_INDEX_CONTENT, REPORT_WEEKLY_CSV_CONTENT } from './site-templates.js';
 
 export interface DesignDocTemplate {
   id: string;
@@ -13,7 +14,7 @@ export interface DesignDocTemplate {
   entryPath?: string;
 }
 
-const TECHNICAL_README = `# {{title}}
+const TECHNICAL_README_CONTENT = `# {{title}}
 
 > {{summary}}
 
@@ -66,7 +67,7 @@ flowchart LR
 - [ ] …
 `;
 
-const ARCHITECTURE_MMD = `flowchart LR
+const ARCHITECTURE_MMD_CONTENT = `flowchart LR
   user([User]) --> ui[Client]
   ui --> api[Service API]
   api --> db[(Database)]
@@ -74,7 +75,7 @@ const ARCHITECTURE_MMD = `flowchart LR
   queue --> worker[Worker]
 `;
 
-const PRODUCT_README = `# {{title}}
+const PRODUCT_README_CONTENT = `# {{title}}
 
 > {{summary}}
 
@@ -115,7 +116,7 @@ Key flows. A clickable mockup lives in \`mockups/overview.html\`.
 - [ ] …
 `;
 
-const PRODUCT_MOCKUP = `<!doctype html>
+const PRODUCT_MOCKUP_CONTENT = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -139,7 +140,7 @@ const PRODUCT_MOCKUP = `<!doctype html>
 </html>
 `;
 
-const ADR_README = `# {{title}}
+const ADR_README_CONTENT = `# {{title}}
 
 - **Status:** Proposed
 - **Deciders:** …
@@ -169,7 +170,7 @@ We will …
 - …
 `;
 
-const API_README = `# {{title}}
+const API_README_CONTENT = `# {{title}}
 
 > {{summary}}
 
@@ -195,7 +196,7 @@ The full contract lives in \`api/openapi.yaml\`.
 - [ ] …
 `;
 
-const API_OPENAPI = `openapi: 3.1.0
+const API_OPENAPI_CONTENT = `openapi: 3.1.0
 info:
   title: {{title}}
   version: 0.1.0
@@ -214,32 +215,57 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
     label: 'Technical design',
     description: 'RFC-style design: context, goals, proposal, alternatives, rollout.',
     files: [
-      { path: 'README.md', content: TECHNICAL_README },
-      { path: 'diagrams/architecture.mmd', content: ARCHITECTURE_MMD }
+      { path: 'README.md', content: TECHNICAL_README_CONTENT },
+      { path: 'diagrams/architecture.mmd', content: ARCHITECTURE_MMD_CONTENT }
     ]
   },
   {
     id: 'product',
     label: 'Product spec',
-    description: 'Problem, users, metrics, scope, requirements and an HTML mockup.',
+    description: 'Problem, users, metrics, scope, requirements, an HTML mockup and an implementation plan.',
     files: [
-      { path: 'README.md', content: PRODUCT_README },
-      { path: 'mockups/overview.html', content: PRODUCT_MOCKUP }
+      { path: 'README.md', content: PRODUCT_README_CONTENT },
+      { path: 'mockups/overview.html', content: PRODUCT_MOCKUP_CONTENT },
+      { path: 'plan.md', content: PLAN_MD_CONTENT },
+      { path: 'AGENTS.md', content: PRODUCT_AGENTS_CONTENT }
     ]
   },
   {
     id: 'adr',
     label: 'Decision record',
     description: 'A single architectural decision with options and consequences.',
-    files: [{ path: 'README.md', content: ADR_README }]
+    files: [{ path: 'README.md', content: ADR_README_CONTENT }]
+  },
+  {
+    id: 'research',
+    label: 'Research',
+    description: 'Evidence-led investigation with a recommendation, and a plan for what follows.',
+    entryPath: 'research.md',
+    files: [
+      { path: 'research.md', content: RESEARCH_MD_CONTENT },
+      { path: 'plan.md', content: PLAN_MD_CONTENT },
+      { path: 'AGENTS.md', content: RESEARCH_AGENTS_CONTENT }
+    ]
+  },
+  {
+    id: 'issue',
+    label: 'Issue',
+    description: 'Problem, impact, evidence, root cause and resolution, with optional research and a fix plan.',
+    entryPath: 'issue.md',
+    files: [
+      { path: 'issue.md', content: ISSUE_MD_CONTENT },
+      { path: 'research.md', content: ISSUE_RESEARCH_MD_CONTENT },
+      { path: 'plan.md', content: PLAN_MD_CONTENT },
+      { path: 'AGENTS.md', content: ISSUE_AGENTS_CONTENT }
+    ]
   },
   {
     id: 'api',
     label: 'API design',
     description: 'Resources, auth, errors and an OpenAPI contract.',
     files: [
-      { path: 'README.md', content: API_README },
-      { path: 'api/openapi.yaml', content: API_OPENAPI }
+      { path: 'README.md', content: API_README_CONTENT },
+      { path: 'api/openapi.yaml', content: API_OPENAPI_CONTENT }
     ]
   },
   {
@@ -248,8 +274,8 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
     description: 'A one-page site: KPIs, charts from CSV, a sortable table. Publishes to GitHub Pages.',
     entryPath: 'index.html',
     files: [
-      { path: 'index.html', content: REPORT_INDEX },
-      { path: 'data/weekly.csv', content: REPORT_WEEKLY_CSV }
+      { path: 'index.html', content: REPORT_INDEX_CONTENT },
+      { path: 'data/weekly.csv', content: REPORT_WEEKLY_CSV_CONTENT }
     ]
   },
   {
@@ -257,7 +283,7 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
     label: 'HTML design doc',
     description: 'A technical design as a web page with section nav. Publishes to GitHub Pages.',
     entryPath: 'index.html',
-    files: [{ path: 'index.html', content: HTML_DESIGN_INDEX }]
+    files: [{ path: 'index.html', content: HTML_DESIGN_INDEX_CONTENT }]
   },
   {
     id: 'blank',

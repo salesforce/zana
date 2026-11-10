@@ -111,6 +111,15 @@ describe('format', () => {
     expect(formatBundle(doc, files, { now: 0 })).not.toContain('omitted');
   });
 
+  it('points at AGENTS.md in the manifest and puts it before the entry file', () => {
+    const files = [file('README.md', 'entry'), file('AGENTS.md', 'rules')];
+    const withRules = { ...doc, files } as DesignDocDetail;
+    expect(formatManifest(withRules, { now: 0 })).toContain('agent instructions: AGENTS.md — read it before editing');
+    expect(formatManifest({ ...doc, files: [files[0]!] } as DesignDocDetail, { now: 0 })).not.toContain('agent instructions');
+    const bundle = formatBundle(withRules, files, { now: 0 });
+    expect(bundle.indexOf('path="AGENTS.md"')).toBeLessThan(bundle.indexOf('path="README.md"'));
+  });
+
   it('formats history and truncates', () => {
     expect(formatHistory([])).toBe('No history.');
     expect(

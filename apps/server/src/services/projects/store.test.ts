@@ -55,6 +55,19 @@ describe('scratchWorkspaceRoot', () => {
 });
 
 describe('config — boolean feature flags round-trip through setConfig', () => {
+  it('keeps validated model tier rules and drops unknown tiers, non-strings and oversized rules', () => {
+    const out = normalizeConfig({
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTierRules: {
+        medium: [' terra ', '', 7, 'x'.repeat(129), ...Array(9).fill('a')],
+        bogus: ['nope'], low: 'luna'
+      } } } }
+    } as never);
+    const rules = out.harnessRouting?.byAdapter.opencode?.modelTierRules as Record<string, string[]>;
+    expect(rules.medium).toEqual(['terra', ...Array(7).fill('a')]);
+    expect(rules).not.toHaveProperty('bogus');
+    expect(rules).not.toHaveProperty('low');
+  });
+
   // Regression guard: normalizeConfig is a strict allow-list, so every boolean
   // flag must be enumerated there or setConfig silently drops it on save. This
   // bit idleTriageEnabled / agentSelfCloseEnabled — assert each survives a
@@ -78,6 +91,7 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'inboxGuidanceEnabled',
     'voiceInputEnabled',
     'menubarPopoverEnabled',
+    'companionEnabled',
     'trustZccToolsEnabled',
     'remoteMcpEnabled',
     'steerActiveThreadOnEnter',
@@ -173,6 +187,18 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     expect(store.getConfig().menubarPopoverEnabled).toBe(true);
     store.setConfig({ menubarPopoverEnabled: false });
     expect(store.getConfig().menubarPopoverEnabled).toBe(false);
+  });
+
+  it('persists a normalized companionPlacement and drops invalid ones', () => {
+    expect(store.getConfig().companionPlacement).toBeUndefined();
+    store.setConfig({ companionPlacement: { edge: 'left', displayId: 7.2, offsetY: 120.6 } });
+    expect(store.getConfig().companionPlacement).toEqual({ edge: 'left', displayId: 7, offsetY: 121 });
+    store.setConfig({ companionPlacement: { edge: 'right', offsetY: -40 } });
+    expect(store.getConfig().companionPlacement).toEqual({ edge: 'right', offsetY: 0 });
+    store.setConfig({
+      companionPlacement: { edge: 'top', offsetY: 10 } as unknown as { edge: 'left' }
+    });
+    expect(store.getConfig().companionPlacement).toBeUndefined();
   });
 
   // Trust all ZCC tools is ON by default for every install (fresh or updated) —
@@ -450,6 +476,18 @@ describe('config — voiceModel / voiceLanguage normalization', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     store.setConfig({ voiceLanguage: true as any });
     expect(store.getConfig().voiceLanguage).toBe('en');
+  });
+});
+
+describe('config — trustedPreviewFolders load sanitization', () => {
+  it('keeps clean absolute folders, drops junk, and ignores a non-array value', () => {
+    store.setConfig({ trustedPreviewFolders: ['/ok/one', '', 5, 'relative/path'] as never });
+    const kept = store.getConfig().trustedPreviewFolders ?? [];
+    expect(kept).toContain('/ok/one');
+    expect(kept).not.toContain('relative/path');
+    expect(kept).not.toContain('');
+    store.setConfig({ trustedPreviewFolders: 'nope' as never });
+    expect(Array.isArray(store.getConfig().trustedPreviewFolders ?? [])).toBe(true);
   });
 });
 

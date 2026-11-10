@@ -720,10 +720,26 @@ export interface PluginComposerThreadRowStatus {
   tone?: 'default' | 'running' | 'success' | 'error';
 }
 
+/** Status only: no prompts, tool arguments, output, or success claims. */
+export interface PluginAgentActivity {
+  id: string;
+  kind: 'thread' | 'cli';
+  state: 'working' | 'idle' | 'needs-you' | 'unknown';
+}
+
+export interface PluginAgentActivitySnapshot {
+  ready: boolean;
+  agents: readonly PluginAgentActivity[];
+}
+
 export interface PluginContentScriptContext {
   readonly pluginId: string;
   readonly generation: number;
   readonly signal: AbortSignal;
+  /** Initial snapshot then changes. Main shell only; scoped windows receive no agents. Unsubscribe on disposal. */
+  readonly experimental_observeAgents?: (listener: (snapshot: PluginAgentActivitySnapshot) => void) => () => void;
+  /** This plugin's realtime channel. Unsubscribe on disposal. */
+  readonly experimental_onSignal?: (channel: string, listener: (payload: unknown) => void) => () => void;
   readonly experimental_setThreadRowStatus?: (
     threadId: string,
     status: PluginComposerThreadRowStatus | null
@@ -765,7 +781,18 @@ export interface PluginBrowserToolbarActionProps {
 export interface PluginBrowserToolbarActionRegistration extends PluginSlotBase {
  title:string; component:ComponentType<PluginBrowserToolbarActionProps>;
 }
+/** A provider owns its controls and policy. The host mounts only the selected,
+ * enabled provider and aborts it on disable, switch, reload or uninstall.
+ * Do not also register its audio player as a general content script. */
+export interface PluginNotificationSoundProviderRegistration extends PluginSlotBase {
+  title: string;
+  description?: string;
+  component: ComponentType<{ pluginId: string }>;
+  mount: PluginContentScriptRegistration['mount'];
+}
+
 export interface PluginAppSlots {
+  notificationSoundProvider(registration: Omit<PluginNotificationSoundProviderRegistration, 'generation' | 'pluginId'>): void;
   experimental_browserToolbarAction(registration:Omit<PluginBrowserToolbarActionRegistration,'generation'|'pluginId'>):void;
   navPanel(registration: Omit<PluginNavPanelRegistration, 'generation' | 'pluginId'>): void;
   settingsSection(registration: Omit<PluginSettingsSectionRegistration, 'generation' | 'pluginId'>): void;
@@ -830,6 +857,7 @@ export interface PluginRegistrationSet {
   generation: number;
   navPanels: PluginNavPanelRegistration[];
   settingsSections: PluginSettingsSectionRegistration[];
+  notificationSoundProviders: PluginNotificationSoundProviderRegistration[];
   homepageSections: PluginHomepageSectionRegistration[];
   projectTabs: PluginProjectTabRegistration[];
   projectMenuActions: PluginProjectMenuActionRegistration[];
@@ -1183,6 +1211,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     generation,
     navPanels: [],
     settingsSections: [],
+    notificationSoundProviders: [],
     homepageSections: [],
     projectTabs: [],
     projectMenuActions: [],
@@ -1302,6 +1331,7 @@ export function collectPluginApp(
   const seen = {
     homepageSection: new Set<string>(),
     settingsSection: new Set<string>(),
+    notificationSoundProvider: new Set<string>(),
     navPanel: new Set<string>(),
     projectTab: new Set<string>(),
     projectMenuAction: new Set<string>(),
@@ -1341,6 +1371,19 @@ export function collectPluginApp(
             component: requireComponent(kind, 'component', registration.component)
           })
         );
+      },
+      notificationSoundProvider: (registration) => {
+        const kind = 'slots.notificationSoundProvider';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.notificationSoundProvider, id);
+        if (typeof registration.mount !== 'function') throw new Error(`${kind}: "mount" must be a function`);
+        set.notificationSoundProviders.push(stamp({
+          id,
+          title: requireNonEmptyString(kind, 'title', registration.title),
+          description: requireOptionalString(kind, 'description', registration.description),
+          component: requireComponent(kind, 'component', registration.component),
+          mount: registration.mount
+        }));
       },
       settingsSection: (registration) => {
         const kind = 'slots.settingsSection';

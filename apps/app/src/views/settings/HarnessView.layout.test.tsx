@@ -7,7 +7,10 @@ import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapt
 import { HarnessView } from './HarnessView.js';
 import { resetThreadModelCatalog } from '../../components/thread/pickers/thread-model-catalog.js';
 
+vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: (props: unknown) => { state.registeredProps = props; return null; } }));
+
 const state = vi.hoisted(() => ({
+  registeredProps: null as any,
   rows: [] as HarnessVerifyResult[],
   refresh: vi.fn(async () => undefined),
   anchor: null as string | null,
@@ -61,6 +64,14 @@ function View({ initial = {} as AppConfig, update = vi.fn(async () => undefined)
 }
 
 describe('Harness setup layout', () => {
+  it('refreshes installation evidence from the registered harness center', async () => {
+    render(<View />);
+    await waitFor(() => expect(state.registeredProps.hostId).toBe('local'));
+    await act(async () => state.registeredProps.onRefreshStatus());
+    expect(state.refresh).toHaveBeenCalledWith({ refreshModels: false });
+    await waitFor(() => expect(state.registeredProps.checkingStatus).toBe(false));
+  });
+
   it('lists installed harnesses alphabetically by label regardless of probe order', async () => {
     state.rows = [
       { family: 'pi', label: 'Pi', installed: false, alwaysEnabled: false, enabled: false, binary: 'pi', installHint: 'install' },

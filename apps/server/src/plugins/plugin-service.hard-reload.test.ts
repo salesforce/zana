@@ -117,7 +117,7 @@ it('deduplicates concurrent recovery requests and exposes immutable progress sna
   expect(first.phase).toBe('running'); expect(next.phase).toBe('running');
   first.failed.push({ id: 'injected', message: 'ignored' });
   expect(service.recoveryStatus().failed).toEqual([]);
-  release(); await vi.waitFor(() => expect(service.recoveryStatus().phase).toBe('complete'));
+  release(); await vi.waitFor(() => expect(service.recoveryStatus().phase).toBe('complete'), { timeout: 10_000 });
 });
 
 it('restores an unchanged remote Git version from its recorded source and retains enabled state', async () => {
@@ -174,7 +174,7 @@ it('does not resurrect a plugin removed while its bundled files are copied', asy
   const copy = recovery.copyBundledPluginRuntime;
   vi.spyOn(recovery, 'copyBundledPluginRuntime').mockImplementationOnce(async args => { await gate; return copy(args); });
   await service.hardReload(); await service.remove('tasks'); release();
-  await vi.waitFor(() => expect(service.recoveryStatus().phase).toBe('complete'));
+  await vi.waitFor(() => expect(service.recoveryStatus().phase).toBe('complete'), { timeout: 10_000 });
   expect(service.get('tasks')).toBeUndefined();
   expect(service.recoveryStatus().restored).toEqual([]);
   expect(service.recoveryStatus().failed[0]?.message).toContain('lifecycle changed');

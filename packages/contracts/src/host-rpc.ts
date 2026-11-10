@@ -407,7 +407,9 @@ export const ThreadStartCommandSchema = z.object({
   instructions: z.string().max(100_000).optional(),
   providerCheckpointId: z.string().min(1).max(200).optional(),
   /** Main-authorized automated catalog selection. Absence keeps interactive behavior. */
-  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional(),
+  /** Main-authorized user/plugin skill names (allowlist entries matching no catalog id). Never renderer input. */
+  allowedSkillNames: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -458,7 +460,9 @@ export const ThreadResumeFieldsSchema = z.object({
   /** Carries unattended-session admission to a restored provider session. */
   sessionKind: z.literal('automated').optional(),
   providerCheckpointId: z.string().min(1).max(200).optional(),
-  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional(),
+  /** Main-authorized user/plugin skill names (allowlist entries matching no catalog id). Never renderer input. */
+  allowedSkillNames: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
@@ -505,7 +509,9 @@ export const ThreadRewindPrepareCommandSchema = z.object({
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
-  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional(),
+  /** Main-authorized user/plugin skill names (allowlist entries matching no catalog id). Never renderer input. */
+  allowedSkillNames: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 
 export const ThreadRewindDiscardCommandSchema = z.object({

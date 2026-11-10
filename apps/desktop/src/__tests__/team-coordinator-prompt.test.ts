@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Team, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
-import { boundedWorkUnitDigest, jobCoordinatorPrompt } from '../team-coordinator-prompt.js';
+import { boundedWorkUnitDigest, jobCoordinatorPrompt, rosterWithTiers, type RosterEntry } from '../team-coordinator-prompt.js';
 
 const team: Team = {
   id: 'builtin:squad',
@@ -91,6 +91,11 @@ describe('jobCoordinatorPrompt — Flow B/C file handoff (sandbox-immune)', () =
     // No source-READ instruction (the deny line still names the tool).
     expect(prompt).not.toContain('read that file with your file-read tool');
     expect(prompt).not.toContain('bounded `execution.source.read`');
+  });
+
+  it('names the only valid Execution class values so an inferred plan is not rejected for "research"', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false, planFilePath: '.zana/execution-plan-exec-1.md' });
+    expect(prompt).toContain('Execution class (exactly Routine, Standard, or Expert; no other value)');
   });
 
   it('without a plan file path: falls back to the legacy MCP-register instruction', () => {
@@ -293,5 +298,39 @@ describe('jobCoordinatorPrompt — provided plan awaiting correction review (squ
   it('a pending flag on a ready plan keeps the host-managed arm', () => {
     const ready = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: true, workUnits: units, planFilePath, planCorrectionPending: true });
     expect(ready).toContain('Kickoff is host-managed');
+  });
+});
+
+describe('jobCoordinatorPrompt - tier roster (advisory)', () => {
+  const tiered: RosterEntry[] = [
+    { sessionId: 's-1', slotId: '0:low:0', label: 'Light', tier: 'low' },
+    { slotId: '1:high:0', label: 'Heavy', tier: 'high', startsWhenNeeded: true }
+  ];
+  const render = (roster: RosterEntry[]) => jobCoordinatorPrompt({ team, executionId: 'e', job: baseJob, roster, planReady: false });
+
+  it('lists running and waiting seats with their tier and states the lowest-sufficient-class rule', () => {
+    const text = render(tiered);
+    expect(text).toContain('Worker tiers (cheaper tiers cost less per unit; tiering is advisory):\n- Light, slot `0:low:0`: low (running)\n- Heavy, slot `1:high:0`: high (starts when needed)');
+    expect(text).toContain('lowest sufficient Execution class (Routine, Standard, or Expert)');
+    expect(text.slice(text.indexOf('Worker tiers'), text.indexOf('Kickoff'))).toMatchInlineSnapshot(`
+      "Worker tiers (cheaper tiers cost less per unit; tiering is advisory):
+      - Light, slot \`0:low:0\`: low (running)
+      - Heavy, slot \`1:high:0\`: high (starts when needed)
+      Give each work unit the lowest sufficient Execution class (Routine, Standard, or Expert) and, where you set \`routing.minimumLevel\`, the lowest tier that can do the work. Reserve higher tiers for ambiguous, high-risk, or adjudicative units.
+
+      "
+    `);
+  });
+
+  it('is byte-identical to the untiered prompt when no seat has a tier', () => {
+    const plain: RosterEntry[] = [{ sessionId: 's-1', slotId: '0:low:0', label: 'Light' }];
+    expect(render(plain)).not.toContain('Worker tiers');
+    expect(render(plain)).toBe(render(plain.map((entry) => ({ ...entry }))));
+  });
+
+  it('rosterWithTiers attaches known levels by slot id and leaves others untouched', () => {
+    const out = rosterWithTiers([{ sessionId: 's', slotId: 'a', label: 'A' }, { slotId: 'b', label: 'B', startsWhenNeeded: true }], [{ slotId: 'a', level: 'medium' }, { slotId: 'b' }]);
+    expect(out).toEqual([{ sessionId: 's', slotId: 'a', label: 'A', tier: 'medium' }, { slotId: 'b', label: 'B', startsWhenNeeded: true }]);
+    expect(rosterWithTiers([{ slotId: 'a', label: 'A', startsWhenNeeded: true }], undefined)).toEqual([{ slotId: 'a', label: 'A', startsWhenNeeded: true }]);
   });
 });

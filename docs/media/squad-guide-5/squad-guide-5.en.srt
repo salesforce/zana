@@ -1,0 +1,43 @@
+1
+00:00:00,600 --> 00:00:02,831
+Start a Squad from a conversation.
+
+2
+00:00:03,400 --> 00:00:05,026
+Ask an agent to prepare it.
+
+3
+00:00:05,800 --> 00:00:07,497
+Review it, or run it now.
+
+4
+00:00:10,803 --> 00:00:16,804
+Any agent can start a Squad for you. Ask it to do the work with a Squad, and point it at your plan.
+
+5
+00:00:17,104 --> 00:00:22,288
+The agent checks the plan, then prepares a launch. It does not start anything.
+
+6
+00:00:23,204 --> 00:00:33,311
+The prepared launch arrives as a Squad launch ready card in your Inbox. It names the Squad, the planning mode and the files. Nothing starts until you press Launch.
+
+7
+00:00:33,943 --> 00:00:40,149
+Review Squad launch opens the composer, already filled in. Check it, then press Launch.
+
+8
+00:00:42,715 --> 00:00:51,615
+The Squad runs, and its details show the conversation it started from. When it needs an answer, a Squad report goes back to that conversation.
+
+9
+00:00:51,918 --> 00:00:59,169
+To skip the Inbox, ask the agent to run it now. The Squad starts straight away, with no card to approve.
+
+10
+00:00:59,799 --> 00:01:05,433
+Run now suits a plan you trust. Otherwise, the Inbox card keeps you in control.
+
+11
+00:01:06,433 --> 00:01:09,888
+Next: attach files and run in the right place.

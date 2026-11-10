@@ -91,50 +91,51 @@ function govern(peer: ReturnType<typeof fixture>, roster: ReturnType<typeof mana
 }
 
 describe('durable independent-store payload replication', () => {
-  it.each(['self', 'sender', 'digest', 'identity', 'scope', 'grant', 'cancelled'] as const)(
-    'suppresses post-commit data ACK after %s changes without rolling back committed state', async (reason) => {
-      for (const method of ['offer', 'transfer', 'chunk', 'apply', 'missing', 'cancel', 'manual', 'manual-deliver'] as const) {
-        const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
-        const root = managedRoot(), left = transferSeat(root, 'replica-a', 'replica-b', 'left');
-        govern(a, left); govern(b, left);
-        const doc = a.store.create({ title: 'Post-commit ACK', status: 'approved', template: 'blank' }, user);
-        const intent = a.sync.readyIntents('repo')[0]!, transfer = a.service.createTransfer(intent, 1);
-        if (['chunk', 'apply', 'missing', 'cancel'].includes(method)) await b.service.receiveTransfer('transfer', 'machine-a', transfer, fence());
-        if (method === 'apply') for (const blob of transfer.blobs) for (let index = 0; index < Math.ceil(blob.bytes / MAX_PEER_CHUNK_BYTES); index++) {
-          await b.service.receiveTransfer('chunk', 'machine-a', a.sync.outgoingChunk(transfer, blob.hash, index), fence());
-        }
-        if (method.startsWith('manual')) b.sync.prepareManual();
-        const handlers = new Map<string, (request: PluginPeerRequest) => unknown | Promise<unknown>>();
-        b.service.register({ sdk: { peers: { list: async () => [], handle: (name: string, handler: (request: PluginPeerRequest) => unknown | Promise<unknown>) => handlers.set(name, handler) } },
-          onDispose: (dispose: () => void) => cleanup.push(dispose) } as unknown as ZccPluginApi);
-        const query = transferQuery(transfer), { sessionId: _session, scopeHash: _scope, ...routing } = query;
-        const input = method === 'offer' ? a.service.createOffer(intent) : method === 'transfer' ? transfer : method === 'chunk' ?
-          a.sync.outgoingChunk(transfer, transfer.blobs.find((blob) => blob.bytes > 0)!.hash, 0) : method.startsWith('manual') ?
-          { ...routing, manualId: 'post-commit-manual', heads: transfer.heads } : query;
-        let committed!: () => void, release!: () => void;
-        const didCommit = new Promise<void>((resolve) => { committed = resolve; });
-        const gate = new Promise<void>((resolve) => { release = resolve; }), controller = new AbortController();
-        const request: PluginPeerRequest = { peerId: 'machine-a', body: input, ...fence(), signal: controller.signal,
-          commitSync: async (fn) => { const result = fn(); committed(); await gate; return result; } };
-        const pending = handlers.get(method)!(request);
-        await didCommit;
-        const tables = ['sync_transfers', 'sync_transfer_chunks', 'sync_manual_sessions', 'sync_checkpoints'];
-        const retained = tables.map((table) => b.db.prepare(`SELECT * FROM ${table}`).all());
-        if (reason === 'self' || reason === 'sender') govern(b, requestRetirement(left, 'replica-a', reason === 'self' ? 'replica-b' : 'replica-a'));
-        if (reason === 'digest') govern(b, transferSeat(root, 'replica-b', 'replica-a', 'right'));
-        if (reason === 'identity') b.db.prepare("UPDATE sync_group_members SET machine_id = 'replacement' WHERE replica_id = 'replica-a'").run();
-        if (reason === 'scope') request.scope = 'other';
-        if (reason === 'grant') request.grantEpoch++;
-        if (reason === 'cancelled') controller.abort();
-        const rejected = expect(pending).rejects.toThrow(reason === 'self' ? 'retiring' : reason === 'sender' || reason === 'identity' ? 'not a roster member' : reason === 'scope' ? 'fence' : reason === 'cancelled' ? 'cancelled' : 'authorization');
-        release(); await rejected;
-        expect(tables.map((table) => b.db.prepare(`SELECT * FROM ${table}`).all())).toEqual(retained);
-        if (method === 'offer' || method === 'apply') {
-          expect(b.store.find(doc.id)).not.toBeNull();
-          expect(b.sync.head('repo', doc.id)).toBe(intent.frozenHead);
-          expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_checkpoints').get()).toEqual({ n: 1 });
-          expect(b.changed).toHaveBeenCalledWith(doc.id);
-        }
+  const postCommitCases = (['self', 'sender', 'digest', 'identity', 'scope', 'grant', 'cancelled'] as const).flatMap(reason =>
+    (['offer', 'transfer', 'chunk', 'apply', 'missing', 'cancel', 'manual', 'manual-deliver'] as const).map(method => ({ reason, method })));
+  // Give each durable scenario its own timeout and release its file-backed DBs immediately.
+  it.each(postCommitCases)(
+    'suppresses post-commit $method ACK after $reason changes without rolling back committed state', async ({ reason, method }) => {
+      const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+      const root = managedRoot(), left = transferSeat(root, 'replica-a', 'replica-b', 'left');
+      govern(a, left); govern(b, left);
+      const doc = a.store.create({ title: 'Post-commit ACK', status: 'approved', template: 'blank' }, user);
+      const intent = a.sync.readyIntents('repo')[0]!, transfer = a.service.createTransfer(intent, 1);
+      if (['chunk', 'apply', 'missing', 'cancel'].includes(method)) await b.service.receiveTransfer('transfer', 'machine-a', transfer, fence());
+      if (method === 'apply') for (const blob of transfer.blobs) for (let index = 0; index < Math.ceil(blob.bytes / MAX_PEER_CHUNK_BYTES); index++) {
+        await b.service.receiveTransfer('chunk', 'machine-a', a.sync.outgoingChunk(transfer, blob.hash, index), fence());
+      }
+      if (method.startsWith('manual')) b.sync.prepareManual();
+      const handlers = new Map<string, (request: PluginPeerRequest) => unknown | Promise<unknown>>();
+      b.service.register({ sdk: { peers: { list: async () => [], handle: (name: string, handler: (request: PluginPeerRequest) => unknown | Promise<unknown>) => handlers.set(name, handler) } },
+        onDispose: (dispose: () => void) => cleanup.push(dispose) } as unknown as ZccPluginApi);
+      const query = transferQuery(transfer), { sessionId: _session, scopeHash: _scope, ...routing } = query;
+      const input = method === 'offer' ? a.service.createOffer(intent) : method === 'transfer' ? transfer : method === 'chunk' ?
+        a.sync.outgoingChunk(transfer, transfer.blobs.find((blob) => blob.bytes > 0)!.hash, 0) : method.startsWith('manual') ?
+        { ...routing, manualId: 'post-commit-manual', heads: transfer.heads } : query;
+      let committed!: () => void, release!: () => void;
+      const didCommit = new Promise<void>((resolve) => { committed = resolve; });
+      const gate = new Promise<void>((resolve) => { release = resolve; }), controller = new AbortController();
+      const request: PluginPeerRequest = { peerId: 'machine-a', body: input, ...fence(), signal: controller.signal,
+        commitSync: async (fn) => { const result = fn(); committed(); await gate; return result; } };
+      const pending = handlers.get(method)!(request);
+      await didCommit;
+      const tables = ['sync_transfers', 'sync_transfer_chunks', 'sync_manual_sessions', 'sync_checkpoints'];
+      const retained = tables.map((table) => b.db.prepare(`SELECT * FROM ${table}`).all());
+      if (reason === 'self' || reason === 'sender') govern(b, requestRetirement(left, 'replica-a', reason === 'self' ? 'replica-b' : 'replica-a'));
+      if (reason === 'digest') govern(b, transferSeat(root, 'replica-b', 'replica-a', 'right'));
+      if (reason === 'identity') b.db.prepare("UPDATE sync_group_members SET machine_id = 'replacement' WHERE replica_id = 'replica-a'").run();
+      if (reason === 'scope') request.scope = 'other';
+      if (reason === 'grant') request.grantEpoch++;
+      if (reason === 'cancelled') controller.abort();
+      const rejected = expect(pending).rejects.toThrow(reason === 'self' ? 'retiring' : reason === 'sender' || reason === 'identity' ? 'not a roster member' : reason === 'scope' ? 'fence' : reason === 'cancelled' ? 'cancelled' : 'authorization');
+      release(); await rejected;
+      expect(tables.map((table) => b.db.prepare(`SELECT * FROM ${table}`).all())).toEqual(retained);
+      if (method === 'offer' || method === 'apply') {
+        expect(b.store.find(doc.id)).not.toBeNull();
+        expect(b.sync.head('repo', doc.id)).toBe(intent.frozenHead);
+        expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_checkpoints').get()).toEqual({ n: 1 });
+        expect(b.changed).toHaveBeenCalledWith(doc.id);
       }
     });
 

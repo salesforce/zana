@@ -7,6 +7,17 @@
  * hidden or empty segments, and a bounded length/depth.
  */
 
+/**
+ * Optional file at a doc's root with instructions for agents working on that doc.
+ * Agents are pointed at it; it is never published, rendered into pages or exported as site content.
+ */
+export const AGENT_INSTRUCTIONS_PATH = 'AGENTS.md';
+
+/** Paths compare case-insensitively inside a doc, so `agents.md` is the instructions file too. */
+export function isAgentInstructionsPath(path: string): boolean {
+  return path.toLowerCase() === AGENT_INSTRUCTIONS_PATH.toLowerCase();
+}
+
 export const MAX_PATH_LENGTH = 160;
 export const MAX_PATH_DEPTH = 10;
 

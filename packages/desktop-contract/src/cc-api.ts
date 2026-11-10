@@ -100,6 +100,13 @@ import type {
   McpServerEntry,
   MenubarReplyResult,
   MenubarSnapshot,
+  CompanionAnswerResult,
+  CompanionOpenTarget,
+  CompanionPanelKind,
+  CompanionPanelState,
+  CompanionSnapshot,
+  CompanionTooltip,
+  CompanionTooltipView,
   OpenCodeProjectSettings,
   OpenCodeSessionSummary,
   OpenCodeSettingsResult,
@@ -1119,6 +1126,10 @@ export interface CcApi {
   config: {
     get(): Promise<AppConfig>;
     set(patch: Partial<AppConfig>): Promise<AppConfig>;
+    /** Opens the native folder chooser and trusts the picked folder for read-only preview. `config` is null when cancelled or refused; `error` explains a refusal (for example the 20-folder cap). */
+    addTrustedPreviewFolder(): Promise<{ config: AppConfig | null; error?: string }>;
+    /** Stops trusting one stored folder. Never deletes files. */
+    removeTrustedPreviewFolder(path: string): Promise<AppConfig>;
     /** Fires in EVERY window after any `config:set`, carrying the full new
      *  config, so each window re-applies its mirrored feature flags live. */
     onChanged(cb: (config: AppConfig) => void): () => void;
@@ -1313,6 +1324,10 @@ export interface CcApi {
     }>;
   };
   app: {
+    previewAgentSound?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<void>;
+    getAgentSoundFiles?(): Promise<import('@zana-ai/zcc-domain/product').AgentSoundFilesSelection>;
+    chooseAgentSoundFile?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<{ name: string } | null>;
+    clearAgentSoundFile?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<void>;
     performance(): Promise<import('./performance.js').RuntimePerformanceSnapshot | null>;
     onMenuEvent(cb: (event: string) => void): () => void;
     homedir(): Promise<string>;
@@ -1391,6 +1406,39 @@ export interface CcApi {
     hide(): Promise<void>;
     /** Quit the whole app (footer power button). */
     quit(): Promise<void>;
+  };
+  /**
+   * Command Center companion surface (rail + quick panel windows). Thin view:
+   * main pushes snapshots and panel state; every action routes through a
+   * main-authorized verb (Rule 1).
+   */
+  companion: {
+    request(): Promise<CompanionSnapshot | null>;
+    onSnapshot(cb: (snapshot: CompanionSnapshot) => void): () => void;
+    /** Hide the main window(s) behind the rail ("Minimize to Command Center"). */
+    enter(): Promise<boolean>;
+    /** Close the rail and bring the main window back. */
+    exit(): Promise<void>;
+    /** Rail → open (or switch) the quick panel beside it. */
+    openPanel(kind: CompanionPanelKind, focusRequestId?: string): Promise<void>;
+    closePanel(): Promise<void>;
+    /** Panel window → current panel state (seed on mount). */
+    panelState(): Promise<CompanionPanelState | null>;
+    onPanel(cb: (state: CompanionPanelState) => void): () => void;
+    onPanelClosed(cb: () => void): () => void;
+    /** Rail hover → float a small name/status tooltip (null hides it). */
+    tooltip(tip: CompanionTooltip | null): Promise<void>;
+    /** Tooltip window only: the tooltip to draw (null = hide). */
+    onTooltip(cb: (tip: CompanionTooltipView | null) => void): () => void;
+    /** Tooltip window only: the tooltip showing right now (seeds it on mount). */
+    tooltipState(): Promise<CompanionTooltipView | null>;
+    dragStart(): Promise<void>;
+    dragEnd(): Promise<void>;
+    /** Answer a Needs You request; main injects it into the agent's terminal. */
+    answer(requestId: string, text: string): Promise<CompanionAnswerResult>;
+    /** Bring the main window forward on a deep-link target. */
+    open(target: CompanionOpenTarget): Promise<void>;
+    runSchedule(taskId: string): Promise<boolean>;
   };
   /** Multi-window control surface (project, plugin view and thread view windows). */
   windows: {
@@ -2237,7 +2285,7 @@ export interface CcApi {
  * loopback HTTP. Window bounds, native menu, tray, updater, notifications —
  * not projects, terminals, inbox, or config.
  */
-export type ZccDesktopApi = Pick<CcApi, 'app' | 'windows' | 'updates' | 'menubar'>;
+export type ZccDesktopApi = Pick<CcApi, 'app' | 'windows' | 'updates' | 'menubar' | 'companion'>;
 
 declare global {
   interface Window {

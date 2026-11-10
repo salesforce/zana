@@ -198,12 +198,41 @@ describe('trusted Modern member runtime', () => {
     await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds }));
   });
 
+  it('applies the member reasoning level to the persisted thread and the provider start request (#584)', async () => {
+    const request = { ...member, reasoningLevel: 'high' as const };
+    await createSquadMemberConversation(ctx, request);
+    await activateSquadMemberConversation(ctx, request);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ reasoningLevel: 'high' }));
+  });
+
+  it('starts a member with no reasoning level when none is requested (#584)', async () => {
+    await createSquadMemberConversation(ctx, member);
+    await activateSquadMemberConversation(ctx, member);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toBeDefined());
+    expect(commands.find(command => command.type === 'thread.start')).not.toHaveProperty('reasoningLevel', 'high');
+  });
+
   it('persists the squad execution id for a member', async () => {
     const executionId = '44444444-4444-4444-8444-444444444444';
     await createSquadMemberConversation(ctx, { ...member, executionId });
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({
       squadExecution: executionId
     });
+  });
+
+  it('persists allowedSkillNames (including empty) and omits the key when unset', async () => {
+    await createSquadMemberConversation(ctx, { ...member, allowedSkillNames: ['ext:fmt'] });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ allowedSkillNames: ['ext:fmt'] });
+  });
+
+  it('keeps an empty allowedSkillNames list as restricted metadata', async () => {
+    await createSquadMemberConversation(ctx, { ...member, allowedSkillNames: [] });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ allowedSkillNames: [] });
+  });
+
+  it('does not persist allowedSkillNames when unrestricted', async () => {
+    await createSquadMemberConversation(ctx, member);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).not.toHaveProperty('allowedSkillNames');
   });
 
   it('persists and sends an empty automated skill selection by default', async () => {

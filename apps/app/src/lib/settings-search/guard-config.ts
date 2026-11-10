@@ -19,13 +19,13 @@ export const SETTINGS_SOURCE_DIRS = ['views/settings', 'components/settings'] as
  * A literal found in one of these files must appear in that section's entries.
  */
 export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
-  global: ['views/settings/GlobalView.tsx', 'views/settings/CliSkillsSettings.tsx', 'components/settings/DoctorSection.tsx'],
+  global: ['views/settings/GlobalView.tsx', 'views/settings/CliSkillsSettings.tsx', 'components/settings/DoctorSection.tsx', 'views/settings/TrustedPreviewFoldersSection.tsx'],
   composer: ['views/settings/ComposerSettingsView.tsx'],
   keyboard: ['views/settings/KeyboardSettingsSection.tsx'],
   inbox: ['views/settings/InboxSettingsView.tsx'],
   browser: ['components/settings/BrowserSettingsSection.tsx', 'components/settings/BrowserImportDialog.tsx'],
   terminal: ['views/settings/TerminalSettingsView.tsx'],
-  harness: ['views/settings/HarnessView.tsx', 'views/settings/ModelRefreshControl.tsx', 'views/settings/ProviderCliUpdateHint.tsx'],
+  harness: ['views/settings/HarnessView.tsx', 'views/settings/RegisteredHarnesses.tsx', 'views/settings/ModelRefreshControl.tsx', 'views/settings/ProviderCliUpdateHint.tsx'],
   editor: ['views/settings/EditorView.tsx'],
   prompts: ['views/settings/PromptsView.tsx'],
   machines: [
@@ -39,6 +39,7 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   peers: ['views/settings/PeersSettingsView.tsx'],
   phone: ['views/settings/PhoneSettingsView.tsx'],
   'remote-access': ['views/settings/RemoteAccessView.tsx', 'views/settings/SharedPreviews.tsx', 'views/settings/PhoneAccountConnection.tsx', 'views/settings/SharedInstancePicker.tsx'],
+  notifications: ['views/settings/NotificationsSettingsView.tsx', 'views/settings/AgentSoundSettings.tsx'],
   agents: ['views/settings/AgentsSettingsView.tsx', 'views/settings/AgentGuidanceSettings.tsx', 'components/settings/OverseerRecentPane.tsx', 'components/settings/ApiErrorResumeSection.tsx'],
   personas: ['views/settings/PersonasView.tsx'],
   squads: ['views/settings/SquadsView.tsx'],

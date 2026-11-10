@@ -1,0 +1,156 @@
+import { describe, expect, it, vi } from 'vitest';
+import { coldStartCanceled, createDeferredSeatRegistry, deferredSeatsOf, isTransientSeatRefusal, onDemandLaunchProblem, type DeferredSeatHooks } from '../on-demand-seat.js';
+
+const seat = (slotId: string, personaId = 'p', label?: string, role: 'worker' | 'orchestrator' = 'worker') => ({ slotId, personaId, label, role });
+
+describe('deferredSeatsOf', () => {
+  const team = { slots: [{ startOnDemand: true }, {}, { startOnDemand: false }] };
+  it('picks worker seats whose row opted in, and nothing else', () => {
+    const seats = [seat('0:a:0'), seat('0:a:1'), seat('1:b:0'), seat('2:c:0'), seat('orchestrator:o', 'o', undefined, 'orchestrator')];
+    expect(deferredSeatsOf(team, seats).map((s) => s.slotId)).toEqual(['0:a:0', '0:a:1']);
+  });
+  it('treats a team without a slots list as having no on-demand rows', () => {
+    expect(deferredSeatsOf({}, [seat('0:a:0')])).toEqual([]);
+  });
+  it('ignores a slot id without a row', () => {
+    expect(deferredSeatsOf(team, [seat('x')])).toEqual([]);
+  });
+});
+
+describe('onDemandLaunchProblem', () => {
+  const deferred = [seat('0:a:0', 'a', 'Reviewer')];
+  it('allows no deferred seats and a supported launch', () => {
+    expect(onDemandLaunchProblem({ slots: [] }, [], { durable: false, structured: false })).toBeUndefined();
+    expect(onDemandLaunchProblem({ slots: [] }, deferred, { durable: true, structured: true })).toBeUndefined();
+  });
+  it('refuses a Modern team naming the seat', () => {
+    expect(onDemandLaunchProblem({ transport: 'MODERN', slots: [] }, deferred, { durable: true, structured: true }))
+      .toBe("Start on demand isn't available for Modern squads yet; turn it off for: Reviewer");
+  });
+  it('refuses a launch without a durable plan, falling back to the persona id', () => {
+    expect(onDemandLaunchProblem({ slots: [] }, [seat('0:a:0', 'a')], { durable: false, structured: true })).toContain('turn it off for: a');
+    expect(onDemandLaunchProblem({ slots: [] }, deferred, { durable: true, structured: false })).toContain('plan-driven');
+  });
+});
+
+describe('coldStartCanceled / isTransientSeatRefusal', () => {
+  it('cancels a launch-time wait when the run is no longer launching, but lets a late seat outlive the launch call', () => {
+    expect(coldStartCanceled({ state: 'active', outcome: { status: 'in-progress' } }, false)).toBe(false);
+    expect(coldStartCanceled({ state: 'active', outcome: { status: 'completed' } }, false)).toBe(true);
+    expect(coldStartCanceled({ state: 'active', outcome: { status: 'completed' } }, true)).toBe(false);
+    expect(coldStartCanceled({ state: 'canceled', outcome: { status: 'completed' } }, true)).toBe(true);
+    expect(coldStartCanceled(undefined, true)).toBe(true);
+  });
+  it('treats a busy provider or a full machine as passing, and anything else as final', () => {
+    expect(isTransientSeatRefusal('CANCEL_PENDING')).toBe(true);
+    expect(isTransientSeatRefusal('RESOURCE_LIMIT')).toBe(true);
+    expect(isTransientSeatRefusal('STALE_PREFLIGHT', 'launch capacity changed after preflight')).toBe(true);
+    expect(isTransientSeatRefusal('DENIED', 'principal concurrent launch limit reached')).toBe(true);
+    expect(isTransientSeatRefusal('STALE_PREFLIGHT', 'launch stores changed after preflight')).toBe(false);
+    expect(isTransientSeatRefusal('DENIED', 'principal launch budget exhausted')).toBe(false);
+    expect(isTransientSeatRefusal('DEADLINE_EXCEEDED')).toBe(false);
+    expect(isTransientSeatRefusal(undefined)).toBe(false);
+    expect(isTransientSeatRefusal('CAPACITY')).toBe(false);
+  });
+});
+
+describe('createDeferredSeatRegistry', () => {
+  const hooks = (over: Partial<DeferredSeatHooks> = {}): DeferredSeatHooks => ({
+    claim: vi.fn(async () => true), sessionOf: vi.fn(async () => undefined),
+    start: vi.fn(async () => ({ ok: true as const, sessionId: 'sess' })), markFailed: vi.fn(async () => undefined), reopen: vi.fn(async () => true), isStuck: vi.fn(async () => true), close: vi.fn(async () => undefined), ...over
+  });
+
+  it('registers nothing without seats and refuses to start anything', async () => {
+    const registry = createDeferredSeatRegistry();
+    registry.register('r', [], hooks());
+    expect(registry.has('r')).toBe(false);
+    expect(await registry.spawn('r', 's')).toMatchObject({ ok: false });
+  });
+
+  it('starts a seat once for concurrent callers and answers a later caller with the same session', async () => {
+    const registry = createDeferredSeatRegistry();
+    let claimed = false;
+    const h = hooks({
+      claim: vi.fn(async () => { if (claimed) return false; claimed = true; return true; }),
+      sessionOf: vi.fn(async () => 'sess')
+    });
+    registry.register('r', ['s'], h);
+    const [a, b] = await Promise.all([registry.spawn('r', 's'), registry.spawn('r', 's')]);
+    expect(a).toEqual({ ok: true, sessionId: 'sess' });
+    expect(b).toEqual(a);
+    expect(h.start).toHaveBeenCalledTimes(1);
+    expect(await registry.spawn('r', 's')).toEqual(a);
+    expect(h.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a seat that is not waiting and has no session', async () => {
+    const registry = createDeferredSeatRegistry();
+    registry.register('r', ['s'], hooks({ claim: vi.fn(async () => false) }));
+    expect(await registry.spawn('r', 's')).toEqual({ ok: false, message: 'the seat is not waiting to start' });
+  });
+
+  it.each([
+    ['a refusal', async () => ({ ok: false as const, message: 'nope' }), 'nope'],
+    ['a throw', async () => { throw new Error('boom'); }, 'boom'],
+    ['a non-error throw', async () => { throw 'plain'; }, 'plain']
+  ])('marks the seat failed after %s', async (_label, start, message) => {
+    const registry = createDeferredSeatRegistry();
+    const h = hooks({ start: start as never, markFailed: vi.fn(async () => { throw new Error('ignored'); }) });
+    registry.register('r', ['s'], h);
+    expect(await registry.spawn('r', 's')).toEqual({ ok: false, message });
+    expect(h.markFailed).toHaveBeenCalledWith('s');
+  });
+
+  it('forgets the run on release', async () => {
+    const registry = createDeferredSeatRegistry();
+    const h = hooks();
+    registry.register('r', ['s'], h);
+    expect(registry.has('r')).toBe(true);
+    registry.release('r');
+    expect(registry.has('r')).toBe(false);
+    expect(await registry.spawn('r', 's')).toMatchObject({ ok: false });
+    expect(h.start).not.toHaveBeenCalled();
+  });
+});
+
+describe('approval of a waiting seat (#580, option A)', () => {
+  it('gives a waiting seat a run-length expiry and no launch deadline, and leaves other seats as launched', async () => {
+    const { seatApprovalWindow, ON_DEMAND_SEAT_APPROVAL_MS } = await import('../on-demand-seat.js');
+    expect(ON_DEMAND_SEAT_APPROVAL_MS).toBe(24 * 60 * 60 * 1_000);
+    expect(seatApprovalWindow(true, 1_000, { expiresAt: 2_000, deadlineAt: 3_000 })).toEqual({ expiresAt: 1_000 + ON_DEMAND_SEAT_APPROVAL_MS });
+    expect(seatApprovalWindow(false, 1_000, { expiresAt: 2_000, deadlineAt: 3_000 })).toEqual({ expiresAt: 2_000, deadlineAt: 3_000 });
+  });
+  it('matches the launch deadline only for seats that start now', async () => {
+    const { preissuedDeadlineMatches } = await import('../on-demand-seat.js');
+    const ttl = 120_000;
+    expect(preissuedDeadlineMatches(true, { expiresAt: 9, deadlineAt: undefined }, 60_000, ttl)).toBe(true);
+    expect(preissuedDeadlineMatches(true, { expiresAt: 9, deadlineAt: 5 }, 60_000, ttl)).toBe(false);
+    expect(preissuedDeadlineMatches(false, { expiresAt: ttl + 10, deadlineAt: 10 + 60_000 }, 60_000, ttl)).toBe(true);
+    expect(preissuedDeadlineMatches(false, { expiresAt: ttl + 10, deadlineAt: 11 }, 60_000, ttl)).toBe(false);
+    expect(preissuedDeadlineMatches(false, { deadlineAt: 10 }, 60_000, ttl)).toBe(false);
+    expect(preissuedDeadlineMatches(false, { expiresAt: 5 }, undefined, ttl)).toBe(true);
+    expect(preissuedDeadlineMatches(false, { expiresAt: 5, deadlineAt: 1 }, undefined, ttl)).toBe(false);
+  });
+  it('refuses a late start when the launch approval is gone, not authorized, or expired', async () => {
+    const { lateSeatApprovalProblem } = await import('../on-demand-seat.js');
+    expect(lateSeatApprovalProblem(undefined, 10)).toMatch(/approval from launch is gone/);
+    expect(lateSeatApprovalProblem({ state: 'revoked', expiresAt: 100 }, 10)).toMatch(/approval from launch is revoked/);
+    expect(lateSeatApprovalProblem({ state: 'authorized', expiresAt: 10 }, 10)).toMatch(/has expired/);
+    expect(lateSeatApprovalProblem({ state: 'authorized', expiresAt: 11 }, 10)).toBeUndefined();
+    expect(lateSeatApprovalProblem({ state: 'authorized' }, 10)).toBeUndefined();
+  });
+  it('withdraws the waiting approvals when the run releases its spawner, and survives a throwing hook', async () => {
+    const { createDeferredSeatRegistry, createDeferredSeatHooks } = await import('../on-demand-seat.js');
+    const revokeWaiting = vi.fn();
+    const hooks = createDeferredSeatHooks({ recordId: 'r', lifecycle: {} as never, startSeat: vi.fn() as never, closeSession: vi.fn() as never, track: vi.fn(), onStarted: vi.fn(), revokeWaiting });
+    const log = vi.fn();
+    const registry = createDeferredSeatRegistry({ log } as never);
+    registry.register('r', ['0:a:0'], hooks);
+    registry.release('r');
+    expect(revokeWaiting).toHaveBeenCalledTimes(1);
+    registry.register('r2', ['0:a:0'], { ...hooks, release: () => { throw new Error('boom'); } });
+    expect(() => registry.release('r2')).not.toThrow();
+    expect(log).toHaveBeenCalled();
+    registry.release('missing');
+  });
+});

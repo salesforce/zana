@@ -19,12 +19,15 @@ vi.mock('electron', () => ({
 
 import {
   PersonaStore,
+  sanitizePersona,
   migratePersonaIfNeeded,
   projectPersonaFields,
   resolvePersonaLaunch
 } from './persona-store.js';
 import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import type { Project, Persona } from '@zana-ai/zcc-domain/product';
+import { registerListPersonasTool } from './register-personas-mcp-tool.js';
+import { toPersonaSummary } from '@zana-ai/zcc-domain/product';
 
 describe('PersonaStore', () => {
   let store: PersonaStore;
@@ -568,6 +571,96 @@ describe('PersonaStore', () => {
     unsubscribe();
     store.refresh();
     expect(fired).toBe(false);
+  });
+
+  it('REQ-5/REQ-6: keeps a valid reasoningLevel and round-trips it through save, reload and summary (#584)', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      const saved = store.saveUser({ name: `Effort ${level}`, reasoningLevel: level });
+      expect(saved.reasoningLevel).toBe(level);
+    }
+    const saved = store.saveUser({ name: 'Effort Round Trip', reasoningLevel: 'xhigh' });
+    store.refresh();
+    const reloaded = store.list().find((p) => p.id === saved.id);
+    expect(reloaded?.reasoningLevel).toBe('xhigh');
+    expect(toPersonaSummary(reloaded as Persona).reasoningLevel).toBe('xhigh');
+  });
+
+  it('REQ-5: rejects an invalid reasoningLevel the same way as an invalid modelLevel (#584)', () => {
+    // @ts-expect-error bad enum
+    expect(() => store.saveUser({ name: 'Bad Effort', reasoningLevel: 'bogus' })).toThrow();
+    // @ts-expect-error thread-only value the CLI flag does not accept
+    expect(() => store.saveUser({ name: 'Bad Effort 2', reasoningLevel: 'ultracode' })).toThrow();
+    // @ts-expect-error wrong type
+    expect(() => store.saveUser({ name: 'Bad Effort 3', reasoningLevel: 3 })).toThrow();
+  });
+
+  it('REQ-2/REQ-6: a persona without reasoningLevel saves and loads with no such key (#584)', () => {
+    const saved = store.saveUser({ name: 'No Effort', modelLevel: 'high' });
+    expect(saved.reasoningLevel).toBeUndefined();
+    expect('reasoningLevel' in saved).toBe(false);
+    store.refresh();
+    const reloaded = store.list().find((p) => p.id === saved.id);
+    expect(reloaded && 'reasoningLevel' in reloaded).toBe(false);
+    expect(reloaded?.modelLevel).toBe('high');
+    expect(toPersonaSummary(reloaded as Persona).reasoningLevel).toBeUndefined();
+  });
+
+  it('OBL-001/REQ-5: sanitizePersona keeps each allowed level, omits absence, nulls every other defined value (#584)', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      expect(sanitizePersona({ id: 'p', name: 'P', reasoningLevel: level })?.reasoningLevel).toBe(level);
+    }
+    const absent = sanitizePersona({ id: 'p', name: 'P' });
+    expect(absent).not.toBeNull();
+    expect(absent && 'reasoningLevel' in absent).toBe(false);
+    for (const bad of [null, '', 'extra-high', 'ultracode', 'High', 3, true, {}]) {
+      expect(sanitizePersona({ id: 'p', name: 'P', reasoningLevel: bad }), String(bad)).toBeNull();
+    }
+  });
+
+  it('forward compat: a file with an unknown reasoningLevel still loads, without the field, and is not rewritten (#584)', () => {
+    mkdirSync(userDir, { recursive: true });
+    const file = join(userDir, 'future.json');
+    writeFileSync(file, JSON.stringify({ id: 'future', name: 'Future', modelLevel: 'high', reasoningLevel: 'ultra-max' }, null, 2));
+    const before = readFileSync(file);
+    store.refresh();
+    const loaded = store.list().find((p) => p.id === 'future');
+    expect(loaded?.modelLevel).toBe('high');
+    expect(loaded && 'reasoningLevel' in loaded).toBe(false);
+    expect(readFileSync(file).equals(before)).toBe(true);
+  });
+
+  it('OBL-009/REQ-2: loading and listing a persona file without the field leaves its bytes untouched (#584)', () => {
+    mkdirSync(userDir, { recursive: true });
+    const file = join(userDir, 'legacy.json');
+    writeFileSync(file, JSON.stringify({ id: 'legacy', name: 'Legacy', modelLevel: 'high' }, null, 2));
+    const before = readFileSync(file);
+    store.refresh();
+    const loaded = store.list().find((p) => p.id === 'legacy');
+    expect(loaded?.modelLevel).toBe('high');
+    expect(loaded && 'reasoningLevel' in loaded).toBe(false);
+    expect(readFileSync(file).equals(before)).toBe(true);
+  });
+
+  it('OBL-004/REQ-6: list_personas returns reasoningLevel from a reloaded persona (#584)', async () => {
+    const saved = store.saveUser({ name: 'Listed Effort', reasoningLevel: 'xhigh' });
+    store.refresh();
+    let handler: (() => Promise<{ content: Array<{ text: string }> }>) | undefined;
+    const fakeServer = { registerTool: (_n: string, _c: unknown, h: typeof handler) => { handler = h; } };
+    registerListPersonasTool(fakeServer as never, {
+      listPersonas: () => store.list().map((p) => toPersonaSummary(p))
+    });
+    const result = await handler!();
+    const listed = JSON.parse(result.content[0].text) as Array<{ id: string; reasoningLevel?: string }> | { personas: Array<{ id: string; reasoningLevel?: string }> };
+    const rows = Array.isArray(listed) ? listed : listed.personas;
+    expect(rows.find((r) => r.id === saved.id)?.reasoningLevel).toBe('xhigh');
+  });
+
+  it('REQ-6: clearing reasoningLevel on a re-save removes it (#584)', () => {
+    const saved = store.saveUser({ name: 'Clear Effort', reasoningLevel: 'max' });
+    const cleared = store.saveUser({ id: saved.id, name: 'Clear Effort' });
+    expect(cleared.reasoningLevel).toBeUndefined();
+    store.refresh();
+    expect(store.list().find((p) => p.id === saved.id)?.reasoningLevel).toBeUndefined();
   });
 
   it('Phase 3 — model level and execution state persistence, validation, and migration', () => {

@@ -1,0 +1,34 @@
+WEBVTT
+
+00:00:00.600 --> 00:00:03.074
+Attach files and run in the right place.
+
+00:00:03.400 --> 00:00:05.200
+Decide what a Squad sees.
+
+00:00:05.800 --> 00:00:07.007
+And where it works.
+
+00:00:14.434 --> 00:00:24.615
+Sources are the files a Squad works from. In the composer, press Attach sources, or drop files in. They appear as chips under Attached sources.
+
+00:00:25.225 --> 00:00:34.128
+A source can also come from your home folder or the clone root. Each file can be up to four megabytes, and together they can total sixteen.
+
+00:00:34.429 --> 00:00:42.092
+Files are captured when you press Launch, so later edits are not included. Credential stores and app data are refused.
+
+00:00:44.701 --> 00:00:55.136
+Worktree isolation gives a Squad its own branch and checkout, so it works apart from your folder. You set it on the Squad: On, Off, or Use default.
+
+00:00:56.699 --> 00:01:11.773
+When a run finishes, the Squad decides what happens to the worktree. Keep it, which is the default, merge it into the base branch, or delete it. Only a completed run is merged or deleted. A failed or stopped run is always kept.
+
+00:01:13.577 --> 00:01:20.296
+A kept worktree shows in Squad details, with its path and branch, so you can review the work before you decide.
+
+00:01:20.597 --> 00:01:24.255
+Attach what the Squad needs, and choose where it works.
+
+00:01:25.255 --> 00:01:27.297
+Next: schedule a Squad.

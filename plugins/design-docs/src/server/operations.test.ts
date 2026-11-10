@@ -42,6 +42,16 @@ describe('input helpers', () => {
 });
 
 describe('agent operations', () => {
+  it('shows a doc\'s AGENTS.md before the entry file, only when it exists', () => {
+    const { ctx, store } = setup();
+    const plain = store.create({ title: 'Plain', template: 'blank' }, agent);
+    expect(readDoc(ctx, { doc: plain.id })).not.toContain('Agent instructions');
+    const ruled = store.create({ title: 'Ruled', files: [{ path: 'README.md', content: '# r' }, { path: 'AGENTS.md', content: 'Keep it short.' }] }, agent);
+    const read = readDoc(ctx, { doc: ruled.id }) as string;
+    expect(read).toContain('## Agent instructions (follow these)');
+    expect(read.indexOf('Keep it short.')).toBeLessThan(read.indexOf('## Entry file'));
+  });
+
   it.each(['content', 'edits', 'delete', 'renameTo'])('forwards baseFileId through %s authoring', async (mode) => {
     const { ctx, store, changes } = setup();
     const doc = store.create({ title: 'Identity', files: [{ path: 'README.md', content: 'one' }, { path: 'other.md', content: 'two' }] }, agent);

@@ -13,6 +13,67 @@ async function route(page: Page, path: string) {
   await page.evaluate(next => { history.pushState({}, '', next); dispatchEvent(new PopStateEvent('popstate')); }, path);
 }
 
+test('thread tabs use project icons and colors in the strip and overflow, including live changes and reload', async ({ app }, testInfo) => {
+  const { window: page, electron, home } = app;
+  await dismissConsentOverlays(page);
+  const roots = ['Design System', 'Website'].map(name => join(home, name));
+  roots.forEach(root => mkdirSync(root));
+  const rows = await page.evaluate(async roots => {
+    const rows: Array<{ id: string; projectId: string }> = [];
+    for (const [index, root] of roots.entries()) {
+      const added = await window.cc.projects.add(root);
+      if (!added.ok) throw new Error(added.message);
+      await window.cc.projects.update(added.value.id, index === 0
+        ? { icon: 'Rocket', color: '#f85149' } : { color: '#2f81f7' });
+      const response = await fetch('/api/v1/threads', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: added.value.id, providerId: 'fake', title: index === 0 ? 'Fix App Shell Bug' : 'Landing page', input: 'Hello' })
+      });
+      if (!response.ok) throw new Error(await response.text());
+      rows.push({ id: (await response.json()).thread.id, projectId: added.value.id });
+    }
+    return rows;
+  }, roots);
+  for (const row of rows) await route(page, `/threads/${row.id}`);
+  const strip = page.getByTestId('titlebar-thread-tabs');
+  const design = strip.getByRole('tab', { name: /Fix App Shell Bug/ });
+  const website = strip.getByRole('tab', { name: /Landing page/ });
+  await expect(design.locator('[data-project-icon="Rocket"]')).toHaveCSS('color', 'rgb(248, 81, 73)');
+  await expect(design.locator('svg.lucide-rocket')).toBeVisible();
+  await expect(website.locator('.project-dot')).toHaveCSS('background-color', 'rgb(47, 129, 247)');
+  await expect(website.locator('[data-project-icon]')).toHaveCount(0);
+
+  await strip.getByLabel('All open threads').click();
+  const result = strip.locator('.titlebar-threads-results').getByRole('button', { name: /Fix App Shell Bug/ });
+  await expect(result.locator('[data-project-icon="Rocket"]')).toHaveCSS('color', 'rgb(248, 81, 73)');
+  await page.evaluate(id => window.cc.projects.update(id, { icon: 'Cloud', color: '#3fb950' }), rows[0]!.projectId);
+  for (const item of [design, result]) {
+    await expect(item.locator('[data-project-icon="Cloud"]')).toHaveCSS('color', 'rgb(63, 185, 80)');
+    await expect(item.locator('svg.lucide-cloud')).toBeVisible();
+    await expect(item.locator('[data-project-icon="Rocket"]')).toHaveCount(0);
+  }
+  await result.click();
+  await expect(design).toHaveAttribute('aria-selected', 'true');
+  await expect(page).toHaveURL(new RegExp(`/threads/${rows[0]!.id}$`));
+
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => window.cc.config.set({ theme: value }), theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const marker = design.locator('.project-dot');
+    await expect(marker).toBeVisible();
+    const box = await marker.boundingBox();
+    expect(box?.width).toBeCloseTo(12, 1);
+    expect(box?.height).toBeCloseTo(12, 1);
+    await captureElectronScreenshot(electron, page, testInfo.outputPath(`project-thread-tabs-${theme}.png`));
+  }
+  await page.reload();
+  await expect(design.locator('[data-project-icon="Cloud"]')).toHaveCSS('color', 'rgb(63, 185, 80)');
+  await expect(website.locator('.project-dot')).toHaveCSS('background-color', 'rgb(47, 129, 247)');
+  await page.evaluate(id => window.cc.projects.update(id, { icon: 'Circle' }), rows[0]!.projectId);
+  await expect(design.locator('[data-project-icon]')).toHaveCount(0);
+  await expect(design.locator('.project-dot')).toHaveCSS('background-color', 'rgb(63, 185, 80)');
+});
+
 test('thread tabs: default, project context, drafts, close safety, settings, reload and scoped windows', async ({ app }, testInfo) => {
   const { window: page, electron, home } = app;
   await dismissConsentOverlays(page);

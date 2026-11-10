@@ -1,6 +1,4 @@
-import { open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type { HostReadFileResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { getConversationThread, getEnvironment } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -8,7 +6,7 @@ import { ThreadCreateError } from '../../http/thread-create.js';
 import { ProjectFsError } from '../../http/project-fs-via-host.js';
 import { isSafeRelPath } from '../../http/library-via-host.js';
 import { confinePathToRoot, threadPathApi } from './thread-path-confine.js';
-import { threadLocalPreviewRoots } from './thread-preview-roots.js';
+import { effectivePreviewRootsFor, openLocalPreviewFile } from './preview-root-policy.js';
 import { PROMPT_ATTACHMENT_MAX_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
 
 const IMAGE_EXT = new Set(['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.avif']);
@@ -49,22 +47,24 @@ export async function readThreadHostFile(
   if (!thread && (!project?.path || !isAbsolute(project.path) || project.remote)) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
-  // Attachments and generated artifacts live on the server, outside the host
-  // checkout. Roots come from server configuration and the authoritative row.
-  // Relative paths keep their existing meaning: files in the environment.
+  // Attachments, generated artifacts and user-trusted folders are read from
+  // the local filesystem. Roots come from server configuration and the
+  // authoritative row, never from the request. Relative paths keep their
+  // existing meaning: files in the environment.
   if (isAbsolute(candidate)) {
-    for (const root of threadLocalPreviewRoots(ctx.dataDir, thread?.projectId)) {
-      const localPath = confinePathToRoot(root, candidate);
-      if (!localPath || !isSafeRelPath(localPath)) continue;
-      const real = await resolveContainedReal(root, localPath);
-      if (!real) throw new ProjectFsError(404, 'path_not_found', 'file not found');
-      const file = await open(real, 'r');
+    const roots = effectivePreviewRootsFor(
+      ctx,
+      { thread: thread ?? null, projectId: thread?.projectId ?? project?.id },
+      thread?.projectId
+    );
+    const opened = await openLocalPreviewFile(roots, candidate);
+    if (opened.kind === 'missing') throw new ProjectFsError(404, 'path_not_found', 'file not found');
+    if (opened.kind === 'opened') {
+      const file = opened.file.handle;
       try {
-        const info = await file.stat();
-        if (!info.isFile()) throw new ProjectFsError(404, 'path_not_found', 'file not found');
-        const contentType = previewContentType(localPath);
+        const contentType = previewContentType(opened.rel);
         const cap = contentType?.startsWith('image/') ? IMAGE_READ_MAX_BYTES : 2_000_000;
-        if (info.size > cap) throw new ProjectFsError(413, 'too_large', 'file exceeds the read cap');
+        if (opened.file.size > cap) throw new ProjectFsError(413, 'too_large', 'file exceeds the read cap');
         // Bound the read too, in case the file grows after stat().
         const chunks: Buffer[] = [];
         let size = 0;
@@ -75,7 +75,7 @@ export async function readThreadHostFile(
         }
         return {
           path: candidate,
-          relPath: localPath,
+          relPath: opened.rel,
           content: Buffer.concat(chunks).toString(contentType ? 'base64' : 'utf8'),
           encoding: contentType ? 'base64' : 'utf8',
           contentType

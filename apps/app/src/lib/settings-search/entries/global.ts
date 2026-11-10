@@ -35,6 +35,28 @@ export const entries: readonly SettingsSearchEntry[] = [
     kind: 'subsection'
   },
   {
+    id: 'global.trusted-preview-folders-intro',
+    section: 'global',
+    anchor: 'trusted-preview-folders',
+    label: 'Trusted Preview Folders',
+    help: 'Let thread Preview open files from folders you choose, read-only. Applies to this local desktop only, not to remote threads or machines.',
+    keywords: ['preview', 'trust', 'folder', 'handoff', 'markdown', 'files outside project', 'allow'],
+    kind: 'subsection',
+    value: (s) => {
+      const count = (s.config.trustedPreviewFolders ?? []).length;
+      return count ? `${count} folder${count === 1 ? '' : 's'}` : 'None';
+    }
+  },
+  {
+    id: 'global.trusted-preview-folders-add',
+    section: 'global',
+    anchor: 'trusted-preview-folders',
+    label: 'Trust a folder',
+    help: 'Thread Preview can open files in these folders, read-only, even when they are outside a project. This applies only to this local desktop; remote threads and machines do not use this list. Removing a folder only stops previews and never deletes files.',
+    keywords: ['add folder', 'remove folder', 'preview'],
+    kind: 'setting'
+  },
+  {
     id: 'global.debug-intro',
     section: 'global',
     anchor: 'debug',

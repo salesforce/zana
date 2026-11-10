@@ -1,9 +1,12 @@
+import { handleThreadPeerReviewApi } from './thread-peer-review-api.js';
+import { handlePeerToolsApi } from './peer-tools-api.js';
 import { listNativeCapabilities } from "../services/skills/native-capabilities.js";
 import { handleHelpVideosApi } from './help-videos-api.js';
 import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
 import { withoutSecretValues } from '../plugins/plugin-settings-redaction.js';
 import { handlePreviewsApi } from './previews-api.js';
 import { handlePluginPacksApi } from './product-plugin-packs.js';
+import { handleOnboardingApi } from './product-onboarding.js';
 import { libraryDocumentOperation } from '../services/library/library-documents.js';
 import { classifyExpectedRpcError } from '@zana-ai/zcc-contracts/rpc-error';
 import { LibraryDocumentRequestSchema, LIBRARY_DOCUMENT_BODY_LIMIT } from '@zana-ai/zcc-contracts/library-documents';
@@ -282,7 +285,8 @@ async function handlePluginAppRpc(
     sendJson(response, 503, { error: 'plugin host is unavailable' });
     return;
   }
-  const body = (await readJsonBody(request)) as { method?: unknown; args?: unknown };
+  // Bounded room for plugin binary data encoded in JSON (including base64 overhead).
+  const body = (await readJsonBody(request, 3 * 1024 * 1024)) as { method?: unknown; args?: unknown };
   if (typeof body.method !== 'string' || body.method.trim().length === 0) {
     sendJson(response, 400, { error: 'method required' });
     return;
@@ -532,6 +536,7 @@ export async function handleProductHttp(
   }
 
   try {
+    if (handleOnboardingApi(response, path, method)) return true;
     if (await handleHelpVideosApi(request, response, ctx.helpVideos, path, method)) return true;
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;
     if (await handlePluginPacksApi(request, response, ctx.plugins?.pluginPacks, path, method)) return true;
@@ -594,6 +599,8 @@ export async function handleProductHttp(
     if (await handlePtySessionInstructionsApi(request, response, ctx, path, method)) return true;
     if (await handlePtySessionToolsApi(request, response, ctx, path, method)) return true;
     if (await handleSessionsSelfApi(request, response, ctx, path, method)) return true;
+    if (await handlePeerToolsApi(request, response, ctx, path, method)) return true;
+    if (await handleThreadPeerReviewApi(request, response, ctx, path, method)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {
       sendJson(response, 200, { projects: ctx.projects.list() });

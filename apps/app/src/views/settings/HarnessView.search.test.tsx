@@ -8,6 +8,8 @@ import { HarnessView } from './HarnessView.js';
 import { RevealContext, type RevealState } from '../../lib/settings-search/reveal.js';
 import { resetThreadModelCatalog } from '../../components/thread/pickers/thread-model-catalog.js';
 
+vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: () => null }));
+
 const state = vi.hoisted(() => ({
   rows: [] as HarnessVerifyResult[],
   descriptors: vi.fn(async () => [] as HarnessAdapterDescriptor[])

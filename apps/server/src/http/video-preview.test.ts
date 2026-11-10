@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FILE_RANGE_MAX_BYTES, videoContentType } from '@zana-ai/zcc-domain';
@@ -106,8 +106,20 @@ describe('video HTTP streaming', () => {
     const storage = await fetch(url('clip.webm', { threadId: 't1', source: 'thread-storage' }));
     expect(await storage.text()).toBe('video');
     vi.mocked(getEnvironment).mockReturnValue(null);
+    const absoluteStorage = await fetch(url(join(root, 'thread-storage/t1/clip.webm'), { threadId: 't1' }));
+    expect(await absoluteStorage.text()).toBe('video');
     const attachment = await fetch(url(join(root, 'attachments/p1/clip.webm'), { threadId: 't1' }));
     expect(await attachment.text()).toBe('video');
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it('rejects absolute storage paths belonging to other threads and storage symlink escapes', async () => {
+    await mkdir(join(root, 'thread-storage/t1'), { recursive: true });
+    await symlink(join(root, 'large.mp4'), join(root, 'thread-storage/t1/escape.mp4'));
+    expect((await fetch(url(join(root, 'thread-storage/t1/escape.mp4'), { threadId: 't1' }))).status).toBe(404);
+    vi.mocked(getEnvironment).mockReturnValue({ path: '/remote/checkout' } as never);
+    for (const id of ['t2', 't1-other']) {
+      expect((await fetch(url(join(root, 'thread-storage', id, 'clip.mp4'), { threadId: 't1' }))).status).toBe(403);
+    }
     expect(rpc).not.toHaveBeenCalled();
   });
   it('rejects missing files, traversal, symlink escapes, directories and unauthorized roots', async () => {
@@ -162,5 +174,50 @@ describe('video HTTP streaming', () => {
     }
     expect(await readConfinedFileRange(root, 'large.mp4', bytes.length + 10, 100)).toMatchObject({ content: '', totalBytes: bytes.length });
     await expect(readConfinedFileRange(root, '../secret.mp4', 0, 1)).rejects.toMatchObject({ code: 'path_not_found' });
+  });
+  describe('trusted preview folders', () => {
+    let trusted: string;
+    const withTrusted = (folders: string[]) => {
+      (ctx as unknown as { config: unknown }).config = { getConfig: () => ({ trustedPreviewFolders: folders }) };
+    };
+    beforeEach(async () => {
+      // Outside the environment root, so only the trusted-folder path can serve it.
+      trusted = await realpath(await mkdtemp(join(tmpdir(), 'video-trusted-')));
+      await writeFile(join(trusted, 'clip.mp4'), 'trusted-video');
+      withTrusted([trusted]);
+    });
+    it('streams an absolute file under a trusted folder for a local thread without a host read', async () => {
+      const response = await fetch(url(join(trusted, 'clip.mp4'), { threadId: 't1' }));
+            expect(response.status).toBe(200);
+      expect(await response.text()).toBe('trusted-video');
+      expect(rpc).not.toHaveBeenCalled();
+      const range = await fetch(url(join(trusted, 'clip.mp4'), { threadId: 't1' }), { headers: { Range: 'bytes=0-6' } });
+      expect(range.status).toBe(206);
+      expect(await range.text()).toBe('trusted');
+    });
+    it('streams for a threadless local project owner', async () => {
+      vi.mocked(getConversationThread).mockReturnValue(null);
+      const response = await fetch(url(join(trusted, 'clip.mp4'), { threadId: 'cli', projectId: 'p1' }));
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('trusted-video');
+    });
+    it('does not use trusted folders for remote threads or remote projects', async () => {
+      vi.mocked(getConversationThread).mockReturnValue({ id: 't1', projectId: 'p1', environmentId: 'e1', hostId: 'other-host' } as never);
+      vi.mocked(getEnvironment).mockReturnValue({ path: join(root, 'env') } as never);
+      expect((await fetch(url(join(trusted, 'clip.mp4'), { threadId: 't1' }))).status).toBe(403);
+      vi.mocked(getConversationThread).mockReturnValue(null);
+      (ctx as unknown as { toProjects: () => unknown }).toProjects = () => [{ id: 'p1', path: root, remote: { host: 'ssh' } }];
+      expect((await fetch(url(join(trusted, 'clip.mp4'), { threadId: 'cli', projectId: 'p1' }))).status).toBe(404);
+    });
+    it('rejects files outside trusted folders, traversal and escaping symlinks', async () => {
+      const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'video-elsewhere-')));
+      await writeFile(join(elsewhere, 'clip.mp4'), 'x');
+      await symlink(join(elsewhere, 'clip.mp4'), join(trusted, 'link.mp4'));
+      for (const path of [join(elsewhere, 'clip.mp4'), join(trusted, '..', basename(elsewhere), 'clip.mp4'), join(trusted, 'link.mp4')]) {
+        expect((await fetch(url(path, { threadId: 't1' }))).status, path).toBeGreaterThanOrEqual(403);
+      }
+      withTrusted([]);
+      expect((await fetch(url(join(trusted, 'clip.mp4'), { threadId: 't1' }))).status).toBe(403);
+    });
   });
 });

@@ -82,11 +82,13 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
         { id: 'claude-4.5-opus-high', label: 'Opus 4.5', provider: 'anthropic', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'claude-4.5-sonnet', label: 'Sonnet 4.5', provider: 'anthropic', level: 'medium', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION }
       ],
-      modelLevelMapping: {
-        low: undefined,
-        medium: 'gpt-5.6-terra-medium',
-        high: 'gpt-5.6-sol-medium',
-        'extra-high': undefined
+      modelLevelMapping: { low: undefined, medium: undefined, high: undefined, 'extra-high': undefined },
+      // The tier is written in the model id (`...-low`, `-medium`, `-high`, `-xhigh`).
+      defaultModelTierRules: {
+        low: ['low', 'mini', 'haiku'],
+        medium: ['medium', 'terra', 'sonnet'],
+        high: ['high', 'sol', 'opus'],
+        'extra-high': ['xhigh', 'extra-high', 'sol']
       },
       executionStateMapping: {
         plan: 'plan',
@@ -148,7 +150,6 @@ export class CursorProvider extends BaseLaunchProvider {
         scope
       })
     );
-    const defaultModel = models[0]?.id;
     return {
       ...CURSOR_ADAPTER,
       evidence,
@@ -157,12 +158,6 @@ export class CursorProvider extends BaseLaunchProvider {
         targets: {
           ...CURSOR_ADAPTER.descriptor.targets!,
           models,
-          modelLevelMapping: {
-            low: models.find((model) => /mini|haiku|low/i.test(model.id))?.id,
-            medium: models.find((model) => /sonnet|terra|medium/i.test(model.id))?.id ?? defaultModel,
-            high: models.find((model) => /grok-4\.6|opus|sol/i.test(model.id))?.id ?? defaultModel,
-            'extra-high': undefined
-          }
         }
       }
     };

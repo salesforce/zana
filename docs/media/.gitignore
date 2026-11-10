@@ -1,0 +1,3 @@
+# Squad guide: regenerable audio and rendered mp4s stay local; the mp4s are published via content/videos/.
+squad-guide-*/audio-neural/
+squad-guide-*/*.mp4

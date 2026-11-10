@@ -1,5 +1,4 @@
-import { open } from 'node:fs/promises';
-import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
+import { openContainedFile } from '@zana-ai/zcc-path-confine';
 import { FILE_RANGE_MAX_BYTES } from '@zana-ai/zcc-domain';
 import { HostCommandError } from './host-command-error.js';
 
@@ -9,12 +8,12 @@ export async function readConfinedFileRange(root: string, relPath: string, offse
     || length < 0 || length > FILE_RANGE_MAX_BYTES) {
     throw new HostCommandError('invalid-range', 'invalid file byte range');
   }
-  const real = await resolveContainedReal(root, relPath);
-  if (!real) throw new HostCommandError('path_not_found', 'file not found');
-  const file = await open(real, 'r');
+  // One validated descriptor serves every chunk of this read; the path is never reopened.
+  const contained = await openContainedFile(root, relPath);
+  if (!contained) throw new HostCommandError('path_not_found', 'file not found');
+  const file = contained.handle;
   try {
-    const stat = await file.stat();
-    if (!stat.isFile()) throw new HostCommandError('path_not_found', 'not a file');
+    const stat = { size: contained.size };
     const buffer = Buffer.alloc(Math.min(length, Math.max(0, stat.size - offset)));
     let read = 0;
     while (read < buffer.length) {

@@ -274,9 +274,9 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
         const files = projectFiles(caller, 'templates import');
         const file = await deps.readLocalFile({ files, path: need(positional, 1, 'file'), cwd: ctx.cwd });
         if (file.encoding !== 'utf8') throw new DesignDocError('invalid', 'template bundle must be UTF-8 JSON');
-        const templates = deps.store.templatesImport(file.content, caller.actor);
-        for (const template of templates) deps.changed(template.id);
-        return `Imported ${templates.length} templates.`;
+        const { imported, skipped } = deps.store.templatesImportReport(file.content, caller.actor);
+        for (const template of imported) deps.changed(template.id);
+        return `Imported ${imported.length} templates${skipped ? `; skipped ${skipped} already present` : ''}.`;
       }
       if (action === 'export' || action === 'purge') {
         const out = stringFlag(flags, 'out');

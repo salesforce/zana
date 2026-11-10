@@ -258,3 +258,8 @@ describe('Settings subsection navigation', () => {
     expect(ids).toContain('usage');
   });
 });
+
+it('puts sounds in Notifications rather than the Agent settings cluster', () => {
+  expect(SETTINGS_SUBSECTIONS.notifications).toContainEqual({ id: 'agent-sounds', label: 'Sounds' });
+  expect(SETTINGS_SUBSECTIONS.agents?.some(row => row.id === 'agent-sounds')).toBe(false);
+});

@@ -113,6 +113,13 @@ export function ExperimentalView({
         />
       </Section>
 
+      <Section searchId="experimental.thread-communication-section" anchorId="thread-communication" title="Thread communication"
+        help="Threads can exchange messages with threads and CLI Agents in the same project. Every message waits for your review before delivery. Existing CLI-to-CLI messaging keeps its current behavior.">
+        <CheckboxField searchId="experimental.thread-communication" label="Enable thread communication"
+          checked={config.threadCommunicationEnabled ?? true}
+          help="Enabled by default. Review a message in the thread and choose Deliver or Discard. Delivery can start work using the recipient’s existing tools and permissions. Turning this off blocks new sends and pending delivery; turning it on again requires fresh review."
+          onChange={threadCommunicationEnabled => onUpdate({ threadCommunicationEnabled })} />
+      </Section>
       <Section
         searchId="experimental.extension-llm"
         anchorId="extension-llm"
@@ -205,6 +212,20 @@ export function ExperimentalView({
         />
       </Section>
 
+      <Section
+        searchId="experimental.command-center-section"
+        anchorId="command-center"
+        title="Command Center (macOS)"
+        help="Adds “Minimize to Command Center” (⌘M) to the Window menu, the menu-bar icon and the sidebar. Instead of minimizing to the Dock, the window collapses to a slim floating rail on the screen edge that shows who needs you, what's working and your schedules — and lets you answer agent questions without reopening the app. Off by default."
+      >
+        <CheckboxField
+          searchId="experimental.command-center"
+          label="Enable Command Center mode"
+          help="When disabled, the entry points are hidden and an open rail is closed (the main window comes back)."
+          checked={config.companionEnabled === true}
+          onChange={(v) => onUpdate({ companionEnabled: v })}
+        />
+      </Section>
     </>
   );
 }

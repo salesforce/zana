@@ -5,6 +5,7 @@ import type {
   PluginProviderHandle
 } from '@zana-ai/zcc-plugin-sdk/server';
 import type { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
+import { PERSONA_REASONING_LEVELS } from '@zana-ai/zcc-domain/product';
 
 export interface ThreadProviderRecord extends PluginProviderDeclaration {
   pluginId: string;
@@ -177,6 +178,27 @@ export function listThreadProviders(): ThreadProviderRecord[] {
 export function getThreadProvider(providerId: string): ThreadProviderRecord | undefined {
   syncFakeProvider();
   return currentProvider(canonicalThreadProviderId(providerId));
+}
+
+/**
+ * The persona reasoning effort a Modern seat carries on `providerId`. Harness
+ * neutral: any provider that declares reasoning levels gets one. A declared
+ * level passes through; an undeclared one steps down to the highest level the
+ * provider declares below it (e.g. `max` on a low/medium/high provider is
+ * `high`). The provider's bridge then maps it to its own setting (Claude effort,
+ * Codex `model_reasoning_effort`, an OpenCode model variant, …). A provider that
+ * declares no levels, or nothing at or below the request, gets none.
+ */
+export function personaEffortForProvider<T extends string>(providerId: string, level: T | undefined): T | undefined {
+  if (!level) return undefined;
+  const declared = getThreadProvider(providerId)?.capabilities.reasoningLevels ?? [];
+  if (declared.includes(level)) return level;
+  const order: readonly string[] = PERSONA_REASONING_LEVELS;
+  const rank = order.indexOf(level);
+  for (let i = rank - 1; i >= 0; i -= 1) {
+    if (declared.includes(order[i]!)) return order[i] as T;
+  }
+  return undefined;
 }
 
 export function canonicalThreadProviderId(providerId: string): string {

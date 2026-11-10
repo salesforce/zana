@@ -59,6 +59,7 @@ const h = vi.hoisted(() => {
 
 // These suites drive launches, not plugin admission (covered in dispatch-admission tests): admit everything.
 vi.mock('../runtime/dispatch-admission.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../runtime/dispatch-admission.js')>()), createMainDispatchAdmission: () => (request: unknown) => h.admission(request) }));
+vi.mock('../native/agent-sound-events.js', () => ({ startAgentSoundEvents: vi.fn(() => vi.fn()) }));
 
 vi.mock('electron', () => {
   const loose = h.loose;
@@ -103,7 +104,7 @@ vi.mock('electron', () => {
     screen: new Proxy({ getAllDisplays: () => [display], getPrimaryDisplay: () => display }, {
       get: (target, key) => key in target ? target[key as keyof typeof target] : loose()
     }),
-    Menu: { setApplicationMenu: () => {}, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
+    Menu: { setApplicationMenu: () => {}, getApplicationMenu: () => null, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
     nativeImage: { createFromPath: () => loose(), createEmpty: () => loose() },
     powerMonitor: { on: () => {}, off: () => {} },
     powerSaveBlocker: loose(),
@@ -314,12 +315,13 @@ describe('host bootstrap wiring', () => {
       h.overlays.length = 0;
       theme.mockReturnValue({ ...config, theme: 'light' });
       ctx().refreshTitleBarOverlays();
-      expect(h.overlays).toEqual([{ color: '#f6f8fa', symbolColor: '#57606a', height: 44 }]);
+      // The main window is the inset workspace, whose title bar paints --inset-chrome.
+      expect(h.overlays).toEqual([{ color: '#edf0f4', symbolColor: '#57606a', height: 44 }]);
       // Theme System: bootstrap's listener follows the OS.
       theme.mockReturnValue({ ...config, theme: 'system' });
       h.nativeTheme.shouldUseDarkColors = true;
       h.nativeTheme.emit('updated');
-      expect(h.overlays.at(-1)).toEqual({ color: '#181818', symbolColor: '#8b949e', height: 44 });
+      expect(h.overlays.at(-1)).toEqual({ color: '#131313', symbolColor: '#8b949e', height: 44 });
       expect(h.overlays).toHaveLength(2);
     } finally {
       Object.defineProperty(process, 'platform', { value: platform, configurable: true });
@@ -436,6 +438,8 @@ describe('host bootstrap wiring', () => {
     expect(items.some((i) => i.label === 'View on GitHub')).toBe(true);
     expect(items.find((i) => i.role === 'pasteAndMatchStyle')).toMatchObject({ accelerator: 'CmdOrCtrl+Shift+V' });
     expect(shell).toBeDefined();
+    expect(items.find((i) => i.id === 'companion-enter')).toMatchObject({ visible: false, enabled: false });
+    expect(() => ctx().syncCompanionMenu()).not.toThrow();
   });
 
   it('launches terminals through authorize, revalidate and spawn', async () => {
@@ -694,6 +698,14 @@ describe('host bootstrap wiring', () => {
     const admission = await o.admissionInput(project.id, request);
     expect(admission).toMatchObject({ slotCount: 2, maxSlots: 32, sourceBytes: 12 });
     expect(admission.slotRoutes).toHaveLength(2);
+    // Advisory (a worker slot has no level): explicit false keeps ROUTE_ELIGIBILITY non-required.
+    expect(admission.enforceRouting).toBe(false);
+    const leveled = await o.admissionInput(project.id, { ...request, resolvedModels: [{ slotId: 's1', personaId: 'pa', provider: 'claude', model: 'sonnet', level: 'high' }] });
+    expect(leveled.enforceRouting).toBe(true);
+    const enforcedTeams = vi.mocked(c.teams.list).getMockImplementation()!;
+    vi.mocked(c.teams.list).mockReturnValue([{ id: 't1', routingEnforced: false, slots: [{ personaId: 'pa' }], orchestratorPersonaId: 'po' }]);
+    expect((await o.admissionInput(project.id, { ...request, resolvedModels: [{ slotId: 's1', personaId: 'pa', provider: 'claude', model: 'sonnet', level: 'high' }] })).enforceRouting).toBe(false);
+    vi.mocked(c.teams.list).mockImplementation(enforcedTeams);
     const missing = await o.admissionInput('no-project', { teamId: 'ghost', workUnits: [], slots: [] });
     expect(missing.slotRoutes).toEqual([]);
     expect(missing.slotCount).toBe(0);
@@ -746,6 +758,21 @@ describe('host bootstrap wiring', () => {
     expect(typeof o.onTerminal).toBe('function');
     expect(typeof o.resolveExactNativeRecoverySnapshots).toBe('function');
     await Promise.resolve(tryIt(() => o.authorizePlanRegistration({ id: 'x' }, []))).catch(() => undefined);
+    // Submitter present: tier-fit advisory is evaluated; it never throws out of registration authorization.
+    await Promise.resolve(tryIt(() => o.authorizePlanRegistration({ id: 'x', resolvedModels: [] }, [], { slotId: 'w' }))).catch(() => undefined);
+    // Tier-fit is advisory: it logs a warning, never throws, and is silent without route facts or findings.
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const planUnit = { id: 'u1', title: 'U', task: 't', dependencies: [], routing: { version: 1, minimumLevel: 'extra-high' } } as never;
+    host.logPlanTierFit('x', [planUnit], undefined);
+    host.logPlanTierFit('x', [planUnit], [{ slotId: 'w', personaId: 'p', level: 'extra-high' }] as never);
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining('plan tier fit'));
+    host.logPlanTierFit('x', [planUnit], [{ slotId: 'w', personaId: 'p', level: 'low' }] as never);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('plan tier fit: execution x: under-tiered'));
+    info.mockClear();
+    // A snapshot without a personaId is tolerated (treated as empty), still reported.
+    host.logPlanTierFit('y', [planUnit], [{ slotId: 'w', level: 'low' }] as never);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('plan tier fit: execution y'));
+    info.mockRestore();
     vi.mocked(c.teams.list).mockRestore();
     vi.mocked(c.personas.list).mockRestore();
   });
@@ -808,6 +835,24 @@ describe('host bootstrap wiring', () => {
       vi.mocked(c.teams.list).mockRestore();
       vi.mocked(c.personas.list).mockRestore();
       h.runtimeOverride = {};
+    }
+  });
+
+  it('stamps skillAllowlist on resolved model snapshots only for restricted slots', async () => {
+    const c = ctx();
+    vi.spyOn(c.teams, 'list').mockReturnValue([{ id: 'tm', transport: 'MODERN', slots: [{ personaId: 'ma' }, { personaId: 'mb' }], orchestratorPersonaId: 'mo' }]);
+    vi.spyOn(c.personas, 'list').mockReturnValue([
+      { id: 'ma', name: 'A', baseProfile: 'claude', model: 'sonnet', skills: ['review'] },
+      { id: 'mb', name: 'B', baseProfile: 'claude', model: 'sonnet' },
+      { id: 'mo', name: 'O', baseProfile: 'claude' }
+    ]);
+    try {
+      const snapshots = await h.squadOpts.resolveTeamModelSnapshots(project.id, { teamId: 'tm', slots: [{ initialTask: 'a' }, { initialTask: 'b' }, { initialTask: 'o' }] });
+      expect(snapshots[0].skillAllowlist).toEqual(expect.arrayContaining(['review']));
+      expect(snapshots[1]).not.toHaveProperty('skillAllowlist');
+    } finally {
+      vi.mocked(c.teams.list).mockRestore();
+      vi.mocked(c.personas.list).mockRestore();
     }
   });
 
@@ -1146,6 +1191,79 @@ describe('host bootstrap wiring', () => {
     } finally {
       failed.mockRestore();
     }
+  });
+
+  it('authorizes sound previews in main and rejects unknown sounds, frames and windows', async () => {
+    const { BrowserWindow } = await import('electron');
+    vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:5173');
+    const caller = vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(h.lastWin);
+    const config = vi.spyOn(store, 'getConfig').mockReturnValue({ agentSoundVolume: 75 } as never);
+    const sender = { mainFrame: {}, getURL: () => 'http://127.0.0.1:5173' };
+    const event = { sender, senderFrame: sender.mainFrame };
+    const preview = h.ipcHandlers.get(IPC.app.previewAgentSound)!;
+    try {
+      expect(await preview(event, 'idle')).toEqual({ volume: 75, clip: undefined });
+      expect(await preview(event, 'needs-you')).toEqual({ volume: 75, clip: undefined });
+      expect(await preview(event, 'other')).toBeUndefined();
+      expect(await preview({ ...event, senderFrame: {} }, 'idle')).toBeUndefined();
+      expect(await preview({ ...event, sender: { ...sender, getURL: () => 'https://untrusted.example' } }, 'idle')).toBeUndefined();
+      caller.mockReturnValue(null);
+      expect(await preview(event, 'idle')).toBeUndefined();
+    } finally { config.mockRestore(); caller.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
+  it('sends each chime to one live window and tolerates windows closing', async () => {
+    const registry = await import('../window/main-window-registry.js');
+    const config = vi.spyOn(store, 'getConfig').mockReturnValue({ agentSoundNeedsYou: true, agentSoundVolume: 65 } as never);
+    let now = 10_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const alive = h.contentsDestroyed;
+    const cues = () => h.sent.filter(([channel]) => channel === IPC.app.onAgentSound);
+    const ring = (id: string) => {
+      now += 3_000;
+      ctx().agentSounds.observe(id, 'working');
+      ctx().agentSounds.observe(id, 'blocked');
+      ctx().agentSounds.remove(id);
+    };
+    let finder: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      h.sent.length = 0;
+      ring('sound-primary');
+      expect(cues()).toEqual([[IPC.app.onAgentSound, 'needs-you', 65]]);
+      finder = vi.spyOn(registry, 'findUnscopedWindow').mockReturnValue(null);
+      ring('sound-scoped-fallback');
+      expect(cues()).toHaveLength(2);
+      h.winDestroyed = true;
+      ring('sound-destroyed');
+      h.winDestroyed = false;
+      h.contentsDestroyed = () => true;
+      ring('sound-destroyed-contents');
+      h.contentsDestroyed = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+      ring('sound-closing-contents');
+      expect(cues()).toHaveLength(2);
+    } finally {
+      finder?.mockRestore(); config.mockRestore(); clock.mockRestore();
+      h.winDestroyed = false; h.contentsDestroyed = alive;
+    }
+  });
+
+  it('routes CLI attention sounds only for visible live agents and releases them on exit', () => {
+    const observe = vi.spyOn(ctx().agentSounds, 'observe');
+    const remove = vi.spyOn(ctx().agentSounds, 'remove');
+    try {
+      h.ptys.sessions.set('sound-visible', sessionFixture({ id: 'sound-visible', projectId: project.id, profile: 'claude' }));
+      ctx().agentStatus.emit('status', 'sound-visible', 'working', 1);
+      expect(observe).toHaveBeenCalledWith('cli:sound-visible', 'working');
+      for (const [id, flags] of [['sound-hidden', { headless: true }], ['sound-scheduled', { scheduled: true }]] as const) {
+        h.ptys.sessions.set(id, sessionFixture({ id, projectId: project.id, ...flags }));
+        ctx().agentStatus.emit('status', id, 'blocked', 1);
+        expect(remove).toHaveBeenCalledWith(`cli:${id}`);
+      }
+      ctx().agentStatus.emit('status', 'sound-missing', 'blocked', 1);
+      expect(remove).toHaveBeenCalledWith('cli:sound-missing');
+      h.ptys.emit('exit', 'sound-visible', 0);
+      expect(remove).toHaveBeenCalledWith('cli:sound-visible');
+    } finally { observe.mockRestore(); remove.mockRestore(); }
   });
 
   it('holds peer messages and mail for an agent while it wraps up', async () => {

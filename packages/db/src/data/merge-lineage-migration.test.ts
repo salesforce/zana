@@ -7,6 +7,29 @@ import { createConversationThread, getConversationThread } from './conversation-
 import { addHostLinkUse, getHost, renameHost, updateHostSshIdentity, upsertHost } from './hosts.js';
 import { createEnvironment } from './environments.js';
 
+it('adds peer review storage to v39 and removes its records with the owning thread', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-peer-review-migration-'));
+  const file = join(dir, 'runtime.sqlite');
+  let db = openDatabase(file);
+  try {
+    const host = upsertHost(db, { name: 'host', hostKeyHash: 'hash' });
+    const environment = createEnvironment(db, { projectId: 'project', hostId: host.id });
+    const thread = createConversationThread(db, { projectId: 'project', hostId: host.id, environmentId: environment.id, providerId: 'fake' });
+    db.sqlite.exec('DROP TABLE peer_review_messages; DELETE FROM runtime_schema_migrations WHERE version = 40');
+    db.close(); db = openDatabase(file);
+    expect(getConversationThread(db, thread.id)?.id).toBe(thread.id);
+    db.sqlite.prepare(`INSERT INTO peer_review_messages
+      (id, owner_thread_id, project_id, sender, recipient, body, transport, status, created_at, updated_at)
+      VALUES ('peer_test', ?, 'project', '{}', '{}', 'review me', 'review me', 'pending', 1, 1)`).run(thread.id);
+    expect(() => db.sqlite.exec("UPDATE peer_review_messages SET status = 'unreviewed-delivery'")).toThrow();
+    db.close(); db = openDatabase(file);
+    expect(db.sqlite.prepare("SELECT body, status, revision FROM peer_review_messages WHERE id = 'peer_test'").get())
+      .toEqual({ body: 'review me', status: 'pending', revision: 1 });
+    db.sqlite.prepare('DELETE FROM threads WHERE id = ?').run(thread.id);
+    expect(db.sqlite.prepare('SELECT id FROM peer_review_messages').all()).toEqual([]);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it.each(['fresh', 'v26', 'main27', 'main28', 'candidate27'])('preserves data and both schemas when upgrading %s', lineage => {
   const dir = mkdtempSync(join(tmpdir(), 'zcc-merge-migration-'));
   const file = join(dir, 'runtime.sqlite');
@@ -29,11 +52,11 @@ it.each(['fresh', 'v26', 'main27', 'main28', 'candidate27'])('preserves data and
     db.close();
     db = openDatabase(file);
     expect(getConversationThread(db, thread.id)?.id).toBe(thread.id);
-    expect(db.sqlite.prepare("SELECT name FROM sqlite_master WHERE name IN ('plugin_interactions', 'dispatch_admission_generations', 'thread_events_user_history_idx', 'threads_visible_project_idx') ORDER BY name").all())
-      .toEqual(['dispatch_admission_generations', 'plugin_interactions', 'thread_events_user_history_idx', 'threads_visible_project_idx'].map(name => ({ name })));
+    expect(db.sqlite.prepare("SELECT name FROM sqlite_master WHERE name IN ('peer_review_messages', 'plugin_interactions', 'dispatch_admission_generations', 'thread_events_user_history_idx', 'threads_visible_project_idx') ORDER BY name").all())
+      .toEqual(['dispatch_admission_generations', 'peer_review_messages', 'plugin_interactions', 'thread_events_user_history_idx', 'threads_visible_project_idx'].map(name => ({ name })));
     if (lineage === 'v26' || lineage === 'candidate27') insertInteraction();
     expect(db.sqlite.prepare('SELECT version FROM runtime_schema_migrations WHERE version >= 27 ORDER BY version').all())
-      .toEqual(Array.from({ length: 13 }, (_, index) => ({ version: index + 27 })));
+      .toEqual(Array.from({ length: 14 }, (_, index) => ({ version: index + 27 })));
     db.close();
     db = openDatabase(file);
     expect(db.sqlite.prepare("SELECT status FROM plugin_interactions WHERE id = 'retained'").get()).toEqual({ status: 'pending' });
@@ -102,7 +125,7 @@ it.each([
       expect(db.sqlite.prepare('SELECT version, applied_at FROM runtime_schema_migrations ORDER BY version').all())
         .toEqual(expect.arrayContaining(history));
       expect(db.sqlite.prepare('SELECT version FROM runtime_schema_migrations WHERE version >= 33 ORDER BY version').all())
-        .toEqual([33, 34, 35, 36, 37, 38, 39].map(version => ({ version })));
+        .toEqual([33, 34, 35, 36, 37, 38, 39, 40].map(version => ({ version })));
     };
     assertData();
     // Both new columns retain their authorization constraints after lineage repair.

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ThreadCreateError } from '../../http/thread-create.js';
@@ -7,7 +7,8 @@ import { ProjectFsError } from '../../http/project-fs-via-host.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({
   getConversationThread: vi.fn(),
-  getEnvironment: vi.fn()
+  getEnvironment: vi.fn(),
+  getPrimaryHost: vi.fn(() => ({ id: 'local-host' }))
 }));
 
 import { getConversationThread, getEnvironment } from '@zana-ai/zcc-db';
@@ -213,7 +214,7 @@ describe('CLI session workspace previews', () => {
   });
 });
 
-describe.each(['attachments', 'artifacts'] as const)('%s previews', (kind) => {
+describe.each(['attachments', 'artifacts', 'thread-storage'] as const)('%s previews', (kind) => {
   it.each([['photo.bmp', 'image/bmp'], ['photo.AVIF', 'image/avif']])('recognizes the accepted %s image format', (path, mime) => {
     expect(imageContentType(path)).toBe(mime);
   });
@@ -224,7 +225,7 @@ describe.each(['attachments', 'artifacts'] as const)('%s previews', (kind) => {
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), 'thread-local-preview-'));
-    root = kind === 'attachments' ? join(dataDir, kind, 'p1') : join(dataDir, kind);
+    root = kind === 'artifacts' ? join(dataDir, kind) : join(dataDir, kind, kind === 'attachments' ? 'p1' : 't1');
     await mkdir(root, { recursive: true });
     vi.mocked(getConversationThread).mockReturnValue({
       id: 't1', projectId: 'p1', environmentId: 'e1', hostId: 'remote-host'
@@ -277,6 +278,8 @@ describe.each(['attachments', 'artifacts'] as const)('%s previews', (kind) => {
       join(dataDir, 'attachments', 'p2', 'private.png'),
       join(dataDir, 'attachments', 'p1-other', 'private.png'),
       join(dataDir, 'artifacts-other', 'private.png'),
+      join(dataDir, 'thread-storage', 't2', 'private.png'),
+      join(dataDir, 'thread-storage', 't1-other', 'private.png'),
       join(dataDir, 'config.json'),
       `${root}/../../secret.png`,
       root
@@ -347,4 +350,79 @@ describe.each(['attachments', 'artifacts'] as const)('%s previews', (kind) => {
       expect(hostRead).not.toHaveBeenCalled();
     });
   }
+});
+
+describe('trusted folder previews', () => {
+  let dataDir: string;
+  let trusted: string;
+  let ctx: ProductHttpContext;
+  const hostRead = vi.fn(async () => ({ content: 'checkout file', encoding: 'utf8' }));
+  const folders = (list: string[]) => {
+    (ctx as unknown as { config: unknown }).config = { getConfig: () => ({ trustedPreviewFolders: list }) };
+  };
+
+  beforeEach(async () => {
+    dataDir = await realpath(await mkdtemp(join(tmpdir(), 'thread-trusted-data-')));
+    trusted = await realpath(await mkdtemp(join(tmpdir(), 'thread-trusted-')));
+    vi.mocked(getConversationThread).mockReturnValue({ id: 't1', projectId: 'p1', environmentId: 'e1', hostId: 'local-host' } as never);
+    vi.mocked(getEnvironment).mockReturnValue({ path: '/checkout' } as never);
+    hostRead.mockClear();
+    ctx = { db: {}, dataDir, hostHub: { callHostOnlineRpc: hostRead }, toProjects: () => [{ id: 'p1', path: '/project' }] } as unknown as ProductHttpContext;
+    folders([trusted]);
+  });
+  afterEach(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+    await rm(trusted, { recursive: true, force: true });
+  });
+
+  it('reads text, images and PDFs from a trusted folder for a local thread', async () => {
+    await writeFile(join(trusted, 'a.md'), 'notes');
+    await writeFile(join(trusted, 'i.png'), Buffer.from([137, 80]));
+    await writeFile(join(trusted, 'd.pdf'), Buffer.from('%PDF'));
+    expect(await readThreadHostFile(ctx, 't1', join(trusted, 'a.md'))).toMatchObject({ content: 'notes', relPath: 'a.md', encoding: 'utf8' });
+    expect(await readThreadHostFile(ctx, 't1', join(trusted, 'i.png'))).toMatchObject({ contentType: 'image/png', encoding: 'base64' });
+    expect(await readThreadHostFile(ctx, 't1', join(trusted, 'd.pdf'))).toMatchObject({ contentType: 'application/pdf' });
+    expect(hostRead).not.toHaveBeenCalled();
+  });
+
+  it('reads for a local registered CLI project owner', async () => {
+    await writeFile(join(trusted, 'a.md'), 'notes');
+    vi.mocked(getConversationThread).mockReturnValue(null);
+    (ctx as unknown as { toProjects: () => unknown }).toProjects = () => [{ id: 'p1', path: '/project' }];
+    expect(await readThreadHostFile(ctx, 'cli', join(trusted, 'a.md'), 'p1')).toMatchObject({ content: 'notes' });
+  });
+
+  it('enforces size caps', async () => {
+    await writeFile(join(trusted, 'big.txt'), Buffer.alloc(2_000_001));
+    await expect(readThreadHostFile(ctx, 't1', join(trusted, 'big.txt'))).rejects.toMatchObject({ status: 413 });
+  });
+
+  it('404s for missing files, directories and symlinks that escape the folder', async () => {
+    const secret = join(dataDir, 'secret.txt');
+    await writeFile(secret, 's');
+    await symlink(secret, join(trusted, 'leak.txt'));
+    await mkdir(join(trusted, 'dir'));
+    for (const name of ['gone.txt', 'dir', 'leak.txt']) {
+      await expect(readThreadHostFile(ctx, 't1', join(trusted, name))).rejects.toMatchObject({ status: 404 });
+    }
+    expect(hostRead).not.toHaveBeenCalled();
+  });
+
+  it('does not use trusted folders for remote threads, unconfigured state, or outside paths', async () => {
+    await writeFile(join(trusted, 'a.md'), 'notes');
+    vi.mocked(getConversationThread).mockReturnValue({ id: 't1', projectId: 'p1', environmentId: 'e1', hostId: 'remote-host' } as never);
+    await expect(readThreadHostFile(ctx, 't1', join(trusted, 'a.md'))).rejects.toMatchObject({ status: 403 });
+    vi.mocked(getConversationThread).mockReturnValue({ id: 't1', projectId: 'p1', environmentId: 'e1', hostId: 'local-host' } as never);
+    folders([]);
+    await expect(readThreadHostFile(ctx, 't1', join(trusted, 'a.md'))).rejects.toMatchObject({ status: 403 });
+    folders([trusted]);
+    (ctx as unknown as { toProjects: () => unknown }).toProjects = () => [{ id: 'p1', path: '/project', remote: { host: 'ssh' } }];
+    await expect(readThreadHostFile(ctx, 't1', join(trusted, 'a.md'))).rejects.toMatchObject({ status: 403 });
+    (ctx as unknown as { toProjects: () => unknown }).toProjects = () => [];
+    await expect(readThreadHostFile(ctx, 't1', join(trusted, 'a.md'))).rejects.toMatchObject({ status: 403 });
+    (ctx as unknown as { toProjects: () => unknown }).toProjects = () => [{ id: 'p1', path: '/project' }];
+    await expect(readThreadHostFile(ctx, 't1', join(dataDir, 'secret.txt'))).rejects.toMatchObject({ status: 403 });
+    await expect(readThreadHostFile(ctx, 't1', `${trusted}-evil/a.md`)).rejects.toMatchObject({ status: 403 });
+    expect(hostRead).not.toHaveBeenCalled();
+  });
 });

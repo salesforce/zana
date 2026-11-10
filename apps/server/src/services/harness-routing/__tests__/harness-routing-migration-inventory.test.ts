@@ -83,7 +83,7 @@ const expectedKeys: Record<HarnessRoutingMigrationStore, string[]> = {
   ],
   schedules: ['profile', 'personaId', 'extraArgs'],
   templates: ['defaults.profile', 'defaults.extraArgs'],
-  teams: ['orchestratorPersonaId', 'slots[].personaId'],
+  teams: ['orchestratorPersonaId', 'slots[].personaId', 'leanWorkers'],
   'extension-personas': ['registration'],
   'extension-teams': ['registration']
 };
@@ -99,7 +99,15 @@ describe('harness routing migration inventory', () => {
       ])
     );
 
-    expect(byStore).toEqual(expectedKeys);
+    // reasoningLevel (#584) is its own inventory group; compare as sets so the
+    // position of that group in the inventory is not pinned.
+    const sorted = (value: Record<string, string[]>) => Object.fromEntries(
+      Object.entries(value).map(([store, keys]) => [store, [...keys].sort()])
+    );
+    expect(sorted(byStore)).toEqual(sorted({
+      ...expectedKeys,
+      personas: [...expectedKeys.personas, 'reasoningLevel', 'skills']
+    }));
   });
 
   it('keeps canonical values authoritative over projected legacy values', () => {
@@ -150,6 +158,17 @@ describe('harness routing migration inventory', () => {
     expect(HARNESS_ROUTING_MIGRATION_INVENTORY).toEqual(expect.arrayContaining([
       expect.objectContaining({ store: 'schedules', key: 'profile', classification: 'already-canonical' }),
       expect.objectContaining({ store: 'templates', key: 'defaults.profile', classification: 'already-canonical' })
+    ]));
+  });
+
+  it('REQ-10: lists persona reasoningLevel as already-canonical (#584)', () => {
+    expect(HARNESS_ROUTING_MIGRATION_INVENTORY).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        store: 'personas',
+        key: 'reasoningLevel',
+        classification: 'already-canonical',
+        reason: 'Retain portable persona reasoning effort unchanged'
+      })
     ]));
   });
 

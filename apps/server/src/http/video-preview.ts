@@ -11,8 +11,8 @@ import { authorizeProjectRelPath, ProjectFsError } from './project-fs-via-host.j
 import { isSafeRelPath } from './library-via-host.js';
 import { confinePathToRoot } from '../services/threads/thread-path-confine.js';
 import { threadStorageRoot } from '../services/threads/thread-storage.js';
-import { projectAttachmentDir } from '../services/projects/attachments.js';
 import { resolveProjectHost } from './project-host.js';
+import { effectivePreviewRootsFor, matchPreviewRootsAsync } from '../services/threads/preview-root-policy.js';
 
 export type RangeReader = (offset: number, length: number) => Promise<HostReadFileResult>;
 
@@ -23,7 +23,7 @@ function confined(root: string, candidate: string): string {
 }
 
 /** Resolves a confined byte-range reader for a preview file (workspace, thread storage or attachment). */
-export function previewFileReader(ctx: ProductHttpContext, params: URLSearchParams): RangeReader {
+export async function previewFileReader(ctx: ProductHttpContext, params: URLSearchParams): Promise<RangeReader> {
   const candidate = params.get('path') ?? '';
   const threadId = params.get('threadId');
   const source = params.get('source') ?? 'workspace';
@@ -34,9 +34,19 @@ export function previewFileReader(ctx: ProductHttpContext, params: URLSearchPara
     ctx.hostHub.callHostOnlineRpc<HostReadFileResult>({
       hostId, command: { type: 'host.read_file', root, relPath, byteRange: { offset, length } }
     });
-  const localReader = (root: string): RangeReader => {
-    const rel = confined(root, candidate);
+  const localReader = (root: string, knownRel?: string): RangeReader => {
+    const rel = knownRel ?? confined(root, candidate);
     return (offset, length) => readConfinedFileRange(root, rel, offset, length);
+  };
+  // Server-owned roots plus the user's trusted folders (local targets only).
+  const localMatch = async (
+    target: { thread: { id?: string; hostId?: string | null } | null; projectId: string },
+    attachmentProjectId: string | null | undefined
+  ): Promise<RangeReader | null> => {
+    if (!isAbsolute(candidate)) return null;
+    const roots = effectivePreviewRootsFor(ctx, target, attachmentProjectId);
+    const match = (await matchPreviewRootsAsync(roots, candidate))[0];
+    return match ? localReader(match.root, match.rel) : null;
   };
   if (threadId) {
     if (!/^[A-Za-z0-9._-]+$/.test(threadId) || threadId === '.' || threadId === '..') {
@@ -50,13 +60,13 @@ export function previewFileReader(ctx: ProductHttpContext, params: URLSearchPara
       if (source !== 'workspace' || !project?.path || project.remote) {
         throw new ProjectFsError(404, 'unknown-thread', 'thread is not registered');
       }
+      const trusted = await localMatch({ thread: null, projectId: project.id }, null);
+      if (trusted) return trusted;
       return hostReader(resolveProjectHost(ctx, project.hostId), project.path, confined(project.path, candidate));
     }
     if (source === 'thread-storage') return localReader(threadStorageRoot(ctx.dataDir, threadId));
-    if (thread.projectId && isAbsolute(candidate)) {
-      const root = projectAttachmentDir(ctx.dataDir, thread.projectId);
-      if (confinePathToRoot(root, candidate)) return localReader(root);
-    }
+    const local = await localMatch({ thread, projectId: thread.projectId }, thread.projectId);
+    if (local) return local;
     const env = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
     if (!env?.path) throw new ProjectFsError(409, 'environment_not_ready', 'environment is not provisioned');
     return hostReader(thread.hostId, env.path, confined(env.path, candidate));
@@ -111,7 +121,7 @@ export async function sendVideoPreview(
   if (request.headers['sec-fetch-site'] === 'cross-site') {
     throw new ProjectFsError(403, 'foreign-origin', 'video must be opened from the app');
   }
-  const read = previewFileReader(ctx, params);
+  const read = await previewFileReader(ctx, params);
   const size = await previewFileSize(read, 'video');
   const range = videoByteRange(request.headers.range, size);
   const headers = {

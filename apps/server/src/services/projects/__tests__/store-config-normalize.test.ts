@@ -1177,3 +1177,71 @@ describe('normalizeConfig — automatedUseUserConfig', () => {
     expect(normalizeConfig({ automatedUseUserConfig: 1 as never }).automatedUseUserConfig).toBeUndefined();
   });
 });
+
+
+describe('normalizeConfig — onboarding', () => {
+  it('preserves bounded progress across unrelated config writes', () => {
+    const onboarding = { version: 1, profileId: 'employees', audience: 'organization', step: 'connections',
+      marketplaceSource: 'path:/fixture', packId: 'starter', pluginIds: ['fixture-tool'] } as const;
+    expect(normalizeConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } }).onboarding).toEqual(onboarding);
+    store.setConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig().onboarding).toEqual(onboarding);
+  });
+  it.each([null, {}, { version: 2 }, { version: 1, profileId: 'employees', audience: 'general', step: 'bundles' }])(
+    'drops malformed or inconsistent progress %j', onboarding => {
+      expect(normalizeConfig({ onboarding: onboarding as never }).onboarding).toBeUndefined();
+    });
+  it('leaves legacy installations eligible for onboarding', () => {
+    expect(normalizeConfig({ walkthroughCompleted: true }).onboarding).toBeUndefined();
+  });
+});
+
+describe('agent notification sounds', () => {
+  it.each([true, false])('persists independent opt-in switches (%s)', value => {
+    store.setConfig({ agentSoundIdle: value, agentSoundNeedsYou: !value, agentSoundVolume: 73 });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig()).toMatchObject({ agentSoundIdle: value, agentSoundNeedsYou: !value, agentSoundVolume: 73 });
+  });
+  it.each(['true', 1, null, undefined])('drops invalid switches (%j)', value => {
+    const result = normalizeConfig({ agentSoundIdle: value as never, agentSoundNeedsYou: value as never });
+    expect(result).not.toHaveProperty('agentSoundIdle');
+    expect(result).not.toHaveProperty('agentSoundNeedsYou');
+  });
+  it.each([[-2, 0], [120, 100], [43.6, 44], [NaN, 50], ['80', 50], [null, 50]])('normalizes volume %j to %s', (input, expected) => {
+    expect(normalizeConfig({ agentSoundVolume: input as never }).agentSoundVolume).toBe(expected);
+  });
+});
+
+describe('notification sound provider settings', () => {
+  it('persists valid selection and an explicit off master across unrelated config writes', () => {
+    store.setConfig({ notificationSoundProvider: 'custom/voice', notificationSoundsEnabled: false });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig()).toMatchObject({ notificationSoundProvider: 'custom/voice', notificationSoundsEnabled: false });
+    expect(normalizeConfig({ notificationSoundsEnabled: true })).toMatchObject({ notificationSoundsEnabled: true });
+  });
+  it('drops malformed provider references and master values without coercion', () => {
+    expect(normalizeConfig({ notificationSoundProvider: '../../audio', notificationSoundsEnabled: 'true' as never })).toEqual({});
+  });
+});
+
+
+describe('completion sounds and fleet quiet spacing', () => {
+  it('persists independent completion preference and bounds spacing', () => {
+    expect(normalizeConfig({ agentSoundDone: true, agentSoundSpacingSeconds: 12.7 })).toMatchObject({ agentSoundDone: true, agentSoundSpacingSeconds: 13 });
+    expect(normalizeConfig({ agentSoundDone: 'yes' as never, agentSoundSpacingSeconds: NaN })).not.toHaveProperty('agentSoundDone');
+    for (const [input, expected] of [[-1, 2], [80, 60], [10, 10]]) expect(normalizeConfig({ agentSoundSpacingSeconds: input }).agentSoundSpacingSeconds).toBe(expected);
+    expect(normalizeConfig({ agentSoundSpacingSeconds: Infinity })).not.toHaveProperty('agentSoundSpacingSeconds');
+  });
+});
+
+describe('normalizeConfig — thread peer consent', () => {
+  it.each([true, false])('preserves the explicit communication preference %s', threadCommunicationEnabled => {
+    expect(normalizeConfig({ threadCommunicationEnabled, threadCommunicationGeneration: 3 }))
+      .toMatchObject({ threadCommunicationEnabled, threadCommunicationGeneration: 3 });
+  });
+  it.each([undefined, -1, 1.5, Number.NaN, '2'])('rejects invalid generations %s', value => {
+    expect(normalizeConfig({ threadCommunicationEnabled: 'true' as never, threadCommunicationGeneration: value as never }))
+      .not.toHaveProperty('threadCommunicationGeneration');
+  });
+});

@@ -843,6 +843,26 @@ describe('execution admission', () => {
     expect(logError).toHaveBeenCalledWith(expect.stringContaining('project-1:request-1'), expect.any(Error));
   }));
 
+  it('names the unsupported harness and tier when route facts fail with a user-safe message', async () => fixture(async (filePath) => {
+    const logError = vi.fn();
+    const safeMessage = 'OpenCode has no model for the medium tier.';
+    const service = new ExecutionService(deps(filePath, {
+      logError,
+      resolveTeamModelSnapshots: () => { throw Object.assign(new Error('OpenCode does not support medium model level.'), { safeMessage }); }
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toEqual({ ok: false, code: 'ADMISSION_FAILED', message: safeMessage });
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('route facts failed'), expect.any(Error));
+  }));
+
+  it('keeps the generic route-facts message when the error carries no safe text', async () => fixture(async (filePath) => {
+    const service = new ExecutionService(deps(filePath, {
+      resolveTeamModelSnapshots: () => { throw Object.assign(new Error('token=secret'), { safeMessage: 42 }); }
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toEqual({
+      ok: false, code: 'ADMISSION_FAILED', message: 'Team route facts could not be evaluated'
+    });
+  }));
+
   it('revokes authorization when admission revalidation rejects', async () => fixture(async (filePath) => {
     let calls = 0;
     const revokeTeamAuthorizations = vi.fn();

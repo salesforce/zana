@@ -1018,6 +1018,26 @@ export interface SavedRecordInput {
  */
 export type AgentState = 'working' | 'blocked' | 'done' | 'idle' | 'unknown' | 'waiting';
 
+/** Stable selection: builtin, or an installed plugin id / provider slot id. */
+export function normalizeNotificationSoundProvider(value: unknown): string | undefined {
+  return value === 'builtin' || (typeof value === 'string' && value.length <= 256 && /^[a-zA-Z0-9][a-zA-Z0-9._-]*\/[a-zA-Z0-9_-]+$/.test(value)) ? value : undefined;
+}
+export function notificationSoundProvider(config: Pick<AppConfig, 'notificationSoundProvider'>): string {
+  return normalizeNotificationSoundProvider(config.notificationSoundProvider) ?? 'builtin';
+}
+/** Existing chime preferences retain their behavior until the master is explicitly set. */
+export function notificationSoundsEnabled(config: Pick<AppConfig, 'notificationSoundsEnabled' | 'agentSoundNeedsYou' | 'agentSoundIdle'>): boolean {
+  return config.notificationSoundsEnabled ?? (config.agentSoundNeedsYou === true || config.agentSoundIdle === true);
+}
+export type AgentSoundKind = 'done' | 'idle' | 'needs-you';
+export interface AgentSoundClip { mime: 'audio/mpeg' | 'audio/wav' | 'audio/ogg'; base64: string }
+export type AgentSoundFilesSelection = Partial<Record<AgentSoundKind, { name: string }>>;
+
+export function normalizeAgentSoundVolume(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, Math.round(value))) : 50;
+}
+
 /**
  * At-rest states where it is safe to inject a peer message / nudge, on ANY
  * harness. `waiting` is the resting state of non-OSC harnesses
@@ -1932,6 +1952,10 @@ export interface AppConfig {
    * grant. Enforced host-side in `broker-caps.ts`.
    */
   extensionLlmEnabled?: boolean;
+  /** Reviewed, same-project thread communication. Enabled unless explicitly disabled. */
+  threadCommunicationEnabled?: boolean;
+  /** Host-owned consent generation; changes invalidate queued peer approvals. */
+  threadCommunicationGeneration?: number;
   /**
    * Path/name of the `cursor-agent` CLI (the Cursor harness). Optional: absent
    * ⇒ the provider falls back to the bare `cursor-agent` on PATH. Same slot
@@ -2215,6 +2239,8 @@ export interface AppConfig {
    * clearing this flag.
    */
   walkthroughCompleted?: boolean;
+  /** Remembered setup audience and resumable progress, independent of app updates. */
+  onboarding?: import('./onboarding.js').OnboardingProgress;
   /**
    * Whether the first-run setup checklist (the dependency doctor) has been
    * completed or dismissed. Absent / false ⇒ the checklist auto-opens once on
@@ -2380,6 +2406,17 @@ export interface AppConfig {
    * nothing. Invalid or missing values normalize to `all`.
    */
   notificationDefaultLevel?: NotificationLevel;
+  /** Desktop notification sounds for visible agents; idle settles for five seconds. */
+  notificationSoundProvider?: string;
+  notificationSoundsEnabled?: boolean;
+  agentSoundNeedsYou?: boolean;
+  agentSoundIdle?: boolean;
+  /** An explicit completed turn, independent of the optional idle alert. */
+  agentSoundDone?: boolean;
+  /** Fleet-wide spacing for built-in/custom audio, 2–60 seconds; default 2. */
+  agentSoundSpacingSeconds?: number;
+  /** Chime volume relative to system output, 0–100; default 50. */
+  agentSoundVolume?: number;
   /**
    * Level for a child thread (one with a parent) that has no level of its own;
    * `inherit` uses {@link notificationDefaultLevel}. Missing or invalid values
@@ -2552,6 +2589,13 @@ export interface AppConfig {
    * Subsequent launches only.
    */
   inAppAgentTerminalsEnabled?: boolean;
+  /**
+   * Local folders the user has trusted for read-only file preview. Global and
+   * device-local: used only for local desktop threads, never for remote
+   * threads or machines. Written only by the desktop Settings folder chooser;
+   * renderer config patches cannot set it. At most 20 canonical absolute paths.
+   */
+  trustedPreviewFolders?: string[];
   /**
    * Automatically open the thread secondary panel on the Plan pin when Plan
    * mode is active (native ACP Plan, `/plan`, or a durable plan artifact).
@@ -2989,6 +3033,21 @@ export interface AppConfig {
    */
   menubarPopoverEnabled?: boolean;
   /**
+   * Where the floating Command Center rail (the compact companion window
+   * shown by "Minimize to Command Center") was last docked: which screen edge,
+   * which display, and how far down that display's work area its top edge sits.
+   * Main owns it (written on drag-drop, Rule 4 via the config store); a missing
+   * or stale display falls back to the main window's display, then the primary.
+   */
+  companionPlacement?: CompanionPlacement;
+  /**
+   * Opt-in Command Center mode (macOS): when true, "Minimize to Command Center"
+   * appears in the Window menu, tray and sidebar, and hides the main window
+   * behind a floating rail on the screen edge. Default OFF (absent ⇒ false);
+   * turning it off while the rail is showing restores the main window.
+   */
+  companionEnabled?: boolean;
+  /**
    * While a live terminal session's cwd sits inside a local (in-app-authored)
    * extension's working dir, watch its `dist/` and auto pack+reinstall on
    * change — the "author an extension" hot-reload path, so an agent editing
@@ -3028,6 +3087,8 @@ export interface MenubarSnapshot {
   nextRunAt: string | null;
   /** Active theme so the popover matches the app without its own config read. */
   theme: 'dark' | 'light';
+  /** The opt-in Command Center mode is on — the footer offers to enter it. */
+  commandCenter?: boolean;
 }
 
 /**
@@ -3040,6 +3101,173 @@ export interface MenubarReplyResult {
   ok: boolean;
   reason?: 'ended' | 'background' | 'empty' | 'disabled';
 }
+
+/** Which vertical screen edge the Command Center rail is docked to. */
+export type CompanionEdge = 'left' | 'right';
+
+/** Persisted Command Center rail position (see {@link AppConfig.companionPlacement}). */
+export interface CompanionPlacement {
+  edge: CompanionEdge;
+  /** Electron `Display.id` the rail was dropped on (may no longer exist). */
+  displayId?: number;
+  /** Rail top, in px below the display work area's top edge. */
+  offsetY?: number;
+}
+
+/** Which quick panel the Command Center rail has open. */
+export type CompanionPanelKind = 'needs-you' | 'agents' | 'scheduler' | 'status';
+
+/** Why a Needs You request can't be answered from the companion (→ "Open in Zana"). */
+export type CompanionUnanswerableReason = 'ended' | 'background' | 'execution' | 'thread' | 'thread-error';
+
+/**
+ * One "Needs You" request in the Command Center snapshot. Either a structured
+ * inbox question (`kind: 'question'`, carries the questions to render as
+ * numbered options) or a blocked agent with only a free-text gloss
+ * (`kind: 'blocked'`). Built entirely in main from the inbox store, pty records
+ * and agent state — the companion renderer is a thin view (Rule 1).
+ */
+export interface CompanionRequest {
+  /** Authoritative Modern-thread interaction; displayed read-only in the rail. */
+  threadContext?: import('./menubar-agent.js').MenubarThreadContext;
+  /** Main-owned request identity: inbox entry, CLI session, or thread + current interaction. */
+  id: string;
+  kind: 'question' | 'blocked';
+  /** Inbox entry id (question kind) — the renderer's answered-set key. */
+  entryId?: string;
+  sessionId?: string;
+  /** Modern thread the request came from (opened, never answered, from the rail). */
+  threadId?: string;
+  projectId: string;
+  projectName: string;
+  projectColor?: string;
+  /** Agent / thread name the request came from. */
+  agentTitle: string;
+  /** The question heading (inbox subject/comments, or triage summary). */
+  prompt: string;
+  /** Structured questions (question kind only). */
+  questions?: InboxQuestion[];
+  /** Epoch ms the request appeared. */
+  ts: number;
+  /** Whether main will accept an answer from the companion. */
+  answerable: boolean;
+  reason?: CompanionUnanswerableReason;
+}
+
+/** One agent row in the Command Center Agents panel. */
+export interface CompanionAgent {
+  /** Pty session id, or `thread:<threadId>` for a Modern thread row (unique row key). */
+  sessionId: string;
+  /** Set for a Modern (conversation) thread; opening it goes through the thread router. */
+  threadId?: string;
+  projectId: string;
+  projectName: string;
+  projectColor?: string;
+  title: string;
+  state: AgentState;
+  /** A failed thread stays visible in Agents, without becoming a user request. */
+  failure?: string;
+  createdAt: number;
+  /** Finished a working turn within the last few minutes (drives the green dot). */
+  recentlyCompleted: boolean;
+}
+
+/** One schedule row in the Command Center Scheduler panel. */
+export interface CompanionSchedule {
+  id: string;
+  name: string;
+  projectId: string;
+  projectName: string;
+  enabled: boolean;
+  /** A session this schedule spawned is still running. */
+  running: boolean;
+  nextRunAt: string | null;
+  /** Outcome + time of the newest finished fire, if any. */
+  lastResult?: ScheduleStatus['lastRunResult'];
+  lastRunAt?: string;
+}
+
+/** The live Command Center snapshot main pushes to the rail + panel windows. */
+export interface CompanionSnapshot {
+  theme: 'dark' | 'light';
+  edge: CompanionEdge;
+  requests: CompanionRequest[];
+  agents: CompanionAgent[];
+  schedules: CompanionSchedule[];
+  counts: {
+    /** Agents in the blocked state (unanswered inbox questions are counted by the renderer). */
+    blocked: number;
+    working: number;
+    idle: number;
+    recentlyCompleted: number;
+    runningSchedules: number;
+  };
+  /** Initials for the profile/status avatar. */
+  userInitials: string;
+}
+
+/** What the panel window should show — pushed by main on open/switch. */
+export interface CompanionPanelState {
+  kind: CompanionPanelKind;
+  /** Side of the panel window the rail sits on (the card hugs that side). */
+  railSide: CompanionEdge;
+  /** Rail top, in px from the panel window's top (the card aligns to it). */
+  anchorY: number;
+  /** When set, expand this request straight away (badge click / deep focus). */
+  focusRequestId?: string;
+}
+
+/** Hover tooltip the rail asks main to float beside an icon. */
+export interface CompanionTooltip {
+  label: string;
+  detail?: string;
+  /** Hovered icon's panel: main attaches a live preview list (Agents / Needs you). */
+  panel?: CompanionPanelKind;
+  /** Icon centre, in px from the rail window's top. */
+  y: number;
+}
+
+/** One line in a hover preview: an agent (state dot) or a pending request. */
+export interface CompanionTooltipRow {
+  title: string;
+  projectName: string;
+  state: AgentState;
+  failure?: string;
+  /** Agent rows: start time and the green "Completed" dot. */
+  createdAt?: number;
+  recentlyCompleted?: boolean;
+  /** Request rows: the agent asking. */
+  agentTitle?: string;
+}
+
+/** What main pushes to the tooltip window (placed beside the rail). */
+export interface CompanionTooltipView {
+  label: string;
+  detail?: string;
+  /** Hover preview rows (Agents / Needs you), built by main from its own snapshot. */
+  rows?: CompanionTooltipRow[];
+  /** Rows beyond the preview cap. */
+  more?: number;
+  /** Rail edge — the tooltip sits on the opposite (inner) side. */
+  side: CompanionEdge;
+  theme: 'dark' | 'light';
+}
+
+/** Outcome of `companion.answer`. */
+export interface CompanionAnswerResult {
+  ok: boolean;
+  reason?: CompanionUnanswerableReason | 'empty' | 'unknown';
+}
+
+/** Deep-link targets the companion can bring the main window forward to. */
+export type CompanionOpenTarget =
+  | { kind: 'main' }
+  | { kind: 'home' }
+  | { kind: 'agents' }
+  | { kind: 'scheduler'; taskId?: string }
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'thread'; threadId: string }
+  | { kind: 'request'; requestId: string };
 
 /**
  * Memory-budget defaults + bounds for live sessions. These bound the two ways a
@@ -4393,6 +4621,13 @@ export interface HarnessModelRoutingV1 {
     roleTargetId?: string;
     modelTargetId?: string;
     modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
+    /**
+     * For a harness whose installed models carry no portable tier: per tier, ordered rules
+     * that pick a model from the live inventory. A rule is an exact model id or a name term
+     * (such as `terra`); a term matches whole `-`/`_`/`/`/`.`-separated words and picks the
+     * highest version. The first rule that matches wins.
+     */
+    modelTierRules?: Partial<Record<'low' | 'medium' | 'high' | 'extra-high', string[]>>;
     executionTargetId?: string;
     executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
     /** Harness-native per-agent overrides that cannot be represented by one portable axis. */
@@ -4411,6 +4646,10 @@ export interface PluginHarnessOverrideV1 extends HarnessModelRoutingV1 {
   /** Run the plugin's agents on this harness instead of the project's default harness. */
   defaultHarness?: HarnessFamily;
 }
+
+/** Reasoning-effort levels a persona can request, lowest first (each harness maps them to its own setting). */
+export const PERSONA_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type PersonaReasoningLevel = (typeof PERSONA_REASONING_LEVELS)[number];
 
 /**
  * A named, reusable Claude Code personality (Reviewer, Architect, Bug-hunter…)
@@ -4494,8 +4733,26 @@ export interface Persona {
    */
   microVmImage?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
+  /**
+   * Reasoning effort, harness neutral. Terminal / CLI Agent and CLI Squad
+   * launches map it in each harness's provider: Claude `--effort`, Codex
+   * `-c model_reasoning_effort`, PI `--thinking`, Grok `--reasoning-effort`
+   * (xhigh/max → high). OpenCode's TUI and cursor-agent have no launch flag,
+   * so they ignore it there. Modern Squad seats carry it as the thread
+   * `reasoningLevel` on any provider that declares levels, stepped down to the
+   * nearest declared level (the provider bridge maps it, e.g. to an OpenCode
+   * model variant). Plain thread launches ignore it. Absent = harness default.
+   */
+  reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
   harnessRouting?: PersonaHarnessRoutingV1;
+  /**
+   * Skill allowlist (a context filter, NOT a security boundary). Entries are an
+   * exact skill name, `plugin:skill`, or `:name` suffix; no globs. Absent =
+   * unrestricted; an explicit empty array = no skills beyond the always-allowed
+   * ones. Resolve with {@link effectiveSkills}, which always adds `zcc-inbox`.
+   */
+  skills?: string[];
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -4526,7 +4783,11 @@ export interface PersonaSummary {
   baseProfile?: LaunchProfileId;
   model?: string;
   modelLevel?: 'low' | 'medium' | 'high' | 'extra-high';
+  /** Reasoning effort; each harness maps it to its own setting (see `Persona.reasoningLevel`). */
+  reasoningLevel?: PersonaReasoningLevel;
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
+  /** Skill allowlist (see `Persona.skills`). Absent = unrestricted. */
+  skills?: string[];
   /** Provenance (builtin / user / project / extension). Non-sensitive; lets a
    *  discovery surface show the source badge. */
   source?: PersonaSource;
@@ -4541,9 +4802,164 @@ export function toPersonaSummary(p: Persona): PersonaSummary {
     baseProfile: p.baseProfile,
     model: p.model,
     modelLevel: p.modelLevel,
+    reasoningLevel: p.reasoningLevel,
     executionState: p.executionState,
+    ...(p.skills !== undefined ? { skills: p.skills } : {}),
     source: p.source
   };
+}
+
+/** Skills every restricted session keeps: documentation for the Squad `execution.*` mechanics. */
+export const ALWAYS_ALLOWED_SKILLS = ['zcc-inbox'] as const;
+/** Persona allowlist bounds. 63 + the always-allowed skill stays within the 64-id wire limit. */
+export const PERSONA_SKILLS_MAX = 63;
+
+/**
+ * Skill policy of built-in personas, by id. Lives in the electron-free domain package so
+ * the runtime-child HTTP layer (which cannot import the Electron-bound persona store) and
+ * the store's built-in list share one source. Absent id = unrestricted.
+ */
+export const BUILTIN_PERSONA_SKILLS: Readonly<Record<string, readonly string[]>> = {
+  'builtin:reviewer': []
+};
+export const PERSONA_SKILL_NAME_MAX = 200;
+const SKILL_NAME_PART = '[A-Za-z0-9][A-Za-z0-9._-]*';
+const SKILL_ENTRY_RE = new RegExp(`^(?:${SKILL_NAME_PART}:|:)?${SKILL_NAME_PART}$`);
+
+/**
+ * Validate a persisted/renderer `Persona.skills` value. Returns `undefined` for
+ * absent input, a trimmed + deduped list (empty list preserved) when valid, and
+ * `null` when malformed (not an array, too many entries, a non-string/oversized
+ * entry, or anything but name / `plugin:skill` / `:name`, e.g. a glob).
+ */
+export function sanitizePersonaSkills(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > PERSONA_SKILLS_MAX) return null;
+  const out = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') return null;
+    const name = entry.trim();
+    if (!name || name.length > PERSONA_SKILL_NAME_MAX || !SKILL_ENTRY_RE.test(name)) return null;
+    out.add(name);
+  }
+  return [...out];
+}
+
+/**
+ * Main-side resolution of the skill allowlist for one slot. Explicit persona
+ * list wins over lean; lean only presets worker slots whose persona leaves
+ * `skills` unset; otherwise `undefined` = unrestricted. A returned list always
+ * contains {@link ALWAYS_ALLOWED_SKILLS}. Renderer input is never an argument.
+ */
+export function effectiveSkills(
+  team: Pick<Team, 'leanWorkers'> | undefined,
+  persona: Pick<Persona, 'skills'>,
+  slotRole: 'worker' | 'orchestrator'
+): string[] | undefined {
+  if (persona.skills !== undefined) return [...new Set([...ALWAYS_ALLOWED_SKILLS, ...persona.skills])];
+  if (slotRole === 'worker' && team?.leanWorkers === true) return [...ALWAYS_ALLOWED_SKILLS];
+  return undefined;
+}
+
+function parseSkillRef(ref: string): { plugin?: string; name: string } {
+  const at = ref.lastIndexOf(':');
+  return { ...(at > 0 ? { plugin: ref.slice(0, at) } : {}), name: ref.slice(at + 1) };
+}
+
+/** True when allowlist `entry` (name, `plugin:skill`, `:name`) covers skill ref `skill`. */
+export function skillAllowlistEntryMatches(entry: string, skill: string): boolean {
+  const a = parseSkillRef(entry);
+  const b = parseSkillRef(skill);
+  return a.name === b.name && (a.plugin === undefined || b.plugin === undefined || a.plugin === b.plugin);
+}
+
+/** True when any allowlist entry covers `skill`; an undefined allowlist covers everything. */
+export function skillAllowlistCovers(allowlist: readonly string[] | undefined, skill: string): boolean {
+  return allowlist === undefined || allowlist.some((entry) => skillAllowlistEntryMatches(entry, skill));
+}
+
+/** Slot-id prefix of the squad orchestrator seat (`orchestrator:<personaId>`). */
+export const ORCHESTRATOR_SLOT_PREFIX = 'orchestrator:';
+
+/** True for the orchestrator's slot id: `orchestrator:<personaId>` or the bare legacy `orchestrator`. */
+export function isOrchestratorSlotId(slotId: string): boolean {
+  return slotId === 'orchestrator' || slotId.startsWith(ORCHESTRATOR_SLOT_PREFIX);
+}
+
+/**
+ * Provider ids whose harness actually enforces a skill allowlist at launch (Claude CLI and Claude
+ * Modern). Every other harness launches unrestricted, so an allowlist on its slot is not a restriction.
+ */
+export const SKILL_ALLOWLIST_ENFORCING_PROVIDERS: readonly string[] = ['claude', 'claude-yolo', 'claude-code'];
+
+/**
+ * The allowlist that really restricts a slot: its `skillAllowlist` only when the slot's harness enforces it.
+ * An unknown provider (legacy snapshot) keeps the recorded allowlist; an explicit non-enforcing provider is unrestricted.
+ */
+export function enforcedSkillAllowlist(slot: { provider?: string; skillAllowlist?: readonly string[] } | undefined): readonly string[] | undefined {
+  if (!slot || slot.skillAllowlist === undefined) return undefined;
+  return slot.provider === undefined || SKILL_ALLOWLIST_ENFORCING_PROVIDERS.includes(slot.provider) ? slot.skillAllowlist : undefined;
+}
+
+/** A Zana-injected catalog skill: `id` is `zcc:<owner>/<name>`. */
+export interface SkillCatalogEntry {
+  id: string;
+  name: string;
+}
+
+/** Wire limit of `automatedSkillIds` (host-rpc / runtime contracts). */
+export const MAX_MAPPED_SKILL_IDS = 64;
+
+export interface MappedSkillAllowlist {
+  /** Catalog ids for the existing `automatedSkillIds` field (Zana-injected skills). */
+  automatedSkillIds?: string[];
+  /** Allowlist entries that match no catalog id; user and plugin skills, by name. */
+  allowedSkillNames?: string[];
+}
+
+/**
+ * Split a resolved allowlist into catalog ids and remaining names. An entry that
+ * matches no catalog id is kept as a name only. `undefined` (unrestricted) maps
+ * to an empty result so callers keep today's behavior.
+ */
+export function mapSkillAllowlist(
+  allowlist: readonly string[] | undefined,
+  catalog: readonly SkillCatalogEntry[]
+): MappedSkillAllowlist {
+  if (allowlist === undefined) return {};
+  const ids = new Set<string>();
+  const names: string[] = [];
+  for (const entry of allowlist) {
+    let matched = false;
+    for (const item of catalog) {
+      const owner = /^zcc:([^/]+)\//.exec(item.id)?.[1];
+      if (skillAllowlistEntryMatches(entry, owner ? `${owner}:${item.name}` : item.name)) {
+        ids.add(item.id);
+        matched = true;
+      }
+    }
+    if (!matched) names.push(entry);
+  }
+  // A bare/`:name` entry matches every owner, so entries can fan out past the wire limit.
+  if (ids.size > MAX_MAPPED_SKILL_IDS) {
+    throw new Error(`skill allowlist maps to ${ids.size} injected skills (limit ${MAX_MAPPED_SKILL_IDS}); use plugin-qualified entries to narrow it`);
+  }
+  return { automatedSkillIds: [...ids].sort(), allowedSkillNames: [...new Set(names)] };
+}
+
+/**
+ * Advisory Team-save check: allowlist entries that no installed skill satisfies.
+ * An unavailable inventory (`undefined`) yields no warning, never a failure. The
+ * always-allowed skills are skipped: Zana-injected skills are absent from some
+ * (remote) host inventories.
+ */
+export function uninstalledAllowlistSkills(
+  allowlist: readonly string[] | undefined,
+  inventory: readonly string[] | undefined
+): string[] {
+  if (!allowlist || !inventory) return [];
+  return allowlist.filter((entry) => !(ALWAYS_ALLOWED_SKILLS as readonly string[]).includes(entry)
+    && !inventory.some((installed) => skillAllowlistEntryMatches(entry, installed)));
 }
 
 /**
@@ -4557,6 +4973,11 @@ export interface TeamSlot {
   quantity?: number;
   /** Optional tab label override. */
   label?: string;
+  /**
+   * Opt-in: keep this seat closed until the engine has a first unit for it.
+   * Only the boolean `true` is stored; absent means the seat starts at launch.
+   */
+  startOnDemand?: boolean;
 }
 
 /** Whole-squad execution transport. Mixed transports are deliberately unsupported. */
@@ -4714,6 +5135,11 @@ export interface Team {
   worktreeOnComplete?: 'leave' | 'merge' | 'delete';
   /** Override global structured-work routing enforcement for this Team. */
   routingEnforced?: boolean;
+  /**
+   * Opt-in: worker slots whose persona leaves `skills` unset get only the
+   * always-allowed skills. Only the boolean `true` is stored; see `effectiveSkills`.
+   */
+  leanWorkers?: boolean;
   /** Transport selected for every squad member. Absent persisted teams remain CLI. */
   transport?: SquadTransport;
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
@@ -6744,3 +7170,6 @@ export interface ExecutionBoardSnapshot {
 
 /** Stable text main raises when Zana Connect rejects this computer's credential (401/403). Survives IPC serialization. */
 export const CONNECT_ACCESS_REVOKED_MESSAGE = "This computer's access was revoked. Sign in again to reconnect.";
+
+/** Maximum folders a user can trust for file Preview; enforced in main, mirrored by the Settings UI. */
+export const TRUSTED_PREVIEW_FOLDERS_MAX = 20;

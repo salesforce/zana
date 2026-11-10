@@ -19,8 +19,8 @@
  * - `--extension <path>` loads the module through a resolve hook that maps
  *   `@earendil-works/pi-coding-agent` and `typebox` onto this package's
  *   copies (pi's loader aliases them the same way); under runtimes without
- *   `module.registerHooks` (Bun) a staged copy beside this package's
- *   node_modules resolves the same bare imports natively. It hands a minimal
+ *   `module.registerHooks` (Bun) a staged copy uses the same resolved imports.
+ *   It hands a minimal
  *   extension API (registerTool, on, get/setActiveTools), and emits
  *   `session_start`, `agent_start`, `agent_end` to it in pi's order — the
  *   extension's `ready`, tool calls, `agent-end-leaf`, and fork replies all
@@ -67,7 +67,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -283,12 +283,15 @@ async function loadExtension(path) {
   }
   let loadPath = path;
   if (!hooksRegistered) {
-    // Bun has no registerHooks: stage the extension copy inside this
-    // package's (gitignored) node_modules so its bare imports
-    // (@earendil-works/pi-coding-agent, typebox) resolve natively.
+    // Bun has no registerHooks. Resolve the same imports in its staged copy,
+    // including SDK dependencies that pnpm does not hoist beside the fixture.
     const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
     const staging = mkdtempSync(join(pkgRoot, "node_modules", ".fake-pi-ext-"));
-    copyFileSync(path, staging + "/extension.mjs");
+    const source = readFileSync(path, "utf8").replace(
+      /from (["'])(@earendil-works\/pi-coding-agent|typebox)\1/g,
+      (_match, _quote, specifier) => `from ${JSON.stringify(aliases.get(specifier))}`,
+    );
+    writeFileSync(staging + "/extension.mjs", source);
     loadPath = staging + "/extension.mjs";
     process.on("exit", () => {
       try { rmSync(staging, { recursive: true, force: true }); } catch {}

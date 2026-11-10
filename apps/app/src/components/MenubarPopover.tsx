@@ -7,7 +7,8 @@ import {
   Zap,
   Settings,
   Power,
-  AppWindow
+  AppWindow,
+  PanelRightClose
 } from 'lucide-react';
 import type { AgentState, MenubarAgent, MenubarSnapshot } from '@zana-ai/zcc-domain/product';
 import fairyGlyph from '../assets/zana-glyph.svg';
@@ -185,6 +186,16 @@ export function MenubarPopover() {
           active={filter === 'all'}
           onClick={() => setFilter('all')}
         />
+        {snapshot.commandCenter && (
+          <NavButton
+            icon={<PanelRightClose size={17} />}
+            label="Command Center"
+            onClick={() => {
+              product.menubar.hide().catch(() => {});
+              product.companion.enter().catch(() => {});
+            }}
+          />
+        )}
         <NavButton icon={<Settings size={17} />} label="Settings" onClick={() => nav('settings')} />
         <NavButton icon={<Power size={17} />} label="Quit" danger onClick={() => product.menubar.quit()} />
       </footer>

@@ -1,4 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('electron', () => ({
+  app: { getPath: () => '/mock-home' },
+  shell: { openPath: vi.fn() }
+}));
 import { mkdtemp, rm, writeFile, mkdir, readFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -2,7 +2,7 @@
 
 Import `definePluginApp` from `@zana-ai/zcc-plugin-sdk/app`; use `PluginAppBuilder.slots`, `composer`, and `contentScripts`. Runtime exports include `isPluginAppDefinition`, `callPluginRpc`, `getPluginSettings`, `setPluginSettings`, `collectPluginApp`, `emptyRegistrationSet`, `PLUGIN_THREAD_PANEL_SCOPES`, `DEFAULT_PLUGIN_THREAD_PANEL_SCOPES`, `threadPanelActionMatchesScope`, `PLUGIN_COMPOSER_SCOPE_KINDS`, `PLUGIN_PROJECT_STATUSBAR_ALIGNS`, `PLUGIN_NAV_PANEL_PLACEMENTS`, `navPanelListsInSidebar`, `navPanelListsInExtensionsHub`, `useRpc`, `useRealtime`, `useRealtimeConnectionState`, `useSettings`, `useZccContext`, `useZccNavigate`, `useZccDeepLinks`, `useWindowTitle`, `useWindowCloseHandler`, `useComposer`, `useComposerView`, `experimental_useSidebarThreads`, `experimental_useSidebarThreadActions`, `experimental_useSidebarThreadPullRequest`, `experimental_useSidebarThreadSplit`, `ThreadChat`, `Markdown`, `experimental_NewThreadComposer`, `experimental_HarnessRoutingEditor`, and `experimental_requestApproval`.
 
-Slots: `navPanel`, `settingsSection`, `homepageSection`, `projectTab`, `sidebarFooterAction`, `projectStatusbarItem`, `pendingInteraction`, `threadPanelAction`, `experimental_newThreadPanelAction`, `experimental_agentsView`, `experimental_threadList`, `experimental_threadHeaderAction`, `fileOpener`, `messageDirective`, `messageAction`, `experimental_agentCardAction`, `experimental_agentsBoardAction`, `experimental_timelineRenderer`, `commandPaletteAction`, `experimental_projectMenuAction`, `experimental_createProjectAction`, and `experimental_providerIcon`.
+Slots: `navPanel`, `settingsSection`, `notificationSoundProvider`, `homepageSection`, `projectTab`, `sidebarFooterAction`, `projectStatusbarItem`, `pendingInteraction`, `threadPanelAction`, `experimental_newThreadPanelAction`, `experimental_agentsView`, `experimental_threadList`, `experimental_threadHeaderAction`, `fileOpener`, `messageDirective`, `messageAction`, `experimental_agentCardAction`, `experimental_agentsBoardAction`, `experimental_timelineRenderer`, `commandPaletteAction`, `experimental_projectMenuAction`, `experimental_createProjectAction`, and `experimental_providerIcon`.
 
 Every registration needs stable `id`. Read SDK types for exact props before implementation. Main still authorizes navigation, dialogs, RPC, project paths, and launch patches. Host React is `globalThis.__ZCC_HOST_REACT__`; UI is not security sandbox. Open Plugin Guide under Plugins for annotated surface wireframes.
 
@@ -22,6 +22,14 @@ The composer displays a removable, inspectable file-and-line chip; Shift-paste k
 
 `experimental_agentsView` contributes a selectable Agents layout. Its component receives `PluginAgentsViewProps`; render scoped `projects`, `members`, `schedules`, and `executions`, then call `onInspect(key)` with the opaque item key. `includeScheduled` and `searchQuery` already filter supplied data. Reloading remounts the view, so clean up timers, observers, and subscriptions. This experimental slot is absent on older hosts; optional chaining makes registration a no-op there.
 
+## Background activity and sound plugins
+
+Use `app.contentScripts.register({ id, mount(context) { /* return disposer */ } })` for effects that must continue with the plugin page closed. Feature-detect the optional `PluginContentScriptContext.experimental_observeAgents` and `experimental_onSignal` methods; older hosts omit them. The activity subscription sends an initial `PluginAgentActivitySnapshot` and changes from existing stores, capped at 1,000 visible agents. Records contain only `id`, thread/CLI `kind` and working/idle/needs-you/unknown `state`, never prompts or output. Idle does not mean success.
+
+Treat `ready: false` as unavailable and reset transition baselines; scoped windows remain unready. Seed the first ready snapshot silently, then react to changes. No extra polling is needed. For one notification player across main windows, request a Chromium Web Lock only after readiness. Own-plugin realtime signals can reload preferences. Both observers return unsubscribe functions and are released when the context `signal` aborts; return a disposer for your own timers, audio contexts and lock ownership on disable, reload and shutdown.
+
+Users choose their own MP3, WAV, or OGG directly in Settings → Notifications → Chimes & custom audio; no plugin or sound-pack creation is required. Completed turns and idle are separate alerts. Sound Studio (`plugins/agent-sounds/`) is an optional forkable example for audio collections and custom playback rules. Use notificationSoundProvider for optional players: Settings selects one provider and the master gates its lifecycle. A per-plugin Web Lock deduplicates that provider across windows. Keep imports bounded and validated, startup baselines silent, input-request priority explicit, and cleanup covered by a built-Electron test. Automatic activity requires a host containing these optional APIs.
+
 ## Resource windows and project chrome
 
 `projectTab({ statusbar: "hidden", ... })` omits the host project-path/Git footer for this tab; other project views keep their footer. `openInWindow(projectId, { tabId, resourceId })` opens one window per opaque resource and preserves the main tab. `useZccContext().resourceId` identifies the resource; it grants no file access. In main, watch `resourceRequestId` too, so repeat navigation reselects the resource. `toProject(projectId, { tabId, inMainWindow: true })` explicitly opens the main tab instead of focusing its detached window.
@@ -37,3 +45,16 @@ Use `copyContextSelection(event, root, { version: 1, label, source })` in a read
 `ContextReference` is a versioned text snapshot with a label and optional descriptive file or plugin source. `parseContextReference` validates one packet; `parseContextReferences` also enforces aggregate limits. `MAX_CONTEXT_REFERENCE_TEXT` is 100,000 characters, `MAX_CONTEXT_REFERENCES` is 24 and `MAX_CONTEXT_REFERENCES_TEXT` is 400,000. `contextReferenceFromClipboard` validates native clipboard metadata against its plain text and adapts the legacy editor selection format via `contextReferenceFromEditorSelection`. `contextReferenceLocation` formats provenance; `contextReferencePrompt` expands an immutable snapshot into provider text. These metadata fields grant no source read authority.
 
 `useComposer().insertContextReference?.(reference)` inserts at the enclosing composer's caret. `useZccNavigate().addThreadContext?.(reference)` targets the thread owning a plugin panel and returns false when unavailable or ambiguous. Neither sends a message. For a page assistant, check `navigate.supportsContextReferences` before calling `openPanelAgent({ draft: { prompt, references: [reference] } })`; older hosts should receive `contextReferencePrompt(reference)` in ordinary prompt text. Keep source text out of other request fields. The host supplies inspect, remove, convert-to-text and undo controls, validates saved offsets, restores history, and expands exact snapshots on send. Plain paste bypasses metadata; compact display does not reduce model tokens.
+
+## Sound settings and providers
+
+Use app.slots.notificationSoundProvider({ id, title, description?, component, mount })
+for sound plugins. The Settings → Notifications page embeds component with
+{ pluginId }; mount receives PluginContentScriptContext only while the host
+master is on and this provider is selected. Aborting stops all pending timers
+and audio. Do not also register the player in contentScripts or add navigation
+entries for configuration. Ordinary settingsSection stays on the plugin hub.
+Provider changes leave the master off; Configure sounds links inspect without
+selecting or enabling playback. Feature-detect the slot for older hosts and
+keep their automatic audio off. Continue to elect one player across main
+windows, after activity is ready. Users may retain multiple installed providers.

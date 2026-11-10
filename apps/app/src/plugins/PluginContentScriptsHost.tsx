@@ -1,5 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { listContentScripts, subscribePluginSlots } from './plugin-slots.js';
+import { listContentScripts, listNotificationSoundProviders, subscribePluginSlots } from './plugin-slots.js';
+import { observeAgentActivity } from './agent-activity.js';
+import { subscribeProductEvent } from '../lib/product-ws.js';
+import { product } from '../lib/product-client.js';
+import { notificationSoundProvider, notificationSoundsEnabled, type AppConfig } from '@zana-ai/zcc-domain/product';
+import { soundProviderKey } from './notification-sounds.js';
 
 /**
  * Mounts plugin content scripts once at app init (Rule 3). Disposes and
@@ -9,8 +14,13 @@ export function PluginContentScriptsHost() {
   const controllers = useRef(new Map<string, AbortController>());
 
   useEffect(() => {
+    let config: AppConfig | null = null;
+    let revision = 0, stopped = false;
     const sync = () => {
-      const scripts = listContentScripts();
+      const selected = config && notificationSoundsEnabled(config)
+        ? listNotificationSoundProviders().filter(row => soundProviderKey(row) === notificationSoundProvider(config!)) : [];
+      // Separate the identity from ordinary content scripts, even when their ids match.
+      const scripts = [...listContentScripts(), ...selected.map(row => ({ ...row, id: `sound/${row.id}` }))];
       const wanted = new Set(scripts.map((row) => `${row.pluginId}:${row.id}:${row.generation}`));
       for (const [key, controller] of controllers.current) {
         if (!wanted.has(key)) {
@@ -23,17 +33,32 @@ export function PluginContentScriptsHost() {
         if (controllers.current.has(key)) continue;
         const controller = new AbortController();
         controllers.current.set(key, controller);
-        void Promise.resolve(
-          script.mount({
+        const bind = (off: () => void) => {
+          let disposed = false;
+          const dispose = () => { if (disposed) return; disposed = true; controller.signal.removeEventListener('abort', dispose); off(); };
+          controller.signal.addEventListener('abort', dispose, { once: true });
+          return dispose;
+        };
+        void Promise.resolve().then(() => controller.signal.aborted ? undefined : script.mount({
             pluginId: script.pluginId,
             generation: script.generation,
-            signal: controller.signal
-          })
-        )
+            signal: controller.signal,
+            experimental_observeAgents: (listener) => {
+              if (controller.signal.aborted) return () => undefined;
+              return bind(observeAgentActivity(snapshot => { try { listener(snapshot); } catch { /* plugin failure is isolated */ } }));
+            },
+            experimental_onSignal: (channel, listener) => {
+              if (controller.signal.aborted) return () => undefined;
+              const off = subscribeProductEvent<{ pluginId: string; channel: string; payload: unknown }>('plugin-signal', event => {
+                if (event.pluginId === script.pluginId && event.channel === channel) { try { listener(event.payload); } catch { /* plugin failure is isolated */ } }
+              });
+              return bind(off);
+            }
+          }))
           .then((dispose) => {
             if (typeof dispose !== 'function') return;
             const onAbort = () => {
-              void dispose();
+              try { void Promise.resolve(dispose()).catch(() => { /* isolated */ }); } catch { /* isolated */ }
             };
             if (controller.signal.aborted) onAbort();
             else controller.signal.addEventListener('abort', onAbort, { once: true });
@@ -44,7 +69,14 @@ export function PluginContentScriptsHost() {
       }
     };
     sync();
-    return subscribePluginSlots(sync);
+    const offSlots = subscribePluginSlots(sync);
+    const offConfig = product.config.onChanged(next => { ++revision; config = next; sync(); });
+    const request = revision;
+    void product.config.get().then(next => {
+      if (stopped || request !== revision) return;
+      config = next; sync();
+    }).catch(() => { /* Keep sound providers off without authoritative config. */ });
+    return () => { stopped = true; offSlots(); offConfig(); };
   }, []);
 
   useEffect(

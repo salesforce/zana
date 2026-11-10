@@ -1,20 +1,20 @@
-import { isDurableCoordination, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, isOrchestratorSlotId, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, slotRouteSnapshot, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, unitSlotEligibility, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
 import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-grant-store.js';
 import type { createExecutionSourceRegistry } from './source-registry.js';
+import { blockerCardSubject, humanBlockerDenial } from './human-blocker-denial.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-watchdog.js';
 import { PlanReadinessWatchdog, type PlanReadinessExpiryReason } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
-import { evaluateSlotEligibility } from './routing-policy.js';
 import { transitionCircuit, type CircuitState } from './retry-policy.js';
 import { usageCursorIdentity, usageRollup, validateStructuredJson, validateStructuredResult, type ExecutionUsageObservationV1, type UsageSampleKind } from './contracts.js';
 import { CoordinatorWakeConfirmations, type CoordinatorWakeConfirmation, type PendingWakeConfirmation } from './coordinator-wake-confirmation.js';
@@ -208,6 +208,8 @@ function assignmentCorrelation(executionId: string, claim: { claimId?: string; c
   return { executionId, assignmentId: claim.claimId, idempotencyKey: `${executionId}:${claim.claimId}:${claim.claimGeneration}` };
 }
 
+export type DeferredWorkerSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string; retryable?: true };
+
 export interface ExecutionServiceDeps {
   store: ReturnType<typeof createExecutionStore>;
   artifacts: ReturnType<typeof createExecutionArtifactStore>;
@@ -247,6 +249,11 @@ export interface ExecutionServiceDeps {
   /** Receipt-aware transport. Only rejection proves an assignment was not accepted. */
   deliverAssignment?: (workerSessionId: string, text: string, correlation: ExecutionAssignmentCorrelation) =>
     Promise<{ state: 'accepted' | 'completed' | 'uncertain' | 'rejected' }>;
+  /**
+   * Start a seat that was left closed at launch (`startOnDemand`). Resolves with the new
+   * session id, or a failure message; the engine then delivers the assignment or releases it.
+   */
+  spawnDeferredWorker?: (recordId: string, slotId: string) => Promise<DeferredWorkerSpawnResult>;
   /** Project a runtime receipt only after authenticated work completion is durable. */
   onWorkSettled?: (correlation: ExecutionAssignmentCorrelation & { workerSessionId: string }) => void | Promise<void>;
   triggerDeliveryDrain?: (sessionId: string) => void;
@@ -375,6 +382,8 @@ export class ExecutionSnapshotTimeoutError extends Error {
 }
 
 interface ExtractedLifecycle {
+  /** Lifecycle record id; the deferred-seat spawner is keyed by it. */
+  recordId?: string;
   orchestratorSessionId?: string;
   orchestratorAuthorizationId?: string;
   retainOrchestrator?: boolean;
@@ -384,6 +393,8 @@ interface ExtractedLifecycle {
     authorizationId?: string;
     projectId?: string;
     process?: string;
+    /** Set on a seat that starts on demand (it may have no session). */
+    onDemand?: true;
     task?: string;
     exitCode?: number;
     exitSignal?: number;
@@ -405,10 +416,11 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
   const orchestratorSessionId = launchResult?.orchestratorSessionId || lifecycle.orchestratorSessionId;
 
   const workers = lifecycle.workers || launchResult?.workers;
-  const orchestratorWorker = workers?.find((w: any) => w.slotId === 'orchestrator' || w.slotId?.startsWith('orchestrator:'));
+  const orchestratorWorker = workers?.find((w: any) => w.slotId && isOrchestratorSlotId(w.slotId));
   const orchestratorAuthorizationId = orchestratorWorker?.authorizationId || lifecycle.orchestratorAuthorizationId;
 
   return {
+    ...(typeof lifecycle.id === 'string' ? { recordId: lifecycle.id } : {}),
     orchestratorSessionId,
     orchestratorAuthorizationId,
     retainOrchestrator: lifecycle.retainOrchestrator === true,
@@ -701,7 +713,9 @@ export class ExecutionService {
       resolvedModels = (await this.withResolvedRouteFacts(projectId, request)).resolvedModels ?? [];
     } catch (error) {
       this.deps.logError?.(`Team route facts failed for ${projectId}:${request.launchRequestId}`, error);
-      return { ok: false, code: 'ADMISSION_FAILED', message: 'Team route facts could not be evaluated' };
+      // Only an error that declares fixed user-safe text is shown; anything else may carry detail.
+      const safe = (error as { safeMessage?: unknown } | null)?.safeMessage;
+      return { ok: false, code: 'ADMISSION_FAILED', message: typeof safe === 'string' && safe ? safe : 'Team route facts could not be evaluated' };
     }
     if (!hasUniqueModelSlots(resolvedModels)) return { ok: false, code: 'INVALID', message: 'duplicate resolved model slot' };
     const resolvedRequest = { ...request, resolvedModels };
@@ -920,7 +934,8 @@ export class ExecutionService {
         slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
         level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
         modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
-        observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
+        observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
+        ...(model.skillAllowlist === undefined ? {} : { skillAllowlist: model.skillAllowlist })
       }))
     };
   }
@@ -1265,7 +1280,7 @@ export class ExecutionService {
       // EVERY distinct worker slot has been exhausted (or a single-worker team) does
       // the store throw here and we fall through to the human block below.
       try {
-        await this.deps.store.reassignKickoffToFreshSlot(reclaimed.id, unit.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(reclaimed) === true });
+        await this.deps.store.reassignKickoffToFreshSlot(reclaimed.id, unit.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(reclaimed) === true, ...await this.deferredDispatchOpts(reclaimed) });
         changed = true;
         continue; // reassigned to a fresh slot — the caller's cascadeDispatch redispatches it
       } catch (error) {
@@ -1363,7 +1378,7 @@ export class ExecutionService {
         this.fireHumanBlocker(updated, blocker);
         void this.deps.inbox?.append({
           projectId: updated.projectId,
-          subject: updated.jobTitle || 'Job Execution Blocked',
+          subject: blockerCardSubject(updated),
           comments: blocker.question,
           executionId: updated.id,
           blockerId: blocker.id
@@ -1661,7 +1676,7 @@ export class ExecutionService {
     }
     try {
       const routed = await this.refreshRouteFacts(record);
-      const { record: updated, assignments } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true });
+      const { record: updated, assignments } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true, ...await this.deferredDispatchOpts(routed) });
       await this.pushAssignments(updated, assignments);
       await this.maybeAutoFinalize(updated.id);
       return { ok: true as const, value: updated };
@@ -1810,6 +1825,24 @@ export class ExecutionService {
   }
 
   /**
+   * Seats that start on demand and have not started (D11): authorized, CLI, no session.
+   * Dispatch ranks them after live seats at equal price. A failed lifecycle read is
+   * best-effort: no deferred hint, so selection falls back to price then roster order.
+   */
+  private async deferredDispatchOpts(record: ExecutionRecord): Promise<{ deferredSlotIds?: ReadonlySet<string> }> {
+    try {
+      const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+      const ids = (lifecycle?.workers ?? [])
+        .filter((worker) => worker.projectId === record.projectId && worker.process === 'authorized' && !worker.sessionId && worker.onDemand === true && (worker as { transport?: string }).transport !== 'MODERN')
+        .flatMap((worker) => worker.slotId ? [worker.slotId] : []);
+      return ids.length ? { deferredSlotIds: new Set(ids) } : {};
+    } catch (error) {
+      (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution ${record.id} deferred-seat lookup failed (team launch ${record.teamLaunchRequestId}); dispatching without deferred hint`, error);
+      return {};
+    }
+  }
+
+  /**
    * After a unit closes (freeing a slot and satisfying dependents), auto-assign
    * the newly-ready units and push them — the engine schedules the DAG so the
    * coordinator stays out of the per-unit relay. Best-effort: a cascade failure
@@ -1823,7 +1856,8 @@ export class ExecutionService {
       if (existing.resourceBlock || this.checkUsageBudget(existing)) return;
       const routed = await this.refreshRouteFacts(existing);
       const { record, assignments } = await this.deps.store.dispatchReady(routed.id, {
-        ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true
+        ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true,
+        ...await this.deferredDispatchOpts(routed)
       });
       await this.pushAssignments(record, assignments);
       if (this.deps.routingEnforcementEnabled?.(record) === true) await this.maybeAutoFinalize(record.id);
@@ -1895,89 +1929,182 @@ export class ExecutionService {
       await this.releaseUndeliveredAssignments(record.id, assignments);
       return;
     }
+    // Seats that are already running are delivered to first, so they never wait for a cold start. Seats that
+    // start on demand then start together (a few at a time), and each is delivered to once its start settles.
+    const ready: Array<{ assignment: ExecutionDispatchAssignment; sessionId?: string }> = [];
+    let quarantined = false;
     for (const assignment of assignments) {
-      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
-      if (!worker?.sessionId) {
+      const verdict = this.assignmentVerdict(record, assignment, lifecycle?.workers);
+      if (verdict === 'release') { await this.releaseUndeliveredAssignments(record.id, [assignment]); continue; }
+      if (verdict === 'quarantine') { quarantined = (await this.quarantineDeadSeat(record, assignment)) || quarantined; continue; }
+      ready.push({ assignment, sessionId: verdict.sessionId });
+    }
+    const deferred = ready.filter((entry) => entry.sessionId === undefined);
+    for (const entry of ready.filter((candidate) => candidate.sessionId !== undefined)) {
+      await this.deliverAssignment(record, entry.assignment, entry.sessionId!);
+    }
+    const started = await this.startDeferredSeats(lifecycle?.recordId, deferred.map((entry) => entry.assignment.slotId));
+    for (const entry of deferred) {
+      const outcome = started.get(entry.assignment.slotId);
+      if (outcome?.sessionId === undefined) {
+        // A refusal that will not pass takes the seat out of rotation, so the unit is not offered to it again.
+        if (outcome?.final) quarantined = (await this.quarantineDeadSeat(record, entry.assignment)) || quarantined;
+        else await this.releaseUndeliveredAssignments(record.id, [entry.assignment]);
+        continue;
+      }
+      // The run may have ended while the seat was starting: stop the session, give it nothing, release the unit.
+      const current = await this.deps.store.get(record.id);
+      if (!current || isResumeGrantTerminal(current.state)) {
+        try { this.deps.closeWorkerSession?.(outcome.sessionId); } catch (error) { this.deps.logError?.(`on-demand seat ${entry.assignment.slotId} could not be closed after the run ended`, error); }
+        await this.releaseUndeliveredAssignments(record.id, [entry.assignment]);
+        continue;
+      }
+      await this.deliverAssignment(record, entry.assignment, outcome.sessionId);
+    }
+    // A unit re-homed or blocked by the quarantine is dispatched again; the quarantined seat is excluded this time.
+    if (quarantined) await this.cascadeDispatch(record.id);
+  }
+
+  /**
+   * What to do with one assignment before delivery: `release` it, `quarantine` its seat (it can never
+   * start), or deliver it, to `sessionId` or, when absent, to a seat that starts on demand and must be started first.
+   */
+  private assignmentVerdict(
+    record: ExecutionRecord, assignment: ExecutionDispatchAssignment, workers: ExtractedLifecycle['workers']
+  ): 'release' | 'quarantine' | { sessionId?: string } {
+    const worker = workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
+    if (!worker) return 'release';
+    // A seat that starts on demand has a lifecycle worker with no session yet (`authorized`, or `spawning` while
+    // another dispatch is starting it). Any other session-less worker is released; one that already ended is quarantined.
+    const waitingSeat = !worker.sessionId && (worker.process === 'authorized' || worker.process === 'spawning');
+    if (!worker.sessionId && !waitingSeat) return worker.onDemand === true && worker.process && DEAD_WORKER_PROCESSES.has(worker.process) ? 'quarantine' : 'release';
+    // Never DISPATCH to a worker whose process has already terminated. A restart
+    // reconciles a prior-run worker to a terminal `process` (`exited`/`spawn-failed`/
+    // `canceled`) but RETAINS its `sessionId` (team-lifecycle-store reconcileStartup),
+    // so a recovered board can re-dispatch a completed unit to that stale sessionId.
+    // The dead session's `reply()` may still be accepted by the surviving PTY (or the
+    // agent-state sits at a stale busy value), so the assignment is counted delivered,
+    // the worker never heartbeats, and the claim churns dispatch<->lease-reclaim to the
+    // run timeout (live run f0f44413: 5/6 units done, 6th reclaimed 3x then timed out).
+    // Release instead -> coordinator parks (HUMAN_BLOCKER). Deterministic, not a
+    // liveness heuristic - a terminal process is authoritative.
+    if (worker.process && DEAD_WORKER_PROCESSES.has(worker.process)) return 'release';
+    // Never TYPE an assignment into a dead-agent's surviving shell (remote-opencode
+    // zombie: outer wrapper alive, inner agent gone - a raw stdin write would be
+    // eval'd by the bash prompt). Release instead; the next dispatch/reconcile cycle
+    // re-delivers once a healthy worker exists or parks the coordinator. `'unknown'`/
+    // `'alive'`/unwired => deliver as before (claude-family path byte-unchanged).
+    if (worker.sessionId !== undefined && this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
+      // Same dead-agent zombie as the reconcile path: release the assignment
+      // AND reap the surviving outer shell/tmux wrapper (host tmux-kill close).
+      this.deps.closeWorkerSession?.(worker.sessionId);
+      return 'release';
+    }
+    const unit = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
+    const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
+    const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
+    if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization
+      && unitSlotEligibility(unit, authorization, model).status !== 'PASS') return 'release';
+    return { sessionId: worker.sessionId };
+  }
+
+  /** Push one assignment's text to a live session; the receipt rules are explained inline. */
+  private async deliverAssignment(record: ExecutionRecord, assignment: ExecutionDispatchAssignment, sessionId: string): Promise<void> {
+    const text = assignmentText(record, assignment);
+    if (this.deps.deliverAssignment) {
+      const correlation = assignmentCorrelation(record.id, assignment);
+      if (!correlation) {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        continue;
+        return;
       }
-      // Never DISPATCH to a worker whose process has already terminated. A restart
-      // reconciles a prior-run worker to a terminal `process` (`exited`/`spawn-failed`/
-      // `canceled`) but RETAINS its `sessionId` (team-lifecycle-store reconcileStartup),
-      // so a recovered board can re-dispatch a completed unit to that stale sessionId.
-      // The dead session's `reply()` may still be accepted by the surviving PTY (or the
-      // agent-state sits at a stale busy value), so the assignment is counted delivered,
-      // the worker never heartbeats, and the claim churns dispatch↔lease-reclaim to the
-      // run timeout (live run f0f44413: 5/6 units done, 6th reclaimed 3× then timed out).
-      // Release instead → coordinator parks (HUMAN_BLOCKER). Deterministic, not a
-      // liveness heuristic — a terminal process is authoritative.
-      if (worker.process && DEAD_WORKER_PROCESSES.has(worker.process)) {
-        await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        continue;
-      }
-      // Never TYPE an assignment into a dead-agent's surviving shell (remote-opencode
-      // zombie: outer wrapper alive, inner agent gone — a raw stdin write would be
-      // eval'd by the bash prompt). Release instead; the next dispatch/reconcile cycle
-      // re-delivers once a healthy worker exists or parks the coordinator. `'unknown'`/
-      // `'alive'`/unwired ⇒ deliver as before (claude-family path byte-unchanged).
-      if (this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
-        // Same dead-agent zombie as the reconcile path: release the assignment
-        // AND reap the surviving outer shell/tmux wrapper (host tmux-kill close).
-        this.deps.closeWorkerSession?.(worker.sessionId);
-        await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        continue;
-      }
-      const unit = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
-      const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
-      const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
-      if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization) {
-        const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(authorization, model));
-        if (eligibility.status !== 'PASS') {
-          await this.releaseUndeliveredAssignments(record.id, [assignment]);
-          continue;
-        }
-      }
-      const text = assignmentText(record, assignment);
-      if (this.deps.deliverAssignment) {
-        const correlation = assignmentCorrelation(record.id, assignment);
-        if (!correlation) {
-          await this.releaseUndeliveredAssignments(record.id, [assignment]);
-          continue;
-        }
-        // `uncertain`/throw keeps the claim and deliberately does NOT redeliver here: the member
-        // may already hold the assignment, and a blind resend would duplicate work. Recovery is
-        // owned by the claim-lease sweep instead (reconcileActive → classifyExpiredClaim): a
-        // member that never received it emits no output, so its lease is never output-renewed.
-        // At lease expiry an idle member is reclaimed (SILENT_WORKER); a member reporting
-        // 'working' is renewed until the durable stall/wall-clock ceilings. The no-progress
-        // reclaim then escalates (escalateKickoffFailures): re-home to an untried slot, which
-        // redelivers under a FRESH claimGeneration/idempotency key, else a HUMAN_BLOCKER —
-        // never a resend to the same member that may hold it. Requires claim recovery
-        // observe+enforce (config default on).
-        try {
-          const receipt = await this.deps.deliverAssignment(worker.sessionId, text, correlation);
-          // Runtime completion is delivery evidence, never an authenticated work outcome.
-          if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        } catch (error) {
-          // A lost receipt may follow acceptance. Preserve the claim; never retry blindly.
-          this.deps.logError?.(`execution assignment delivery uncertain for ${record.id}/${assignment.workUnitId}`, error);
-        }
-        continue;
-      }
+      // `uncertain`/throw keeps the claim and deliberately does NOT redeliver here: the member
+      // may already hold the assignment, and a blind resend would duplicate work. Recovery is
+      // owned by the claim-lease sweep instead (reconcileActive -> classifyExpiredClaim): a
+      // member that never received it emits no output, so its lease is never output-renewed.
+      // At lease expiry an idle member is reclaimed (SILENT_WORKER); a member reporting
+      // 'working' is renewed until the durable stall/wall-clock ceilings. The no-progress
+      // reclaim then escalates (escalateKickoffFailures): re-home to an untried slot, which
+      // redelivers under a FRESH claimGeneration/idempotency key, else a HUMAN_BLOCKER -
+      // never a resend to the same member that may hold it. Requires claim recovery
+      // observe+enforce (config default on).
       try {
-        // Idle-gated: never inject an assignment into a mid-turn worker (the
-        // cascade fires from the worker's own completion, so it is busy). Falls
-        // back to the raw reply when the host doesn't wire the idle-gated dep.
-        const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
-        const delivered = await deliver(worker.sessionId, text);
-        if (delivered) {
-          try { this.deps.triggerDeliveryDrain?.(worker.sessionId); } catch { /* nudge best-effort */ }
-        } else {
-          await this.releaseUndeliveredAssignments(record.id, [assignment]);
-        }
-      } catch {
+        const receipt = await this.deps.deliverAssignment(sessionId, text, correlation);
+        // Runtime completion is delivery evidence, never an authenticated work outcome.
+        if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      } catch (error) {
+        // A lost receipt may follow acceptance. Preserve the claim; never retry blindly.
+        this.deps.logError?.(`execution assignment delivery uncertain for ${record.id}/${assignment.workUnitId}`, error);
+      }
+      return;
+    }
+    try {
+      // Idle-gated: never inject an assignment into a mid-turn worker (the
+      // cascade fires from the worker's own completion, so it is busy). Falls
+      // back to the raw reply when the host doesn't wire the idle-gated dep.
+      const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
+      const delivered = await deliver(sessionId, text);
+      if (delivered) {
+        try { this.deps.triggerDeliveryDrain?.(sessionId); } catch { /* nudge best-effort */ }
+      } else {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
       }
+    } catch {
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+    }
+  }
+
+  /**
+   * A seat that ended without ever having a session (a start that failed for good, or one lost in a restart)
+   * can never take this unit. Reclaim it as "no progress on that seat" so the unit is re-homed to another seat,
+   * or blocked to a person when none is left, instead of being offered to the same dead seat again and again.
+   * Returns true when the unit changed.
+   */
+  private async quarantineDeadSeat(record: ExecutionRecord, assignment: ExecutionDispatchAssignment): Promise<boolean> {
+    try {
+      if (assignment.claimId === undefined || assignment.claimGeneration === undefined) throw new Error('assignment has no claim fence');
+      const reclaimed = await this.deps.store.reclaimExpiredClaims(record.id, [{
+        workUnitId: assignment.workUnitId, claimId: assignment.claimId, claimGeneration: assignment.claimGeneration,
+        reason: NO_PROGRESS_CLAIM_REASON.PROVEN_DEAD, force: true
+      }]);
+      await this.escalateKickoffFailures(reclaimed);
+      return true;
+    } catch (error) {
+      this.deps.logError?.(`on-demand seat ${assignment.slotId} of ${record.id} could not be taken out of rotation`, error);
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      return false;
+    }
+  }
+
+  /** At most this many on-demand seats start at the same time within one dispatch. */
+  private static readonly DEFERRED_START_CONCURRENCY = 3;
+
+  /**
+   * Start the given on-demand seats a few at a time. Resolves per slot with its session id, or with no session and
+   * `final` when the seat will not start (a refusal that may pass keeps the seat waiting, so it is not final).
+   */
+  private async startDeferredSeats(recordId: string | undefined, slotIds: readonly string[]): Promise<Map<string, { sessionId?: string; final?: true }>> {
+    const outcomes = new Map<string, { sessionId?: string; final?: true }>();
+    const queue = [...new Set(slotIds)];
+    const lane = async () => {
+      for (let slotId = queue.shift(); slotId !== undefined; slotId = queue.shift()) {
+        outcomes.set(slotId, await this.startDeferredSeat(recordId, slotId));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(ExecutionService.DEFERRED_START_CONCURRENCY, queue.length) }, lane));
+    return outcomes;
+  }
+
+  /** Ask the host to start a seat left closed at launch. */
+  private async startDeferredSeat(recordId: string | undefined, slotId: string): Promise<{ sessionId?: string; final?: true }> {
+    if (!recordId || !this.deps.spawnDeferredWorker) return {};
+    try {
+      const started = await this.deps.spawnDeferredWorker(recordId, slotId);
+      if (started.ok) return { sessionId: started.sessionId };
+      this.deps.logError?.(`on-demand seat ${slotId} of ${recordId} did not start: ${started.message}`, new Error(started.message));
+      return started.retryable === true ? {} : { final: true };
+    } catch (error) {
+      this.deps.logError?.(`on-demand seat ${slotId} of ${recordId} failed to start`, error);
+      return { final: true };
     }
   }
 
@@ -2071,7 +2198,7 @@ export class ExecutionService {
     if (isResumeGrantTerminal(record.state)) return terminalBound(record);
     const blocker = record.blockers?.find((candidate) => candidate.id === blockerId && !candidate.resolved);
     if (!blocker) return { ok: false as const, code: 'NOT_FOUND', message: 'execution blocker not found' };
-    if (blocker.audience !== 'coordinator') return deniedBound('blocker requires owner resolution');
+    if (blocker.audience !== 'coordinator') return deniedBound(humanBlockerDenial(record, blocker));
     // Deterministic idempotency key: one coordinator answer per blocker. A retry
     // of the same answer replays; a re-block mints a fresh blocker id.
     const clientRequestId = `${record.id}:${blocker.id}:coordinator-answer`;
@@ -2865,7 +2992,7 @@ export class ExecutionService {
       try {
         const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
         const slotId = value.deliveries?.find(delivery => delivery.id === deliveryId)?.slotId;
-        const sessionId = slotId === 'orchestrator' || slotId?.startsWith('orchestrator:')
+        const sessionId = slotId && isOrchestratorSlotId(slotId)
           ? lifecycle?.orchestratorSessionId
           : lifecycle?.workers?.find(worker => worker.slotId === slotId && worker.projectId === record.projectId)?.sessionId;
         if (sessionId) this.deps.triggerDeliveryDrain?.(sessionId);
@@ -3240,7 +3367,7 @@ export class ExecutionService {
     const rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
     const lifecycle = extractLifecycleInfo(rawLifecycle);
     let targetSessionId: string | undefined;
-    if (blocker.slotId === 'orchestrator' || blocker.slotId.startsWith('orchestrator:')) {
+    if (isOrchestratorSlotId(blocker.slotId)) {
       targetSessionId = lifecycle?.orchestratorSessionId;
     } else {
       const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === blocker.slotId && candidate.projectId === record.projectId);
@@ -3362,7 +3489,10 @@ export class ExecutionService {
     if (lifecycle.workers.some((worker) => worker.task === 'caller-reported-failed')) {
       return this.transitionOrCurrent(record, 'FAILED', 'error', 'A Team slot reported failure');
     }
-    if (lifecycle.workers.length > 0 && lifecycle.workers.every((worker) =>
+    // A seat that starts on demand and never started is not a live worker; once everything else has
+    // ended it can no longer be used, so it must not keep the run open.
+    const startedWorkers = lifecycle.workers.filter((worker) => worker.sessionId !== undefined || worker.process !== 'authorized');
+    if (startedWorkers.length > 0 && startedWorkers.every((worker) =>
       worker.process === 'exited' || worker.process === 'spawn-failed' || worker.process === 'canceled')) {
       // Build a self-diagnosing per-slot detail from the exit info captured at the
       // PTY exit event (exit code + provider explanation). Historically this was a
@@ -3629,7 +3759,7 @@ export class ExecutionService {
     if (!inbox) return;
     const input: InboxInput = {
       projectId: record.projectId,
-      subject: record.jobTitle || 'Job Execution Blocked',
+      subject: blockerCardSubject(record),
       comments: blocker.question,
       executionId: record.id,
       blockerId: blocker.id,

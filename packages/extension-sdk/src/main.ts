@@ -599,6 +599,8 @@ export interface Persona {
   addDirs?: string[];
   mcpServers?: string[];
   initialPrompt?: string;
+  /** Skill allowlist (context filter, not a security boundary) — see core's `Persona.skills`. */
+  skills?: string[];
   source?: PersonaSource;
 }
 
@@ -625,6 +627,8 @@ export interface Team {
   slots: TeamSlot[];
   defaultProjectId?: string;
   initialPrompt?: string;
+  /** Opt-in lean worker preset — see core's `Team.leanWorkers`. */
+  leanWorkers?: boolean;
   source?: PersonaSource;
 }
 

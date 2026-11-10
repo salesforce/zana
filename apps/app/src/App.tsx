@@ -50,6 +50,8 @@ import { FavoriteAgentsDrawer } from './components/FavoriteAgentsDrawer.js';
 import { NotificationsDrawer } from './components/NotificationsDrawer.js';
 import { HostInstallDrawer } from './components/HostInstallDrawer.js';
 import { Walkthrough } from './components/Walkthrough.js';
+import { OnboardingHost } from './components/onboarding/Onboarding.js';
+import { useOnboarding } from './components/onboarding/onboarding-store.js';
 import { SetupChecklistHost } from './components/SetupChecklist.js';
 import { Toaster } from './components/Toaster.js';
 import { PendingLaunches } from './components/PendingLaunches.js';
@@ -231,6 +233,7 @@ export function App() {
 }
 
 function AppShell() {
+  const onboardingActive = useOnboarding(s => !s.loaded || s.open);
   const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
   useRouteSync();
   useEffect(installAgentBoardMoves, []);
@@ -505,6 +508,10 @@ function AppShell() {
       switch (event) {
         case 'app:openSettings':
           ui.toggleSettings();
+          return;
+        case 'app:openHome':
+          // Command Center "+": land on home, where a new agent starts.
+          ui.setNav('home');
           return;
         case 'app:toggleInbox':
           ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
@@ -912,15 +919,16 @@ function AppShell() {
       <FavoriteAgentsDrawer />
       <NotificationsDrawer />
       <HostInstallDrawer />
-      <WalkthroughHost />
-      <SetupChecklistHost />
-      <WhatsNewModal />
+      <OnboardingHost />
+      {!onboardingActive && <WalkthroughHost />}
+      {!onboardingActive && <SetupChecklistHost />}
+      {!onboardingActive && <WhatsNewModal />}
       <HelpVideoLibrary />
       <PendingLaunches />
       <HostDialogs />
       <Toaster />
       <ExtensionConsent />
-      {!isScopedWindow() && <SponsorNudge />}
+      {!onboardingActive && !isScopedWindow() && <SponsorNudge />}
     </div>
   );
 }
