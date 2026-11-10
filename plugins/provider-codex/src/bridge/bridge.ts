@@ -770,6 +770,31 @@ function buildCodexPolicyInteractiveResponse(
   return buildCodexInteractiveResult(request.payload, { status: "fulfilled", value: resolution });
 }
 
+// Human interaction path for a decoded request (prompt via the runtime).
+function routeCodexHumanInteraction(
+  session: CodexBridgeSession,
+  request: DecodedInteractiveRequest,
+  responder: CodexAppServerRequestResponder,
+): void {
+  void sendRuntimeRequest(BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest, {
+    providerThreadId: session.codexThreadId ?? request.providerThreadId,
+    threadId: session.bbThreadId,
+    turnId: request.turnId,
+    payload: request.payload,
+    providerNativeIds: true,
+  })
+    .then(
+      (value) => responder.result(buildCodexInteractiveResult(request.payload, { status: "fulfilled", value })),
+      (reason: unknown) => responder.result(buildCodexInteractiveResult(request.payload, { status: "rejected", reason })),
+    )
+    .catch((error: unknown) => {
+      responder.error(
+        BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+}
+
 // Route a decoded command/file-change approval through the native-tool veto.
 // On allow, codex proceeds with no human prompt (danger-full-access UX preserved);
 // on deny/timeout/transport-failure the tracker fails closed and the tool is refused.
@@ -808,6 +833,17 @@ function routeCodexNativeToolPolicy(
           BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
           "native-tool policy session unavailable",
         );
+        return;
+      }
+      // A policy allow only replaces the human prompt under danger-full-access,
+      // where the sandbox grants everything anyway. Under workspace-write the
+      // approval is a real permission boundary: an allow means "no objection",
+      // so the human still decides. A deny always refuses.
+      if (
+        decision.action === "allow" &&
+        session.turnPermissionSettings.sandbox !== "danger-full-access"
+      ) {
+        routeCodexHumanInteraction(session, request, responder);
         return;
       }
       if (decision.action === "allow") {
@@ -908,23 +944,7 @@ function handleChildRequest(
     return;
   }
 
-  void sendRuntimeRequest(BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest, {
-    providerThreadId: session.codexThreadId ?? request.providerThreadId,
-    threadId: session.bbThreadId,
-    turnId: request.turnId,
-    payload: request.payload,
-    providerNativeIds: true,
-  })
-    .then(
-      (value) => responder.result(buildCodexInteractiveResult(request.payload, { status: "fulfilled", value })),
-      (reason: unknown) => responder.result(buildCodexInteractiveResult(request.payload, { status: "rejected", reason })),
-    )
-    .catch((error: unknown) => {
-      responder.error(
-        BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
-        error instanceof Error ? error.message : String(error),
-      );
-    });
+  routeCodexHumanInteraction(session, request, responder);
 }
 
 function buildMacOsPermissionItemDelta(

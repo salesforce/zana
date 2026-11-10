@@ -767,11 +767,11 @@ server over its start message, never through process environment. Proofs never r
 processes, renderer storage, or agent environment.
 
 `zcc thread interactions <threadId> respond <interactionId> --value '<JSON>'`
-uses the desktop control socket. Operator-class callers count as `human`; agent
-and orchestrator callers remain `agent` and receive 403 for human-required gates.
-Known limit: a same-uid process that reads the shared control token and omits its
-session fields is classified `operator`. CLI human proof is best-effort; desktop
-UI proof is the strong path. Non-desktop HTTP cannot satisfy human-required gates.
+uses the desktop control socket. Every caller on that socket answers as `cli`,
+never `human`, so a human-required gate rejects it with 403; agent and
+orchestrator callers answer as `agent` and are rejected the same way. Only the
+Zana window or the main-drawn sheet can satisfy `requireHuman`. Non-desktop HTTP
+cannot satisfy it either.
 
 #### Request input on a PTY session
 
@@ -802,6 +802,14 @@ Stated plainly so a plugin does not assume more than the host wires:
   environment identity.
 - Admission does not cover raw `term.write` input or restored sessions.
 - Modern lifecycle events carry no `sessionId`; only PTY events do.
+- When the watchdog terminates an unresponsive plugin worker, `onDispose` does
+  not run. Release external resources on the next activation, not only in
+  `onDispose`.
+- Plugin process reaping covers the worker's process group. A grandchild that
+  starts its own session (`setsid`) escapes it.
+- `ZCC_THREAD_ID` is set only when the host bound the session to a thread. Modern
+  threads always have it; a PTY session has `ZCC_SESSION_ID` and gets
+  `ZCC_THREAD_ID` only when main supplied a binding.
 - The menu bar shows `ended` as the reason when a dispatch is refused.
 - A second project checkout added through `POST /projects/:id/sources` is refused
   for remote project calls unless catalogued on the target machine. This is an

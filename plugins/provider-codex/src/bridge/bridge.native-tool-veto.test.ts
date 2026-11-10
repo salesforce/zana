@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -84,14 +84,16 @@ async function driveApprovalToPolicy(
   bridge: ReturnType<typeof createBridgeJsonRpcTestHarness>,
   workspace: string,
   threadId: string,
+  sessionOptions: typeof FULL_ACCESS_SESSION_OPTIONS = FULL_ACCESS_SESSION_OPTIONS,
 ) {
   bridge.sendRequest(1, "thread/start", {
     threadId,
     cwd: workspace,
     instructionMode: "append",
-    options: FULL_ACCESS_SESSION_OPTIONS,
+    options: sessionOptions,
   });
   const start = await bridge.waitForResponse(1);
+  if (start.error) throw new Error(JSON.stringify(start.error));
   const providerThreadId = (start.result as { providerThreadId: string })
     .providerThreadId;
   bridge.sendRequest(2, "turn/start", {
@@ -99,7 +101,7 @@ async function driveApprovalToPolicy(
     providerThreadId,
     input: [{ type: "text", text: "Act", mentions: [] }],
     clientRequestId: "creq_a2b3c4d5e6",
-    options: FULL_ACCESS_SESSION_OPTIONS,
+    options: sessionOptions,
   });
   await vi.waitFor(() => {
     expect(
@@ -319,6 +321,46 @@ it("reports tool/policy/settled after an allowed command completes (OBL-011)", a
   } finally {
     bridge.sendRequest(999, "thread/stop", {
       threadId: "thr_settled",
+      providerThreadId: "codex-thread",
+      intent: "release",
+      activeTurnId: null,
+    });
+    await bridge.waitForResponse(999).catch(() => undefined);
+    bridge.restore();
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}, 30_000);
+
+it("keeps the human prompt on a policy allow when the session is workspace-scoped", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "bb-codex-veto-ws-"));
+  const responseLogPath = join(workspace, "responses.jsonl");
+  writeApprovalScript(workspace, responseLogPath, COMMAND_APPROVAL);
+  stubFakeCodexAppServer(join(workspace, "script.json"));
+  const bridge = createBridgeJsonRpcTestHarness(handleLine);
+  try {
+    await driveApprovalToPolicy(bridge, workspace, "thr_veto_ws", {
+      ...FULL_ACCESS_SESSION_OPTIONS,
+      permissionMode: "accept-edits",
+      permissionScope: "workspace",
+      approvalReviewer: "user",
+      permissionEscalation: "ask",
+    } as unknown as typeof FULL_ACCESS_SESSION_OPTIONS);
+    const policy = bridge.messages.find(
+      (message) => message.method === "tool/policy/decide",
+    );
+    handleLine(
+      JSON.stringify({ jsonrpc: "2.0", id: policy?.id, result: { action: "allow" } }),
+    );
+    // Allow is "no objection": the human still decides under workspace-write.
+    await vi.waitFor(() => {
+      expect(
+        bridge.messages.some((message) => message.method === "interaction/request"),
+      ).toBe(true);
+    });
+    expect(existsSync(responseLogPath) ? readFileSync(responseLogPath, "utf8").trim() : "").toBe("");
+  } finally {
+    bridge.sendRequest(999, "thread/stop", {
+      threadId: "thr_veto_ws",
       providerThreadId: "codex-thread",
       intent: "release",
       activeTurnId: null,
