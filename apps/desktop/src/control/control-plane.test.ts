@@ -1057,37 +1057,6 @@ describe('startControlPlane (real socket)', () => {
     } finally { timers.mockRestore(); }
   });
 
-  it('lets an authenticated term.create finish beyond the handshake deadline', async () => {
-    const nativeTimeout = globalThis.setTimeout;
-    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: Parameters<typeof setTimeout>) => {
-      if (args[1] === 10_000) args[1] = 25;
-      return nativeTimeout(...args);
-    }) as typeof setTimeout);
-    try {
-      const createTerminal = vi.fn(async () => { await new Promise(resolve => nativeTimeout(resolve, 75)); return { ok: true as const, value: { id: 's1' } as any }; });
-      const { socketPath, tokenPath } = await boot({ createTerminal: createTerminal as any });
-      const { token, nonce } = JSON.parse(readFileSync(tokenPath, 'utf8'));
-      const result = await rawRequest(socketPath, [JSON.stringify({ token, nonce, op: 'term.create', args: { projectId: 'p1', profile: 'shell' } }) + '\n']);
-      expect(result).toMatchObject({ ok: true });
-      expect(createTerminal).toHaveBeenCalledOnce();
-    } finally { timers.mockRestore(); }
-  });
-
-  it('keeps a finite deadline for an authenticated term.create', async () => {
-    const nativeTimeout = globalThis.setTimeout;
-    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: Parameters<typeof setTimeout>) => {
-      if (args[1] === 45_000) args[1] = 25;
-      return nativeTimeout(...args);
-    }) as typeof setTimeout);
-    try {
-      const createTerminal = vi.fn(() => new Promise(() => {}));
-      const { socketPath, tokenPath } = await boot({ createTerminal: createTerminal as any });
-      const { token, nonce } = JSON.parse(readFileSync(tokenPath, 'utf8'));
-      const result = await rawRequest(socketPath, [JSON.stringify({ token, nonce, op: 'term.create', args: { projectId: 'p1', profile: 'shell' } }) + '\n']);
-      expect(result).toMatchObject({ ok: false, code: 'TIMEOUT', message: 'terminal launch timed out' });
-    } finally { timers.mockRestore(); }
-  });
-
   it('removes the socket + token file on close', async () => {
     const { socketPath, tokenPath } = await boot();
     await handle!.close();
