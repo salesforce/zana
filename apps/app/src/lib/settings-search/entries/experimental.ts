@@ -232,6 +232,25 @@ export const entries: readonly SettingsSearchEntry[] = [
     keywords: ['menubar', 'tray', 'dropdown'],
     kind: 'setting',
     value: onOff((c) => c.menubarPopoverEnabled, true)
+  },
+  {
+    id: 'experimental.command-center-section',
+    section: 'experimental',
+    anchor: 'command-center',
+    label: 'Command Center (macOS)',
+    help: "Adds “Minimize to Command Center” (⌘M) to the Window menu, the menu-bar icon and the sidebar. Instead of minimizing to the Dock, the window collapses to a slim floating rail on the screen edge that shows who needs you, what's working and your schedules — and lets you answer agent questions without reopening the app. Off by default.",
+    keywords: ['companion', 'rail', 'minimize', 'floating', 'side bar'],
+    kind: 'subsection'
+  },
+  {
+    id: 'experimental.command-center',
+    section: 'experimental',
+    anchor: 'command-center',
+    label: 'Enable Command Center mode',
+    help: 'When disabled, the entry points are hidden and an open rail is closed (the main window comes back).',
+    keywords: ['companion', 'rail', 'minimize to command center'],
+    kind: 'setting',
+    value: onOff((c) => c.companionEnabled, false)
   }
 ];
 

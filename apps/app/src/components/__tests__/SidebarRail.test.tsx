@@ -19,6 +19,8 @@ vi.mock('../../store', () => ({
   useUi: Object.assign((selector: (state: typeof h.state) => unknown) => selector(h.state), {
     getState: () => h.state
   }),
+  // Command Center entry is opt-in; off here so the rail renders as before.
+  useData: (selector: (state: { companionEnabled: boolean }) => unknown) => selector({ companionEnabled: false }),
   applySidebarWidth: vi.fn(),
   SIDEBAR_MIN: 256,
   SIDEBAR_MAX: 480

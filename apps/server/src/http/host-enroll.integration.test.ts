@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import {
   HOST_RPC_PROTOCOL_VERSION,
+  type HostEventAckMessage,
   type HostRpcRequestMessage
 } from '@zana-ai/zcc-contracts/host-rpc';
 import {
@@ -471,7 +472,17 @@ describe('host enroll hub and thread create', () => {
     server!.ctx.db.sqlite.exec('DROP TRIGGER fail_batch');
     socket = await openHostSocket(enrolled, instanceId, defaultRpcHandler(root));
     await waitForHost(enrolled.hostId);
-    const acknowledged = new Promise<any>(resolve => socket.once('message', data => resolve(JSON.parse(String(data)))));
+    const acknowledged = new Promise<HostEventAckMessage>(resolve => {
+      const listener = (data: WebSocket.RawData) => {
+        const message = JSON.parse(String(data));
+        if (message.type !== 'host.event-ack' || message.batchId !== batch.batchId) return;
+        socket.off('message', listener);
+        resolve(message);
+      };
+      socket.on('message', listener);
+    });
+    // Readiness is observable server-side before its frame necessarily arrives.
+    socket.emit('message', Buffer.from(JSON.stringify({ type: 'host.ready-ok' })));
     socket.send(JSON.stringify(batch)); expect(await acknowledged).toMatchObject({ accepted: 1 });
     expect(server!.ctx.terminalSessions.get(terminalId)).toMatchObject({ outputText: 'one', outputEndOffset: 3 });
     expect(publish.mock.calls.filter(([type]) => type === 'terminals:data')).toHaveLength(1);

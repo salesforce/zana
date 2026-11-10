@@ -616,6 +616,22 @@ function normalizeThreadViewWindowBounds(
 const MIN_STARTUP_GRACE_MS = 30_000;
 const MAX_STARTUP_GRACE_MS = 3_600_000;
 
+function normalizeCompanionPlacement(
+  placement: AppConfig['companionPlacement'] | undefined
+): AppConfig['companionPlacement'] | undefined {
+  if (!placement || typeof placement !== 'object') return undefined;
+  if (placement.edge !== 'left' && placement.edge !== 'right') return undefined;
+  const next: NonNullable<AppConfig['companionPlacement']> = { edge: placement.edge };
+  if (typeof placement.displayId === 'number' && Number.isFinite(placement.displayId)) {
+    next.displayId = Math.round(placement.displayId);
+  }
+  if (typeof placement.offsetY === 'number' && Number.isFinite(placement.offsetY)) {
+    // A rail top more than a (very tall) screen below the work area is garbage.
+    next.offsetY = Math.max(0, Math.min(20_000, Math.round(placement.offsetY)));
+  }
+  return next;
+}
+
 const TIER_RULE_LEVELS = ['low', 'medium', 'high', 'extra-high'] as const;
 type TierRules = Partial<Record<(typeof TIER_RULE_LEVELS)[number], string[]>>;
 
@@ -1360,6 +1376,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.menubarPopoverEnabled === 'boolean') {
     normalized.menubarPopoverEnabled = input.menubarPopoverEnabled;
   }
+  if (typeof input.companionEnabled === 'boolean') {
+    normalized.companionEnabled = input.companionEnabled;
+  }
   if (typeof input.localExtensionHotReloadEnabled === 'boolean') {
     normalized.localExtensionHotReloadEnabled = input.localExtensionHotReloadEnabled;
   }
@@ -1434,6 +1453,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (Object.prototype.hasOwnProperty.call(input, 'threadViewWindowBounds')) {
     normalized.threadViewWindowBounds = normalizeThreadViewWindowBounds(input.threadViewWindowBounds);
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'companionPlacement')) {
+    normalized.companionPlacement = normalizeCompanionPlacement(input.companionPlacement);
   }
 
   // Autonomous team run backstops: support 0-means-disabled for both timeout and

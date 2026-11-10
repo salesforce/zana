@@ -21,6 +21,7 @@ import { registerVoiceIpc } from './voice.js';
 import { registerModulesIpc } from './modules.js';
 import { registerMobileIpc } from './mobile.js';
 import { registerApiErrorResumeIpc } from './api-error-resume.js';
+import { registerCompanionIpc } from './companion.js';
 
 export function registerIpcFamilies(host: IpcCtx): void {
   bindIpcCtx(host);
@@ -46,5 +47,6 @@ export function registerIpcFamilies(host: IpcCtx): void {
   registerModulesIpc();
   registerMobileIpc();
   registerApiErrorResumeIpc();
+  registerCompanionIpc();
 }
 

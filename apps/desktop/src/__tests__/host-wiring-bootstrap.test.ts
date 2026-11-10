@@ -101,7 +101,7 @@ vi.mock('electron', () => {
     screen: new Proxy({ getAllDisplays: () => [display], getPrimaryDisplay: () => display }, {
       get: (target, key) => key in target ? target[key as keyof typeof target] : loose()
     }),
-    Menu: { setApplicationMenu: () => {}, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
+    Menu: { setApplicationMenu: () => {}, getApplicationMenu: () => null, buildFromTemplate: (t: unknown) => { h.menuTemplate = t; return {}; } },
     nativeImage: { createFromPath: () => loose(), createEmpty: () => loose() },
     powerMonitor: { on: () => {}, off: () => {} },
     powerSaveBlocker: loose(),
@@ -435,6 +435,8 @@ describe('host bootstrap wiring', () => {
     expect(items.some((i) => i.label === 'View on GitHub')).toBe(true);
     expect(items.find((i) => i.role === 'pasteAndMatchStyle')).toMatchObject({ accelerator: 'CmdOrCtrl+Shift+V' });
     expect(shell).toBeDefined();
+    expect(items.find((i) => i.id === 'companion-enter')).toMatchObject({ visible: false, enabled: false });
+    expect(() => ctx().syncCompanionMenu()).not.toThrow();
   });
 
   it('launches terminals through authorize, revalidate and spawn', async () => {

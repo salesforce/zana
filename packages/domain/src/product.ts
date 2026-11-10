@@ -3029,6 +3029,21 @@ export interface AppConfig {
    */
   menubarPopoverEnabled?: boolean;
   /**
+   * Where the floating Command Center rail (the compact companion window
+   * shown by "Minimize to Command Center") was last docked: which screen edge,
+   * which display, and how far down that display's work area its top edge sits.
+   * Main owns it (written on drag-drop, Rule 4 via the config store); a missing
+   * or stale display falls back to the main window's display, then the primary.
+   */
+  companionPlacement?: CompanionPlacement;
+  /**
+   * Opt-in Command Center mode (macOS): when true, "Minimize to Command Center"
+   * appears in the Window menu, tray and sidebar, and hides the main window
+   * behind a floating rail on the screen edge. Default OFF (absent ⇒ false);
+   * turning it off while the rail is showing restores the main window.
+   */
+  companionEnabled?: boolean;
+  /**
    * While a live terminal session's cwd sits inside a local (in-app-authored)
    * extension's working dir, watch its `dist/` and auto pack+reinstall on
    * change — the "author an extension" hot-reload path, so an agent editing
@@ -3068,6 +3083,8 @@ export interface MenubarSnapshot {
   nextRunAt: string | null;
   /** Active theme so the popover matches the app without its own config read. */
   theme: 'dark' | 'light';
+  /** The opt-in Command Center mode is on — the footer offers to enter it. */
+  commandCenter?: boolean;
 }
 
 /**
@@ -3080,6 +3097,173 @@ export interface MenubarReplyResult {
   ok: boolean;
   reason?: 'ended' | 'background' | 'empty' | 'disabled';
 }
+
+/** Which vertical screen edge the Command Center rail is docked to. */
+export type CompanionEdge = 'left' | 'right';
+
+/** Persisted Command Center rail position (see {@link AppConfig.companionPlacement}). */
+export interface CompanionPlacement {
+  edge: CompanionEdge;
+  /** Electron `Display.id` the rail was dropped on (may no longer exist). */
+  displayId?: number;
+  /** Rail top, in px below the display work area's top edge. */
+  offsetY?: number;
+}
+
+/** Which quick panel the Command Center rail has open. */
+export type CompanionPanelKind = 'needs-you' | 'agents' | 'scheduler' | 'status';
+
+/** Why a Needs You request can't be answered from the companion (→ "Open in Zana"). */
+export type CompanionUnanswerableReason = 'ended' | 'background' | 'execution' | 'thread' | 'thread-error';
+
+/**
+ * One "Needs You" request in the Command Center snapshot. Either a structured
+ * inbox question (`kind: 'question'`, carries the questions to render as
+ * numbered options) or a blocked agent with only a free-text gloss
+ * (`kind: 'blocked'`). Built entirely in main from the inbox store, pty records
+ * and agent state — the companion renderer is a thin view (Rule 1).
+ */
+export interface CompanionRequest {
+  /** Authoritative Modern-thread interaction; displayed read-only in the rail. */
+  threadContext?: import('./menubar-agent.js').MenubarThreadContext;
+  /** Main-owned request identity: inbox entry, CLI session, or thread + current interaction. */
+  id: string;
+  kind: 'question' | 'blocked';
+  /** Inbox entry id (question kind) — the renderer's answered-set key. */
+  entryId?: string;
+  sessionId?: string;
+  /** Modern thread the request came from (opened, never answered, from the rail). */
+  threadId?: string;
+  projectId: string;
+  projectName: string;
+  projectColor?: string;
+  /** Agent / thread name the request came from. */
+  agentTitle: string;
+  /** The question heading (inbox subject/comments, or triage summary). */
+  prompt: string;
+  /** Structured questions (question kind only). */
+  questions?: InboxQuestion[];
+  /** Epoch ms the request appeared. */
+  ts: number;
+  /** Whether main will accept an answer from the companion. */
+  answerable: boolean;
+  reason?: CompanionUnanswerableReason;
+}
+
+/** One agent row in the Command Center Agents panel. */
+export interface CompanionAgent {
+  /** Pty session id, or `thread:<threadId>` for a Modern thread row (unique row key). */
+  sessionId: string;
+  /** Set for a Modern (conversation) thread; opening it goes through the thread router. */
+  threadId?: string;
+  projectId: string;
+  projectName: string;
+  projectColor?: string;
+  title: string;
+  state: AgentState;
+  /** A failed thread stays visible in Agents, without becoming a user request. */
+  failure?: string;
+  createdAt: number;
+  /** Finished a working turn within the last few minutes (drives the green dot). */
+  recentlyCompleted: boolean;
+}
+
+/** One schedule row in the Command Center Scheduler panel. */
+export interface CompanionSchedule {
+  id: string;
+  name: string;
+  projectId: string;
+  projectName: string;
+  enabled: boolean;
+  /** A session this schedule spawned is still running. */
+  running: boolean;
+  nextRunAt: string | null;
+  /** Outcome + time of the newest finished fire, if any. */
+  lastResult?: ScheduleStatus['lastRunResult'];
+  lastRunAt?: string;
+}
+
+/** The live Command Center snapshot main pushes to the rail + panel windows. */
+export interface CompanionSnapshot {
+  theme: 'dark' | 'light';
+  edge: CompanionEdge;
+  requests: CompanionRequest[];
+  agents: CompanionAgent[];
+  schedules: CompanionSchedule[];
+  counts: {
+    /** Agents in the blocked state (unanswered inbox questions are counted by the renderer). */
+    blocked: number;
+    working: number;
+    idle: number;
+    recentlyCompleted: number;
+    runningSchedules: number;
+  };
+  /** Initials for the profile/status avatar. */
+  userInitials: string;
+}
+
+/** What the panel window should show — pushed by main on open/switch. */
+export interface CompanionPanelState {
+  kind: CompanionPanelKind;
+  /** Side of the panel window the rail sits on (the card hugs that side). */
+  railSide: CompanionEdge;
+  /** Rail top, in px from the panel window's top (the card aligns to it). */
+  anchorY: number;
+  /** When set, expand this request straight away (badge click / deep focus). */
+  focusRequestId?: string;
+}
+
+/** Hover tooltip the rail asks main to float beside an icon. */
+export interface CompanionTooltip {
+  label: string;
+  detail?: string;
+  /** Hovered icon's panel: main attaches a live preview list (Agents / Needs you). */
+  panel?: CompanionPanelKind;
+  /** Icon centre, in px from the rail window's top. */
+  y: number;
+}
+
+/** One line in a hover preview: an agent (state dot) or a pending request. */
+export interface CompanionTooltipRow {
+  title: string;
+  projectName: string;
+  state: AgentState;
+  failure?: string;
+  /** Agent rows: start time and the green "Completed" dot. */
+  createdAt?: number;
+  recentlyCompleted?: boolean;
+  /** Request rows: the agent asking. */
+  agentTitle?: string;
+}
+
+/** What main pushes to the tooltip window (placed beside the rail). */
+export interface CompanionTooltipView {
+  label: string;
+  detail?: string;
+  /** Hover preview rows (Agents / Needs you), built by main from its own snapshot. */
+  rows?: CompanionTooltipRow[];
+  /** Rows beyond the preview cap. */
+  more?: number;
+  /** Rail edge — the tooltip sits on the opposite (inner) side. */
+  side: CompanionEdge;
+  theme: 'dark' | 'light';
+}
+
+/** Outcome of `companion.answer`. */
+export interface CompanionAnswerResult {
+  ok: boolean;
+  reason?: CompanionUnanswerableReason | 'empty' | 'unknown';
+}
+
+/** Deep-link targets the companion can bring the main window forward to. */
+export type CompanionOpenTarget =
+  | { kind: 'main' }
+  | { kind: 'home' }
+  | { kind: 'agents' }
+  | { kind: 'scheduler'; taskId?: string }
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'thread'; threadId: string }
+  | { kind: 'request'; requestId: string };
 
 /**
  * Memory-budget defaults + bounds for live sessions. These bound the two ways a

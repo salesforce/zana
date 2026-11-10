@@ -67,6 +67,12 @@ import type {
   LlmPromptEntry,
   McpServerEntry,
   MenubarSnapshot,
+  CompanionOpenTarget,
+  CompanionPanelKind,
+  CompanionPanelState,
+  CompanionSnapshot,
+  CompanionTooltip,
+  CompanionTooltipView,
   Persona,
   PluginAppEntry,
   PluginEntry,
@@ -1317,7 +1323,8 @@ const api: CcApi = {
         'app:closeTab',
         'app:toggleProjectView',
         'app:openPalette',
-        'app:openShortcuts'
+        'app:openShortcuts',
+        'app:openHome'
       ];
       const handlers = events.map((name) => {
         const h = () => cb(name);
@@ -1387,6 +1394,43 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.menubar.open, view),
     hide: () => ipcRenderer.invoke(IPC.menubar.hide),
     quit: () => ipcRenderer.invoke(IPC.menubar.quit)
+  },
+  companion: {
+    request: () => ipcRenderer.invoke(IPC.companion.request),
+    onSnapshot: (cb: (snapshot: CompanionSnapshot) => void) => {
+      const handler = (_e: unknown, snapshot: CompanionSnapshot) => cb(snapshot);
+      ipcRenderer.on(IPC.companion.onSnapshot, handler);
+      return () => ipcRenderer.off(IPC.companion.onSnapshot, handler);
+    },
+    enter: () => ipcRenderer.invoke(IPC.companion.enter),
+    exit: () => ipcRenderer.invoke(IPC.companion.exit),
+    openPanel: (kind: CompanionPanelKind, focusRequestId?: string) =>
+      ipcRenderer.invoke(IPC.companion.openPanel, kind, focusRequestId),
+    closePanel: () => ipcRenderer.invoke(IPC.companion.closePanel),
+    panelState: () => ipcRenderer.invoke(IPC.companion.panelState),
+    onPanel: (cb: (state: CompanionPanelState) => void) => {
+      const handler = (_e: unknown, state: CompanionPanelState) => cb(state);
+      ipcRenderer.on(IPC.companion.onPanel, handler);
+      return () => ipcRenderer.off(IPC.companion.onPanel, handler);
+    },
+    onPanelClosed: (cb: () => void) => {
+      const handler = () => cb();
+      ipcRenderer.on(IPC.companion.onPanelClosed, handler);
+      return () => ipcRenderer.off(IPC.companion.onPanelClosed, handler);
+    },
+    tooltip: (tip: CompanionTooltip | null) => ipcRenderer.invoke(IPC.companion.tooltip, tip),
+    onTooltip: (cb: (tip: CompanionTooltipView | null) => void) => {
+      const handler = (_e: unknown, tip: CompanionTooltipView | null) => cb(tip);
+      ipcRenderer.on(IPC.companion.onTooltip, handler);
+      return () => ipcRenderer.off(IPC.companion.onTooltip, handler);
+    },
+    tooltipState: () => ipcRenderer.invoke(IPC.companion.tooltipState),
+    dragStart: () => ipcRenderer.invoke(IPC.companion.dragStart),
+    dragEnd: () => ipcRenderer.invoke(IPC.companion.dragEnd),
+    answer: (requestId: string, text: string) =>
+      ipcRenderer.invoke(IPC.companion.answer, requestId, text),
+    open: (target: CompanionOpenTarget) => ipcRenderer.invoke(IPC.companion.open, target),
+    runSchedule: (taskId: string) => ipcRenderer.invoke(IPC.companion.runSchedule, taskId)
   },
   windows: {
     openProject: (projectId: string) =>
@@ -1479,7 +1523,8 @@ contextBridge.exposeInMainWorld('zccDesktop', {
   app: api.app,
   windows: api.windows,
   updates: api.updates,
-  menubar: api.menubar
+  menubar: api.menubar,
+  companion: api.companion
 });
 
 // E2E test-observability bridge (GATED). Exposed ONLY when main launched this
