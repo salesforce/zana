@@ -150,7 +150,7 @@ import {
 import semver from 'semver';
 import { runPluginSourceCommand } from './plugin-source-command.js';
 import { createPluginUpdateStore } from './plugin-update-store.js';
-import { installedSourceIntent, listBoundedGitRefs, pluginUpdateFingerprint, pluginEngineProblems, resolvePluginUpdate, type PluginSourceIntent, type PluginUpdateCheck, type PluginUpdateResolver, type PluginUpdateCandidate } from './plugin-update-resolver.js';
+import { installedSourceIntent, pluginUpdateFingerprint, pluginEngineProblems, resolvePluginUpdate, type PluginSourceIntent, type PluginUpdateCheck, type PluginUpdateResolver, type PluginUpdateCandidate } from './plugin-update-resolver.js';
 import { PLUGIN_UPDATE_CHECK_INTERVAL_MS, startPluginUpdateSweep } from './plugin-updates.js';
 import { assertBundledPluginInstall, bundledPluginById, bundledPluginSourceNotice, reconcileBundledPluginMetadata } from './bundled-plugin-policy.js';
 import { buildPluginApp, buildPluginServer, buildPluginHost, getPluginBuildToolchain, createPluginDevLoop } from '@zana-ai/zcc-plugin-build';
@@ -1975,7 +1975,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       try { return JSON.parse(result.stdout); } catch { throw new Error('npm returned malformed package metadata'); }
     },
     async gitRefs(url) {
-      return listBoundedGitRefs(url, opts.dataDir, sourceCommands.signal);
+      const result = await runPluginSourceCommand('git', ['ls-remote', '--', url, 'HEAD', 'refs/heads/*', 'refs/tags/*'], opts.dataDir, { signal: sourceCommands.signal });
+      if (result.code !== 0) throw new Error('Git source is unavailable');
+      return result.stdout;
     },
     async gitManifest(intent, commit) {
       const cloned = await cloneGitTree(intent.url, `commit:${commit}`, intent.subdir);
