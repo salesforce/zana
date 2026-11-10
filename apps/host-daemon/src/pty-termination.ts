@@ -43,7 +43,11 @@ export function terminatePtyProcessTree(
   const pid = handle.pid;
   const signalledGroup = pid !== undefined && signalProcessGroup(pid, signal);
   try {
-    handle.kill(signal);
+    // node-pty on Windows throws "Signals not supported on windows" for any
+    // signal argument, which left the pty and its agent tree running. Its
+    // signal-less kill ends the console's whole process list.
+    if (process.platform === 'win32') handle.kill();
+    else handle.kill(signal);
   } catch {
     /* process can win the exit race */
   }
