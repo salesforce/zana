@@ -9,6 +9,7 @@ import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './ar
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
 import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-grant-store.js';
 import type { createExecutionSourceRegistry } from './source-registry.js';
+import { blockerCardSubject, humanBlockerDenial } from './human-blocker-denial.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-watchdog.js';
@@ -1399,7 +1400,7 @@ export class ExecutionService {
         this.fireHumanBlocker(updated, blocker);
         void this.deps.inbox?.append({
           projectId: updated.projectId,
-          subject: updated.jobTitle || 'Job Execution Blocked',
+          subject: blockerCardSubject(updated),
           comments: blocker.question,
           executionId: updated.id,
           blockerId: blocker.id
@@ -2307,7 +2308,7 @@ export class ExecutionService {
     if (isResumeGrantTerminal(record.state)) return terminalBound(record);
     const blocker = record.blockers?.find((candidate) => candidate.id === blockerId && !candidate.resolved);
     if (!blocker) return { ok: false as const, code: 'NOT_FOUND', message: 'execution blocker not found' };
-    if (blocker.audience !== 'coordinator') return deniedBound('blocker requires owner resolution');
+    if (blocker.audience !== 'coordinator') return deniedBound(humanBlockerDenial(record, blocker));
     // Deterministic idempotency key: one coordinator answer per blocker. A retry
     // of the same answer replays; a re-block mints a fresh blocker id.
     const clientRequestId = `${record.id}:${blocker.id}:coordinator-answer`;
@@ -3868,7 +3869,7 @@ export class ExecutionService {
     if (!inbox) return;
     const input: InboxInput = {
       projectId: record.projectId,
-      subject: record.jobTitle || 'Job Execution Blocked',
+      subject: blockerCardSubject(record),
       comments: blocker.question,
       executionId: record.id,
       blockerId: blocker.id,
