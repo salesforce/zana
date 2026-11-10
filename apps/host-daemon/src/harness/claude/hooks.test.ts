@@ -195,6 +195,21 @@ describe('StopFailure hook', () => {
   });
 });
 
+describe('tool-settled hooks (OBL-011)', () => {
+  type Settings = { hooks: Record<string, Array<{ matcher: string; hooks: Array<{ command: string; timeout: number }> }>> };
+  it('adds PostToolUse and PostToolUseFailure relays only with the native-tool gate', () => {
+    const on = JSON.parse(buildClaudeHookSettings({ stop: false, notify: false, nativeTool: true })) as Settings;
+    for (const event of ['PostToolUse', 'PostToolUseFailure']) {
+      const cmd = on.hooks[event]!.at(-1)!.hooks[0]!.command;
+      expect(cmd).toContain('"$ZCC_TOOLSETTLED_URL"');
+      expect(cmd).toContain('&)');
+      expect(on.hooks[event]!.at(-1)!.hooks[0]!.timeout).toBe(5);
+    }
+    const off = JSON.parse(buildClaudeHookSettings({ stop: true, notify: false })) as Settings;
+    expect(off.hooks.PostToolUseFailure).toBeUndefined();
+  });
+});
+
 describe('skillSettings', () => {
   const skill = { skillOverrides: { a: 'off' as const }, enabledPlugins: { 'p@m': false as const } };
   it('merges skill keys into the hook settings', () => {

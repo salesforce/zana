@@ -47,7 +47,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 // tmux "available" so a non-headless remote arms the tmux wrap (the tmux-backed
@@ -89,6 +89,7 @@ const sentinel = (pid: number | string): string => `\x1b]6997;zcc-remote-pid=${p
 /** A remote AGENT spawn (non-shell → reap-armed). `opencode` is the real orphan case. */
 function makeRemoteAgent(mgr: PtyManager, over: Record<string, unknown> = {}): TerminalSession {
   return mgr.create({
+    nativeToolPolicyRequired: false,
     projectId: 'p1',
     profile: 'opencode',
     cwd: '/work/p1',
@@ -183,6 +184,7 @@ describe('PtyManager remote agent reap', () => {
   it('plain remote SHELL: no sentinel prepended, no capture, no reap (honors SIGHUP)', () => {
     const mgr = new PtyManager();
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       cwd: '/work/p1',

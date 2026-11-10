@@ -36,6 +36,19 @@ describe('tmux identity env file', () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  it('pane wrapper runs a spilled command and args from the file, keeping them off the tmux argv', () => {
+    const args = ['-c', 'printf "%s|%s|%s" "$ZCC_SESSION_TOKEN" "$1" "$2"', 'sh', "it's big " + 'x'.repeat(40_000), 'two\nlines'];
+    const path = writeSessionEnvFile('sess-envfile-spill', { ZCC_SESSION_TOKEN: 'tok' }, ['sh', ...args]);
+    const { args: tmuxArgs } = buildLocalTmuxCommand('sess-envfile-spill', 'sh', args, {}, path, true);
+    const pane = tmuxArgs.slice(tmuxArgs.indexOf('--') + 1);
+    expect(pane.join(' ')).not.toContain('xxxx');
+    const [cmd, ...rest] = pane;
+    const res = spawnSync(cmd, rest, { encoding: 'utf8' });
+    expect(res.status).toBe(0);
+    expect(res.stdout).toBe("tok|it's big " + 'x'.repeat(40_000) + '|two\nlines');
+    expect(existsSync(path)).toBe(false);
+  });
+
   it('pane wrapper fails closed and never runs the command when the file is missing', () => {
     const [cmd, ...rest] = paneArgv('/nonexistent/zcc-env-file', 'sh', ['-c', 'echo RAN']);
     const res = spawnSync(cmd, rest, { encoding: 'utf8' });

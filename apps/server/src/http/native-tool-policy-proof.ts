@@ -10,7 +10,19 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 export const NATIVE_TOOL_POLICY_PROOF_HEADER = 'x-zcc-native-tool-policy-proof';
 /** The product route main posts to; main imports only this module, never the route. */
 export const NATIVE_TOOL_POLICY_PATH = '/api/v1/native-tool-policy';
-/** Covers main's 4 s request timeout with margin; a proof is never reused. */
+/** Pre-spawn readiness route (OBL-018); main posts an empty signed body, same proof scheme. */
+export const NATIVE_TOOL_POLICY_INVENTORY_PATH = '/api/v1/native-tool-policy-inventory';
+/** PTY dispatch admission route (same proof scheme); main posts the strict request. */
+export const DISPATCH_ADMISSION_PATH = '/api/v1/dispatch-admission';
+/** PTY lifecycle event route (same proof scheme); main posts the strict request. */
+export const PTY_LIFECYCLE_EVENT_PATH = '/api/v1/pty-lifecycle-event';
+/** PTY session instructions route (same proof scheme); main posts the strict request. */
+export const PTY_SESSION_INSTRUCTIONS_PATH = '/api/v1/pty-session-instructions';
+/** PTY session plugin tool list route (same proof scheme); main posts the strict request. */
+export const PTY_SESSION_TOOLS_PATH = '/api/v1/pty-session-tools';
+/** PTY session plugin tool call route (same proof scheme); main posts the strict request. */
+export const PTY_SESSION_TOOL_CALL_PATH = '/api/v1/pty-session-tool-call';
+/** Checked once, when the server receives the request, never across the decision wait (a human may take minutes on an `ask`). A proof is never reused. */
 export const NATIVE_TOOL_POLICY_PROOF_TTL_MS = 10_000;
 const MAX_USED = 1024;
 const TOKEN = /^(\d{13})\.([a-f0-9]{32})\.([a-f0-9]{64})$/;

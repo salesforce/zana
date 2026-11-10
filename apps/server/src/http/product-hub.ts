@@ -33,6 +33,7 @@ export type ProductEventType =
   | 'terminals:data'
   | 'terminals:exit'
   | 'terminals:updated'
+  | 'pty-interactions:changed'
   | 'plugin-signal';
 
 export interface ProductEvent {

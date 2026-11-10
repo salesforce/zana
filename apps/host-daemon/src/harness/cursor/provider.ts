@@ -16,10 +16,13 @@
  * launcher injection OFF, matching this. The one non-default override note kept
  * below is `mcpArgs` — see why the cursor MCP bridge is externally blocked.
  *
- * This mirrors the MCP-less posture the remote ssh path already ships with —
- * the spawn, the tab, resume, and the Agents-board classification all work; the
- * MCP/hook bridge for cursor-agent is a follow-up (blocked end-to-end anyway
- * until the machine is logged into `cursor-agent`).
+ * The spawn, the tab, resume, and the Agents-board classification all work.
+ * The one launcher-injectable surface is `--plugin-dir`: when a tool policy is
+ * required, a per-session plugin directory carries the blocking native-tool
+ * hook (see `native-tool-gate.ts`). The zcc-inbox MCP server and plugin
+ * instructions are NOT delivered to a Cursor PTY (MCP approval lives in
+ * Cursor's shared data directory); loading of the hook is unverified-live
+ * because it needs a logged-in `cursor-agent`.
  *
  * Rule 6: the concrete profile literals (`'cursor'`, `'cursor-resume'`) and the
  * provider id (`'cursor-agent'`) appear ONLY here + the registry — `PtyManager`
@@ -36,6 +39,7 @@ import type {
 import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
 import { BaseLaunchProvider } from '../base-provider.js';
 import type { HarnessModelTarget, ModelLevel } from "@zana-ai/zcc-domain/harness-adapter";
+import { cursorNativeToolGateArgs, cursorNativeToolGateFiles } from './native-tool-gate.js';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 
@@ -131,6 +135,8 @@ export class CursorProvider extends BaseLaunchProvider {
   readonly id = 'cursor-agent';
   /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`default`, `grok-4.6`). */
   readonly acceptsUnlistedModelTargets = true;
+  // The native tool veto is a plugin directory named on argv (`--plugin-dir`); local launches only.
+  readonly nativeToolGateViaDirectory = true;
   private discoveredModels: readonly HarnessModelTarget[] = [];
 
   get adapter(): TrustedHarnessAdapter {
@@ -234,6 +240,10 @@ export class CursorProvider extends BaseLaunchProvider {
   // mode is Claude Code's classifier-backed --permission-mode, not a cursor
   // concept. All of these are v1 follow-ups if cursor-agent grows a config-path
   // flag. See findings/multi-provider/A5-*.
+
+  nativeToolGateDirectory(_profile: LaunchProfileId, nativeToolUrl: string, dir: string) {
+    return { files: cursorNativeToolGateFiles(nativeToolUrl), args: cursorNativeToolGateArgs(dir) };
+  }
 
   buildRemoteCommand(input: RemoteCommandInput): RemoteCommandResult {
     // Relies on `cursor-agent` being on the remote PATH (mirrors the claude

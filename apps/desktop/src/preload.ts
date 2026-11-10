@@ -609,9 +609,8 @@ const api: CcApi = {
       resolve: async () => {
         throw new Error('threads require the product server');
       },
-      respond: async () => {
-        throw new Error('threads require the product server');
-      },
+      respond: (threadId, interactionId, value) => ipcRenderer.invoke('interactions:respond', { threadId, interactionId, value }),
+      respondSession: (sessionId, interactionId, value) => ipcRenderer.invoke('interactions:respond', { sessionId, interactionId, value }),
       cancel: async () => {
         throw new Error('threads require the product server');
       }

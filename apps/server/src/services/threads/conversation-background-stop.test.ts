@@ -108,7 +108,7 @@ describe('stopConversationBackgroundTasks', () => {
     expect(await stopConversationBackgroundTasks(ctx, 'thr-1')).toEqual({ ok: true, stopped: [], requested: ['review', 'unnamed'] });
     expect(callHostOnlineRpc).not.toHaveBeenCalled();
     expect(sendConversationTurn).toHaveBeenCalledWith(ctx, 'thr-1',
-      backgroundStopPrompt(['Review changes (child-review)', 'Agent (child-unnamed)']), 'auto');
+      backgroundStopPrompt(['Review changes (child-review)', 'Agent (child-unnamed)']), 'auto', undefined, { skipAdmission: true });
   });
 
   it('stops natively without messaging the agent and sends the RPC shape', async () => {

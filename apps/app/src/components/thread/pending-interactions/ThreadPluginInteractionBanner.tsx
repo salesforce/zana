@@ -9,7 +9,9 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../../../lib/product-client.js';
 import { listPendingInteractionSlots, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
+import { TOOL_POLICY_ASK_RENDERER_ID } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { PendingInteractionShell } from './PendingInteractionShell.js';
+import { ToolPolicyAskCard } from './ToolPolicyAskCard.js';
 import { QuestionInteractionBanner } from './QuestionInteractionBanner.js';
 
 export function ThreadPluginInteractionBanner({ interaction, threadId, sourceThread }: {
@@ -28,7 +30,12 @@ export function ThreadPluginInteractionBanner({ interaction, threadId, sourceThr
 
   const resolve = async (value: JsonValue) => {
     if (pluginRequest) {
-      await product.threads.interactions.respond(threadId, interaction.id, value);
+      if (window.cc?.threads?.interactions?.respond) {
+        await window.cc.threads.interactions.respond(threadId, interaction.id, value);
+      } else {
+        // Non-desktop HTTP cannot establish a human actor; required gates fail closed.
+        await product.threads.interactions.respond(threadId, interaction.id, value);
+      }
     } else {
       await product.threads.interactions.resolve(threadId, interaction.id, { kind: 'request_answer', value });
     }
@@ -66,6 +73,18 @@ export function ThreadPluginInteractionBanner({ interaction, threadId, sourceThr
     createdAt: interaction.createdAt,
     expiresAt: interaction.expiresAt ?? null
   };
+  if (pluginRequest && interaction.origin.rendererId === TOOL_POLICY_ASK_RENDERER_ID) {
+    return (
+      <ToolPolicyAskCard
+        key={interaction.id}
+        data={interaction.payload.data}
+        pluginId={interaction.origin.pluginId}
+        sourceThread={sourceThread}
+        submit={(value) => resolve(value)}
+        cancel={cancelRequest}
+      />
+    );
+  }
   if (slot?.questionForm) {
     const form = slot.questionForm(view);
     return (

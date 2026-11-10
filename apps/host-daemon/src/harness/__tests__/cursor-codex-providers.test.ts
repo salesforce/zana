@@ -580,6 +580,93 @@ describe('CodexProvider — the three -c bridges (exact argv + TOML escaping)', 
       expect(args.filter((a) => a === '--dangerously-bypass-hook-trust')).toHaveLength(1);
       expect(args[0]).toBe('--dangerously-bypass-hook-trust');
     });
+
+    describe('scoped hook trust (probe-verified binary)', () => {
+      const urls = {
+        stop: 'http://h/hook/stop/p/s',
+        notify: 'http://h/hook/notify/p/s',
+        firstPrompt: 'http://h/hook/firstprompt/p/s',
+        subagent: 'http://h/hook/subagent/p/s',
+        nativeTool: 'http://h/hook/nativetool/p/s'
+      };
+      const scoped = () => {
+        const provider = new CodexProvider();
+        provider.setBinaryResolverForTests((command) => command);
+        provider.setHookTrustMode('scoped', 'codex');
+        provider.resolveLaunch('codex', {} as never, false);
+        return provider;
+      };
+
+      it('matches a bare launch command to the verified RESOLVED path (default config)', () => {
+        const provider = new CodexProvider();
+        provider.setBinaryResolverForTests((command) => (command === 'codex' ? '/home/u/.local/bin/codex' : command));
+        provider.setHookTrustMode('scoped', '/home/u/.local/bin/codex');
+        provider.resolveLaunch('codex', {} as never, false);
+        const args = provider.hookArgs('codex', urls);
+        expect(args).not.toContain('--dangerously-bypass-hook-trust');
+        expect(args.some((arg) => arg.startsWith('hooks.state='))).toBe(true);
+      });
+
+      it('keeps bypass when the bare command resolves to a different binary than the verified one', () => {
+        const provider = new CodexProvider();
+        provider.setBinaryResolverForTests(() => '/usr/local/bin/codex');
+        provider.setHookTrustMode('scoped', '/home/u/.local/bin/codex');
+        provider.resolveLaunch('codex', {} as never, false);
+        expect(provider.hookArgs('codex', urls)[0]).toBe('--dangerously-bypass-hook-trust');
+      });
+
+      it('keeps bypass when no launch has been resolved yet', () => {
+        const provider = new CodexProvider();
+        provider.setBinaryResolverForTests((command) => command);
+        provider.setHookTrustMode('scoped', 'codex');
+        expect(provider.hookArgs('codex', urls)[0]).toBe('--dangerously-bypass-hook-trust');
+      });
+
+      it('keeps the bypass flag when the launched binary is not the probe-verified one', () => {
+        const provider = new CodexProvider();
+        provider.setBinaryResolverForTests((command) => command);
+        provider.setHookTrustMode('scoped', 'codex');
+        provider.resolveLaunch('codex', { codexBinary: '/opt/other/codex' } as never, false);
+        expect(provider.hookArgs('codex', urls)[0]).toBe('--dangerously-bypass-hook-trust');
+      });
+
+      it('defaults to the degraded bypass flag until a probe verifies the binary', () => {
+        const provider = new CodexProvider();
+        expect(provider.currentHookTrustMode).toBe('bypass');
+        expect(provider.hookArgs('codex', urls)[0]).toBe('--dangerously-bypass-hook-trust');
+      });
+
+      it('drops the bypass flag and adds exactly one valid hooks.state override', () => {
+        const args = scoped().hookArgs('codex', urls);
+        expect(args).not.toContain('--dangerously-bypass-hook-trust');
+        const states = args.filter((a) => a.startsWith('hooks.state='));
+        expect(states).toHaveLength(1);
+        const parsed = parse(states[0]!) as { hooks: { state: Record<string, { trusted_hash: string }> } };
+        const keys = Object.keys(parsed.hooks.state);
+        expect(keys).toContain('/<session-flags>/config.toml:pre_tool_use:0:0');
+        expect(keys).toContain('/<session-flags>/config.toml:pre_tool_use:1:0');
+        expect(keys).toContain('/<session-flags>/config.toml:user_prompt_submit:0:1');
+        for (const entry of Object.values(parsed.hooks.state)) expect(entry.trusted_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      });
+
+      it('wires the same hook overrides as bypass mode, in the same order', () => {
+        const scopedArgs = scoped().hookArgs('codex', urls);
+        const bypassArgs = new CodexProvider().hookArgs('codex', urls).slice(1);
+        expect(scopedArgs.slice(0, bypassArgs.length)).toEqual(bypassArgs);
+      });
+
+      it('still returns [] with no hook urls', () => {
+        expect(scoped().hookArgs('codex', {})).toEqual([]);
+      });
+
+      it('remote launches keep the global bypass flag and never carry hooks.state', () => {
+        const { cmd } = scoped().buildRemoteCommand({
+          profile: 'codex', config: CONFIG, remote: { host: 'h', user: 'u', remotePath: '/srv/app' }, remoteHookUrls: urls
+        });
+        expect(cmd).toContain('--dangerously-bypass-hook-trust');
+        expect(cmd).not.toContain('hooks.state');
+      });
+    });
   });
 });
 

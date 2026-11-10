@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 
@@ -77,7 +77,7 @@ vi.mock('node-pty', () => ({
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string, extra?: string[]) =>
     `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 // tmux never wraps in tests (keep the bare argv), regardless of the host.
@@ -108,6 +108,8 @@ vi.mock('../harness/claude/binary-identity.js', () => ({
 }));
 
 import { PtyManager, applyHeapCeiling } from '../pty.js';
+import { codexHarness } from '../harness/codex/registration.js';
+import type { CodexProvider } from '../harness/codex/provider.js';
 import { join } from 'node:path';
 import type {
   AppConfig,
@@ -132,6 +134,7 @@ const SCHEDULED_SUPERVISOR_RE = /(?:[A-Za-z]:)?[^"\\]+\/resources\/scheduled-sup
 /** Replace every UUID + the derived remote port with stable tokens so snapshots don't churn per run. */
 function normalize<T>(value: T): T {
   const masked = JSON.stringify(value)
+    .replace(/[^"]*\/zcc-session-mcp\//g, '<SESSION_MCP_DIR>/')
     .replace(UUID_RE, '<UUID>')
     .replace(SESSION_CREDENTIAL_RE, '<SESSION_CREDENTIAL>')
     .replace(REVERSE_FORWARD_RE, '<PORT>$1')
@@ -150,6 +153,8 @@ const SESSION_ENV_KEYS = [
   'ZCC_OVERSEER_URL',
   'ZCC_CONTENTSCREEN_URL',
   'ZCC_SESSION_ID',
+  'ZCC_PROJECT_ID',
+  'ZCC_THREAD_ID',
   'CLAUDE_CODE_ENABLE_AUTO_MODE',
   'MASTRACODE_YOLO'
   // NODE_OPTIONS deliberately excluded: it inherits the parent (vitest's own
@@ -287,7 +292,50 @@ describe('golden argv — local create() matrix', () => {
   }
 });
 
+describe('golden argv — per-session plugin instructions', () => {
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  for (const profile of ['claude', 'codex'] as const) {
+    it(`${profile} · plugin instructions · interactive`, () => {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl(MCP_BASE);
+      mgr.create({
+        projectId: 'proj1', profile, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG,
+        pluginInstructions: 'Instructions from the ZCC plugin "demo":\nbe polite'
+      });
+      const call = spawns[0];
+      expect(
+        normalize({
+          command: snapshotCommand(call.command),
+          args: snapshotSpawnArgs(call.command, call.args),
+          sessionEnv: pickSessionEnv(call.env)
+        })
+      ).toMatchSnapshot();
+    });
+  }
+});
+
 describe('preallocated launch identity', () => {
+  it.each([false, true])('records actual local/remote hook-base evidence (headless=%s)', (headless) => {
+    for (const hookBase of [false, true]) {
+      const mgr = new PtyManager();
+      if (hookBase) mgr.setMcpBaseUrl(MCP_BASE);
+      // This test asserts the capability surface's hookBase evidence, not the
+      // fail-closed veto gate (OBL-018, covered in pty-native-tool-veto.test.ts).
+      // The no-hook branch must still spawn to observe hookBase:false, so it
+      // opts out of the policy requirement.
+      const options = { projectId: 'proj1', profile: 'codex' as const, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG, headless, nativeToolPolicyRequired: false };
+      const local = mgr.create(options);
+      expect(local.capabilitySurface).toEqual({ surface: 'pty', harness: 'codex', headless, hookBase });
+      const remote = mgr.createRemote({ ...options, remote: { host: 'test-host', path: '/tmp/work' } });
+      // Remote headless sessions do not receive hook forwarding, so their
+      // descriptor remains unavailable rather than overstating enforcement.
+      expect(remote.capabilitySurface).toEqual({ surface: 'pty', harness: 'codex', headless, hookBase: hookBase && !headless });
+    }
+  });
+
   it('uses one coordinator-owned session id in record, env, hooks, and tmux identity', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl(MCP_BASE);
@@ -313,7 +361,9 @@ describe('restored harness identity', () => {
       cols: 80,
       rows: 24,
       config: BASE_CONFIG,
-      resumeSessionId: 'ses_abc123'
+      resumeSessionId: 'ses_abc123',
+      // Not exercising the veto gate here; this harness has no MCP relay.
+      nativeToolPolicyRequired: false
     });
 
     expect(session.openCodeSessionId).toBe('ses_abc123');
@@ -333,7 +383,9 @@ describe('spawn PATH for GUI launches', () => {
       cwd: '/tmp/work',
       cols: 80,
       rows: 24,
-      config: BASE_CONFIG
+      config: BASE_CONFIG,
+      // Not exercising the veto gate here; this harness has no MCP relay.
+      nativeToolPolicyRequired: false
     });
     const path = spawns[0]!.env.PATH ?? '';
     expect(path.split(':')).toEqual(expect.arrayContaining([join(homedir(), '.local', 'bin')]));
@@ -496,7 +548,10 @@ describe('golden argv — auto-mode + overseer variants', () => {
       cwd: '/tmp/work',
       cols: 80,
       rows: 24,
-      config: BASE_CONFIG
+      config: BASE_CONFIG,
+      // This test asserts the no-MCP argv; the veto gate (which would refuse a
+      // no-hook spawn) is exercised separately in pty-native-tool-veto.test.ts.
+      nativeToolPolicyRequired: false
     });
     const call = spawns[0];
     expect(
@@ -530,6 +585,43 @@ describe('golden argv — auto-mode + overseer variants', () => {
     expect(disallowedIdx).toHaveLength(1);
     const values = call.args[disallowedIdx[0] + 1].split(',');
     expect(values.filter((v) => v === 'AskUserQuestion')).toHaveLength(1);
+  });
+});
+
+describe('golden argv — codex scoped hook trust', () => {
+  const codex = codexHarness.implementation as CodexProvider;
+  const hashesMasked = (args: string[]) => args.map((arg) => arg.replace(/sha256:[0-9a-f]{64}/g, 'sha256:<HASH>'));
+
+  beforeEach(() => {
+    spawns.length = 0;
+    // Host-independent identity: the bare launch command is its own verified binary.
+    codex.setBinaryResolverForTests((command) => command);
+    codex.setHookTrustMode('scoped', 'codex');
+  });
+  afterEach(() => codex.setHookTrustMode('bypass'));
+
+  it('local codex: bypass flag gone, one hooks.state override trusts only the generated handlers', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({ projectId: 'proj1', profile: 'codex', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG });
+    const args = spawns[0]!.args;
+    expect(args).not.toContain('--dangerously-bypass-hook-trust');
+    const hookArgs = args.filter((arg) => arg.startsWith('hooks.'));
+    expect(hookArgs.filter((arg) => arg.startsWith('hooks.state=')).length).toBe(1);
+    expect(normalize({ hooks: hashesMasked(hookArgs) })).toMatchSnapshot();
+  });
+
+  it('remote codex keeps the degraded global flag even in scoped mode', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({
+      projectId: 'proj1', profile: 'codex', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG,
+      remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' },
+      nativeToolPolicyRequired: false
+    });
+    const remoteCmd = spawns[0]!.args.join(' ');
+    expect(remoteCmd).toContain('--dangerously-bypass-hook-trust');
+    expect(remoteCmd).not.toContain('hooks.state');
   });
 });
 
@@ -599,6 +691,10 @@ describe('golden command — remote buildRemoteCmd matrix', () => {
           rows: 24,
           config: BASE_CONFIG,
           remote,
+          // Golden argv matrix: the mocked ssh harness has no reverse-tunnelled
+          // native-tool route, so opt out of the veto gate (covered separately in
+          // pty-native-tool-veto.test.ts).
+          nativeToolPolicyRequired: false,
           ...layerOpts(layer)
         });
         expect(spawns.length).toBe(1);

@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { createSkillSnapshotStore } from './skill-snapshots.js';
 import { join } from 'node:path';
 import { resolveZccDataDir } from './host-config.js';
+import { sessionPluginMcpServers } from './mcp-config.js';
 import type { HostBridgeLaunch, HostEventEnvelope, ProviderHealthResult, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type { HostDaemonAcpLaunchSpec } from '@zana-ai/zcc-host-daemon-contract';
 import {
@@ -23,6 +24,8 @@ import { ensureCachedPluginHostArtifact, type FetchPluginHostArtifact } from './
 import { silentArtifactCacheLogger, type ArtifactCacheLogger } from './node-artifact-cache.js';
 import {
   encodeClientTurnRequestIdNumber,
+  sanitizeSessionMcpServers,
+  type SessionMcpServer,
   type PermissionMode,
   type PendingInteractionCreate,
   type PendingInteractionResolution,
@@ -95,24 +98,31 @@ export function mergeSessionTooling(input: {
   remoteProxy: boolean;
   dynamicTools?: DynamicTool[];
   instructions?: string;
+  /** Plugin MCP servers already selected by the single enablement rule; validated here before the wire. */
+  mcpServers?: readonly unknown[];
 }): {
   disallowedTools?: readonly string[];
   instructions?: string;
   dynamicTools?: DynamicTool[];
+  mcpServers?: SessionMcpServer[];
 } {
   const pluginTools = input.dynamicTools ?? [];
   const pluginInstructions = input.instructions?.trim();
+  const mcpServers = sanitizeSessionMcpServers(input.mcpServers ?? []);
+  const mcpPart = mcpServers.length > 0 ? { mcpServers } : {};
   if (input.remoteProxy) {
     return {
       disallowedTools: REMOTE_TOOL_PROXY_DISALLOWED_TOOLS,
       instructions: [REMOTE_TOOL_PROXY_INSTRUCTIONS, pluginInstructions].filter(Boolean).join('\n\n'),
-      dynamicTools: [...REMOTE_TOOL_PROXY_DYNAMIC_TOOLS, ...pluginTools]
+      dynamicTools: [...REMOTE_TOOL_PROXY_DYNAMIC_TOOLS, ...pluginTools],
+      ...mcpPart
     };
   }
-  if (pluginTools.length === 0 && !pluginInstructions) return {};
+  if (pluginTools.length === 0 && !pluginInstructions && mcpServers.length === 0) return {};
   return {
     ...(pluginInstructions ? { instructions: pluginInstructions } : {}),
-    ...(pluginTools.length > 0 ? { dynamicTools: pluginTools } : {})
+    ...(pluginTools.length > 0 ? { dynamicTools: pluginTools } : {}),
+    ...mcpPart
   };
 }
 
@@ -305,6 +315,9 @@ export function createAgentRuntimeAdapter(options: {
   getRemoteDefaultPath?: () => string | undefined;
   onInteractiveRequest?: (request: PendingInteractionCreate) => Promise<PendingInteractionResolution>;
   onPluginToolCall?: (request: ToolCallRequest) => Promise<ToolCallResponse>;
+  onNativeToolDecision?: AgentRuntimeOptions['onNativeToolDecision'];
+  /** Observational tool completion (OBL-011); fire-and-forget, scoped to a live thread on this runtime. */
+  onNativeToolSettled?: AgentRuntimeOptions['onNativeToolSettled'];
   fetchPluginHostArtifact?: FetchPluginHostArtifact;
   artifactCacheLogger?: ArtifactCacheLogger;
   onProcessExit?: (info: {
@@ -321,7 +334,7 @@ export function createAgentRuntimeAdapter(options: {
   const discoveryRuntimes = new Set<AgentRuntime>();
   const environmentRuntimes = new Set<string>();
   const runtimeMeta = new Map<string, { catalogHash: string; cwd: string }>();
-  const threadLocation = new Map<string, { environmentId: string; cwd: string; status: 'active' | 'idle' | 'error' }>();
+  const threadLocation = new Map<string, { environmentId: string; projectId: string; cwd: string; status: 'active' | 'idle' | 'error' }>();
   const remoteProxyByThread = new Map<string, ThreadRemoteProxy>();
   const submitByThread = new Map<string, Promise<void>>();
   const createRuntime = options.createRuntime
@@ -368,7 +381,7 @@ export function createAgentRuntimeAdapter(options: {
   }
 
   function createEnvironmentRuntime(cwd: string): AgentRuntime {
-    return createRuntime({
+    const runtime = createRuntime({
       workspacePath: cwd,
       threadStorageRootPath: storageRoot,
       additionalWorkspaceWriteRoots: [storageRoot],
@@ -410,6 +423,34 @@ export function createAgentRuntimeAdapter(options: {
         };
       },
       ...(options.onInteractiveRequest ? { onInteractiveRequest: options.onInteractiveRequest } : {}),
+      onNativeToolDecision: async (request, signal) => {
+        const location = threadLocation.get(request.threadId);
+        const session = runtime.getProviderSession(request.threadId);
+        if (signal.aborted || !options.onNativeToolDecision || !location
+          || runtimes.get(location.environmentId) !== runtime || location.projectId !== request.projectId
+          || location.environmentId !== request.environmentId || session?.providerId !== request.providerId
+          || session.providerThreadId !== request.providerThreadId) {
+          return { action: 'deny', reason: 'native policy thread is not live on this runtime' };
+        }
+        const decision = await options.onNativeToolDecision(request, signal);
+        const current = runtime.getProviderSession(request.threadId);
+        if (signal.aborted || threadLocation.get(request.threadId) !== location
+          || runtimes.get(location.environmentId) !== runtime || current?.providerId !== session.providerId
+          || current.providerThreadId !== session.providerThreadId) {
+          return { action: 'deny', reason: 'native policy session ended' };
+        }
+        return decision;
+      },
+      ...(options.onNativeToolSettled ? {
+        onNativeToolSettled: event => {
+          const location = threadLocation.get(event.threadId);
+          const session = runtime.getProviderSession(event.threadId);
+          if (!location || runtimes.get(location.environmentId) !== runtime
+            || location.projectId !== event.projectId || location.environmentId !== event.environmentId
+            || session?.providerId !== event.providerId || session.providerThreadId !== event.providerThreadId) return;
+          options.onNativeToolSettled!(event);
+        }
+      } : {}),
       onProcessExit: info => {
         for (const thread of info.threads) {
           const location = threadLocation.get(thread.threadId);
@@ -418,6 +459,7 @@ export function createAgentRuntimeAdapter(options: {
         options.onProcessExit?.(info);
       }
     });
+    return runtime;
   }
 
   function runtimeFor(environmentId: string, cwd: string, isEnvironment = true): AgentRuntime {
@@ -509,7 +551,7 @@ export function createAgentRuntimeAdapter(options: {
       syncProviderBridgeRecording();
       const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch, input.providerOptions);
       const runtime = runtimeFor(input.environmentId, input.cwd);
-      threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
+      threadLocation.set(input.threadId, { environmentId: input.environmentId, projectId: input.projectId, cwd: input.cwd, status: 'active' });
       const remoteProxy = usesRemoteToolProxy(input);
       if (remoteProxy && input.remote) {
         remoteProxyByThread.set(
@@ -553,7 +595,8 @@ export function createAgentRuntimeAdapter(options: {
           ...mergeSessionTooling({
             remoteProxy,
             dynamicTools: input.dynamicTools,
-            instructions: input.instructions
+            instructions: input.instructions,
+            mcpServers: isIsolatedAutomatedStart(input) ? [] : sessionPluginMcpServers()
           })
         });
         const location = threadLocation.get(input.threadId);
@@ -605,7 +648,7 @@ export function createAgentRuntimeAdapter(options: {
       syncProviderBridgeRecording();
       const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch, input.providerOptions);
       const runtime = runtimeFor(input.environmentId, input.cwd);
-      threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
+      threadLocation.set(input.threadId, { environmentId: input.environmentId, projectId: input.projectId, cwd: input.cwd, status: 'active' });
       try {
         const result = await runtime.resumeThread({
           skillRoots: await skillSnapshots.capture(runtime, automatedSkillSelection(input)),
@@ -631,7 +674,8 @@ export function createAgentRuntimeAdapter(options: {
           ...mergeSessionTooling({
             remoteProxy: false,
             dynamicTools: input.dynamicTools,
-            instructions: input.instructions
+            instructions: input.instructions,
+            mcpServers: input.sessionKind === 'automated' ? [] : sessionPluginMcpServers()
           }),
           ...(input.requireNativeLoad === true ? { requireNativeLoad: true as const } : {})
         });

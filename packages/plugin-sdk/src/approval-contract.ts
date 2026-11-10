@@ -3,11 +3,16 @@
  * no thread exists to carry a confirmation card. The app asks the host, the
  * host draws the sheet and signs what the user approved, and the plugin's
  * server rebuilds the same binding from its own sources and consumes the token
- * with `zcc.ui.experimental_consumeApproval` before acting.
+ * with `zcc.ui.consumeApproval` before acting. Server tools can request the
+ * same main-owned sheet while awaiting their result.
  */
 
 /** What one approval covers. Every field is signed; rebuild it server-side, never trust the app's copy. */
 export interface PluginApprovalBinding {
+  /** Required for server tool approvals; part of the complete binding. */
+  threadId?: string;
+  /** Exact tool invocation, when available; cannot be reused by another invocation. */
+  invocationId?: string;
   /** Plugin-defined lowercase id, such as "agent.activate". */
   action: string;
   /** Stable id of what changes, such as an org id. */
@@ -37,6 +42,18 @@ export interface PluginApprovalRequest {
   tone?: 'default' | 'danger';
 }
 
+/** A server-tool approval. The host derives plugin, thread and invocation scope. */
+export interface PluginToolApprovalRequest extends PluginApprovalRequest {
+  /** Optional assertion; a value differing from the active invocation is refused. */
+  threadId?: string;
+  /** Optional assertion, not an authority supplied by the plugin. */
+  invocationId?: string;
+  /** Optional explanation, at most 600 characters. */
+  detail?: string;
+  /** Positive integer, at most five minutes. Defaults to five minutes. */
+  timeoutMs?: number;
+}
+
 /**
  * `unavailable`: no desktop host can draw the sheet (web, mobile, headless).
  * `busy`: another approval sheet is open on this window. `invalid`: the request
@@ -44,4 +61,4 @@ export interface PluginApprovalRequest {
  */
 export type PluginApprovalResult =
   | { approved: true; token: string; expiresAt: number }
-  | { approved: false; reason: 'cancelled' | 'unavailable' | 'busy' | 'invalid' };
+  | { approved: false; reason: 'cancelled' | 'denied' | 'timeout' | 'unavailable' | 'busy' | 'invalid' };

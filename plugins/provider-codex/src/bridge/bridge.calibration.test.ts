@@ -290,6 +290,7 @@ const SECOND_REQUEST_ID = "creq_23456789ad";
 
 interface ReplayResult {
   approvals: InteractionRequestParams[];
+  policyDecisions: Array<Record<string, unknown>>;
   collector: BridgeDeltaEventCollector;
   events: ThreadEvent[];
 }
@@ -298,12 +299,26 @@ function answerBridgeRequests(
   bridge: BridgeJsonRpcTestHarness,
   from: number,
   approvals: InteractionRequestParams[],
+  policyDecisions: Array<Record<string, unknown>>,
 ): number {
   for (const message of bridge.messages.slice(from)) {
-    if (
-      message.method !== BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest ||
-      message.id === undefined
-    ) {
+    if (message.id === undefined) {
+      continue;
+    }
+    // p0-modern-codex-veto: command/file-change approvals under full scope are
+    // routed through the native-tool policy, not the human interaction path.
+    if (message.method === "tool/policy/decide") {
+      policyDecisions.push(message.params as Record<string, unknown>);
+      handleLine(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { action: "allow" },
+        }),
+      );
+      continue;
+    }
+    if (message.method !== BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest) {
       continue;
     }
     approvals.push(interactionRequestParamsSchema.parse(message.params));
@@ -322,6 +337,7 @@ async function replayCanonical(workspaceDir: string): Promise<ReplayResult> {
   const bridge = createBridgeJsonRpcTestHarness(handleLine);
   const events: ThreadEvent[] = [];
   const approvals: InteractionRequestParams[] = [];
+  const policyDecisions: Array<Record<string, unknown>> = [];
   let drained = 0;
   let answered = 0;
 
@@ -338,7 +354,12 @@ async function replayCanonical(workspaceDir: string): Promise<ReplayResult> {
 
   const settle = async (id: number): Promise<void> => {
     while (!bridge.hasResponse(id)) {
-      answered = answerBridgeRequests(bridge, answered, approvals);
+      answered = answerBridgeRequests(
+        bridge,
+        answered,
+        approvals,
+        policyDecisions,
+      );
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     answered = bridge.messages.length;
@@ -401,7 +422,7 @@ async function replayCanonical(workspaceDir: string): Promise<ReplayResult> {
     bridge.restore();
   }
 
-  return { approvals, collector, events };
+  return { approvals, policyDecisions, collector, events };
 }
 
 function firstTurnId(events: readonly ThreadEvent[]): string | undefined {
@@ -471,17 +492,27 @@ it("replays one scripted codex session onto the golden event stream", async () =
     describeCalibrationEvents(normalizeCalibrationEvents(canonical.events)),
   ).toEqual(GOLDEN_EVENT_STREAM);
 
-  expect(canonical.approvals).toHaveLength(1);
-  const approvalRequest = canonical.approvals[0];
-  const canonicalApproval = approvalRequest?.payload;
+  // p0-modern-codex-veto: the command approval is governed by the native-tool
+  // policy under full scope, so it surfaces as a tool/policy/decide request
+  // rather than a human interaction.
+  expect(canonical.approvals).toHaveLength(0);
+  expect(canonical.policyDecisions).toHaveLength(1);
+  const policyRequest = canonical.policyDecisions[0];
+  expect(policyRequest?.toolName).toBe("codex.command");
+  expect(policyRequest?.callId).toBe(COMMAND_ITEM_ID);
+  const canonicalApproval = policyRequest?.input as
+    | Record<string, unknown>
+    | undefined;
   if (
     canonicalApproval?.kind !== "approval" ||
-    canonicalApproval.subject.kind !== "command"
+    (canonicalApproval.subject as Record<string, unknown> | undefined)?.kind !==
+      "command"
   ) {
     throw new Error("Expected a canonical command-approval payload");
   }
-  expect(approvalRequest?.providerNativeIds).toBe(true);
-  expect(canonicalApproval.subject.itemId).toBe(COMMAND_ITEM_ID);
+  expect((canonicalApproval.subject as Record<string, unknown>).itemId).toBe(
+    COMMAND_ITEM_ID,
+  );
   const commandEventItemId = canonical.events.find(
     (event) =>
       event.type === "item/completed" &&

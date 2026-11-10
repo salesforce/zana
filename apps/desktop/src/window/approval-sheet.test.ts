@@ -94,6 +94,7 @@ describe('sheet geometry', () => {
 class FakeSheet extends EventEmitter {
   destroyed = false;
   shown = false;
+  destroyCalls = 0;
   url = '';
   openHandler: (() => { action: string }) | null = null;
   loadResult: Promise<void> = Promise.resolve();
@@ -103,7 +104,11 @@ class FakeSheet extends EventEmitter {
   isDestroyed() { return this.destroyed; }
   show() { this.shown = true; }
   close() {
+    this.destroy();
+  }
+  destroy() {
     if (this.destroyed) return;
+    this.destroyCalls++;
     this.destroyed = true;
     this.emit('closed');
   }
@@ -144,6 +149,7 @@ describe('showApprovalSheet', () => {
     sheet.webContents.emit('page-title-updated', { preventDefault: vi.fn() }, 'approve:prod');
     await expect(outcome).resolves.toEqual({ kind: 'approved', typed: 'prod' });
     expect(sheet.destroyed).toBe(true);
+    expect(sheet.destroyCalls).toBe(1);
     expect(parent.listenerCount('closed')).toBe(0);
   });
 
@@ -151,6 +157,7 @@ describe('showApprovalSheet', () => {
     const { sheet, outcome } = open();
     sheet.webContents.emit('page-title-updated', { preventDefault: vi.fn() }, 'cancel');
     await expect(outcome).resolves.toEqual({ kind: 'cancelled' });
+    expect(sheet.destroyCalls).toBe(1);
   });
 
   it('cancels when the sheet or its parent closes', async () => {
@@ -169,6 +176,16 @@ describe('showApprovalSheet', () => {
     sheet.webContents.emit('will-navigate', event, 'https://example.com');
     expect(event.preventDefault).toHaveBeenCalled();
     await expect(outcome).resolves.toEqual({ kind: 'cancelled' });
+  });
+
+  it('destroys a settled disposable sheet without relying on cancellable native close', async () => {
+    const { sheet, parent, outcome } = open(undefined, sheet => { sheet.close = vi.fn(); });
+    sheet.webContents.emit('page-title-updated', { preventDefault: vi.fn() }, 'approve:');
+    await expect(outcome).resolves.toEqual({ kind: 'approved', typed: '' });
+    sheet.webContents.emit('page-title-updated', { preventDefault: vi.fn() }, 'cancel');
+    expect(sheet.close).not.toHaveBeenCalled();
+    expect(sheet.destroyCalls).toBe(1);
+    expect(parent.listenerCount('closed')).toBe(0);
   });
 
   it('cancels when the page fails to load', async () => {

@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
           setImmediate(() => child.emit('message', {
             type: 'ready', protocolVersion: h.pv, url: `http://127.0.0.1/${entry}`, hostId: 'host-1', instanceId: 'inst-1'
           }));
-        } else if (message.type === 'request' && (['thread-queue-turn', 'plugins-update-all'].includes(message.operation) || message.operation.startsWith('plugin-packs-'))) {
+        } else if (message.type === 'request' && (['thread-queue-turn', 'plugins-update-all', 'plugins-dispatch-admission', 'plugins-tool-settled', 'plugins-tool-policy-inventory'].includes(message.operation) || message.operation.startsWith('plugins-pty-') || message.operation.startsWith('plugin-packs-'))) {
           h.queueRequests.push(message);
           setImmediate(() => child.emit('message', h.queued === 'runtime-error'
             ? { type: 'error', protocolVersion: h.pv, id: message.id, message: 'thread store unavailable' }
@@ -65,6 +65,58 @@ describe('utility-backed runtime supervisor', () => {
     } finally {
       await runtime.close();
       expect(onLocalThreadWork).toHaveBeenLastCalledWith(false);
+      vi.unstubAllEnvs();
+    }
+  });
+  it('forwards a valid plugin capability message to the host daemon process as well as the main listener', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-caps-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    const server = h.children.find(child => child.entry.endsWith('server-runtime.js'));
+    const host = h.children.find(child => child.entry.endsWith('host-daemon.js') || (child !== server && child.entry !== server.entry));
+    const listener = vi.fn();
+    runtime.onPluginCapabilitiesChanged(listener);
+    try {
+      const message = { type: 'plugin-capabilities', protocolVersion: h.pv, contributors: [{ id: 'p', enabled: true, rootDir: '/p', skillsRootPaths: [], skillNames: [], mcpServers: [{ name: 's', type: 'stdio', command: 'node', alwaysOn: true }] }] };
+      server.emit('message', message);
+      expect(listener).toHaveBeenCalledWith(message.contributors);
+      expect(host.postMessage).toHaveBeenCalledWith(message);
+      host.postMessage.mockClear(); listener.mockClear();
+      server.emit('message', { ...message, contributors: [{ id: 'p' }] });
+      expect(listener).not.toHaveBeenCalled();
+      expect(host.postMessage).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+      vi.unstubAllEnvs();
+    }
+  });
+  it('routes PTY plugin-host operations to the server utility with the main-asserted request', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-pty-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    try {
+      const request = { sessionId: 's-1', projectId: 'p-1' } as never;
+      const actions = [
+        { operation: 'plugins-dispatch-admission', call: () => runtime.admitDispatch(request), withRequest: true },
+        { operation: 'plugins-pty-lifecycle-event', call: () => runtime.emitPtyLifecycle(request), withRequest: true },
+        { operation: 'plugins-tool-settled', call: () => runtime.emitToolSettled(request), withRequest: true },
+        { operation: 'plugins-pty-session-instructions', call: () => runtime.ptySessionInstructions(request), withRequest: true },
+        { operation: 'plugins-pty-session-tools', call: () => runtime.ptySessionTools(request), withRequest: true },
+        { operation: 'plugins-pty-session-tool-call', call: () => runtime.ptySessionToolCall(request), withRequest: true },
+        { operation: 'plugins-tool-policy-inventory', call: () => runtime.toolPolicyReadiness(), withRequest: false }
+      ];
+      for (const action of actions) {
+        h.queued = { ack: action.operation };
+        await expect(action.call()).resolves.toEqual(h.queued);
+        const message = h.queueRequests.at(-1);
+        expect(message.operation).toBe(action.operation);
+        if (action.withRequest) expect(message.request).toEqual(request);
+        else expect(message).not.toHaveProperty('request');
+      }
+      h.queued = 'runtime-error';
+      await expect(runtime.ptySessionToolCall(request)).rejects.toThrow('thread store unavailable');
+    } finally {
+      await runtime.close();
       vi.unstubAllEnvs();
     }
   });

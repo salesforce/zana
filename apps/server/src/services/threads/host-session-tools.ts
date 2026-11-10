@@ -12,8 +12,9 @@ import { peerToolNames, type PeerToolName } from '../agents/peer-tool-contract.j
  *
  * Do not attach a zcc-inbox MCP URL to ACP/SDK/Codex/Pi.
  *
- * CLI Agent / PTY keeps `zcc-inbox` + plugin `zcc.mcpServers` instead of
- * these DynamicTools. `registerTool` does not reach PTY sessions.
+ * CLI Agent / PTY keeps its own MCP wiring (the inbox server plus plugin MCP
+ * servers) instead of these DynamicTools. PTY sessions get plugin `registerTool`
+ * tools through that inbox server (see services/mcp/pty-plugin-tools.ts).
  */
 
 import type { DynamicTool, ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';

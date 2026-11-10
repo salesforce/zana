@@ -24,6 +24,7 @@ import {
   buildEditDiff,
   createBridgeIo,
   createBridgeLineHandler,
+  createNativeToolDecisionTracker,
   decodeBridgeJsonRpcResponse,
   decodeToolCallResponsePayload,
   mimeTypeFromExtension,
@@ -37,6 +38,7 @@ import {
   THREAD_DELTA_GRAMMAR_V3,
   THREAD_DELTA_NOTIFICATION_METHOD,
   type BridgeExecutionOptions,
+  type NativeToolDecision,
   type InitializeResult,
   type ThreadDelta,
   experimental_defineProviderBridge,
@@ -92,6 +94,7 @@ import {
 import { isPlanAcpMode, isPlanArtifactWritePath } from "../plan-write-policy.js";
 import { acpProfileFromLaunchSpec, type AcpAgentProfile } from "../profiles.js";
 import {
+  cursorAgentCommand,
   approveCursorSessionMcpServer,
   revokeCursorSessionMcpServer,
   type CursorMcpApproval,
@@ -159,6 +162,7 @@ import {
   ACP_BRIDGE_MCP_SERVER_NAME,
   buildAcpMcpServerConfig,
   buildAcpHttpMcpServerConfig,
+  buildPluginAcpMcpServers,
   runAcpDynamicToolMcpServer,
   type AcpMcpServerConfig,
   type AcpStdioMcpServerConfig,
@@ -660,8 +664,13 @@ async function buildSessionMcpServers(
   supportsHttpMcp = false,
 ): Promise<AcpMcpServerConfig[]> {
   const dynamicTools = params.dynamicTools ?? [];
+  // Cursor only runs MCP servers the user approved, and Zana pre-approves just
+  // its own zcc bridge, so plugin servers are not offered to it.
+  const pluginServers = cursorAgentCommand(params.agent.command)
+    ? []
+    : buildPluginAcpMcpServers(params.mcpServers, supportsHttpMcp);
   if (dynamicTools.length === 0) {
-    return [];
+    return pluginServers;
   }
   const bridge = await ensureDynamicToolBridge();
   dynamicToolsByThreadId.set(params.threadId, dynamicTools);
@@ -677,6 +686,7 @@ async function buildSessionMcpServers(
         threadId: params.threadId,
         token: bridge.token,
       }),
+      ...pluginServers,
     ];
   }
   return [
@@ -684,6 +694,7 @@ async function buildSessionMcpServers(
       `http://${bridge.host}:${bridge.httpPort}/mcp/${encodeURIComponent(params.threadId)}`,
       bridge.token,
     ),
+    ...pluginServers,
   ];
 }
 
@@ -1897,6 +1908,30 @@ function pickPermissionOptionId(
   }
 }
 
+// Permission requests an ACP agent raises are put to the host native-tool policy
+// before any auto-allow or human prompt. An agent that raises no request for a
+// tool (e.g. one running with every permission pre-granted) is not covered.
+const nativeToolDecisionTracker = createNativeToolDecisionTracker(send);
+
+function acpPolicyCall(
+  session: AcpThreadSession,
+  toolCall: z.infer<typeof acpRequestPermissionParamsSchema>["toolCall"],
+): { threadId: string; providerThreadId: string; callId: string; toolName: string; input: Record<string, unknown> } {
+  const command = acpRawInputCommandSchema.safeParse(toolCall?.rawInput);
+  return {
+    threadId: session.bbThreadId,
+    providerThreadId: session.providerThreadId,
+    callId: toolCall?.toolCallId ?? "acp-permission",
+    toolName: `acp.${toolCall?.kind ?? "tool"}`,
+    input: {
+      ...(toolCall?.title ? { title: toolCall.title } : {}),
+      ...(toolCall?.kind ? { kind: toolCall.kind } : {}),
+      ...(command.success ? { command: command.data.command } : {}),
+      ...(toolCall?.locations ? { locations: toolCall.locations } : {}),
+    },
+  };
+}
+
 function respondPermission(
   pending: PendingAcpPermission,
   decision: "allow_once" | "allow_for_session" | "deny" | null,
@@ -1918,6 +1953,7 @@ function cancelPendingPermissions(session: AcpThreadSession): void {
     pending.responder.result({ outcome: { outcome: "cancelled" } });
   }
   session.pendingPermissions.clear();
+  nativeToolDecisionTracker.cancel(session);
 }
 
 const acpRawInputCommandSchema = z
@@ -1970,12 +2006,53 @@ function handlePermissionRequest(
     }
   }
 
+  // Held in the pending set while the policy decides, so a stop or cancel
+  // answers the agent and a late decision is dropped.
+  session.pendingPermissions.add(pending);
+  const call = acpPolicyCall(session, rawToolCall);
+  const decided =
+    call.providerThreadId === ""
+      ? Promise.resolve<NativeToolDecision>({
+          action: "deny",
+          reason: "native policy thread unavailable",
+        })
+      : nativeToolDecisionTracker.decide(call, session);
+  void decided.then((decision) => {
+    if (!session.pendingPermissions.delete(pending)) {
+      return;
+    }
+    if (decision.action !== "allow") {
+      respondPermission(pending, "deny");
+      return;
+    }
+    continuePermissionRequest(session, parsed.data, pending);
+  }).catch(() => {
+    // Fail closed: an unanswered permission would hang the agent.
+    if (session.pendingPermissions.delete(pending)) respondPermission(pending, "deny");
+  });
+}
+
+function continuePermissionRequest(
+  session: AcpThreadSession,
+  params: z.infer<typeof acpRequestPermissionParamsSchema>,
+  pending: PendingAcpPermission,
+): void {
+  if (
+    session.stopping ||
+    session.cancelRequested ||
+    session.activePromptKind !== "turn"
+  ) {
+    respondPermission(pending, null);
+    return;
+  }
+
   if (session.policy.permissionMode === "full") {
     respondPermission(pending, "allow_once");
     return;
   }
 
   session.pendingPermissions.add(pending);
+  const parsed = { data: params };
 
   const toolCall = parsed.data.toolCall;
   const rawInputCommand = acpRawInputCommandSchema.safeParse(
@@ -3245,6 +3322,7 @@ async function handleRequest(
         dialectId: decodeDialectId(params.options.providerOptions),
         cwd: params.cwd,
         dynamicTools: params.dynamicTools,
+        mcpServers: params.mcpServers,
         options: {
           ...params.options,
           skillRoots: configuredSkillRoots ?? undefined,
@@ -3406,6 +3484,9 @@ async function handleRequest(
 
 function handleParsedMessage(parsed: unknown): void {
   const response = decodeBridgeJsonRpcResponse(parsed);
+  if (response && nativeToolDecisionTracker.handle(response)) {
+    return;
+  }
   if (response && typeof response.id === "number") {
     const pending = pendingRuntimeRequests.get(response.id);
     if (pending) {

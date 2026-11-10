@@ -30,7 +30,13 @@ describe('createNativeToolPolicyHook', () => {
   it('passes the session record identity to the decider', async () => {
     const decide = vi.fn(async () => ({ action: 'allow' }));
     await hook({ decider: () => decide })('p1', 's1', event({ profile: 'forged' }));
-    expect(decide).toHaveBeenCalledWith(expect.objectContaining({ threadId: 's1', projectId: 'p1', profile: 'claude', toolName: 'Bash' }));
+    expect(decide).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', projectId: 'p1', profile: 'claude', toolName: 'Bash' }));
+    expect(decide.mock.calls[0]![0]).not.toHaveProperty('threadId');
+  });
+  it('sends the thread binding only when main recorded one', async () => {
+    const decide = vi.fn(async () => ({ action: 'allow' }));
+    await hook({ getSession: () => ({ ...session, threadId: 't9' }), decider: () => decide })('p1', 's1', event());
+    expect(decide).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', threadId: 't9' }));
   });
   it.each([
     ['unknown session', { getSession: () => null }], ['exited session', { getSession: () => ({ ...session, status: 'exited' }) }],
@@ -42,6 +48,14 @@ describe('createNativeToolPolicyHook', () => {
     expect(await hook({ log, decider: () => async () => { throw new Error('boom'); } })('p1', 's1', event())).toBeNull();
     expect(await hook({ log, decider: () => async () => ({ action: 'maybe' }) })('p1', 's1', event())).toBeNull();
     expect(log).toHaveBeenCalledTimes(2);
+  });
+  it('reports an allowed call by invocation id, and never a denied one', async () => {
+    const onAllowed = vi.fn();
+    await hook({ onAllowed })('p1', 's1', event());
+    expect(onAllowed).toHaveBeenCalledWith(parseNativeToolHookEvent('s1', event())?.invocationId);
+    onAllowed.mockClear();
+    await hook({ onAllowed, decider: () => async () => ({ action: 'deny', reason: 'no' }) })('p1', 's1', event());
+    expect(onAllowed).not.toHaveBeenCalled();
   });
   it('denies oversize input without asking the decider', async () => {
     const decide = vi.fn();

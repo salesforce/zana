@@ -37,7 +37,7 @@ vi.mock('node-pty', () => ({
 // Keep claude-profile spawns from writing a real ~/.zcc/mcp file.
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
 }));
 
 import { PtyManager, cleanExtraArgs, extractPinnedSessionId } from '../pty.js';
@@ -105,6 +105,7 @@ describe('PtyManager.create — empty-prompt invariant', () => {
   it('never spawns claude with a blank positional when the prompt is empty', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -120,6 +121,7 @@ describe('PtyManager.create — empty-prompt invariant', () => {
   it('passes a non-empty opening prompt through as a positional', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -154,6 +156,7 @@ describe('PtyManager.create — autonomous team runs (yolo base)', () => {
   it('launches on the yolo base (--dangerously-skip-permissions) and emits no --permission-mode', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -172,6 +175,7 @@ describe('PtyManager.create — autonomous team runs (yolo base)', () => {
   it('without autonomous, the same persona keeps its own permission-mode (plan)', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -194,6 +198,7 @@ describe('PtyManager.create — autonomous team runs (yolo base)', () => {
     // the file path itself is mocked (ensureMcpConfigForProjectSync above).
     mgr.setMcpBaseUrl('http://127.0.0.1:9999');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -210,6 +215,7 @@ describe('PtyManager.create — autonomous team runs (yolo base)', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:9999');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -229,6 +235,7 @@ describe('PtyManager.create — autonomous team runs (yolo base)', () => {
   it('disallows AskUserQuestion for autonomous runs', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -244,6 +251,7 @@ describe('PtyManager.create — autonomous team runs (yolo base)', () => {
   it('does NOT disallow AskUserQuestion for a normal agent', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -264,6 +272,7 @@ describe('PtyManager.create — scheduled runs are unattended', () => {
   it('remaps a default claude schedule onto yolo and denies AskUserQuestion', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -281,6 +290,7 @@ describe('PtyManager.create — scheduled runs are unattended', () => {
   it('does not inherit a prompting persona permission mode', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -303,6 +313,7 @@ describe('PtyManager.create — scheduled runs are unattended', () => {
   it('remaps cursor onto --force so the TUI cannot prompt', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'cursor',
       cwd: '/tmp',
@@ -345,6 +356,7 @@ describe('PtyManager.create — per-tab claude session id', () => {
   it('mints a --session-id and stamps it on the session for a fresh claude tab', () => {
     const mgr = new PtyManager();
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -360,8 +372,8 @@ describe('PtyManager.create — per-tab claude session id', () => {
 
   it('gives sibling tabs in the same cwd DISTINCT session ids', () => {
     const mgr = new PtyManager();
-    const a = mgr.create({ projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
-    const b = mgr.create({ projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+    const a = mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+    const b = mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
     expect(a.claudeSessionId).toBeDefined();
     expect(b.claudeSessionId).toBeDefined();
     expect(a.claudeSessionId).not.toBe(b.claudeSessionId);
@@ -370,6 +382,7 @@ describe('PtyManager.create — per-tab claude session id', () => {
   it('does NOT mint a second id when restore pins --resume <uuid>, but surfaces that id', () => {
     const mgr = new PtyManager();
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -387,6 +400,7 @@ describe('PtyManager.create — per-tab claude session id', () => {
   it('does not mint a session id for shell tabs', () => {
     const mgr = new PtyManager();
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       cwd: '/tmp',
@@ -408,6 +422,7 @@ describe('PtyManager.create — CLI remote tools', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',
@@ -432,6 +447,7 @@ describe('PtyManager.create — CLI remote tools', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'cursor',
       cwd: '/tmp',
@@ -450,6 +466,7 @@ describe('PtyManager.create — CLI remote tools', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       cwd: '/tmp',

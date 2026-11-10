@@ -9,6 +9,7 @@
  * ZCC_FAKE_PROVIDER override is used: native-policy failures must stay failures.
  */
 import { test as base, expect, type AppHandle } from './fixtures/app.js';
+import { buildPluginHost } from '../packages/plugin-build/src/build-plugin-host.js';
 import type { Page } from '@playwright/test';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { BUILTIN_PLUGINS } from '../apps/server/src/plugins/builtin-registry.js';
@@ -19,6 +20,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const probePluginDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plugins', 'platform-hooks-probe');
 const fixtureBin = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'bin');
 const teamId = 'e2e-modern-member-squad';
 const workerPersona = 'e2e-modern-member-worker';
@@ -26,8 +28,20 @@ const coordinatorPersona = 'e2e-modern-member-coordinator';
 const commandPrefix = 'SQUAD_FIXTURE:';
 const marker = 'MODERN_MEMBER_ASSIGNMENT_REACHED_PROVIDER';
 
-const test = base.extend({
-  launchEnv: async ({ home }, use) => {
+const test = base.extend<{ preinstallProbe: boolean }>({
+  preinstallProbe: [false, { option: true }],
+  launchEnv: async ({ home, preinstallProbe }, use) => {
+    if (preinstallProbe) {
+      // Installed before launch so the plugin loads once at boot; a row written into a running
+      // service is never noticed, and reloading it restarts the worker.
+      await buildPluginHost(probePluginDir, '1.0.0');
+      mkdirSync(join(home, '.zcc', 'plugins'), { recursive: true });
+      writeFileSync(join(home, '.zcc', 'plugins', 'installed.json'), JSON.stringify({ version: 1, plugins: [{
+        id: 'platform-hooks-probe', version: '0.1.0', name: 'Platform Hooks Probe', enabled: true, status: 'running',
+        provenance: 'direct', sourceKind: 'path', source: `path:${probePluginDir}`, rootDir: probePluginDir,
+        serverEntry: './server.ts', appEntry: null, installedAt: Date.now(), updatedAt: Date.now()
+      }] }));
+    }
     const bin = join(home, 'modern-member-bin');
     mkdirSync(bin);
     // Observe the real fixture's request boundary, not a later polling snapshot.
@@ -434,6 +448,55 @@ test('Modern member Job Team delivers assigned work through ACP, fences role and
       'Late coordinator call must not reach a bridge tool').toBe(404);
     expect(await probe.page.evaluate(id => window.cc.terminals.list(id), probe.projectId)).toEqual([]);
   } finally { await probe.cleanup(); }
+});
+
+test.describe('preinstalled dispatch probe plugin', () => {
+  test.use({ preinstallProbe: true });
+
+test('a rejecting dispatch plugin refuses Modern squad member start without creating a member, then allows it', async ({ app }) => {
+  test.setTimeout(180_000);
+  const probe = await setup(app);
+  const { home } = app;
+  try {
+    await expect.poll(() => probe.page.evaluate(async () =>
+      (await window.cc.pluginApps.list()).find(row => row.id === 'platform-hooks-probe')?.status
+    ), { timeout: 45_000 }).toBe('running');
+    const rpc = <T,>(method: string, args?: unknown) => probe.page.evaluate(
+      ({ method, args }) => window.cc.pluginApps.callRpc('platform-hooks-probe', method, args), { method, args }) as Promise<T>;
+    await rpc('setDispatchSelection', { kind: 'reject', message: 'squad-start-blocked' });
+    const refused = await probe.page.evaluate(input => window.cc.teams.startJob(input), {
+      teamId, projectId: probe.projectId, title: 'Modern member refused', goal: 'refused start', coordinationMode: 'structured' as const
+    });
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    expect(JSON.stringify(refused)).toContain('squad-start-blocked');
+    const events = await rpc<Array<{ surface?: string; entry?: string; decision: { action: string } }>>('dispatchEventsList');
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ surface: 'modern', entry: 'squad-member-start', decision: { action: 'reject', message: 'squad-start-blocked' } })
+    ]));
+    // Nothing was created and no reserved slot is left held as an uncertain worker.
+    const threads = await probe.page.evaluate(async projectId => {
+      const response = await fetch(`/api/v1/threads?projectId=${encodeURIComponent(projectId)}`);
+      return response.json();
+    }, probe.projectId) as { threads?: unknown[] };
+    expect(threads.threads ?? []).toEqual([]);
+    const records = (JSON.parse(readFileSync(join(await app.electron.evaluate(({ app }) => app.getPath('userData')), 'team-lifecycle.json'), 'utf8')) as {
+      records: Array<{ workers: Array<{ bindingState: string; capacityReleased: boolean }> }>;
+    }).records;
+    for (const worker of records.flatMap(record => record.workers)) {
+      expect(worker.bindingState).not.toBe('UNCERTAIN');
+      expect(worker.capacityReleased).toBe(true);
+    }
+    expect(await probe.page.evaluate(id => window.cc.terminals.list(id), probe.projectId)).toEqual([]);
+
+    await rpc('setDispatchSelection', { kind: 'proceed' });
+    const executionId = await probe.launch('Modern member admitted');
+    await expect.poll(() => probe.lifecycle(executionId)?.workers.filter(member =>
+      member.transport === 'MODERN' && member.bindingState === 'BOUND' && member.process === 'running'
+    ).length ?? 0, { timeout: 30_000 }).toBe(2);
+    const admitted = await rpc<Array<{ entry?: string; decision: { action: string } }>>('dispatchEventsList');
+    expect(admitted.filter(event => event.entry === 'squad-member-start' && event.decision.action === 'proceed')).toHaveLength(2);
+  } finally { await probe.cleanup(); }
+});
 });
 
 test('stopping a Modern member Job Team cancels active ACP turns and rejects late member outcomes', async ({ app }) => {

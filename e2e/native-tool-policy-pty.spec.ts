@@ -108,7 +108,7 @@ serveProbes(relays[0]);
 
 interface ProbeResult { status: number | null; stdout: string; stderr: string; error: string | null }
 interface PolicyReply { hookSpecificOutput: { hookEventName: string; permissionDecision: string; permissionDecisionReason: string } }
-interface PolicyRow { invocationId: string; threadId: string; projectId: string; providerId: string; toolName: string; state: string }
+interface PolicyRow { invocationId: string; threadId: string; sessionId?: string; surface?: string; projectId: string; providerId: string; toolName: string; state: string }
 interface Wiring { url: string; count: number; matchers?: string[]; command: string; tmux?: string; tmuxPane?: string }
 
 const denyReason = (stdout: string) => (JSON.parse(stdout) as PolicyReply).hookSpecificOutput;
@@ -254,7 +254,7 @@ const allowStaysSilentAndReplays = (probe: Probe, event: ClaudeEvent) => test.st
   const firstRows = await probe.rows();
   expect(firstRows).toHaveLength(1);
   expect(firstRows[0]).toMatchObject({
-    toolName: 'Bash', providerId: 'claude-code', threadId: probe.sessionId, projectId: probe.projectId, state: 'allowed',
+    toolName: 'Bash', providerId: 'claude-code', threadId: probe.sessionId, sessionId: probe.sessionId, surface: 'pty', projectId: probe.projectId, state: 'allowed',
     invocationId: sha([probe.sessionId, null, 'toolu_e2e_allow', 'Bash', { command: 'pwd' }])
   });
   await expect(probe.probe('allow-retry', allowEvent)).resolves.toMatchObject({ status: 0, stdout: '' });

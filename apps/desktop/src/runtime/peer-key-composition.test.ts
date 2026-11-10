@@ -35,9 +35,10 @@ function setup() {
   });
   mocks.decrypt.mockImplementation(() => plainKeys[0]);
   mocks.fork.mockImplementation((entry: string) => {
-    const child = Object.assign(new EventEmitter(), { kill: vi.fn(), postMessage: vi.fn(), bootKeys: [] as (Uint8Array | undefined)[] });
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn(), postMessage: vi.fn(), bootKeys: [] as (Uint8Array | undefined)[], credentials: [] as (string | undefined)[] });
     child.postMessage.mockImplementation((message: { type: string; peerBootKey?: Uint8Array }) => {
       // The supplier zeroes the buffer right after postMessage returns, so snapshot the bytes now.
+      if (message.type === 'start') child.credentials.push((message as { productServerCredential?: string }).productServerCredential);
       if (message.type === 'start') child.bootKeys.push(message.peerBootKey ? Uint8Array.from(message.peerBootKey) : undefined);
       if (message.type === 'start') queueMicrotask(() => child.emit('message', {
         type: 'ready', protocolVersion, url: entry.includes('host-runtime') ? 'http://127.0.0.1:40100' : 'http://127.0.0.1:40101/',
@@ -53,7 +54,7 @@ function setup() {
 }
 async function start(dir: string) {
   const runtime = await startRuntimeSupervisor({ dataDir: dir, runtimeDir: '/test/runtime', rendererRoot: '/test/renderer',
-    extraEnv: { [PEER_BOOT_KEY_ENV]: 'must-not-override-host-key', ZCC_PRODUCT_SERVER_CREDENTIAL: 'ui-secret' } });
+    extraEnv: { [PEER_BOOT_KEY_ENV]: 'must-not-override-host-key' }, productServerCredential: 'u'.repeat(32) });
   runtimes.push(runtime);
   return runtime;
 }
@@ -68,7 +69,11 @@ it('passes protected key only to product utility; daemon excludes inherited key;
   expect(daemonChild.bootKeys[0]).toBeUndefined();
   expect(serverChild.bootKeys[0]).toEqual(new Uint8Array(Buffer.from(plainKeys[0], 'base64url')));
   expect(serverChild.bootKeys[0]).toHaveLength(32);
-  expect(server[2].env.ZCC_PRODUCT_SERVER_CREDENTIAL).toBe('ui-secret');
+  // The UI-signing secret rides the start message only; env is readable by same-uid `ps eww`.
+  expect(server[2].env.ZCC_PRODUCT_SERVER_CREDENTIAL).toBeUndefined();
+  expect(daemon[2].env.ZCC_PRODUCT_SERVER_CREDENTIAL).toBeUndefined();
+  expect((serverChild as unknown as { credentials: string[] }).credentials[0]).toBe('u'.repeat(32));
+  expect((daemonChild as unknown as { credentials: string[] }).credentials[0]).toBeUndefined();
   expect(process.env[PEER_BOOT_KEY_ENV]).toBe('must-not-reach-daemon');
   const ciphertext = readFileSync(join(dir, 'peer-key', 'key.bin'));
   expect(ciphertext.includes(Buffer.from(plainKeys[0]))).toBe(false);

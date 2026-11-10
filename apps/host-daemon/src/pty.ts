@@ -4,8 +4,8 @@ import { createRequire } from 'node:module';
 import { controlCredentialForSession } from './control-credential.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { readdir as readdirAsync, stat as statAsync, unlink as unlinkAsync } from 'node:fs/promises';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readdir as readdirAsync, rm as rmAsync, stat as statAsync, unlink as unlinkAsync } from 'node:fs/promises';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isWithin } from '@zana-ai/zcc-path-confine';
@@ -16,7 +16,7 @@ import { classifyTerminalInput } from './pty-input-activity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
-import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync } from './mcp-config.js';
+import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync, sessionPluginMcpServers } from './mcp-config.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
@@ -49,6 +49,7 @@ import {
 } from './harness/claude/automated-isolation.js';
 import { resolveZccDataDir } from './host-config.js';
 import { shellQuote } from './harness/shell-quote.js';
+import { PTY_SESSION_INSTRUCTIONS_MAX_CHARS } from '@zana-ai/zcc-contracts/runtime';
 import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from './harness/argv-utils.js';
 import {
   buildWorktreeGuidance,
@@ -66,6 +67,7 @@ import {
 } from './remote-tool-proxy.js';
 import { REMOTE_FS_TOOL_NAMES } from './remote-fs-mcp-tools.js';
 import { terminatePtyProcessTree } from './pty-termination.js';
+import { clearInheritedSessionIdentity, sessionIdentityEnv } from './session-identity-env.js';
 
 // Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
 // module-local resolver distinct so the bundled declarations cannot collide.
@@ -130,25 +132,43 @@ let lastSessionMcpSweepAt = 0;
  * removes it (age gate); unlink-on-exit ({@link PtyManager.finalizeExit}) is the
  * primary reclaim, this only mops crash orphans.
  */
-function sweepStaleSessionMcpConfigs(dir: string): void {
+/** Suffix of a per-session native tool gate directory (a provider that names one on argv). */
+const NATIVE_TOOL_GATE_DIR_SUFFIX = '.native-tool-gate.d';
+
+/**
+ * Remove crash-orphaned per-session launch artifacts older than the age cap.
+ * Artifacts are named `<sessionId>.<suffix>`; one whose session is still owned
+ * by a live PtyManager is never removed, however old its mtime — the native
+ * tool gate module/dir a running session loaded must outlive any later launch.
+ */
+export async function sweepStaleSessionArtifacts(
+  dir: string,
+  now: number,
+  isOwnedBySession: (sessionId: string) => boolean
+): Promise<void> {
+  try {
+    for (const name of await readdirAsync(dir)) {
+      const isGateDir = name.endsWith(NATIVE_TOOL_GATE_DIR_SUFFIX);
+      if (!isGateDir && !name.endsWith('.json') && !name.endsWith('.instructions.md') && !name.endsWith('.native-tool-gate.mjs')) continue;
+      const dot = name.indexOf('.');
+      if (dot > 0 && isOwnedBySession(name.slice(0, dot))) continue;
+      const path = join(dir, name);
+      try {
+        if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await (isGateDir ? rmAsync(path, { recursive: true, force: true }) : unlinkAsync(path));
+      } catch {
+        /* best-effort per-file */
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+function sweepStaleSessionMcpConfigs(dir: string, isOwnedBySession: (sessionId: string) => boolean): void {
   const now = Date.now();
   if (now - lastSessionMcpSweepAt < SESSION_MCP_SWEEP_MIN_INTERVAL_MS) return;
   lastSessionMcpSweepAt = now;
-  void (async () => {
-    try {
-      for (const name of await readdirAsync(dir)) {
-        if (!name.endsWith('.json')) continue;
-        const path = join(dir, name);
-        try {
-          if (now - (await statAsync(path)).mtimeMs > SESSION_MCP_CONFIG_MAX_AGE_MS) await unlinkAsync(path);
-        } catch {
-          /* best-effort per-file */
-        }
-      }
-    } catch {
-      /* best-effort */
-    }
-  })();
+  void sweepStaleSessionArtifacts(dir, now, isOwnedBySession);
 }
 
 interface Live {
@@ -459,6 +479,22 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Crash-on-start GET/stop still need the record after `live` drops. Rule 5 cap. */
 export const PTY_RECENT_EXITED_CAP = 32;
 
+/**
+ * Thrown by {@link PtyManager.create} when a spawn is refused before any child
+ * is started. Carries a stable machine `code` so callers (and the headless
+ * native-tool-policy e2e) can assert the exact refusal. OBL-018: fail-closed
+ * when a tool-policy plugin is required but no native-tool hook is reachable.
+ */
+export class SpawnRefusedError extends Error {
+  constructor(
+    readonly code: 'native-tool-policy-unreachable',
+    message: string
+  ) {
+    super(message);
+    this.name = 'SpawnRefusedError';
+  }
+}
+
 /** Supplied by the process that owns execution. The standalone daemon must
  * receive only a session credential, never the shared instance's signing key. */
 export interface PtyManagerHostServices {
@@ -516,6 +552,12 @@ export class PtyManager extends EventEmitter {
    *  written on spawn and unlinked in {@link finalizeExit}. Absent for providers
    *  that carry MCP another way (claude file-arg, codex `-c`, shell none). */
   private sessionMcpConfigFiles = new Map<string, string>();
+  /** Per-session plugin instruction files (OpenCode); unlinked in {@link finalizeExit}. */
+  private sessionInstructionFiles = new Map<string, string>();
+  /** Per-session native tool gate modules (OpenCode); unlinked in {@link finalizeExit}. */
+  private sessionNativeToolGateFiles = new Map<string, string>();
+  /** Per-session native tool gate directories (named on argv); removed in {@link finalizeExit}. */
+  private sessionNativeToolGateDirs = new Map<string, string>();
   /** Tmux identity env files not yet consumed by the pane; unlinked on exit (the pane normally deletes it first). */
   private sessionEnvFiles = new Map<string, string>();
   /** Per-run isolated CLAUDE_CONFIG_DIR of unattended Claude sessions, by session id; removed in {@link finalizeExit}. */
@@ -845,10 +887,19 @@ export class PtyManager extends EventEmitter {
    * wrapper that clobbers the inline-config env var. Swept for crash orphans on
    * every call; unlinked on session exit ({@link finalizeExit}).
    */
+  /** True while this manager still tracks the session or any of its launch artifacts. */
+  private ownsSessionArtifacts(sessionId: string): boolean {
+    return this.live.has(sessionId)
+      || this.sessionMcpConfigFiles.has(sessionId)
+      || this.sessionInstructionFiles.has(sessionId)
+      || this.sessionNativeToolGateFiles.has(sessionId)
+      || this.sessionNativeToolGateDirs.has(sessionId);
+  }
+
   private writeSessionMcpConfigFile(sessionId: string, contents: string): string | null {
     try {
       mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
-      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR);
+      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR, (id) => this.ownsSessionArtifacts(id));
       const path = join(SESSION_MCP_CONFIG_DIR, `${sessionId}.json`);
       writeFileSync(path, contents, { mode: 0o600 });
       this.sessionMcpConfigFiles.set(sessionId, path);
@@ -856,6 +907,90 @@ export class PtyManager extends EventEmitter {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[pty] writeSessionMcpConfigFile(${sessionId}) failed:`, err);
+      return null;
+    }
+  }
+
+  /** Unlink every per-session launch file written so far for a spawn that is being refused. */
+  private releaseSessionLaunchFiles(sessionId: string): void {
+    for (const files of [this.sessionNativeToolGateFiles, this.sessionInstructionFiles, this.sessionMcpConfigFiles]) {
+      const path = files.get(sessionId);
+      if (!path) continue;
+      files.delete(sessionId);
+      try { unlinkSync(path); } catch { /* best-effort */ }
+    }
+    const gateDir = this.sessionNativeToolGateDirs.get(sessionId);
+    if (gateDir) {
+      this.sessionNativeToolGateDirs.delete(sessionId);
+      try { rmSync(gateDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  }
+
+  /**
+   * Create a session's native tool gate directory (`0700`) with its files
+   * (`0600`) and return its path (null on failure; a partial directory is removed).
+   * Removed on session exit ({@link finalizeExit}).
+   */
+  private writeSessionNativeToolGateDir(
+    sessionId: string,
+    build: (dir: string) => { files: ReadonlyArray<{ path: string; contents: string }>; args: string[] } | null
+  ): { dir: string; args: string[] } | null {
+    const dir = join(SESSION_MCP_CONFIG_DIR, `${sessionId}${NATIVE_TOOL_GATE_DIR_SUFFIX}`);
+    try {
+      const bundle = build(dir);
+      if (!bundle) return null;
+      mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
+      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR, (id) => this.ownsSessionArtifacts(id));
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      this.sessionNativeToolGateDirs.set(sessionId, dir);
+      for (const file of bundle.files) {
+        const target = join(dir, file.path);
+        mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+        writeFileSync(target, file.contents, { mode: 0o600 });
+      }
+      return { dir, args: bundle.args };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] writeSessionNativeToolGateDir(${sessionId}) failed:`, err);
+      this.sessionNativeToolGateDirs.delete(sessionId);
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      return null;
+    }
+  }
+
+  /**
+   * Write a session's native tool gate module to a host-owned `0600` file and
+   * return its path (null on failure). Unlinked on session exit ({@link finalizeExit}).
+   */
+  private writeSessionNativeToolGateFile(sessionId: string, source: string): string | null {
+    try {
+      mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
+      const path = join(SESSION_MCP_CONFIG_DIR, `${sessionId}.native-tool-gate.mjs`);
+      writeFileSync(path, source, { mode: 0o600 });
+      this.sessionNativeToolGateFiles.set(sessionId, path);
+      return path;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] writeSessionNativeToolGateFile(${sessionId}) failed:`, err);
+      return null;
+    }
+  }
+
+  /**
+   * Write a session's plugin instructions to a host-owned `0600` file next to its
+   * MCP config and return the path (null on failure: the session then starts
+   * without them). Unlinked on session exit ({@link finalizeExit}).
+   */
+  private writeSessionInstructionsFile(sessionId: string, text: string): string | null {
+    try {
+      mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
+      const path = join(SESSION_MCP_CONFIG_DIR, `${sessionId}.instructions.md`);
+      writeFileSync(path, text, { mode: 0o600 });
+      this.sessionInstructionFiles.set(sessionId, path);
+      return path;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] writeSessionInstructionsFile(${sessionId}) failed:`, err);
       return null;
     }
   }
@@ -882,6 +1017,13 @@ export class PtyManager extends EventEmitter {
     /** Main coordinator-owned identity, allocated before authorization/commit. */
     preallocatedSessionId?: string;
     projectId: string;
+    /** MAIN-only thread binding for this session; never read from renderer input. */
+    threadId?: string;
+    /**
+     * MAIN-only: standing plugin instructions the plugin host evaluated for this
+     * session. Bounded again here; delivered through the provider's own channel.
+     */
+    pluginInstructions?: string;
     profile: LaunchProfileId;
     cwd: string;
     cols: number;
@@ -1058,6 +1200,14 @@ export class PtyManager extends EventEmitter {
      * for resume / scheduled launches.
      */
     openingPrompt?: string;
+    /**
+     * MAIN-only (rule 1): whether an enabled tool-policy plugin requires a native
+     * veto on this spawn. Main owns the plugin inventory and decides before spawn;
+     * the daemon only checks the flag. When set and no native-tool hook endpoint is
+     * reachable, the spawn is REFUSED (fail-closed, OBL-018). Absent → treated as
+     * `true` by the daemon so an older caller cannot open a fail-open window.
+     */
+    nativeToolPolicyRequired?: boolean;
     /**
      * MAIN-only: resolved skill-allowlist trimming for the harness's settings
      * payload (see `resolveSkillSettings`). Absent leaves argv unchanged.
@@ -1313,14 +1463,21 @@ export class PtyManager extends EventEmitter {
     // worktree → rules) so a codex tab reads the identical standing instructions
     // as a claude tab. Both extras are absent on a normal launch, so the composed
     // string collapses to `guidanceText` (byte-identical argv, golden-argv net).
+    // Plugin instructions come last so a plugin's standing guidance reads as the
+    // latest word, and are bounded here whatever the caller sent.
+    const pluginInstructionText = (opts.pluginInstructions ?? '')
+      .trim()
+      .slice(0, PTY_SESSION_INSTRUCTIONS_MAX_CHARS);
     const composedGuidanceText = [
       guidanceText,
       ...(opts.worktree ? [buildWorktreeGuidance(opts.worktree)] : []),
-      ...(rulesText ? [rulesText] : [])
+      ...(rulesText ? [rulesText] : []),
+      ...(pluginInstructionText ? [pluginInstructionText] : [])
     ].filter((part) => part.length > 0).join('\n\n');
     // HOOK wiring for providers whose CLI carries lifecycle hooks as ARGS (codex
-    // takes `-c hooks.<Event>=[…]` + the global `--dangerously-bypass-hook-trust`
-    // flag). The lifecycle counterpart to providerMcpArgs/providerGuidanceArgs: it
+    // takes `-c hooks.<Event>=[…]` + either a scoped `hooks.state` trust
+    // override or, as the degraded fallback, the global
+    // `--dangerously-bypass-hook-trust` flag). The lifecycle counterpart to providerMcpArgs/providerGuidanceArgs: it
     // registers `command` hooks that curl the SAME identity-baked `/hook/*` URLs
     // the claude path bakes into its `ZCC_*_URL` env, so codex's signals land on
     // the same provider-AGNOSTIC handlers (onStopHook / onNotifyHook /
@@ -1332,21 +1489,40 @@ export class PtyManager extends EventEmitter {
     // claude returns [] here (its hooks ride the launcher-owned `--settings` JSON
     // gated on `injectsClaudeMcpConfig`); cursor/shell return []. Rule 6: the
     // concrete `-c hooks.…` strings + bypass flag live ONLY in the codex provider.
+    // Lifecycle hooks (stop/notify/firstprompt/subagent) stay interactive-only:
+    // headless sessions have no live tab to drive status, so their lifecycle base
+    // is null, unchanged. The native-tool VETO is different — it must reach headless
+    // workers (scheduler, goals, squad) too, so it derives from a separate
+    // headless-independent URL off the same relay. OBL-018: fail-open closed below.
     const providerHookBase =
       this.mcpBaseUrl && !opts.headless
         ? `${this.mcpBaseUrl}/hook`
         : null;
-    const providerHookUrls: ProviderHookUrls = providerHookBase
-      ? {
-          stop: `${providerHookBase}/stop/${opts.projectId}/${sessionId}`,
-          notify: `${providerHookBase}/notify/${opts.projectId}/${sessionId}`,
-          firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
-            ? undefined
-            : `${providerHookBase}/firstprompt/${opts.projectId}/${sessionId}`,
-          subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`,
-          nativeTool: `${providerHookBase}/nativetool/${opts.projectId}/${sessionId}`
-        }
-      : {};
+    const nativeToolUrl = this.mcpBaseUrl
+      ? `${this.mcpBaseUrl}/hook/nativetool/${opts.projectId}/${sessionId}`
+      : null;
+    // Main decides whether a tool-policy plugin is enabled before spawn (rule 1);
+    // the daemon only checks the main-supplied flag. Absent (older caller) → required.
+    const nativeToolPolicyRequired = opts.nativeToolPolicyRequired ?? true;
+    if (!nativeToolUrl && nativeToolPolicyRequired) {
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but native-tool hook endpoint is unavailable'
+      );
+    }
+    const providerHookUrls: ProviderHookUrls = {
+      ...(providerHookBase
+        ? {
+            stop: `${providerHookBase}/stop/${opts.projectId}/${sessionId}`,
+            notify: `${providerHookBase}/notify/${opts.projectId}/${sessionId}`,
+            firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
+              ? undefined
+              : `${providerHookBase}/firstprompt/${opts.projectId}/${sessionId}`,
+            subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`
+          }
+        : {}),
+      ...(nativeToolUrl ? { nativeTool: nativeToolUrl } : {})
+    };
     // Per-harness AUTH override (Settings → Harness): a stored base URL + token
     // for this profile's credential family, letting the operator point the CLI at
     // a gateway/proxy or supply a key WITHOUT running the CLI's own `login`. The
@@ -1360,8 +1536,8 @@ export class PtyManager extends EventEmitter {
     const authFamily = provider.authKey(effectiveProfile);
     const providerIntegration = provider.integration.configure({
       profile: effectiveProfile,
-      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl }, guidance: composedGuidanceText } : {}),
-      ...(providerHookBase ? {
+      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl, servers: sessionPluginMcpServers(opts.persona?.mcpServers) }, guidance: composedGuidanceText } : {}),
+      ...(providerHookBase || providerHookUrls.nativeTool ? {
         lifecycle: {
           stop: providerHookUrls.stop,
           blocked: providerHookUrls.notify ? `${providerHookUrls.notify}/blocked` : undefined,
@@ -1387,9 +1563,74 @@ export class PtyManager extends EventEmitter {
     // returns no `mcpConfigFile`). Rule 6: the concrete env-var name lives only in
     // the provider — core reads it generically off the contribution.
     const mcpConfigFileEnvVar = providerIntegration.mcpConfigFile?.envVar;
-    const mcpConfigFilePath = providerIntegration.mcpConfigFile
-      ? this.writeSessionMcpConfigFile(sessionId, providerIntegration.mcpConfigFile.contents)
+    // A provider that reads plugin instructions from a file named in its config
+    // gets them in a host-owned `0600` file, listed in the same config document.
+    // A provider that vetoes through a module its config names gets one per
+    // session. When a tool policy is required and the gate cannot be put in
+    // place, the spawn is refused rather than started without its veto.
+    const nativeToolGateSource = provider.nativeToolGateViaConfigFile && providerIntegration.mcpConfigFile && providerHookUrls.nativeTool
+      ? provider.nativeToolGatePluginSource(effectiveProfile, providerHookUrls.nativeTool)
       : null;
+    const nativeToolGatePath = nativeToolGateSource
+      ? this.writeSessionNativeToolGateFile(sessionId, nativeToolGateSource)
+      : null;
+    if (provider.nativeToolGateViaConfigFile && !nativeToolGatePath && nativeToolPolicyRequired) {
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but the native tool gate could not be installed for this launch'
+      );
+    }
+    const pluginInstructionsPath =
+      pluginInstructionText && provider.pluginInstructionsViaConfigFile && providerIntegration.mcpConfigFile
+        ? this.writeSessionInstructionsFile(sessionId, pluginInstructionText)
+        : null;
+    const withGate = (contents: string) => {
+      if (!nativeToolGatePath) return contents;
+      try { return provider.mergeNativeToolGateConfig(effectiveProfile, contents, nativeToolGatePath); }
+      catch (error) {
+        if (!nativeToolPolicyRequired) return contents;
+        throw new SpawnRefusedError(
+          'native-tool-policy-unreachable',
+          `tool policy plugin enabled but the native tool gate could not be merged into the launch config: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    };
+    const mcpConfigFilePath = providerIntegration.mcpConfigFile
+      ? this.writeSessionMcpConfigFile(
+          sessionId,
+          withGate(pluginInstructionsPath
+            ? provider.mergePluginInstructionsConfig(
+                effectiveProfile,
+                providerIntegration.mcpConfigFile.contents,
+                pluginInstructionsPath
+              )
+            : providerIntegration.mcpConfigFile.contents)
+        )
+      : null;
+    // The gate only governs the session if the config naming it landed.
+    const nativeToolGateWired = Boolean(nativeToolGatePath && mcpConfigFilePath);
+    if (provider.nativeToolGateViaConfigFile && !nativeToolGateWired && nativeToolPolicyRequired) {
+      this.releaseSessionLaunchFiles(sessionId);
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but the native tool gate config could not be written for this launch'
+      );
+    }
+    // A provider whose CLI loads its veto from a directory named on argv gets a
+    // per-session one. It is only added when a policy is required, so a launch
+    // without a tool-policy plugin stays byte-identical. When it cannot be put
+    // in place the spawn is refused rather than started without its veto.
+    const nativeToolGateDir = provider.nativeToolGateViaDirectory && providerHookUrls.nativeTool && nativeToolPolicyRequired
+      ? this.writeSessionNativeToolGateDir(sessionId, (dir) =>
+          provider.nativeToolGateDirectory(effectiveProfile, providerHookUrls.nativeTool!, dir))
+      : null;
+    if (provider.nativeToolGateViaDirectory && nativeToolPolicyRequired && !nativeToolGateDir) {
+      this.releaseSessionLaunchFiles(sessionId);
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but the native tool gate directory could not be installed for this launch'
+      );
+    }
     // Persona flags: inserted AFTER claudeMcpArgs so the persona's
     // append-system-prompt layers on TOP of the inbox guidance (personas can
     // build on the baseline inbox behavior), and BEFORE projectSettings so
@@ -1706,10 +1947,12 @@ export class PtyManager extends EventEmitter {
           ...sessionIdArgs,
           ...nativeMintArgs,
           ...claudeMcpArgs,
+          ...(pluginInstructionText ? provider.pluginInstructionArgs(effectiveProfile, pluginInstructionText) : []),
            ...(providerIntegration.mcpArgs ?? []),
           ...mcpApprovalArgs,
            ...(providerIntegration.guidanceArgs ?? []),
            ...(providerIntegration.hookArgs ?? []),
+          ...(nativeToolGateDir?.args ?? []),
            ...(providerIntegration.authArgs ?? []),
           ...psArgs,
           ...personaArgs,
@@ -1737,6 +1980,11 @@ export class PtyManager extends EventEmitter {
       ZCC_SESSION_ID: sessionId,
       ZCC_SESSION_TOKEN: sessionCredential
     };
+    // Project/thread hints come only from the main-authorized spawn context. An
+    // ambient value inherited from a parent session is dropped first so this
+    // session never reports another session's thread.
+    clearInheritedSessionIdentity(env);
+    Object.assign(env, sessionIdentityEnv({ projectId: opts.projectId, threadId: opts.threadId }));
     // Finder/Dock and the electron-vite sandbox omit `~/.local/bin`. node-pty
     // `posix_spawnp` does not always honor env PATH the way `execFile` does,
     // so we also resolve the harness basename against the augmented PATH.
@@ -1950,7 +2198,15 @@ export class PtyManager extends EventEmitter {
     // Session record, shared by both launch paths.
     const session: TerminalSession = {
       id: sessionId,
+      capabilitySurface: {
+        // hookBase gates the registry's tool-before-native veto descriptor, so it
+        // tracks NATIVE-TOOL reachability (headless-independent), not just lifecycle:
+        // codex rides nativeToolUrl, claude rides lifecycleBase's nativeTool hook.
+        surface: 'pty', harness: registrationFor(effectiveProfile)?.id ?? effectiveProfile,
+        headless: !!opts.headless, hookBase: provider.nativeToolGateViaConfigFile ? nativeToolGateWired : provider.nativeToolGateViaDirectory ? Boolean(nativeToolGateDir) : Boolean(nativeToolUrl || lifecycleBase)
+      },
       projectId: opts.projectId,
+      ...(opts.threadId ? { threadId: opts.threadId } : {}),
       // Title tracks the REQUESTED profile (matching the old titleFor(opts.profile)),
       // not the persona's effective baseProfile.
       title: opts.title ?? providerFor(opts.profile).title(opts.profile),
@@ -2032,16 +2288,28 @@ export class PtyManager extends EventEmitter {
         console.warn(`[pty] session ${sessionId}: identity env dir unavailable; spawning without tmux:`, err);
       }
     }
-    const prospectiveTmux = identityEnvFile
-      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, withBlankedSessionCallbacks(sessionEnv), identityEnvFile)
+    const tmuxEnv = withBlankedSessionCallbacks(sessionEnv);
+    const tmuxBytes = (cmd: { command: string; args: string[] }) =>
+      Buffer.byteLength([cmd.command, ...cmd.args].join(' '), 'utf8');
+    let prospectiveTmux = identityEnvFile
+      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, tmuxEnv, identityEnvFile)
       : undefined;
     // Conservative bound below MAX_IMSGSIZE (16384) minus tmux's per-arg framing
     // and imsg header; empirically a serialized argv ~16 KiB is rejected while
     // ~15.7 KiB is accepted.
     const TMUX_IMSG_SAFE_BYTES = 15_000;
-    const tmuxCommandBytes = prospectiveTmux
-      ? Buffer.byteLength([prospectiveTmux.command, ...prospectiveTmux.args].join(' '), 'utf8')
-      : 0;
+    let tmuxCommandBytes = prospectiveTmux ? tmuxBytes(prospectiveTmux) : 0;
+    // An oversized launch (plugin instructions can add up to 16 KB to one argument) keeps its
+    // restore backing: the 0600 env file the pane already sources carries the command and args.
+    let spillArgv: string[] | undefined;
+    if (prospectiveTmux && identityEnvFile && tmuxCommandBytes >= TMUX_IMSG_SAFE_BYTES) {
+      const spilled = buildLocalTmuxCommand(sessionId, inner.command, inner.args, tmuxEnv, identityEnvFile, true);
+      if (tmuxBytes(spilled) < TMUX_IMSG_SAFE_BYTES) {
+        prospectiveTmux = spilled;
+        spillArgv = [inner.command, ...inner.args];
+        tmuxCommandBytes = tmuxBytes(spilled);
+      }
+    }
     let useTmux = !!prospectiveTmux && tmuxCommandBytes < TMUX_IMSG_SAFE_BYTES;
     if (prospectiveTmux && !useTmux) {
       console.warn(
@@ -2053,7 +2321,8 @@ export class PtyManager extends EventEmitter {
       try {
         writeSessionEnvFile(
           sessionId,
-          Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]]))
+          Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]])),
+          spillArgv
         );
         this.sessionEnvFiles.set(sessionId, identityEnvFile);
       } catch (err) {
@@ -2304,6 +2573,33 @@ export class PtyManager extends EventEmitter {
         /* best-effort — already gone or swept */
       }
     }
+    const instructionsFile = this.sessionInstructionFiles.get(sessionId);
+    if (instructionsFile) {
+      this.sessionInstructionFiles.delete(sessionId);
+      try {
+        unlinkSync(instructionsFile);
+      } catch {
+        /* best-effort — already gone or swept */
+      }
+    }
+    const gateFile = this.sessionNativeToolGateFiles.get(sessionId);
+    if (gateFile) {
+      this.sessionNativeToolGateFiles.delete(sessionId);
+      try {
+        unlinkSync(gateFile);
+      } catch {
+        /* best-effort — already gone or swept */
+      }
+    }
+    const gateDir = this.sessionNativeToolGateDirs.get(sessionId);
+    if (gateDir) {
+      this.sessionNativeToolGateDirs.delete(sessionId);
+      try {
+        rmSync(gateDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort — already gone or swept */
+      }
+    }
     if (!live) return;
     if (live.session.status === 'running') this.startupFailures.delete(sessionId);
     live.session.status = 'exited';
@@ -2388,6 +2684,8 @@ export class PtyManager extends EventEmitter {
     /** Main coordinator-owned identity, allocated before authorization/commit. */
     preallocatedSessionId?: string;
     projectId: string;
+    /** MAIN-only thread binding for this session; never read from renderer input. */
+    threadId?: string;
     profile: LaunchProfileId;
     cwd: string;
     cols: number;
@@ -2438,6 +2736,13 @@ export class PtyManager extends EventEmitter {
      * Reconnect re-attach must not replay it (bindRemoteProc is reused without this).
      */
     openingPrompt?: string;
+    /**
+     * See {@link create}'s `nativeToolPolicyRequired`. The remote veto rides the
+     * reverse-tunnelled /hook/nativetool route; when set and that route is
+     * unreachable the remote spawn is REFUSED (fail-closed, OBL-018). Absent →
+     * treated as `true` so an older caller cannot open a fail-open window.
+     */
+    nativeToolPolicyRequired?: boolean;
   }): TerminalSession {
     const { remote } = opts;
     // The session record is consumed by the renderer for remote file drops. It
@@ -2667,6 +2972,15 @@ export class PtyManager extends EventEmitter {
       scope: 'remote',
       ...(opts.skillSettings ? { skillSettings: opts.skillSettings } : {})
     });
+    // Fail-closed on the remote path too (OBL-018): the native-tool veto rides the
+    // reverse-tunnelled /hook/nativetool route. If main requires a tool policy but
+    // no such route is reachable (no tunnel / no local MCP port), refuse before spawn.
+    if (!remoteHookUrls?.nativeTool && (opts.nativeToolPolicyRequired ?? true)) {
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but native-tool hook endpoint is unavailable for the remote spawn'
+      );
+    }
     const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = renderRemoteCommand(remoteEffectiveProfile, {
       ...opts,
       extraArgs: remoteExtraWithMint,
@@ -2757,6 +3071,13 @@ export class PtyManager extends EventEmitter {
       ZCC_SESSION_TOKEN: (this.hostServices.sessionCredential ?? controlCredentialForSession)(sessionId),
       TERM: 'xterm-256color'
     };
+    // Same hints as the local path, set on the local ssh process only. They are
+    // not written into the remote command: the session token is never forwarded
+    // (it would be visible in the remote process list), so a remote process has
+    // no way to use the lookup and remote identity stays in the hook/MCP URL path
+    // segments.
+    clearInheritedSessionIdentity(spawnEnv);
+    Object.assign(spawnEnv, sessionIdentityEnv({ projectId: opts.projectId, threadId: opts.threadId }));
     spawnEnv.PATH = augmentPath(spawnEnv.PATH ?? process.env.PATH);
     stripInheritedSessionCallbacks(spawnEnv);
     ensureInteractiveTerminalEnv(spawnEnv);
@@ -2772,7 +3093,13 @@ export class PtyManager extends EventEmitter {
 
     const session: TerminalSession = {
       id: sessionId,
+      capabilitySurface: {
+        surface: 'pty', harness: remoteRegistration.id,
+        headless: !!opts.headless, // A config-file gate names a host-local module, so a remote launch carries no veto.
+        hookBase: Boolean(remoteHookUrls?.nativeTool) && !remoteProvider.nativeToolGateViaConfigFile && !remoteProvider.nativeToolGateViaDirectory
+      },
       projectId: opts.projectId,
+      ...(opts.threadId ? { threadId: opts.threadId } : {}),
       title: opts.title ?? `${remoteProvider.title(opts.profile)} · ${remote.host}`,
       profile: opts.profile,
       cwd: remoteCwd,

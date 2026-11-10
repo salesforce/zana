@@ -97,6 +97,8 @@ vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', async (importOriginal
   return { ...actual, verifyHarnesses: async () => h.verified };
 });
 
+// These suites drive launches, not plugin admission (covered in dispatch-admission tests): admit everything.
+vi.mock('../runtime/dispatch-admission.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../runtime/dispatch-admission.js')>()), createMainDispatchAdmission: () => async () => null }));
 vi.mock('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => true,

@@ -45,6 +45,11 @@ const OPTIONAL_SERVER_FIELD_GROUP_LIMIT = 30;
 const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   {
     reason:
+      "Stored plugin resolutions predating actor attribution omit actor; HTTP callers cannot establish authority by supplying it.",
+    fields: ["resolvePendingInteractionRequestSchema.actor"],
+  },
+  {
+    reason:
       "Base error payloads omit optional details and retryability when a route has no structured details or retry guidance.",
     fields: [
       "apiErrorSchema.details",

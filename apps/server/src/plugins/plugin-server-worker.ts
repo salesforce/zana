@@ -81,6 +81,14 @@ export async function runPluginWorker(port = parentPort) {
     source: () => { api.storage.database(); return database; },
     openCopy: (file) => backupCopyHandle(new (require(workerData.sqlite.modulePath))(file, { nativeBinding: workerData.sqlite.nativeBinding, timeout: 25 }))
   });
+  // A Promise cannot cross the bridge: the host hands back wait(), and the exit promise is rebuilt here.
+  if (api.process?.spawn) {
+    const hostSpawn = api.process.spawn as unknown as (command: string, args: string[], options?: unknown) => Promise<{ pid: number; wait(): Promise<number | null> }>;
+    api.process.spawn = async (command, args, options) => {
+      const handle = await hostSpawn(command, args, options);
+      return { pid: handle.pid, exited: Promise.resolve(handle.wait()).catch(() => null) };
+    };
+  }
   api.services.use = <T extends object>(id: string): T => new Proxy({} as T, {
     get(_target, method) {
       if (method === 'then' || typeof method === 'symbol') return undefined;

@@ -19,6 +19,8 @@ export * from "./contracts.js";
 export * from "./json-rpc-envelope.js";
 export * from "./mime-types.js";
 export * from "./pending-tool-call-tracker.js";
+export * from "./native-tool-decisions.js";
+export * from "./native-tool-settled.js";
 export * from "./provider-maintenance-kit.js";
 export * from "./permission-policy.js";
 export * from "./presentation.js";

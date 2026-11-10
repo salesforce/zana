@@ -3,13 +3,15 @@ import {
   CliCallbackRequestSchema, CliCallbackResponseSchema, cliCallbackPaths, isCliNativeToolPath,
   type CliCallbackGrant, type CliCallbackWireResponse
 } from '@zana-ai/zcc-contracts/cli-callbacks';
+import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { getHost } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { createNativeToolPolicyHook } from '../../plugins/native-tool-hook.js';
 import { decideMainOwnedToolPolicy } from '../../plugins/native-tool-policy.js';
 
 /** Below the relay's `curl -m 5`, leaving time for the proxy, daemon client and transit. */
-const NATIVE_TOOL_POLICY_TIMEOUT_MS = 3_000;
+// Decision phase plus the largest human approval wait; below the daemon relay's own bound.
+const NATIVE_TOOL_POLICY_TIMEOUT_MS = MAX_MAIN_CEILING_MS;
 /** Per session; a global ceiling still bounds all sessions together. */
 const MAX_PENDING_NATIVE_TOOL_PER_SESSION = 8;
 const MAX_PENDING_NATIVE_TOOL = CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL;
@@ -59,6 +61,8 @@ export class CliCallbackAuthority {
     log?(message: string): void;
     fetch?: typeof fetch;
     timeoutMs?: number;
+    /** Ceiling for one native tool policy decision. Defaults to the full ask-capable budget. */
+    nativeToolTimeoutMs?: number;
   }) {}
 
   register(input: CliCallbackGrant): void {
@@ -123,7 +127,7 @@ export class CliCallbackAuthority {
           () => ({ decision: 'deny' as const, reason: 'native tool policy error' })
         ),
         new Promise<{ decision: 'deny'; reason: string }>(resolve => {
-          timer = setTimeout(() => resolve({ decision: 'deny', reason: 'native tool policy timed out' }), NATIVE_TOOL_POLICY_TIMEOUT_MS);
+          timer = setTimeout(() => resolve({ decision: 'deny', reason: 'native tool policy timed out' }), this.options.nativeToolTimeoutMs ?? NATIVE_TOOL_POLICY_TIMEOUT_MS);
         }),
         new Promise<never>((_, reject) => {
           onAbort = () => reject(new Error('callback aborted'));

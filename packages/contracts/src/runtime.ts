@@ -120,6 +120,8 @@ export const ServerRuntimeStartSchema = z.object({
     instanceId: z.string().uuid()
   }).strict(),
   bundledPluginsRoot: z.string().min(1).optional(),
+  /** Desktop UI-signing secret. Sent over the start message, never env: `ps eww` shows a child's initial env to same-uid processes. */
+  productServerCredential: z.string().min(32).optional(),
   version: z.string()
 }).strict();
 
@@ -174,9 +176,12 @@ export function nativeToolPolicyInputFits(input: Record<string, unknown>): boole
  * identity from its live session record and derives `invocationId`; the
  * server runtime only asks the plugin policy.
  */
-export const NativeToolPolicyRequestSchema = z.object({
+export const NativeToolPolicyRequestFieldsSchema = z.object({
   invocationId: z.string().regex(/^[a-f0-9]{64}$/),
-  threadId: SessionIdSchema.max(256),
+  /** The PTY session id main owns; absent for a Modern thread, which has no PTY. */
+  sessionId: SessionIdSchema.max(256).optional(),
+  /** The thread record the call belongs to; absent for a PTY main has no thread binding for. */
+  threadId: SessionIdSchema.max(256).optional(),
   projectId: ProjectIdSchema.max(256),
   profile: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
   toolName: z.string().min(1).max(512).refine(
@@ -185,6 +190,11 @@ export const NativeToolPolicyRequestSchema = z.object({
   ),
   input: z.record(z.string(), z.unknown()).refine(nativeToolPolicyInputFits, 'tool input exceeds the native tool policy limit')
 }).strict();
+
+export const NativeToolPolicyRequestSchema = NativeToolPolicyRequestFieldsSchema.refine(
+  (request) => request.sessionId !== undefined || request.threadId !== undefined,
+  'a native tool policy request names a session or a thread'
+);
 
 /**
  * The plugin policy's answer for one native tool call. A shape check only:
@@ -197,6 +207,153 @@ export const NativeToolPolicyDecisionSchema = z.discriminatedUnion('action', [
 
 export type NativeToolPolicyRequest = z.infer<typeof NativeToolPolicyRequestSchema>;
 export type NativeToolPolicyDecision = z.infer<typeof NativeToolPolicyDecisionSchema>;
+
+/**
+ * One PTY dispatch (initial prompt, reply, Job Team task) that Electron-main is
+ * about to forward. Main asserts the identity; an unbound PTY has no thread, and
+ * a launch has no session until it spawns, so neither id is required.
+ */
+/** Characters of prompt text main sends for admission; the plugin-facing cap is applied in core. */
+export const DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS = 32 * 1024;
+
+export const DispatchAdmissionMainRequestSchema = z.object({
+  sessionId: SessionIdSchema.max(256).optional(),
+  projectId: ProjectIdSchema.max(256),
+  entry: z.enum(['initial', 'reply', 'job-team-dispatch']),
+  origin: z.enum(['user', 'agent', 'system']),
+  /** Opening or reply text, already bounded by main; core redacts and caps it again before any plugin sees it. */
+  prompt: z.object({
+    text: z.string().max(DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS),
+    truncated: z.boolean().optional()
+  }).strict().optional()
+}).strict();
+export type DispatchAdmissionMainRequest = z.infer<typeof DispatchAdmissionMainRequestSchema>;
+
+/** The admission answer main acts on; a wait is a refusal for a PTY, which cannot hold input. */
+export const DispatchAdmissionMainDecisionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('proceed') }).strict(),
+  z.object({ action: z.literal('reject'), message: z.string().min(1).max(1024) }).strict(),
+  z.object({ action: z.literal('wait'), reason: z.string().min(1).max(1024) }).strict()
+]);
+export type DispatchAdmissionMainDecision = z.infer<typeof DispatchAdmissionMainDecisionSchema>;
+
+/**
+ * Leading text of the error a Modern squad member create returns when dispatch
+ * admission refused the start. Nothing was created, so main may release the
+ * reserved slot instead of holding it as an uncertain worker.
+ */
+export const SQUAD_START_REFUSED_PREFIX = 'squad member start refused';
+
+/** The lifecycle moments a PTY session reports to plugins. */
+export const PTY_LIFECYCLE_KINDS = ['created', 'active', 'idle', 'failed', 'deleted'] as const;
+
+/**
+ * One lifecycle moment of a PTY Electron-main owns. Main asserts the identity
+ * from its live session record; the server only fans it out to plugins. A PTY
+ * main has no thread binding for names no thread.
+ */
+export const PtyLifecycleEventMainRequestSchema = z.object({
+  kind: z.enum(PTY_LIFECYCLE_KINDS),
+  sessionId: SessionIdSchema.max(256),
+  /** The thread record the session is bound to; absent for an unbound PTY. */
+  threadId: SessionIdSchema.max(256).optional(),
+  projectId: ProjectIdSchema.max(256),
+  profile: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
+  /** Short failure cause for `failed`; bounded here and redacted again by the server. */
+  error: z.string().max(1024).optional()
+}).strict();
+export type PtyLifecycleEventMainRequest = z.infer<typeof PtyLifecycleEventMainRequestSchema>;
+
+/** Longest raw tool output text main forwards for a settled event; core redacts and caps it again before a plugin sees any. */
+export const NATIVE_TOOL_SETTLED_OUTPUT_MAX_CHARS = 32_768;
+
+/**
+ * One settled native tool call of a PTY Electron-main owns (OBL-011). Main
+ * asserts the identity from its live session record and derives `invocationId`
+ * with the same formula as the policy request; the server only fans it out to
+ * plugins. Observational: no reply is read.
+ */
+export const NativeToolSettledMainRequestSchema = z.object({
+  invocationId: z.string().regex(/^[a-f0-9]{64}$/),
+  sessionId: SessionIdSchema.max(256),
+  threadId: SessionIdSchema.max(256).optional(),
+  projectId: ProjectIdSchema.max(256),
+  profile: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
+  toolName: z.string().min(1).max(512).refine(
+    (value) => !/[\x00-\x1f\x7f]/.test(value),
+    'tool name must not contain control characters'
+  ),
+  state: z.enum(['succeeded', 'failed', 'cancelled']),
+  durationMs: z.number().int().min(0).max(2_147_483_647),
+  exitCode: z.number().int().optional(),
+  outputBytes: z.number().int().min(0).optional(),
+  output: z.string().max(NATIVE_TOOL_SETTLED_OUTPUT_MAX_CHARS).optional()
+}).strict();
+export type NativeToolSettledMainRequest = z.infer<typeof NativeToolSettledMainRequestSchema>;
+
+/** Ceiling for the plugin guidance text one PTY launch carries on its argv. */
+export const PTY_SESSION_INSTRUCTIONS_MAX_CHARS = 16_000;
+
+/**
+ * Ask the plugins for the standing instructions of a PTY main is about to spawn.
+ * Main asserts the identity from its own launch plan, never from the renderer.
+ * The session is not live yet, so the id is the one main allocated for it.
+ */
+export const PtySessionInstructionsMainRequestSchema = z.object({
+  sessionId: SessionIdSchema.max(256),
+  /** The thread record the session will be bound to; absent for an unbound PTY. */
+  threadId: SessionIdSchema.max(256).optional(),
+  projectId: ProjectIdSchema.max(256),
+  profile: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/)
+}).strict();
+export type PtySessionInstructionsMainRequest = z.infer<typeof PtySessionInstructionsMainRequestSchema>;
+
+export const PtySessionInstructionsReplySchema = z.object({
+  instructions: z.string().max(PTY_SESSION_INSTRUCTIONS_MAX_CHARS)
+}).strict();
+export type PtySessionInstructionsReply = z.infer<typeof PtySessionInstructionsReplySchema>;
+
+/** Ceilings for plugin tools one PTY session lists and calls over zcc-inbox. */
+export const PTY_SESSION_TOOLS_MAX = 128;
+export const PTY_SESSION_TOOL_NAME_MAX_CHARS = 128;
+export const PTY_SESSION_TOOL_DESCRIPTION_MAX_CHARS = 4_096;
+export const PTY_SESSION_TOOL_RESULT_MAX_CHARS = 256 * 1024;
+export const PTY_SESSION_TOOL_IMAGES_MAX = 8;
+
+/**
+ * Ask the plugins which tools one live PTY session may use. Main asserts the
+ * identity from its live session record, never from the agent or renderer.
+ */
+export const PtySessionToolsMainRequestSchema = PtySessionInstructionsMainRequestSchema;
+export type PtySessionToolsMainRequest = z.infer<typeof PtySessionToolsMainRequestSchema>;
+
+const PtySessionToolNameSchema = z.string().min(1).max(PTY_SESSION_TOOL_NAME_MAX_CHARS).regex(/^[A-Za-z0-9_.-]+$/);
+
+export const PtySessionToolsReplySchema = z.object({
+  tools: z.array(z.object({
+    name: PtySessionToolNameSchema,
+    description: z.string().max(PTY_SESSION_TOOL_DESCRIPTION_MAX_CHARS),
+    inputSchema: z.record(z.string(), z.unknown())
+  }).strict()).max(PTY_SESSION_TOOLS_MAX)
+}).strict();
+export type PtySessionToolsReply = z.infer<typeof PtySessionToolsReplySchema>;
+
+/** One plugin tool call from a live PTY session; policy and the plugin both run behind this. */
+export const PtySessionToolCallMainRequestSchema = PtySessionInstructionsMainRequestSchema.extend({
+  invocationId: z.string().uuid(),
+  name: PtySessionToolNameSchema,
+  arguments: z.record(z.string(), z.unknown()).refine(nativeToolPolicyInputFits, 'tool input exceeds the native tool policy limit')
+}).strict();
+export type PtySessionToolCallMainRequest = z.infer<typeof PtySessionToolCallMainRequestSchema>;
+
+export const PtySessionToolCallReplySchema = z.object({
+  success: z.boolean(),
+  contentItems: z.array(z.discriminatedUnion('type', [
+    z.object({ type: z.literal('inputText'), text: z.string().max(PTY_SESSION_TOOL_RESULT_MAX_CHARS) }).strict(),
+    z.object({ type: z.literal('inputImage'), imageUrl: z.string().max(8 * 1024 * 1024) }).strict()
+  ])).max(1 + PTY_SESSION_TOOL_IMAGES_MAX)
+}).strict();
+export type PtySessionToolCallReply = z.infer<typeof PtySessionToolCallReplySchema>;
 
 /** Main-attested request for one Modern squad participant. Never renderer input. */
 export const SquadMemberRuntimeRequestSchema = z.object({
@@ -546,6 +703,41 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     request: NativeToolPolicyRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    // Admission for PTY input main owns: the server holds the plugin handlers.
+    operation: z.literal('plugins-dispatch-admission'),
+    request: DispatchAdmissionMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // OBL-011: a settled native tool call of a PTY main owns; observational.
+    operation: z.literal('plugins-tool-settled'),
+    request: NativeToolSettledMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // Lifecycle moments of PTYs main owns: the server holds the plugin handlers.
+    operation: z.literal('plugins-pty-lifecycle-event'),
+    request: PtyLifecycleEventMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // Plugin guidance for a PTY main is about to spawn: the server holds the plugin handlers.
+    operation: z.literal('plugins-pty-session-instructions'),
+    request: PtySessionInstructionsMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // Plugin tools one live PTY session may list: the server holds the plugin handlers.
+    operation: z.literal('plugins-pty-session-tools'),
+    request: PtySessionToolsMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // One plugin tool call from a live PTY session: tool policy, then the plugin.
+    operation: z.literal('plugins-pty-session-tool-call'),
+    request: PtySessionToolCallMainRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    // OBL-018 pre-spawn readiness: main reads the tool-policy inventory before a
+    // provider launch to decide whether the native-tool veto must be reachable.
+    operation: z.literal('plugins-tool-policy-inventory')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('marketplace-list')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
@@ -659,6 +851,7 @@ export const PluginAgentContributionSchema = z.object({
 
 export const PluginCapabilitiesChangedMessageSchema = z.object({
   type: z.literal('plugin-capabilities'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
   contributors: z.array(PluginAgentContributionSchema).max(256)
 }).strict();
 
@@ -692,6 +885,7 @@ export const PluginAppSnapshotSchema = z.object({
   }).strict().optional(),
   projectTab: PluginAppProjectTabSchema.optional(),
   peers: z.boolean().optional(),
+  toolPolicyTimeoutMs: z.number().int().min(1_000).max(9_000).optional(),
   skillNames: z.array(z.string().min(1).max(256)).max(64).optional(),
   mcpServers: z.array(z.object({
     name: z.string().min(1).max(256),

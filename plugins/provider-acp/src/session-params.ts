@@ -6,6 +6,7 @@
 
 import {
   type DynamicTool,
+  type SessionMcpServer,
   type PermissionEscalation,
   type PermissionMode,
   type ReasoningLevel,
@@ -142,6 +143,8 @@ export interface AcpSessionParams {
   /** Server-owned instructions; prepended to the session's first prompt. */
   instructions?: string;
   dynamicTools?: readonly DynamicTool[];
+  /** Host-selected plugin MCP servers, delivered beside the zcc tool bridge. */
+  mcpServers?: readonly SessionMcpServer[];
 }
 
 function sanitizeAcpSkillDescription(description: string): string {
@@ -382,6 +385,7 @@ export interface BuildAcpSessionParamsArgs {
   /** The dialect the registering plugin named for this agent, if any. */
   dialectId?: string | undefined;
   dynamicTools?: readonly DynamicTool[] | undefined;
+  mcpServers?: readonly SessionMcpServer[] | undefined;
   options: AcpSessionExecutionOptions;
   profile: AcpAgentProfile;
   /** Provider label used in user-facing capability errors. */
@@ -444,6 +448,9 @@ export function buildAcpSessionParams(
     ...(instructions ? { instructions } : {}),
     ...(args.dynamicTools && args.dynamicTools.length > 0
       ? { dynamicTools: args.dynamicTools }
+      : {}),
+    ...(args.mcpServers && args.mcpServers.length > 0
+      ? { mcpServers: args.mcpServers.map((server) => ({ ...server })) }
       : {}),
   };
 }

@@ -54,6 +54,7 @@ import {
   buildPiTurnOptions,
   type PiSessionParams,
 } from "../session-params.js";
+import { pickPiIdentityEnv } from "../identity-env.js";
 import { ZCC_PI_EXTENSION_SOURCE } from "./zcc-pi-extension.js";
 import {
   createExtensionUiCoordinator,
@@ -1055,7 +1056,12 @@ async function reconcileTurnOptions(
   // child only reads it at spawn, so a change rebuilds the session.
   const shellEnvOverrides =
     options.envVars && Object.keys(options.envVars).length > 0
-      ? { ZCC_THREAD_ID: threadId, ...buildShellEnvOverrides(options.envVars) }
+      ? {
+          ...buildShellEnvOverrides(options.envVars),
+          // A rebuilt child keeps the identity it was constructed with.
+          ...pickPiIdentityEnv(construction.shellEnvOverrides),
+          ZCC_THREAD_ID: threadId,
+        }
       : undefined;
   const environmentChanged =
     (shellEnvOverrides !== undefined &&

@@ -191,6 +191,7 @@ describe('local ↔ remote agent coordination (end-to-end, real pty + real MCP)'
       lastProjectId: null
     };
     const remoteSession = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId,
       profile: 'shell',
       cwd: scriptDir,
@@ -313,6 +314,7 @@ describe('local ↔ remote agent coordination (end-to-end, real pty + real MCP)'
 
     // A LOCAL claude session DOES get an MCP URL (it can originate agent_send).
     const localClaude = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId,
       profile: 'claude',
       cwd: scriptDir,
@@ -328,6 +330,7 @@ describe('local ↔ remote agent coordination (end-to-end, real pty + real MCP)'
     let remoteReady = false;
     ptys.on('data', (_id, data) => { if (data.includes('ssh-fixture-ready')) remoteReady = true; });
     const remote = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId,
       profile: 'claude',
       cwd: '/tmp',

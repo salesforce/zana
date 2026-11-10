@@ -85,10 +85,16 @@ export interface FakePluginHarness {
       | import('../server.js').PluginHttpResponse
       | Promise<import('../server.js').PluginHttpResponse>;
   }>;
-  events: Array<{
-    name: import('../server.js').PluginThreadEventName;
-    handler: (event: import('../server.js').PluginThreadEvent) => void | Promise<void>;
-  }>;
+  events: Array<
+    | {
+        name: import('../server.js').PluginThreadEventName;
+        handler: (event: import('../server.js').PluginThreadEvent) => void | Promise<void>;
+      }
+    | {
+        name: 'tool.settled';
+        handler: (event: import('../server.js').ToolSettledEvent) => void | Promise<void>;
+      }
+  >;
   sdk: {
     stub(path: string, implementation: (...args: never[]) => unknown): void;
     callsTo(path: string): unknown[][];
@@ -160,6 +166,8 @@ export interface FakePluginHost {
 }
 
 export interface FakePluginHostOptions {
+  /** Explicit stand-in for main's approval sheet; defaults to unavailable. */
+  requestToolApproval?: import('../server.js').PluginUi['requestToolApproval'];
   pluginId?: string;
   agentSkillIds?: readonly string[];
   spawnThread?: (args: import('../server.js').PluginSdkThreadSpawnArgs) => Promise<{ id: string }>;
@@ -245,7 +253,7 @@ export interface FakePluginHostOptions {
 /** The fields a host-signed approval covers, in signing order. */
 function approvalKey(binding: unknown): string {
   const row = binding && typeof binding === 'object' ? (binding as Record<string, unknown>) : {};
-  return JSON.stringify(['action', 'target', 'targetLabel', 'subject', 'revision', 'confirmText'].map((key) => row[key] ?? ''));
+  return JSON.stringify(['action', 'target', 'targetLabel', 'subject', 'revision', 'confirmText', 'threadId', 'invocationId'].map((key) => row[key] ?? ''));
 }
 
 export function createFakePluginHost(options?: FakePluginHostOptions): FakePluginHost {
@@ -253,6 +261,17 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   // Tokens from `harness.approve`, keyed to the binding they cover; consumed once.
   const approvals = new Map<string, string>();
   let approvalSequence = 0;
+  const requestToolApproval: ZccPluginApi['ui']['requestToolApproval'] = async request => {
+    assertLive();
+    return options?.requestToolApproval?.(request) ?? { approved: false, reason: 'unavailable' };
+  };
+  const consumeApproval: ZccPluginApi['ui']['consumeApproval'] = async request => {
+    assertLive();
+    const token = request && typeof request === 'object' ? request.token : undefined;
+    if (typeof token !== 'string' || approvals.get(token) !== approvalKey(request.binding)) return false;
+    approvals.delete(token);
+    return true;
+  };
   const kv = new Map<string, unknown>();
   const backups: PluginDatabaseBackup[] = [];
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
@@ -413,8 +432,8 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     events: {
-      on(name, handler) {
-        events.push({ name, handler });
+      on(name: string, handler: unknown) {
+        events.push({ name, handler } as (typeof events)[number]);
       }
     },
     hooks: {
@@ -828,6 +847,11 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         published.push({ event, payload });
       }
     },
+    process: {
+      async spawn() {
+        throw new Error('process.spawn is not available in the testing host');
+      }
+    },
     background: {
       service(_name, start) {
         void Promise.resolve(start()).then((stop) => {
@@ -924,13 +948,11 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     ui: {
-      async experimental_consumeApproval(request) {
-        assertLive();
-        const token = request && typeof request === 'object' ? request.token : undefined;
-        if (typeof token !== 'string' || approvals.get(token) !== approvalKey(request.binding)) return false;
-        approvals.delete(token);
-        return true;
-      },
+      requestToolApproval,
+      requestApproval: requestToolApproval,
+      experimental_requestApproval: requestToolApproval,
+      consumeApproval,
+      experimental_consumeApproval: consumeApproval,
       requestInput(_request: PluginInteractionRequest) {
         assertLive();
         return new Promise<PluginInteractionResult>((resolve) => {
@@ -1155,7 +1177,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       });
     },
     submitInteraction(value) {
-      pendingInteraction?.resolve({ outcome: 'submitted', value: value as PluginInteractionResult extends { value: infer V } ? V : never } as PluginInteractionResult);
+      pendingInteraction?.resolve({ outcome: 'submitted', value: value as PluginInteractionResult extends { value: infer V } ? V : never, actor: 'human' } as PluginInteractionResult);
       pendingInteraction = null;
     },
     cancelInteraction() {

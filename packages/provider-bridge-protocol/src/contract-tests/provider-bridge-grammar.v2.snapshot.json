@@ -329,6 +329,7 @@
   ],
   "inboundRequestMethods": [
     "interaction/request",
-    "item/tool/call"
+    "item/tool/call",
+    "tool/policy/decide"
   ]
 }

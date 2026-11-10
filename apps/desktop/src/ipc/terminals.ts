@@ -231,7 +231,13 @@ export function registerTerminalsIpc(): void {
     // Surface the delivery verdict to the renderer: `ctx.ptys.reply` returns false
     // when no live pty matches (the agent already exited), so the inbox reply
     // box can report a dead session instead of silently claiming success.
-    (id: string, text: string) => ctx.ptys.reply(id, text),
+    async (id: string, text: string) => {
+      const session = ctx.ptys.getSession(id);
+      if (!session) return ctx.ptys.reply(id, text);
+      // Main admits against its own session record; the renderer only names the session.
+      const refusal = await ctx.admitPtyDispatch({ sessionId: id, projectId: session.projectId, entry: 'reply', origin: 'user', promptText: text });
+      return refusal ? false : ctx.ptys.reply(id, text);
+    },
     () => false
   );
   safeProductHandle(
@@ -444,7 +450,7 @@ export function registerTerminalsIpc(): void {
   );
   safeProductHandle<[string, string], MenubarReplyResult>(
     IPC.menubar.reply,
-    (sessionId: string, text: string) => {
+    async (sessionId: string, text: string) => {
       // Light-interaction WRITE path. Every gate is re-checked here from main's
       // OWN state — the popover's sessionId/text are untrusted lookup inputs,
       // never a capability (Rule 1).
@@ -462,6 +468,8 @@ export function registerTerminalsIpc(): void {
       // and cap the length so the write path can't be flooded from the menu bar.
       const clean = text.replace(/[\r\n]+/g, ' ').trim().slice(0, ctx.MENUBAR_REPLY_MAX_CHARS);
       if (!clean) return { ok: false, reason: 'empty' };
+      const refusal = await ctx.admitPtyDispatch({ sessionId, projectId: s.projectId, entry: 'reply', origin: 'user', promptText: clean });
+      if (refusal) return { ok: false, reason: 'ended' };
       const ok = ctx.ptys.reply(sessionId, clean);
       if (ok) ctx.menubar?.refresh();
       return { ok, reason: ok ? undefined : 'ended' };

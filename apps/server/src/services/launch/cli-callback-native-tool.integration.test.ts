@@ -12,7 +12,7 @@ afterEach(async () => { await Promise.all(closers.splice(0).map(close => close()
 /** Wire the real proxy to the real authority and run the exact curl + relay tail the Claude hook runs. */
 async function hook(decide: (request: unknown) => Promise<unknown>) {
   const owner = { projectId: grant.projectId, hostId: 'host', daemonInstanceId: 'daemon', active: true, profile: 'claude' };
-  const authority = new CliCallbackAuthority({ owner: () => owner, mcpBaseUrl: () => 'http://127.0.0.1:1', plugins: () => ({ decideToolPolicy: decide as never }) });
+  const authority = new CliCallbackAuthority({ owner: () => owner, mcpBaseUrl: () => 'http://127.0.0.1:1', plugins: () => ({ decideToolPolicy: decide as never }), nativeToolTimeoutMs: 1_500 });
   authority.register(grant);
   const proxy = await startCliCallbackProxy({
     grant,

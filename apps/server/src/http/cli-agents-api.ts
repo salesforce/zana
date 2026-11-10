@@ -31,6 +31,7 @@ function routeParams(pathname: string, pattern: string): Record<string, string> 
 function controlHttpStatus(code: string | undefined): number {
   if (code === 'NOT_FOUND' || code === 'unknown-session') return 404;
   if (code === 'CANCELLED' || code === 'FORBIDDEN_AGENT') return 403;
+  if (code === 'DISPATCH_REJECTED' || code === 'DISPATCH_WAITING') return 409;
   if (code === 'host_disconnected' || code === 'UNAVAILABLE') return 502;
   if (code === 'BAD_ARGS' || code === 'INVALID') return 400;
   return 400;

@@ -23,7 +23,7 @@ function errorCode(error: unknown): unknown {
   return error instanceof Error && "code" in error ? error.code : undefined;
 }
 
-function cursorAgentCommand(command: string): boolean {
+export function cursorAgentCommand(command: string): boolean {
   return (
     basename(command)
       .toLowerCase()

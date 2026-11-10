@@ -8,6 +8,10 @@ import type {
   ContractJson,
   DispatchAdmissionContract,
   DispatchAdmissionDecision,
+  DispatchAdmissionPrompt,
+  DispatchEntry,
+  DispatchOrigin,
+  DispatchSurface,
   HostRpcContract,
   HostRpcResultContract,
   InteractionAcknowledgement,
@@ -17,12 +21,18 @@ import type {
   PersonaContributionContract,
   ProjectTabAvailabilityContract,
   TeamContributionContract,
+  ToolSettledContract,
+  ToolSettledState,
 } from '@zana-ai/zcc-domain';
 
 export type {
   CapabilityIntrospectionContract,
   DispatchAdmissionContract,
   DispatchAdmissionDecision,
+  DispatchAdmissionPrompt,
+  DispatchEntry,
+  DispatchOrigin,
+  DispatchSurface,
   HostRpcContract,
   HostRpcResultContract,
   InteractionAcknowledgement,
@@ -32,6 +42,8 @@ export type {
   PersonaContributionContract,
   ProjectTabAvailabilityContract,
   TeamContributionContract,
+  ToolSettledContract,
+  ToolSettledState,
 };
 
 export interface PluginHostRpc {

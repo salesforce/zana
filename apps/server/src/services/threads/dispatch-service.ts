@@ -4,8 +4,9 @@ import {
   getDispatchAdmissionGeneration,
   recordDispatchAdmissionWait
 } from '@zana-ai/zcc-db';
+import { buildAdmissionPrompt, type RawAdmissionPrompt } from '../../plugins/admission-prompt.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
-import type { DispatchAdmissionDecision } from '@zana-ai/zcc-domain';
+import type { DispatchAdmissionContract, DispatchAdmissionDecision } from '@zana-ai/zcc-domain';
 
 const DISPATCH_ADMISSION_TIMEOUT_MS = 10_000;
 
@@ -16,43 +17,73 @@ export interface DispatchAdmissionOutcome {
   pluginId?: string;
 }
 
+/** Host-resolved identity of one dispatch; core adds the id and generation. */
+export type DispatchAdmissionRequest = Omit<DispatchAdmissionContract, 'dispatchId' | 'generation' | 'prompt'> & {
+  /**
+   * Raw text of the dispatch. Core redacts and caps it before any plugin sees
+   * it, and only plugins that declare `zcc.promptAccess` receive it at all.
+   */
+  prompt?: RawAdmissionPrompt;
+};
+
+/**
+ * Fold an outcome for a caller that cannot hold the send for later (a create,
+ * a fork, a PTY input). A wait is a refusal there: nothing is recorded and no
+ * override can release it. Returns null when the dispatch may proceed.
+ */
+export function admissionRefusal(outcome: DispatchAdmissionOutcome): { code: 'dispatch_rejected' | 'dispatch_waiting'; message: string } | null {
+  const { decision } = outcome;
+  if (decision.action === 'reject') return { code: 'dispatch_rejected', message: decision.message };
+  if (decision.action === 'wait') return { code: 'dispatch_waiting', message: decision.reason };
+  return null;
+}
+
 export async function admitDispatch(
   ctx: ProductHttpContext,
-  request: { threadId: string; projectId: string },
+  request: DispatchAdmissionRequest,
   assertCurrent?: () => void
 ): Promise<DispatchAdmissionOutcome> {
   if (!ctx.plugins) return { decision: { action: 'proceed' }, generation: 1 };
-  const current = getDispatchAdmissionGeneration(ctx.db, request.threadId);
+  // Only a thread can carry a persisted wait generation; a session or a not-yet-created
+  // target admits statelessly at generation 1.
+  const threadId = request.threadId;
+  const current = threadId ? getDispatchAdmissionGeneration(ctx.db, threadId) : undefined;
   const generation = current?.generation ?? 1;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const { prompt: rawPrompt, ...identity } = request;
     const decision = await Promise.race([
-      ctx.plugins.admitDispatch({ ...request, generation, dispatchId: randomUUID() }),
+      ctx.plugins.admitDispatch({
+        ...identity,
+        ...(rawPrompt ? { prompt: buildAdmissionPrompt(rawPrompt) } : {}),
+        generation,
+        dispatchId: randomUUID()
+      }),
       new Promise<DispatchAdmissionDecision>((resolve) => {
         timer = setTimeout(() => resolve({ action: 'reject', message: 'Plugin dispatch admission timed out' }), DISPATCH_ADMISSION_TIMEOUT_MS);
       })
     ]);
     assertCurrent?.();
-    if (decision.action === 'wait') {
+    if (decision.action === 'wait' && threadId) {
       const recorded = recordDispatchAdmissionWait(ctx.db, {
-        threadId: request.threadId,
+        threadId,
         overrideable: decision.overrideable,
         reason: decision.reason
       });
       return { decision, generation: recorded.generation, pluginId: decision.pluginId };
     }
-    if (decision.action === 'proceed' || decision.action === 'reject') {
+    if (threadId && (decision.action === 'proceed' || decision.action === 'reject')) {
       // A reject must drop any earlier recorded wait too, or a stale
       // overrideable generation from before the reject survives and can
       // still be Send-now'd through after the reject.
-      clearDispatchAdmissionGeneration(ctx.db, request.threadId);
+      clearDispatchAdmissionGeneration(ctx.db, threadId);
     }
-    return { decision, generation };
+    return { decision, generation, ...(decision.action === 'wait' ? { pluginId: decision.pluginId } : {}) };
   } catch {
     // Cancellation must propagate without recording/clearing a later send's admission.
     assertCurrent?.();
     // A failed admission cannot prove that all plugin vetoes were reviewed.
-    clearDispatchAdmissionGeneration(ctx.db, request.threadId);
+    if (threadId) clearDispatchAdmissionGeneration(ctx.db, threadId);
     return { decision: { action: 'reject', message: 'Plugin dispatch admission unavailable' }, generation };
   } finally {
     // Timeout wins over any late plugin response; it cannot record a wait.

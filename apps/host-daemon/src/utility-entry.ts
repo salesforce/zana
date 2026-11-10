@@ -3,7 +3,8 @@ import { shutdownPortableCommands } from '@zana-ai/zcc-agent-process-utils';
 import { startHostDaemon } from './daemon.js';
 import { createLocalPtyTerminalManager } from './local-pty-host.js';
 import { startEnrolledHostDaemon, type EnrolledHostDaemon } from './enroll-runtime.js';
-import { SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
+import { PluginCapabilitiesChangedMessageSchema, SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
+import { rebuildPluginServers } from './mcp-config.js';
 import { randomUUID } from 'node:crypto';
 
 interface ParentPortLike {
@@ -41,6 +42,14 @@ parentPort.on('message', async ({ data }) => {
     && message.protocolVersion !== SERVER_RUNTIME_PROTOCOL_VERSION
   ) {
     parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, message: 'incompatible host runtime protocol version' });
+    return;
+  }
+  if (message.type === 'plugin-capabilities') {
+    // Plugin-contributed MCP servers for sessions this daemon starts (Modern Claude and Codex).
+    const capabilities = PluginCapabilitiesChangedMessageSchema.safeParse(message);
+    if (capabilities.success && capabilities.data.protocolVersion === SERVER_RUNTIME_PROTOCOL_VERSION) {
+      rebuildPluginServers(capabilities.data.contributors);
+    }
     return;
   }
   if (typeof message.path === 'string' && message.path.length > 0) {

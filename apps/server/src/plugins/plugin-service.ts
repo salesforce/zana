@@ -71,7 +71,7 @@ import {
   isRetiredFirstPartyPluginId
 } from './builtin-registry.js';
 import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
-import { readPluginLogTail } from './plugin-log.js';
+import { appendPluginLogLine, readPluginLogTail } from './plugin-log.js';
 import {
   classifyInstalledToolPolicy,
   classifyActivatedToolPolicy,
@@ -121,14 +121,27 @@ import type {
 } from '@zana-ai/zcc-plugin-sdk/server';
 import type { ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
 import {
+  ASK_APPROVAL_MS,
+  DECISION_PHASE_MAX_MS,
+  TOOL_POLICY_ASK_INPUT_PREVIEW_MAX_CHARS,
+  TOOL_POLICY_ASK_PROMPT_MAX_CHARS,
+  TOOL_POLICY_ASK_RENDERER_ID,
+  clampAskApprovalMs,
+  clampToolPolicyHandlerMs,
+  isToolPolicyAskAllow,
+  sanitizeToolPolicyAskText
+} from '@zana-ai/zcc-domain/native-tool-policy-budget';
+import {
   deepFreezePluginMetadata,
   parsePersistedPluginMetadata
 } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   listThreadPluginMetadataRows
 } from '@zana-ai/zcc-db';
+import { PTY_SESSION_INSTRUCTIONS_MAX_CHARS } from '@zana-ai/zcc-contracts/runtime';
 import {
   invokePluginAgentTool,
+  LIVE_INSTRUCTION_MAX,
   resolvePluginSessionTools,
   type PluginAgentToolSource,
   type PluginSessionTools
@@ -145,6 +158,7 @@ import { createSerializedTransactionQueue } from '../durable-store.js';
 import { createPluginPackService, type PluginPackService } from './plugin-packs.js';
 import type { PluginRecoveryState } from '@zana-ai/zcc-domain/product';
 import { copyRecoveryRollbackRuntime, copyBundledPluginRuntime } from './plugin-recovery-runtime.js';
+import { finalizeToolSettled } from './tool-settled.js';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -160,6 +174,21 @@ export interface PluginUpdateRow {
   available: string;
   marketplace: string;
 }
+
+export interface PluginSessionInstructionsArgs {
+  surface: 'pty';
+  sessionId: string;
+  threadId: string;
+  projectId: string;
+  /** The harness family id the session runs, as plugins see it on lifecycle events. */
+  harness: string;
+}
+
+/**
+ * What a call finally gets. A plugin's `ask` is resolved inside the service by a
+ * human decision, so callers only ever see allow or deny.
+ */
+export type ResolvedToolPolicyDecision = Exclude<PluginToolPolicyDecision, { action: 'ask' }>;
 
 export interface PluginService {
   readonly pluginPacks: PluginPackService;
@@ -186,6 +215,18 @@ export interface PluginService {
   agentContributions(): PluginAgentContribution[];
   sessionTools(ctx: PluginAgentConfigureContext): Promise<PluginSessionTools>;
   invokeAgentTool(args: {
+    name: string;
+    input: unknown;
+    ctx: PluginAgentToolContext;
+  }): Promise<ToolCallResponse>;
+  /**
+   * The tools of the live plugins for one PTY session, with each plugin's
+   * `configure()` selection applied. Plugin tools only: host-contributed
+   * sources (the Modern team-launch forwarder) are not offered to a PTY.
+   */
+  ptySessionTools(ctx: PluginAgentConfigureContext): Promise<PluginSessionTools>;
+  /** Invoke one live plugin's tool for a PTY session. Plugin tools only; policy is the caller's. */
+  invokePtySessionTool(args: {
     name: string;
     input: unknown;
     ctx: PluginAgentToolContext;
@@ -228,8 +269,23 @@ export interface PluginService {
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   dispatchPeer(pluginId: string, method: string, request: import('@zana-ai/zcc-plugin-sdk/server').PluginPeerRequest): Promise<unknown>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
+  /**
+   * Deliver a settled native tool call (OBL-011) to every live plugin that
+   * subscribed with `events.on('tool.settled', ...)`. Core redacts and caps
+   * `output` and hands it over only as `outputPreview` to a plugin whose
+   * activation read `zcc.toolResults: 'preview'`. Best effort: never throws,
+   * never stored, never logged.
+   */
+  emitToolSettled(event: import('./tool-settled.js').ToolSettledIntake): Promise<void>;
+  /**
+   * The standing instructions the live plugins want in one session, evaluated
+   * now with that session's own context. `configure()` runs with real ids, an
+   * error is logged to that plugin's log and the other plugins still
+   * contribute, and the text is bounded. Never rejects.
+   */
+  sessionInstructions(args: PluginSessionInstructionsArgs): Promise<string>;
   admitDispatch(request: PluginDispatchAdmissionRequest): Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>;
-  decideToolPolicy(request: PluginToolPolicyRequest): Promise<PluginToolPolicyDecision>;
+  decideToolPolicy(request: PluginToolPolicyRequest): Promise<ResolvedToolPolicyDecision>;
   /**
    * One consistent view of the native tool-policy inventory once startup has
    * settled: a single strict registry read joined with this service's sealed
@@ -271,6 +327,8 @@ export interface PluginUiSnapshot {
   source: string;
   projectTab: PluginManifest['projectTab'];
   peers: boolean;
+  /** Clamped decision deadline, present only for plugins that declare a tool policy. */
+  toolPolicyTimeoutMs?: number;
   skillNames: string[];
   mcpServers: PluginUiMcpServer[];
   extra: Record<string, unknown>;
@@ -313,6 +371,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     ...(row.availableVersion ? { availableVersion: row.availableVersion } : {}),
     projectTab: row.projectTab,
     ...(row.peers ? { peers: true } : {}),
+    ...(row.toolPolicyTimeoutMs !== undefined ? { toolPolicyTimeoutMs: row.toolPolicyTimeoutMs } : {}),
     skillNames: row.skillNames,
     mcpServers: row.mcpServers.map((server) => ({
       name: server.name,
@@ -364,10 +423,12 @@ export interface PluginServiceOptions {
     title: string;
     payload: import('@zana-ai/zcc-domain/thread-runtime').JsonValue;
     timeoutMs: number;
+    requireHuman?: boolean | 'native-sheet';
     signal?: AbortSignal;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
   interruptPluginInteractions?: (pluginId: string) => void;
   consumePluginApproval?: (args: { pluginId: string; token: string; binding: unknown }) => boolean;
+  requestPluginToolApproval?: (input: import('../http/plugin-approval-proof.js').PluginToolApprovalScope) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginApprovalResult>;
   getInteraction?: (args: { pluginId: string; interactionId: string }) => Promise<
     import('@zana-ai/zcc-domain').InteractionContract | null
   >;
@@ -502,6 +563,12 @@ interface LivePlugin {
   isBusy?: () => boolean;
   /** Latest `zcc.status` message from this load; null once the plugin calls `configured()`. */
   pluginStatus?: string | null;
+  /** `zcc.promptAccess` as read at this generation's activation; an on-disk edit applies at the next activation. */
+  promptAccess?: boolean;
+  /** `zcc.toolPolicyTimeoutMs` (clamped) as read at this generation's activation. */
+  toolPolicyTimeoutMs?: number;
+  /** `zcc.toolResults` as read at this generation's activation; an on-disk edit applies at the next activation. */
+  toolResults?: 'preview';
 }
 
 function readJson(path: string): unknown {
@@ -631,9 +698,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   // than re-invoking plugin handlers. Map insertion order supplies bounded FIFO eviction.
   const toolPolicyDecisions = new Map<string, {
     stamp: ToolPolicyDecisionStamp;
-    decision: Promise<PluginToolPolicyDecision>;
+    decision: Promise<ResolvedToolPolicyDecision>;
   }>();
   const TOOL_POLICY_DECISIONS_MAX = 500;
+  /** An ask with less than this left in its budget is denied instead of shown for an instant. */
+  const ASK_QUEUE_MIN_REMAINING_MS = 1_000;
   const toolPolicyInventory = createToolPolicyInventoryState();
   const toolPolicySealed = new Set<string>();
   const toolPolicyPendingTrue = new Map<string, Promise<void>>();
@@ -728,7 +797,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     return captureToolPolicyStamp(toolPolicyInventory.snapshot(), currentGenerationIds());
   }
 
-  function inventoryBlocksAllow(): PluginToolPolicyDecision | null {
+  function inventoryBlocksAllow(): ResolvedToolPolicyDecision | null {
     if (toolPolicyReadFailure) {
       return { action: 'deny', reason: TOOL_POLICY_INVENTORY_UNAVAILABLE_REASON };
     }
@@ -777,7 +846,76 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         };
   }
 
-  function denyCachedAllow(reason: string): PluginToolPolicyDecision {
+  // One human question at a time per thread or PTY session: both stores hold a
+  // single open interaction per key, so concurrent asks queue behind each other.
+  const toolPolicyAskTails = new Map<string, Promise<unknown>>();
+
+  /**
+   * Hold the call while a human decides. Only an explicit allow from a human
+   * proves approval: a plugin cannot answer its own ask (`requireHuman`), and a
+   * cancel, timeout, missing UI, session end or error all deny. Time spent
+   * queued behind an earlier ask comes out of this ask's own budget, so the
+   * card never outlives the approval phase the deciding side budgeted.
+   */
+  async function askForToolPolicyApproval(
+    request: PluginToolPolicyRequest,
+    pluginId: string,
+    ask: Record<string, unknown>
+  ): Promise<ResolvedToolPolicyDecision> {
+    if (typeof ask.prompt !== 'string') throw new Error('invalid tool policy decision');
+    const prompt = sanitizeToolPolicyAskText(ask.prompt, TOOL_POLICY_ASK_PROMPT_MAX_CHARS);
+    if (!prompt) throw new Error('invalid tool policy decision');
+    const budgetMs = clampAskApprovalMs(ask.timeoutMs);
+    const deadline = Date.now() + budgetMs;
+    if (!opts.requestPluginInteraction) {
+      return { action: 'deny', reason: 'Tool call needs approval but no approval UI is available' };
+    }
+    const requestInteraction = opts.requestPluginInteraction;
+    const key = request.threadId;
+    const previous = toolPolicyAskTails.get(key) ?? Promise.resolve();
+    const run = previous.then(async (): Promise<ResolvedToolPolicyDecision> => {
+      const timeoutMs = deadline - Date.now();
+      if (timeoutMs < ASK_QUEUE_MIN_REMAINING_MS) {
+        return { action: 'deny', reason: 'Tool call approval timed out waiting for an earlier approval' };
+      }
+      let preview = '';
+      try {
+        preview = sanitizeToolPolicyAskText(JSON.stringify(request.input) ?? '', TOOL_POLICY_ASK_INPUT_PREVIEW_MAX_CHARS);
+      } catch {
+        preview = '';
+      }
+      try {
+        const result = await requestInteraction({
+          pluginId,
+          threadId: request.threadId,
+          rendererId: TOOL_POLICY_ASK_RENDERER_ID,
+          title: 'Approve tool call',
+          payload: { kind: 'tool-policy-ask', toolName: request.toolName, prompt, inputPreview: preview },
+          timeoutMs,
+          // A tool approval is an unforgeable-human gate: the main-drawn sheet, not window Submit.
+          requireHuman: 'native-sheet'
+        });
+        if (result.outcome === 'submitted') {
+          return result.actor === 'human' && isToolPolicyAskAllow(result.value)
+            ? { action: 'allow' }
+            : { action: 'deny', reason: 'Tool call was not approved' };
+        }
+        return { action: 'deny', reason: result.reason === 'timeout' ? 'Tool call approval timed out' : 'Tool call approval was cancelled' };
+      } catch (error) {
+        console.warn(`[plugins] tool policy approval for ${pluginId} failed`, error);
+        return { action: 'deny', reason: 'Tool call approval is unavailable' };
+      }
+    });
+    const tail = run.catch(() => undefined);
+    toolPolicyAskTails.set(key, tail);
+    try {
+      return await run;
+    } finally {
+      if (toolPolicyAskTails.get(key) === tail) toolPolicyAskTails.delete(key);
+    }
+  }
+
+  function denyCachedAllow(reason: string): ResolvedToolPolicyDecision {
     return { action: 'deny', reason };
   }
 
@@ -1269,7 +1407,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   function agentToolSources(): PluginAgentToolSource[] {
-    const pluginSources = [...live.entries()]
+    const pluginSources = livePluginToolSources();
+    // Host source first so its tool names win the dedupe in
+    // resolvePluginSessionTools over any collision from a plugin.
+    return opts.hostAgentToolSource ? [opts.hostAgentToolSource, ...pluginSources] : pluginSources;
+  }
+
+  function livePluginToolSources(): PluginAgentToolSource[] {
+    return [...live.entries()]
       .filter(([, current]) => current.handle)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([pluginId, current]) => ({
@@ -1279,11 +1424,63 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         tools: current.handle!.agentTools,
         configurers: current.handle!.agentConfigurers,
         extraInstructions: current.handle!.extraInstructions,
-        extraInstructionProviders: current.handle!.extraInstructionProviders
+        extraInstructionProviders: current.handle!.extraInstructionProviders,
+        onConfigureError: (error: unknown) => logPluginFailure(pluginId, 'configure failed for a session', error)
       }));
-    // Host source first so its tool names win the dedupe in
-    // resolvePluginSessionTools over any collision from a plugin.
-    return opts.hostAgentToolSource ? [opts.hostAgentToolSource, ...pluginSources] : pluginSources;
+  }
+
+  function logPluginFailure(pluginId: string, message: string, error: unknown): void {
+    appendPluginLogLine(
+      opts.dataDir,
+      pluginId,
+      'error',
+      `${message}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  async function assembleSessionInstructions(args: PluginSessionInstructionsArgs): Promise<string> {
+    const blocks: string[] = [];
+    const add = (pluginId: string, raw: unknown) => {
+      const text = typeof raw === 'string' ? raw.trim().slice(0, LIVE_INSTRUCTION_MAX) : '';
+      if (text) blocks.push(`Instructions from the ZCC plugin "${pluginId}":\n${text}`);
+    };
+    const ids = [...live.keys()].sort((left, right) => left.localeCompare(right));
+    for (const pluginId of ids) {
+      const handle = live.get(pluginId)?.handle;
+      if (!handle) continue;
+      for (const text of handle.extraInstructions) add(pluginId, text);
+      for (const provider of handle.extraInstructionProviders) {
+        try {
+          add(pluginId, await provider({ threadId: args.threadId, projectId: args.projectId }));
+        } catch (error) {
+          logPluginFailure(pluginId, 'contributeInstructions failed for a PTY session', error);
+        }
+      }
+      for (const configure of handle.agentConfigurers) {
+        try {
+          const result = await configure({
+            threadId: args.threadId,
+            projectId: args.projectId,
+            surface: args.surface,
+            sessionId: args.sessionId,
+            project: { id: args.projectId },
+            provider: { id: args.harness },
+            pluginMetadata: deepFreezePluginMetadata({})
+          });
+          add(pluginId, result?.instructions);
+        } catch (error) {
+          logPluginFailure(pluginId, 'configure failed for a PTY session', error);
+        }
+      }
+    }
+    const joined = blocks.join('\n\n');
+    if (joined.length <= PTY_SESSION_INSTRUCTIONS_MAX_CHARS) return joined;
+    appendLogForAll(ids, `plugin instructions for a PTY session exceeded ${PTY_SESSION_INSTRUCTIONS_MAX_CHARS} characters and were truncated`);
+    return joined.slice(0, PTY_SESSION_INSTRUCTIONS_MAX_CHARS);
+  }
+
+  function appendLogForAll(ids: string[], message: string): void {
+    for (const pluginId of ids) appendPluginLogLine(opts.dataDir, pluginId, 'warn', message);
   }
 
   async function configuredInstructions(): Promise<Array<{ pluginId: string; text: string }>> {
@@ -1294,8 +1491,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           const result = await provider({});
           const text = result?.instructions?.trim();
           if (text) out.push({ pluginId, text });
-        } catch {
-          /* one misbehaving configure() must not block the rest */
+        } catch (error) {
+          // One misbehaving configure() must not block the rest.
+          logPluginFailure(pluginId, 'configure failed for the machine-wide instructions skill', error);
         }
       }
     }
@@ -1508,8 +1706,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     let hostEntry: string | null = null;
     let serverEntry = row.serverEntry;
     let remoteEnvironmentNames: string[] = [];
+    let promptAccess = false;
+    let toolPolicyTimeoutMs = clampToolPolicyHandlerMs(undefined);
+    let toolResults: 'preview' | undefined;
     try {
       const manifest = loadManifestFromDir(row.rootDir);
+      promptAccess = manifest.promptAccess;
+      toolPolicyTimeoutMs = manifest.toolPolicyTimeoutMs;
+      toolResults = manifest.toolResults;
       hostEntry = manifest.hostEntry;
       if (manifest.serverEntry) serverEntry = manifest.serverEntry;
       remoteEnvironmentNames = parseRemoteEnvironmentNames(manifest.extra);
@@ -1542,6 +1746,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     let activationFailure: Error | null = null;
     let runtime: ReturnType<typeof createIsolatedPluginRuntime> | undefined;
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
+      isWorkerAlive: () => runtime?.isAlive() ?? true,
       toolPolicyRegistrationAllowed: () => {
         const active = live.get(row.id)?.handle;
         return !toolPolicySealed.has(row.id) || !active || active !== handle;
@@ -1553,6 +1758,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       requestPluginInteraction: opts.requestPluginInteraction,
       interruptPluginInteractions: opts.interruptPluginInteractions,
       consumePluginApproval: opts.consumePluginApproval,
+      requestPluginToolApproval: opts.requestPluginToolApproval,
       getInteraction: opts.getInteraction,
       upsertInteraction: opts.upsertInteraction,
       acknowledgeInteraction: opts.acknowledgeInteraction,
@@ -1730,7 +1936,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (activationFailure) throw activationFailure;
       toolPolicySealed.add(row.id);
       pendingToolPolicy.delete(row.id);
-      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage });
+      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage, promptAccess, toolPolicyTimeoutMs, toolResults });
       refreshToolPolicyInventory();
       cancelRecovery(row.id);
       if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
@@ -2278,6 +2484,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       let extra: Record<string, unknown> = {};
       let projectTab: PluginManifest['projectTab'];
       let peers = false;
+      let toolPolicyTimeoutMs: number | undefined;
       let themes: PluginThemeSnapshot[] = [];
       let name = row.name;
       let description = row.description;
@@ -2291,6 +2498,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         extra = manifest.extra;
         projectTab = manifest.projectTab;
         peers = manifest.peers;
+        if (manifest.toolPolicy === true) toolPolicyTimeoutMs = manifest.toolPolicyTimeoutMs;
         mcpServers = manifest.mcpServers.map((server) => ({
           name: server.name,
           type: server.type,
@@ -2319,6 +2527,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       } catch {
         projectTab = undefined;
         peers = false;
+        toolPolicyTimeoutMs = undefined;
       }
       return {
         id: row.id,
@@ -2337,6 +2546,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         source: row.source,
         projectTab,
         peers,
+        ...(toolPolicyTimeoutMs !== undefined ? { toolPolicyTimeoutMs } : {}),
         skillNames,
         mcpServers,
         extra,
@@ -2973,6 +3183,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     invokeAgentTool(args) {
       return invokePluginAgentTool(agentToolSources(), args.name, args.input, args.ctx);
     },
+    ptySessionTools(ctx) {
+      return resolvePluginSessionTools(livePluginToolSources(), ctx);
+    },
+    invokePtySessionTool(args) {
+      return invokePluginAgentTool(livePluginToolSources(), args.name, args.input, args.ctx);
+    },
     cliContributions,
     mentionProviders,
     resolveMention,
@@ -3006,11 +3222,30 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         [...live.values()].map((current) => current.handle?.emitThreadEvent(event) ?? Promise.resolve())
       );
     },
+    async emitToolSettled(intake) {
+      await Promise.all(
+        [...live.values()].map(async (current) => {
+          const handle = current.handle;
+          if (!handle?.hasToolSettledHandler) return;
+          try {
+            // Tool output is a data grant: only a plugin that declared `preview` gets any of it.
+            await handle.emitToolSettled(finalizeToolSettled(intake, current.toolResults === 'preview'));
+          } catch {
+            // Observational: a plugin failure never reaches the tool, and the event is not logged.
+          }
+        })
+      );
+    },
+    async sessionInstructions(args) {
+      return assembleSessionInstructions(args);
+    },
     async admitDispatch(request) {
       const reviews = [...live.values()].flatMap((current) =>
         (current.handle?.dispatchAdmissionHandlers ?? []).map(async (handler) => {
           try {
-            const decision: unknown = await handler(request);
+            // Prompt content is a data grant: only a plugin that declared it gets the field.
+            const { prompt: _prompt, ...identity } = request;
+            const decision: unknown = await handler(current.promptAccess && request.prompt ? request : identity);
             if (!decision || typeof decision !== 'object') throw new Error('invalid dispatch admission decision');
             const result = decision as Record<string, unknown>;
             if (result.action === 'reject' && typeof result.message === 'string') {
@@ -3068,18 +3303,30 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         const before = currentToolPolicyStamp();
         const unready = inventoryBlocksAllow();
         if (unready) return unready;
+        // The decision phase has one budget for every handler together; time a
+        // human spends on an `ask` is the separate approval phase and never counts.
+        let decisionSpentMs = 0;
         for (const current of live.values()) {
           for (const handler of current.handle?.toolPolicyHandlers ?? []) {
             try {
+              const remainingMs = DECISION_PHASE_MAX_MS - decisionSpentMs;
+              if (remainingMs <= 0) throw new Error('tool policy decision phase exhausted');
+              const startedAt = Date.now();
               const decision: unknown = await withDeadline(
                 Promise.resolve().then(() => handler(request)),
-                PLUGIN_MENTION_RESOLVE_TIMEOUT_MS,
+                Math.min(current.toolPolicyTimeoutMs ?? clampToolPolicyHandlerMs(undefined), remainingMs),
                 `tool policy ${current.row.id}`
               );
+              decisionSpentMs += Date.now() - startedAt;
               if (!decision || typeof decision !== 'object') throw new Error('invalid tool policy decision');
               const result = decision as Record<string, unknown>;
               if (result.action === 'deny' && typeof result.reason === 'string') {
                 return { action: 'deny', reason: result.reason } as const;
+              }
+              if (result.action === 'ask') {
+                const asked = await askForToolPolicyApproval(request, current.row.id, result);
+                if (asked.action === 'deny') return asked;
+                continue;
               }
               if (result.action !== 'allow') throw new Error('invalid tool policy decision');
             } catch (error) {
