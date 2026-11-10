@@ -403,8 +403,17 @@ export function validateLoops(units: readonly AdmissionWorkUnitInput[]): void {
     if (!fix.dependencies.includes(review.id)) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} must depend on ${review.id}`);
     if (targets.has(fixId)) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} is already the target of another loop`);
     if (fix.loop?.fixUnitId === review.id) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} loops back at the review`);
+    const gated = fix.dependencies.find((dependency) => dependency !== review.id && dependsOn(byId, dependency, review.id));
+    if (gated) throw new PlanValidationError('dag', `loop on ${review.id}: fix unit ${fixId} depends on ${gated}, which waits for ${review.id} to pass, so the loop could never run`);
     targets.add(fixId);
   }
+}
+
+/** Whether `unitId` depends, directly or through other units, on `targetId`. */
+function dependsOn(byId: ReadonlyMap<string, AdmissionWorkUnitInput>, unitId: string, targetId: string, seen = new Set<string>()): boolean {
+  if (seen.has(unitId)) return false;
+  seen.add(unitId);
+  return (byId.get(unitId)?.dependencies ?? []).some((dependency) => dependency === targetId || dependsOn(byId, dependency, targetId, seen));
 }
 
 function normalizeLoop(loop: WorkUnitLoopV1 | undefined, unitId: string): WorkUnitLoopV1 | undefined {

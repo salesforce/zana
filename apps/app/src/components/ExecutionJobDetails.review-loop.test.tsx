@@ -36,7 +36,7 @@ describe('REQ-10 job details review round', () => {
     expect(await screen.findByText(/Review round 2 of 3/)).toBeTruthy();
   });
 
-  it('shows the grown bound after a Retry at the limit', async () => {
+  it('renders the stored bound for a completed round', async () => {
     load({ loopRound: 2, loopMax: 2, state: 'COMPLETED' });
     expect(await screen.findByText(/Review round 2 of 2/)).toBeTruthy();
   });

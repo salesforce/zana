@@ -1046,7 +1046,7 @@ export function applyLoopVerdict(record: ExecutionRecord, review: ExecutionWorkU
 /** Retry at the loop limit: one more round, the review keeps its CHANGES verdict and the fix unit runs again. */
 function grantLoopRound(record: ExecutionRecord, review: ExecutionWorkUnit, timestamp: number): void {
   for (const blocker of record.blockers ?? []) {
-    if (blocker.workUnitId === review.id && !blocker.resolved) {
+    if (blocker.workUnitId === review.id && !blocker.resolved && blocker.id.startsWith(LOOP_LIMIT_BLOCKER_PREFIX)) {
       blocker.resolved = true;
       blocker.resolvedAt = timestamp;
       failActiveDeliveries(record, blocker.id, 'blocker resolved by work retry', timestamp);

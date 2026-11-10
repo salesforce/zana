@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createExecutionStore, type ExecutionRecord, type ExecutionWorkUnitInput } from '../store.js';
@@ -200,6 +200,20 @@ describe('REQ-9 limit blocker and Retry', () => {
     expect(unitOf(rec, 'r').state).toBe('BLOCKED'); // 1 + 1 extra = 2 rounds, now exhausted again
   }));
 
+  it('Retry leaves an unrelated open blocker on the review unit alone', async () => fixture(async (filePath) => {
+    const { store, id } = await start(filePath, plan(1));
+    await complete(store, id, 'r', { verdict: 'CHANGES' });
+    const state = JSON.parse(await readFile(filePath, 'utf8'));
+    const stored = state.records.find((r: ExecutionRecord) => r.id === id);
+    stored.blockers.push({ id: 'other-blocker', workUnitId: 'r', slotId: 'engine', question: 'unrelated?', audience: 'human', resolved: false, createdAt: 1 });
+    await writeFile(filePath, JSON.stringify(state));
+    const fresh = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let rec = (await fresh.get(id))!;
+    rec = await fresh.retryWork(id, rec.stateVersion, lead, 'r');
+    expect(rec.blockers!.find((b) => b.id === 'other-blocker')!.resolved).toBe(false);
+    expect(rec.blockers!.find((b) => b.id.startsWith('loop-limit:'))!.resolved).toBe(true);
+  }));
+
   it('Retry does not change plan identity: the same plan still re-registers', async () => fixture(async (filePath) => {
     const { store, id } = await start(filePath, plan(1));
     await complete(store, id, 'r', { verdict: 'CHANGES' });
@@ -259,5 +273,33 @@ describe('REQ-11 failed review does not strand the run', () => {
     expect(unitOf(rec, 'a').state).toBe('SKIPPED');
     rec = await store.retryWork(id, rec.stateVersion, lead, 'r');
     expect(unitOf(rec, 'a').state).not.toBe('SKIPPED');
+  }));
+});
+
+describe('REQ-9 limit announcement failure path', () => {
+  it('logs a failed announcement and still finishes the completion', async () => fixture(async (filePath) => {
+    const logError = vi.fn();
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService({
+      store, inbox: { append: vi.fn(async () => ({ id: 'i' })), appendOnce: vi.fn(async () => ({ id: 'i' })) }, logError,
+      artifacts: createExecutionArtifactStore({ filePath: `${filePath}.artifacts`, id: () => 'artifact-1' }),
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [] } } }),
+      launchTeam: async () => ({ ok: true }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] }),
+      cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
+      replyToSession: () => false,
+      resolveExactNativeRecoverySnapshots: (record: ExecutionRecord) => record.nativeRecoverySnapshots ?? []
+    } as never);
+    vi.spyOn(service as never as { wakeCoordinator: () => Promise<void> }, 'wakeCoordinator').mockRejectedValue(new Error('wake down'));
+    await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Loop', slots: [{ initialTask: 'x' }] });
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, plan(1));
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'r');
+    const unit = unitOf(record, 'r');
+    const binding = { executionId: record.id, projectId: record.projectId, role: 'worker' as const, slotId: 'slot-1', principalId: 'worker-1' };
+    const outcome = await service.completeWork(binding, 'r', 'changes found', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true, { verdict: 'CHANGES' });
+    expect(outcome.ok).toBe(true);
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('execution-1/r'), expect.any(Error));
   }));
 });

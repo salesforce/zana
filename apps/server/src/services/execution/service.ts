@@ -1755,11 +1755,18 @@ export class ExecutionService {
 
   /** A completed review that hit its loop bound is now blocked: tell the person and the coordinator at once. */
   private async announceLoopLimit(record: ExecutionRecord, workUnitId: string, stateOrClaimGeneration: string): Promise<void> {
-    const unit = record.workUnits?.find((candidate) => candidate.id === workUnitId);
-    const blocker = unit?.state === 'BLOCKED' && unit.loop
-      ? record.blockers?.find((candidate) => !candidate.resolved && candidate.workUnitId === workUnitId && candidate.id.startsWith(LOOP_LIMIT_BLOCKER_PREFIX))
-      : undefined;
-    if (blocker) await this.announceHumanBlocker(record, blocker, workUnitId, stateOrClaimGeneration, {});
+    if (!record.workUnits?.find((candidate) => candidate.id === workUnitId)?.loop) return;
+    try {
+      // A Retry can land while the settlement hook runs: act on the current record, not the one from before the await.
+      const current = await this.deps.store.get(record.id) ?? record;
+      const unit = current.workUnits?.find((candidate) => candidate.id === workUnitId);
+      const blocker = unit?.state === 'BLOCKED'
+        ? current.blockers?.find((candidate) => !candidate.resolved && candidate.workUnitId === workUnitId && candidate.id.startsWith(LOOP_LIMIT_BLOCKER_PREFIX))
+        : undefined;
+      if (blocker) await this.announceHumanBlocker(current, blocker, workUnitId, stateOrClaimGeneration, {});
+    } catch (error) {
+      this.deps.logError?.(`execution loop-limit announcement failed for ${record.id}/${workUnitId}`, error);
+    }
   }
 
   /** Shared tail of a human blocker: hook, coordinator wake and Inbox entry. */
