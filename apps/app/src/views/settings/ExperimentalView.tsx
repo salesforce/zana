@@ -113,6 +113,13 @@ export function ExperimentalView({
         />
       </Section>
 
+      <Section searchId="experimental.thread-communication-section" anchorId="thread-communication" title="Thread communication"
+        help="Threads can exchange messages with threads and CLI Agents in the same project. Every message waits for your review before delivery. Existing CLI-to-CLI messaging keeps its current behavior.">
+        <CheckboxField searchId="experimental.thread-communication" label="Enable thread communication"
+          checked={config.threadCommunicationEnabled ?? true}
+          help="Enabled by default. Review a message in the thread and choose Deliver or Discard. Delivery can start work using the recipient’s existing tools and permissions. Turning this off blocks new sends and pending delivery; turning it on again requires fresh review."
+          onChange={threadCommunicationEnabled => onUpdate({ threadCommunicationEnabled })} />
+      </Section>
       <Section
         searchId="experimental.extension-llm"
         anchorId="extension-llm"

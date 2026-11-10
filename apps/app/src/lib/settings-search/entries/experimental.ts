@@ -8,6 +8,16 @@ const VOICE_MODELS = ['gpt-transcribe (Codex)', 'whisper-1', 'gpt-4o-transcribe'
 
 export const entries: readonly SettingsSearchEntry[] = [
   {
+    id: 'experimental.thread-communication-section', section: 'experimental', anchor: 'thread-communication',
+    label: 'Thread communication', kind: 'subsection', help: 'Threads can exchange messages with threads and CLI Agents in the same project. Every message waits for your review before delivery. Existing CLI-to-CLI messaging keeps its current behavior.',
+    keywords: ['peer', 'messaging', 'collaboration', 'agent_send']
+  },
+  {
+    id: 'experimental.thread-communication', section: 'experimental', anchor: 'thread-communication',
+    label: 'Enable thread communication', kind: 'setting', value: onOff(c => c.threadCommunicationEnabled, true), help: 'Enabled by default. Review a message in the thread and choose Deliver or Discard. Delivery can start work using the recipient’s existing tools and permissions. Turning this off blocks new sends and pending delivery; turning it on again requires fresh review.',
+    keywords: ['peer', 'messaging', 'review', 'deliver', 'discard']
+  },
+  {
     id: 'experimental.provider-service-tiers',
     section: 'experimental',
     anchor: 'provider-service-tiers',

@@ -2,6 +2,16 @@ import { connect } from 'node:net';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Result, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { ThreadPeer } from '../services/agents/peer-tool-contract.js';
+
+export interface CliPeerSend {
+  to: string;
+  projectId: string;
+  fromSessionId: string;
+  fromHandle: string;
+  message: string;
+  generation?: number;
+}
 
 const CONTROL_TIMEOUT_MS = 20_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
@@ -124,6 +134,8 @@ export interface ProductCliAgentRecord {
 }
 
 export interface ProductCliAgentOps {
+  peers?(projectId?: string): Promise<ThreadPeer[]>;
+  sendPeer?(input: CliPeerSend): Promise<{ ok: boolean; id?: string; delivered?: boolean; error?: string }>;
   invalidateModelCatalog?(providerId: string): Promise<unknown>;
   create(input: ProductCliAgentCreateInput): Promise<unknown>;
   status(sessionId: string): Promise<unknown>;
@@ -135,6 +147,19 @@ export interface ProductCliAgentOps {
 
 export function createCliAgentOpsViaControl(dataDir: string): ProductCliAgentOps {
   return {
+    peers: async (projectId) => {
+      const result = asControlResult<Array<{ sessionId: string; projectId: string; displayName?: string; handle?: string; role?: string; capabilities?: string[]; state?: string; teamLaunchId?: string }>>(
+        await callControlAsProductServer(dataDir, 'agent.list', {}));
+      if (!result.ok) return [];
+      return result.value.filter(peer => (!projectId || peer.projectId === projectId) && !peer.teamLaunchId).slice(0, 200)
+        .map(peer => ({ sessionId: peer.sessionId, projectId: peer.projectId, kind: 'cli-agent',
+          displayName: peer.displayName || peer.handle || peer.sessionId, handle: peer.handle, role: peer.role,
+          capabilities: peer.capabilities, status: peer.state ?? 'unknown' }));
+    },
+    sendPeer: async (input) => {
+      const result = asControlResult<{ id: string; delivered: boolean }>(await callControlAsProductServer(dataDir, 'agent.peer.send', { ...input }));
+      return result.ok ? { ok: true, ...result.value } : { ok: false, error: result.message };
+    },
     invalidateModelCatalog: async (providerId) => {
       // Standalone servers have no desktop cache. The boot-only credential
       // identifies the desktop-attached case without exposing it to renderers.
