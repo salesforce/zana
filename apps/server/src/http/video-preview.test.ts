@@ -106,8 +106,20 @@ describe('video HTTP streaming', () => {
     const storage = await fetch(url('clip.webm', { threadId: 't1', source: 'thread-storage' }));
     expect(await storage.text()).toBe('video');
     vi.mocked(getEnvironment).mockReturnValue(null);
+    const absoluteStorage = await fetch(url(join(root, 'thread-storage/t1/clip.webm'), { threadId: 't1' }));
+    expect(await absoluteStorage.text()).toBe('video');
     const attachment = await fetch(url(join(root, 'attachments/p1/clip.webm'), { threadId: 't1' }));
     expect(await attachment.text()).toBe('video');
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it('rejects absolute storage paths belonging to other threads and storage symlink escapes', async () => {
+    await mkdir(join(root, 'thread-storage/t1'), { recursive: true });
+    await symlink(join(root, 'large.mp4'), join(root, 'thread-storage/t1/escape.mp4'));
+    expect((await fetch(url(join(root, 'thread-storage/t1/escape.mp4'), { threadId: 't1' }))).status).toBe(404);
+    vi.mocked(getEnvironment).mockReturnValue({ path: '/remote/checkout' } as never);
+    for (const id of ['t2', 't1-other']) {
+      expect((await fetch(url(join(root, 'thread-storage', id, 'clip.mp4'), { threadId: 't1' }))).status).toBe(403);
+    }
     expect(rpc).not.toHaveBeenCalled();
   });
   it('rejects missing files, traversal, symlink escapes, directories and unauthorized roots', async () => {

@@ -48,6 +48,8 @@ const activeOwnedRuns = vi.fn<SquadLaunchNowDeps['activeOwnedRuns']>();
 const executionState = vi.fn<NonNullable<SquadLaunchNowDeps['executionState']>>();
 const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
+let planTierFitDep: SquadProposalServiceDeps['planTierFit'];
+
 function build(over: { staging?: StagingStore | null; maxRecords?: number } = {}) {
   const store = createSquadProposalStore({ filePath: join(root, 'state', 'squad-proposals.json'), now: () => clock, ...(over.maxRecords ? { maxRecords: over.maxRecords } : {}) });
   const staging = over.staging === null ? undefined : over.staging ?? createStagingStore({ root: join(homeDir, '.zcc', 'squad-proposals', 'staged') });
@@ -62,6 +64,7 @@ function build(over: { staging?: StagingStore | null; maxRecords?: number } = {}
     teamHostProblem: () => hostProblem,
     expandTeamSlots: () => Array.from({ length: slotCount }),
     resolveSquadPlan: resolveSquadPlan as never,
+    planTierFit: (...a) => planTierFitDep?.(...a) ?? Promise.resolve([]),
     fs: {
       realpath: (p) => fsImpl.realpath(p),
       lstat: (p) => fsImpl.lstat(p),
@@ -120,6 +123,7 @@ beforeEach(() => {
   readFails = false;
   fsImpl = realFs;
   logError.mockReset();
+  planTierFitDep = undefined;
   svc = build();
 });
 
@@ -252,6 +256,38 @@ describe('reading confined sources', () => {
   it('reads an unchanged source through the verified handle', async () => {
     expect(code(await svc.service.checkPlan(route, { path: 'plan.md' }))).toBe('ok');
     expect(resolveSquadPlan).toHaveBeenCalledWith('provided', ['# plan']);
+  });
+});
+
+describe('checkPlan tier fit (advisory)', () => {
+  const units = [{ id: 'u1', title: 'One', dependencies: [] }];
+  const finding = (kind: 'over-tiered' | 'under-tiered' | 'no-eligible-slot') => ({ unitId: 'u1', kind, detail: `d-${kind}` });
+  const withFit = (planTierFit: unknown) => { planTierFitDep = planTierFit as never; return svc.service; };
+
+  it.each(['over-tiered', 'under-tiered', 'no-eligible-slot'] as const)('adds %s findings without changing ok', async (kind) => {
+    resolveSquadPlan.mockReturnValue({ workUnits: units });
+    const planTierFit = vi.fn(async () => [finding(kind)]);
+    const res = await withFit(planTierFit).checkPlan(route, { text: '# p', teamId: 't1' });
+    expect(res).toEqual({ ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [] }], tierFit: { findings: [finding(kind)] } } });
+    expect(planTierFit).toHaveBeenCalledWith(route.projectId, 't1', units);
+  });
+
+  it('omits tierFit with no findings, no teamId, no dep, or a failing dep', async () => {
+    resolveSquadPlan.mockReturnValue({ workUnits: units });
+    const plain = { ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [] }] } };
+    expect(await withFit(async () => []).checkPlan(route, { text: '# p', teamId: 't1' })).toEqual(plain);
+    const spy = vi.fn(async () => [finding('over-tiered')]);
+    expect(await withFit(spy).checkPlan(route, { text: '# p' })).toEqual(plain);
+    expect(spy).not.toHaveBeenCalled();
+    expect(await withFit(undefined).checkPlan(route, { text: '# p', teamId: 't1' })).toEqual(plain);
+    expect(await withFit(async () => { throw new Error('boom'); }).checkPlan(route, { text: '# p', teamId: 't1' })).toEqual(plain);
+  });
+
+  it('does not run tier fit for an invalid plan', async () => {
+    resolveSquadPlan.mockReturnValue({ planError: 'bad' });
+    const spy = vi.fn(async () => [finding('over-tiered')]);
+    expect(await withFit(spy).checkPlan(route, { text: '# p', teamId: 't1' })).toEqual({ ok: true, value: { ok: false, reason: 'bad' } });
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

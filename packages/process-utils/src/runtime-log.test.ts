@@ -2,11 +2,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createRuntimeLog, installRuntimeLog, redactRuntimeLog } from './runtime-log.js';
+import { EventEmitter } from 'node:events';
+import { createRuntimeLog, guardOutputPipes, installRuntimeLog, redactRuntimeLog } from './runtime-log.js';
 const roots: string[] = [];
 async function root() { const p = await mkdtemp(join(tmpdir(), 'zcc-log-')); roots.push(p); return p; }
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 describe('durable runtime logs', () => {
+  it('absorbs disconnected output pipes without logging recursively and releases listeners', () => {
+    const stdout = new EventEmitter(), stderr = new EventEmitter();
+    const release = guardOutputPipes([stdout, stderr]);
+    const brokenPipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+    for (const stream of [stdout, stderr]) {
+      expect(() => stream.emit('error', brokenPipe)).not.toThrow();
+      const otherError = Object.assign(new Error('I/O failure'), { code: 'EIO' });
+      expect(() => stream.emit('error', otherError)).toThrow(otherError);
+    }
+    release(); release();
+    expect(stdout.listenerCount('error')).toBe(0);
+    expect(stderr.listenerCount('error')).toBe(0);
+  });
   it('redacts credentials before writing private logs, without inspecting objects', async () => {
     const sink = createRuntimeLog(await root(), 'server', { env: { API_KEY: 'sensitive-value' } });
     sink.write('error', ['Bearer abc', '--join-code flag-secret', 'token=foo', 'sensitive-value', 'https://user:pass@host/t/zcrs_abcdef', { get secret() { throw new Error('getter must not run'); } }, new Error('failure')]);
@@ -34,11 +48,16 @@ describe('durable runtime logs', () => {
     const dir = await root(), bundle = join(dir, 'bundle.js'); await writeFile(bundle, 'test');
     vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
     const before = process.listenerCount('uncaughtExceptionMonitor');
+    const outputListeners = [process.stdout, process.stderr].map(stream => stream.listenerCount('error'));
     const sink = installRuntimeLog(dir, 'desktop', bundle);
+    for (const [index, stream] of [process.stdout, process.stderr].entries()) {
+      expect(stream.listenerCount('error')).toBe(outputListeners[index] + 1);
+    }
     console.error('example error'); console.warn('example warning');
     await vi.waitFor(async () => { await sink.flush(); expect(await readFile(sink.file, 'utf8')).toContain('sha256='); });
     await sink.close();
     const content = await readFile(sink.file, 'utf8'); expect(content).toContain('example error'); expect(content).toContain('example warning');
     expect(process.listenerCount('uncaughtExceptionMonitor')).toBe(before);
+    expect([process.stdout, process.stderr].map(stream => stream.listenerCount('error'))).toEqual(outputListeners);
   });
 });

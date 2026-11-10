@@ -13,7 +13,7 @@ import {
 import { claudeCodePermissionModeForTurn } from './conversation-execution-mode.js';
 import { threadPermissionMode } from './thread-permission-mode.js';
 import { readLastThreadExecution } from './thread-last-execution.js';
-import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
+import { threadAutomatedSkillIds, threadSkillSelection } from './thread-automated-skill-selection.js';
 
 export function isUnknownThreadHostError(error: unknown): boolean {
   return Boolean(
@@ -48,7 +48,8 @@ export async function threadResumeFields(
     projectId: thread.projectId,
     permissionMode,
     ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
-    plugins: ctx.plugins
+    plugins: ctx.plugins,
+  skillSelection: threadSkillSelection(ctx.db, thread.id)
   });
   const automatedSkillIds = threadAutomatedSkillIds(ctx.db, thread.id);
   return {

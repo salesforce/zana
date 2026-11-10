@@ -11,6 +11,7 @@ vi.mock('@zana-ai/zcc-db', () => ({
 
 import {
   effectivePreviewRoots,
+  effectivePreviewRootsFor,
   isLocalDesktopHost,
   matchPreviewRoots, matchPreviewRootsAsync,
   openLocalPreviewFile,
@@ -38,6 +39,32 @@ const ctx = (folders: string[], projects: unknown[] = []) => ({
   db,
   config: { getConfig: () => ({ trustedPreviewFolders: folders }) },
   toProjects: () => projects as never
+});
+
+describe('thread storage roots', () => {
+  it('opens storage belonging to the registered thread even when its host is remote', async () => {
+    const dataDir = join(base, 'data');
+    const storage = join(dataDir, 'thread-storage', 't1');
+    mkdirSync(storage, { recursive: true });
+    const report = join(storage, 'index.html');
+    writeFileSync(report, '<h1>Recording and results</h1>');
+    const roots = effectivePreviewRootsFor(
+      { ...ctx([trusted]), dataDir },
+      { thread: { id: 't1', hostId: 'remote-host' }, projectId: null }
+    );
+    expect(roots).toContainEqual({ path: storage, trusted: false });
+    expect(roots.some((root) => root.trusted)).toBe(false);
+    const result = await openLocalPreviewFile(roots, report);
+    expect(result.kind).toBe('opened');
+    if (result.kind === 'opened') {
+      expect(await result.file.handle.readFile('utf8')).toContain('Recording and results');
+      await result.file.handle.close();
+    }
+    expect(matchPreviewRoots(roots, join(dataDir, 'thread-storage', 't2', 'index.html'))).toEqual([]);
+    expect(matchPreviewRoots(roots, `${storage}-other/index.html`)).toEqual([]);
+    const threadless = effectivePreviewRootsFor({ ...ctx([]), dataDir }, { thread: null, projectId: null });
+    expect(matchPreviewRoots(threadless, report)).toEqual([]);
+  });
 });
 
 describe('trustedFoldersForTarget', () => {

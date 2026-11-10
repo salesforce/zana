@@ -39,6 +39,7 @@ export function appendClientTurnRequested(
     reasoningLevel?: ReasoningLevel;
     serviceTier?: string;
     acpMode?: string;
+    senderThreadId?: string;
   }
 ): string | undefined {
   const input = promptInputForTurn(args.prompt, args.promptInput);
@@ -54,8 +55,8 @@ export function appendClientTurnRequested(
     direction: 'outbound',
     requestId,
     source: args.kind === 'thread-start' ? 'spawn' : 'tell',
-    initiator: 'user',
-    senderThreadId: null,
+    initiator: args.senderThreadId ? 'agent' : 'user',
+    senderThreadId: args.senderThreadId ?? null,
     input,
     target: args.kind === 'steer'
       ? { kind: 'steer', expectedTurnId: args.expectedTurnId ?? null }

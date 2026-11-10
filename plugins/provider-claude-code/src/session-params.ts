@@ -27,6 +27,22 @@ interface ClaudeSkillConfigParams {
   plugins: ClaudeLocalPluginConfig[];
 }
 
+/** `Options.skills` only when main authorized a list (an empty array is a real, restrictive list). */
+function buildClaudeSkillAllowlistParams(
+  allowlist: readonly string[] | undefined,
+): { skills: string[] } | undefined {
+  if (allowlist === undefined) return undefined;
+  // SDK matches the exact canonical name (`plugin:skill`) or a `:name` suffix; a bare name only
+  // matches a non-plugin skill. Injected skills live under `zcc-global-skills[-hash]`, so a bare
+  // entry also emits the `:name` suffix form. Qualified/suffix entries pass through unchanged.
+  const out = new Set<string>();
+  for (const entry of allowlist) {
+    out.add(entry);
+    if (!entry.includes(":")) out.add(`:${entry}`);
+  }
+  return { skills: [...out] };
+}
+
 export interface ClaudeCodeSkillRoot {
   id: string;
   localPluginPath: string;
@@ -79,6 +95,7 @@ export type ClaudeSessionExecutionOptions = RuntimePermissionPolicy & {
   memoryEnabled?: boolean | undefined;
   providerSubagentsEnabled?: boolean | undefined;
   skillRoots?: readonly ClaudeCodeSkillRoot[] | undefined;
+  skillAllowlist?: readonly string[] | undefined;
 };
 
 function resolveClaudeSessionPermissionMode(
@@ -115,6 +132,9 @@ function buildInternalSessionParams(
         )
       : undefined;
   const skillConfig = buildClaudeSkillConfigParams(args.options.skillRoots);
+  const skillAllowlistParams = buildClaudeSkillAllowlistParams(
+    args.options.skillAllowlist,
+  );
   return {
     baseInstructions,
     threadId: args.threadId,
@@ -128,6 +148,7 @@ function buildInternalSessionParams(
       ? additionalWorkspaceWriteRootsParams
       : {}),
     ...(skillConfig ? skillConfig : {}),
+    ...(skillAllowlistParams ? skillAllowlistParams : {}),
     ...(config ? { config } : {}),
     ...(args.options.model ? { model: args.options.model } : {}),
     ...(args.options.reasoningLevel
@@ -154,6 +175,7 @@ const claudeProviderOptionsSchema = z
     memoryEnabled: z.boolean().optional(),
     providerSubagentsEnabled: z.boolean().optional(),
     additionalWorkspaceWriteRoots: z.array(z.string()).optional(),
+    skillAllowlist: z.array(z.string()).optional(),
   })
   .passthrough();
 
@@ -200,6 +222,7 @@ export function buildClaudeSessionParams(
       chromeEnabled: providerOptions.chromeEnabled ?? false,
       memoryEnabled: providerOptions.memoryEnabled,
       providerSubagentsEnabled: providerOptions.providerSubagentsEnabled,
+      skillAllowlist: providerOptions.skillAllowlist,
     },
   });
   return args.sessionKind === undefined

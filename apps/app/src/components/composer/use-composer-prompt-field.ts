@@ -59,6 +59,8 @@ export type ComposerKeyInterceptor = (event: {
   metaKey: boolean;
   ctrlKey: boolean;
   altKey: boolean;
+  defaultPrevented?: boolean;
+  isComposing?: boolean;
   preventDefault: () => void;
   stopPropagation: () => void;
 }) => boolean;

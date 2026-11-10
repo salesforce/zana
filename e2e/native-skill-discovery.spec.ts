@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { test, expect, launchApp } from './fixtures/app.js';
+import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
 function file(path: string, content: string) {
   mkdirSync(dirname(path), { recursive: true });
@@ -17,6 +17,7 @@ test('native skills and legacy commands survive the built Electron host RPC boun
   home
 }) => {
   const config = join(home, 'custom-claude');
+  file(join(home, '.claude/skills/stale-default/SKILL.md'), '---\nname: stale-default\ndescription: Old user config\n---\nStale');
   const plugin = join(config, 'plugins/cache/test/reviewer/1.0.0');
   file(
     join(config, 'commands/grill-me.md'),
@@ -85,6 +86,7 @@ test('native skills and legacy commands survive the built Electron host RPC boun
     );
     expect(catalog.skills.map((row: any) => row.name)).not.toContain('empty');
     expect(catalog.skills.map((row: any) => row.name)).not.toContain('uninstalled');
+    expect(catalog.skills.map((row: any) => row.name)).not.toContain('stale-default');
     expect(catalog.commands.map((row: any) => row.name)).toContain('/reviewer:check');
     expect(catalog.commands.map((row: any) => row.name)).not.toContain('/agent-only');
     await route(app, '/extensions/skills');
@@ -96,6 +98,7 @@ test('native skills and legacy commands survive the built Electron host RPC boun
     const palette = await app.window.evaluate(() => window.cc.commands.list());
     expect(palette.map((row) => row.invocation)).toContain('/grill-me');
     expect(palette.map((row) => row.invocation)).not.toContain('/agent-only');
+    expect(palette.map((row) => row.invocation)).not.toContain('/stale-default');
     file(
       join(config, 'settings.json'),
       JSON.stringify({ enabledPlugins: { 'reviewer@test': false } })
@@ -106,7 +109,7 @@ test('native skills and legacy commands survive the built Electron host RPC boun
     await app.window.getByRole('button', { name: 'Refresh skills', exact: true }).click();
     await expect(app.window.locator('.skills-row')).toContainText('after-refresh');
   } finally {
-    await app.electron.close();
+    await closeApp(app.electron);
   }
 });
 

@@ -1,5 +1,6 @@
 import type { Persona, Team, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
+import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import type { PlanAuthoringTransport } from '@zana-ai/zcc-domain/squad-proposal';
 
 /**
@@ -145,7 +146,30 @@ function legacyMcpKickoffLines(hasSources: boolean): string[] {
  *    register, so the coordinator STILL never calls `dispatch_ready`.
  */
 /** A seat is either running (has a session id) or waiting to start; never neither. */
-export type RosterEntry = { slotId: string; label: string } & ({ sessionId: string; startsWhenNeeded?: undefined } | { startsWhenNeeded: true; sessionId?: undefined });
+export type RosterEntry = { slotId: string; label: string; /** Model tier of the seat, when known; drives the tier roster. */ tier?: ModelLevel } & ({ sessionId: string; startsWhenNeeded?: undefined } | { startsWhenNeeded: true; sessionId?: undefined });
+
+/** Attach each seat's resolved model tier (by slot id) to its roster entry; entries without a known tier are untouched. */
+export function rosterWithTiers(roster: readonly RosterEntry[], routes: readonly { slotId: string; level?: ModelLevel }[] | undefined): RosterEntry[] {
+  const levels = new Map((routes ?? []).filter((route) => route.level).map((route) => [route.slotId, route.level as ModelLevel]));
+  return roster.map((entry) => {
+    const tier = levels.get(entry.slotId);
+    return tier ? { ...entry, tier } : entry;
+  });
+}
+
+/**
+ * Advisory tier roster plus the cost rule. Empty when no seat has a known tier, so a
+ * Team without tier facts gets a byte-identical prompt.
+ */
+function tierRosterBlock(roster: readonly RosterEntry[]): string {
+  const tiered = roster.filter((worker) => worker.tier);
+  if (tiered.length === 0) return '';
+  return [
+    'Worker tiers (cheaper tiers cost less per unit; tiering is advisory):',
+    ...tiered.map((worker) => `- ${worker.label}, slot \`${worker.slotId}\`: ${worker.tier}${worker.startsWhenNeeded ? ' (starts when needed)' : ' (running)'}`),
+    'Give each work unit the lowest sufficient Execution class (Routine, Standard, or Expert) and, where you set `routing.minimumLevel`, the lowest tier that can do the work. Reserve higher tiers for ambiguous, high-risk, or adjudicative units.'
+  ].join('\n');
+}
 
 export function jobCoordinatorPrompt(input: {
   team: Team;
@@ -208,6 +232,7 @@ export function jobCoordinatorPrompt(input: {
     ...waiting.map((worker) => `- ${worker.label}, slot \`${worker.slotId}\``),
     'The engine starts each of these seats when it assigns its first unit. Do not message them or wait for them to appear; assign work to their slots as normal.'
   ].join('\n');
+  const tierBlock = tierRosterBlock(input.roster);
   const hasSources = sources.length > 0;
   // One of four kickoff arms, keyed on host-computed plan readiness then on
   // whether a plan-file handoff path was provided. Each arm is a named helper; the
@@ -225,6 +250,7 @@ export function jobCoordinatorPrompt(input: {
     `You are coordinator of Team "${input.team.name}"${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Your coordinator identity, execution binding, and worker roster are already host-bound. Do not discover, register, recover, or replace them during normal kickoff.`,
     `Workers are already running:\n${rosterLines.join('\n') || (waiting.length ? '- No workers are running yet.' : '- No workers.')}`,
     ...(waitingBlock ? [waitingBlock] : []),
+    ...(tierBlock ? [tierBlock] : []),
     ...(input.recoveryResume ? [
       'Recovery resume: this coordinator reopened its trusted native session for this same execution slot.',
       // A planless run has no retained plan to resume: a plan this session

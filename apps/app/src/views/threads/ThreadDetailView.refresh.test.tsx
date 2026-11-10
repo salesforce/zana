@@ -27,6 +27,7 @@ vi.mock('../../components/thread/ThreadDetailOverflow.js',() => ({ThreadDetailOv
 vi.mock('../../components/thread/ThreadDetailSearch.js',() => ({ThreadDetailSearch:() => null}));
 vi.mock('../../components/thread/timeline/ThreadBanners.js',() => ({ThreadDetailHeading:({title,metadata}:any) => <><h1>{title}</h1>{metadata}</>,ThreadDetailActions:({children}:any) => children,ThreadPromptModeCard:() => null,ThreadStatusBadge:() => null,ThreadTodoCard:() => null}));
 vi.mock('../../components/thread/timeline/ComposerStackCards.js',() => ({BackgroundCommandsCard:() => null,ModelFallbackCard:() => null,PromptContextBanner:({branchName}:any) => <div data-testid="composer-branch">{branchName}</div>,QueuedMessagesCard:() => null}));
+vi.mock('../../components/thread/timeline/PeerMessageReviews.js', () => ({ PeerMessageReviews: () => null }));
 vi.mock('../../components/thread/pending-interactions/ChildThreadPendingBanners.js',() => ({ChildThreadPendingBanners:() => null}));
 vi.mock('../../plugins/PluginThreadHeaderActions.js',() => ({PluginThreadHeaderActions:() => null}));
 vi.mock('../../plugins/thread-panel-owner.js',() => ({ThreadPanelOwnerProvider:({children}:any) => children}));

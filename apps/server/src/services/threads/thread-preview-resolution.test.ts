@@ -251,6 +251,36 @@ describe('resolveThreadPreviewPath', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it('resolves absolute Markdown links inside the owning thread storage without a host checkout', async () => {
+    ctx.dataDir = mkdtempSync(join(tmpdir(), 'preview-thread-storage-'));
+    h.thread.environmentId = null;
+    const path = join(ctx.dataDir, 'thread-storage', 'thread-1', 'recording', 'index.html');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '<h1>Recording and results</h1>');
+    await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path }))
+      .resolves.toEqual({ kind: 'resolved', path });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects other threads, sibling prefixes and symlink escapes from thread storage', async () => {
+    ctx.dataDir = mkdtempSync(join(tmpdir(), 'preview-thread-storage-'));
+    const root = join(ctx.dataDir, 'thread-storage', 'thread-1');
+    mkdirSync(root, { recursive: true });
+    const privatePath = join(ctx.dataDir, 'private.html');
+    writeFileSync(privatePath, 'private');
+    symlinkSync(privatePath, join(root, 'escape.html'));
+    for (const path of [
+      join(ctx.dataDir, 'thread-storage', 'thread-2', 'index.html'),
+      join(ctx.dataDir, 'thread-storage', 'thread-1-other', 'index.html')
+    ]) {
+      await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path }))
+        .rejects.toMatchObject({ status: 403, code: 'path-escape' });
+    }
+    await expect(resolveThreadPreviewPath(ctx, 'thread-1', { path: join(root, 'escape.html') }))
+      .rejects.toMatchObject({ status: 404, code: 'path_not_found' });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it('resolves attachments under the product data dir for project-only previews', async () => {
     h.thread = null;
     ctx.toProjects = vi.fn(() => [{ id: 'project-1', path: '/srv/checkouts/project-1', remote: false, hostId: 'linux-host' }]);

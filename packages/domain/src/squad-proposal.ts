@@ -241,8 +241,15 @@ export type SquadLaunchNowErrorCode =
 export const LAUNCH_REVIEW_REQUIRED_MESSAGE =
   "This Squad requires review before launch. Use squad_launch with mode 'review' so the user can Launch it from the Inbox.";
 
+/** Advisory tier-fit finding for a checked plan against a Squad's roster. Never changes pass/fail. */
+export interface SquadPlanTierFitFinding {
+  unitId: string;
+  kind: 'over-tiered' | 'under-tiered' | 'no-eligible-slot';
+  detail: string;
+}
+
 export type SquadPlanCheckResult =
-  | { ok: true; steps: SquadPlanStep[] }
+  | { ok: true; steps: SquadPlanStep[]; /** Advisory warnings; present only when a teamId was given and there are findings. */ tierFit?: { findings: SquadPlanTierFitFinding[] } }
   | { ok: false; reason: string };
 
 /** Shown wherever a reviewer sees attached content: it is a private copy, so later edits to the original are not picked up. */

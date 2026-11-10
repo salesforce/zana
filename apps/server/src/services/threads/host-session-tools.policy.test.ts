@@ -48,9 +48,15 @@ describe('host session tool policy', () => {
     expect(HOST_ADAPT_TOOL_NAMES).not.toContain('inbox_ask');
     expect(HOST_ADAPT_TOOL_NAMES).toContain('followup_create');
     expect(HOST_PTY_ONLY_TOOL_NAMES).toContain('schedule_report');
-    expect(HOST_PTY_ONLY_TOOL_NAMES).toContain('register_agent');
+    expect(HOST_SHARE_TOOL_NAMES).toContain('register_agent');
+    expect(HOST_SHARE_TOOL_NAMES).toContain('agent_send');
   });
 
+  it('omits peer tools and guidance when the experiment is disabled', () => {
+    const packed = mergeHostSessionTooling({}, { threadCommunicationEnabled: false });
+    expect(packed.dynamicTools?.some(tool => ['agent_send', 'agent_inbox', 'register_agent', 'list_agents', 'find_agent'].includes(tool.name))).toBe(false);
+    expect(packed.instructions).not.toContain('Threads and CLI Agents can coordinate');
+  });
   it('reserves SHARE names so plugins cannot register colliding tools', async () => {
     const { RESERVED_AGENT_TOOL_NAMES } = await import(
       '@zana-ai/zcc-plugin-sdk/internal/host-policy'
@@ -63,4 +69,12 @@ describe('host session tool policy', () => {
       ])
     );
   });
+});
+
+it('omits peer tools for remote and in-app terminal sessions when disabled', () => {
+  for (const options of [{ remoteSurface: { label: 'remote' } }, { inAppAgentTerminalsEnabled: true }]) {
+    const packed = mergeHostSessionTooling({}, { ...options, threadCommunicationEnabled: false });
+    expect(packed.dynamicTools?.some(tool => tool.name === 'agent_send')).toBe(false);
+    expect(packed.instructions).not.toContain('Threads and CLI Agents can coordinate');
+  }
 });

@@ -8,7 +8,7 @@ declare module '@zana-ai/zcc-plugin-sdk' {
   export type { ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
 
   export type { PluginSdk, PluginSdkInbox, PluginSdkInboxEntry, PluginSdkInboxSearchArgs, PluginSdkInboxSearchResult, PluginSdkInboxReport, PluginSdkAssistant } from '@zana-ai/zcc-plugin-sdk/server';
-  export type { PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
+  export type { PluginNotificationSoundProviderRegistration, PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
 
 /** A JSON-safe path segment reported by a Standard Schema validation issue. */
 export type PluginRpcIssuePathSegment = string | number;
@@ -726,9 +726,19 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     onInspect(key: string): void;
   }
 
+  /** Settings → Notifications contribution; mounted only while selected and enabled. */
+  export interface PluginNotificationSoundProviderRegistration {
+    id: string;
+    title: string;
+    description?: string;
+    component: import('react').ComponentType<{ pluginId: string }>;
+    mount(context: PluginContentScriptContext): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>;
+  }
   export function definePluginApp(
     setup: (app: {
-      slots: Record<string, (registration: Record<string, unknown>) => void>;
+      slots: Record<string, (registration: Record<string, unknown>) => void> & {
+        notificationSoundProvider(registration: PluginNotificationSoundProviderRegistration): void;
+      };
       contentScripts: { register(registration: { id: string; mount(context: PluginContentScriptContext): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)> }): void };
     }) => void
   ): unknown;
@@ -777,6 +787,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
     navPanels: Array<{ id: string; title: string; component: unknown }>;
     browserToolbarActions: Array<{ id: string; title: string; component: unknown }>;
     settingsSections: Array<{ id: string; title?: string }>;
+    notificationSoundProviders: Array<import('@zana-ai/zcc-plugin-sdk/app').PluginNotificationSoundProviderRegistration>;
     pendingInteractions: Array<{ id: string }>;
   };
   export function installTestPluginRuntime(options?: {
