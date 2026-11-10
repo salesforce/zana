@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createPortal } from 'react-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import zanaLogo from '../../assets/zana-favicon.svg';
 const api = vi.hoisted(() => ({
@@ -18,10 +19,10 @@ vi.mock('../../lib/windowScope.js', () => ({ isScopedWindow: () => api.scoped })
 vi.mock('../../lib/app-navigate.js', () => ({ appNavigate: api.navigate }));
 vi.mock('../../store.js', () => ({ useData: (fn: (s: object) => unknown) => fn({ configLoaded: api.configLoaded }), useUi: { setState: api.ui } }));
 vi.mock('../../views/extensions/PluginPacksCollection.js', () => ({ PluginPacksCollection: (props: {
-  marketplaceSource: string; onInstalled: (value: object) => void; onReviewChange: (open: boolean) => void
-}) => { api.packs(props); return <button onClick={() => props.onInstalled({ identity: { packId: 'starter' }, members: [
+  marketplaceSource: string; footerTarget?: HTMLElement | null; onInstalled: (value: object) => void; onReviewChange: (open: boolean) => void
+}) => { api.packs(props); const action = <button onClick={() => props.onInstalled({ identity: { packId: 'starter' }, members: [
   { pluginId: 'tool', selected: true, status: 'installed' }, { pluginId: 'optional', selected: false, status: 'skipped' }
-] })}>Install fixture bundle</button>; } }));
+] })}>Install fixture bundle</button>; return props.footerTarget ? createPortal(action, props.footerTarget) : action; } }));
 import { Onboarding, OnboardingHost, OnboardingSettingsAction } from './Onboarding.js';
 import { useOnboarding } from './onboarding-store.js';
 const profile = { id: 'employees', organization: 'Example', question: 'Are you an Example employee?', prerequisite: 'Connect to the VPN and sign in to Git.', marketplaceSource: 'path:/fixture' };
@@ -112,6 +113,22 @@ it('shows the VPN prerequisite before checking access, then filters bundles to t
   expect(api.packs.mock.calls.at(-1)![0]).toMatchObject({ marketplaceSource: 'path:/fixture', presentation: 'onboarding', onBusyChange: expect.any(Function) });
   click('Back to access check'); await screen.findByRole('heading', { name: 'Connect the internal marketplace' });
 });
+it('keeps access and bundle navigation in one footer outside the scrolling content', async () => {
+  useOnboarding.setState({ progress });
+  render(<Onboarding profile={profile} />);
+  const dialog = screen.getByRole('dialog');
+  const footer = dialog.querySelector('footer')!;
+  expect(within(footer).getByRole('button', { name: 'Check access and continue' })).toBeTruthy();
+  click('Check access and continue');
+  await waitFor(() => expect(within(footer).getByRole('button', { name: 'Install fixture bundle' })).toBeTruthy());
+  expect(within(footer).getByRole('button', { name: 'Back to access check' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Change setup choice' })).toBeNull();
+  expect(dialog.querySelector('.onboarding-body button')).toBeNull();
+  click('Back to access check');
+  await screen.findByRole('heading', { name: 'Connect the internal marketplace' });
+  expect(within(footer).queryByRole('button', { name: 'Install fixture bundle' })).toBeNull();
+  click('Change setup choice'); await screen.findByText(profile.question);
+});
 it('refreshes an existing marketplace and keeps failure retryable without advancing progress', async () => {
   useOnboarding.setState({ progress }); api.list.mockResolvedValue([{ source: profile.marketplaceSource }]);
   api.refresh.mockRejectedValueOnce(new Error('Corporate access unavailable'));
@@ -143,6 +160,7 @@ it('saves skipped progress on Escape and restores the opener', async () => {
 it('resumes saved employee progress and lets the user change their choice without removing plugins', async () => {
   useOnboarding.setState({ progress: { ...progress, step: 'bundles', marketplaceSource: profile.marketplaceSource } });
   render(<Onboarding profile={profile} />); await screen.findByRole('button', { name: 'Install fixture bundle' });
+  click('Back to access check'); await screen.findByRole('heading', { name: 'Connect the internal marketplace' });
   click('Change setup choice'); await screen.findByText(profile.question);
   expect(useOnboarding.getState().progress).toEqual({ version: 1, profileId: profile.id, audience: 'undecided', step: 'welcome' });
 });
@@ -243,7 +261,7 @@ it('keeps parent navigation and Escape locked while the inline bundle is install
   act(() => api.packs.mock.calls.at(-1)![0].onBusyChange(true));
   expect((screen.getByRole('button', { name: 'Skip for now' }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole('button', { name: 'Back to access check' }) as HTMLButtonElement).disabled).toBe(true);
-  expect((screen.getByRole('button', { name: 'Change setup choice' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Change setup choice' })).toBeNull();
   fireEvent.keyDown(document, { key: 'Escape' });
   expect(useOnboarding.getState().open).toBe(true);
   act(() => api.packs.mock.calls.at(-1)![0].onBusyChange(false));

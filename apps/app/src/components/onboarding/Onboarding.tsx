@@ -79,6 +79,7 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
   const locked = busy || bundleBusy;
   const [error, setError] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [bundleFooter, setBundleFooter] = useState<HTMLDivElement | null>(null);
   const [plugins, setPlugins] = useState<PluginAppEntry[]>([]);
   const [pluginsLoading, setPluginsLoading] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
@@ -172,11 +173,10 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
         </> : step === 'marketplace' ? <section className="onboarding-card">
           <h2>{profile.organization} internal marketplace</h2><p>{profile.prerequisite}</p><code className="onboarding-source">{profile.marketplaceSource}</code>
           <p className="settings-help">We’ll check access and reuse an existing marketplace or add it if missing.</p>
-          <button type="button" className="settings-btn primary" disabled={locked} onClick={connectMarketplace}>{busy ? <><Loader2 size={14} /> Checking access…</> : <><RefreshCw size={14} /> {error ? 'Retry access check' : 'Check access and continue'}</>}</button>
           {error ? <p className="settings-help">Check your corporate connection and Git sign-in, then retry. You can finish setup later.</p> : null}
         </section> : step === 'bundles' ? <>
           <p>Choose the plugins you need. You can add more later.</p>
-          <PluginPacksCollection mode="browse" presentation="onboarding" onBusyChange={setBundleBusy} marketplaceSource={progress.marketplaceSource ?? profile.marketplaceSource}
+          <PluginPacksCollection mode="browse" presentation="onboarding" footerTarget={bundleFooter} onBusyChange={setBundleBusy} marketplaceSource={progress.marketplaceSource ?? profile.marketplaceSource}
             onReviewChange={setReviewOpen} onInstalled={installed} onOpenPlugin={(id, installation) => {
               void run(async () => {
                 if (installation) await persist({ ...progress, step: 'connections', packId: installation.identity.packId,
@@ -184,7 +184,6 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
                 openPlugin(id);
               });
             }} />
-          <button type="button" className="settings-btn" disabled={locked} onClick={() => { void run(() => persist({ ...progress, step: 'marketplace' })); }}>Back to access check</button>
         </> : <>
           <p>Your selected plugins are installed. Open each plugin to finish its account sign-in or environment setup.</p>
           <div className="onboarding-card">
@@ -199,7 +198,13 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
         </>}
         {error ? <p role="alert" className="modal-error">{error}</p> : null}
       </div>
-      {step !== 'welcome' ? <footer className="onboarding-footer"><button type="button" className="settings-btn" disabled={locked} onClick={() => choose('undecided')}><ArrowLeft size={14} /> Change setup choice</button>
+      {step !== 'welcome' ? <footer className="onboarding-footer">
+        {step === 'bundles' ? <button type="button" className="settings-btn" disabled={locked} onClick={() => { void run(() => persist({ ...progress, step: 'marketplace' })); }}><ArrowLeft size={14} /> Back to access check</button>
+          : <button type="button" className="settings-btn" disabled={locked} onClick={() => choose('undecided')}><ArrowLeft size={14} /> Change setup choice</button>}
+        {!general && step === 'marketplace' ? <div className="onboarding-finish-actions">
+          <button type="button" className="settings-btn primary" disabled={locked} onClick={connectMarketplace}>{busy ? <><Loader2 size={14} /> Checking access…</> : <><RefreshCw size={14} /> {error ? 'Retry access check' : 'Check access and continue'}</>}</button>
+        </div> : null}
+        {step === 'bundles' ? <div ref={setBundleFooter} className="onboarding-bundle-actions" /> : null}
         {general || step === 'connections' ? <div className="onboarding-finish-actions">
           <button type="button" className={`settings-btn${general ? ' primary' : ''}`} disabled={busy || pluginsLoading} onClick={() => complete()}><CheckCircle2 size={14} /> {general ? 'Continue to Zana' : 'Done'}</button>
           {!general ? <button type="button" className="settings-btn primary" disabled={busy || pluginsLoading} onClick={() => complete(true)}>Open {profile.organization} tools <ArrowRight size={14} /></button> : null}
