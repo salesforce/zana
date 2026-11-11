@@ -18,6 +18,8 @@ it('verifies Electron, Chromium and WebKit when Linux dependency preparation cha
   expect(workflow.jobs.e2e.container.image.split('@')[0]).toBe(`mcr.microsoft.com/playwright:v${playwrightVersion}-resolute`);
   expect(workflow.jobs.e2e.container.image).toMatch(/@sha256:[a-f0-9]{64}$/);
   expect(workflow.jobs.e2e.container.options).toBe('--ipc=host');
+  // Terminal specs spawn the default shell, which falls back to /bin/zsh when SHELL is unset.
+  expect(workflow.jobs.e2e.env.SHELL).toBe('/bin/bash');
   const trust = workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Trust checked-out repository in container');
   expect(trust).toBeGreaterThan(0);
   expect(workflow.jobs.e2e.steps[trust].run).toBe('git config --global --add safe.directory "$GITHUB_WORKSPACE"');

@@ -303,6 +303,10 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-resolute@sha256:b022639ae9197f864040f92eef7b57c6d4b47db2190f77c909d8a5d902dd4b7e
       options: --ipc=host
+    # Hosted runners export SHELL; the container does not. Without it the app's
+    # default terminal shell falls back to /bin/zsh, which the image lacks.
+    env:
+      SHELL: /bin/bash
     needs: [plan, e2e-build]
     if: needs.plan.outputs.e2e == 'true'
     # Pack whole spec files by measured duration; empty shards never provision.
