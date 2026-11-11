@@ -13,10 +13,15 @@ it('verifies Electron, Chromium and WebKit when Linux dependency preparation cha
     ]));
   }
   const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
+  const lock = load(readFileSync('pnpm-lock.yaml', 'utf8')) as any;
+  const playwrightVersion = lock.importers['.'].devDependencies['@playwright/test'].version;
+  expect(workflow.jobs.e2e.container.image.split('@')[0]).toBe(`mcr.microsoft.com/playwright:v${playwrightVersion}-resolute`);
+  expect(workflow.jobs.e2e.container.image).toMatch(/@sha256:[a-f0-9]{64}$/);
+  expect(workflow.jobs.e2e.container.options).toBe('--ipc=host');
   const commands = workflow.jobs.e2e.steps.map((step: any) => step.run || '').join('\n');
   expect(commands).toContain('node scripts/check-electron-linux-deps.mjs');
-  expect(commands).toContain('pnpm exec playwright install chromium webkit');
-  expect(commands).not.toMatch(/apt-get|--with-deps/);
+  expect(commands).not.toMatch(/apt-get|playwright install|sysctl/);
+  expect(commands).toContain('xvfb-run -a node scripts/ci-verification.mjs');
   const preview = workflow.jobs['preview-cross-platform'].steps.find((step: any) => step.name === 'Check Linux Electron display dependencies');
   expect(preview.if).toBe("runner.os == 'Linux'");
   expect(preview.run).toContain('node scripts/check-electron-linux-deps.mjs');

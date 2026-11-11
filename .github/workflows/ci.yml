@@ -293,6 +293,11 @@ jobs:
   e2e:
     name: Affected Electron boundaries (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    # Match the lockfile's Playwright version and the build runner's Ubuntu 26.04.
+    # The immutable image supplies WebKit libraries absent from hosted runners.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-resolute@sha256:b022639ae9197f864040f92eef7b57c6d4b47db2190f77c909d8a5d902dd4b7e
+      options: --ipc=host
     needs: [plan, e2e-build]
     if: needs.plan.outputs.e2e == 'true'
     # Pack whole spec files by measured duration; empty shards never provision.
@@ -330,17 +335,10 @@ jobs:
       - name: Restore the same-run Electron build
         run: tar -xzf "$RUNNER_TEMP/electron-e2e-build.tgz"
 
-      # Check the hosted image's native dependencies without apt/font downloads.
-      # Keep both browsers for the real Chromium and mobile Safari checks.
-      - name: Check system deps and install test browsers
-        run: |
-          node scripts/check-electron-linux-deps.mjs
-          pnpm exec playwright install chromium webkit
-
-      # ubuntu-24.04 blocks Chromium's sandbox via AppArmor; Electron never
-      # creates a window without this (microsoft/playwright#34251).
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Browsers and their libraries are supplied together by the pinned image.
+      # Electron still validates its own binary before the real app tests.
+      - name: Check system deps for headless Electron
+        run: node scripts/check-electron-linux-deps.mjs
 
       - name: Test affected Electron boundaries from private snapshots
         run: xvfb-run -a node scripts/ci-verification.mjs
