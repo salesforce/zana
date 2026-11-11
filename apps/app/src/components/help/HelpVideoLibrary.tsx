@@ -48,7 +48,7 @@ function Library({ current }: { current: string }) {
   }, []);
 
   return (
-    <Modal title="Videos" onClose={close} className="help-videos-modal">
+    <Modal title="Video tutorials" onClose={close} className="help-videos-modal">
       <div className="help-videos" data-testid="help-video-library">
         <div className="help-videos-player">
           <video key={video.src} ref={player} aria-label={video.title} data-testid="help-video-player" controls playsInline

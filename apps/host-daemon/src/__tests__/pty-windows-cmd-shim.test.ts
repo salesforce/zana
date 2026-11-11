@@ -20,6 +20,7 @@ vi.mock('node-pty', () => ({
 vi.mock('node:path', async (original) => ({ ...await original<typeof import('node:path')>(), delimiter: ';' }));
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
+  sessionPluginMcpServers: () => [],
   alwaysOnPluginMcpAllowlist: () => []
 }));
 vi.mock('../tmux.js', () => ({

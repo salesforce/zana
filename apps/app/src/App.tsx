@@ -784,7 +784,7 @@ function AppShell() {
           />
         )}
         <InstanceMenu />
-        <HelpMenu />
+        <HelpMenu discoveryEnabled={projectsLoaded && !onboardingActive && !mobileNavigation.isCompact && !isScopedWindow()} />
         <button
           type="button"
           className={`titlebar-fav ${favoriteCount > 0 ? 'has-favs' : ''} ${favoritesOpen ? 'active' : ''}`}

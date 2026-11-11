@@ -98,7 +98,12 @@ export function SkillsBody({
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [query, setQuery] = useState('');
   const [editingBundle, setEditingBundle] = useState<SkillBundle | 'new' | null>(null);
-  const [savedFlash, setSavedFlash] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(0);
+  useEffect(() => {
+    if (!savedFlash) return;
+    const timer = setTimeout(() => setSavedFlash(0), 1400);
+    return () => clearTimeout(timer);
+  }, [savedFlash]);
   const [applyNote, setApplyNote] = useState<string | null>(null);
   const [dismissedNoteKeys, setDismissedNoteKeys] = useState<Set<string>>(() => new Set());
   const [notesExpanded, setNotesExpanded] = useState(false);
@@ -193,9 +198,7 @@ export function SkillsBody({
   }, [reload, catalogueFilter.skills, setCatalogueFilter]);
 
   const flashSaved = useCallback(() => {
-    setSavedFlash(true);
-    const t = window.setTimeout(() => setSavedFlash(false), 1400);
-    return () => window.clearTimeout(t);
+    setSavedFlash(previous => previous + 1);
   }, []);
 
   const filtered = useMemo(
@@ -513,7 +516,7 @@ export function SkillsBody({
           </aside>
         </div>
 
-        {savedFlash && <div className="settings-saved">Saved</div>}
+        {savedFlash > 0 && <div className="settings-saved">Saved</div>}
         {applyNote && <div className="skills-apply-note">{applyNote}</div>}
       </div>
 

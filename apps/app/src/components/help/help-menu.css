@@ -1,4 +1,43 @@
 /* Title-bar Help menu: page hints, videos, and the other ways to learn Zana. */
+.help-discovery-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--bg-elevated);
+  border-radius: 50%;
+  background: var(--accent);
+}
+.help-tutorial-discovery {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: -6px;
+  width: 328px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 76px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 18px 15px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 12px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.2);
+  text-align: left;
+  -webkit-app-region: no-drag;
+}
+.help-discovery-pointer { position: absolute; top: calc(100% + 7px); right: 8px; width: 10px; height: 10px; z-index: 1; transform: rotate(45deg); border-top: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-left: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); background: var(--bg-panel); }
+.help-tutorial-discovery-eyebrow { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: var(--accent); font-size: 11px; font-weight: 600; }
+.help-tutorial-discovery-dismiss { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin: -4px -5px -4px auto; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--text-muted); cursor: pointer; }
+.help-tutorial-discovery h2 { margin: 0 0 8px; font-size: 17px; font-weight: 600; line-height: 1.35; letter-spacing: -0.3px; }
+.help-tutorial-discovery p { margin: 0 0 14px; color: var(--text-muted); font-size: 12px; line-height: 1.65; }
+.help-tutorial-discovery-anchor { display: inline-grid; place-items: center; width: 17px; height: 17px; border: 1px solid var(--border); border-radius: 4px; font-weight: 600; line-height: 1; }
+.help-tutorial-discovery-actions { display: flex; align-items: center; gap: 6px; }
+.help-tutorial-discovery-actions .settings-btn { gap: 7px; padding: 9px 11px; font-size: 12px; }
+.help-tutorial-discovery-later { border: 0; border-radius: 6px; background: none; color: var(--text-muted); padding: 8px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.help-tutorial-discovery-dismiss:hover, .help-tutorial-discovery-later:hover { background: var(--bg-hover); }
+.help-tutorial-discovery button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .help-menu-popover {
   display: flex;
   flex-direction: column;
