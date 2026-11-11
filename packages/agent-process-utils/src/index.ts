@@ -155,8 +155,9 @@ const defaultProcessTreeKillHost: ProcessTreeKillHost = {
 
 const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
 
-function windowsTaskkillPath(): string {
-  const root = process.env.SystemRoot ?? process.env.windir;
+/** Absolute System32 taskkill, so a `taskkill` earlier on PATH is never run. */
+export function windowsTaskkillPath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = env.SystemRoot ?? env.windir;
   return root ? join(root, "System32", "taskkill.exe") : "taskkill.exe";
 }
 
