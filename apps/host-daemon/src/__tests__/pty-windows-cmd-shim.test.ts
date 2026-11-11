@@ -84,11 +84,11 @@ const longPrompt = 'Project house rules. '.repeat(500);
 
 // The codex shim is passed by path: PATH here uses Windows's `;`, which the
 // PATH lookup only splits on when the tests run on Windows.
-function launch(profile: 'claude' | 'codex' = 'claude', codexBinary = codexCmd) {
+function launch(profile: 'claude' | 'codex' = 'claude', codexBinary = codexCmd, extraArgs?: string[]) {
   const mgr = new PtyManager();
   mgr.setMcpBaseUrl('http://127.0.0.1:39999');
   return mgr.create({
-    projectId: 'proj1', profile, cwd: root, cols: 80, rows: 24,
+    projectId: 'proj1', profile, cwd: root, cols: 80, rows: 24, extraArgs,
     config: { ...config, codexBinary } as never, projectSettings: { appendSystemPrompt: longPrompt }
   });
 }
@@ -137,7 +137,15 @@ describe('PtyManager.create on win32 with the npm codex.cmd on PATH', () => {
     writeFileSync(join(nvm, 'node.cmd'), '@echo off\r\n', { mode: 0o700 });
     process.env.PATH = `${npmDir};${nvm};${nodeDir}`;
     expect(() => launch('codex')).toThrow(
-      /^Cannot start .*codex\.cmd: its command line is \d+ characters, over the Windows limit of 8191\. It is a batch file/
+      /^Cannot start .*codex\.cmd: its command line is \d+ characters, over the Windows limit of 8191\. It is a batch file.* putting node\.exe ahead of any node\.cmd or node\.bat on PATH also works\.$/
+    );
+    expect(spawns).toHaveLength(0);
+  });
+
+  it('fails before spawning, naming the CreateProcess limit, when the unwrapped argv is over 32766', () => {
+    // The guidance alone is ~12.6 K; a per-tab prompt takes it past CreateProcess's cap.
+    expect(() => launch('codex', codexCmd, ['x'.repeat(21_000)])).toThrow(
+      /^Cannot start .*node\.exe: its command line is \d+ characters, over the Windows limit of 32766\.$/
     );
     expect(spawns).toHaveLength(0);
   });

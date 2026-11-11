@@ -39,6 +39,8 @@ export function isFile(path: string): boolean {
 export interface ExeShim {
   kind: 'exe';
   command: string;
+  /** Entries the shim prepends to `NODE_PATH` (pnpm writes the block for any target). */
+  nodePath?: string;
 }
 
 /** A shim that runs `node [nodeArgs] <script> %*`. */
@@ -181,7 +183,10 @@ export function parsePackageManagerShim(text: string, shimDir: string): PackageM
     const groups = matchTemplate(lines, template.lines);
     if (!groups) continue;
     const target = resolveShimRelative(groups.target!, shimDir);
-    if (template.kind === 'exe') return /\.exe$/i.test(target) ? { kind: 'exe', command: target } : null;
+    if (template.kind === 'exe') {
+      if (!/\.exe$/i.test(target)) return null;
+      return { kind: 'exe', command: target, ...(groups.nodePath ? { nodePath: groups.nodePath } : {}) };
+    }
     const node = groups.node;
     if (node !== undefined && !win32.isAbsolute(node)) return null;
     return {
@@ -222,7 +227,9 @@ export function nodeOnPath(env: Env): string | null {
   const exts = pathext.split(';').filter(Boolean);
   for (const raw of (pathKey ? env[pathKey]! : '').split(';')) {
     const dir = raw.trim().replace(/^"|"$/g, '');
-    if (!dir) continue;
+    // cmd.exe resolves a relative entry against the launch folder, not the
+    // daemon's; skip it rather than guess, as with the current folder.
+    if (!dir || !win32.isAbsolute(dir)) continue;
     for (const ext of exts) {
       const candidate = join(dir, `node${ext.toLowerCase()}`);
       if (isFile(candidate)) return /^\.exe$/i.test(ext) ? candidate : null;
@@ -237,11 +244,16 @@ export function nodeOnPath(env: Env): string | null {
  * is the launch environment (PATH, PATHEXT and NODE_PATH are read from it).
  */
 export function packageManagerShimLaunch(shim: PackageManagerShim, args: readonly string[], env: Env): PackageManagerLaunch | null {
-  if (shim.kind === 'exe') return isFile(shim.command) ? { command: shim.command, args: [...args] } : null;
-  if (!isFile(shim.script)) return null;
-  const node = shim.node ?? (shim.localNode && isFile(shim.localNode) ? shim.localNode : nodeOnPath(env));
-  if (!node || !isFile(node)) return null;
-  const launch: PackageManagerLaunch = { command: node, args: [...shim.nodeArgs, shim.script, ...args] };
+  let launch: PackageManagerLaunch;
+  if (shim.kind === 'exe') {
+    if (!isFile(shim.command)) return null;
+    launch = { command: shim.command, args: [...args] };
+  } else {
+    if (!isFile(shim.script)) return null;
+    const node = shim.node ?? (shim.localNode && isFile(shim.localNode) ? shim.localNode : nodeOnPath(env));
+    if (!node || !isFile(node)) return null;
+    launch = { command: node, args: [...shim.nodeArgs, shim.script, ...args] };
+  }
   if (shim.nodePath) {
     const key = envKey(env, 'NODE_PATH');
     const prior = key ? env[key] : undefined;

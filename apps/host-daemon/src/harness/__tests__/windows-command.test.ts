@@ -267,7 +267,7 @@ describe('assertWindowsCommandLineFits', () => {
     const fits = pad(CMD_COMMAND_LINE_LIMIT - cmd.length - 1);
     expect(() => assertWindowsCommandLineFits(cmd, [fits], 'win32')).not.toThrow();
     expect(() => assertWindowsCommandLineFits(cmd, [fits + 'x'], 'win32')).toThrow(
-      `Cannot start ${cmd}: its command line is 8192 characters, over the Windows limit of 8191. It is a batch file, so it runs through cmd.exe. Set the harness binary to the program's .exe instead.`
+      `Cannot start ${cmd}: its command line is 8192 characters, over the Windows limit of 8191. It is a batch file, so it runs through cmd.exe. Set the harness binary to the program's .exe instead. For an npm, pnpm or yarn shim, putting node.exe ahead of any node.cmd or node.bat on PATH also works.`
     );
   });
 

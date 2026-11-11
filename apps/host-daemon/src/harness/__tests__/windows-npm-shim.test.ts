@@ -6,6 +6,7 @@
  * - `npm6-node.cmd`, `npm6-exe.cmd`: cmd-shim 3 (npm 6);
  * - `pnpm-node-path.cmd`: `pnpm install` (pnpm 11), install folder renamed `C:\proj`;
  * - `pnpm-node.cmd`, `pnpm-exe.cmd`: `@zkochan/cmd-shim` 5 without `NODE_PATH`;
+ * - `pnpm-exe-node-path.cmd`: `@zkochan/cmd-shim` 7 for an exe, with `nodePath` set;
  * - `yarn-node.cmd`: `yarn install` (yarn 1.22), `yarn-exe.cmd`: `@zkochan/cmd-shim` 3.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -66,6 +67,14 @@ describe('parsePackageManagerShim on real generator output', () => {
     expect(parsePackageManagerShim(fixture(name), shimDir)).toEqual({
       kind: 'exe',
       command: join(shimDir, '..', 'src', 'tool.exe')
+    });
+  });
+
+  it('keeps the NODE_PATH block of a pnpm shim whose target is an exe', () => {
+    expect(parsePackageManagerShim(fixture('pnpm-exe-node-path.cmd'), shimDir)).toEqual({
+      kind: 'exe',
+      command: join(shimDir, '..', 'src', 'tool.exe'),
+      nodePath: 'C:\\proj\\node_modules\\.pnpm\\tool@1.0.0\\node_modules;C:\\proj\\node_modules\\.pnpm\\node_modules'
     });
   });
 
@@ -142,6 +151,20 @@ describe('nodeOnPath', () => {
     expect(nodeOnPath({ Path: pathDir('js') })).toBe(exe);
   });
 
+  it('skips relative PATH entries, which cmd.exe would resolve against the launch folder', () => {
+    const cwd = process.cwd();
+    const rel = join(root, 'rel');
+    touch(join(rel, 'bin', 'node.exe'));
+    const exe = touch(join(pathDir('abs'), 'node.exe'));
+    process.chdir(rel);
+    try {
+      expect(nodeOnPath({ PATH: `bin;.;${pathDir('abs')}`, PATHEXT: '.EXE' })).toBe(exe);
+      expect(nodeOnPath({ PATH: 'bin', PATHEXT: '.EXE' })).toBeNull();
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
   it('returns null with no PATH or no node', () => {
     expect(nodeOnPath({})).toBeNull();
     expect(nodeOnPath({ PATH: `;${pathDir('empty')};` })).toBeNull();
@@ -189,6 +212,16 @@ describe('packageManagerShimLaunch', () => {
   it('runs the target of an exe shim', () => {
     const exe = touch(join(root, 'src', 'tool.exe'));
     expect(packageManagerShimLaunch({ kind: 'exe', command: exe }, ['-p'], env)).toEqual({ command: exe, args: ['-p'] });
+  });
+
+  it('carries the pnpm NODE_PATH of an exe shim into its env', () => {
+    const exe = touch(join(root, 'src', 'tool.exe'));
+    const shim = parsePackageManagerShim(fixture('pnpm-exe-node-path.cmd'), join(root, 'bin'))!;
+    expect(packageManagerShimLaunch(shim, ['-p'], { ...env, NODE_PATH: 'C:\\old' })).toEqual({
+      command: exe,
+      args: ['-p'],
+      env: { NODE_PATH: 'C:\\proj\\node_modules\\.pnpm\\tool@1.0.0\\node_modules;C:\\proj\\node_modules\\.pnpm\\node_modules;C:\\old' }
+    });
   });
 
   it('returns null when the script, the exe target or node is missing', () => {

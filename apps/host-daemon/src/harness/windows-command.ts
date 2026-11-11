@@ -271,7 +271,8 @@ export function assertWindowsCommandLineFits(
   const length = windowsCommandLineLength(command, args);
   if (length <= limit) return;
   const hint = batch
-    ? ' It is a batch file, so it runs through cmd.exe. Set the harness binary to the program\'s .exe instead.'
+    ? ' It is a batch file, so it runs through cmd.exe. Set the harness binary to the program\'s .exe instead.' +
+      ' For an npm, pnpm or yarn shim, putting node.exe ahead of any node.cmd or node.bat on PATH also works.'
     : '';
   throw new Error(
     `Cannot start ${command}: its command line is ${length} characters, over the Windows limit of ${limit}.${hint}`
