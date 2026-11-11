@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures/app.js';
 
-test.use({ e2e: true, launchEnv: { ZCC_E2E_HELP_VIDEOS_ORIGIN: 'http://127.0.0.1:9/' },
+test.use({ e2e: true, tutorialDiscovery: true, launchEnv: { ZCC_E2E_HELP_VIDEOS_ORIGIN: 'http://127.0.0.1:9/' },
   initialConfig: { sponsorPromptDismissed: true, walkthroughCompleted: true, setupDismissed: true, lastSeenVersion: '2.6.0' } });
 
 test.describe('after upgrade setup', () => {
