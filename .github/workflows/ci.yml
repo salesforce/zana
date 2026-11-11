@@ -325,6 +325,14 @@ jobs:
       - name: Trust checked-out repository in container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      # Terminal specs spawn $SHELL. Fail in seconds with a clear message, not
+      # as a "Missing shell" e2e timeout, if the image ever lacks it.
+      - name: Check the terminal shell runs in the container
+        run: |
+          if test -x "$SHELL" && "$SHELL" -c 'echo "terminal shell ok: $0"'; then exit 0; fi
+          echo "::error::SHELL=$SHELL is missing or cannot run in the e2e container; terminal specs need a working shell."
+          exit 1
+
       - name: Install tmux for native PTY coverage
         run: apt-get update && apt-get install -y --no-install-recommends tmux
 
