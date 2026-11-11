@@ -274,6 +274,11 @@ export async function resolveRuntimeBridgeLaunch(args: {
   return toRuntimeBridgeLaunch(args.launch, dataDir, artifactPath);
 }
 
+/** The runtime's error for a thread whose provider session is already gone. */
+function isMissingProviderSession(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('No provider associated with thread');
+}
+
 function isInFlightRetryEvent(event: ThreadEvent): boolean {
   if (event.type === 'provider/error') return event.willRetry === true;
   if (event.type === 'system/error') return event.reconnectAttempt !== undefined;
@@ -518,15 +523,21 @@ export function createAgentRuntimeAdapter(options: {
 
   async function releaseStoppedThread(threadId: string): Promise<void> {
     const location = threadLocation.get(threadId);
+    if (location) {
+      try {
+        // Releases the provider session, and with it a thread-scoped process.
+        await runtimeFor(location.environmentId, location.cwd).stopThread({ threadId });
+      } catch (error) {
+        // A failed construction already dropped its session; anything else
+        // keeps the bookkeeping so a later stop can retry the release.
+        if (!isMissingProviderSession(error)) {
+          console.warn(`[host-daemon] could not release stopped thread ${threadId}:`, error);
+          return;
+        }
+      }
+    }
     threadLocation.delete(threadId);
     remoteProxyByThread.delete(threadId);
-    if (!location) return;
-    try {
-      // Releases the provider session, and with it a thread-scoped process.
-      await runtimeFor(location.environmentId, location.cwd).stopThread({ threadId });
-    } catch {
-      /* A failed construction already dropped its session. */
-    }
   }
 
   function runtimeForThread(threadId: string): AgentRuntime {
