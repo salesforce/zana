@@ -11,6 +11,7 @@ import {
   stopProcessGroupLeaderFirst,
   type PortablePipedChildProcess,
   type ProcessTreeKillHost,
+  windowsTaskkillPath,
 } from "../src/index.js";
 
 // An agent CLI installed by npm on Windows is a `.cmd` shim. cross-spawn runs
@@ -220,5 +221,17 @@ describe("installWindowsProcessTreeKill", () => {
     installWindowsProcessTreeKill(child, { ...host, execPath: process.execPath });
     expect(child.kill).toBe(before);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("windowsTaskkillPath", () => {
+  it("uses System32 under SystemRoot, then windir, so PATH is never searched", () => {
+    expect(windowsTaskkillPath({ SystemRoot: "C:/Windows", windir: "D:/Other" }))
+      .toBe(join("C:/Windows", "System32", "taskkill.exe"));
+    expect(windowsTaskkillPath({ windir: "D:/Win" })).toBe(join("D:/Win", "System32", "taskkill.exe"));
+  });
+
+  it("falls back to the bare name with neither variable set", () => {
+    expect(windowsTaskkillPath({})).toBe("taskkill.exe");
   });
 });
