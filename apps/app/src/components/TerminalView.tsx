@@ -22,6 +22,7 @@ import { openXtermHttpLink } from '../lib/xterm-http-link.js';
 import { registerOsc52Clipboard } from '../lib/osc52-clipboard.js';
 import { copyText } from '../lib/copy-text.js';
 import { isTerminalPasteKey } from '../lib/terminalPaste.js';
+import { registerCopyOnSelect } from '../lib/terminalCopyOnSelect.js';
 import { useData, useUi } from '../store.js';
 import { createVisibleTerminalRenderer, TERMINAL_SCROLLBACK_MAX } from '../lib/terminal-resource-budget.js';
 
@@ -182,6 +183,18 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
           console.error(`[TerminalView] OSC52 clipboard write failed (session ${session.id}): ${message}`);
           useUi.getState().pushToast('Terminal clipboard copy failed', 'error');
         });
+    });
+
+    // Copy on select: a finished mouse selection goes to the system clipboard
+    // (Settings → Terminal → Clipboard, read live). See lib/terminalCopyOnSelect.ts.
+    const copyOnSelect = registerCopyOnSelect(term, ref.current, {
+      enabled: () => useData.getState().terminalCopyOnSelectEnabled !== false,
+      copy: copyText,
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[TerminalView] copy on select failed (session ${session.id}): ${message}`);
+        useUi.getState().pushToast('Could not copy the terminal selection', 'error');
+      }
     });
 
     const offFinder = registerFinder(session.id, {
@@ -370,7 +383,7 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
       const label = reason ?? (bad ? `[exited code ${code}]` : '[session exited]');
       writes.write(`\r\n${sgr}${label}\x1b[0m\r\n`);
     });
-    offsRef.current = [offData, offExit, offReconnect, showHost, () => replay.dispose(), () => offScroll.dispose(), () => offOsc52.dispose()];
+    offsRef.current = [offData, offExit, offReconnect, showHost, () => replay.dispose(), () => offScroll.dispose(), () => offOsc52.dispose(), () => copyOnSelect.dispose()];
 
     const onInput = term.onData((data) => {
       void product.terminals.write(session.id, data).catch(() => {});

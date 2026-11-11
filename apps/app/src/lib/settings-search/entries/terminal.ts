@@ -53,9 +53,19 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'terminal',
     anchor: 'terminal-clipboard',
     label: 'Clipboard',
-    help: 'Control how the terminal pastes, and whether terminal output may change your system clipboard.',
+    help: 'Control how the terminal copies and pastes, and whether terminal output may change your system clipboard.',
     keywords: ['copy', 'paste'],
     kind: 'subsection'
+  },
+  {
+    id: 'terminal.copy-on-select',
+    section: 'terminal',
+    anchor: 'terminal-clipboard',
+    label: 'Copy selected text automatically',
+    help: 'When on (default), finishing a mouse selection in a terminal copies it to your clipboard, with no extra keys. Double-click copies a word and triple-click a line. In programs that use the mouse, such as Claude Code, Codex or vim, hold Shift while you drag (Option on macOS). Empty selections and search matches are never copied, and Ctrl+C still stops the running program. Applies immediately to open terminals.',
+    keywords: ['copy on select', 'copyonselect', 'selection', 'select', 'clipboard', 'mouse', 'highlight', 'putty', 'windows terminal'],
+    kind: 'setting',
+    value: (s) => onOff(s.config.terminalCopyOnSelectEnabled, true)
   },
   {
     id: 'terminal.clipboard-write',

@@ -23,6 +23,8 @@ describe('Config pages are searchable (values, options, synonyms)', () => {
   it('finds help-only text and synonyms on every Config page', () => {
     expect(top('OSC 52')).toContain('terminal.clipboard-write');
     expect(top('ctrl+v')).toContain('terminal.ctrl-v-paste');
+    expect(top('copy on select')).toContain('terminal.copy-on-select');
+    expect(top('copyonselect')).toContain('terminal.copy-on-select');
     expect(top('shift insert')).toContain('terminal.ctrl-v-paste');
     expect(top('pagers')).toContain('terminal.wheel-scroll');
     expect(top('dracula')).toContain('terminal.theme');
@@ -63,6 +65,8 @@ describe('Config pages are searchable (values, options, synonyms)', () => {
     expect(valueOf('inbox.trust-zcc-tools', {})).toBe('On');
     expect(valueOf('inbox.show-guidance', { inboxGuidanceEnabled: false })).toBe('Off');
     expect(valueOf('terminal.clipboard-write', { terminalClipboardWriteEnabled: false })).toBe('Off');
+    expect(valueOf('terminal.copy-on-select', {})).toBe('On');
+    expect(valueOf('terminal.copy-on-select', { terminalCopyOnSelectEnabled: false })).toBe('Off');
     expect(valueOf('terminal.ctrl-v-paste', { terminalCtrlVPasteEnabled: false })).toBe('Off');
     expect(valueOf('terminal.ctrl-v-paste', { terminalCtrlVPasteEnabled: true })).toBe('On');
     expect(valueOf('terminal.ctrl-v-paste', {})).toBe(navigator.platform.toUpperCase().startsWith('WIN') ? 'On' : 'Off');

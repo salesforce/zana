@@ -1158,6 +1158,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.terminalClipboardWriteEnabled === 'boolean') {
     normalized.terminalClipboardWriteEnabled = input.terminalClipboardWriteEnabled;
   }
+  if (typeof input.terminalCopyOnSelectEnabled === 'boolean') {
+    normalized.terminalCopyOnSelectEnabled = input.terminalCopyOnSelectEnabled;
+  }
   if (typeof input.terminalCtrlVPasteEnabled === 'boolean') {
     normalized.terminalCtrlVPasteEnabled = input.terminalCtrlVPasteEnabled;
   }

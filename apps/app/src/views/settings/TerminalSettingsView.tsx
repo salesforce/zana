@@ -117,7 +117,7 @@ export function TerminalSettingsView({
         anchorId="terminal-clipboard"
         searchId="terminal.clipboard-intro"
         title="Clipboard"
-        help="Control how the terminal pastes, and whether terminal output may change your system clipboard."
+        help="Control how the terminal copies and pastes, and whether terminal output may change your system clipboard."
       >
         <CheckboxField
           searchId="terminal.ctrl-v-paste"
@@ -126,6 +126,13 @@ export function TerminalSettingsView({
           checked={config.terminalCtrlVPasteEnabled ?? ctrlVPastesByDefault()}
           disabled={isMacShortcutPlatform()}
           onChange={(v) => onUpdate({ terminalCtrlVPasteEnabled: v })}
+        />
+        <CheckboxField
+          searchId="terminal.copy-on-select"
+          label="Copy selected text automatically"
+          help="When on (default), finishing a mouse selection in a terminal copies it to your clipboard, with no extra keys. Double-click copies a word and triple-click a line. In programs that use the mouse, such as Claude Code, Codex or vim, hold Shift while you drag (Option on macOS). Empty selections and search matches are never copied, and Ctrl+C still stops the running program. Applies immediately to open terminals."
+          checked={config.terminalCopyOnSelectEnabled ?? true}
+          onChange={(v) => onUpdate({ terminalCopyOnSelectEnabled: v })}
         />
         <CheckboxField
           searchId="terminal.clipboard-write"
