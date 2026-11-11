@@ -514,7 +514,7 @@ function AppShell() {
           ui.setNav('home');
           return;
         case 'app:toggleInbox':
-          ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
+          ui.toggleInbox();
           return;
         case 'app:openPalette':
           ui.setPaletteOpen(true);

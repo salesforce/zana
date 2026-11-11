@@ -196,7 +196,7 @@ it('retries unavailable model catalogs on plugin changes and ignores late pushes
 });
 
 it('native menu items reach the same store actions as their shortcuts', async () => {
-  const actions = { toggleSettings: vi.fn(), setNav: vi.fn(), setPaletteOpen: vi.fn(), setShortcutsOpen: vi.fn() };
+  const actions = { toggleSettings: vi.fn(), toggleInbox: vi.fn(), setNav: vi.fn(), setPaletteOpen: vi.fn(), setShortcutsOpen: vi.fn() };
   const original = store.useUi.getState();
   store.useUi.setState({ ...actions, selectedProjectId: null, nav: 'home', shortcutsOpen: false });
   const view = render(<MemoryRouter><App /></MemoryRouter>);
@@ -207,7 +207,9 @@ it('native menu items reach the same store actions as their shortcuts', async ()
     });
     // Settings… shares ⌘,'s toggle, so drilled in it opens Project settings too.
     expect(actions.toggleSettings).toHaveBeenCalledOnce();
-    expect(actions.setNav).toHaveBeenCalledWith('inbox');
+    // Toggle Inbox shares ⌘I's toggle, so it returns to the previous view too.
+    expect(actions.toggleInbox).toHaveBeenCalledOnce();
+    expect(actions.setNav).not.toHaveBeenCalledWith('inbox');
     expect(actions.setNav).toHaveBeenCalledWith('home');
     expect(actions.setPaletteOpen).toHaveBeenCalledWith(true);
     expect(actions.setShortcutsOpen).toHaveBeenCalledWith(true);

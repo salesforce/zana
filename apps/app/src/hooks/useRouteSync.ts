@@ -5,6 +5,7 @@ import { useUi, type ExtensionsTab, type NavId, type ProjectView, type SettingsT
 import { registerAppNavigate } from '../lib/app-navigate.js';
 import { decodeRoutePath, scopedProjectIdFromSearch, scopedWindowLockReplace } from '../lib/decode-route.js';
 import { getScopedProjectId, isScopedWindow } from '../lib/windowScope.js';
+import { rememberLocation } from '../lib/route-memory.js';
 
 const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
 
@@ -21,6 +22,10 @@ function splitDestination(to: string): { pathname: string; search: string; hash:
 export function useRouteSync(): void {
   const location = useLocation();
   const navigate = useNavigate();
+  // Record every rendered route, not only while a rail is mounted: with the
+  // sidebar collapsed no rail reads route memory, and Ctrl/Cmd+I's return
+  // trip would miss the views visited meanwhile. Deduped per URL.
+  rememberLocation(location);
 
   useEffect(() => {
     registerAppNavigate((to, options) => {
