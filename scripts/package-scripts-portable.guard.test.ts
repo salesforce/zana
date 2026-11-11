@@ -9,18 +9,26 @@
  *
  * Use `cross-env VAR=value cmd`, double quotes, and `rimraf` / a Node script
  * instead. Scripts that call `bash` explicitly are POSIX by design and pass.
+ *
+ * This is a static text check for the common POSIX-only patterns listed in
+ * `posixOnlySyntax`, not a cmd.exe run: other constructs (`&` backgrounding,
+ * `~`, `2>/dev/null`, `test`/`[ ]`, …) and shell syntax inside script files
+ * are not detected. The package list comes from `pnpm-workspace.yaml`.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Folders whose direct children are packages (pnpm-workspace.yaml globs). */
-const PACKAGE_PARENTS = ['apps', 'packages', 'plugins', 'tools'];
-/** Single packages: the root, the npm-installed website and the marketplace. */
-const SINGLE_PACKAGES = ['.', 'website', 'marketplace'];
+/**
+ * Packages outside `pnpm-workspace.yaml` whose scripts still run on Windows,
+ * each with the reason. The repo root is always scanned.
+ */
+const EXTRA_PACKAGES: Record<string, string> = {
+  marketplace: 'standalone npm package; its scripts run in CI and locally'
+};
 
 /**
  * Scripts allowed to keep POSIX-only syntax, keyed `<package.json path>#<script>`,
@@ -53,16 +61,46 @@ function posixOnlySyntax(script: string): string[] {
   return problems;
 }
 
+/** The `packages:` globs of a pnpm-workspace.yaml (a plain list of quoted or bare strings). */
+function workspaceGlobs(yaml: string): string[] {
+  const lines = yaml.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^packages:\s*$/.test(line));
+  if (start < 0) throw new Error('pnpm-workspace.yaml has no packages: list');
+  const globs: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\S/.test(line)) break; // next top-level key
+    const item = line.match(/^\s+-\s*(["']?)([^"'#]+?)\1\s*(?:#.*)?$/);
+    if (item) globs.push(item[2]);
+  }
+  return globs;
+}
+
+/** Package directories for one glob. Supports `dir`, `dir/*` and `dir/**`; throws on anything else. */
+function expandGlob(glob: string): string[] {
+  if (glob.startsWith('!')) throw new Error(`negated workspace glob "${glob}": teach the guard about it`);
+  const parts = glob.split('/');
+  const recursive = parts.at(-1) === '**';
+  if (!recursive && parts.at(-1) !== '*') {
+    if (parts.some((part) => part.includes('*'))) throw new Error(`unsupported workspace glob "${glob}"`);
+    return [glob];
+  }
+  const base = parts.slice(0, -1).join('/');
+  if (base.includes('*')) throw new Error(`unsupported workspace glob "${glob}"`);
+  if (!existsSync(join(repoRoot, base))) return [];
+  const children = (dir: string): string[] =>
+    readdirSync(join(repoRoot, dir), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name !== 'node_modules')
+      .flatMap((entry) => {
+        const child = posix.join(dir, entry.name);
+        return recursive ? [child, ...children(child)] : [child];
+      });
+  return children(base);
+}
+
 function workspacePackageJsonFiles(): string[] {
-  const dirs = [
-    ...SINGLE_PACKAGES,
-    ...PACKAGE_PARENTS.filter((parent) => existsSync(join(repoRoot, parent))).flatMap((parent) =>
-      readdirSync(join(repoRoot, parent), { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => `${parent}/${entry.name}`)
-    )
-  ];
-  return dirs
+  const globs = workspaceGlobs(readFileSync(join(repoRoot, 'pnpm-workspace.yaml'), 'utf8'));
+  const dirs = ['.', ...Object.keys(EXTRA_PACKAGES), ...globs.flatMap(expandGlob)];
+  return [...new Set(dirs)]
     .map((dir) => (dir === '.' ? 'package.json' : `${dir}/package.json`))
     .filter((file) => existsSync(join(repoRoot, file)));
 }
@@ -97,12 +135,48 @@ describe('posixOnlySyntax', () => {
   });
 });
 
+describe('workspaceGlobs', () => {
+  it('reads quoted, bare and commented entries and stops at the next key', () => {
+    const yaml = ['packages:', '  - "apps/*"', '  # note', '  - packages/*', "  - 'website' # site", '', 'onlyBuiltDependencies:', '  - "esbuild"', ''].join('\n');
+    expect(workspaceGlobs(yaml)).toEqual(['apps/*', 'packages/*', 'website']);
+  });
+
+  it('reads CRLF files', () => {
+    expect(workspaceGlobs(['packages:', '  - "apps/*"', '  - "website"', ''].join('\r\n'))).toEqual(['apps/*', 'website']);
+  });
+
+  it('throws without a packages list', () => {
+    expect(() => workspaceGlobs(['onlyBuiltDependencies:', '  - esbuild', ''].join('\n'))).toThrow('no packages');
+  });
+});
+
+describe('expandGlob', () => {
+  it('rejects globs it cannot expand', () => {
+    expect(() => expandGlob('!apps/legacy')).toThrow('negated');
+    expect(() => expandGlob('apps/*-plugin')).toThrow('unsupported');
+    expect(() => expandGlob('*/pkg/*')).toThrow('unsupported');
+  });
+
+  it('expands nested packages for dir/**', () => {
+    expect(expandGlob('scripts/**').length).toBeGreaterThanOrEqual(expandGlob('scripts/*').length);
+  });
+});
+
 describe('package.json scripts run under cmd.exe', () => {
   const files = workspacePackageJsonFiles();
 
   it('scans the workspace package.json files', () => {
     expect(files).toEqual(expect.arrayContaining(['package.json', 'website/package.json', 'packages/control-sdk/package.json']));
     expect(files.length).toBeGreaterThan(20);
+  });
+
+  it('scans every pnpm-workspace.yaml glob that has packages', () => {
+    const globs = workspaceGlobs(readFileSync(join(repoRoot, 'pnpm-workspace.yaml'), 'utf8'));
+    expect(globs).toEqual(expect.arrayContaining(['apps/*', 'packages/*', 'website']));
+    for (const glob of globs) {
+      const expected = expandGlob(glob).map((dir) => `${dir}/package.json`).filter((file) => existsSync(join(repoRoot, file)));
+      expect(files).toEqual(expect.arrayContaining(expected));
+    }
   });
 
   it('uses no POSIX-only syntax outside the allow-list', () => {
