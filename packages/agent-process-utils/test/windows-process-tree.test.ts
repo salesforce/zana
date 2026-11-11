@@ -9,6 +9,8 @@ import {
   killProcessGroup,
   spawnPortablePipedProcess,
   stopProcessGroupLeaderFirst,
+  registerSpawnedTreeRoot,
+  stopWindowsProcessTree,
   type PortablePipedChildProcess,
   type ProcessTreeKillHost,
   windowsTaskkillPath,
@@ -122,16 +124,23 @@ windowsOnly("Windows process tree stop", { timeout: 30_000 }, () => {
 // The decisions taskkill drives, on every OS: a fake Windows host and a real,
 // live child whose `kill` is observed.
 describe("installWindowsProcessTreeKill", () => {
-  const children: ChildProcess[] = [];
-  afterEach(() => {
+  // The real kill, stored before any override, so teardown never goes
+  // through a fake taskkill host.
+  const children: { child: ChildProcess; realKill: ChildProcess["kill"] }[] = [];
+  afterEach(async () => {
     vi.useRealTimers();
-    for (const child of children.splice(0)) child.kill("SIGKILL");
+    await Promise.all(children.splice(0).map(({ child, realKill }) => {
+      if (child.exitCode !== null || child.signalCode !== null) return undefined;
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      realKill("SIGKILL");
+      return exited;
+    }));
   });
 
   function liveChild() {
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-    children.push(child);
     const realKill = child.kill.bind(child);
+    children.push({ child, realKill });
     const rootKill = vi.fn((signal?: NodeJS.Signals | number) => realKill(signal));
     child.kill = rootKill as unknown as ChildProcess["kill"];
     return { child, realKill, rootKill };
@@ -140,16 +149,57 @@ describe("installWindowsProcessTreeKill", () => {
   function fakeTaskkill() {
     const taskkill = Object.assign(new EventEmitter(), { kill: vi.fn() });
     const calls: string[][] = [];
+    const warn = vi.fn();
     const host: ProcessTreeKillHost = {
       platform: "win32",
-      execPath: "C:\other\runtime.exe",
+      execPath: String.raw`C:\other\runtime.exe`,
       spawnTaskkill: (args) => {
         calls.push([...args]);
         return taskkill as unknown as ChildProcess;
       },
+      warn,
     };
-    return { taskkill, calls, host };
+    return { taskkill, calls, host, warn };
   }
+
+  it("keeps signal 0 as an existence probe", () => {
+    const { child, rootKill } = liveChild();
+    const { calls, host } = fakeTaskkill();
+    installWindowsProcessTreeKill(child, host);
+    expect(child.kill(0)).toBe(true);
+    expect(rootKill).toHaveBeenCalledWith(0);
+    expect(calls).toEqual([]);
+  });
+
+  it("warns when taskkill fails and the plain kill fails too", () => {
+    const { child, rootKill } = liveChild();
+    const { taskkill, host, warn } = fakeTaskkill();
+    installWindowsProcessTreeKill(child, host);
+    child.kill("SIGTERM");
+    rootKill.mockImplementationOnce(() => { throw new Error("EPERM"); });
+    taskkill.emit("exit", 1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`process ${child.pid}: taskkill exited 1`));
+  });
+
+  it("warns when taskkill never ran and the plain kill reports failure", () => {
+    const { child, rootKill } = liveChild();
+    const { taskkill, host, warn } = fakeTaskkill();
+    installWindowsProcessTreeKill(child, host);
+    child.kill("SIGTERM");
+    rootKill.mockReturnValueOnce(false);
+    taskkill.emit("error", new Error("ENOENT"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("taskkill did not run"));
+  });
+
+  it("does not warn when taskkill found the root already gone", () => {
+    const { child, rootKill } = liveChild();
+    const { taskkill, host, warn } = fakeTaskkill();
+    installWindowsProcessTreeKill(child, host);
+    child.kill("SIGTERM");
+    rootKill.mockReturnValueOnce(false);
+    taskkill.emit("exit", 128);
+    expect(warn).not.toHaveBeenCalled();
+  });
 
   it("runs taskkill over the tree and leaves the root to it on success", () => {
     const { child, rootKill } = liveChild();
@@ -184,8 +234,9 @@ describe("installWindowsProcessTreeKill", () => {
     const { child, rootKill } = liveChild();
     installWindowsProcessTreeKill(child, {
       platform: "win32",
-      execPath: "C:\other\runtime.exe",
+      execPath: String.raw`C:\other\runtime.exe`,
       spawnTaskkill: () => { throw new Error("EMFILE"); },
+      warn: () => {},
     });
     child.kill("SIGTERM");
     expect(rootKill).toHaveBeenCalledWith("SIGTERM");
@@ -226,12 +277,108 @@ describe("installWindowsProcessTreeKill", () => {
 
 describe("windowsTaskkillPath", () => {
   it("uses System32 under SystemRoot, then windir, so PATH is never searched", () => {
-    expect(windowsTaskkillPath({ SystemRoot: "C:/Windows", windir: "D:/Other" }))
-      .toBe(join("C:/Windows", "System32", "taskkill.exe"));
-    expect(windowsTaskkillPath({ windir: "D:/Win" })).toBe(join("D:/Win", "System32", "taskkill.exe"));
+    expect(windowsTaskkillPath({ SystemRoot: String.raw`C:\Windows`, windir: String.raw`D:\Other` }))
+      .toBe(String.raw`C:\Windows\System32\taskkill.exe`);
+    expect(windowsTaskkillPath({ windir: String.raw`D:\Win` })).toBe(String.raw`D:\Win\System32\taskkill.exe`);
   });
 
-  it("falls back to the bare name with neither variable set", () => {
-    expect(windowsTaskkillPath({})).toBe("taskkill.exe");
+  it("falls back to the default Windows location, never a bare name", () => {
+    expect(windowsTaskkillPath({})).toBe(String.raw`C:\Windows\System32\taskkill.exe`);
+  });
+});
+
+describe("stopWindowsProcessTree", () => {
+  function host() {
+    const taskkill = Object.assign(new EventEmitter(), { kill: vi.fn() });
+    const calls: string[][] = [];
+    return {
+      taskkill,
+      calls,
+      spawnTaskkill: (args: readonly string[]) => {
+        calls.push([...args]);
+        return taskkill as unknown as ChildProcess;
+      },
+    };
+  }
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("refuses the real taskkill under a test runner for a PID this process did not spawn", () => {
+    // Fake handles in unit tests carry made-up PIDs that can be live processes.
+    expect(process.env.VITEST).toBeTruthy();
+    const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    try {
+      const onDone = vi.fn();
+      stopWindowsProcessTree(unrelated.pid!, onDone);
+      expect(onDone).toHaveBeenCalledWith(null);
+      expect(() => process.kill(unrelated.pid!, 0)).not.toThrow();
+      const release = registerSpawnedTreeRoot(4242);
+      release();
+      const afterRelease = vi.fn();
+      stopWindowsProcessTree(4242, afterRelease);
+      expect(afterRelease).toHaveBeenCalledWith(null);
+    } finally {
+      unrelated.kill();
+    }
+  });
+
+  it("lets the real taskkill stop a root this process spawned and registered", async () => {
+    const own = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const release = registerSpawnedTreeRoot(own.pid!);
+    try {
+      // Windows: taskkill stops it (0). Elsewhere System32 is missing: null.
+      const code = await new Promise<number | null>((resolve) => stopWindowsProcessTree(own.pid!, resolve));
+      expect(code).toBe(process.platform === "win32" ? 0 : null);
+    } finally {
+      release();
+      own.kill();
+    }
+  }, 20_000);
+
+  it("runs taskkill /T /F on the PID and reports its exit code once", () => {
+    const h = host();
+    const onDone = vi.fn();
+    stopWindowsProcessTree(4242, onDone, h);
+    expect(h.calls).toEqual([["/PID", "4242", "/T", "/F"]]);
+    h.taskkill.emit("exit", 128);
+    h.taskkill.emit("exit", 0);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledWith(128);
+  });
+
+  it("reports once when an error is followed by an exit, and needs no callback", () => {
+    const h = host();
+    const onDone = vi.fn();
+    stopWindowsProcessTree(7, onDone, h);
+    h.taskkill.emit("error", new Error("EPERM"));
+    h.taskkill.emit("exit", 1);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledWith(null);
+
+    const quiet = host();
+    expect(() => {
+      stopWindowsProcessTree(8, undefined, quiet);
+      quiet.taskkill.emit("exit", 0);
+    }).not.toThrow();
+  });
+
+  it("reports null when taskkill errors, cannot spawn or hangs", () => {
+    const h = host();
+    const onError = vi.fn();
+    stopWindowsProcessTree(1, onError, h);
+    h.taskkill.emit("error", new Error("ENOENT"));
+    expect(onError).toHaveBeenCalledWith(null);
+
+    const onThrow = vi.fn();
+    stopWindowsProcessTree(1, onThrow, { spawnTaskkill: () => { throw new Error("EMFILE"); } });
+    expect(onThrow).toHaveBeenCalledWith(null);
+
+    vi.useFakeTimers();
+    const hung = host();
+    const onHang = vi.fn();
+    stopWindowsProcessTree(1, onHang, hung);
+    vi.advanceTimersByTime(10_000);
+    expect(hung.taskkill.kill).toHaveBeenCalled();
+    expect(onHang).toHaveBeenCalledWith(null);
   });
 });

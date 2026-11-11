@@ -9,7 +9,7 @@ import { spawn as nodeSpawn, type ChildProcess, type StdioOptions } from "node:c
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import crossSpawn from "cross-spawn";
 
@@ -138,6 +138,38 @@ export interface ProcessTreeKillHost {
   platform: NodeJS.Platform;
   execPath: string;
   spawnTaskkill: (args: readonly string[]) => ChildProcess;
+  /** Reports a tree that could not be stopped. */
+  warn: (message: string) => void;
+}
+
+/**
+ * Roots this process spawned itself and has not seen exit. Under a test
+ * runner, the real taskkill runs only for these: unit tests drive close paths
+ * with fake handles whose made-up PIDs can belong to live processes, and
+ * `/T /F` would end them and their trees.
+ */
+const spawnedTreeRoots = new Set<number>();
+
+function underTestRunner(): boolean {
+  return !!process.env.VITEST;
+}
+
+/**
+ * Mark `pid` as a root this process spawned itself, so the real taskkill may
+ * stop it under a test runner. Returns the release. Production code never
+ * needs to call it: the guard applies only under a test runner.
+ */
+export function registerSpawnedTreeRoot(pid: number): () => void {
+  spawnedTreeRoots.add(pid);
+  return () => { spawnedTreeRoots.delete(pid); };
+}
+
+/** The error the default host throws for a PID a test did not spawn. */
+export class TaskkillRefusedUnderTestError extends Error {
+  constructor(pid: string) {
+    super(`refusing taskkill under a test runner for PID ${pid}, which this process did not spawn`);
+    this.name = "TaskkillRefusedUnderTestError";
+  }
 }
 
 const defaultProcessTreeKillHost: ProcessTreeKillHost = {
@@ -145,20 +177,66 @@ const defaultProcessTreeKillHost: ProcessTreeKillHost = {
   get execPath() { return process.execPath; },
   // An argument array and no shell: the PID is the only input, and nothing
   // parses it but taskkill itself.
-  spawnTaskkill: (args) =>
-    nodeSpawn(windowsTaskkillPath(), [...args], {
+  spawnTaskkill: (args) => {
+    const pid = Number(args[args.indexOf("/PID") + 1]);
+    if (underTestRunner() && !spawnedTreeRoots.has(pid)) {
+      throw new TaskkillRefusedUnderTestError(String(pid));
+    }
+    return nodeSpawn(windowsTaskkillPath(), [...args], {
       shell: false,
       stdio: "ignore",
       windowsHide: true,
-    }),
+    });
+  },
+  warn: console.warn.bind(console),
 };
 
 const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
+/** taskkill's exit code when the root PID is not running. */
+export const TASKKILL_NOT_FOUND = 128;
 
-/** Absolute System32 taskkill, so a `taskkill` earlier on PATH is never run. */
+/**
+ * Absolute System32 taskkill, so a `taskkill` earlier on PATH is never run.
+ * With neither SystemRoot nor windir set, the default Windows location.
+ */
 export function windowsTaskkillPath(env: NodeJS.ProcessEnv = process.env): string {
-  const root = env.SystemRoot ?? env.windir;
-  return root ? join(root, "System32", "taskkill.exe") : "taskkill.exe";
+  const root = env.SystemRoot ?? env.windir ?? "C:\\Windows";
+  return win32.join(root, "System32", "taskkill.exe");
+}
+
+/**
+ * Run `taskkill /PID <pid> /T /F`, which ends the process and every
+ * descendant it can find by parentage. `onDone` gets taskkill's exit code
+ * (0 stopped, 128 not running), or null when taskkill could not start or hung
+ * and was stopped. A spawn failure calls `onDone` before this returns.
+ */
+export function stopWindowsProcessTree(
+  pid: number,
+  onDone: (code: number | null) => void = () => {},
+  host: Pick<ProcessTreeKillHost, "spawnTaskkill"> = defaultProcessTreeKillHost,
+): void {
+  let settled = false;
+  const finish = (code: number | null): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    onDone(code);
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let taskkill: ChildProcess;
+  try {
+    taskkill = host.spawnTaskkill(["/PID", String(pid), "/T", "/F"]);
+  } catch {
+    finish(null);
+    return;
+  }
+  timer = setTimeout(() => {
+    try { taskkill.kill(); } catch { /* Already gone. */ }
+    finish(null);
+  }, WINDOWS_TASKKILL_TIMEOUT_MS);
+  timer.unref?.();
+  taskkill.once("error", () => finish(null));
+  taskkill.once("exit", (code) => finish(code));
 }
 
 function sameExecutable(file: string | undefined, execPath: string): boolean {
@@ -178,43 +256,38 @@ function sameExecutable(file: string | undefined, execPath: string): boolean {
  *
  * A root running this runtime's own executable keeps the plain kill: libuv
  * puts each child of a Node process in a kill-on-close job, so its own
- * descendants end with it. POSIX is unchanged.
+ * descendants end with it. Signal 0 stays an existence probe. POSIX is
+ * unchanged.
  */
 export function installWindowsProcessTreeKill(
   child: ChildProcess,
   host: ProcessTreeKillHost = defaultProcessTreeKillHost,
 ): void {
   if (host.platform !== "win32" || sameExecutable(child.spawnfile, host.execPath)) return;
+  // A real child of this process: its tree is safe to stop, test runner or not.
+  if (host === defaultProcessTreeKillHost && child.pid !== undefined) {
+    const release = registerSpawnedTreeRoot(child.pid);
+    child.once("exit", release);
+  }
   const killRoot = child.kill.bind(child);
   child.kill = (signal?: NodeJS.Signals | number): boolean => {
     // A reaped child's PID is free for reuse; never hand it to taskkill.
-    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+    if (signal === 0 || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
       return killRoot(signal);
     }
-    const fallback = (): void => {
-      try { killRoot(signal); } catch { /* Already gone. */ }
-    };
-    let taskkill: ChildProcess;
-    try {
-      taskkill = host.spawnTaskkill(["/PID", String(child.pid), "/T", "/F"]);
-    } catch {
-      return killRoot(signal);
-    }
-    const timer = setTimeout(() => {
-      try { taskkill.kill(); } catch { /* Already gone. */ }
-    }, WINDOWS_TASKKILL_TIMEOUT_MS);
-    timer.unref?.();
-    taskkill.once("error", () => {
-      clearTimeout(timer);
-      fallback();
-    });
-    taskkill.once("exit", (code) => {
-      clearTimeout(timer);
-      // 128: the root already exited. A no-op for a reaped child; ends a root
-      // taskkill could not reach.
-      if (code !== 0) fallback();
-    });
-    // The stop was sent, as `kill()` reports for a delivered signal.
+    const pid = child.pid;
+    stopWindowsProcessTree(pid, (code) => {
+      if (code === 0) return;
+      // The root taskkill could not reach (or a taskkill that never ran).
+      // 128 means it had already exited, and the plain kill is a no-op.
+      let stopped = false;
+      try { stopped = killRoot(signal); } catch { /* Reported below. */ }
+      if (!stopped && code !== TASKKILL_NOT_FOUND && child.exitCode === null && child.signalCode === null) {
+        host.warn(`[agent-process-utils] could not stop process ${pid}: taskkill ${code === null ? "did not run" : `exited ${code}`} and the plain kill failed`);
+      }
+    }, host);
+    // The stop was sent, as `kill()` reports for a delivered signal; a failure
+    // is reported through host.warn once taskkill has finished.
     (child as { killed: boolean }).killed = true;
     return true;
   };
