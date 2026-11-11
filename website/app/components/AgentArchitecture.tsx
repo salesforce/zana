@@ -20,6 +20,12 @@ const CAPABILITIES = [
   }
 ];
 
+export const PLUGIN_VIDEO = {
+  src: '/media/plugin-power.mp4',
+  poster: '/media/plugin-power-poster.jpg',
+  captions: '/media/plugin-power.en.vtt'
+} as const;
+
 const AGENTS = [
   { name: 'Claude Code', icon: 'claude-code', monochrome: false },
   { name: 'Codex', icon: 'codex', monochrome: true },
@@ -78,6 +84,17 @@ export function AgentArchitecture() {
           <Link href="/docs/architecture/">Explore the architecture <span aria-hidden="true">→</span></Link>
           <Link href="/media-press/">See the full presentation <span aria-hidden="true">→</span></Link>
         </p>
+
+        <figure className={styles.video}>
+          <video controls playsInline preload="none" poster={PLUGIN_VIDEO.poster} width={1920} height={1080} aria-label="Built from plugins: a 30-second look at extending Zana">
+            <source src={PLUGIN_VIDEO.src} type="video/mp4" />
+            <track kind="captions" src={PLUGIN_VIDEO.captions} srcLang="en" label="English" default />
+          </video>
+          <figcaption>
+            <span><strong>Built from plugins.</strong> Every panel is a plugin, and you can build your own in 30 seconds.</span>
+            <Link href="/extensions/getting-started/">Build a plugin <span aria-hidden="true">→</span></Link>
+          </figcaption>
+        </figure>
       </div>
     </section>
   );
