@@ -17,6 +17,7 @@ import {
   experimental_formatCommand as formatCommand,
   experimental_installationVerification as installationVerification,
   experimental_npmCommand as npmCommand,
+  experimental_npmGlobalInstallCommand as npmGlobalInstallCommand,
   experimental_npmGlobalInstallSource as npmGlobalInstallSource,
   experimental_probeNpmGlobalPackage as probeNpmGlobalPackage,
   experimental_readCliVersion as readCliVersion,
@@ -105,6 +106,20 @@ function claudeDoctor(value: string | null): {
   };
 }
 
+function claudeUpdateExecution(
+  installSource: ProviderInstallationStatus["installSource"],
+) {
+  if (installSource === "npmGlobal") {
+    return npmGlobalInstallCommand(CLAUDE_NPM_PACKAGE);
+  }
+  const command = claudeExecutable();
+  return {
+    command,
+    args: ["update"],
+    displayCommand: formatCommand(command, ["update"]),
+  };
+}
+
 function isDefaultNativeClaudePath(executablePath: string | null): boolean {
   if (executablePath === null) return false;
   const normalized = executablePath.replace(/\\/gu, "/");
@@ -176,7 +191,7 @@ export async function getClaudeProviderInstallationStatus(): Promise<ProviderIns
   const displayCommand =
     actionKind === "install"
       ? downloadedInstallerCommand(CLAUDE_INSTALL_SCRIPT_URL).displayCommand
-      : formatCommand(command, ["update"]);
+      : claudeUpdateExecution(installSource).displayCommand;
   return {
     executableName: command,
     executablePath: resolvedExecutable,
@@ -217,15 +232,10 @@ function buildClaudeProviderInstallationRun(
       message: `Claude Code ${action} is no longer available on this host.`,
     };
   }
-  const command = claudeExecutable();
   const execution =
     action === "install"
       ? downloadedInstallerCommand(CLAUDE_INSTALL_SCRIPT_URL)
-      : {
-          command,
-          args: ["update"],
-          displayCommand: formatCommand(command, ["update"]),
-        };
+      : claudeUpdateExecution(status.installSource);
   return {
     available: true,
     command: execution,

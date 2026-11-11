@@ -4,8 +4,8 @@ import {
   type ReasoningLevel,
   type RuntimePermissionScope,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
-import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import type { Options, Settings } from "@anthropic-ai/claude-agent-sdk";
 import type { ClaudePermissionMode } from "../interactive-contract.js";
 import { buildReadonlyBashUpdatedInput } from "./readonly-bash-policy.js";
@@ -281,12 +281,85 @@ function resolveExecutableOnPath(
 
 /**
  * The SDK spawns the CLI without a shell, so on Windows only a PE image can
- * launch. Every existing file passes `X_OK` there, so matching the bare name
- * would accept an extensionless `#!/bin/sh` shim or `.cmd` launcher that
- * fails at spawn.
+ * launch. npm's global install puts `claude.cmd` on PATH and the real image
+ * at `node_modules/@anthropic-ai/claude-code/bin/claude.exe`. Every existing
+ * file passes `X_OK` there, so matching the bare name would accept an
+ * extensionless `#!/bin/sh` shim or `.cmd` launcher that fails at spawn.
  */
 function claudeExecutableName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "claude.exe" : "claude";
+}
+
+const WINDOWS_NPM_CLAUDE_EXE_SEGMENTS = [
+  "node_modules",
+  "@anthropic-ai",
+  "claude-code",
+  "bin",
+  "claude.exe",
+] as const;
+const CMD_SHIM_MAX_BYTES = 64 * 1024;
+
+function resolveWindowsNpmClaudeInDirectory(searchDir: string): string | null {
+  const direct = join(searchDir, "claude.exe");
+  if (isExecutableFile(direct)) return direct;
+  const packaged = join(searchDir, ...WINDOWS_NPM_CLAUDE_EXE_SEGMENTS);
+  if (isExecutableFile(packaged)) return packaged;
+  return claudeExeFromNpmCmdShim(join(searchDir, "claude.cmd"));
+}
+
+function resolveWindowsNpmClaudeOnPath(pathEnv: string | undefined): string | null {
+  if (!pathEnv) return null;
+  for (const searchDir of pathEnv.split(delimiter)) {
+    if (!searchDir) continue;
+    const resolved = resolveWindowsNpmClaudeInDirectory(searchDir);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+/** `%dp0%` / `%~dp0` is the directory of the `.cmd` shim npm writes. */
+function claudeExeTargetFromCmdToken(raw: string, shimDir: string): string | null {
+  const hasDp0 = /%~dp0%?|%dp0%/iu.test(raw);
+  const stripped = raw.replace(/%~dp0%?/giu, "").replace(/%dp0%/giu, "");
+  if (stripped.includes("%") || !/claude\.exe$/iu.test(stripped)) return null;
+  if (!hasDp0 && (isAbsolute(stripped) || /^[A-Za-z]:[\\/]/u.test(stripped))) {
+    return stripped;
+  }
+  const segments = stripped.split(/[/\\]+/u).filter((segment) => segment.length > 0);
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === "." || segment === "..") ||
+    segments[segments.length - 1]?.toLowerCase() !== "claude.exe"
+  ) {
+    return null;
+  }
+  return join(shimDir, ...segments);
+}
+
+function claudeExeFromNpmCmdShim(cmdPath: string): string | null {
+  let text: string;
+  try {
+    const stat = statSync(cmdPath);
+    if (!stat.isFile() || stat.size > CMD_SHIM_MAX_BYTES) return null;
+    text = readFileSync(cmdPath, "utf8");
+  } catch {
+    return null;
+  }
+  const shimDir = dirname(cmdPath);
+  for (const match of text.matchAll(/"([^"\r\n]*)"/gu)) {
+    const resolved = claudeExeTargetFromCmdToken(match[1] ?? "", shimDir);
+    if (resolved && isExecutableFile(resolved)) return resolved;
+  }
+  return null;
+}
+
+function windowsNpmShimDirectories(env: NodeJS.ProcessEnv): string[] {
+  const dirs: string[] = [];
+  const appData = env.APPDATA?.trim();
+  const programFiles = (env.ProgramFiles ?? env.PROGRAMFILES)?.trim();
+  if (appData) dirs.push(join(appData, "npm"));
+  if (programFiles) dirs.push(join(programFiles, "nodejs"));
+  return dirs;
 }
 
 function wellKnownClaudeExecutablePaths(
@@ -305,7 +378,18 @@ function wellKnownClaudeExecutablePaths(
       join(home, ".claude", "local", executableName),
     );
   }
-  if (platform !== "win32") {
+  if (platform === "win32") {
+    const appData = env.APPDATA?.trim();
+    const programFiles = (env.ProgramFiles ?? env.PROGRAMFILES)?.trim();
+    if (appData) {
+      candidatePaths.push(join(appData, "npm", ...WINDOWS_NPM_CLAUDE_EXE_SEGMENTS));
+    }
+    if (programFiles) {
+      candidatePaths.push(
+        join(programFiles, "nodejs", ...WINDOWS_NPM_CLAUDE_EXE_SEGMENTS),
+      );
+    }
+  } else {
     candidatePaths.push("/opt/homebrew/bin/claude", "/usr/local/bin/claude");
   }
   return candidatePaths;
@@ -328,17 +412,33 @@ export function resolveClaudeCodeExecutable(
     }
   }
 
-  const executableOnPath = resolveExecutableOnPath({
-    executableName: claudeExecutableName(platform),
-    pathEnv: args.env.PATH ?? (platform === "win32" ? args.env.Path : undefined),
-  });
-  if (executableOnPath) {
-    return executableOnPath;
+  const pathEnv = args.env.PATH ?? (platform === "win32" ? args.env.Path : undefined);
+  if (platform === "win32") {
+    // CreateProcess walks PATH one directory at a time and tries PATHEXT
+    // (.exe before .cmd). A later bare claude.exe must not hide an earlier
+    // npm global install that only published claude.cmd.
+    const packagedOnPath = resolveWindowsNpmClaudeOnPath(pathEnv);
+    if (packagedOnPath) return packagedOnPath;
+  } else {
+    const executableOnPath = resolveExecutableOnPath({
+      executableName: claudeExecutableName(platform),
+      pathEnv,
+    });
+    if (executableOnPath) {
+      return executableOnPath;
+    }
   }
 
   for (const candidate of wellKnownClaudeExecutablePaths(args.env, platform)) {
     if (isExecutableFile(candidate)) {
       return candidate;
+    }
+  }
+
+  if (platform === "win32") {
+    for (const dir of windowsNpmShimDirectories(args.env)) {
+      const packaged = resolveWindowsNpmClaudeInDirectory(dir);
+      if (packaged) return packaged;
     }
   }
 

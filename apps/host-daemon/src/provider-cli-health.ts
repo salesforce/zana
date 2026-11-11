@@ -598,7 +598,19 @@ export function latestVersionRespectingMinReleaseAge(args: {
 export function resolveProviderCliUpdateCommand(args: {
   definition: ProviderCliDefinition;
   executablePath: string | null;
+  nodePlatform?: NodeJS.Platform;
+  installSource?: ProviderCliInstallSource;
+  npmPrefix?: string | null;
 }): ProviderCliActionCommand {
+  // `claude update` probes the registry with a 5s timeout and reports a
+  // firewall failure. Global npm installs update through npm itself, the
+  // same command Codex and Pi use, with `npm.cmd` on Windows.
+  if (
+    args.definition.key === 'claudeCode'
+    && (args.installSource === 'npmGlobal' || (args.npmPrefix !== null && args.npmPrefix !== undefined))
+  ) {
+    return npmInstallActionCommand(args.definition, args.nodePlatform ?? process.platform);
+  }
   const nativeArgs = nativeUpdateArgs(args.definition.key);
   if (nativeArgs) {
     return {
@@ -773,7 +785,10 @@ function buildInstallAction(args: {
   if ((args.needsUpdate || args.versionUnsupported) && canRunUpdate) {
     const command = resolveProviderCliUpdateCommand({
       definition: args.definition,
-      executablePath: args.executablePath
+      executablePath: args.executablePath,
+      nodePlatform: args.nodePlatform,
+      installSource: args.installSource,
+      npmPrefix: args.classification.kind === 'updatable' ? args.classification.npmPrefix : null
     });
     return { kind: 'update', label: 'Update', commandKind: command.commandKind, command: command.displayCommand };
   }
@@ -785,12 +800,17 @@ function resolveProviderCliActionCommand(args: {
   actionKind: ProviderCliInstallActionKind;
   executablePath: string | null;
   nodePlatform: NodeJS.Platform;
+  installSource: ProviderCliInstallSource;
+  npmPrefix: string | null;
 }): ProviderCliActionCommand {
   return args.actionKind === 'install'
     ? installActionCommand(args.definition, args.nodePlatform)
     : resolveProviderCliUpdateCommand({
       definition: args.definition,
-      executablePath: args.executablePath
+      executablePath: args.executablePath,
+      nodePlatform: args.nodePlatform,
+      installSource: args.installSource,
+      npmPrefix: args.npmPrefix
     });
 }
 
@@ -1105,17 +1125,6 @@ export async function runProviderCliInstall(args: {
       });
       return { events };
     }
-    const actionCommand = resolveProviderCliActionCommand({
-      definition,
-      actionKind: args.actionKind,
-      executablePath: before.executablePath,
-      nodePlatform
-    });
-    events.push({
-      type: 'started',
-      provider: args.provider,
-      command: actionCommand.displayCommand
-    });
     const npmPrefix = args.actionKind === 'update'
       ? npmInstallPrefixForExecutable({
         executablePath: before.executablePath,
@@ -1124,6 +1133,19 @@ export async function runProviderCliInstall(args: {
         pathExists
       })
       : null;
+    const actionCommand = resolveProviderCliActionCommand({
+      definition,
+      actionKind: args.actionKind,
+      executablePath: before.executablePath,
+      nodePlatform,
+      installSource: before.installSource,
+      npmPrefix
+    });
+    events.push({
+      type: 'started',
+      provider: args.provider,
+      command: actionCommand.displayCommand
+    });
     const closeState: { result: { exitCode: number | null; signal: NodeJS.Signals | null } | null } = {
       result: null
     };
