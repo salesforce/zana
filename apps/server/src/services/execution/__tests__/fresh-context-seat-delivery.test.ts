@@ -27,6 +27,8 @@ async function setup(filePath: string, opts: {
   recordUnitDelivered?: (...args: any[]) => Promise<void>;
   deliverAssignment?: (...args: any[]) => Promise<any>;
   logError?: (message: string, error: unknown) => void;
+  closeWorkerSession?: (sessionId: string) => void;
+  getTeamLaunch?: (...args: any[]) => Promise<any>;
 }) {
   const store = createExecutionStore({ filePath, id: () => 'execution-1' });
   const deliverAssignment = opts.deliverAssignment ?? vi.fn(async () => ({ state: 'accepted' as const }));
@@ -40,7 +42,7 @@ async function setup(filePath: string, opts: {
       ]
     } } }),
     launchTeam: async () => ({ ok: true }),
-    getTeamLaunch: async () => ({ id: 'lifecycle-1', orchestratorSessionId: 'coordinator', workers: [typeof opts.worker === 'function' ? opts.worker() : opts.worker] }),
+    getTeamLaunch: opts.getTeamLaunch ?? (async () => ({ id: 'lifecycle-1', orchestratorSessionId: 'coordinator', workers: [typeof opts.worker === 'function' ? opts.worker() : opts.worker] })),
     cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
     replyToSession: () => true,
     deliverAssignment: deliverAssignment as never,
@@ -48,7 +50,8 @@ async function setup(filePath: string, opts: {
     ...(opts.spawnDeferredWorker ? { spawnDeferredWorker: opts.spawnDeferredWorker } : {}),
     ...(opts.recycleSeat ? { recycleSeat: opts.recycleSeat } : {}),
     ...(opts.recordUnitDelivered ? { recordUnitDelivered: opts.recordUnitDelivered } : {}),
-    ...(opts.logError ? { logError: opts.logError } : {})
+    ...(opts.logError ? { logError: opts.logError } : {}),
+    ...(opts.closeWorkerSession ? { closeWorkerSession: opts.closeWorkerSession } : {})
   } as never);
   const started = await service.start('owner', 'project-1', {
     version: 1 as const, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Build', slots: [{ initialTask: 'Run' }],
@@ -123,7 +126,6 @@ describe('REQ-3 the next unit of a seat that already finished one starts a fresh
     const spawnDeferredWorker = vi.fn(async () => { bound = true; return { ok: true as const, sessionId: 'worker-1' }; });
     const recordUnitDelivered = vi.fn(async () => undefined);
     const waiting = { slotId: 'slot-1', projectId: 'project-1', process: 'authorized', onDemand: true };
-    await fixture(async () => undefined);
     const { service } = await setup(filePath, {
       worker: () => (bound ? seat({ deliveredUnitCount: 0 }) : waiting), spawnDeferredWorker, recordUnitDelivered
     });
@@ -135,6 +137,43 @@ describe('REQ-3 the next unit of a seat that already finished one starts a fresh
     const { service, deliverAssignment } = await setup(filePath, { worker: seat({ deliveredUnitCount: 1 }) });
     await service.dispatchReady(coordinator);
     expect(deliverAssignment).toHaveBeenCalledWith('worker-1', expect.any(String), expect.anything());
+  }));
+});
+
+describe('a run stopped while the fresh session\'s lifecycle was being read', () => {
+  it('closes the new session and gives it nothing', async () => fixture(async (filePath) => {
+    const closeWorkerSession = vi.fn();
+    const stopRef: { stop?: () => Promise<void> } = {};
+    let reads = 0;
+    const getTeamLaunch = vi.fn(async () => {
+      reads += 1;
+      // reads: 1 dispatch, 2 finishRecycle, 4 the re-read in deliverStartedSeat
+      if (reads === 4) await stopRef.stop!();
+      return { id: 'lifecycle-1', workers: [seat({ deliveredUnitCount: 1 })] };
+    });
+    const recycleSeat = vi.fn(async () => ({ sessionId: 'fresh-1' }));
+    const { store, service, deliverAssignment } = await setup(filePath, { worker: seat({ deliveredUnitCount: 1 }), recycleSeat, closeWorkerSession, getTeamLaunch, logError: vi.fn() });
+    stopRef.stop = async () => { const r = await store.get('execution-1'); await store.transition(r!.id, r!.stateVersion, 'STOPPED', 'info', 'test stop'); };
+    reads = 0;
+    await service.dispatchReady(coordinator);
+    await vi.waitFor(() => expect(closeWorkerSession).toHaveBeenCalledWith('fresh-1'));
+    expect(deliverAssignment).not.toHaveBeenCalledWith('fresh-1', expect.anything(), expect.anything());
+  }));
+
+  it('logs the run id when the lifecycle re-read fails, and still delivers', async () => fixture(async (filePath) => {
+    const logError = vi.fn();
+    let reads = 0;
+    const getTeamLaunch = vi.fn(async () => {
+      reads += 1;
+      if (reads >= 4) throw new Error('read failed');
+      return { id: 'lifecycle-1', workers: [seat({ deliveredUnitCount: 1 })] };
+    });
+    const recycleSeat = vi.fn(async () => ({ sessionId: 'fresh-1' }));
+    const { service, deliverAssignment } = await setup(filePath, { worker: seat({ deliveredUnitCount: 1 }), recycleSeat, getTeamLaunch, logError });
+    reads = 0;
+    await service.dispatchReady(coordinator);
+    await vi.waitFor(() => expect(deliverAssignment).toHaveBeenCalledWith('fresh-1', expect.any(String), expect.anything()));
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('execution-1'), expect.any(Error));
   }));
 });
 

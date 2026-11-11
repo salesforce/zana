@@ -598,7 +598,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                     )}
                     {transport !== 'MODERN' && orchestratorPersonaId !== slot.personaId && (
                       <>
-                        <label className="team-slot-on-demand">
+                        <label className="team-slot-fresh-session">
                           <input
                             type="checkbox"
                             checked={slot.freshContextPerUnit}
@@ -606,7 +606,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                           />
                           Start each unit in a fresh session
                         </label>
-                        <span className="team-slot-on-demand">{FRESH_SESSION_HELP}</span>
+                        <span className="team-slot-fresh-session team-slot-fresh-session-help">{FRESH_SESSION_HELP}</span>
                       </>
                     )}
                     <button

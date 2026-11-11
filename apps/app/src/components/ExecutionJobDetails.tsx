@@ -185,13 +185,6 @@ function artifactLines(artifacts: ExecutionBoardSnapshot['artifacts']): string[]
 }
 
 /**
- * Readable, copy-paste-friendly plain-text dump of the job details shown in this view.
- * Purpose is wedge diagnosis — dump every liveness / claim / usage / blocker signal the
- * projection carries so a stalled run can be pasted for analysis. Bounded (Rule 5): events
- * are a last-N tail; artifacts are name+mediaType+digest only (never bodies). Composed from
- * per-section helpers joined by a blank line between sections (no trailing blank).
- */
-/**
  * Seats of the run whose Team row asks for a fresh session per unit (#579). A seat id is `<row>:<persona>:<n>`; the
  * row is looked up in the run's Team, so a team edited since the launch can only show a mark, never change the run.
  */
@@ -200,6 +193,13 @@ export function freshSessionSlotIds(team: { slots?: ReadonlyArray<{ freshContext
   return new Set(slotIds.filter((slotId) => team?.slots?.[rowOf(slotId)]?.freshContextPerUnit === true));
 }
 
+/**
+ * Readable, copy-paste-friendly plain-text dump of the job details shown in this view.
+ * Purpose is wedge diagnosis — dump every liveness / claim / usage / blocker signal the
+ * projection carries so a stalled run can be pasted for analysis. Bounded (Rule 5): events
+ * are a last-N tail; artifacts are name+mediaType+digest only (never bodies). Composed from
+ * per-section helpers joined by a blank line between sections (no trailing blank).
+ */
 export function buildJobDetailsText(projectId: string, snapshot: ExecutionBoardSnapshot): string {
   const execution = snapshot.execution;
   return [

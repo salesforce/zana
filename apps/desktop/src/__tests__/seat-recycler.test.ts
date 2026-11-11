@@ -102,7 +102,7 @@ describe('createSeatRecycler', () => {
     timers[0].fn();
     await tick();
     expect(order).toContain('close:old');
-    timers[1].fn();
+    recycler.onExit('old');
     await expect(done).resolves.toEqual({ sessionId: 'new' });
     expect(timers[1].ms).toBe(SEAT_EXIT_WAIT_MS);
   });
@@ -116,26 +116,117 @@ describe('createSeatRecycler', () => {
     expect(order).toEqual([]);
   });
 
-  it('carries on when a step fails: a failed usage sample, recovery clear or close is logged and the respawn still goes ahead', async () => {
+  it('carries on when a usage sample or close fails: it is logged and the respawn still goes ahead', async () => {
     const log = vi.fn();
     const { recycler, state } = setup({
-      log, sampleUsage: async () => { throw new Error('no stats'); }, clearRecovery: async () => { throw new Error('store'); },
-      close: async () => { throw new Error('stuck'); }
+      log, sampleUsage: async () => { throw new Error('no stats'); }, close: async () => { throw new Error('stuck'); }
     });
     state.current = 'done';
     const done = recycler.recycle('r1', 's1');
     await tick();
     recycler.onExit('old');
     await expect(done).resolves.toEqual({ sessionId: 'new' });
-    expect(log).toHaveBeenCalledTimes(3);
+    expect(log).toHaveBeenCalledTimes(2);
     expect(log.mock.calls.map((call) => call[0]).join(' ')).toContain('r1/s1');
   });
 
-  it('starts the new session without closing anything when the seat has no session', async () => {
+  it('aborts the recycle when the recovery snapshot cannot be cleared, and retries the clear next time', async () => {
+    const log = vi.fn();
+    let fail = true;
+    const orderRef: string[] = [];
+    const { recycler, state, respawn } = setup({ log, clearRecovery: async () => { if (fail) throw new Error('store'); orderRef.push('clear'); } });
+    state.current = 'done';
+    const done = recycler.recycle('r1', 's1');
+    await tick();
+    recycler.onExit('old');
+    await expect(done).resolves.toEqual({});
+    expect(respawn).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('not cleared'), expect.any(Error));
+    fail = false;
+    state.sessionId = undefined;
+    await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ sessionId: 'new' });
+    expect(orderRef).toContain('clear');
+  });
+
+  it('does not quarantine a healthy seat whose old session is slow to exit: it retries instead of respawning', async () => {
+    const { recycler, state, timers, respawn } = setup();
+    state.current = 'idle';
+    const done = recycler.recycle('r1', 's1');
+    await tick();
+    const exitTimer = timers.find((t) => t.ms === SEAT_EXIT_WAIT_MS)!;
+    exitTimer.fn();
+    await expect(done).resolves.toEqual({});
+    expect(respawn).not.toHaveBeenCalled();
+  });
+
+  it('declines at once, without the 90 second wait, when the harness reports no agent state', async () => {
+    for (const reported of [undefined, 'unknown']) {
+      const { recycler, state, timers, order, respawn } = setup();
+      state.current = reported;
+      await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ declined: true });
+      expect(timers).toHaveLength(0);
+      expect(order).toEqual([]);
+      expect(respawn).not.toHaveBeenCalled();
+    }
+  });
+
+  it('declines, logging, when detaching the seat throws, and leaves the old session open', async () => {
+    const log = vi.fn();
+    const { recycler, state, order } = setup({ log, detach: async () => { throw new Error('disk'); } });
+    state.current = 'idle';
+    await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ declined: true });
+    expect(order).not.toContain('close:old');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('could not be detached'), expect.any(Error));
+  });
+
+  it('declines, logging, when the seat cannot be read', async () => {
+    const log = vi.fn();
+    const { recycler, respawn } = setup({ log, sessionOf: async () => { throw new Error('read'); } });
+    await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ declined: true });
+    expect(respawn).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('could not be read'), expect.any(Error));
+  });
+
+  it('does not respawn for a run released while the seat was being read', async () => {
+    let read!: (id: string | undefined) => void;
+    const { recycler, respawn } = setup({ sessionOf: () => new Promise((resolve) => { read = resolve; }) });
+    const done = recycler.recycle('r1', 's1');
+    await tick();
+    recycler.release('r1');
+    read(undefined);
+    await expect(done).resolves.toEqual({ final: true });
+    expect(respawn).not.toHaveBeenCalled();
+  });
+
+  it('does not respawn for a run released while the recovery snapshot was being cleared', async () => {
+    let clear!: () => void;
+    const { recycler, state, respawn } = setup({ clearRecovery: () => new Promise<void>((resolve) => { clear = resolve; }) });
+    state.sessionId = undefined;
+    const done = recycler.recycle('r1', 's1');
+    await tick();
+    recycler.release('r1');
+    clear();
+    await expect(done).resolves.toEqual({ final: true });
+    expect(respawn).not.toHaveBeenCalled();
+  });
+
+  it('never closes a session that started a turn while the detach was pending', async () => {
+    const seen: string[] = [];
+    const { recycler, state, order, timers, respawn } = setup({ detach: async () => { seen.push('detach'); state.current = 'working'; return true; } });
+    state.current = 'idle';
+    const done = recycler.recycle('r1', 's1');
+    await tick();
+    timers.find((t) => t.ms === SEAT_REST_WAIT_MS)!.fn();
+    await expect(done).resolves.toEqual({});
+    expect(order).not.toContain('close:old');
+    expect(respawn).not.toHaveBeenCalled();
+  });
+
+  it('starts the new session without closing anything when the seat has no session (only the snapshot is cleared)', async () => {
     const { recycler, state, order, respawn } = setup();
     state.sessionId = undefined;
     await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ sessionId: 'new' });
-    expect(order).toEqual([]);
+    expect(order).toEqual(['clear']);
     expect(respawn).toHaveBeenCalled();
   });
 

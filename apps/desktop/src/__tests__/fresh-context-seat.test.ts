@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Team } from '@zana-ai/zcc-domain/product';
-import * as seatModule from '../on-demand-seat.js';
-import { deferredSeatsOf, freshContextSeatsOf, recycleGuard, respawnLaunchShape, onDemandLaunchProblem } from '../on-demand-seat.js';
+import { recycleDecision } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
+import { deferredSeatsOf, freshContextSeatsOf, freshContextLaunchProblem as problem, respawnLaunchShape, onDemandLaunchProblem } from '../on-demand-seat.js';
 import { jobCoordinatorPrompt } from '../team-coordinator-prompt.js';
 
 /** #579: the pure decisions behind a fresh session per unit. */
 const seat = (slotId: string, personaId = 'p', label?: string, role: 'worker' | 'orchestrator' = 'worker') => ({ slotId, personaId, label, role });
-const facts = (over: Partial<Parameters<typeof recycleGuard>[0]> = {}) => ({ deliveredUnitCount: 1, hasBlockedUnit: false, hasOpenBlockerDelivery: false, queuedInInjector: 0, ...over });
+const facts = (over: Partial<Parameters<typeof recycleDecision>[0]> = {}) => ({ deliveredUnitCount: 1, hasBlockedUnit: false, hasOpenBlockerDelivery: false, queuedInInjector: 0, ...over });
 
 describe('REQ-1 freshContextSeatsOf', () => {
   const team = { slots: [{ freshContextPerUnit: true }, {}, { freshContextPerUnit: false }, { startOnDemand: true, freshContextPerUnit: true }] };
@@ -25,25 +25,18 @@ describe('REQ-1 freshContextSeatsOf', () => {
 });
 
 describe('REQ-9 a Modern or non-durable launch with a fresh-context seat is refused before anything spawns', () => {
-  const problem = (seatModule as Record<string, unknown>).freshContextLaunchProblem as
-    | ((team: object, fresh: readonly object[], launch: { durable: boolean; structured: boolean }) => string | undefined)
-    | undefined;
   const fresh = [seat('0:a:0', 'a', 'Engineer')];
-  it('exports freshContextLaunchProblem, built like onDemandLaunchProblem', () => {
-    expect(typeof problem).toBe('function');
-  });
   it('allows no fresh seats and a supported launch', () => {
-    expect(problem?.({ slots: [] }, [], { durable: false, structured: false })).toBeUndefined();
-    expect(problem?.({ slots: [] }, fresh, { durable: true, structured: true })).toBeUndefined();
-    expect(problem).toBeTypeOf('function');
+    expect(problem({ slots: [] }, [], { durable: false, structured: false })).toBeUndefined();
+    expect(problem({ slots: [] }, fresh, { durable: true, structured: true })).toBeUndefined();
   });
   it('refuses a Modern team naming the seat', () => {
-    expect(problem?.({ transport: 'MODERN', slots: [] }, fresh, { durable: true, structured: true }))
+    expect(problem({ transport: 'MODERN', slots: [] }, fresh, { durable: true, structured: true }))
       .toBe("Fresh session per unit isn't available for Modern squads yet; turn it off for: Engineer");
   });
   it('refuses a launch without a durable plan', () => {
-    expect(problem?.({ slots: [] }, fresh, { durable: false, structured: true })).toContain('turn it off for: Engineer');
-    expect(problem?.({ slots: [] }, fresh, { durable: true, structured: false })).toContain('plan-driven');
+    expect(problem({ slots: [] }, fresh, { durable: false, structured: true })).toContain('turn it off for: Engineer');
+    expect(problem({ slots: [] }, fresh, { durable: true, structured: false })).toContain('plan-driven');
   });
   it('leaves the on-demand message alone', () => {
     expect(onDemandLaunchProblem({ transport: 'MODERN', slots: [] }, fresh, { durable: true, structured: true })).toContain("Start on demand isn't available");
@@ -52,28 +45,28 @@ describe('REQ-9 a Modern or non-durable launch with a fresh-context seat is refu
 
 describe('REQ-3 / REQ-5 respawnLaunchShape', () => {
   it('a respawn uses the respawn approval and drops the old conversation and recovery prompt', () => {
-    expect(respawnLaunchShape('respawn')).toEqual({ usesRespawnApproval: true, dropsRecovery: true });
+    expect(respawnLaunchShape('respawn')).toEqual({ dropsRecovery: true });
   });
   it('a first start and a late seat keep today\'s shape', () => {
-    expect(respawnLaunchShape('start')).toEqual({ usesRespawnApproval: false, dropsRecovery: false });
-    expect(respawnLaunchShape('lateSeat')).toEqual({ usesRespawnApproval: false, dropsRecovery: false });
+    expect(respawnLaunchShape('start')).toEqual({ dropsRecovery: false });
+    expect(respawnLaunchShape('lateSeat')).toEqual({ dropsRecovery: false });
   });
 });
 
-describe('REQ-3 / REQ-4 recycleGuard', () => {
+describe('REQ-3 / REQ-4 recycleDecision', () => {
   it('recycles a seat that has finished a unit and has nothing in the way', () => {
-    expect(recycleGuard(facts())).toEqual({ recycle: true });
-    expect(recycleGuard(facts({ deliveredUnitCount: 7 }))).toEqual({ recycle: true });
+    expect(recycleDecision(facts())).toEqual({ recycle: true });
+    expect(recycleDecision(facts({ deliveredUnitCount: 7 }))).toEqual({ recycle: true });
   });
   it('never recycles the first unit', () => {
-    expect(recycleGuard(facts({ deliveredUnitCount: 0 }))).toMatchObject({ recycle: false, reason: expect.stringMatching(/first/i) });
+    expect(recycleDecision(facts({ deliveredUnitCount: 0 }))).toMatchObject({ recycle: false, reason: expect.stringMatching(/first/i) });
   });
   it.each([
     ['a blocked unit', { hasBlockedUnit: true }, /block/i],
     ['an open blocker delivery', { hasOpenBlockerDelivery: true }, /blocker/i],
     ['queued injector items', { queuedInInjector: 2 }, /queue/i]
   ])('delivers to the current session with %s and says why', (_n, over, reason) => {
-    expect(recycleGuard(facts(over))).toMatchObject({ recycle: false, reason: expect.stringMatching(reason) });
+    expect(recycleDecision(facts(over))).toMatchObject({ recycle: false, reason: expect.stringMatching(reason) });
   });
 });
 

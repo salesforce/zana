@@ -2088,13 +2088,23 @@ export class ExecutionService {
     }
     // The snapshot predates the start: the bind has since stored the seat's delivered-unit count, so read it again.
     const bound = await this.freshLifecycle(record, lifecycle);
+    // That read was asynchronous: look again before handing work to a run that was stopped or dismissed meanwhile.
+    const afterRead = await this.deps.store.get(record.id);
+    if (!afterRead || isResumeGrantTerminal(afterRead.state)) {
+      try { this.deps.closeWorkerSession?.(outcome.sessionId); } catch (error) { this.deps.logError?.(`on-demand seat ${assignment.slotId} could not be closed after the run ended`, error); }
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      return false;
+    }
     await this.deliverAssignment(record, assignment, outcome.sessionId, countedRecordId(record, bound, assignment.slotId));
     return false;
   }
 
   /** The lifecycle read again, or the earlier one when the read fails. */
   private async freshLifecycle(record: ExecutionRecord, earlier: ExtractedLifecycle | undefined): Promise<ExtractedLifecycle | undefined> {
-    try { return extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)) ?? earlier; } catch { return earlier; }
+    try { return extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)) ?? earlier; } catch (error) {
+      this.deps.logError?.(`fresh session lifecycle re-read failed for ${record.id}; the delivered unit may not be counted`, error);
+      return earlier;
+    }
   }
 
   /**
