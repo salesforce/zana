@@ -6,6 +6,24 @@ import { planVerification, previewAffected, runPlan } from './ci-plan.mjs';
 import { boundarySpecs } from './ci-boundaries.mjs';
 import { runVerification } from './ci-verification.mjs';
 
+it('verifies Electron, Chromium and WebKit when Linux dependency preparation changes', () => {
+  for (const path of ['scripts/check-electron-linux-deps.mjs', '.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining([
+      'e2e/contextual-help.spec.ts', 'e2e/mobile-composer-layout.spec.ts',
+    ]));
+  }
+  const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
+  const commands = workflow.jobs.e2e.steps.map((step: any) => step.run || '').join('\n');
+  expect(commands).toContain('node scripts/check-electron-linux-deps.mjs');
+  expect(commands).toContain('pnpm exec playwright install chromium webkit');
+  expect(commands).not.toMatch(/apt-get|--with-deps/);
+  const preview = workflow.jobs['preview-cross-platform'].steps.find((step: any) => step.name === 'Check Linux Electron display dependencies');
+  expect(preview.if).toBe("runner.os == 'Linux'");
+  expect(preview.run).toContain('node scripts/check-electron-linux-deps.mjs');
+  expect(preview.run).toContain('pnpm exec playwright install chromium');
+  expect(preview.run).not.toMatch(/apt-get|--with-deps/);
+});
+
 it('keeps cross-platform preview checks for native, path, render and distribution changes', () => {
   for (const path of [
     'apps/desktop/src/preload.ts', 'apps/host-daemon/src/remote-fs.ts', 'apps/server/src/http/product-api.ts',

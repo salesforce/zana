@@ -330,15 +330,12 @@ jobs:
       - name: Restore the same-run Electron build
         run: tar -xzf "$RUNNER_TEMP/electron-e2e-build.tgz"
 
-      # Electron needs a display + the usual Chromium shared libs. xvfb-run
-      # supplies a virtual X server; playwright's dep installer pulls the libs.
-      # WebKit backs the mobile Safari checks in contextual-help and
-      # mobile-composer-layout.
-      - name: Install system deps for headless Electron
+      # Check the hosted image's native dependencies without apt/font downloads.
+      # Keep both browsers for the real Chromium and mobile Safari checks.
+      - name: Check system deps and install test browsers
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          pnpm exec playwright install --with-deps chromium webkit
+          node scripts/check-electron-linux-deps.mjs
+          pnpm exec playwright install chromium webkit
 
       # ubuntu-24.04 blocks Chromium's sandbox via AppArmor; Electron never
       # creates a window without this (microsoft/playwright#34251).
@@ -395,12 +392,11 @@ jobs:
 
       - uses: ./.github/actions/electron-cache
 
-      - name: Install Linux Electron display dependencies
+      - name: Check Linux Electron display dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          pnpm exec playwright install --with-deps chromium
+          node scripts/check-electron-linux-deps.mjs
+          pnpm exec playwright install chromium
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Run file preview production-boundary regression

@@ -6,6 +6,13 @@ typechecking, unit tests, and the Linux Electron boot/IPC gate before packaging.
 All three packages must succeed before the workflow creates a draft release on
 `salesforce/zana`. A human publishes the draft.
 
+Linux jobs validate the hosted runner's Xvfb and the installed Electron binary's
+shared libraries before running the real app tests. They do not install unrelated
+browser font packages through apt: an Ubuntu mirror DNS outage must not block a
+runner whose app dependencies are already present. A missing executable, failed
+library probe or unresolved shared library fails the job. Merge CI also runs the
+Chromium and WebKit checks when dependency preparation changes.
+
 Root unit tests run on four separate Ubuntu runners, matching merge CI. Each
 shard keeps serial file execution to isolate real bridge and PTY subprocesses.
 Typechecking, release-note validation and the package-specific Tasks, Pi and
