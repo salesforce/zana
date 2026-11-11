@@ -83,6 +83,10 @@ describe('splitThreadNavigation', () => {
     expect(isSplitWorkspacePath('/inbox')).toBe(true);
     expect(paneContentForPathname('/inbox')).toEqual({ kind: 'inbox' });
     expect(paneContentRoute({ kind: 'inbox' })).toBe('/inbox');
+    expect(isSplitWorkspacePath('/projects/p1/inbox')).toBe(true);
+    expect(paneContentForPathname('/projects/p1/inbox')).toEqual({ kind: 'inbox', projectId: 'p1' });
+    expect(paneContentRoute({ kind: 'inbox', projectId: 'p1' })).toBe('/projects/p1/inbox');
+    expect(paneContentRoute({ kind: 'inbox', projectId: 'a/b' })).toBe('/projects/a%2Fb/inbox');
     expect(paneContentForPathname('/extensions/plugins/docs')).toBeNull();
     expect(isSplitWorkspacePath('/threads/abc')).toBe(true);
     expect(isSplitWorkspacePath('/plugins/docs/panel')).toBe(true);
@@ -143,6 +147,26 @@ describe('splitThreadNavigation', () => {
     expect(focused.focusedPaneId).toBe('pane-1');
     const replaced = reconcileLayoutForContent(two, { kind: 'home' });
     expect(replaced.focusedPaneId).toBe(two.focusedPaneId);
+  });
+
+  it("moves the one Inbox pane to another project's Inbox instead of opening a second", () => {
+    const projectA = { kind: 'inbox' as const, projectId: 'pA' };
+    const projectB = { kind: 'inbox' as const, projectId: 'pB' };
+    const two = splitPane(createSinglePaneLayout(projectA), 'pane-1', 'right', { kind: 'home' });
+    expect(two.focusedPaneId).toBe('pane-2');
+    const next = reconcileLayoutForContent(two, projectB);
+    expect(next.focusedPaneId).toBe('pane-1');
+    expect(next.root.type === 'split' && next.root.children.map((c) => c.type === 'pane' && c.content)).toEqual([
+      projectB,
+      { kind: 'home' }
+    ]);
+    expect(focusedPaneRoute(next)).toBe('/projects/pB/inbox');
+    const workspace = reconcileLayoutForContent(next, { kind: 'inbox' });
+    expect(workspace.root.type === 'split' && workspace.root.children[0]).toMatchObject({
+      paneId: 'pane-1',
+      content: { kind: 'inbox' }
+    });
+    expect(focusedPaneRoute(workspace)).toBe('/inbox');
   });
 
   it('replaces an Agents board pane with a global CLI-agent session', () => {

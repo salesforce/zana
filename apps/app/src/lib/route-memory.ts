@@ -1,12 +1,14 @@
 import { matchPath } from 'react-router-dom';
 import {
   APP_ROOT_ROUTE_PATH,
+  INBOX_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   TOOLS_PLUGINS_ROUTE_PATH,
   getAgentsRoutePath,
   getLocationRoutePath,
   isExtensionsRoutePath,
+  isProjectInboxRoutePath,
   isProjectRoutePath,
   isSettingsRoutePath
 } from './route-paths.js';
@@ -38,10 +40,13 @@ export const INITIAL_STORED_ROUTE_MEMORY: StoredRouteMemory = {
 /**
  * Project-rail Back must leave `/projects/:id`. Empty or project dests fall
  * back to Agents — the cross-project home — never the current project URL.
+ * A project's Inbox leaves to the cross-project Inbox, where it went while
+ * that view was the plain `/inbox` route.
  */
 export function resolveProjectBackPath(to?: string | null): string {
   const dest = to && to.length > 0 ? to : getAgentsRoutePath();
   const pathname = dest.split(/[?#]/, 1)[0] ?? dest;
+  if (isProjectInboxRoutePath(pathname)) return `${INBOX_ROUTE_PATH}${dest.slice(pathname.length)}`;
   return isProjectRoutePath(pathname) ? getAgentsRoutePath() : dest;
 }
 
@@ -67,11 +72,17 @@ export function nextStoredRouteMemory(
   if (kind === 'extensions') {
     return { ...prev, lastToolsRoutePath: current, lastAppRoutePath: current };
   }
+  // A project's Inbox counts as the cross-project Inbox for project Back.
+  const nonProjectPath = isProjectInboxRoutePath(location.pathname)
+    ? resolveProjectBackPath(current)
+    : onProject
+      ? prev.lastNonProjectAppRoutePath
+      : current;
   return {
     ...prev,
     lastAppRoutePath: current,
     lastCoreAppRoutePath: current,
-    lastNonProjectAppRoutePath: onProject ? prev.lastNonProjectAppRoutePath : current
+    lastNonProjectAppRoutePath: nonProjectPath
   };
 }
 

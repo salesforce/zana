@@ -27,7 +27,12 @@ function isNonEmptyString(value: unknown): value is string {
 function parsePaneContent(value: unknown): PaneContent | null {
   if (!isRecord(value) || typeof value.kind !== 'string') return null;
   if (value.kind === 'home') return { kind: 'home' };
-  if (value.kind === 'inbox') return { kind: 'inbox' };
+  if (value.kind === 'inbox') {
+    const projectId = value.projectId;
+    if (projectId === undefined || projectId === null) return { kind: 'inbox' };
+    if (!isNonEmptyString(projectId)) return null;
+    return { kind: 'inbox', projectId };
+  }
   if (value.kind === 'agents') return { kind: 'agents' };
   if (value.kind === 'empty') return { kind: 'empty' };
   if (value.kind === 'scheduler') {

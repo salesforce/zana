@@ -147,6 +147,25 @@ describe('split layout persistence', () => {
     expect(deserializeSplitLayout(serializeSplitLayout(inbox))).toEqual(inbox);
   });
 
+  it("round-trips a project's inbox pane and rejects a malformed project id", () => {
+    const inbox: SplitLayout = {
+      root: { type: 'pane', paneId: 'pane-1', content: { kind: 'inbox', projectId: 'p1' } },
+      focusedPaneId: 'pane-1'
+    };
+    expect(deserializeSplitLayout(serializeSplitLayout(inbox))).toEqual(inbox);
+    const legacy = serializeSplitLayout({
+      root: { type: 'pane', paneId: 'pane-1', content: { kind: 'inbox', projectId: null } },
+      focusedPaneId: 'pane-1'
+    });
+    expect(deserializeSplitLayout(legacy)?.root).toEqual({
+      type: 'pane',
+      paneId: 'pane-1',
+      content: { kind: 'inbox' }
+    });
+    const malformed = serializeSplitLayout(inbox).replace('"projectId":"p1"', '"projectId":7');
+    expect(deserializeSplitLayout(malformed)).toBeNull();
+  });
+
   it('round-trips an empty drop well', () => {
     const empty: SplitLayout = {
       root: {

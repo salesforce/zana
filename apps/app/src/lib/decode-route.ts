@@ -9,6 +9,7 @@ import {
   PLUGIN_PANEL_ROUTE_PATH,
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
+  PROJECT_INBOX_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
   PROJECT_THREAD_ROUTE_PATH,
   PROJECT_SESSION_ROUTE_PATH,
@@ -252,6 +253,15 @@ export function decodeRoutePath(pathname: string, hash = '', search = ''): Decod
       focusedProjectId: projectId,
       isProjectSettings: true
     };
+  }
+
+  // The project's Inbox: the same Inbox nav, focused on that project, so route
+  // memory can tell it apart from the cross-project `/inbox`. Not a project
+  // mode (no `projectMode`), and not `isProjectFocused`, matching `/inbox`
+  // with a sticky focus.
+  const projectInboxId = param(matchPath(PROJECT_INBOX_ROUTE_PATH, pathname), 'projectId');
+  if (projectInboxId) {
+    return { ...DEFAULT_DECODED, nav: 'inbox', settingsAnchor: anchor, focusedProjectId: projectInboxId };
   }
 
   const projectNewSchedule = matchPath(PROJECT_NEW_SCHEDULE_ROUTE_PATH, pathname);

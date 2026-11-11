@@ -7,6 +7,7 @@ import {
   NEW_THREAD_ROUTE_PATH,
   PLUGIN_PANEL_ROOT_ROUTE_PATH,
   PLUGIN_PANEL_ROUTE_PATH,
+  PROJECT_INBOX_ROUTE_PATH,
   PROJECT_MODE_ROUTE_PATH,
   PROJECT_NEW_SCHEDULE_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
@@ -22,6 +23,7 @@ import {
   getAgentSessionRoutePath,
   getAgentsRoutePath,
   getInboxRoutePath,
+  getProjectInboxRoutePath,
   getNewScheduleRoutePath,
   getNewThreadRoutePath,
   getPluginDetailRoutePath,
@@ -87,7 +89,7 @@ export function paneContentRoute(content: PaneContent): string {
     return getRootRoutePath();
   }
   if (content.kind === 'inbox') {
-    return getInboxRoutePath();
+    return content.projectId ? getProjectInboxRoutePath(content.projectId) : getInboxRoutePath();
   }
   if (content.kind === 'agents') {
     return getAgentsRoutePath();
@@ -139,6 +141,11 @@ function splatParam(match: ReturnType<typeof matchPath>): string {
 export function paneContentForPathname(pathname: string): PaneContent | null {
   if (pathname === APP_ROOT_ROUTE_PATH) return { kind: 'home' };
   if (pathname === INBOX_ROUTE_PATH) return { kind: 'inbox' };
+  const projectInbox = matchPath(PROJECT_INBOX_ROUTE_PATH, pathname);
+  if (projectInbox) {
+    const projectId = param(projectInbox, 'projectId');
+    if (projectId) return { kind: 'inbox', projectId };
+  }
   if (pathname === AGENTS_ROUTE_PATH) return { kind: 'agents' };
   if (pathname === SCHEDULER_ROUTE_PATH) return { kind: 'scheduler' };
   if (pathname === NEW_THREAD_ROUTE_PATH) return { kind: 'new-thread' };

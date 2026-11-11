@@ -275,6 +275,34 @@ describe('project-focus navigation contract', () => {
       expect(useUi.getState().focusedProjectId).toBe('proj-1');
     });
 
+    it("closes project Settings back to the project's Inbox it was opened from", async () => {
+      const { useUi, lastPath } = await setup();
+      const visit = await routeVisitor();
+      useUi.getState().enterProjectFocus('proj-1');
+      useUi.getState().setNav('inbox');
+      expect(lastPath()).toBe('/projects/proj-1/inbox');
+      visit(lastPath()!);
+      useUi.getState().toggleSettings();
+      expect(lastPath()).toBe('/projects/proj-1/settings');
+      visit(lastPath()!);
+
+      useUi.getState().toggleSettings();
+
+      expect(lastPath()).toBe('/projects/proj-1/inbox');
+      expect(useUi.getState().nav).toBe('inbox');
+      expect(useUi.getState().focusedProjectId).toBe('proj-1');
+    });
+
+    it('opens the cross-project Inbox when not drilled in or the focus is stale', async () => {
+      const { useUi, lastPath } = await setup();
+      useUi.getState().setNav('inbox');
+      expect(lastPath()).toBe('/inbox');
+
+      useUi.setState({ focusedProjectId: 'gone' });
+      useUi.getState().setNav('inbox');
+      expect(lastPath()).toBe('/inbox');
+    });
+
     it("ignores a remembered route from another project and uses this project's view", async () => {
       const { useUi, lastPath } = await setup(['proj-1', 'proj-2']);
       const visit = await routeVisitor();
