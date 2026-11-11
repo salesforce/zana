@@ -33,7 +33,10 @@ vi.mock('@zana-ai/zcc-process-utils', async original => ({
   ...await original<typeof import('@zana-ai/zcc-process-utils')>(), installRuntimeLog() {}
 }));
 vi.mock('./runtime-request-boundary.js', () => ({
-  dispatchRuntimeMessage: async (data: unknown, _reply: unknown, handler: (data: unknown) => Promise<void>) => handler(data)
+  dispatchRuntimeMessage: async (data: any, reply: (data: unknown) => void, handler: (data: unknown) => Promise<void>) => {
+    try { await handler(data); }
+    catch (error) { reply({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: data.id, message: (error as Error).message }); }
+  }
 }));
 
 it('refreshes plugin policy and publishes the owner config through utility-process messages', async () => {
@@ -53,6 +56,8 @@ it('refreshes plugin policy and publishes the owner config through utility-proce
   };
   try {
     await import('./utility-entry.js');
+    parent.emit('message', { data: { type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: 'unavailable-checks', deadlineAt: new Date(Date.now() + 20_000).toISOString(), operation: 'named-checks-get', scope: { kind: 'global' } } });
+    await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'unavailable-checks', type: 'error', message: 'named checks storage is unavailable' })));
     await publish('config:onChanged', [{ pluginSafeMode: false }]);
     expect(h.refresh).not.toHaveBeenCalled();
     expect(h.development).not.toHaveBeenCalled();
@@ -60,6 +65,23 @@ it('refreshes plugin policy and publishes the owner config through utility-proce
     parent.emit('message', { data: { type: 'start', dataDir: root, rendererRoot: root,
       hostBinding: { hostId: 'test-host', instanceId: 'test-instance' } } });
     await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'ready' })));
+
+    const command = async (operation: string, fields: Record<string, unknown>) => {
+      const requestId = `checks-${++id}`;
+      parent.emit('message', { data: { type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: requestId, deadlineAt: new Date(Date.now() + 20_000).toISOString(), operation, ...fields } });
+      await vi.waitFor(() => expect(parent.postMessage.mock.calls.some(([reply]) => reply.id === requestId)).toBe(true));
+      return parent.postMessage.mock.calls.find(([reply]) => reply.id === requestId)![0];
+    };
+    const globalChecks = [{ name: 'test', command: 'printf global' }];
+    expect(await command('named-checks-set', { scope: { kind: 'global' }, checks: globalChecks })).toMatchObject({ type: 'result', value: globalChecks });
+    expect(await command('named-checks-get', { scope: { kind: 'global' } })).toMatchObject({ type: 'result', value: globalChecks });
+    expect(await command('named-checks-get', { scope: { kind: 'project', projectId: 'missing' } })).toMatchObject({ type: 'error', message: 'named checks project is not registered' });
+    const project = (await command('projects-add', { path: root })).value;
+    const projectChecks = [{ name: 'test', command: 'printf project' }];
+    expect(await command('named-checks-set', { scope: { kind: 'project', projectId: project.id }, checks: projectChecks })).toMatchObject({ type: 'result', value: projectChecks });
+    expect(await command('named-checks-get', { scope: { kind: 'project', projectId: project.id } })).toMatchObject({ type: 'result', value: projectChecks });
+    expect(await command('project-settings-get', { projectId: project.id })).not.toHaveProperty('value.namedChecks');
 
     await publish('config:onChanged', [{ pluginSafeMode: false }]);
     expect(h.refresh).toHaveBeenCalledTimes(1);

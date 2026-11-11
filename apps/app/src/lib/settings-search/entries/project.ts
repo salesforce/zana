@@ -1,5 +1,6 @@
 import type { ProjectSettings } from '@zana-ai/zcc-domain/product';
 import type { SettingsSearchEntry, SettingsValueSnapshot } from '../types';
+import { namedChecksEntries } from '../named-checks';
 
 // Project settings (ProjectSettingsView + ProjectSourcesSettings). These rows
 // follow the selected project, so values read `snapshot.project.settings` only.
@@ -12,6 +13,7 @@ const list = (items: readonly string[] | undefined): readonly string[] | undefin
 const PI_THINKING = ['Default', 'Off', 'Minimal', 'Low', 'Medium', 'High', 'XHigh', 'Max'] as const;
 
 export const entries: readonly SettingsSearchEntry[] = [
+  ...namedChecksEntries('project'),
   {
     id: 'project.landing',
     section: 'project',

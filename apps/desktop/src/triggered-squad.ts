@@ -1,9 +1,10 @@
 import type { Persona, Project, Team } from '@zana-ai/zcc-domain/product';
+import { launchOptionsSchema, type LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
 import type { SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
 import { invalidProvidedPlanHold, planNormalizationNote, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
 import { startTriggeredSquadExecution, triggeredSquadSlotTasks } from './scheduled-plan-correction.js';
 
-export interface TriggeredSquadInput {
+export interface TriggeredSquadInput extends LaunchOptions {
   projectId: string;
   callerPrincipalId: string;
   teamId: string;
@@ -33,6 +34,7 @@ export interface TriggeredSquadDeps {
  */
 export function createTriggeredSquadLauncher(deps: TriggeredSquadDeps) {
   return async function startTriggeredSquad(input: TriggeredSquadInput): Promise<{ executionId: string }> {
+    const options = launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target });
     const project = deps.projects.listProjects().find(candidate => candidate.id === input.projectId);
     const team = deps.teams.list().find(candidate => candidate.id === input.teamId);
     if (!project) throw new Error('project not found');
@@ -41,7 +43,7 @@ export function createTriggeredSquadLauncher(deps: TriggeredSquadDeps) {
     if (!team.orchestratorPersonaId || !deps.personas.list().some(persona => persona.id === team.orchestratorPersonaId)) throw new Error('team requires an available orchestrator');
     const slots = deps.expandTeamSlots(team);
     if (!slots.length || slots.length > 32) throw new Error('team has no launchable slots');
-    const { coordinationMode, workUnits, idRenames, planError } = resolveTriggeredSquadPlan(input.planSource, input.objective);
+    const { coordinationMode, workUnits, launch, idRenames, planError } = resolveTriggeredSquadPlan(input.planSource, input.objective);
     const normalizationNote = planNormalizationNote(idRenames);
     const slotInput = normalizationNote ? { ...input, objective: `${input.objective}\n\n${normalizationNote}` } : input;
     // An invalid supplied plan follows the same parked-Squad correction path as an
@@ -52,8 +54,10 @@ export function createTriggeredSquadLauncher(deps: TriggeredSquadDeps) {
     return startTriggeredSquadExecution(input.launchRequestId, () => deps.squadExecutionService.start(input.callerPrincipalId, project.id, {
       version: 1, teamId: team.id, launchRequestId: input.launchRequestId, coordinationMode, origin: input.origin,
       jobTitle: input.title, objective: input.objective,
+      ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)),
       slots: triggeredSquadSlotTasks(slotInput, slots, planError, invalidProvidedPlanHold, deps.planCorrectionLaunchBinding),
       ...(workUnits ? { workUnits } : {}),
+      ...(launch ? { planLaunch: launch } : {}),
       ...(input.maxDurationMinutes && input.maxDurationMinutes > 0 ? { policy: { deadlineMs: input.maxDurationMinutes * 60 * 1000 } } : {})
     }), deps.planCorrectionLaunchBinding);
   };
@@ -61,7 +65,7 @@ export function createTriggeredSquadLauncher(deps: TriggeredSquadDeps) {
 
 /** Scheduler `launchSquad` adapter input. The Team id is validated by the launcher. */
 export function scheduledSquadInput(args: {
-  schedule: { id: string; name: string; teamId?: string; planSource?: 'provided' | 'infer'; maxDurationMinutes?: number };
+  schedule: { id: string; name: string; teamId?: string; planSource?: 'provided' | 'infer'; maxDurationMinutes?: number; launchOptions?: LaunchOptions } & LaunchOptions;
   project: { id: string };
   runId: string;
   objective: string;
@@ -72,20 +76,23 @@ export function scheduledSquadInput(args: {
     objective,
     title: `Scheduled: ${schedule.name}`, planSource: schedule.planSource ?? 'infer',
     origin: 'scheduled',
-    maxDurationMinutes: schedule.maxDurationMinutes
+    maxDurationMinutes: schedule.maxDurationMinutes,
+    ...Object.fromEntries(Object.entries(launchOptionsSchema.parse(schedule.launchOptions ?? { worktree: schedule.worktree, onComplete: schedule.onComplete, push: schedule.push, checks: schedule.checks, failurePolicyDefault: schedule.failurePolicyDefault, target: schedule.target })).filter(([, value]) => value !== undefined))
   };
 }
 
 /** Goal-loop `launchSquad` adapter input. */
 export function goalSquadInput(args: {
-  goal: { id: string; title: string; statement: string; planSource?: 'provided' | 'infer'; assignment: { teamId?: string } };
+  goal: { id: string; title: string; statement: string; planSource?: 'provided' | 'infer'; launchOptions?: LaunchOptions; assignment: { teamId?: string } };
   project: { id: string };
   iterationId: string;
 }): TriggeredSquadInput {
   const { goal, project, iterationId } = args;
+  const options = launchOptionsSchema.parse(goal.launchOptions ?? {});
   return {
     projectId: project.id, callerPrincipalId: `goal:${project.id}`, teamId: goal.assignment.teamId!, launchRequestId: `goal:${goal.id}:${iterationId}`,
-    objective: goal.statement, title: `Goal: ${goal.title}`, planSource: goal.planSource ?? 'infer', origin: 'goal'
+    objective: goal.statement, title: `Goal: ${goal.title}`, planSource: goal.planSource ?? 'infer', origin: 'goal',
+    ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined))
   };
 }
 

@@ -18,6 +18,27 @@ async function issue(registry: ReturnType<typeof createExecutionSourceRegistry>,
 }
 
 describe('execution source registry', () => {
+  it('inspects complete extracted content repeatedly without consuming capabilities or writing snapshots', async () => fixture(async dir => {
+    const path = join(dir, 'plan.md');
+    const text = '# plan\n' + 'content\n'.repeat(10000);
+    await writeFile(path, text);
+    const registry = createExecutionSourceRegistry({ rootDir: join(dir, 'store') });
+    const views = await issue(registry, [path]);
+    const input = { windowId: 7, projectId: 'project-1', capabilityIds: views.map(view => view.id) };
+    expect(registry.inspect).toBeTypeOf('function');
+    for (let n = 0; n < 2; n++) {
+      const inspected = await registry.inspect(input);
+      expect(inspected.sources[0].extractedText).toBe(text);
+      expect(inspected).not.toHaveProperty('contentRef');
+      expect(await issue(registry, [path])).toEqual(views);
+    }
+    await expect(stat(join(dir, 'store'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(registry.inspect({ ...input, windowId: 8 })).rejects.toMatchObject({ code: 'FOREIGN_CAPABILITY' });
+    await expect(registry.inspect({ ...input, projectId: 'other' })).rejects.toMatchObject({ code: 'FOREIGN_CAPABILITY' });
+    await expect(registry.inspect({ ...input, capabilityIds: ['missing'] })).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
+    expect((await registry.resolve({ ...input, snapshotKey: 'launch' })).sources[0].extractedText).toBe(text);
+    await expect(registry.inspect(input)).rejects.toMatchObject({ code: 'REPLAYED_CAPABILITY' });
+  }));
   it('extracts supported textual formats, validates structured text, and stores immutable snapshots', async () => fixture(async (dir) => {
     const inputs = join(dir, 'inputs');
     await mkdir(inputs);
@@ -71,6 +92,21 @@ describe('execution source registry', () => {
     expect(persisted).toContain('source content');
   }));
 
+  it('inspection rejects changed and expired sources without retiring their IDs', async () => fixture(async dir => {
+    const path = join(dir, 'plan.md');
+    await writeFile(path, 'original');
+    let clock = 1000;
+    const registry = createExecutionSourceRegistry({ rootDir: join(dir, 'store'), now: () => clock, ttlMs: 100 });
+    const views = await issue(registry, [path]);
+    const input = { windowId: 7, projectId: 'project-1', capabilityIds: views.map(view => view.id) };
+    await writeFile(path, 'modified');
+    await expect(registry.inspect(input)).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
+    await writeFile(path, 'original');
+    expect((await registry.inspect(input)).sources[0].extractedText).toBe('original');
+    clock = 1101;
+    await expect(registry.inspect(input)).rejects.toMatchObject({ code: 'EXPIRED_CAPABILITY' });
+  }));
+
   it.each([
     ['invalid UTF-8', 'bad.txt', Buffer.from([0xc3, 0x28]), 'INVALID_ENCODING'],
     ['binary bytes', 'bad.txt', Buffer.from([0, 1, 2]), 'BINARY_UNSUPPORTED'],
@@ -83,6 +119,8 @@ describe('execution source registry', () => {
     await writeFile(path, bytes);
     const registry = createExecutionSourceRegistry({ rootDir: join(dir, 'store') });
     const capabilities = await issue(registry, [path]);
+    await expect(registry.inspect({ windowId: 7, projectId: 'project-1', capabilityIds: capabilities.map(({ id }) => id) }))
+      .rejects.toMatchObject({ code });
     await expect(registry.resolve({ windowId: 7, projectId: 'project-1', capabilityIds: capabilities.map(({ id }) => id), snapshotKey: 'launch' }))
       .rejects.toMatchObject({ code });
   }));

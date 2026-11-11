@@ -9,7 +9,7 @@ import { pendingInteractionUserQuestionQuestionSchema, USER_QUESTION_MAX_QUESTIO
 import { ProjectIdSchema, SessionIdSchema, PROJECT_ICONS } from '@zana-ai/zcc-domain';
 import { pluginPackIdentitySchema, pluginPackInstallRequestSchema } from '@zana-ai/zcc-domain';
 import { TerminalRequestCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
-import { ProjectSettingsPatchSchema } from './project-settings.js';
+import { NamedCheckScopeSchema, NamedChecksSchema, ProjectSettingsPatchSchema } from './project-settings.js';
 import { ProjectMetadataRequestSchema, ProjectCatalogRequestSchema } from './project-metadata-records.js';
 import { ProjectHistoryRequestSchema } from './project-history.js';
 
@@ -565,6 +565,15 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('project-settings-get'),
     projectId: ProjectIdSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('named-checks-get'),
+    scope: NamedCheckScopeSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('named-checks-set'),
+    scope: NamedCheckScopeSchema,
+    checks: NamedChecksSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('project-settings-set'),

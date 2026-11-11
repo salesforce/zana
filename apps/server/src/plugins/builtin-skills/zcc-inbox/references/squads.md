@@ -18,6 +18,33 @@ execution_snapshot({ executionId, after })
 execution_respond({ executionId, expectedStateVersion, blockerId, message })
 ```
 
+`squad_launch` and `squad_propose` accept flat optional launch fields, including
+`worktree`, `onComplete`, `push`, `checks`, `failurePolicyDefault`, and `target`.
+`target` is `{ kind: 'project-root' }` or `{ kind: 'worktree', branch }`; never
+send a raw path. An existing-worktree target is resolved and revalidated by host
+code against the Project's Git worktrees. It is user-owned, so it can only
+`leave`; merge and delete are rejected. `target` with `worktree: true` is also
+rejected. Do not describe a local target as a remote default.
+
+Review cards show resolved settings and location. With `mode: 'now'`, receipt
+shows actual location after launch; no review card is added, but existing
+`launchApproval` can still reject `now` with `LAUNCH_REVIEW_REQUIRED`.
+
+Tool exposure is an operational prerequisite. Do not treat loopback access as
+caller authentication or claim these controls are agent-proof. Main-process path
+confinement and route-bound authorization remain required.
+
+A registered SSH remote Project uses its configured remote default path. Infer
+and provided plans, including inline provided plans and locally attached source
+capabilities, can preview without local remote-checkout I/O. Do not request an
+explicit `target`, worktree isolation, named checks, or push for a remote Project:
+host preview rejects them with no local fallback. Relative local sources are not
+available for a remote Project; use an approved absolute local attachment.
+
+Named checks are unsupported on Windows. Any launch referencing `check:<name>`
+is rejected during preview/admission before workers spawn, rather than failing
+later at completion. Do not claim named checks work on every platform.
+
 Attachments (`attachments: [{ name, text }]`, also on `squad_propose`) carry text
 that is not on disk. Files and attachments share one budget: 16 items, 4 MiB each,
 16 MiB total; names are plain file names of at most 128 UTF-8 bytes. Names are

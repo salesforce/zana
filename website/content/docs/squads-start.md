@@ -48,6 +48,10 @@ Use a **Squad** when:
 Use a **single agent** for small, serial, or exploratory tasks where you want to
 steer turn by turn.
 
+Use a **Workflow** when you need a separate plugin-managed fan-out or automation
+flow. Workflows do not replace durable Squad execution, its plan admission,
+shared worktree lifecycle, or Squad details record.
+
 A finished run does not prove the goal was met. A person reads the result.
 
 ---

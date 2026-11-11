@@ -36,7 +36,7 @@ function setup() {
   mocks.decrypt.mockImplementation(() => plainKeys[0]);
   mocks.fork.mockImplementation((entry: string) => {
     const child = Object.assign(new EventEmitter(), { kill: vi.fn(), postMessage: vi.fn(), bootKeys: [] as (Uint8Array | undefined)[], credentials: [] as (string | undefined)[] });
-    child.postMessage.mockImplementation((message: { type: string; peerBootKey?: Uint8Array }) => {
+    child.postMessage.mockImplementation((message: { type: string; peerBootKey?: Uint8Array; operation?: string; id?: string; checks?: unknown }) => {
       // The supplier zeroes the buffer right after postMessage returns, so snapshot the bytes now.
       if (message.type === 'start') child.credentials.push((message as { productServerCredential?: string }).productServerCredential);
       if (message.type === 'start') child.bootKeys.push(message.peerBootKey ? Uint8Array.from(message.peerBootKey) : undefined);
@@ -46,6 +46,7 @@ function setup() {
       }));
       if (message.type === 'enroll') queueMicrotask(() => child.emit('message', { type: 'enrolled', protocolVersion, hostId: randomUUID() }));
       if (message.type === 'stop') queueMicrotask(() => child.emit('message', { type: 'stopped', protocolVersion }));
+      if (message.operation === 'named-checks-get' || message.operation === 'named-checks-set') queueMicrotask(() => child.emit('message', { type: 'result', protocolVersion, id: message.id, value: message.checks ?? [{ name: 'test', command: 'printf test' }] }));
     });
     queueMicrotask(() => child.emit('spawn'));
     return child;
@@ -83,6 +84,14 @@ it('passes protected key only to product utility; daemon excludes inherited key;
   expect(restartServer.bootKeys[0]).toEqual(new Uint8Array(Buffer.from(plainKeys[0], 'base64url')));
   expect(readFileSync(join(dir, 'peer-key', 'key.bin'))).toEqual(ciphertext);
   if (process.platform !== 'linux') expect(mocks.backend).not.toHaveBeenCalled();
+});
+it('uses validated dedicated Settings authority methods on packaged supervisor', async () => {
+  const { dir } = setup();
+  const runtime = await start(dir);
+  const checks = [{ name: 'test', command: 'printf test' }];
+  expect(await runtime.getNamedChecks({ kind: 'global' })).toEqual(checks);
+  expect(await runtime.setNamedChecks({ kind: 'project', projectId: 'p1' }, checks)).toEqual(checks);
+  await expect(runtime.setNamedChecks({ kind: 'global' }, [{ name: '../bad', command: 'x' }])).rejects.toThrow();
 });
 it.each(['unavailable', 'e2e', 'backend-error', ...(process.platform === 'linux' ? ['basic_text', 'unknown'] : [])])('never sends fallback key when protection is %s', async mode => {
   const { dir } = setup();

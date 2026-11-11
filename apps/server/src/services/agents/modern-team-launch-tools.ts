@@ -58,6 +58,7 @@ export const MODERN_TEAM_LAUNCH_TOOL_NAMES = [
 /** Owner-session execution verbs exposed to ACP clients. */
 export const MODERN_OWNER_EXECUTION_TOOL_NAMES = [
   'execution_start',
+  'execution_checks_list',
   'execution_snapshot',
   'execution_status',
   'execution_respond',

@@ -4,13 +4,14 @@ import { expect, it, vi } from 'vitest';
 // every IPC family once. Each family module is stubbed so this stays a pure
 // wiring check (host-wiring-bootstrap.test.ts mocks this module as a whole).
 const calls = vi.hoisted(() => [] as string[]);
+const config = vi.hoisted(() => vi.fn());
 const family = (name: string) => () => { calls.push(name); };
 
 vi.mock('./ctx.js', () => ({ bindIpcCtx: (ctx: unknown) => { calls.push(`bind:${(ctx as { id: string }).id}`); } }));
 vi.mock('./projects.js', () => ({ registerProjectsIpc: family('projects') }));
 vi.mock('./windows.js', () => ({ registerWindowsIpc: family('windows') }));
 vi.mock('./terminals.js', () => ({ registerTerminalsIpc: family('terminals') }));
-vi.mock('./config.js', () => ({ registerConfigIpc: family('config') }));
+vi.mock('./config.js', () => ({ registerConfigIpc: (checks: unknown) => { config(checks); calls.push('config'); } }));
 vi.mock('./execution.js', () => ({ registerExecutionIpc: family('execution') }));
 vi.mock('./execution-board.js', () => ({ registerExecutionBoardIpc: family('execution-board') }));
 vi.mock('./sessions.js', () => ({ registerSessionsIpc: family('sessions') }));
@@ -39,4 +40,11 @@ it('binds the host ctx before registering every IPC family once', async () => {
   expect(calls).toContain('companion');
   expect(calls).toHaveLength(24);
   expect(new Set(calls).size).toBe(calls.length);
+});
+
+it('injects owner named-check authority into Settings registration', async () => {
+  const { registerIpcFamilies } = await import('./register.js');
+  const authority = { get: vi.fn(), set: vi.fn() };
+  (registerIpcFamilies as any)({ id: 'host' }, authority);
+  expect(config).toHaveBeenLastCalledWith(authority);
 });

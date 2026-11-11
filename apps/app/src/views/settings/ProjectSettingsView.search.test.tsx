@@ -27,6 +27,7 @@ vi.mock('../../lib/product-client.js', () => ({
   product: {
     harness: { descriptors: mocks.descriptors },
     projectSettings: { get: mocks.settingsGet, set: mocks.settingsSet, onChanged: () => () => undefined },
+    namedChecks: { get: vi.fn(async () => []), set: vi.fn(async (_scope, checks) => checks), onChanged: () => () => undefined },
     executionConsent: { listProject: mocks.consent, revokeProject: vi.fn() },
     git: { isRepo: mocks.isRepo },
     projects: { listProcesses: vi.fn(async () => ({ supported: true, truncated: false, processes: [] })) },

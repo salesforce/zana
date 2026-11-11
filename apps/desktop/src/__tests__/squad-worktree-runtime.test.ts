@@ -9,6 +9,12 @@ import {
 } from '../squad-worktree-runtime.js';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { claimSquadWorktreeFollowUp, releaseSquadWorktreeFollowUp } from '../squad-worktree-lifecycle.js';
+import { resolveAllLaunch } from '@zana-ai/zcc-domain/launch-options';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import * as realGit from '@zana-ai/zcc-server/services/projects/git';
 
 const ROOT = '/p';
 const WT = '/p/.worktrees/w';
@@ -85,7 +91,23 @@ function setup(over: { realpath?: (p: string) => string; exists?: boolean; proje
       realpathSync: over.realpath ?? ((p: string) => p)
     }
   };
-  const runtime = createSquadWorktreeRuntime(deps);
+  const implementation = createSquadWorktreeRuntime(deps);
+  // Older fixtures model claim-time defaults; production records are migrated by the store.
+  const snapshot = (record: any, request: any = {}) => {
+    record.resolvedLaunch ??= resolveAllLaunch({
+      launch: { ...record.request, ...request }, squad: team ? {
+        worktreeIsolation: team.worktreeIsolation, worktreeOnComplete: team.worktreeOnComplete
+      } : {}, fallback: { worktree: over.settings?.worktreeIsolation ?? over.config?.worktreeIsolationDefault }
+    });
+  };
+  const runtime = { ...implementation,
+    prepareSquadWorktree: (record: any, request: any) => { snapshot(record, request); return implementation.prepareSquadWorktree(record, request); },
+    handleSquadWorktreeTerminal: (record: any) => { snapshot(record); return implementation.handleSquadWorktreeTerminal(record); },
+    replayUndisposedTerminalEffects: async () => {
+      for (const record of await deps.executionStore.listUndisposedSquadWorktrees()) snapshot(record);
+      return implementation.replayUndisposedTerminalEffects();
+    }
+  };
   return { deps, runtime };
 }
 
@@ -122,6 +144,96 @@ describe('path helpers', () => {
 });
 
 describe('prepareSquadWorktree', () => {
+  it('creates and reattaches reviewed generated checkout through real Git', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'reviewed-create-')));
+    try {
+      execFileSync('git', ['init', '-b', 'main', root]);
+      execFileSync('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial']);
+      execFileSync('git', ['-C', root, 'config', 'core.hooksPath', '.git/hooks']);
+      const { deps } = setup({ project: { id: 'proj', name: 'Repo', path: root } });
+      Object.assign(deps.git, realGit);
+      deps.fs.realpathSync = realpathSync;
+      const record = rec({ squadWorktree: undefined, resolvedLaunch: resolveAllLaunch({ launch: { worktree: true, push: false } }) });
+      serve(deps, record);
+      deps.executionStore.setSquadWorktree.mockImplementation(async (_id: string, _version: number, worktree: unknown) => { record.squadWorktree = worktree; return record; });
+      const base = (await realGit.listWorktrees(root))[0];
+      const reviewed = { path: root, branch: 'main', head: base.head! };
+      const runtime = createSquadWorktreeRuntime(deps);
+      await expect(runtime.prepareSquadWorktree(record, {}, reviewed)).resolves.toBe(record);
+      await expect(runtime.prepareSquadWorktree(record, {}, reviewed)).resolves.toBe(record);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it('binds generated checkout only when reviewed base and generated HEAD match', async () => {
+    const { deps } = setup();
+    const record = rec({ squadWorktree: undefined, resolvedLaunch: resolveAllLaunch({ launch: { worktree: true } }) });
+    serve(deps, record);
+    const target = `${ROOT}/.worktrees/team-${record.id}`;
+    deps.git.listWorktrees = vi.fn(async () => [{ path: ROOT, branch: 'main', head: 'reviewed' }, { path: target, branch: `zcc/team-${record.id}`, head: 'reviewed' }]);
+    await expect(createSquadWorktreeRuntime(deps).prepareSquadWorktree(record, {}, { path: ROOT, branch: 'main', head: 'reviewed' })).resolves.toMatchObject({ squadWorktree: { path: target, baseBranch: 'main' } });
+  });
+  it.each(['failure', 'head-drift', 'wrong-head'])('refuses reviewed generated checkout %s without binding fallback', async kind => {
+    const { deps } = setup();
+    const record = rec({ squadWorktree: undefined, resolvedLaunch: resolveAllLaunch({ launch: { worktree: true } }) });
+    serve(deps, record);
+    let head = 'reviewed';
+    deps.git.listWorktrees = vi.fn(async () => [{ path: ROOT, branch: 'main', head }]);
+    deps.git.createWorktree.mockImplementation(async (_root: string, path: string, branch: string) => {
+      if (kind === 'failure') return { ok: false, reason: 'failed' };
+      if (kind === 'head-drift') head = 'changed';
+      deps.git.listWorktrees.mockImplementation(async () => [{ path: ROOT, branch: 'main', head }, { path, branch, head: kind === 'wrong-head' ? 'wrong' : 'reviewed' }]);
+      return { ok: true, path, branch };
+    });
+    await expect(createSquadWorktreeRuntime(deps).prepareSquadWorktree(record, {}, { path: ROOT, branch: 'main', head: 'reviewed' })).rejects.toThrow();
+    expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
+  });
+  it.each([true, false])('snapshot push=%s controls real managed-worktree push to local bare origin', async push => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'runtime-push-')));
+    const root = join(dir, 'repo');
+    const origin = join(dir, 'origin.git');
+    try {
+      execFileSync('git', ['init', '--bare', origin]);
+      execFileSync('git', ['init', '-b', 'main', root]);
+      execFileSync('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial']);
+      execFileSync('git', ['-C', root, 'remote', 'add', 'origin', origin]);
+      const { deps } = setup({ project: { id: 'proj', name: 'Repo', path: root } });
+      Object.assign(deps.git, realGit);
+      deps.fs.realpathSync = realpathSync;
+      const record = rec({ squadWorktree: undefined, resolvedLaunch: resolveAllLaunch({ launch: { worktree: true, push } }) });
+      serve(deps, record);
+      deps.executionStore.setSquadWorktree.mockImplementation(async (_id: string, _version: number, worktree: unknown) => { record.squadWorktree = worktree; return record; });
+      await createSquadWorktreeRuntime(deps).prepareSquadWorktree(record, {});
+      expect(record.squadWorktree).toBeDefined();
+      const run = () => execFileSync('git', ['-C', record.squadWorktree.path, 'push', 'origin', record.squadWorktree.branch], { stdio: 'pipe' });
+      if (push) {
+        run();
+        expect(execFileSync('git', ['--git-dir', origin, 'show-ref', '--verify', `refs/heads/${record.squadWorktree.branch}`], { encoding: 'utf8' })).toContain(record.squadWorktree.branch);
+      } else expect(run).toThrow();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('uses claim snapshot despite request and settings mutation', async () => {
+    const r = rec({ squadWorktree: undefined, resolvedLaunch: resolveAllLaunch({ launch: { worktree: true, push: true } }) });
+    const { deps, runtime } = setup({ team: { id: 'team', worktreeIsolation: false }, settings: { worktreeIsolation: false } });
+    serve(deps, r);
+    await runtime.prepareSquadWorktree(r, { worktree: false });
+    expect(deps.git.createWorktree).toHaveBeenCalledWith(ROOT, `${ROOT}/.worktrees/team-${r.id}`, `zcc/team-${r.id}`, `${ROOT}/.worktrees`, false);
+    expect(deps.getProjectSettings).not.toHaveBeenCalled();
+  });
+
+  it('reattaches push-enabled snapshot with guard disabled', async () => {
+    const r = rec({ resolvedLaunch: resolveAllLaunch({ launch: { push: true } }) });
+    const { deps, runtime } = setup();
+    serve(deps, r);
+    await runtime.prepareSquadWorktree(r, {});
+    expect(deps.git.setWorktreePushProtection).toHaveBeenCalledWith(ROOT, WT, false);
+  });
+
+  it('uses snapshotted leave at terminal even when Squad now requests delete', async () => {
+    const r = rec({ resolvedLaunch: resolveAllLaunch({ launch: { onComplete: 'leave' } }) });
+    const { deps, runtime } = setup({ team: { id: 'team', worktreeOnComplete: 'delete' } });
+    serve(deps, r);
+    expect(await runtime.handleSquadWorktreeTerminal(r)).toBe('kept');
+    expect(deps.git.removeWorktree).not.toHaveBeenCalled();
+  });
   it('returns initial when execution vanished, current when version moved', async () => {
     const { deps, runtime } = setup();
     const initial = rec({ squadWorktree: undefined });
@@ -1084,8 +1196,8 @@ describe('trusted registered target (squad-bugs B8)', () => {
     return { deps: s.deps, runtime: createSquadWorktreeRuntime(s.deps) };
   }
   const fresh = (target: any, extra: Record<string, unknown> = {}) =>
-    rec({ state: 'STARTING', squadWorktree: undefined, request: { target, ...extra } });
-  const userRecord = (target: any, worktree: any) => rec({ request: { target }, squadWorktree: worktree });
+    rec({ state: 'STARTING', squadWorktree: undefined, request: { target, ...extra }, resolvedLaunch: resolveAllLaunch({}) });
+  const userRecord = (target: any, worktree: any) => rec({ request: { target }, squadWorktree: worktree, resolvedLaunch: resolveAllLaunch({}) });
 
   it('binds the project root as a user-owned target without creating a worktree', async () => {
     const { deps, runtime } = targetSetup();
@@ -1159,12 +1271,15 @@ describe('trusted registered target (squad-bugs B8)', () => {
     await expect(s.runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
   });
 
-  it('re-applies admission rules: conflicting generated flag or auto disposition rejects', async () => {
+  it('rejects corrupt persisted target snapshots, not mutable preparation options', async () => {
     const { deps, runtime } = targetSetup();
     const r = fresh({ kind: 'project-root' });
     serve(deps, r);
-    await expect(runtime.prepareSquadWorktree(r, { worktree: true, target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
-    await expect(runtime.prepareSquadWorktree(r, { onComplete: 'delete', target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    r.resolvedLaunch.worktree.value = true;
+    await expect(runtime.prepareSquadWorktree(r, {})).rejects.toThrow('TARGET_UNAVAILABLE');
+    r.resolvedLaunch.worktree.value = false;
+    r.resolvedLaunch.onComplete.value = 'delete';
+    await expect(runtime.prepareSquadWorktree(r, {})).rejects.toThrow('TARGET_UNAVAILABLE');
     await expect(runtime.prepareSquadWorktree(r, { target: { kind: 'worktree', branch: '../x' } as any })).rejects.toThrow('TARGET_UNAVAILABLE');
     expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
   });
@@ -1176,6 +1291,7 @@ describe('trusted registered target (squad-bugs B8)', () => {
     ] as const) {
       const { deps, runtime } = targetSetup();
       const r = fresh({ kind: 'project-root' }, request);
+      r.resolvedLaunch = resolveAllLaunch({ launch: { worktree: request.worktree, onComplete: request.onComplete } });
       serve(deps, r);
       await expect(runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
       expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
@@ -1184,7 +1300,7 @@ describe('trusted registered target (squad-bugs B8)', () => {
 
   it('never rebinds a generated worktree record to a user target, and refuses a racing bind', async () => {
     let s = targetSetup();
-    let r = rec({ state: 'STARTING', request: { target: { kind: 'project-root' } } });
+    let r = rec({ state: 'STARTING', request: { target: { kind: 'project-root' } }, resolvedLaunch: resolveAllLaunch({}) });
     serve(s.deps, r);
     await expect(s.runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
 

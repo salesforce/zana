@@ -352,6 +352,32 @@ describe('GoalManager — create / spawn', () => {
     expect(updated.planSource).toBe('provided');
   });
 
+  it('persists parsed Squad launch options including explicit false and empty checks', async () => {
+    const { manager } = makeManager();
+    const options = { worktree: false, push: false, checks: [], onComplete: 'leave' as const, failurePolicyDefault: 'fail-run' as const };
+    const goal = await manager.create({
+      projectId: 'proj-1', title: 'T', statement: 'x', successCriteria: [],
+      assignment: { kind: 'team', teamId: 'release-squad' }, launchOptions: options
+    });
+    expect(goal.launchOptions).toEqual(options);
+    const updated = await manager.update(goal.id, { launchOptions: { ...options, push: true } });
+    expect(updated.launchOptions).toEqual({ ...options, push: true });
+  });
+
+  it('rejects agent launch options and clears Squad options when reassigned to an agent', async () => {
+    const { manager } = makeManager();
+    await expect(manager.create({
+      projectId: 'proj-1', title: 'T', statement: 'x', successCriteria: [], launchOptions: { push: false }
+    })).rejects.toThrow('launchOptions are only supported for team goals');
+
+    const goal = await manager.create({
+      projectId: 'proj-1', title: 'T', statement: 'x', successCriteria: [],
+      assignment: { kind: 'team', teamId: 'release-squad' }, launchOptions: { push: false }
+    });
+    const updated = await manager.update(goal.id, { assignment: { kind: 'profile', profile: 'claude-yolo' } });
+    expect(updated.launchOptions).toBeUndefined();
+  });
+
   it('runNow forces one iteration on a draft goal', async () => {
     const { manager, ptys } = makeManager();
     const g = await manager.create({

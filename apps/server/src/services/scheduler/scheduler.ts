@@ -24,7 +24,7 @@ import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery as parseEveryShared } from
 import { nextCronRunAt } from '@zana-ai/zcc-domain/parse-cron';
 import { isCronCadence, previousCronSlots, slotsBetween, validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
 import { collectRunRows, isOpenProblem, isProblemRun, isRecoveryMode, runReason, SCHEDULE_REASONS } from '@zana-ai/zcc-domain/schedule-health';
-import { normalizeCatchUp, normalizeRequiredMcps, normalizeRetry } from './schedule-validation.js';
+import { normalizeCatchUp, normalizeRequiredMcps, normalizeRetry, validateScheduleLaunchOptions } from './schedule-validation.js';
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
 import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -540,6 +540,7 @@ export class SchedulerManager extends EventEmitter {
       kind: input.kind ?? 'agent',
       teamId: input.kind === 'team' ? input.teamId?.trim() || undefined : undefined,
       planSource: input.kind === 'team' ? input.planSource ?? 'infer' : undefined,
+      ...(input.launchOptions !== undefined ? { launchOptions: validateScheduleLaunchOptions(input.kind, input.launchOptions) } : {}),
       extraArgs: input.extraArgs,
       prompt: input.prompt,
       schedule,
@@ -614,8 +615,10 @@ export class SchedulerManager extends EventEmitter {
     if (patch.kind !== undefined) next.kind = patch.kind;
     if (patch.teamId !== undefined) next.teamId = patch.teamId?.trim() || undefined;
     if (patch.planSource !== undefined) next.planSource = patch.planSource ?? undefined;
+    if (patch.launchOptions !== undefined) next.launchOptions = patch.launchOptions === null
+      ? undefined : validateScheduleLaunchOptions(next.kind, patch.launchOptions);
     if (next.kind === 'team' && !next.teamId) throw new Error('teamId is required for team schedules');
-    if (next.kind !== 'team') { next.teamId = undefined; next.planSource = undefined; }
+    if (next.kind !== 'team') { next.teamId = undefined; next.planSource = undefined; next.launchOptions = undefined; }
     if (patch.extraArgs !== undefined) next.extraArgs = patch.extraArgs;
     if (patch.prompt !== undefined) next.prompt = patch.prompt;
     // Cadence edits. `every` and `cron` are mutually exclusive: setting one
@@ -678,6 +681,9 @@ export class SchedulerManager extends EventEmitter {
     // moves the timing anchor so the paused slot isn't fired (design D10).
     if ((!wasEnabled && next.enabled) || !isDeepStrictEqual(priorSchedule, next.schedule)) this.markDiscontinuity(next);
     const definitionPatch: Partial<ScheduledTask> = { updatedAt: next.updatedAt };
+    if (patch.kind !== undefined && next.kind !== 'team') {
+      Object.assign(definitionPatch, { teamId: undefined, planSource: undefined, launchOptions: undefined });
+    }
     for (const key of Object.keys(patch) as (keyof ScheduleUpdateInput)[]) {
       const field = key === 'every' || key === 'cron' || key === 'tz' ? 'schedule' : key === 'retain' ? 'history' : key;
       Object.assign(definitionPatch, { [field]: next[field as keyof ScheduledTask] });

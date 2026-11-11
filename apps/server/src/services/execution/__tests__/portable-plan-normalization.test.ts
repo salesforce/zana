@@ -154,7 +154,7 @@ describe('portable plan execution class pinning', () => {
 
 describe('portable plan near-miss label indent', () => {
   it('folds a near-miss at the step label indent and records it', () => {
-    const parsed = parsePortablePlan(step('a', '- **Work:** Do it.\n- **Completion criterion:** tests pass'));
+    const parsed = parsePortablePlan(step('a', '- **Work:** Do it.\n- **Completion criterion:** check:tests'));
     expect(parsed.ok).toBe(true);
     if (parsed.ok) {
       expect(parsed.units[0].task).toBe('Do it.');

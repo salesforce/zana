@@ -33,6 +33,8 @@ describe('runtime supervisor', () => {
       message: 'This session does not run a packaged host daemon'
     });
     await expect(runtime.listProjects()).resolves.toEqual([]);
+    await expect(runtime.getNamedChecks({ kind: 'global' })).rejects.toThrow('unavailable');
+    await expect(runtime.setNamedChecks({ kind: 'global' }, [])).rejects.toThrow('unavailable');
     const packIdentity = { marketplaceSource: 'https://catalog.test/marketplace.json', packId: 'team-tools' };
     await expect(runtime.listPluginPacks()).resolves.toEqual([]);
     await expect(runtime.listInstalledPluginPacks()).resolves.toEqual([]);

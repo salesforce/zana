@@ -2,6 +2,17 @@ import type { ScheduledTask, ScheduleCatchUp, ScheduleRetryPolicy, ScheduleRunCo
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
 import { isValidConversationId } from '@zana-ai/zcc-domain/schedule-health';
+import { launchOptionsSchema, type LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
+import { validateSquadExecutionTarget } from '@zana-ai/zcc-domain/product';
+
+export function validateScheduleLaunchOptions(kind: unknown, raw: unknown): LaunchOptions | undefined {
+  if (raw === undefined) return undefined;
+  if (kind !== 'team') throw new Error('launchOptions require a team schedule');
+  const options = launchOptionsSchema.parse(raw);
+  const target = validateSquadExecutionTarget(options);
+  if (!target.ok) throw new Error(target.message);
+  return options;
+}
 
 /** Upper bound on pending reservations + active Squad runs kept per schedule file. */
 const MAX_UNRESOLVED_RUNS = 100;
@@ -91,7 +102,7 @@ function lenientRequiredMcps(raw: unknown): string[] | undefined {
 const KNOWN_TASK_KEYS = new Set([
   'id', 'name', 'description', 'enabled', 'projectId', 'profile', 'personaId', 'extraArgs', 'prompt',
   'inboxLevel', 'notifyInbox', 'autoCloseOnFinish', 'useUserConfig', 'requiredMcps', 'maxDurationMinutes', 'group', 'schedule', 'overlap',
-  'history', 'status', 'createdAt', 'updatedAt', 'catchUp', 'retry', 'kind', 'teamId', 'planSource'
+  'history', 'status', 'createdAt', 'updatedAt', 'catchUp', 'retry', 'kind', 'teamId', 'planSource', 'launchOptions'
 ]);
 const KNOWN_STATUS_KEYS = new Set([
   'runCount', 'runs', 'lastRunAt', 'lastRunResult', 'lastRunSessionId', 'nextRunAt',
@@ -152,6 +163,9 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
   }
   const kind = r.kind === undefined ? 'agent' : r.kind;
   if (kind !== 'agent' && kind !== 'team') return { error: 'invalid schedule kind' };
+  let launchOptions: LaunchOptions | undefined;
+  try { launchOptions = validateScheduleLaunchOptions(kind, r.launchOptions); }
+  catch (error) { return { error: error instanceof Error ? error.message : 'invalid launchOptions' }; }
   if (kind === 'team' && (typeof r.teamId !== 'string' || !r.teamId.trim())) return { error: 'team schedule requires teamId' };
   const teamId = typeof r.teamId === 'string' ? r.teamId.trim() : undefined;
   if (r.planSource !== undefined && r.planSource !== 'provided' && r.planSource !== 'infer') return { error: 'invalid planSource' };
@@ -219,6 +233,7 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
     kind,
     teamId: kind === 'team' ? teamId : undefined,
     planSource: kind === 'team' ? (r.planSource ?? 'infer') : undefined,
+    ...(launchOptions !== undefined ? { launchOptions } : {}),
     extraArgs: Array.isArray(r.extraArgs)
       ? (r.extraArgs as unknown[]).filter((s): s is string => typeof s === 'string')
       : undefined,

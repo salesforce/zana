@@ -5,7 +5,7 @@ import {
   type ExecFileOptions,
   type ExecFileOptionsWithBufferEncoding
 } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { isExecutableGitHook } from './git-hook-mode.js';
@@ -87,21 +87,6 @@ const STATUS_MAX_PATHSPECS = 400;
  *  than a status read, so it gets a more generous ceiling than {@link TIMEOUT_MS}
  *  while still bounding a hung git (Rule 5). */
 const WORKTREE_ADD_TIMEOUT_MS = 20_000;
-
-// Guardrail only: Git config and hooks can be bypassed. Tokens stay process-local
-// and are consumed once, so authorization never persists in a worktree.
-const instructPushAuthorizations = new Set<string>();
-
-export function authorizeInstructWorktreePush(): string {
-  const token = randomBytes(32).toString('hex');
-  instructPushAuthorizations.add(token);
-  return token;
-}
-
-export function consumeInstructWorktreePushAuthorization(token: string): NodeJS.ProcessEnv | undefined {
-  if (!instructPushAuthorizations.delete(token)) return undefined;
-  return { ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: token };
-}
 
 /** Hard cap on how many commits `getRecentCommits` will ever read — bounds the
  *  `git log` output regardless of how deep the caller asks (CLAUDE.md rule 5). */
@@ -653,8 +638,10 @@ async function configureWorktreeProtection(toplevel: string, worktreePath: strin
       previousHooksDir = realpathSync(dirname(previousHook));
       hookNames = readdirSync(previousHooksDir);
     } catch (error) {
-      // A repo without a hooks directory has nothing to preserve.
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      // No effective hooks directory means nothing to preserve. In linked checkouts,
+      // inherited `.git/hooks` traverses the `.git` file and yields ENOTDIR, not ENOENT.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
     }
     for (const hook of hookNames) {
       if (hook.endsWith('.sample')) continue;
@@ -677,12 +664,7 @@ async function configureWorktreeProtection(toplevel: string, worktreePath: strin
       preservedHooks.set(hook, resolvedHook);
     }
     mkdirSync(zanaHooksPath, { recursive: true, mode: 0o700 });
-    let chainedHook = '';
-    const preservedPrePush = preservedHooks.get('pre-push');
-    if (previousHook !== zanaPrePush && preservedPrePush) {
-      chainedHook = `\nexec ${shellSingleQuote(preservedPrePush)} "$@"\n`;
-    }
-    writeFileSync(zanaPrePush, `#!/bin/sh\n# Zana safety guardrail; not a security boundary.\nif [ -z "${'${ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION:-}'}" ]; then\n  printf '%s\\n' 'Zana blocked push from managed squad worktree. Request one-time Instruct-agent authorization, then retry.' >&2\n  exit 1\nfi${chainedHook}\nexit 0\n`, { mode: 0o700 });
+    writeFileSync(zanaPrePush, `#!/bin/sh\n# Zana safety guardrail; not a security boundary.\nprintf '%s\\n' 'Zana blocked push from a managed squad worktree. Push stays blocked until the run ends. After the run, push zcc/<slug>, or declare the push capability in ## Launch.' >&2\nexit 1\n`, { mode: 0o700 });
     chmodSync(zanaPrePush, 0o700);
     for (const [hook, resolvedHook] of preservedHooks) {
       if (hook === 'pre-push') continue;

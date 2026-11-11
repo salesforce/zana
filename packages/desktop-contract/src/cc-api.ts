@@ -255,6 +255,11 @@ export interface CcApi {
     set(id: string, patch: Partial<ProjectSettings>): Promise<ProjectSettings>;
     onChanged(callback: (projectId: string) => void): () => void;
   };
+  namedChecks: {
+    get(scope: import('@zana-ai/zcc-contracts/project-settings').NamedCheckScope): Promise<import('@zana-ai/zcc-contracts/project-settings').NamedCheck[]>;
+    set(scope: import('@zana-ai/zcc-contracts/project-settings').NamedCheckScope, checks: import('@zana-ai/zcc-contracts/project-settings').NamedCheck[]): Promise<import('@zana-ai/zcc-contracts/project-settings').NamedCheck[]>;
+    onChanged(callback: () => void): () => void;
+  };
   executionConsent: {
     listProject(projectId: string): Promise<ProjectExecutionConsentGrant[]>;
     revokeProject(projectId: string, grantId: string): Promise<ProjectExecutionConsentGrant[]>;
@@ -2086,7 +2091,8 @@ export interface CcApi {
     /** Cancel sessions from a renderer-owned interactive Team launch. */
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
     /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
-    startJob(input: TeamJobLaunchInput): Promise<TeamJobLaunchResponse>;
+    startJob(input: TeamJobLaunchInput & { /** Opaque main-held preview binding; never a caller fingerprint. */ previewToken?: string }): Promise<TeamJobLaunchResponse>;
+    preview(input: Pick<TeamJobLaunchInput, 'teamId' | 'projectId' | 'goal' | 'coordinationMode' | 'sourceCapabilityIds'> & import('@zana-ai/zcc-domain/launch-options').LaunchOptions): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
     /** Resolve a pending Squad proposal into a composer pre-fill. Desktop window only. */
     reviewProposal(
       proposalId: string

@@ -1,4 +1,5 @@
 import { RunErrorDialog } from './RunErrorDialog.js';
+import { ScheduleLaunchReview } from './ScheduleLaunchReview.js';
 import { failedRunMessage } from '../../lib/schedule-run-outcome';
 import React, { useState, type ReactNode } from 'react';
 import { PendingWorkerRecovery } from '../PendingWorkerRecovery.js';
@@ -77,6 +78,7 @@ export function ScheduleInfoPanel({
   const [reportRun, setReportRun] = useState<ScheduleRun | null>(null);
   const [errorRun, setErrorRun] = useState<ScheduleRun | null>(null);
   const [busyRuns, setBusyRuns] = useState<ReadonlySet<string>>(new Set());
+  const [reviewLaunch, setReviewLaunch] = useState(false);
 
   React.useEffect(() => {
     const timer = window.setInterval(() => setTick((n) => n + 1), 1000);
@@ -115,7 +117,9 @@ export function ScheduleInfoPanel({
     const result = await product.scheduler.setEnabled(task.id, !task.enabled);
     if (!result.ok) pushToast(result.message, 'error');
   };
-  const runNow = async () => {
+  const runNow = async (reviewed = false) => {
+    if (task.kind === 'team' && !reviewed) { setReviewLaunch(true); return; }
+    setReviewLaunch(false);
     const result = await product.scheduler.runNow(task.id);
     if (!result.ok) {
       pushToast(`Run failed: ${result.message}`, 'error');
@@ -170,6 +174,7 @@ export function ScheduleInfoPanel({
 
   return (
     <div className="schedule-info-panel" data-testid="schedule-info-panel">
+      {reviewLaunch && <ScheduleLaunchReview task={task} onCancel={() => setReviewLaunch(false)} onConfirm={() => { void runNow(true); }} />}
       {pending.length > 0 && <PendingWorkerRecovery key={task.id} kind="schedule" id={task.id} sessionIds={pending.flatMap(run => run.sessionId ? [run.sessionId] : [])} />}
       <section className="schedule-info-section">
         <h3>Status</h3>

@@ -26,6 +26,7 @@ vi.mock('./resumeScheduledRun.js', async (importOriginal) => ({
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
+    teams: { preview: vi.fn(async () => ({ ok: false, message: 'Unavailable' })) },
     scheduler: {
       setEnabled: (...args: unknown[]) => setEnabled(...args),
       runNow: (...args: unknown[]) => runNow(...args),
@@ -62,6 +63,12 @@ const baseTask = {
 } as ScheduledTask;
 
 describe('ScheduleInfoPanel', () => {
+  it('opens review before running a squad schedule', () => {
+    render(<ScheduleInfoPanel task={{ ...baseTask, kind: 'team', teamId: 't' }} />);
+    fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+    expect(screen.queryByRole('dialog', { name: 'Review scheduled squad launch' })).not.toBeNull();
+    expect(runNow).not.toHaveBeenCalled();
+  });
   it('shows a pending worker and disables actions that would start more work', () => {
     render(<ScheduleInfoPanel task={{ ...baseTask, enabled: false, status: { runCount: 0, runs: [{ at: new Date().toISOString(), launchState: 'pending', sessionId: 'reserved', result: 'skipped' }] } }} />);
     expect(screen.getByTestId('pending-worker-recovery')).toBeTruthy();

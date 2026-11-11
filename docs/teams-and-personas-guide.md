@@ -9,11 +9,11 @@ How to create, configure, and launch multi-agent teams in Zana (ZCC).
 ZCC's Teams system lets you define a bundle of named agent personas that launch together into a project. Each **Persona** is a reusable Claude Code flag bundle (model, permissions, system prompt, tools). A **Team** references multiple personas by id and opens one terminal tab per slot — optionally running autonomously toward a goal.
 
 Key files:
-- `src/shared/types.ts` — `Persona`, `Team`, `TeamSlot`, `AutonomousRun` interfaces
-- `src/main/persona-store.ts` — discovery, validation, hot-reload for personas
-- `src/main/team-store.ts` — discovery for teams (same pattern as persona-store)
-- `src/main/autonomous-run-supervisor.ts` — drives autonomous runs toward a goal
-- `src/renderer/components/TeamsPanel.tsx` — UI catalogue + launch action
+- `packages/domain/src/product.ts` — shared Persona, Team, slot, and launch contracts
+- `apps/server/src/services/agents/` — Persona and Squad discovery, validation, and routing
+- `apps/server/src/services/execution/` — durable Squad execution, plan admission, and recovery
+- `apps/desktop/src/squad-launch-core.ts` — host-side Squad launch assembly
+- `apps/app/src/components/TeamComposer.tsx` — composer launch surface
 
 ---
 
@@ -118,6 +118,9 @@ A Team bundles multiple personas into a single-click launch:
 | `defaultProjectId` | string? | Fallback project when none supplied at launch |
 | `initialPrompt` | string? | Opening text for the orchestrator's tab |
 | `worktreeIsolation` | boolean? | Shared-worktree override for Squad runs; absent follows the Project or global default |
+| `worktreeOnComplete` | `"leave"` \| `"merge"` \| `"delete"`? | Disposition for a generated Squad worktree; default is `leave` |
+| `routingEnforced` | boolean? | Require eligible routing where model-tier routing is available |
+| `retainOrchestrator` | boolean? | Keep the coordinator session after successful completion |
 | `defaultPlanning` | `"infer"` \| `"provided"`? | Planning mode preselected when the Squad is picked in the composer or proposed by an agent; absent uses the global default. Set it in Settings → Squads → Default planning |
 
 ### TeamSlot
@@ -132,16 +135,28 @@ A Team bundles multiple personas into a single-click launch:
 
 Same pattern as personas: `builtin ⊕ ~/.zcc/teams/*.json ⊕ <project>/.zcc/teams/*.json ⊕ extension registrations`.
 
-### Launch Behavior
+### Squad execution model
 
-When a team is launched (via UI or `cc.teams.launch(teamId, projectId)`):
+A durable Squad run is not the legacy tab-launch flow. Zana validates the Project
+and plan, persists the execution in SQLite, starts its coordinator and workers,
+and reconciles durable executions after app restart. Squad details retains the
+plan, assignments, outputs, lifecycle state, and recovery record.
 
-1. The team is resolved from the store
-2. The project is validated (from `defaultProjectId` or explicit arg)
-3. The **orchestrator** tab opens first (with `initialPrompt` as its opening instruction)
-4. Each **slot** opens `quantity` tabs for that persona (unknown persona ids are skipped)
-5. Total tabs per launch are capped at **32** (Rule 5 — bound growing work)
-6. Returns `{ launched: number, orchestratorSessionId, workerSessionIds }`
+The separate `AutonomousRunSupervisor` nudge loop described below is in-memory.
+Restarting ZCC ends that nudge loop; it does not erase durable Squad executions.
+
+Launch settings resolve once at claim and stay frozen for that run. For every
+shared launch option, precedence is explicit launch > plan `## Launch` > Squad >
+default. Worktree isolation retains its host-derived Project/global fallback at
+the default rung. The persisted snapshot records both effective value and source;
+editing a Squad while a run is active does not change its disposition or push
+permission.
+
+Registered SSH remote Projects use their configured remote default path. They
+support inferred and provided plans, including inline provided plans and locally
+attached source capabilities, without local I/O against a remote-checkout
+placeholder. Remote launches reject explicit targets, generated worktree
+isolation, named checks, and push; they do not fall back to a local checkout.
 
 ---
 
@@ -400,3 +415,7 @@ goal" is refused; the agent proposes a plan it has written and checked instead
 - The 32-tab cap per team launch means a team with many high-quantity slots will be truncated.
 - `baseProfile: "claude-yolo"` ignores `permissionMode` (it forces skip-permissions regardless).
 - Extension-contributed teams/personas are in-memory and read-only — they vanish when the extension is disabled.
+
+## Internal Comparison Guidance
+
+For authors and agents comparing Squads with Claude Unleashed, read [Authoring Squad Comparisons](squad-comparison-authoring.md). It distinguishes intentional workflow style from missing capabilities and requires version-pinned external evidence.

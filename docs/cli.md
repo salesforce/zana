@@ -279,12 +279,18 @@ Start and watch one durable Team execution. `--mode freeform` (default) asks the
 Launch, answer, and stop are operator-only.
 
 ```bash
-zcc team launch --team <id> --project <id> --goal "ship it" [--mode freeform|structured] [--wait]
+zcc team launch --team <id> --project <id|path> --goal "ship it" [--mode freeform|structured] [--worktree true|false] [--on-complete leave|merge|delete] [--push] [--check <name>]... [--target project-root|worktree:<branch>] [--title <text>] [--summary <text>] [--wait] [--timeout 5m]
 zcc team status <executionId>
 zcc team wait <id> [--timeout 5m]
 zcc team answer <id> --text "yes" [--blocker <blockerId>]
 zcc team stop <id>
 ```
+
+`--project` accepts an id or a confined filesystem path. A path is realpath
+checked under HOME or cloneRoot before idempotent project registration; arbitrary
+paths are not trusted. Before launch, CLI writes trusted resolved launch settings
+and location to stderr. stdout remains launch output, or exact streamed terminal
+result payload when `--wait` is set. `--timeout` defaults to `5m`.
 
 ### `schedule ls`
 

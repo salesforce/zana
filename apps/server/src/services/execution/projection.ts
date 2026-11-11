@@ -206,7 +206,6 @@ export function assembledResultProjection(record: ExecutionRecord): ExecutionBoa
     })),
     failures: record.assembledResult.failures.map(({ workUnitId, code }) => ({ workUnitId, code })),
     artifacts: record.assembledResult.artifacts.map(({ name, mediaType, contentDigest }) => ({ name, mediaType, contentDigest })),
-    ...(record.assembledResult.policy ? { policy: { status: record.assembledResult.policy.status, summary: record.assembledResult.policy.summary } } : {}),
     verification: record.assembledResult.verification.map(({ workUnitId, checks }) => ({ workUnitId, checks: [...checks] })),
     usage: publicUsage(record.assembledResult.usage), digest: record.assembledResult.digest
   };

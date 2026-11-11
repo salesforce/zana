@@ -1,8 +1,11 @@
 import { open } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { TEAM_GOAL_MAX_CHARS } from '@zana-ai/zcc-domain/product';
+import { homedir } from 'node:os';
+import { isAbsolute, resolve } from 'node:path';
+import { TEAM_GOAL_MAX_CHARS, type ProductTeamStatus } from '@zana-ai/zcc-domain/product';
 import { errResult, type CliResult } from '../cli-result.js';
 import { flagValue, hasFlag, stripFlags } from '../flag-parse.js';
+import { launchOptionsFromFlags } from './launch-forward.js';
+import { squadLaunchPreviewSchema } from '@zana-ai/zcc-domain/squad-proposal';
 import {
   nowMs,
   productRequest,
@@ -15,6 +18,8 @@ interface TeamLaunchValue {
   kind?: 'job' | 'run';
   id?: string;
   state?: string;
+  path?: string;
+  branch?: string;
 }
 
 interface TeamStatusValue {
@@ -26,10 +31,27 @@ interface TeamStatusValue {
   stateVersion?: number;
   goal?: string;
   summary?: string;
+  result?: ProductTeamStatus['result'];
   blockers?: Array<{ id?: string; question?: string; resolved?: boolean }>;
 }
 
 const MAX_WAIT_MS = 24 * 60 * 60 * 1_000;
+
+export async function resolveTeamProjectArg(
+  value: string,
+  deps?: ProductHttpDeps
+): Promise<{ ok: true; projectId: string } | { ok: false; result: CliResult }> {
+  const path = isAbsolute(value) || value === '.' || value === '..' || value === '~' || value.includes('/') || value.includes('\\');
+  if (!path) return { ok: true, projectId: value };
+  const absolute = value === '~' ? homedir() : value.startsWith('~/') ? resolve(homedir(), value.slice(2)) : resolve(value);
+  const registered = await productRequest<{ project?: { id?: string } }>('POST', '/api/v1/projects', {
+    deps, body: { path: absolute, registrationMode: 'confined' }
+  });
+  if (!registered.ok) return registered;
+  const id = registered.data.project?.id;
+  if (!id) return { ok: false, result: errResult('project registration did not return an id') };
+  return { ok: true, projectId: id };
+}
 
 function parseDuration(raw: string): number | undefined {
   const match = /^(\d+)(ms|s|m|h)?$/.exec(raw.trim());
@@ -98,7 +120,10 @@ async function waitForId(
     }
     const row = shown.data.value ?? (shown.data as TeamStatusValue);
     if (isTerminal(row.state)) {
-      return renderOrJson(json, row, `${formatStatus(row)}\n`);
+      if (row.result === undefined || row.result === null) {
+        return errResult(`terminal execution ${id} has no persisted result payload`);
+      }
+      return renderOrJson(json, row.result, typeof row.result === 'string' ? row.result : `${JSON.stringify(row.result, null, 2)}\n`);
     }
     await sleepMs(500, deps);
   }
@@ -118,8 +143,11 @@ export async function runTeamCommand(
   if (subcommand === 'ls' || subcommand === 'list' || !subcommand) return undefined;
 
   if (subcommand === 'launch') {
+    let launchOptions;
+    try { launchOptions = launchOptionsFromFlags(rest); }
+    catch (error) { return errResult(error instanceof Error ? error.message : String(error), 2); }
     const teamId = flagValue(rest, '--team');
-    const projectId = flagValue(rest, '--project');
+    const projectArg = flagValue(rest, '--project');
     const goalRaw = flagValue(rest, '--goal');
     // Default is freeform (coordinator infers the plan): a prose goal such as
     // "ship it" is not a plan, and `structured` rejects it as INVALID_PLAN.
@@ -128,7 +156,7 @@ export async function runTeamCommand(
     const summary = flagValue(rest, '--summary');
     const wait = hasFlag(rest, '--wait');
     if (!teamId) return errResult('team launch requires --team <id>', 2);
-    if (!projectId) return errResult('team launch requires --project <id>', 2);
+    if (!projectArg) return errResult('team launch requires --project <id|path>', 2);
     if (modeRaw !== 'structured' && modeRaw !== 'freeform') {
       return errResult("--mode must be 'structured' or 'freeform'", 2);
     }
@@ -137,6 +165,25 @@ export async function runTeamCommand(
     const timeoutRaw = flagValue(rest, '--timeout') ?? '5m';
     const timeoutMs = parseDuration(timeoutRaw);
     if (timeoutMs === undefined) return errResult(`invalid --timeout '${timeoutRaw}'`, 2);
+    const project = await resolveTeamProjectArg(projectArg, deps);
+    if (!project.ok) return project.result;
+    const previewed = await productRequest<{ ok?: boolean; value?: unknown; message?: string }>('POST', '/api/v1/teams/preview', {
+      deps,
+      body: { teamId, projectId: project.projectId, goal: resolved.goal, coordinationMode: modeRaw, ...launchOptions }
+    });
+    if (!previewed.ok) return previewed.result;
+    if (!previewed.data?.ok) return errResult(previewed.data?.message ?? 'launch preview unavailable');
+    const rawPreview = previewed.data.value;
+    if (!rawPreview || typeof rawPreview !== 'object') return errResult('invalid trusted launch preview');
+    const { previewToken, ...snapshot } = rawPreview as Record<string, unknown>;
+    const parsed = squadLaunchPreviewSchema.safeParse(snapshot);
+    if (!parsed.success || typeof previewToken !== 'string' || !previewToken) return errResult('invalid trusted launch preview');
+    const preview = parsed.data;
+    const policies = Object.entries(preview.resolvedLaunch).map(([name, policy]) => `${name}: ${Array.isArray(policy.value) ? policy.value.join(', ') || 'none' : policy.value} (${policy.source})`).join('; ');
+    const previewLocation = preview.location.kind === 'new-worktree' ? 'New worktree (path assigned at launch)' : `${preview.branch ?? 'HEAD'} — ${preview.path}`;
+    const diagnostic = `Launch preview: ${policies}\nLocation: ${previewLocation}\n`;
+    deps?.onStderr?.(diagnostic);
+    const withPreview = (result: CliResult): CliResult => ({ ...result, stderr: `${deps?.onStderr ? '' : diagnostic}${result.stderr ?? ''}` });
     const launched = await productRequest<{ ok?: boolean; value?: TeamLaunchValue }>(
       'POST',
       '/api/v1/teams/launch',
@@ -144,19 +191,21 @@ export async function runTeamCommand(
         deps,
         body: {
           teamId,
-          projectId,
+          projectId: project.projectId,
           goal: resolved.goal,
           mode: modeRaw,
+          ...launchOptions,
+          previewToken,
           ...(title ? { title } : {}),
           ...(summary ? { summary } : {})
         }
       }
     );
-    if (!launched.ok) return launched.result;
+    if (!launched.ok) return withPreview(launched.result);
     const row = launched.data.value;
-    if (!row?.id) return errResult('team launch did not return an id');
-    if (!wait) return renderOrJson(json, row, `${row.id}\t${row.kind ?? '?'}\t${row.state ?? 'starting'}\n`);
-    return waitForId(row.id, timeoutMs, json, deps);
+    if (!row?.id) return withPreview(errResult('team launch did not return an id'));
+    if (!wait) return withPreview(renderOrJson(json, row, `${row.id}\t${row.kind ?? '?'}\t${row.state ?? 'starting'}${row.path ? `\t${row.branch ?? 'HEAD'} — ${row.path}` : ''}\n`));
+    return withPreview(await waitForId(row.id, timeoutMs, json, deps));
   }
 
   if (subcommand === 'status') {

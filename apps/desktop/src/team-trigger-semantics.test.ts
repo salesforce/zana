@@ -58,6 +58,14 @@ describe('resolveTriggeredSquadPlan', () => {
 });
 
 describe('resolveSquadPlan', () => {
+  it('preserves provided launch declarations and step check/failure contracts', () => {
+    const text = `## Launch\n- worktree: true\n- push: true\n- checks: check:lint\n## Execution Plan\n${validPlan}\n- Completion criteria: check:test\n- On failure: fail run`;
+    expect(resolveSquadPlan('provided', [text])).toMatchObject({
+      launch: { worktree: true, push: true, checks: ['lint'] },
+      workUnits: [{ checks: ['test'], onFailure: { kind: 'fail-run' } }]
+    });
+    expect(resolveSquadPlan('infer', [text])).not.toHaveProperty('launch');
+  });
   const stepWithoutScope = '### write: Write output <!-- executable-step -->\n\n- **Mode:** Mutating\n- **Work:** Create output.\n- **Verification:** Read output.';
 
   it('never parses an inferred plan, whatever the text', () => {

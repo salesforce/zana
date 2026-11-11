@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../run-cli.js';
+import { resolveAllLaunch } from '@zana-ai/zcc-domain/launch-options';
+
+const teamPreview = { ok: true, value: { launchOptions: {}, resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p1' }, path: '/repo', branch: 'main', fingerprint: 'trusted', previewToken: 'opaque-token' } };
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -681,11 +684,12 @@ describe('product API command groups', () => {
     let answerBody: unknown;
     let state = 'RUNNING';
     const fetchImpl = router({
+      'POST /api/v1/teams/preview': teamPreview,
       'POST /api/v1/teams/launch': (_url, init) => {
         body = JSON.parse(String(init?.body));
         return jsonResponse(201, { ok: true, value: { kind: 'job', id: 'ex-1', state: 'RUNNING' } });
       },
-      'GET /api/v1/executions/ex-1': () => ({ ok: true, value: { kind: 'job', id: 'ex-1', state } }),
+      'GET /api/v1/executions/ex-1': () => ({ ok: true, value: { kind: 'job', id: 'ex-1', state, ...(state === 'COMPLETED' ? { result: 'Persisted team output' } : {}) } }),
       'POST /api/v1/executions/ex-1/answer': (_url, init) => {
         answerBody = JSON.parse(String(init?.body));
         return { ok: true, value: { id: 'ex-1', state: 'RUNNING' } };
@@ -746,6 +750,7 @@ describe('product API command groups', () => {
     writeFileSync(file, 'do the thing\n');
     let body: { goal?: string } = {};
     const fetchImpl = router({
+      'POST /api/v1/teams/preview': teamPreview,
       'POST /api/v1/teams/launch': (_url, init) => {
         body = JSON.parse(String(init?.body));
         return jsonResponse(201, { ok: true, value: { kind: 'job', id: 'execution-1', state: 'RUNNING' } });
@@ -770,6 +775,7 @@ describe('product API command groups', () => {
   it('defaults a prose goal to freeform and reports INVALID_PLAN for explicit structured', async () => {
     const modes: unknown[] = [];
     const fetchImpl = router({
+      'POST /api/v1/teams/preview': teamPreview,
       'POST /api/v1/teams/launch': (_url, init) => {
         const body = JSON.parse(String(init?.body));
         modes.push(body.mode);
@@ -793,11 +799,12 @@ describe('product API command groups', () => {
     let state = 'RUNNING';
     let now = 0;
     const fetchImpl = router({
+      'POST /api/v1/teams/preview': teamPreview,
       'POST /api/v1/teams/launch': (_url, init) => {
         body = JSON.parse(String(init?.body));
         return jsonResponse(201, { ok: true, value: { kind: 'job', id: 'execution-1', state } });
       },
-      'GET /api/v1/executions/execution-1': () => ({ ok: true, value: { kind: 'job', id: 'execution-1', state } })
+      'GET /api/v1/executions/execution-1': () => ({ ok: true, value: { kind: 'job', id: 'execution-1', state, ...(state === 'COMPLETED' ? { result: 'Persisted team output' } : {}) } })
     });
     const launched = await runCli(
       [
@@ -814,12 +821,13 @@ describe('product API command groups', () => {
       }
     );
     expect(launched.exitCode).toBe(0);
-    expect(launched.stdout).toContain('COMPLETED');
+    expect(launched.stdout).toBe('Persisted team output\n');
     expect(body).toEqual({
       teamId: 't1',
       projectId: 'p1',
       goal: 'ship it',
       mode: 'freeform',
+      previewToken: 'opaque-token',
       title: 'Release',
       summary: 'Verify release'
     });

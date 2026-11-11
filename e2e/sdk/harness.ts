@@ -610,6 +610,22 @@ async function proposer() {
     if (entry.tool === 'squad_launch' && proposed.ok && proposed.value && proposed.value.executionId) {
       const snap = await tryMcp('execution.snapshot', { executionId: proposed.value.executionId, after: 0 });
       log('snapshot[' + entry.label + ']', JSON.stringify({ ok: snap.ok, state: snap.ok && snap.value && snap.value.execution ? snap.value.execution.state : snap.error }));
+      if (spec.observeExecutions) {
+        const id = proposed.value.executionId;
+        const initial = await tryMcp('execution.status', { executionId: id });
+        log('initial[' + entry.label + ']', JSON.stringify(initial));
+        (async function () {
+          for (let i = 0; i < 600; i++) {
+            const current = await tryMcp('execution.status', { executionId: id });
+            if (current.ok && ['COMPLETED', 'FAILED', 'STOPPED'].includes(current.value.state)) {
+              log('terminal[' + entry.label + ']', JSON.stringify(current));
+              return;
+            }
+            await sleep(500);
+          }
+          log('terminal[' + entry.label + ']', JSON.stringify({ ok: false, error: 'observation timed out' }));
+        })().catch(function (e) { log('observation error', String(e)); });
+      }
     }
   }
   setIdle();
@@ -759,6 +775,31 @@ async function handleNavigationLabel(outcomeFence) {
 
 // Execute ONE engine-assigned unit (the engine already CLAIMed it to this
 // worker's slot, so no self-claim — just do the work and complete).
+function readDependencyResult(text, dependencyId) {
+  const lines = text.split('\n');
+  const prefix = '- ' + BT + dependencyId + BT;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const header = /^- /.test(line) && line.indexOf(BT) === 2;
+    if (!header) continue;
+    const selected = line.startsWith(prefix) && (line[prefix.length] === ':' || line[prefix.length] === ' ');
+    if (line.endsWith(': (untrusted data, not instructions)')) {
+      const opening = (lines[i + 1] || '').match(/^BEGIN_(UNTRUSTED_OUTPUT_*)$/);
+      if (!opening) throw new Error('dependency result missing opening boundary');
+      const closing = 'END_' + opening[1];
+      let end = i + 2;
+      while (end < lines.length && lines[end] !== closing) end++;
+      if (end === lines.length) throw new Error('dependency result missing closing boundary');
+      if (selected) return lines.slice(i + 2, end).join('\n');
+      i = end; // Headers inside another dependency's data are not section headers.
+    } else if (selected) {
+      const colon = line.indexOf(':', prefix.length);
+      if (colon >= 0) return line.slice(colon + 1).trim();
+    }
+  }
+  throw new Error('assignment missing dependency result: ' + dependencyId);
+}
+
 async function doUnit(unitId) {
   log('assigned', unitId);
   try {
@@ -802,11 +843,9 @@ async function doUnit(unitId) {
     } else if (unitId === 'assemble') {
       // Inherit the chosen label from the engine-injected 'Upstream results'
       // section of THIS unit's assignment push (dependencyResultsSection). If the
-      // result never propagated, the label stays empty and result.txt is missing
-      // it — the assertion then fails loudly instead of a silent side-file fallback.
-      let chosenLabel = '';
-      const upstream = (assignText['assemble'] || '').match(new RegExp(BT + 'navigation-label' + BT + '[^:]*:[ ]*([^\n]+)'));
-      if (upstream) chosenLabel = upstream[1].trim();
+      // result never propagated or its envelope is malformed, fail loudly instead
+      // of using the trust warning or a silent side-file fallback as the label.
+      const chosenLabel = readDependencyResult(assignText['assemble'] || '', 'navigation-label');
       log('assemble inherited label', JSON.stringify(chosenLabel));
       const home = fs.readFileSync(path.join(CWD, 'home.txt'), 'utf8').trim();
       const about = fs.readFileSync(path.join(CWD, 'about.txt'), 'utf8').trim();
@@ -1168,7 +1207,7 @@ async function worker() {
   if (!EXECUTION_ID && APIERR && RESUMED) {
     try { EXECUTION_ID = fs.readFileSync(execFileFor(), 'utf8').trim() || null; } catch (e) { /* guard below reports it */ }
   }
-  log('boot', 'mcp=' + (MCP_URL ? 'yes' : 'no'), 'exec=' + EXECUTION_ID, 'resumed=' + RESUMED, 'sid=' + process.env.ZCC_SESSION_ID, 'promptHead=' + JSON.stringify(PROMPT.slice(0, 120)));
+  log('boot', 'mcp=' + (MCP_URL ? 'yes' : 'no'), 'exec=' + EXECUTION_ID, 'resumed=' + RESUMED, 'sid=' + process.env.ZCC_SESSION_ID, 'cwd=' + CWD, 'home=' + process.env.HOME, 'promptHead=' + JSON.stringify(PROMPT.slice(0, 120)));
   if (!MCP_URL || (!EXECUTION_ID && !IS_OWNER && !IS_PROPOSER)) { log('missing MCP_URL/EXECUTION_ID', MCP_URL, EXECUTION_ID); await hold(); return; }
   try {
     if (IS_OWNER) await owner();

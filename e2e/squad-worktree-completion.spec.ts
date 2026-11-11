@@ -60,13 +60,15 @@ function installPolicyHook(projectDir: string) {
 
 function expectPreservedPolicyHook(worktree: string) {
   const hooks = resolve(worktree, makeGit(worktree)('rev-parse', '--git-path', 'zana-hooks'));
-  expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toContain('exec ');
+  const denial = 'Zana blocked push from a managed squad worktree. Push stays blocked until the run ends. After the run, push zcc/<slug>, or declare the push capability in ## Launch.';
+  expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toContain(denial);
   const push = spawnSync('git', ['-c', `core.hooksPath=${hooks}`, 'push', 'origin', 'HEAD:refs/heads/policy-test'], {
-    cwd: worktree, encoding: 'utf8', timeout: 15_000,
-    env: { ...process.env, ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: 'isolated-e2e-fixture' }
+    cwd: worktree, encoding: 'utf8', timeout: 15_000
   });
-  expect(push.status).not.toBe(0);
-  expect(push.stderr).toContain('preserved-user-policy');
+  expect(push.error).toBeUndefined();
+  expect(push.status).toBe(1);
+  expect(push.stderr).toContain(denial);
+  expect(push.stderr).not.toContain('preserved-user-policy');
 }
 
 /** Parse `git worktree list --porcelain` into the non-main worktrees. */

@@ -12,6 +12,12 @@ vi.mock('@/lib/inspect-session', () => ({ inspectAgentSession: fixtures.inspect,
 vi.mock('@/components/ExecutionJobDetails', () => ({ ExecutionJobDetails: ({ projectId, executionId }: any) => <output data-testid="execution">{projectId}:{executionId}</output> }));
 vi.mock('@/views/agents/SquadFlowView', () => ({ SquadFlowView: () => null }));
 vi.mock('@/components/AgentMonitor', () => ({ AgentMonitor: () => null }));
+vi.mock('@/components/AgentBoard', async importOriginal => ({
+  ...await importOriginal<typeof import('@/components/AgentBoard')>(),
+  AgentBoardLanes: ({ executions }: any) => <div data-testid="board-lanes">
+    {executions.map((row: any) => <span key={row.executionId}>{row.jobTitle}</span>)}
+  </div>
+}));
 vi.mock('@/components/MobilePageHeader', () => ({ MobilePageHeader: () => null }));
 import { useData, useAgentStatus, useScheduler, useUi } from '@/store';
 import { useThreads } from '@/thread-store';
@@ -108,6 +114,21 @@ it('opens a pending Inbox deep-link target on mount', async () => {
   setPendingSquadDetailsTarget({ projectId: 'p1', executionId: 'j1' });
   render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
   expect((await screen.findByTestId('execution')).textContent).toBe('p1:j1');
+});
+
+it('shows a rebooted BLOCKED execution without live agents on the global board', async () => {
+  fixtures.view = 'board'; fixtures.slots = [];
+  fixtures.executions = [{ projectId: 'p1', executionId: 'boot', jobTitle: 'Boot CLAIMED worker', state: 'BLOCKED' }];
+  useData.setState({ terminals: {} });
+  render(<MemoryRouter><AgentsBoard scope={{ kind: 'global' }} /></MemoryRouter>);
+  expect(await screen.findByText('Boot CLAIMED worker')).toBeTruthy();
+  expect(screen.getByTestId('board-lanes')).toBeTruthy();
+  expect(screen.queryByText('No matches')).toBeNull();
+  fireEvent.change(screen.getByLabelText('Filter agents'), { target: { value: 'absent' } });
+  expect(screen.getByText('No matches')).toBeTruthy();
+  expect(screen.queryByTestId('board-lanes')).toBeNull();
+  fireEvent.click(screen.getByText('Clear filter'));
+  expect(screen.getByText('Boot CLAIMED worker')).toBeTruthy();
 });
 it('opens squad details from the open event and ignores incomplete event details', async () => {
   render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);

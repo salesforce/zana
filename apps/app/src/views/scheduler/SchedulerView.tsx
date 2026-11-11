@@ -2,6 +2,7 @@ import { failedRunMessage } from '../../lib/schedule-run-outcome';
 import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import React, { useEffect, useMemo, useState } from 'react';
+import { ScheduleLaunchReview } from '../../components/scheduler/ScheduleLaunchReview.js';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Clock, Plus, ListChecks, Sparkles, Pause, PlayCircle, AlertTriangle, Activity, Settings } from 'lucide-react';
 import type { ScheduledTask, ScheduleTemplate } from '@zana-ai/zcc-domain/product';
@@ -59,6 +60,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
   const [pausedSet, setPausedSet] = useState<Set<string> | null>(null);
   const [view, setView] = useState<'overview' | 'schedules' | 'problems'>('overview');
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [reviewLaunch, setReviewLaunch] = useState<ScheduledTask | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 1000);
@@ -137,7 +139,9 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     const result = await product.scheduler.setEnabled(t.id, !t.enabled);
     if (!result.ok) useUi.getState().pushToast(result.message, 'error');
   };
-  const runScheduleNow = async (t: ScheduledTask) => {
+  const runScheduleNow = async (t: ScheduledTask, reviewed = false) => {
+    if (t.kind === 'team' && !reviewed) { setReviewLaunch(t); return; }
+    setReviewLaunch(null);
     const result = await product.scheduler.runNow(t.id);
     if (!result.ok) {
       useUi.getState().pushToast(`Run failed: ${result.message}`, 'error');
@@ -204,6 +208,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     >
       <MobilePageHeader title="Schedules" primary={<button type="button" className="icon-btn" aria-label="New schedule" disabled={projects.length === 0} onClick={() => openNew()}><Plus size={20} /></button>}>{secondaryActions}</MobilePageHeader>
       <AuroraGrid />
+      {reviewLaunch && <ScheduleLaunchReview task={reviewLaunch} onCancel={() => setReviewLaunch(null)} onConfirm={() => { void runScheduleNow(reviewLaunch, true); }} />}
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">

@@ -8,6 +8,9 @@ const create = vi.fn();
 const update = vi.fn();
 const upsertSchedulerTask = vi.hoisted(() => vi.fn());
 const teamsList = vi.hoisted(() => vi.fn());
+const teamsPreview = vi.hoisted(() => vi.fn());
+const projectsList = vi.hoisted(() => vi.fn());
+const listWorktrees = vi.hoisted(() => vi.fn());
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
@@ -16,8 +19,11 @@ vi.mock('../../lib/product-client.js', () => ({
       update: (...args: unknown[]) => update(...args)
     },
     teams: {
+      preview: (...args: unknown[]) => teamsPreview(...args),
       list: (...args: unknown[]) => teamsList(...args)
-    }
+    },
+    projects: { list: () => projectsList() },
+    git: { listWorktrees: (...args: unknown[]) => listWorktrees(...args) }
   }
 }));
 
@@ -71,8 +77,18 @@ import { ScheduleEditor } from './ScheduleEditor.js';
 
 describe('ScheduleEditor', () => {
   beforeEach(() => {
+    teamsPreview.mockReset();
+    teamsPreview.mockResolvedValue({ ok: true, value: { location: { kind: 'project-root', projectId: 'p1' }, resolvedLaunch: {
+      worktree: { value: false, source: 'default' }, onComplete: { value: 'leave', source: 'default' },
+      push: { value: false, source: 'launch' }, checks: { value: [], source: 'launch' },
+      failurePolicyDefault: { value: 'fail-run', source: 'default' }
+    } } });
     teamsList.mockReset();
     teamsList.mockResolvedValue([{ id: 'team-1', name: 'Release squad', slots: [] }]);
+    projectsList.mockReset();
+    projectsList.mockResolvedValue([{ id: 'p1', name: 'Demo', path: '/demo' }]);
+    listWorktrees.mockReset();
+    listWorktrees.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -122,6 +138,7 @@ describe('ScheduleEditor', () => {
     expect(screen.getByRole('button', { name: 'Create schedule' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(screen.getByLabelText('Squad'));
     fireEvent.click(screen.getByLabelText('Squad planning'));
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Create schedule' }).hasAttribute('disabled')).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
@@ -136,7 +153,68 @@ describe('ScheduleEditor', () => {
     teamsList.mockRejectedValue(new Error('offline'));
     render(<ScheduleEditor task={null} />);
     fireEvent.click(screen.getByLabelText('Run as'));
-    await vi.waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not load squads'));
+    await vi.waitFor(() => expect(screen.getByText('Could not load squads. Close and reopen this form to retry.')).toBeTruthy());
+  });
+
+  it('edits structured launch overrides and previews every resolved setting without a review disclosure', async () => {
+    update.mockResolvedValue({ ok: true, value: { id: 'team-schedule' } });
+    const task = {
+      id: 'team-schedule', name: 'Review', enabled: true, projectId: 'p1', profile: 'claude',
+      kind: 'team', teamId: 'team-1', planSource: 'infer', launchOptions: { failurePolicyDefault: 'fail-run' },
+      schedule: { every: '1h' }, overlap: 'skip', history: { retain: 10 }, status: { runCount: 0, runs: [] },
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z'
+    };
+    render(<ScheduleEditor task={task as never} />);
+    await vi.waitFor(() => expect(teamsPreview).toHaveBeenLastCalledWith(expect.objectContaining({ failurePolicyDefault: 'fail-run' })));
+    fireEvent.click(screen.getByRole('button', { name: 'Customize launch' }));
+    fireEvent.change(screen.getByLabelText('Checkout'), { target: { value: 'selected-checkout' } });
+    fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'false' } });
+    fireEvent.change(screen.getByLabelText('Named checks mode'), { target: { value: 'none' } });
+    await vi.waitFor(() => expect(teamsPreview).toHaveBeenLastCalledWith(expect.objectContaining({
+      teamId: 'team-1', projectId: 'p1', coordinationMode: 'freeform', worktree: false, push: false,
+      checks: [], failurePolicyDefault: 'fail-run'
+    })));
+    expect(screen.queryByRole('button', { name: 'Review resolved settings' })).toBeNull();
+    const preview = screen.getByRole('status');
+    await vi.waitFor(() => expect(preview.textContent).toContain('Worktree isolation'));
+    expect(preview.textContent).toContain('Use checkout (Default)');
+    expect(preview.textContent).toContain('Keep checkout and branch (Default)');
+    expect(preview.textContent).toContain('Blocked (This launch)');
+    expect(preview.textContent).toContain('No checks (This launch)');
+    expect(preview.textContent).toContain('Fail run (Default)');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith('team-schedule', expect.objectContaining({
+      launchOptions: { worktree: false, push: false, checks: [], failurePolicyDefault: 'fail-run' }
+    })));
+  });
+
+  it('blocks save on a failed trusted preview', async () => {
+    teamsPreview.mockResolvedValue({ ok: false, message: 'Target unavailable' });
+    render(<ScheduleEditor task={null} />);
+    fireEvent.change(document.querySelector('#sched-name')!, { target: { value: 'Review' } });
+    fireEvent.click(screen.getByLabelText('Run as'));
+    fireEvent.click(screen.getByLabelText('Squad'));
+    await vi.waitFor(() => expect(screen.getAllByText('Target unavailable').length).toBeGreaterThan(0));
+    expect(screen.getByRole('button', { name: 'Create schedule' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Create schedule' }).hasAttribute('disabled')).toBe(true);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('keeps a valid squad preview when name and description change after a prompt supplies goal', async () => {
+    render(<ScheduleEditor task={null} />);
+    fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, { target: { value: 'Initial name' } });
+    fireEvent.change(document.querySelector('#sched-prompt') as HTMLTextAreaElement, { target: { value: 'Review release readiness' } });
+    fireEvent.click(screen.getByLabelText('Run as'));
+    await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('Squad'));
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Create schedule' }).hasAttribute('disabled')).toBe(false));
+    const previewCalls = teamsPreview.mock.calls.length;
+
+    fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, { target: { value: 'Renamed schedule' } });
+    fireEvent.change(document.querySelector('#sched-desc') as HTMLInputElement, { target: { value: 'Changed description' } });
+
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Create schedule' }).hasAttribute('disabled')).toBe(false));
+    expect(teamsPreview).toHaveBeenCalledTimes(previewCalls);
   });
 
   it('shows an empty hint when no squads exist, none when squads load', async () => {
@@ -144,7 +222,7 @@ describe('ScheduleEditor', () => {
     const first = render(<ScheduleEditor task={null} />);
     fireEvent.click(screen.getByLabelText('Run as'));
     await vi.waitFor(() => expect(screen.getByText(/No squads available/)).toBeTruthy());
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('Could not load squads. Close and reopen this form to retry.')).toBeNull();
     first.unmount();
     teamsList.mockResolvedValue([{ id: 'team-1', name: 'Release squad', slots: [] }]);
     render(<ScheduleEditor task={null} />);
@@ -324,6 +402,8 @@ describe('ScheduleEditor', () => {
     };
     render(<ScheduleEditor task={task as never} />);
     fireEvent.click(screen.getByLabelText('Squad planning'));
+    await vi.waitFor(() => expect(teamsPreview).toHaveBeenLastCalledWith(expect.objectContaining({ coordinationMode: 'structured' })));
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Save changes' }).hasAttribute('disabled')).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await vi.waitFor(() => expect(update).toHaveBeenCalled());
     expect(update).toHaveBeenCalledWith('squad-1', expect.objectContaining({

@@ -194,6 +194,11 @@ export const IPC = {
     set: 'projectSettings:set',
     onChanged: 'projectSettings:onChanged'
   },
+  namedChecks: {
+    get: 'namedChecks:get',
+    set: 'namedChecks:set',
+    onChanged: 'namedChecks:onChanged'
+  },
   /**
    * Per-harness auth (Settings → Harness): a base URL + API token for each agent
    * CLI family (claude/codex/cursor), injected at spawn so a harness can auth
@@ -815,6 +820,7 @@ export const IPC = {
     launch: 'teams:launch',
     cancel: 'teams:cancel',
     startJob: 'teams:startJob',
+    preview: 'teams:preview',
     reviewProposal: 'teams:reviewProposal',
     launchAutonomous: 'teams:launchAutonomous',
     stopAutonomous: 'teams:stopAutonomous',

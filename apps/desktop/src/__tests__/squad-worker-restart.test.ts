@@ -54,6 +54,30 @@ function makeDeps(over: Partial<SquadWorkerRestartDeps> = {}, sess: TerminalSess
 }
 
 describe('coordination helpers', () => {
+  it('accepts persisted managed ownership without relaxing managed confinement', async () => {
+    const resolveUserTarget = vi.fn();
+    const deps = makeDeps({ getExecution: vi.fn(async () => ({ squadWorktree: { path: worktree, branch: 'zcc/x', ownership: 'managed' as const } })), resolveUserTarget });
+    expect(await relaunchSquadWorker(deps, session())).toMatchObject({ ok: true });
+    deps.getExecution.mockResolvedValue({ squadWorktree: { path: root, branch: 'main', ownership: 'managed' } });
+    expect(await relaunchSquadWorker(deps, session())).toMatchObject({ ok: false, code: 'WORKTREE_UNAVAILABLE' });
+    expect(resolveUserTarget).not.toHaveBeenCalled();
+    expect(deps.launchAuthorizedTerminal).toHaveBeenCalledTimes(1);
+  });
+  it.each(['project-root', 'worktree'] as const)('revalidates exact user-owned %s and refuses branch/path drift', async targetKind => {
+    const path = targetKind === 'project-root' ? root : worktree;
+    const resolveUserTarget = vi.fn(async () => ({ path, branch: 'main', targetKind }));
+    const deps = makeDeps({
+      getExecution: vi.fn(async () => ({ squadWorktree: { path, branch: 'main', ownership: 'user' as const, targetKind }, request: { target: targetKind === 'project-root' ? { kind: 'project-root' as const } : { kind: 'worktree' as const, branch: 'main' } } })),
+      resolveUserTarget
+    });
+    expect(await relaunchSquadWorker(deps, session())).toMatchObject({ ok: true });
+    expect(resolveUserTarget).toHaveBeenCalledWith('p1', targetKind === 'project-root' ? { kind: 'project-root' } : { kind: 'worktree', branch: 'main' });
+    for (const changed of [{ path, branch: 'changed', targetKind }, { path: `${path}/other`, branch: 'main', targetKind }]) {
+      resolveUserTarget.mockResolvedValue(changed);
+      expect(await relaunchSquadWorker(deps, session())).toMatchObject({ ok: false, code: 'WORKTREE_UNAVAILABLE' });
+    }
+    expect(deps.launchAuthorizedTerminal).toHaveBeenCalledTimes(1);
+  });
   it('matches the team launch formulas', () => {
     expect(squadWorkerAutonomous('autonomous-team', false)).toBe(true);
     expect(squadWorkerAutonomous('freeform', true)).toBe(true);

@@ -83,6 +83,12 @@ import {
 } from 'electron';
 import { join, isAbsolute, resolve, sep, basename, relative, dirname } from 'node:path';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { resolveAllLaunch, launchOptionsSchema, type LaunchOptions, type SquadLaunchLocation } from '@zana-ai/zcc-domain/launch-options';
+import { squadLaunchPreviewSchema, type SquadLaunchPreview } from '@zana-ai/zcc-domain/squad-proposal';
+import { createProjectSettingsStore } from '@zana-ai/zcc-server/project-settings-store';
+import { NamedCheckScopeSchema, NamedChecksSchema, type NamedCheckScope, type NamedCheck } from '@zana-ai/zcc-contracts/project-settings';
+import { createNamedCheckRunner } from '@zana-ai/zcc-server/services/execution/check-runner';
+import { confineSource, readConfinedSource, sourceScope } from './squad-proposals/sources.js';
 import { existsSync, realpathSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isTrustedRendererUrl, productServerUrl, rendererUrl, setProductionRendererOrigin } from './window/renderer-url.js';
@@ -285,6 +291,7 @@ import { ABOUT_CREDITS, REPORT_BUG_URL, isDurableCoordination, type SavedRecord,
 import type { ExecutionBoardProjection, ExecutionBoardSnapshot, ExecutionSourceSnapshot, SquadTransport } from '@zana-ai/zcc-domain/product';
 import { isRestfulAgentState, decayUnreliableAgentState, validateSquadExecutionTarget } from '@zana-ai/zcc-domain/product';
 import type { TeamJobLaunchInput, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
+import { parseLaunchSection } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '@zana-ai/zcc-domain/product';
 import type { SubagentChild } from '@zana-ai/zcc-domain/product';
@@ -352,7 +359,7 @@ import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
 import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createStagingStore, SQUAD_STAGING_DIR_NAME, SQUAD_STAGING_PARENT_DIR_NAME } from './squad-proposals/staging.js';
-import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
+import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, SquadPreviewAdmissionError, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
 import { goalMentionPaths } from './squad-proposals/sources.js';
 import { parseSshConfig } from '@zana-ai/zcc-server/services/projects/ssh-config';
@@ -1199,6 +1206,7 @@ const squadWorkerRestarter = createSquadWorkerRestarter({
   getSession: (id) => ptys.getSession(id) ?? undefined,
   getProject: (projectId) => store.listProjects().find((project) => project.id === projectId),
   getExecution: (projectId, executionId) => executionStore.getInProject(projectId, executionId),
+  resolveUserTarget: (projectId, selector) => squadWorktreeRuntime.resolveUserTarget(store.listProjects().find(project => project.id === projectId), selector),
   teamLaunchEnabled: () => store.getConfig().teamLaunchEnabled === true,
   restoreCapabilities,
   followUp: lifecycleClaimOps((capability) => squadFollowUpClaims.restoreClaim(capability)),
@@ -3666,6 +3674,161 @@ async function getAuthoritativeProjectSettings(projectId: string): Promise<Proje
     : store.getProjectSettings(projectId);
 }
 
+const localNamedCheckSettings = createProjectSettingsStore({ projectSettingsFile: join(electronZccDataDir(), 'project-settings.json') });
+
+function registeredCheckScope(input: NamedCheckScope): NamedCheckScope {
+  const scope = NamedCheckScopeSchema.parse(input);
+  if (scope.kind === 'project' && !store.listProjects().some(project => project.id === scope.projectId)) throw new Error('named checks project is not registered');
+  return scope;
+}
+
+export const namedChecksSettings = {
+  async get(input: NamedCheckScope): Promise<NamedCheck[]> {
+    const scope = registeredCheckScope(input);
+    return NamedChecksSchema.parse(runtimeSupervisor ? await runtimeSupervisor.getNamedChecks(scope) : localNamedCheckSettings.getNamedChecks(scope));
+  },
+  async set(input: NamedCheckScope, checks: NamedCheck[]): Promise<NamedCheck[]> {
+    const scope = registeredCheckScope(input);
+    const values = NamedChecksSchema.parse(checks);
+    return runtimeSupervisor ? runtimeSupervisor.setNamedChecks(scope, values) : localNamedCheckSettings.setNamedChecks(scope, values);
+  }
+};
+
+const pendingSquadPreviews = new Map<string, SquadLaunchPreview>();
+const composerPreviewTokens = new Map<string, { key: string; preview: SquadLaunchPreview; expiresAt: number }>();
+const COMPOSER_PREVIEW_TTL_MS = 5 * 60_000;
+const COMPOSER_PREVIEW_MAX = 200;
+function composerPreviewKey(input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0], caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }): string {
+  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
+    launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target })]);
+}
+function pruneComposerPreviewTokens(): void {
+  for (const [token, entry] of composerPreviewTokens) if (entry.expiresAt <= Date.now()) composerPreviewTokens.delete(token);
+  while (composerPreviewTokens.size > COMPOSER_PREVIEW_MAX) composerPreviewTokens.delete(composerPreviewTokens.keys().next().value!);
+}
+export async function resolveSquadLaunchOptions(projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'worktree' | 'onComplete' | 'target' | 'push' | 'checks' | 'failurePolicyDefault' | 'planLaunch'> & { launchRequestId?: string }) {
+  if (!store.listProjects().some(project => project.id === projectId)) throw new Error('project not registered');
+  const team = teams.list().find(candidate => candidate.id === request.teamId);
+  if (!team) throw new Error('Squad not found');
+  const settings = await getAuthoritativeProjectSettings(projectId);
+  const resolved = resolveAllLaunch({
+    launch: launchOptionsSchema.parse({ worktree: request.worktree, onComplete: request.onComplete, push: request.push, checks: request.checks, failurePolicyDefault: request.failurePolicyDefault, target: request.target }),
+    plan: request.planLaunch ? { ...request.planLaunch, checks: request.planLaunch.checks ? [...request.planLaunch.checks] : undefined } : undefined,
+    squad: { worktreeIsolation: team.worktreeIsolation, worktreeOnComplete: team.worktreeOnComplete, push: team.push, checks: team.checks, failurePolicyDefault: team.failurePolicyDefault },
+    fallback: { worktree: settings.worktreeIsolation ?? store.getConfig().worktreeIsolationDefault }
+  });
+  const preview = request.launchRequestId ? pendingSquadPreviews.get(request.launchRequestId) : undefined;
+  if (preview) {
+    const project = store.listProjects().find(project => project.id === projectId)!;
+    if ((await resolveSquadLocationPreview(project, preview.launchOptions, resolved)).fingerprint !== preview.fingerprint) throw new Error('Launch settings or target changed before claim');
+  }
+  return resolved;
+}
+
+export async function resolveSquadLaunchPreview(input: import('./squad-proposals/service.js').SquadLaunchPreviewRequest): Promise<SquadLaunchPreview> {
+  const project = store.listProjects().find(candidate => candidate.id === input.projectId);
+  if (!project) throw new Error('TARGET_UNAVAILABLE');
+  const parsedOptions = launchOptionsSchema.safeParse(input.launchOptions);
+  if (!parsedOptions.success) throw new SquadPreviewAdmissionError('Invalid launch options or target selector.');
+  const launchOptions = parsedOptions.data;
+  const targetCheck = validateSquadExecutionTarget(launchOptions);
+  if (!targetCheck.ok) throw new SquadPreviewAdmissionError(targetCheck.message);
+  const fs = { realpath, lstat, open: (path: string, flags: number) => openFile(path, flags) };
+  const scope = await sourceScope(fs, project.path, squadSourceBases(), { remote: Boolean(project.remote) });
+  if (!scope) throw new Error('TARGET_UNAVAILABLE');
+  const texts: string[] = [];
+  for (const path of input.sourcePaths) {
+    const confined = await confineSource(fs, scope, path);
+    if (!confined.ok) throw new Error(confined.message);
+    texts.push(await readConfinedSource(fs, scope, { source: confined.source, identity: confined.identity }));
+  }
+  texts.push(...input.attachments.map(attachment => attachment.text), input.goal);
+  const plan = resolveSquadPlan(input.planning, texts);
+  if (plan.planError) throw new SquadPreviewAdmissionError(plan.planError);
+  const resolvedLaunch = await resolveSquadLaunchOptions(project.id, { teamId: input.teamId, ...launchOptions, planLaunch: plan.launch });
+  return resolveSquadLocationPreview(project, launchOptions, resolvedLaunch);
+}
+
+export async function resolveSquadComposerPreview(input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0], caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }): Promise<SquadLaunchPreview & { previewToken: string }> {
+  const project = store.listProjects().find(project => project.id === input.projectId);
+  if (!project) throw new Error('TARGET_UNAVAILABLE');
+  if (teamHostProblem(project, localHostId())) throw new SquadPreviewAdmissionError('Project host is unavailable for this launch.');
+  const launchOptions = launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target });
+  const sourceIds = input.sourceCapabilityIds ?? [];
+  if (sourceIds.length && caller.kind !== 'window') throw new Error('Execution source capabilities require a trusted window');
+  const sourceBases = squadSourceBases();
+  const goalSources = project.remote ? [] : await goalExecutionSourcePaths(input.goal, project.path, sourceBases.home, sourceBases);
+  if (goalSources.length && caller.kind !== 'window') throw new Error('Goal execution sources require a trusted window');
+  const goalCapabilities = goalSources.length && caller.kind === 'window'
+    ? await executionSources.issue({
+      windowId: caller.windowId, projectId: project.id, paths: goalSources.map(source => source.exactPath),
+      policy: await resolveSourcePolicy(realpath, { projectRoot: project.path, ...sourceBases })
+    }) : [];
+  const capabilityIds = [...new Set([...sourceIds, ...goalCapabilities.map(source => source.id)])];
+  const inspected = capabilityIds.length && caller.kind === 'window'
+    ? await executionSources.inspect({ windowId: caller.windowId, projectId: project.id, capabilityIds }) : undefined;
+  const texts = [...(inspected?.sources ?? []).map(source => source.extractedText), input.goal];
+  const plan = resolveSquadPlan(input.coordinationMode === 'freeform' ? 'infer' : 'provided', texts);
+  // Attended malformed DAGs retain the existing correction flow, but bad launch declarations never become defaults.
+  if (plan.planError) {
+    for (const text of texts) {
+      const declarations = parseLaunchSection(text ?? '');
+      if (!declarations.ok) throw new Error(declarations.reason);
+      if (Object.keys(declarations.launch).length) throw new Error('Correct the supplied plan before previewing its launch declarations');
+    }
+    if (caller.kind !== 'window') throw new Error(plan.planError);
+  }
+  const resolved = await resolveSquadLaunchOptions(project.id, { teamId: input.teamId, ...launchOptions, planLaunch: plan.launch });
+  const preview = await resolveSquadLocationPreview(project, launchOptions, resolved);
+  pruneComposerPreviewTokens();
+  const key = composerPreviewKey(input, caller);
+  const existing = [...composerPreviewTokens].find(([, entry]) => entry.key === key && entry.preview.fingerprint === preview.fingerprint);
+  const previewToken = existing?.[0] ?? randomUUID();
+  composerPreviewTokens.set(previewToken, { key, preview, expiresAt: Date.now() + COMPOSER_PREVIEW_TTL_MS });
+  pruneComposerPreviewTokens();
+  return { ...preview, previewToken };
+}
+
+async function resolveSquadLocationPreview(project: Project, launchOptions: LaunchOptions, resolvedLaunch: Awaited<ReturnType<typeof resolveSquadLaunchOptions>>): Promise<SquadLaunchPreview> {
+  let location: SquadLaunchLocation;
+  let path: string | undefined;
+  let branch: string | undefined;
+  let head: string | undefined;
+  if (project.remote) {
+    if (launchOptions.target || launchOptions.worktree === true || resolvedLaunch.worktree.source === 'plan' && resolvedLaunch.worktree.value || resolvedLaunch.push.value || resolvedLaunch.checks.value.length) throw new SquadPreviewAdmissionError('Remote target, generated worktree, checks, or push preview is unavailable on this host.');
+    const projection = { launchOptions, resolvedLaunch, location: { kind: 'project-root' as const, projectId: project.id }, path: project.path };
+    return squadLaunchPreviewSchema.parse({ ...projection, fingerprint: createHash('sha256').update(JSON.stringify({ ...projection, remote: project.remote, hostId: project.hostId })).digest('hex') });
+  }
+  await resolveSquadNamedChecks(project.id, resolvedLaunch.checks.value.map(reference => reference.startsWith('check:') ? reference : `check:${reference}`));
+  const checked = validateSquadExecutionTarget({ ...launchOptions, worktree: resolvedLaunch.worktree.value, onComplete: resolvedLaunch.onComplete.value });
+  if (!checked.ok) throw new SquadPreviewAdmissionError(checked.message);
+  if (launchOptions.target) {
+    let target: Awaited<ReturnType<typeof squadWorktreeRuntime.resolveUserTarget>>;
+    try { target = await squadWorktreeRuntime.resolveUserTarget(project, launchOptions.target); }
+    catch (error) {
+      if (error instanceof Error && error.message === 'TARGET_UNAVAILABLE') throw new SquadPreviewAdmissionError('TARGET_UNAVAILABLE: selected checkout is unavailable; prepare a new launch.');
+      throw error;
+    }
+    path = target.path; branch = target.branch;
+    location = launchOptions.target.kind === 'worktree'
+      ? { kind: 'worktree', projectId: project.id, branch, ownership: 'user' }
+      : { kind: 'project-root', projectId: project.id };
+  } else {
+    const root = await realpath(project.path);
+    const status = await getGitStatus(root);
+    const eligible = !project.quickAgent && !!status?.branch && !status.detached;
+    if (!eligible && (launchOptions.worktree === true || resolvedLaunch.worktree.source === 'plan' && resolvedLaunch.worktree.value || resolvedLaunch.push.value || resolvedLaunch.checks.value.length)) throw new Error('TARGET_UNAVAILABLE');
+    location = resolvedLaunch.worktree.value && eligible
+      ? { kind: 'new-worktree', projectId: project.id, baseBranch: status!.branch!, isolationSource: resolvedLaunch.worktree.source }
+      : { kind: 'project-root', projectId: project.id };
+    if (location.kind === 'project-root') { path = root; branch = status?.detached ? undefined : status?.branch ?? undefined; }
+  }
+  const checkout = path ?? await realpath(project.path);
+  head = (await listWorktrees(checkout)).find(entry => entry.path === checkout)?.head ?? undefined;
+  const projection = { launchOptions, resolvedLaunch, location, ...(path ? { path, ...(branch ? { branch } : {}) } : {}), ...(head ? { head } : {}) };
+  return squadLaunchPreviewSchema.parse({ ...projection, fingerprint: createHash('sha256').update(JSON.stringify(projection)).digest('hex') });
+}
+
 function productIconLookup() {
   return {
     packaged: app.isPackaged,
@@ -5605,6 +5768,7 @@ async function resolveTeamModelSnapshots(
       // Execution MCP supplies opaque ordered tasks; index disambiguates duplicate personas.
       slotId: slots[index].slotId,
       personaId: slot.personaId,
+      ...(slot.label !== undefined ? { label: slot.label } : {}),
       provider: team.transport === 'MODERN' ? canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile) : provider.adapter.descriptor.id,
       ...(roleOwnedModel || !model.targetId ? {} : { model: model.targetId }),
       ...(model.level ? { level: model.level } : {}),
@@ -6994,6 +7158,7 @@ const SQUAD_STAGING_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 let squadStagingSweepTimer: NodeJS.Timeout | null = null;
 
 const squadProposalServiceDeps: SquadProposalServiceDeps = {
+  resolveLaunchPreview: resolveSquadLaunchPreview,
   store: squadProposalStore,
   staging: squadAttachmentStaging,
   enabled: teamExecutionEnabled,
@@ -7021,13 +7186,30 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
     // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
     activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
     executionState: async (executionId) => (await executionStore.get(executionId))?.state,
-    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths, attachments }, ctx) => {
+    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths, attachments, launchOptions, launchPreview }, ctx) => {
       const sourceBases = squadSourceBases();
-      return launchSquad(squadNowLaunchDeps, {
+      const current = await resolveSquadLaunchPreview({ teamId: team.id, projectId: project.id, planning: coordinationMode === 'structured' ? 'provided' : 'infer', goal, sourcePaths, attachments: attachments ?? [], launchOptions: launchOptions ?? {} });
+      if (launchPreview && current.fingerprint !== launchPreview.fingerprint) return { ok: false, code: 'LAUNCH_CHANGED', message: 'Launch settings or target changed. Prepare the launch again.' };
+      const result = await launchSquad(squadNowLaunchDeps, {
         teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary, completionInboxNotice,
+        launchOptions,
+        launchPreview,
         sourceCapabilityIds: [], sourcePaths, ...(attachments?.length ? { attachments } : {}),
-        goalSources: await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
+        goalSources: project.remote ? [] : await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
       }, ctx);
+      if (!result.ok) return result;
+      const record = await executionStore.getInProject(project.id, result.value.executionId);
+      if (!record) throw new Error('launched execution receipt unavailable');
+      const path = record.squadWorktree?.path ?? (project.remote ? project.path : await realpath(project.path));
+      const status = record.squadWorktree || project.remote ? undefined : await getGitStatus(path);
+      const branch = record.squadWorktree?.branch ?? (status?.detached ? undefined : status?.branch ?? undefined);
+      if (record.squadWorktree && !branch) throw new Error('launched execution branch unavailable');
+      const location: SquadLaunchLocation = record.squadWorktree
+        ? record.squadWorktree.ownership === 'user'
+          ? record.squadWorktree.targetKind === 'project-root' ? { kind: 'project-root', projectId: project.id } : { kind: 'worktree', projectId: project.id, branch: branch!, ownership: 'user' }
+          : { kind: 'new-worktree', projectId: project.id, baseBranch: record.squadWorktree.baseBranch!, isolationSource: record.resolvedLaunch.worktree.source }
+        : { kind: 'project-root', projectId: project.id };
+      return { ...result, value: { ...result.value, location, path, branch } };
     }
   }
 };
@@ -7134,7 +7316,67 @@ export function squadProposalMcpDeps() {
   };
 }
 
+const authorizedCheckCwds = new Map<string, number>();
+const namedCheckRunner = createNamedCheckRunner({
+  store: localNamedCheckSettings,
+  resolveCwd: async (projectId, cwd) => {
+    const project = store.listProjects().find(candidate => candidate.id === projectId);
+    if (!project || project.remote || project.quickAgent) throw new Error('named check project unavailable');
+    const canonical = await realpath(cwd);
+    if (canonical !== await realpath(project.path) && !authorizedCheckCwds.has(`${projectId}\0${canonical}`)) throw new Error('named check cwd is not authorized');
+    return canonical;
+  }
+});
+
+export async function resolveSquadNamedChecks(projectId: string, references: readonly string[], platform: NodeJS.Platform = process.platform) {
+  registeredCheckScope({ kind: 'project', projectId });
+  if (references.length && platform === 'win32') throw new SquadPreviewAdmissionError('Named checks are unsupported on Windows. Remove checks before launching.');
+  const [global, project] = await Promise.all([namedChecksSettings.get({ kind: 'global' }), namedChecksSettings.get({ kind: 'project', projectId })]);
+  return [...new Set(references)].map(reference => {
+    if (!/^check:[A-Za-z_][A-Za-z0-9_-]{0,99}$/.test(reference)) throw new Error('Invalid check reference');
+    const name = reference.slice(6);
+    const check = project.find(check => check.name === name) ?? global.find(check => check.name === name);
+    if (!check) throw new SquadPreviewAdmissionError(`Unknown check: ${name}`);
+    return { reference, name, command: check.command };
+  });
+}
+
+export async function runSquadNamedCheck(record: ExecutionRecord, reference: string, signal?: AbortSignal) {
+  const check = record.resolvedChecks?.find(check => check.reference === reference);
+  if (!check) throw new Error('named check is not frozen in execution');
+  const project = store.listProjects().find(project => project.id === record.projectId);
+  if (!project || project.remote || project.quickAgent) throw new Error('named check project unavailable');
+  let cwd = await realpath(project.path);
+  if (record.squadWorktree) {
+    cwd = await realpath(record.squadWorktree.path);
+    if (cwd !== record.squadWorktree.path) throw new Error('named check worktree changed');
+    if (record.squadWorktree.ownership === 'user') await squadWorktreeRuntime.revalidateUserTarget(record);
+    else {
+      if (!isWithinSquadWorktreeBase(cwd, await realpath(project.path))) throw new Error('named check worktree is not authorized');
+      if ((await getGitStatus(cwd))?.branch !== record.squadWorktree.branch) throw new Error('named check worktree branch changed');
+    }
+  }
+  const key = `${project.id}\0${cwd}`;
+  authorizedCheckCwds.set(key, (authorizedCheckCwds.get(key) ?? 0) + 1);
+  try { return await namedCheckRunner.runResolved({ projectId: project.id, check: { name: check.name, command: check.command }, cwd, signal }); }
+  finally {
+    const remaining = authorizedCheckCwds.get(key)! - 1;
+    if (remaining) authorizedCheckCwds.set(key, remaining); else authorizedCheckCwds.delete(key);
+  }
+}
+
+export async function disposeSquadNamedChecks(): Promise<void> {
+  await namedCheckRunner.dispose();
+}
+
 const squadExecutionService = new SquadExecutionService({
+  resolveLaunchOptions: resolveSquadLaunchOptions,
+  resolveNamedChecks: resolveSquadNamedChecks,
+  runNamedCheck: runSquadNamedCheck,
+  listNamedCheckNames: async projectId => {
+    const [global, project] = await Promise.all([namedChecksSettings.get({ kind: 'global' }), namedChecksSettings.get({ kind: 'project', projectId })]);
+    return [...new Set([...global, ...project].map(check => check.name))].sort();
+  },
   store: executionStore,
   artifacts: executionArtifacts,
   sources: executionSources,
@@ -7186,7 +7428,34 @@ const squadExecutionService = new SquadExecutionService({
   isRegisteredProject: (projectId) => store.listProjects().some((project) => project.id === projectId),
   withExecutionLifecycleLock: withSquadWorktreeLifecycleLock,
   mayResumeRetainedWorktree: (executionId) => !squadWorktreeHasActiveFollowUp(executionId),
-  prepareSquadWorktree: squadWorktreeRuntime.prepareSquadWorktree,
+  prepareSquadWorktree: async (record, request) => {
+    const preview = pendingSquadPreviews.get(record.teamLaunchRequestId);
+    const project = store.listProjects().find(project => project.id === record.projectId);
+    if (preview && !project) throw new Error('TARGET_UNAVAILABLE');
+    if (preview && project && (await resolveSquadLocationPreview(project, preview.launchOptions, record.resolvedLaunch)).fingerprint !== preview.fingerprint) throw new Error('Launch target changed before preparation');
+    const reviewedBase = preview?.location.kind === 'new-worktree'
+      ? { path: await realpath(project!.path), branch: preview.location.baseBranch, head: preview.head ?? '' } : undefined;
+    if (reviewedBase && !reviewedBase.head) throw new Error('Reviewed worktree base HEAD unavailable');
+    // Legacy ineligible isolation is explicitly shown as project-root; do not attempt a generated checkout after that review.
+    const deliberateRootFallback = preview?.location.kind === 'project-root' && !record.request.target && record.resolvedLaunch.worktree.value && !record.squadWorktree;
+    const prepared = deliberateRootFallback ? record : await squadWorktreeRuntime.prepareSquadWorktree(record, request, reviewedBase);
+    if (preview && preview.location.kind === 'new-worktree' && !prepared.squadWorktree) throw new Error('Reviewed worktree was not created');
+    if (preview && preview.location.kind !== 'new-worktree') {
+      const project = store.listProjects().find(project => project.id === record.projectId);
+      if (!project) throw new Error('TARGET_UNAVAILABLE');
+      if (project.remote) {
+        if (prepared.squadWorktree || project.path !== preview.path) throw new Error('Launch target changed after claim');
+        return prepared;
+      }
+      const path = prepared.squadWorktree?.path ?? await realpath(project.path);
+      const branch = prepared.squadWorktree?.branch ?? (await getGitStatus(path))?.branch;
+      const status = await getGitStatus(path);
+      const actualBranch = status?.detached ? undefined : branch ?? undefined;
+      const head = (await listWorktrees(path)).find(entry => entry.path === path)?.head ?? undefined;
+      if (path !== preview.path || actualBranch !== preview.branch || head !== preview.head) throw new Error('Launch target changed after claim');
+    }
+    return prepared;
+  },
   onTerminal: async (record) => {
     await releaseDeferredSeatsOf(record);
     await handleSquadTerminalWithReport(record);
@@ -7338,6 +7607,7 @@ const squadExecutionService = new SquadExecutionService({
     });
     const slotRoutes = (request.resolvedModels ?? []).map((model) => ({
       slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
+      label: team ? expandTeamSlots(team).find(slot => slot.slotId === model.slotId)?.label : undefined,
       level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
       modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
       observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
@@ -7466,7 +7736,7 @@ const startTriggeredSquad = createTriggeredSquadLauncher({
 });
 
 export async function startTeamJobFromUi(
-  input: TeamJobLaunchInput,
+  input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['startJob']>[0],
   sourceContext?: { windowId: number }
 ): Promise<TeamJobLaunchResponse> {
   if (!teamExecutionEnabled()) {
@@ -7526,27 +7796,50 @@ export async function startTeamJobFromUi(
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Execution source capabilities require a trusted window' };
   }
   // The renderer names a target by role/branch only; main resolves and revalidates it at launch.
-  const targetCheck = validateSquadExecutionTarget({ target: input.target });
+  const optionsInput = input as TeamJobLaunchInput & LaunchOptions;
+  const parsedOptions = launchOptionsSchema.safeParse({ worktree: optionsInput.worktree, onComplete: optionsInput.onComplete, push: optionsInput.push, checks: optionsInput.checks, failurePolicyDefault: optionsInput.failurePolicyDefault, target: optionsInput.target });
+  if (!parsedOptions.success) return { ok: false, code: 'INVALID', message: 'Invalid launch options' };
+  if (process.platform === 'win32' && Array.isArray(optionsInput.checks) && optionsInput.checks.length) {
+    return { ok: false, code: 'ADMISSION_FAILED', message: 'Named checks are unsupported on Windows. Remove checks before launching.' };
+  }
+  const targetCheck = validateSquadExecutionTarget(parsedOptions.data);
   if (!targetCheck.ok) return { ok: false, code: 'INVALID', message: targetCheck.message };
   const proposed = input.proposalId !== undefined;
-  // Goal paths follow the one source policy. A proposed launch narrows them below, once its stored proposal is known.
-  const sourceBases = squadSourceBases();
-  const discoveredGoalSources = await goalExecutionSourcePaths(originalGoal, project.path, sourceBases.home, sourceBases);
-  if (discoveredGoalSources.length && !sourceContext) {
-    return { ok: false, code: 'INVALID_CAPABILITY', message: 'Goal execution sources require a trusted window' };
-  }
   // A proposed launch is bound to its stored proposal and must come from a trusted window.
   if (proposed && !sourceContext) {
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Proposed Squad launches must be opened from the desktop app window.' };
   }
   const proposalId = proposed ? (typeof input.proposalId === 'string' ? input.proposalId.trim() : '') : undefined;
+  let composerPreview: SquadLaunchPreview | undefined;
+  if (input.previewToken !== undefined) {
+    try {
+      pruneComposerPreviewTokens();
+      const entry = typeof input.previewToken === 'string' ? composerPreviewTokens.get(input.previewToken) : undefined;
+      const caller = sourceContext ? { kind: 'window' as const, windowId: sourceContext.windowId } : { kind: 'shared-owner' as const };
+      const previewInput = { teamId, projectId, goal: originalGoal, coordinationMode, sourceCapabilityIds, ...parsedOptions.data };
+      if (!entry || entry.key !== composerPreviewKey(previewInput, caller)) throw new Error('Launch preview expired or does not match this window and input');
+      // Reserve synchronously: revalidation awaits IO, so concurrent calls must not share this token.
+      composerPreviewTokens.delete(input.previewToken!);
+      const current = await resolveSquadComposerPreview(previewInput, caller);
+      composerPreviewTokens.delete(current.previewToken);
+      if (current.fingerprint !== entry.preview.fingerprint) throw new Error('Launch settings or target changed. Prepare the launch again.');
+      composerPreview = entry.preview;
+    } catch (error) { return { ok: false, code: 'LAUNCH_CHANGED', message: error instanceof Error ? error.message : 'Launch preview changed' }; }
+  }
+  // Goal paths follow the one source policy. Reserve preview tokens before this first source IO.
+  const sourceBases = squadSourceBases();
+  const discoveredGoalSources = project.remote ? [] : await goalExecutionSourcePaths(originalGoal, project.path, sourceBases.home, sourceBases);
+  if (discoveredGoalSources.length && !sourceContext) {
+    return { ok: false, code: 'INVALID_CAPABILITY', message: 'Goal execution sources require a trusted window' };
+  }
   const renewal = scopedSourceRenewal(executionSources, sourceContext?.windowId, projectId);
   const sources: SquadSourceProvider | undefined = sourceContext ? { kind: 'window', windowId: sourceContext.windowId } : undefined;
   return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
     teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
     completionInboxNotice: true,
     sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths,
-    ...(targetCheck.target ? { target: targetCheck.target } : {})
+    launchOptions: proposal?.launchOptions ?? parsedOptions.data,
+    launchPreview: proposal?.launchPreview ?? composerPreview
   }, {
     sources,
     // A proposed run reports back to the conversation that proposed it.
@@ -7563,8 +7856,11 @@ export async function startTeamJobFromUi(
   })), sourceCapabilityIds, renewal.reissue, logMainError, renewal.discardRetired);
 }
 
-const proposalLaunchDeps: ProposalLaunchDeps<NonNullable<ExecutionRecord['proposal']>> = {
-  beginLaunch: (proposalId, projectId) => squadProposalService.beginLaunch(proposalId, projectId),
+const proposalLaunchDeps: ProposalLaunchDeps<NonNullable<ExecutionRecord['proposal']> & { launchOptions?: LaunchOptions; launchPreview?: SquadLaunchPreview }> = {
+  beginLaunch: async (proposalId, projectId) => {
+    const result = await squadProposalService.beginLaunch(proposalId, projectId);
+    return result.ok ? { ...result, value: { ...result.value, proposal: { ...result.value.proposal, launchOptions: result.value.launchOptions, launchPreview: result.value.launchPreview } } } : result;
+  },
   markLaunched: (proposalId, executionId) => squadProposalService.markLaunched(proposalId, executionId),
   releaseLaunch: (proposalId) => squadProposalService.releaseLaunch(proposalId),
   logError: (context, error) => logMainError(context, error)
@@ -7580,7 +7876,18 @@ const squadLaunchDeps: SquadLaunchDeps = {
   planCorrectionLaunchBinding,
   nameTeamExecution: (launchId, objective, explicitTitle, sourceTexts) => nameTeamExecution(launchId, objective, explicitTitle, sourceTexts),
   autonomousTimeoutMs: () => store.getConfig().autonomousTimeoutMs,
-  squadExecutionService,
+  squadExecutionService: { start: async (...args: Parameters<SquadExecutionService['start']>) => {
+    try { return await squadExecutionService.start(...args); }
+    finally { if (args[2].launchRequestId) pendingSquadPreviews.delete(args[2].launchRequestId); }
+  } },
+  validateLaunchPreview: async (projectId, request, preview) => {
+    const project = store.listProjects().find(project => project.id === projectId);
+    if (!project) throw new Error('TARGET_UNAVAILABLE');
+    const resolved = await resolveSquadLaunchOptions(projectId, request);
+    const current = await resolveSquadLocationPreview(project, preview.launchOptions, resolved);
+    if (current.fingerprint !== preview.fingerprint) throw new Error('Launch settings or target changed. Prepare the launch again.');
+    if (request.launchRequestId) pendingSquadPreviews.set(request.launchRequestId, preview);
+  },
   log: (message, error) => logMainError(message, error)
 };
 // Agent-started runs get their own launch id prefix, distinct from UI launches.
@@ -7658,6 +7965,20 @@ export function stopAutonomousRun(runId: string): Result<true> {
 
 function createMainTeamProductOps() {
   return createTeamProductOps({
+    resolvePreview: input => resolveSquadComposerPreview({ ...input, coordinationMode: input.mode }, { kind: 'shared-owner' }),
+    resolveLocation: async (projectId, executionId) => {
+      const record = await executionStore.getInProject(projectId, executionId);
+      const project = store.listProjects().find(project => project.id === projectId);
+      if (!record || !project) return {};
+      const path = record.squadWorktree?.path ?? (project.remote ? project.path : await realpath(project.path));
+      const branch = record.squadWorktree?.branch ?? (project.remote ? undefined : (await getGitStatus(path))?.branch ?? undefined);
+      const location: SquadLaunchLocation = record.squadWorktree
+        ? record.squadWorktree.ownership === 'user'
+          ? record.squadWorktree.targetKind === 'project-root' ? { kind: 'project-root', projectId } : { kind: 'worktree', projectId, branch: record.squadWorktree.branch, ownership: 'user' }
+          : { kind: 'new-worktree', projectId, baseBranch: record.squadWorktree.baseBranch!, isolationSource: record.resolvedLaunch.worktree.source }
+        : { kind: 'project-root', projectId };
+      return { location, path, ...(branch ? { branch } : {}) };
+    },
     startTeamJobFromUi: (input) => startTeamJobFromUi(input),
     getExecution: (executionId) => executionStore.get(executionId),
     status: (owner, projectId, executionId) => squadExecutionService.status(owner, projectId, executionId),
@@ -8585,6 +8906,7 @@ function registerIpc() {
     get executionResumeGrants() { return executionResumeGrants; },
     get executionResumeTokens() { return executionResumeTokens; },
     get executionSources() { return executionSources; },
+    get resolveSquadComposerPreview() { return resolveSquadComposerPreview; },
     get squadProposals() { return squadProposalService; },
     get executionStore() { return executionStore; },
     get exitedSessionStats() { return exitedSessionStats; },
@@ -8687,7 +9009,7 @@ function registerIpc() {
     get windows() { return windows; },
     get worktreeBySession() { return worktreeBySession; },
     get worktreeInUse() { return worktreeInUse; },
-  } as IpcCtx);
+  } as IpcCtx, namedChecksSettings);
 }
 
 function buildAppMenu() {
@@ -10682,10 +11004,20 @@ const quitGuard = createQuitGuard({
   log: (error) => logMainError('quit activity check', error)
 });
 
+let namedChecksShutdownComplete = false;
+let namedChecksShutdown: Promise<void> | undefined;
 app.on('before-quit', (event) => {
   // Keep services alive while the authoritative activity probe and confirmation run.
   // Update restarts set quitConfirmed after their own consent and bypass this guard.
   if (!quitGuard.allowQuit(event)) return;
+  if (!namedChecksShutdownComplete) {
+    event.preventDefault();
+    namedChecksShutdown ??= disposeSquadNamedChecks().catch(error => logMainError('namedCheckRunner.dispose', error)).finally(() => {
+      namedChecksShutdownComplete = true;
+      app.quit();
+    });
+    return;
+  }
   windowShutdownStarted = true;
   runtimeRecovery.dispose();
   ptyLifecycle.dispose();

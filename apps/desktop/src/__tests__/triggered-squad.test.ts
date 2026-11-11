@@ -31,6 +31,20 @@ function setup(over: Record<string, unknown> = {}) {
 }
 
 describe('createTriggeredSquadLauncher', () => {
+  it('forwards nested schedule.launchOptions and ignores stale flattened values', async () => {
+    const options = { worktree: false, onComplete: 'leave' as const, push: false, checks: [], failurePolicyDefault: 'fail-run' as const, target: { kind: 'project-root' as const } };
+    const { launch, start } = setup();
+    await launch(scheduledSquadInput({ schedule: { id: 's', name: 'N', teamId: 't1', launchOptions: options, worktree: true, push: true }, project: { id: 'p1' }, runId: 'r', objective: 'ship' }));
+    expect((start.mock.calls[0] as unknown[])[2]).toMatchObject(options);
+    const nestedEmpty = scheduledSquadInput({ schedule: { id: 's', name: 'N', teamId: 't1', launchOptions: {}, push: true }, project: { id: 'p1' }, runId: 'r', objective: 'ship' });
+    expect(nestedEmpty).not.toHaveProperty('push');
+  });
+  it('forwards canonical scheduled launch options unchanged', async () => {
+    const options = { worktree: false, onComplete: 'leave' as const, push: false, checks: ['unit'], failurePolicyDefault: 'fail-run' as const, target: { kind: 'project-root' as const } };
+    const { launch, start } = setup();
+    await launch(scheduledSquadInput({ schedule: { id: 's', name: 'N', teamId: 't1', ...options }, project: { id: 'p1' }, runId: 'r', objective: 'ship' }));
+    expect((start.mock.calls[0] as unknown[])[2]).toMatchObject(options);
+  });
   it('starts an inferred squad with freeform mode and no policy', async () => {
     const { launch, start } = setup();
     await expect(launch(input())).resolves.toEqual({ executionId: 'exec1' });
@@ -58,6 +72,11 @@ describe('createTriggeredSquadLauncher', () => {
     expect(body.coordinationMode).toBe('structured');
     expect(body.workUnits).toBeTruthy();
     expect(binding.beginLaunch).not.toHaveBeenCalled();
+  });
+  it('forwards scheduler options separately from parsed plan declarations', async () => {
+    const { launch, start } = setup();
+    await launch(input({ planSource: 'provided', objective: `## Launch\n- push: true\n- checks: check:lint\n## Execution Plan\n${PLAN}`, push: false, worktree: true, onComplete: 'leave', checks: [], failurePolicyDefault: 'fail-run' }));
+    expect((start.mock.calls[0] as unknown[])[2]).toMatchObject({ push: false, worktree: true, onComplete: 'leave', checks: [], failurePolicyDefault: 'fail-run', planLaunch: { push: true, checks: ['lint'] } });
   });
 
   it('appends the id-rename note to slot tasks only when step ids were renamed', async () => {
@@ -139,6 +158,17 @@ describe('input builders', () => {
     const base = { goal: { id: 'g', title: 'GT', statement: 'st', assignment: { teamId: 't' } }, project: { id: 'p' }, iterationId: 'i' };
     expect(goalSquadInput(base)).toMatchObject({ callerPrincipalId: 'goal:p', launchRequestId: 'goal:g:i', objective: 'st', title: 'Goal: GT', planSource: 'infer', origin: 'goal' });
     expect(goalSquadInput({ ...base, goal: { ...base.goal, planSource: 'provided' } }).planSource).toBe('provided');
+  });
+
+  it('goalSquadInput forwards canonical launch options without flattening or dropping false values', () => {
+    const result = goalSquadInput({
+      goal: {
+        id: 'g', title: 'GT', statement: 'st', assignment: { teamId: 't' },
+        launchOptions: { worktree: false, push: false, checks: [], onComplete: 'leave', failurePolicyDefault: 'fail-run' }
+      },
+      project: { id: 'p' }, iterationId: 'i'
+    });
+    expect(result).toMatchObject({ worktree: false, push: false, checks: [], onComplete: 'leave', failurePolicyDefault: 'fail-run' });
   });
 });
 

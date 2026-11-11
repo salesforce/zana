@@ -92,6 +92,7 @@ async function callControl(
 
 export function createTeamOpsViaControl(dataDir: string): ProductTeamOps {
   return {
+    preview: (input, caller) => callControl(dataDir, 'team.preview', launchArgs(input), caller) as ReturnType<NonNullable<ProductTeamOps['preview']>>,
     launch: (input, caller) => callControl(dataDir, 'team.launch', launchArgs(input), caller) as ReturnType<ProductTeamOps['launch']>,
     status: (id, caller) => callControl(dataDir, 'team.status', { id }, caller) as ReturnType<ProductTeamOps['status']>,
     answer: (input, caller) => callControl(dataDir, 'team.answer', { ...input }, caller) as ReturnType<ProductTeamOps['answer']>,

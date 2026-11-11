@@ -650,11 +650,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     }
   }
 
-  async function resolve(input: ExecutionSourceBindingInput & { projectId: string; capabilityIds: string[]; snapshotKey: string }): Promise<{
-    sources: readonly ExecutionSourceSnapshot[];
-    contentRef: string;
-    pathDescriptors: readonly ExecutionSourcePathDescriptor[];
-  }> {
+  function selectCapabilities(input: ExecutionSourceBindingInput & { projectId: string; capabilityIds: string[] }): Capability[] {
     const binding = requireBinding(input);
     if (input.capabilityIds.length > limits.maxFiles) throw new ExecutionSourceError('TOO_MANY_SOURCES', `Use at most ${limits.maxFiles} execution sources`);
     if (new Set(input.capabilityIds).size !== input.capabilityIds.length) throw new ExecutionSourceError('DUPLICATE_SOURCE', 'Duplicate execution source capability');
@@ -669,11 +665,14 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     if (new Set(selected.map(({ path }) => path)).size !== selected.length) {
       throw new ExecutionSourceError('DUPLICATE_SOURCE', 'Duplicate execution source selected');
     }
-    for (const capability of selected) capability.used = true;
+    return selected;
+  }
+
+  async function extractSelected(selected: readonly Capability[]) {
     const sources: ExecutionSourceSnapshot[] = [];
     let total = 0;
     let extracted = 0;
-    try { for (const capability of selected) {
+    for (const capability of selected) {
       let bytes: Buffer;
       if (capability.inline) {
         bytes = capability.inline;
@@ -704,22 +703,43 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     if (serializedSnapshot.byteLength > limits.maxSerializedSnapshotBytes) {
       throw new ExecutionSourceError('SERIALIZED_SNAPSHOT_TOO_LARGE', 'Serialized execution source snapshot exceeds limit');
     }
-    const snapshotKey = assertSnapshotKey(input.snapshotKey);
-    const contentRef = `${snapshotKey}/sources.json`;
-    const snapshotFile = confinedSnapshotPath(contentRef);
-    await snapshotQueue.run(async () => {
-      await mkdir(dirname(snapshotFile), { recursive: true });
-      atomicDurableWrite(snapshotFile, serializedSnapshot, { expectedHash: null });
-    });
     return {
       sources: frozen,
-      contentRef,
+      serializedSnapshot,
       pathDescriptors: Object.freeze(selected.map((capability) => Object.freeze({
         exactPath: capability.exactPath,
         canonicalPath: capability.path,
         representations: Object.freeze([...capability.representations])
       })))
     };
+  }
+
+  /** Read validated source content for preview without consuming IDs or persisting a snapshot. */
+  async function inspect(input: ExecutionSourceBindingInput & { projectId: string; capabilityIds: string[] }) {
+    const selected = selectCapabilities(input);
+    const { sources, pathDescriptors } = await extractSelected(selected);
+    // A concurrent launch or expiry must not leave a preview claiming these IDs are usable.
+    selectCapabilities(input);
+    return { sources, pathDescriptors };
+  }
+
+  async function resolve(input: ExecutionSourceBindingInput & { projectId: string; capabilityIds: string[]; snapshotKey: string }): Promise<{
+    sources: readonly ExecutionSourceSnapshot[];
+    contentRef: string;
+    pathDescriptors: readonly ExecutionSourcePathDescriptor[];
+  }> {
+    const selected = selectCapabilities(input);
+    for (const capability of selected) capability.used = true;
+    try {
+      const { sources, serializedSnapshot, pathDescriptors } = await extractSelected(selected);
+      const snapshotKey = assertSnapshotKey(input.snapshotKey);
+      const contentRef = `${snapshotKey}/sources.json`;
+      const snapshotFile = confinedSnapshotPath(contentRef);
+      await snapshotQueue.run(async () => {
+        await mkdir(dirname(snapshotFile), { recursive: true });
+        atomicDurableWrite(snapshotFile, serializedSnapshot, { expectedHash: null });
+      });
+      return { sources, contentRef, pathDescriptors };
     } finally {
       for (const capability of selected) {
         capabilities.delete(capability.id);
@@ -838,5 +858,5 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     await rm(join(target, '..'), { recursive: true, force: true });
   }
 
-  return { issue, issueFromBytes, reissue, discardRetired, resolve, list, read, pruneSnapshots, removeSnapshot };
+  return { issue, issueFromBytes, reissue, discardRetired, inspect, resolve, list, read, pruneSnapshots, removeSnapshot };
 }

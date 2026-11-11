@@ -9,7 +9,7 @@
 import { runCli } from '../lib/run-cli.js';
 
 async function main() {
-  const result = await runCli(process.argv);
+  const result = await runCli(process.argv, { onStderr: text => { process.stderr.write(text); } });
 
   if (result.stdout) {
     process.stdout.write(result.stdout);

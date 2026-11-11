@@ -179,6 +179,9 @@ export async function invokeHostScheduleTool(
       }
       const method = name === SCHEDULE_GET_NAME ? 'get' : 'update';
       const params = name === SCHEDULE_UPDATE_NAME ? [found.task.id, scheduleDefinitionPatchSchema.parse(fields.patch)] : [found.task.id];
+      if (name === SCHEDULE_UPDATE_NAME && (params[1] as { launchOptions?: unknown }).launchOptions !== undefined) {
+        throw new Error('launchOptions changes are operator-only; use the Scheduler UI');
+      }
       const result = await invokeOwner<Result<ScheduledTask>>(ctx, `scheduler.${method}`, params);
       if (!result.ok) return fail(name, result.message);
       const value = result.value;

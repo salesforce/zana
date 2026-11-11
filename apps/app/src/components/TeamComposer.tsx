@@ -1,4 +1,6 @@
 import { product } from '../lib/product-client.js';
+import { SquadLaunchPolicyFields, SquadResolvedLaunchDetails } from './SquadLaunchSettings.js';
+import { launchOptionsSchema, type LaunchOptions, type ExecutionResolvedLaunchV1 } from '@zana-ai/zcc-domain/launch-options';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, FileText, Folder, Loader2, Paperclip, Users, X } from 'lucide-react';
 import type { ExecutionSourceCapabilityView, Project, TeamAvailabilityUnknown, TeamCoordinationMode, TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
@@ -47,6 +49,8 @@ import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 
 /** A source chip. A file outside the project (proposed from HOME or the clone root) shows its path. */
 type ComposerSource = ExecutionSourceCapabilityView & { path?: string; outsideProject?: boolean; attachment?: true };
+type PreviewSnapshot = { resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPrefill['launchPreview'] };
+const previewSnapshot = (value: PreviewSnapshot | undefined) => JSON.stringify({ resolved: value?.resolved, location: value?.preview?.location, path: value?.preview?.path, branch: value?.preview?.branch, head: value?.preview?.head });
 
 /** One durable Team launch surface for inferred and user-provided plans. */
 export function TeamComposer({
@@ -55,15 +59,18 @@ export function TeamComposer({
   onComposerProjectIdChange,
   initialText,
   prefill,
+  resolveLaunchPreview,
   onClose
 }: {
   project?: Project;
   initialText?: string;
   /** A reviewed proposal from a conversation; seeds the form and tags the launch with its id. */
   prefill?: SquadLaunchPrefill;
+  resolveLaunchPreview?: (input: { teamId: string; projectId: string; goal: string; coordinationMode: 'structured' | 'freeform'; sourceCapabilityIds: string[] } & LaunchOptions) => Promise<ExecutionResolvedLaunchV1>;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
   const session = useComposerSession();
+  const reviewedBound = Boolean(prefill?.launchPreview || prefill?.launchOptions);
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const teams = useTeams(useShallow((s) => s.teams));
@@ -72,15 +79,17 @@ export function TeamComposer({
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const lastProjectId = useData((s) => s.lastProjectId);
   const [internalProjectId, setInternalProjectId] = useComposerSetting(session, 'projectId', pinnedProject?.id ?? (composerProjectId || prefill?.projectId) ?? '');
-  const projectId = pinnedProject?.id
+  const projectId = (reviewedBound ? prefill?.projectId : undefined) ?? pinnedProject?.id
     ?? (onComposerProjectIdChange ? (composerProjectId || internalProjectId) : internalProjectId);
   const setProjectId = (nextProjectId: string | ((current: string) => string)) => {
+    if (reviewedBound) return;
     const resolved = typeof nextProjectId === 'function' ? nextProjectId(projectId) : nextProjectId;
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
   const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
-  const [teamId, setTeamId] = useComposerSetting(session, 'team.id', prefill?.teamId ?? '');
+  const [draftTeamId, setTeamId] = useComposerSetting(session, 'team.id', prefill?.teamId ?? '');
+  const teamId = reviewedBound ? prefill!.teamId : draftTeamId;
   const [coordinationMode, setCoordinationMode] = useComposerSetting<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(session, 'team.coordination',
     () => prefill?.coordinationMode ?? useData.getState().teamDefaultCoordinationMode
   );
@@ -93,6 +102,12 @@ export function TeamComposer({
   const [pickingSources, setPickingSources] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [targetValue, setTargetValue] = useState(NO_TARGET);
+  const [launchOptions, setLaunchOptions] = useState<LaunchOptions>(() => prefill?.launchOptions ?? {});
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(reviewedBound);
+  const [previewGeneration, setPreviewGeneration] = useState(0);
+  const [previewState, setPreviewState] = useState<{ key: string; generation: number; resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPrefill['launchPreview']; error?: string }>();
+  const launchBusyRef = useRef(false);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [error, setError] = useState<string | null>(null);
   const jobSourcesRef = useRef(jobSources);
@@ -106,17 +121,23 @@ export function TeamComposer({
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const sortedTeams = useMemo(() => sortCatalogueByName(teams), [teams]);
   const selectedTeam = teams.find((team) => team.id === teamId);
+  const target = squadTargetSelector(targetValue);
+  const { target: _storedTarget, ...policyOptions } = launchOptions;
+  const effectiveOptions = reviewedBound ? prefill?.launchOptions ?? prefill?.launchPreview?.launchOptions ?? {} : { ...policyOptions, ...(target ? { target } : {}) };
+  const overrideCount = Object.keys(effectiveOptions).filter((key) => key !== 'target' && effectiveOptions[key as keyof LaunchOptions] !== undefined).length;
+  const optionsValid = launchOptionsSchema.safeParse(effectiveOptions);
 
   // The picker needs at least one linked worktree beyond Default + Project root. Existing worktrees are offered by branch only for local Projects; main re-resolves the selector at launch.
   const projectPath = project?.path;
   const projectIsRemote = Boolean(project?.remote);
   useEffect(() => {
-    setTargetValue(NO_TARGET);
+    const reviewedTarget = projectId === prefill?.projectId ? (prefill.launchOptions ?? prefill.launchPreview?.launchOptions)?.target : undefined;
+    setTargetValue(reviewedTarget?.kind === 'worktree' ? `worktree:${reviewedTarget.branch}` : reviewedTarget?.kind === 'project-root' ? 'project-root' : NO_TARGET);
     setWorktrees([]);
     if (!projectPath || projectIsRemote) return;
     let cancelled = false;
     product.git.listWorktrees(projectPath).then(
-      (list) => { if (!cancelled) setWorktrees(list); },
+      (list) => { if (!cancelled) setWorktrees(list.slice(0, 256)); },
       () => undefined
     );
     return () => { cancelled = true; };
@@ -139,6 +160,41 @@ export function TeamComposer({
     onError: setError
   });
   const voice = useVoiceInput({ onTranscript: field.insertText });
+  const serializedField = field.serialize();
+  const stagingKey = JSON.stringify({ projectId, remote: project?.remote, serialized: serializedField, images: field.images });
+  const imageKey = JSON.stringify({ projectId, images: field.images });
+  const persistedImagesRef = useRef<{ key: string; paths: string[] } | undefined>(undefined);
+  const stagedGoalRef = useRef<{ key: string; goal: string } | undefined>(undefined);
+  const [stagedGoal, setStagedGoal] = useState<{ key: string; goal: string }>();
+  const previewRequest = { teamId, projectId, goal: stagedGoal?.key === stagingKey ? stagedGoal.goal : serializedField.text, coordinationMode, sourceCapabilityIds: jobSources.map(({ id }) => id), ...effectiveOptions };
+  const previewKey = JSON.stringify(previewRequest);
+  const activeInputRef = useRef({ stagingKey, previewKey });
+  activeInputRef.current = { stagingKey, previewKey };
+  const currentPreview = previewState?.key === previewKey ? previewState : undefined;
+  const resolved = currentPreview?.resolved;
+  const previewReady = currentPreview?.generation === previewGeneration && Boolean(resolved) && !currentPreview?.error;
+  useEffect(() => {
+    if (previewState?.key === previewKey && previewState.generation === previewGeneration) return;
+    setPreviewState((current) => current?.key === previewKey ? current : undefined);
+    if (!teamId || !projectId || !optionsValid.success) return;
+    let cancelled = false;
+    const pending = resolveLaunchPreview
+      ? resolveLaunchPreview(previewRequest).then((value) => ({ resolved: value }))
+      : Promise.resolve().then(() => product.teams.preview(previewRequest)).then((result) => {
+        if (!result.ok) throw new Error(result.message);
+        return { resolved: result.value.resolvedLaunch, preview: result.value };
+      });
+    pending.then((value) => {
+      if (cancelled) return;
+      if (currentPreview?.resolved && previewSnapshot(value) !== previewSnapshot(currentPreview)) {
+        setError('Launch preview changed. Review effective settings and location, then Launch again.');
+      }
+      setPreviewState({ key: previewKey, generation: previewGeneration, ...value });
+    }, (error) => {
+      if (!cancelled) setPreviewState({ key: previewKey, generation: previewGeneration, error: error instanceof Error ? error.message : 'Launch preview unavailable' });
+    });
+    return () => { cancelled = true; };
+  }, [resolveLaunchPreview, previewKey, previewGeneration]);
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   useEffect(() => {
@@ -207,7 +263,7 @@ export function TeamComposer({
     : summaryView.over
       ? squadSummaryTooLongMessage(summaryLength)
       : null;
-  const canLaunch = Boolean(teamId && project && goalReady && !launching && !textOverMessage);
+   const canLaunch = Boolean(teamId && project && goalReady && !launching && !textOverMessage && optionsValid.success && previewReady);
   const sendLabel = launching ? 'Launching squad' : goalView.over ? 'Goal is too long for a Squad' : summaryView.over ? 'Summary is too long for a Squad' : 'Launch squad';
 
   const pickSources = async () => {
@@ -236,7 +292,7 @@ export function TeamComposer({
   };
 
   const launch = async () => {
-    if (!teamId || !project || launching) return;
+    if (!teamId || !project || launching || launchBusyRef.current) return;
     if (field.typeaheadOpen && field.suggestions.length > 0) return;
     setError(null);
     setRequirementFailure(null);
@@ -244,20 +300,34 @@ export function TeamComposer({
     // Over the limit, the limit message is the only one that applies: clear any
     // error from an earlier attempt, then refuse.
     if (textOverMessage) return;
+    if (!optionsValid.success || !previewReady) { setError('Invalid launch options or incompatible target.'); return; }
+    launchBusyRef.current = true;
     setLaunching(true);
     const revision = field.captureRevision();
+    let launchAttempted = false;
+    let launchSucceeded = false;
     try {
+      const persistImages: typeof persistComposerImages = async (id, images) => {
+        if (persistedImagesRef.current?.key === imageKey) return persistedImagesRef.current.paths;
+        const paths = await persistComposerImages(id, images);
+        if (paths.length !== images.length || paths.some((path) => typeof path !== 'string' || !path.trim())) throw new Error('Image staging returned an invalid attachment path.');
+        persistedImagesRef.current = { key: imageKey, paths };
+        return paths;
+      };
       const serialized = field.serialize();
       let promptText = serialized.text;
       let imagePaths: string[] = [];
-      if (project.remote) {
+      const cachedGoal = stagedGoalRef.current?.key === stagingKey ? stagedGoalRef.current.goal : undefined;
+      if (cachedGoal !== undefined) {
+        promptText = cachedGoal;
+      } else if (project.remote) {
         const staged = await stageRemoteComposerAttachments({
           promptText,
           mentions: serialized.mentions,
           images: field.images,
           projectId: project.id,
           uploadLocalPath: (localPath) => product.fs.uploadToRemote(project.id, localPath, '.'),
-          persistImages: persistComposerImages,
+          persistImages,
           uploadPersistedAttachment: (relativePath) =>
             product.fs.uploadProjectAttachmentToRemote(project.id, relativePath),
           quoteRemotePath: posixQuote
@@ -272,9 +342,9 @@ export function TeamComposer({
         promptText = staged.promptText;
         imagePaths = staged.imagePaths;
       } else if (field.images.length > 0) {
-        imagePaths = await persistComposerImages(project.id, field.images);
+        imagePaths = await persistImages(project.id, field.images);
       }
-      const goal = assembleCliLaunchPrompt({ text: promptText, imagePaths });
+      const goal = cachedGoal ?? assembleCliLaunchPrompt({ text: promptText, imagePaths });
       if (!goal) {
         setError('Describe a goal for the squad');
         return;
@@ -284,13 +354,42 @@ export function TeamComposer({
         setError(squadGoalTooLongMessage(goal.length));
         return;
       }
+      stagedGoalRef.current = { key: stagingKey, goal };
+      if (activeInputRef.current.stagingKey !== stagingKey || activeInputRef.current.previewKey !== previewKey || field.captureRevision() !== revision) {
+        setError('Composer changed while staging attachments. Refresh the launch preview.');
+        return;
+      }
+      let launchPreview = currentPreview?.preview;
+      {
+        const finalRequest = { ...previewRequest, goal };
+        const refreshed = resolveLaunchPreview
+          ? { resolved: await resolveLaunchPreview(finalRequest) }
+          : await product.teams.preview(finalRequest).then((result) => {
+            if (!result.ok) throw new Error(result.message);
+            return { resolved: result.value.resolvedLaunch, preview: result.value };
+          });
+        if (activeInputRef.current.stagingKey !== stagingKey || activeInputRef.current.previewKey !== previewKey || field.captureRevision() !== revision) {
+          setError('Composer changed while staging attachments. Refresh the launch preview.');
+          return;
+        }
+        setStagedGoal({ key: stagingKey, goal });
+        setPreviewState({ key: JSON.stringify(finalRequest), generation: previewGeneration, ...refreshed });
+        if (previewSnapshot(refreshed) !== previewSnapshot(currentPreview)) {
+          setError('Launch preview changed after staging attachments. Review effective settings and location, then Launch again.');
+          return;
+        }
+        launchPreview = 'preview' in refreshed ? refreshed.preview : undefined;
+      }
+      launchAttempted = true;
       const res = await product.teams.startJob({
         teamId,
         projectId: project.id,
         goal,
         coordinationMode,
-        ...(prefill ? { proposalId: prefill.proposalId } : {}),
-        ...(squadTargetSelector(targetValue) ? { target: squadTargetSelector(targetValue) } : {}),
+        ...(prefill?.projectId === project.id ? { proposalId: prefill.proposalId } : {}),
+        ...effectiveOptions,
+        ...(!reviewedBound && launchPreview && 'previewToken' in launchPreview && typeof launchPreview.previewToken === 'string'
+          ? { previewToken: launchPreview.previewToken } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(summary.trim() ? { summary: summary.trim() } : {}),
         ...(jobSources.length ? { sourceCapabilityIds: jobSources.map(({ id }) => id) } : {})
@@ -319,6 +418,7 @@ export function TeamComposer({
         for (const notice of notices) pushToast(notice, 'error');
         return;
       }
+      launchSucceeded = true;
       field.clearIfRevision(revision);
       setTitle('');
       setSummary('');
@@ -330,6 +430,8 @@ export function TeamComposer({
       setError(message);
       pushToast(message, 'error');
     } finally {
+      if (launchAttempted && !launchSucceeded) setPreviewGeneration((generation) => generation + 1);
+      launchBusyRef.current = false;
       setLaunching(false);
     }
   };
@@ -388,7 +490,7 @@ export function TeamComposer({
           <h2 id="team-availability-unknown-title">Project capabilities could not be verified</h2>
           <p>No workers started. Retry after connection or capability discovery is available.</p>
           <div className="team-requirement-failure-actions">
-            <button type="button" className="btn" onClick={() => { void launch(); }}>Retry</button>
+            <button type="button" className="btn" disabled={!canLaunch} onClick={() => { void launch(); }}>Retry</button>
             <button type="button" className="btn" onClick={cancelRequirementFailure}>Cancel</button>
           </div>
           <details>
@@ -459,8 +561,8 @@ export function TeamComposer({
                     options={sortedTeams.map((team) => squadPicklistOption(team, { withDescription: true }))}
                     // The selected Squad's planning default is applied by the effect above, which
                     // keeps a planning mode the user (or a reviewed proposal) already chose.
-                    onChange={setTeamId}
-                    disabled={teams.length === 0}
+                    onChange={(value) => { if (!reviewedBound) setTeamId(value); }}
+                    disabled={teams.length === 0 || reviewedBound}
                     emptyHint="No squads configured"
                   />
                 </div>
@@ -470,11 +572,13 @@ export function TeamComposer({
                     value={coordinationMode}
                     ariaLabel="Squad planning"
                     searchable={false}
+                    disabled={reviewedBound}
                     options={[
                       { value: 'freeform', label: 'Infer plan from goal' },
                       { value: 'structured', label: 'Plan provided in goal' }
                     ]}
-                    onChange={(value) => {
+                     onChange={(value) => {
+                       if (reviewedBound) return;
                       planningTouchedRef.current = true;
                       setCoordinationMode(value as typeof coordinationMode);
                     }}
@@ -488,7 +592,8 @@ export function TeamComposer({
                       ariaLabel="Squad target"
                       searchable={targetOptions.length > 6}
                       options={targetOptions}
-                      onChange={setTargetValue}
+                      disabled={reviewedBound}
+                      onChange={(value) => { if (!reviewedBound) setTargetValue(value); }}
                     />
                   </div>
                 ) : null}
@@ -557,7 +662,28 @@ export function TeamComposer({
         </ul>
       ) : null}
       <div className="launch-job-details" role="group" aria-label="Squad details">
-        <label className="workflow-arg-field" htmlFor="team-title">
+        {reviewedBound ? <p role="note">Reviewed launch policies and target are fixed. Prepare a new proposal to change them.</p> : null}
+        <div aria-label="Effective launch settings" role="status">
+          {currentPreview?.preview ? <p>Location: {currentPreview.preview.location.kind === 'new-worktree'
+            ? `New worktree from ${currentPreview.preview.location.baseBranch} — isolation: ${currentPreview.preview.location.isolationSource}; path assigned at launch`
+            : `${currentPreview.preview.branch} — ${currentPreview.preview.path}${currentPreview.preview.location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'}`}</p> : null}
+          {resolved?.push.value ? <p>Push allowed ({resolved.push.source})</p> : null}
+          {resolved && resolved.onComplete.value !== 'leave' ? <p>{resolved.onComplete.value === 'merge' ? 'Merge' : 'Delete'} on completion ({resolved.onComplete.source})</p> : null}
+          {!resolved ? <p>{!optionsValid.success ? 'Invalid launch options or incompatible target.' : currentPreview?.error ?? 'Validating launch plan, sources, and target…'}</p> : null}
+        </div>
+        <div className="squad-launch-actions">
+          <button type="button" className="launch-advanced-toggle launch-disclosure-button" aria-expanded={customizeOpen} aria-controls="squad-customize-launch" onClick={() => { setCustomizeOpen((open) => !open); setReviewOpen(false); }}>
+            Customize launch
+            {!reviewedBound && overrideCount > 0 ? <span className="launch-advanced-badge">{overrideCount}</span> : null}
+          </button>
+          <button type="button" className="launch-advanced-toggle launch-disclosure-button" aria-expanded={reviewOpen} onClick={() => { setReviewOpen((open) => !open); setCustomizeOpen(false); }}>Review settings</button>
+        </div>
+        {reviewOpen ? <div className="launch-advanced launch-advanced-card squad-launch-review" aria-label="Reviewed launch settings">
+          {resolved ? <SquadResolvedLaunchDetails resolved={resolved} /> : <p>Launch settings are not available yet.</p>}
+        </div> : null}
+        {customizeOpen ? <div id="squad-customize-launch" className="launch-advanced launch-advanced-card">
+        {!reviewedBound ? <SquadLaunchPolicyFields value={effectiveOptions} onChange={setLaunchOptions} disabled={launching} includeCheckout={false} /> : null}
+        <label className="workflow-arg-field squad-launch-detail-field" htmlFor="team-title">
           <span>Title <span className="launch-optional">Optional</span></span>
           <input
             id="team-title"
@@ -568,7 +694,7 @@ export function TeamComposer({
             onChange={(event) => setTitle(event.target.value)}
           />
         </label>
-        <label className="workflow-arg-field" htmlFor="team-summary">
+        <label className="workflow-arg-field squad-launch-detail-field" htmlFor="team-summary">
           <span>
             Summary <span className="launch-optional">Optional</span>
             {summaryView.show ? (
@@ -584,6 +710,7 @@ export function TeamComposer({
             onChange={(event) => setSummary(event.target.value)}
           />
         </label>
+        </div> : null}
       </div>
       <div className="thread-command-composer-meta">
         <div className="thread-command-composer-meta-start">
@@ -593,7 +720,7 @@ export function TeamComposer({
               projects={projects}
               value={projectId}
               onChange={setProjectId}
-              disabled={Boolean(pinnedProject)}
+              disabled={Boolean(pinnedProject) || reviewedBound}
               title={pinnedProject ? 'Workspace is locked to this project' : undefined}
             />
           </div>

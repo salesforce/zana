@@ -15,6 +15,7 @@ import { AGENT_FALLBACK_LABEL, DesignDocError, DesignDocStore, applyEdits, repai
 import { createTestDatabase } from './test-db.js';
 import { DesignDocSyncStore } from './sync-store.js';
 import { MAX_PEER_STORED_BYTES, MAX_PEER_STORED_VERSIONS } from '../shared/peer-limits.js';
+import { hasPortablePlanStep, parsePortablePlan } from '../../../../apps/server/src/services/execution/portable-plan.js';
 
 const user: DocActor = { kind: 'user', label: 'You', threadId: null };
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
@@ -659,13 +660,24 @@ describe('DesignDocStore — docs', () => {
     expect(store.listTemplates()).toHaveLength(9);
   });
 
-  it('ships a plan and agent instructions with the product spec, and no workflow markers in any built-in', () => {
+  it('ships executable plans and agent instructions without leaking workflow markers into ordinary docs', () => {
     const store = makeStore();
     expect(store.templateByKey('product')?.files.map((file) => file.path).sort()).toEqual(['AGENTS.md', 'README.md', 'mockups/overview.html', 'plan.md']);
     for (const template of store.listTemplates()) {
       for (const file of template.files) {
         if (file.encoding === 'base64') continue;
-        expect(file.content, `${template.id}/${file.path}`).not.toMatch(/AI Instructions|doc-manager|executable-step/);
+        const context = `${template.id}/${file.path}`;
+        expect(file.content, context).not.toMatch(/AI Instructions|doc-manager/);
+        if (['product', 'research', 'issue'].includes(template.id) && file.path === 'plan.md') {
+          expect(parsePortablePlan(file.content), context).toMatchObject({ ok: true, units: [{ id: 'step-id' }, { id: 'test-only-example' }] });
+        } else if (['product', 'research', 'issue'].includes(template.id) && file.path === 'AGENTS.md') {
+          expect(file.content, context).toContain('`id: Title <!-- executable-step -->`');
+          expect(file.content, context).toContain('Keep ordinary plans as ordered implementation steps when no machine execution is intended.');
+          expect(hasPortablePlanStep(file.content), context).toBe(false);
+          expect(parsePortablePlan(file.content), context).toEqual({ ok: false, reason: 'no executable steps found' });
+        } else {
+          expect(file.content, context).not.toMatch(/executable-step/);
+        }
       }
     }
   });

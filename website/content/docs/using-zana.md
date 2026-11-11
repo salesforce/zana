@@ -50,8 +50,10 @@ the default conversation surface from New Chat.
 A launch picks an **environment** — the directory the agent actually writes in.
 The composer picker on a local git project offers:
 
-- **Work locally** — the registered project folder. Palette, Inbox, scheduler,
-  shell, team, and remote launches always use this default.
+- **Work locally** — the registered project folder. Palette, Inbox, shell, and
+  remote launches use this default. Squad launches have their own launch policy:
+  they can use the Project checkout, an existing worktree, or a generated shared
+  worktree.
 - **New worktree** — a managed git worktree on `zcc/<name>-<id>`, created under
   `~/.zcc/worktrees/<environmentId>/<repoName>`. Optional **Base branch**
   defaults to the server's policy (usually `main`/`master`). The main checkout
@@ -62,6 +64,10 @@ The composer picker on a local git project offers:
 
 Remote SSH projects can only use **Work locally**. This slice does not create
 managed worktrees over SSH.
+
+Thread environments and Squad launch policy are separate. A thread's environment
+is its working directory. A Squad chooses its location through effective launch
+settings, shown with their sources in its launch preview.
 
 Leftover folders under `~/zcc-worktrees` (the previous desktop mint path) stay
 on disk as unmanaged checkouts. New worktrees are not created there.

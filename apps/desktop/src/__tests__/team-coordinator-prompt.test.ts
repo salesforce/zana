@@ -69,6 +69,19 @@ describe('jobCoordinatorPrompt — Flow B/C (plan needed, coordinator authors th
 });
 
 describe('jobCoordinatorPrompt — Flow B/C file handoff (sandbox-immune)', () => {
+  it('authors only registered deterministic completion references and explicit failure policy', () => {
+    const prompt = jobCoordinatorPrompt({ team, job: baseJob, roster, planReady: false, planFilePath: 'plan.md' });
+    expect(prompt).not.toContain('Stop conditions');
+    expect(prompt).not.toContain('Verification, Completion criteria,');
+    expect(prompt).toContain('Verification, On failure, Outputs / handoff');
+    expect(prompt).toContain('Completion criteria: check:<name>');
+    expect(prompt).toContain('registered names');
+    expect(prompt).toContain('otherwise omit the Completion criteria label');
+    expect(prompt).toContain('On failure: fail run');
+    expect(prompt).toContain('[A-Za-z_][A-Za-z0-9_-]*');
+    expect(prompt).toContain('100 characters');
+  });
+
   it('with a plan file path: write the plan file, no execution.* MCP', () => {
     const prompt = jobCoordinatorPrompt({
       team, executionId: 'exec-1', job: withSources, roster, planReady: false,

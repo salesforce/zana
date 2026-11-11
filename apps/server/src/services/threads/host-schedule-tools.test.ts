@@ -69,7 +69,7 @@ it.each(['schedule_get', 'schedule_reload', 'schedule_update'])('confines the %s
   expect(control.mock.calls.every(call => call[2].method === 'scheduler.list')).toBe(true);
 });
 it('rejects forged fields and empty patches on modern schedule updates', async () => {
-  for (const patch of [{}, { enabled: true }, { extraArgs: [1] }, { projectId: 'p2' }]) expect((await invoke('schedule_update', { id: task.id, patch })).success).toBe(false);
+  for (const patch of [{}, { enabled: true }, { extraArgs: [1] }, { projectId: 'p2' }, { launchOptions: { push: false, checks: [] } }, { launchOptions: null }]) expect((await invoke('schedule_update', { id: task.id, patch })).success).toBe(false);
   expect(control.mock.calls.every(call => call[2].method === 'scheduler.list')).toBe(true);
 });
 describe('schedule run tools', () => {

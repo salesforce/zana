@@ -608,7 +608,7 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/projects' && method === 'POST') {
-      const body = (await readJsonBody(request)) as { path?: unknown; hostId?: unknown } | null;
+      const body = (await readJsonBody(request)) as { path?: unknown; hostId?: unknown; registrationMode?: unknown } | null;
       if (!body || typeof body.path !== 'string' || body.path.length === 0 || body.path.length > 4096 || /[\x00-\x1f]/.test(body.path)) {
         sendJson(response, 400, { error: 'path is required' });
         return true;
@@ -618,6 +618,34 @@ export async function handleProductHttp(
       }
       const hostId = typeof body.hostId === 'string' && body.hostId.length > 0 ? body.hostId : undefined;
       let projectPath = body.path;
+      if (body.registrationMode !== undefined) {
+        if (body.registrationMode !== 'confined' || hostId || !isAbsolute(projectPath)) {
+          sendJson(response, 400, { code: 'INVALID', message: 'confined registration requires an absolute local directory path' });
+          return true;
+        }
+        // Operator registration must not elevate an agent into a cross-project mutation.
+        if (request.headers['x-zcc-caller-session-id'] !== undefined || request.headers['x-zcc-caller-credential'] !== undefined) {
+          sendJson(response, 403, { code: 'FORBIDDEN_AGENT', message: 'Agent callers cannot auto-register projects; use a registered project id' });
+          return true;
+        }
+        try {
+          projectPath = realpathSync(projectPath);
+          if (!statSync(projectPath).isDirectory()) throw new Error('not a directory');
+        } catch {
+          sendJson(response, 400, { code: 'INVALID', message: 'project path must be an existing directory' });
+          return true;
+        }
+        const allowed = [homedir(), resolveCloneRoot(ctx)].some(base => {
+          try {
+            const rel = relative(realpathSync(base), projectPath);
+            return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
+          } catch { return false; }
+        });
+        if (!allowed) {
+          sendJson(response, 403, { code: 'PROJECT_PATH_UNCONFINED', message: 'project path is outside HOME and cloneRoot' });
+          return true;
+        }
+      }
       if (hostId) {
         try { projectPath = await validatedProjectPath(ctx, body.path, hostId); }
         catch (error) { sendHostFailure(response, error); return true; }
@@ -871,14 +899,24 @@ export async function handleProductHttp(
       return true;
     }
 
-    if (path === '/api/v1/teams/launch' && method === 'POST') {
+    if ((path === '/api/v1/teams/launch' || path === '/api/v1/teams/preview') && method === 'POST') {
       const body = (await readJsonBody(request)) as Partial<ProductTeamLaunchInput>;
       const teamId = typeof body?.teamId === 'string' ? body.teamId.trim() : '';
       const projectId = typeof body?.projectId === 'string' ? body.projectId.trim() : '';
       const goal = typeof body?.goal === 'string' ? body.goal.trim() : '';
-      const mode = body?.mode === 'freeform' || body?.mode === 'structured' ? body.mode : '';
+      const previewMode = path.endsWith('/preview') ? (body as Partial<ProductTeamLaunchInput> & { coordinationMode?: unknown })?.coordinationMode : undefined;
+      const mode = body?.mode === 'freeform' || body?.mode === 'structured' ? body.mode : previewMode === 'freeform' || previewMode === 'structured' ? previewMode : '';
       const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
       const summary = typeof body?.summary === 'string' ? body.summary.trim() : undefined;
+      const { launchOptionsSchema } = await import('@zana-ai/zcc-domain/launch-options');
+      const options = launchOptionsSchema.safeParse(Object.fromEntries(
+        ['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault', 'target']
+          .filter((key) => body && key in body).map((key) => [key, (body as Record<string, unknown>)[key]])
+      ));
+      if (!options.success || body.previewToken !== undefined && (typeof body.previewToken !== 'string' || body.previewToken.length > 256)) {
+        sendJson(response, 400, { ok: false, code: 'INVALID', message: 'Invalid launch options' });
+        return true;
+      }
       if (
         !teamId || teamId.length > TEAM_ID_MAX_CHARS || !projectId || projectId.length > TEAM_ID_MAX_CHARS ||
         !goal || goal.length > TEAM_GOAL_MAX_CHARS || !mode || (title?.length ?? 0) > TEAM_TITLE_MAX_CHARS ||
@@ -900,15 +938,20 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        const result = await ctx.teamOps.launch({
+        const input = {
           teamId,
           projectId,
           goal,
           mode,
+          ...options.data,
+          ...(body.previewToken ? { previewToken: body.previewToken } : {}),
           ...(title ? { title } : {}),
           ...(summary ? { summary } : {})
-        }, teamCaller(request));
-        sendTeamOpResult(response, result, 201);
+        };
+        const result = path.endsWith('/preview')
+          ? ctx.teamOps.preview ? await ctx.teamOps.preview(input, teamCaller(request)) : { ok: false as const, code: 'UNAVAILABLE', message: 'Trusted launch preview unavailable' }
+          : await ctx.teamOps.launch(input, teamCaller(request));
+        sendTeamOpResult(response, result, path.endsWith('/preview') ? 200 : 201);
       } catch (error) {
         sendHostFailure(response, error);
       }

@@ -10,15 +10,14 @@
  */
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEBSITE = join(HERE, '..');
 const REPO_ROOT = join(WEBSITE, '..');
-const OUT_DIR = join(WEBSITE, 'content', 'docs');
 
-/** slug → { title, source (relative to repo root), group }. Edit to publish a doc. */
+/** source is relative to repo root; site-authored docs omit it. */
 // NOTE: "getting-started" and "using-zana" are PUBLIC, site-authored onboarding
 // docs (docs/getting-started.md, docs/using-zana.md) — NOT copies of the repo
 // README. They describe the product from the end user's side and point at the
@@ -29,6 +28,11 @@ const DOCS = [
   { slug: 'multiple-devices', title: 'Using Zana on multiple machines', source: 'docs/multiple-devices.md', group: 'Start' },
   { slug: 'cli', title: 'The zcc CLI', source: 'docs/cli.md', group: 'Start' },
   { slug: 'control-sdk', title: 'Control SDK', source: 'docs/control-sdk.md', group: 'Start' },
+  { slug: 'squads-start', title: 'Start using Squads', group: 'Squads' },
+  { slug: 'squads-catalogue', title: 'Choose a Squad', group: 'Squads' },
+  { slug: 'squads-launch', title: 'Ways to start a Squad', group: 'Squads' },
+  { slug: 'squads-watch', title: 'Watching a Squad', group: 'Squads' },
+  { slug: 'squads-customize', title: 'Personas and custom Squads', group: 'Squads' },
   { slug: 'extensions-quickstart', title: 'Build your first plugin', source: 'docs/extensions-quickstart.md', group: 'Plugins' },
   { slug: 'extensions', title: 'Plugins overview', source: 'docs/extensions.md', group: 'Plugins' },
   { slug: 'extensions-authoring', title: 'Authoring plugins', source: 'docs/extensions-authoring.md', group: 'Plugins' },
@@ -40,25 +44,31 @@ const DOCS = [
 // context, which is only website/), DON'T clobber an already-synced content/
 // dir — the committed copy is the source of truth there. Only resync when the
 // real repo docs are present (host dev / CI checkout of the full repo).
-const repoDocsPresent = existsSync(join(REPO_ROOT, 'docs')) || existsSync(join(REPO_ROOT, 'README.md'));
-if (!repoDocsPresent && existsSync(join(OUT_DIR, '_manifest.json'))) {
-  console.log('sync-docs: repo docs not reachable; keeping committed content/docs/ as-is');
-  process.exit(0);
-}
-
-await mkdir(OUT_DIR, { recursive: true });
-
-const manifest = [];
-for (const d of DOCS) {
-  const src = join(REPO_ROOT, d.source);
-  if (!existsSync(src)) {
-    console.warn(`sync-docs: SKIP ${d.slug} — missing ${d.source}`);
-    continue;
+export async function syncDocs(repoRoot = REPO_ROOT, website = WEBSITE) {
+  const outDir = join(website, 'content', 'docs');
+  const repoDocsPresent = existsSync(join(repoRoot, 'docs')) || existsSync(join(repoRoot, 'README.md'));
+  if (!repoDocsPresent && existsSync(join(outDir, '_manifest.json'))) {
+    console.log('sync-docs: repo docs not reachable; keeping committed content/docs/ as-is');
+    return;
   }
-  const md = await readFile(src, 'utf-8');
-  await writeFile(join(OUT_DIR, `${d.slug}.md`), md);
-  manifest.push({ slug: d.slug, title: d.title, group: d.group });
+
+  await mkdir(outDir, { recursive: true });
+  const manifest = [];
+  for (const d of DOCS) {
+    const destination = join(outDir, `${d.slug}.md`);
+    const src = d.source ? join(repoRoot, d.source) : destination;
+    if (!existsSync(src)) {
+      console.warn(`sync-docs: SKIP ${d.slug} — missing ${d.source ?? destination}`);
+      continue;
+    }
+    if (d.source) await writeFile(destination, await readFile(src, 'utf-8'));
+    manifest.push({ slug: d.slug, title: d.title, group: d.group });
+  }
+
+  await writeFile(join(outDir, '_manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  console.log(`sync-docs: wrote ${manifest.length} docs → content/docs/`);
 }
 
-await writeFile(join(OUT_DIR, '_manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-console.log(`sync-docs: wrote ${manifest.length} docs → content/docs/`);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await syncDocs();
+}

@@ -33,10 +33,12 @@ import type {
   LaunchProfileId,
   Team
 } from '@zana-ai/zcc-domain/product';
+import type { LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
 import { useData, useGoals, useUi } from '@/store';
 import { ImprovePromptButton } from '@/components/ImprovePromptButton';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { squadPicklistOption } from '@/components/SquadTransportChip';
+import { SquadLaunchSettings } from '@/components/SquadLaunchSettings';
 import { useNowTick } from '@/hooks/useNowTick';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { useNavigate } from 'react-router-dom';
@@ -550,6 +552,8 @@ function GoalModal({
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamsError, setTeamsError] = useState(false);
   const [planSource, setPlanSource] = useState<'provided' | 'infer'>(goal?.planSource ?? 'infer');
+  const [launchOptions, setLaunchOptions] = useState<LaunchOptions>(goal?.launchOptions ?? {});
+  const [launchSettingsValidity, setLaunchSettingsValidity] = useState<{ key: string; valid: boolean }>();
   const [maxIterations, setMaxIterations] = useState<number>(goal?.maxIterations ?? 10);
   const [noProgressLimit, setNoProgressLimit] = useState<number>(goal?.noProgressLimit ?? 2);
   const [scope, setScope] = useState<'global' | 'project'>(
@@ -568,7 +572,10 @@ function GoalModal({
     [criteriaText]
   );
   const isSquad = runAs === 'team';
-  const canSave = title.trim().length > 0 && statement.trim().length > 0 && Boolean(projectId) && (runAs === 'agent' || Boolean(teamId));
+  const launchSettingsKey = JSON.stringify({ teamId, projectId, statement, planSource, launchOptions });
+  const squadLaunchReady = launchSettingsValidity?.key === launchSettingsKey && launchSettingsValidity.valid;
+  const canSave = title.trim().length > 0 && statement.trim().length > 0 && Boolean(projectId) &&
+    (runAs === 'agent' || (Boolean(teamId) && squadLaunchReady));
 
   useEffect(() => {
     let active = true;
@@ -593,6 +600,7 @@ function GoalModal({
           successCriteria: isSquad ? [] : criteria,
           assignment: runAs === 'team' ? { kind: 'team', teamId } : { kind: 'profile', profile },
           ...(isSquad ? { planSource } : {}),
+          ...(isSquad ? { launchOptions } : {}),
           maxIterations,
           noProgressLimit,
           scope: scope === 'project' ? { projectId } : 'global',
@@ -611,6 +619,7 @@ function GoalModal({
           successCriteria: isSquad ? [] : criteria,
           assignment: runAs === 'team' ? { kind: 'team', teamId } : { kind: 'profile', profile },
           ...(isSquad ? { planSource } : {}),
+          ...(isSquad ? { launchOptions } : {}),
           maxIterations,
           noProgressLimit
         });
@@ -779,6 +788,18 @@ function GoalModal({
                 ]}
               />
             </div>
+          ) : null}
+          {isSquad ? (
+            <SquadLaunchSettings
+              teamId={teamId}
+              projectId={projectId}
+              goal={statement}
+              coordinationMode={planSource === 'provided' ? 'structured' : 'freeform'}
+              value={launchOptions}
+              onChange={setLaunchOptions}
+              disabled={saving}
+              onValidityChange={(valid) => setLaunchSettingsValidity({ key: launchSettingsKey, valid })}
+            />
           ) : null}
           <div className="scheduler-form-row">
             <div className="scheduler-form-field">

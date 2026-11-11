@@ -85,3 +85,18 @@ export const ProjectSettingsPatchSchema = z.object({
 }).strict();
 
 export type ProjectSettingsPatch = z.infer<typeof ProjectSettingsPatchSchema>;
+
+export const NamedCheckSchema = z.object({
+  name: z.string().max(100).regex(/^[A-Za-z_][A-Za-z0-9_-]*$/),
+  command: z.string().min(1).max(16_384).refine((value) => value.trim().length > 0 && !value.includes('\0'))
+}).strict();
+export const NamedChecksSchema = z.array(NamedCheckSchema).max(64).refine(
+  (checks) => new Set(checks.map((check) => check.name)).size === checks.length,
+  'Check names must be unique within a scope'
+);
+export const NamedCheckScopeSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('global') }).strict(),
+  z.object({ kind: z.literal('project'), projectId: z.string().min(1).max(4_096).refine((id) => !id.startsWith('$')) }).strict()
+]);
+export type NamedCheck = z.infer<typeof NamedCheckSchema>;
+export type NamedCheckScope = z.infer<typeof NamedCheckScopeSchema>;

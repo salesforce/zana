@@ -61,7 +61,7 @@ describe('portable plan near-miss labels', () => {
     }
   });
 
-  it.each(['Purpose / why', 'Notes', 'Note', 'Model', 'Steps', 'Outputs / handoff', 'Stop conditions', 'Completion criteria', 'Read scope', 'Requires'])(
+  it.each(['Purpose / why', 'Notes', 'Note', 'Model', 'Steps', 'Outputs / handoff', 'Read scope', 'Requires'])(
     'accepts %s',
     (label) => {
       expect(parsePortablePlan(plan(`- ${label}: ${label === 'Requires' ? 'None' : 'something'}`)).ok).toBe(true);

@@ -54,6 +54,10 @@ export interface IpcCtx {
   executionResumeGrants: any;
   executionResumeTokens: any;
   executionSources: any;
+  resolveSquadComposerPreview: (
+    input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0],
+    caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }
+  ) => Promise<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>;
   squadProposals: any;
   executionStore: any;
   exitedSessionStats: any;

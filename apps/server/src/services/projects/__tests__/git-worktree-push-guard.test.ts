@@ -5,9 +5,8 @@ import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
+import * as projectGit from '../git.js';
 import {
-  authorizeInstructWorktreePush,
-  consumeInstructWorktreePushAuthorization,
   createWorktree,
   removeWorktree,
   setWorktreePushProtection
@@ -16,12 +15,15 @@ import {
 /**
  * MT-3 step 1/4 automation: the squad-worktree push guard exercised through a
  * REAL `git push` against a REAL bare remote, both under os.tmpdir(). Nothing
- * here touches the zana checkout. (The shipped guard message is "Zana blocked
- * push from managed squad worktree. Request one-time Instruct-agent
- * authorization, then retry." — the older manual-test wording differs.)
+ * here touches the zana checkout.
  */
 const execFileP = promisify(execFile);
-const BLOCKED = 'Zana blocked push from managed squad worktree';
+const BLOCKED = 'Zana blocked push from a managed squad worktree. Push stays blocked until the run ends. After the run, push zcc/<slug>, or declare the push capability in ## Launch.';
+
+it('does not expose the retired push token API', () => {
+  expect(projectGit).not.toHaveProperty('authorizeInstructWorktreePush');
+  expect(projectGit).not.toHaveProperty('consumeInstructWorktreePushAuthorization');
+});
 
 const savedGitEnv: Record<string, string | undefined> = {};
 beforeAll(() => {
@@ -104,38 +106,34 @@ describe('squad worktree push guard against a real git remote', () => {
     const wt = await guardedWorktree();
     const explicit = await gitFails(wt, ['push', 'origin', 'zcc/guarded']);
     expect(explicit).toContain(BLOCKED);
-    expect(explicit).toContain('Instruct-agent authorization');
+    expect(explicit.split('\n')[0]).toBe(BLOCKED);
+    expect(explicit).not.toContain('Instruct-agent authorization');
     // push.default=nothing refuses an argument-less push before any network I/O.
     expect(await gitFails(wt, ['push'])).toMatch(/push\.default|didn't specify any refs|No configured push destination/i);
     expect(await gitFails(wt, ['push', 'origin', 'HEAD:refs/heads/other'])).toContain(BLOCKED);
     expect(await remoteHeads(remote)).toBe('main');
   });
 
-  it('allows a push carrying a one-time authorization token, then blocks again', async () => {
-    const wt = await guardedWorktree();
-    const token = authorizeInstructWorktreePush();
-    const env = consumeInstructWorktreePushAuthorization(token);
-    expect(env).toEqual({ ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: token });
-    expect(consumeInstructWorktreePushAuthorization(token)).toBeUndefined();
-    await git(wt, ['push', 'origin', 'zcc/guarded'], env);
-    expect(await remoteHeads(remote)).toBe('main\nzcc/guarded');
-
-    // Authorization lived only in that process env; nothing persisted in the worktree.
-    await writeFile(join(wt, 'more.txt'), 'more\n');
-    await git(wt, ['add', '.']);
-    await git(wt, ['commit', '-m', 'more']);
-    expect(await gitFails(wt, ['push', 'origin', 'zcc/guarded'])).toContain(BLOCKED);
-    const stored = await readFile(join(await git(wt, ['config', '--worktree', '--get', 'core.hooksPath']), 'pre-push'), 'utf8');
-    expect(stored).not.toContain(token);
+  it('installs denial with inherited .git/hooks pointing through linked checkout gitfile', async () => {
+    await git(main, ['config', 'core.hooksPath', '.git/hooks']);
+    const wt = await guardedWorktree('gitfile-hooks');
+    expect(await gitFails(wt, ['push', 'origin', 'zcc/gitfile-hooks'])).toContain(BLOCKED);
+    expect(await remoteHeads(remote)).toBe('main');
+    expect(await git(main, ['config', '--get', 'core.hooksPath'])).toBe('.git/hooks');
+    await expect(setWorktreePushProtection(main, wt, true)).resolves.toEqual({ ok: true });
+    await expect(setWorktreePushProtection(main, wt, false)).resolves.toEqual({ ok: true });
+    await expect(setWorktreePushProtection(main, wt, true)).resolves.toEqual({ ok: true });
+    expect(await gitFails(wt, ['push', 'origin', 'zcc/gitfile-hooks'])).toContain(BLOCKED);
   });
 
-  it('accepts any non-empty env value at the shell guard; in-process consume rejects unissued tokens (accident guard, not a security boundary)', async () => {
+  it.each(['', 'x', 'isolated-e2e-fixture'])('denies pushes with legacy authorization env value %j', async (value) => {
     const wt = await guardedWorktree();
-    expect(consumeInstructWorktreePushAuthorization('not-issued')).toBeUndefined();
-    // The shell guard is only a safety rail: any non-empty env value passes it.
-    // Authorization is minted/consumed in-process; this documents that boundary.
-    await git(wt, ['push', 'origin', 'zcc/guarded'], { ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: 'x' });
-    expect(await remoteHeads(remote)).toContain('zcc/guarded');
+    expect(await gitFails(wt, ['push', 'origin', 'zcc/guarded'], {
+      ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: value
+    })).toContain(BLOCKED);
+    expect(await remoteHeads(remote)).toBe('main');
+    const stored = await readFile(join(await git(wt, ['config', '--worktree', '--get', 'core.hooksPath']), 'pre-push'), 'utf8');
+    expect(stored).not.toContain('ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION');
   });
 
   it('does not leak guard config or hooks into the main checkout or an unguarded worktree', async () => {
@@ -234,23 +232,25 @@ describe('squad worktree push guard against a real git remote', () => {
       await chmod(file, 0o700);
     }
 
-    it('chains an authorized push into the user hook, which can still veto', async () => {
+    it('restores the user hook veto after push protection is removed', async () => {
       await installUserPrePush(1);
       const wt = await guardedWorktree();
-      const env = consumeInstructWorktreePushAuthorization(authorizeInstructWorktreePush());
-      await expect(execFileP('git', ['push', 'origin', 'zcc/guarded'], { cwd: wt, env: cleanGitEnv(env) })).rejects.toBeDefined();
+      expect(await gitFails(wt, ['push', 'origin', 'zcc/guarded'])).toContain(BLOCKED);
+      await expect(readFile(log, 'utf8')).rejects.toBeDefined();
+      await expect(setWorktreePushProtection(main, wt, false)).resolves.toEqual({ ok: true });
+      await expect(execFileP('git', ['push', 'origin', 'zcc/guarded'], { cwd: wt, env: cleanGitEnv() })).rejects.toBeDefined();
       expect(await readFile(log, 'utf8')).toContain('user-hook origin');
       expect(await remoteHeads(remote)).toBe('main');
     });
 
-    it('runs the user hook after authorization and lets the push through when it passes', async () => {
+    it('runs the user hook after push protection is removed and lets the push through when it passes', async () => {
       await installUserPrePush(0);
       const wt = await guardedWorktree();
-      // Unauthorized: the guard blocks first, so the user hook never runs.
+      // Active protection blocks before the user hook runs.
       expect(await gitFails(wt, ['push', 'origin', 'zcc/guarded'])).toContain(BLOCKED);
       await expect(readFile(log, 'utf8')).rejects.toBeDefined();
-      const env = consumeInstructWorktreePushAuthorization(authorizeInstructWorktreePush());
-      await git(wt, ['push', 'origin', 'zcc/guarded'], env);
+      await expect(setWorktreePushProtection(main, wt, false)).resolves.toEqual({ ok: true });
+      await git(wt, ['push', 'origin', 'zcc/guarded']);
       expect(await readFile(log, 'utf8')).toContain('user-hook origin');
       expect(await remoteHeads(remote)).toBe('main\nzcc/guarded');
       // Main checkout configuration is untouched by guard install and uninstall.

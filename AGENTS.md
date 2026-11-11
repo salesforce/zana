@@ -66,6 +66,8 @@ Triggers: Job Team launch surfaces; thread/CLI Agent lifecycle and configuration
 
 ## Coupling index
 
+Before comparing Squads with Claude Unleashed or proposing external-workflow parity, read [Squad comparison authoring](docs/squad-comparison-authoring.md). Preserve deliberate capability-versus-workflow distinctions and pin external evidence.
+
 Detail lives next to the code and loads when you work there. Read the file before changing that area.
 
 - Spawn argv/env assembly (`PtyManager.create`, `@zana-ai/zcc-spawn-plan`, golden-argv), launch identity registry, OpenCode role/model + discovery → `apps/host-daemon/AGENTS.md`

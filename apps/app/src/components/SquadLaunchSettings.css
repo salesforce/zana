@@ -1,0 +1,108 @@
+.squad-launch-settings { display: grid; gap: 8px; }
+.squad-launch-preview, .squad-launch-customize, .squad-launch-review { border: 1px solid var(--border, #555); border-radius: 6px; padding: 10px; background: var(--bg-surface, transparent); }
+.squad-launch-preview p, .squad-launch-help { margin: 5px 0 0; font-size: 12px; }
+.squad-launch-disclosure { width: fit-content; }
+.squad-launch-customize, .squad-launch-policy-fields { display: grid; gap: 8px; }
+.squad-launch-customize label, .squad-launch-policy-fields label,
+.launch-job-details .squad-launch-detail-field {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  font-size: 13px;
+}
+.squad-launch-customize label > span,
+.squad-launch-policy-fields label > span,
+.launch-job-details .squad-launch-detail-field > span {
+  padding-top: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.squad-launch-customize .squad-launch-help { margin-left: 132px; }
+.squad-launch-resolved-details { margin: 8px 0 0; display: grid; gap: 6px; }
+.squad-launch-resolved-details > div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; }
+.squad-launch-resolved-details dt { font-weight: 600; }
+.squad-launch-resolved-details dd { margin: 0; overflow-wrap: anywhere; }
+.squad-launch-resolved-details dd span { color: var(--text-muted, #999); }
+
+.squad-launch-customize select,
+.squad-launch-policy-fields select,
+.squad-launch-policy-fields input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--bg-app, var(--bg-panel));
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.squad-launch-customize select,
+.squad-launch-policy-fields select {
+  cursor: pointer;
+}
+
+.squad-launch-customize select:focus-visible,
+.squad-launch-policy-fields select:focus-visible,
+.squad-launch-policy-fields input:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+  border-color: var(--accent-blue);
+}
+
+.squad-launch-customize select:disabled,
+.squad-launch-policy-fields select:disabled,
+.squad-launch-policy-fields input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Automation editors use stacked fields; the session composer keeps compact rows. */
+.squad-launch-settings .squad-launch-customize,
+.squad-launch-settings .squad-launch-policy-fields {
+  gap: 16px;
+}
+
+.squad-launch-settings .squad-launch-customize label {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+}
+
+.squad-launch-settings .squad-launch-customize label > span {
+  padding-top: 0;
+  font-weight: 600;
+}
+
+.squad-launch-settings .squad-launch-customize select,
+.squad-launch-settings .squad-launch-customize input {
+  background-color: var(--bg-base);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 7px 10px;
+}
+
+.squad-launch-settings .squad-launch-customize .squad-launch-help {
+  margin: -8px 0 0;
+  color: var(--text-muted);
+}
+
+.squad-launch-reset {
+  display: flex;
+  justify-content: flex-start;
+}
+
+@media (max-width: 600px) {
+  .squad-launch-customize label,
+  .squad-launch-policy-fields label,
+  .launch-job-details .squad-launch-detail-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .squad-launch-customize .squad-launch-help { margin-left: 0; }
+  .squad-launch-resolved-details > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}

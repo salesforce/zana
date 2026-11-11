@@ -15,6 +15,7 @@ import { LAUNCH_REVIEW_REQUIRED_MESSAGE, type LaunchApproval } from '@zana-ai/zc
 import { MAX_EXECUTION_PLAN_BYTES, validOutputDeclaration } from './contracts.js';
 import { assembledResultProjection } from './projection.js';
 import { answerReceipt } from './answer-receipt.js';
+import { planLaunchSchema } from '@zana-ai/zcc-domain/launch-options';
 
 const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
@@ -41,6 +42,11 @@ const workflowSchema = z.strictObject({
 const workUnitSchema = z.strictObject({
   id: z.string().min(1).max(2048), title: z.string().min(1).max(2048), task: z.string().min(1).max(16384),
   dependencies: z.array(z.string().min(1).max(2048)).max(100), preferredRole: z.string().min(1).max(2048).optional(),
+  onFailure: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('fail-run') }),
+    z.strictObject({ kind: z.literal('retry'), stepId: z.string().min(1).max(2048), maxRetries: z.number().int().min(1).max(100), maxIterations: z.number().int().min(1).optional(), noProgressLimit: z.number().int().min(1).optional() })
+  ]).optional(),
+  checks: z.array(z.string().max(100).regex(/^[A-Za-z_][A-Za-z0-9_-]*$/)).max(100).optional(),
   files: z.array(z.string().min(1).max(2048)).max(100).optional(), verification: z.array(z.string().min(1).max(2048)).max(100).optional(), readOnly: z.boolean().optional(),
   requires: z.strictObject({
     skills: z.array(z.string().min(1).max(256)).max(50).optional(),
@@ -58,6 +64,7 @@ const workUnitSchema = z.strictObject({
   output: z.unknown().refine(validOutputDeclaration, { message: 'invalid bounded output declaration' }).optional()
 });
 const executionStartSchema = z.strictObject({
+  ...planLaunchSchema.shape,
   version: z.literal(1),
   launchKind: z.literal('team').optional(),
   launchDisplay: z.strictObject({ label: z.string().min(1).max(240) }).optional(),
@@ -72,7 +79,6 @@ const executionStartSchema = z.strictObject({
   maxTurnsPerClaim: z.number().int().min(1).max(10_000).optional(),
   maxClaimWallClockMs: z.number().int().min(1_000).max(24 * 60 * 60 * 1000).optional(),
   usageBudget: z.strictObject({ maxTokens: z.number().int().min(1).optional(), maxUsd: z.number().positive().optional() }).optional(),
-  worktree: z.boolean().optional(),
   /**
    * Existing user-owned target, resolved by main against the registered project's own
    * git worktrees. Names a branch, never a path; conflicts with `worktree: true`.
@@ -150,7 +156,8 @@ const executionWorkResultSchema = { ...executionWorkSchema, result: z.string().m
 const executionWorkFailureSchema = {
   ...executionWorkSchema,
   failure: z.string().min(1).max(EXECUTION_FAILURE_DETAIL_MAX_CHARS),
-  failureCode: z.enum(EXECUTION_FAILURE_CODES).optional()
+  failureCode: z.enum(EXECUTION_FAILURE_CODES).optional(),
+  structuredResult: z.unknown().optional()
 };
 const executionWorkBlockSchema = { ...executionWorkSchema, blockerId: z.string().min(1).max(2048), question: z.string().min(1).max(2048), options: z.array(z.string().min(1).max(2048)).max(20).optional(), audience: z.enum(['human', 'coordinator']).optional() };
 const executionWorkAnswerSchema = { ...executionIdSchema, blockerId: z.string().min(1).max(2048), answer: z.string().min(1).max(MAX_BLOCKER_ANSWER_BYTES) };
@@ -246,7 +253,7 @@ type McpSafeExecutionRecord = Omit<ExecutionRecord, 'deliveries'>;
 
 type BoundSnapshotExecutionRecord = Pick<ExecutionRecord,
   'id' | 'projectId' | 'teamId' | 'launchKind' | 'launchDisplay' | 'jobTitle' | 'summary'
-  | 'attempt' | 'state' | 'stateVersion' | 'lastEventSequence' | 'policyResult' | 'workUnits'
+  | 'attempt' | 'state' | 'stateVersion' | 'lastEventSequence' | 'workUnits'
   | 'blockers' | 'finalSummary' | 'coordinationMode' | 'createdAt' | 'updatedAt' | 'dismissedAt'
 >;
 
@@ -258,21 +265,21 @@ function toMcpSafeExecution(record: ExecutionRecord): McpSafeExecutionRecord {
 function toBoundSnapshotExecution(record: ExecutionRecord): BoundSnapshotExecutionRecord {
   const {
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
-    lastEventSequence, policyResult, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
+    lastEventSequence, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
     dismissedAt
   } = record;
   return sanitizeStructuredResults({
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
-    lastEventSequence, policyResult, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
+    lastEventSequence, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
     dismissedAt
   }) as BoundSnapshotExecutionRecord;
 }
 
 function sanitizeStructuredResults(record: Omit<ExecutionRecord, 'deliveries'> | BoundSnapshotExecutionRecord): unknown {
-  const { usageObservations: _usageObservations, usageBaseline: _usageBaseline, authorizationContext: _authorizationContext, launchIntent: _launchIntent, ...publicRecord } = record as typeof record & Record<string, unknown>;
+  const { resolvedChecks: _resolvedChecks, usageObservations: _usageObservations, usageBaseline: _usageBaseline, authorizationContext: _authorizationContext, launchIntent: _launchIntent, ...publicRecord } = record as typeof record & Record<string, unknown>;
   return {
     ...publicRecord,
-    ...(record.workUnits ? { workUnits: record.workUnits.map(({ structuredResult: _structuredResult, ...unit }) => unit) } : {}),
+    ...(record.workUnits ? { workUnits: record.workUnits.map(({ structuredResult: _structuredResult, retryFeedback: _retryFeedback, failureRetry, ...unit }) => ({ ...unit, ...(failureRetry ? { failureRetry: { retries: failureRetry.retries, iterations: failureRetry.iterations, identicalFailures: failureRetry.identicalFailures, stopped: failureRetry.stopped } } : {}) })) } : {}),
     ...('assembledResult' in record && record.assembledResult ? { assembledResult: assembledResultProjection(record as ExecutionRecord) } : {})
   };
 }
@@ -446,6 +453,11 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     }) as never);
   }) as McpServer['registerTool'];
 
+  register('execution.checks.list', { description: 'List available owner-defined check names in this authorized project. No commands or writes.', inputSchema: {} }, async () => {
+    if (!await authorized()) return denied('execution.checks.list');
+    try { return { content: [{ type: 'text' as const, text: JSON.stringify({ names: await options.service.listNamedChecks(options.projectId) }) }] }; }
+    catch { return { isError: true, content: [{ type: 'text' as const, text: 'Named check discovery unavailable' }] }; }
+  });
   register('execution.whoami', {
     description: 'Read this live session MCP route identity. Execution starts in this session project unless a host feature explicitly selects another project.',
     inputSchema: {}
@@ -497,12 +509,12 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     }
     return outcomeResult('execution.work.complete', workUnitId, await options.service.completeWork(bound, workUnitId, result, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true, structuredResult));
   });
-  register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure, failureCode, claimId, claimGeneration }) => {
+  register('execution.work.fail', { description: 'Fail one assigned work unit durably. Include structuredResult when the plan declares an output schema; engine applies bounded failure policy atomically.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure, failureCode, structuredResult, claimId, claimGeneration }) => {
     if (!await authorized()) return denied('execution.work.fail'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.fail');
     const claim = claimId && claimGeneration ? { claimId, claimGeneration } : undefined;
     return outcomeResult('execution.work.fail', workUnitId, await (claim
-      ? options.service.failWork(bound, workUnitId, failure, failureCode, claim, true)
-      : options.service.failWork(bound, workUnitId, failure, failureCode, undefined, true)));
+      ? options.service.failWork(bound, workUnitId, failure, failureCode, claim, true, structuredResult)
+      : options.service.failWork(bound, workUnitId, failure, failureCode, undefined, true, structuredResult)));
   });
   register('execution.work.block', { description: 'Block one assigned work unit with a durable question. audience "human" (default) routes to a human via the inbox; audience "coordinator" is a self-heal ask — it wakes the coordinator (no human) to decide a plan/spec detail and answer with execution.work.answer. options must be complete answers the recipient can submit verbatim. Omit options when the answer requires free-form data such as an absolute path, identifier, or explanation.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices, audience, claimId, claimGeneration }) => {
     if (!await authorized()) return denied('execution.work.block'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.block');
@@ -562,11 +574,11 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (approval === 'review') {
       return { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: LAUNCH_REVIEW_REQUIRED: ${LAUNCH_REVIEW_REQUIRED_MESSAGE}` }] };
     }
-    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, worktree, target, notify } = start;
+    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, target, notify } = start;
     const request: ExecutionRequestV1 = {
       version, launchKind, ...(launchDisplay === undefined ? {} : { launchDisplay }), teamId, launchRequestId, jobTitle, summary, slots,
       ...(workflow === undefined ? {} : { workflow }), ...(workUnits === undefined ? {} : { workUnits }), coordinationMode: 'job-team',
-      ...(worktree === undefined ? {} : { worktree }),
+      ...planLaunchSchema.parse(Object.fromEntries(Object.keys(planLaunchSchema.shape).filter(key => start[key as keyof typeof start] !== undefined).map(key => [key, start[key as keyof typeof start]]))),
       ...(target === undefined ? {} : { target }),
       policy: {
         ...(deadlineMs === undefined ? {} : { deadlineMs }),

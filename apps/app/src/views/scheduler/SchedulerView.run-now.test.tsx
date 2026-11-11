@@ -11,7 +11,7 @@ const pushToast = vi.hoisted(() => vi.fn());
 const tasks = vi.hoisted(() => ({ current: [] as unknown[] }));
 
 vi.mock('../../lib/product-client.js', () => ({
-  product: { scheduler: { runNow: (...a: unknown[]) => runNow(...a), setEnabled: vi.fn(), delete: vi.fn() }, terminals: { close: vi.fn() } }
+  product: { teams: { preview: vi.fn(async () => ({ ok: false, message: 'Unavailable' })) }, scheduler: { runNow: (...a: unknown[]) => runNow(...a), setEnabled: vi.fn(), delete: vi.fn() }, terminals: { close: vi.fn() } }
 }));
 vi.mock('@/store', () => {
   const ui = { setNav: vi.fn(), revealScheduleId: null, pushToast, clearRevealSchedule: vi.fn(), enterProjectFocus: vi.fn(), setProjectView: vi.fn() };
@@ -54,6 +54,13 @@ const mount = () => {
 afterEach(() => { cleanup(); runNow.mockReset(); pushToast.mockReset(); });
 
 describe('SchedulerView run now outcome', () => {
+  it('opens review before running an overview squad', () => {
+    tasks.current = [{ ...task(), kind: 'team', teamId: 't' }];
+    render(<MemoryRouter><SchedulerView /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'overview-run' }));
+    expect(screen.queryByRole('dialog', { name: 'Review scheduled squad launch' })).not.toBeNull();
+    expect(runNow).not.toHaveBeenCalled();
+  });
   it('toasts a transport failure', async () => {
     runNow.mockResolvedValue({ ok: false, message: 'denied' });
     mount();

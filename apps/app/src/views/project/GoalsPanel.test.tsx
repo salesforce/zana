@@ -8,6 +8,9 @@ const create = vi.fn();
 const update = vi.fn();
 const storeGoals: unknown[] = [];
 const teamsList = vi.hoisted(() => vi.fn());
+const launchSettings = vi.hoisted(() => vi.fn());
+const launchSettingsValidity = vi.hoisted(() => ({ value: true }));
+const reportedLaunchSettings = vi.hoisted(() => new Set<string>());
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
@@ -26,6 +29,21 @@ vi.mock('@/store', () => ({
 }));
 
 vi.mock('@/components/ImprovePromptButton', () => ({ ImprovePromptButton: () => null }));
+
+vi.mock('@/components/SquadLaunchSettings', () => ({
+  SquadLaunchSettings: (props: { teamId: string; projectId: string; goal: string; value: unknown; coordinationMode: string; onChange: (value: unknown) => void; onValidityChange?: (valid: boolean) => void }) => {
+    const request = JSON.stringify({ teamId: props.teamId, projectId: props.projectId, goal: props.goal, value: props.value, coordinationMode: props.coordinationMode });
+    if (!reportedLaunchSettings.has(request)) {
+      reportedLaunchSettings.add(request);
+      queueMicrotask(() => props.onValidityChange?.(launchSettingsValidity.value));
+    }
+    launchSettings(props);
+    return <section data-testid="squad-launch-settings">
+      {!props.teamId ? <div role="status">Choose a Squad and Project in the fields above to preview this launch.</div> : null}
+      <button type="button" aria-label="Squad launch settings" onClick={() => props.onChange({ worktree: false, push: false, checks: [] })}>Launch settings</button>
+    </section>;
+  }
+}));
 
 vi.mock('@/components/ui/PopoverPicklist', () => ({
   PopoverPicklist: ({ id, value, onChange, ariaLabel }: { id: string; value: string; onChange: (value: string) => void; ariaLabel: string }) => (
@@ -51,6 +69,9 @@ import { GoalsPanel } from './GoalsPanel.js';
 describe('GoalsPanel squad assignment', () => {
   beforeEach(() => {
     teamsList.mockReset();
+    launchSettings.mockReset();
+    launchSettingsValidity.value = true;
+    reportedLaunchSettings.clear();
     teamsList.mockResolvedValue([{ id: 'team-1', name: 'Release squad', slots: [] }]);
   });
 
@@ -70,6 +91,7 @@ describe('GoalsPanel squad assignment', () => {
     await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
     fireEvent.click(screen.getByLabelText('Squad'));
   };
+  const waitForSquadSave = () => vi.waitFor(() => expect((screen.getByRole('button', { name: 'Create goal' }) as HTMLButtonElement).disabled).toBe(false));
 
   it('shows a load-error hint when the squad list fails', async () => {
     teamsList.mockRejectedValue(new Error('offline'));
@@ -101,9 +123,20 @@ describe('GoalsPanel squad assignment', () => {
     expect(screen.queryByText('Objective')).toBeNull();
   });
 
+  it('shows shared launch controls before choosing a Squad', async () => {
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getAllByRole('button', { name: /New goal/ })[0]!);
+    fireEvent.click(screen.getByLabelText('Run as'));
+    const settings = await screen.findByTestId('squad-launch-settings');
+    expect(settings).toBeTruthy();
+    expect(within(settings).getByRole('status').textContent).toBe('Choose a Squad and Project in the fields above to preview this launch.');
+    expect(within(settings).queryByRole('alert')).toBeNull();
+  });
+
   it('passes default infer planSource and empty criteria for Squad create', async () => {
     create.mockResolvedValue({ ok: true, value: { id: 'g' } });
     await openNewSquad();
+    await waitForSquadSave();
     fireEvent.click(screen.getByRole('button', { name: 'Create goal' }));
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ planSource: 'infer', successCriteria: [] }));
@@ -113,9 +146,48 @@ describe('GoalsPanel squad assignment', () => {
     create.mockResolvedValue({ ok: true, value: { id: 'g' } });
     await openNewSquad();
     fireEvent.click(screen.getByLabelText('Squad planning'));
+    await waitForSquadSave();
     fireEvent.click(screen.getByRole('button', { name: 'Create goal' }));
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ planSource: 'provided' }));
+  });
+
+  it('uses launch settings only for Squad goals and forwards explicit false options', async () => {
+    create.mockResolvedValue({ ok: true, value: { id: 'g' } });
+    await openNewSquad();
+    expect(screen.getByLabelText('Squad launch settings')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Squad launch settings'));
+    await waitForSquadSave();
+    fireEvent.click(screen.getByRole('button', { name: 'Create goal' }));
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ launchOptions: { worktree: false, push: false, checks: [] } }));
+
+    cleanup();
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getAllByRole('button', { name: /New goal/ })[0]!);
+    expect(screen.queryByLabelText('Squad launch settings')).toBeNull();
+  });
+
+  it('keeps Squad save disabled until the matching trusted preview succeeds', async () => {
+    launchSettingsValidity.value = false;
+    await openNewSquad();
+    const save = screen.getByRole('button', { name: 'Create goal' });
+    await vi.waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(true));
+    fireEvent.click(save);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('does not gate Agent Goal save on Squad preview validity', async () => {
+    launchSettingsValidity.value = false;
+    create.mockResolvedValue({ ok: true, value: { id: 'g' } });
+    render(<GoalsPanel />);
+    fireEvent.click(screen.getAllByRole('button', { name: /New goal/ })[0]!);
+    fireEvent.change(document.querySelector('#goal-title') as HTMLInputElement, { target: { value: 'Agent goal' } });
+    fireEvent.change(document.querySelector('#goal-statement') as HTMLTextAreaElement, { target: { value: 'Stay local' } });
+    const save = screen.getByRole('button', { name: 'Create goal' });
+    expect((save as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(save);
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
   });
 
   it('does not send planSource for Agent goals and keeps criteria', async () => {
@@ -136,7 +208,7 @@ describe('GoalsPanel squad assignment', () => {
     update.mockResolvedValue({ ok: true, value: { id: 'goal-9' } });
     storeGoals.push({
       id: 'goal-9', projectId: 'p1', title: 'Existing', statement: 'Plan', successCriteria: [],
-      assignment: { kind: 'team', teamId: 'team-1' }, planSource: 'provided',
+      assignment: { kind: 'team', teamId: 'team-1' }, planSource: 'provided', launchOptions: { push: false, checks: [] },
       status: 'draft', maxIterations: 10, noProgressLimit: 2, iterations: [], source: 'p1',
       createdAt: 1, updatedAt: 1
     });
@@ -145,9 +217,11 @@ describe('GoalsPanel squad assignment', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[0]!);
     await vi.waitFor(() => expect(screen.getByLabelText('Squad planning').textContent).toBe('provided'));
     expect(document.querySelector('#goal-criteria')).toBeNull();
+    await vi.waitFor(() => expect((screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: /Save/ }));
     await vi.waitFor(() => expect(update).toHaveBeenCalled());
     expect(update).toHaveBeenCalledWith('goal-9', expect.objectContaining({ planSource: 'provided', successCriteria: [] }));
+    expect(update).toHaveBeenCalledWith('goal-9', expect.objectContaining({ launchOptions: { push: false, checks: [] } }));
   });
 
   it('shows a failed iteration launch error inline', () => {
@@ -172,6 +246,7 @@ describe('GoalsPanel squad assignment', () => {
     fireEvent.click(screen.getByLabelText('Run as'));
     await vi.waitFor(() => expect(screen.getByLabelText('Squad')).toBeTruthy());
     fireEvent.click(screen.getByLabelText('Squad'));
+    await waitForSquadSave();
     fireEvent.click(screen.getByRole('button', { name: 'Create goal' }));
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith(expect.objectContaining({

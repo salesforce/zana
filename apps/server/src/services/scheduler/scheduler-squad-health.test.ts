@@ -59,6 +59,15 @@ beforeEach(() => {
 afterEach(() => { for (const manager of managers.splice(0)) { manager.stopWatching(); manager.stopAll(); } vi.useRealTimers(); });
 
 describe('scheduled Squads and self-healing', () => {
+  it('passes persisted canonical launch options to the trusted squad callback', async () => {
+    const { manager, deps, input } = fixture();
+    const task = await manager.create({ ...input, launchOptions: { push: false, checks: [] } });
+    await manager.update(task.id, { launchOptions: { worktree: false, push: false, checks: [] } });
+    await manager.runNow(task.id);
+    expect(deps.launchSquad).toHaveBeenCalledWith(expect.objectContaining({
+      schedule: expect.objectContaining({ launchOptions: { worktree: false, push: false, checks: [] } })
+    }));
+  });
   it('stamps run metadata on the Squad reservation and running record', async () => {
     const { manager, input } = fixture();
     const task = await manager.create(input);

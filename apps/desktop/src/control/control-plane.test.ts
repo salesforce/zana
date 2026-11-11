@@ -622,6 +622,18 @@ describe('dispatchOp', () => {
     expect(deps.teamOps?.answer).toHaveBeenCalledWith({ id: 'ex-1', message: 'yes', expectedStateVersion: 2 });
     expect(deps.teamOps?.stop).toHaveBeenCalledWith('ex-1', 3);
   });
+  it('forwards trusted operator preview/options/token and denies agent preview', async () => {
+    const deps = makeDeps();
+    const preview = vi.fn(async () => ({ ok: true as const, value: { previewToken: 'opaque' } } as never));
+    deps.teamOps!.preview = preview;
+    const input = { teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'freeform', push: false, checks: [], target: { kind: 'project-root' }, previewToken: 'opaque' };
+    expect(await dispatchOp('team.preview', input, deps)).toMatchObject({ ok: true });
+    expect(preview).toHaveBeenCalledWith(input);
+    expect(await dispatchOp('team.launch', input, deps)).toMatchObject({ ok: true });
+    expect(deps.teamOps!.launch).toHaveBeenCalledWith(input);
+    expect(authorizeRequest({ ...EXPECTED, op: 'team.preview', callerSessionId: 'agent' }, EXPECTED)).toMatchObject({ ok: false, code: 'FORBIDDEN_AGENT' });
+    expect(preview).toHaveBeenCalledTimes(1);
+  });
 
   it('rejects malformed team operations before invoking Team services', async () => {
     const deps = makeDeps();

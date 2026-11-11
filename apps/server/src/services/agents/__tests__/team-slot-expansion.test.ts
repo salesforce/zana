@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { expandTeamSlots } from '../team-slot-expansion.js';
 
 describe('expandTeamSlots', () => {
+  it('caps worker-only expansion and clamps quantities without an orchestrator', () => {
+    const slots = expandTeamSlots({ id: 't', name: 'T', slots: [{ personaId: 'a', quantity: 99 }, { personaId: 'b', quantity: 99 }, { personaId: 'c' }] });
+    expect(slots).toHaveLength(32);
+    expect(slots.every(slot => slot.role === 'worker')).toBe(true);
+    expect(expandTeamSlots({ id: 't', name: 'T', slots: [{ personaId: 'a', quantity: 0 }] })).toHaveLength(1);
+  });
+  it('preserves exact host-owned labels across quantity expansion', () => {
+    expect(expandTeamSlots({ id: 't', name: 'T', orchestratorPersonaId: 'o', slots: [{ personaId: 'w', quantity: 2, label: 'QA exact' }] }).slice(0, 2))
+      .toEqual([0, 1].map(index => ({ slotId: `0:w:${index}`, personaId: 'w', role: 'worker', label: 'QA exact' })));
+  });
   it('uses stable host slot ids and reserves orchestrator capacity', () => {
     const slots = expandTeamSlots({
       id: 'team-1', name: 'Team', orchestratorPersonaId: 'controller',

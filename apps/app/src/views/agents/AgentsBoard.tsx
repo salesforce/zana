@@ -507,7 +507,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             </button>
           )}
         </PaneEmptyState>
-      ) : isGlobal && visibleFleet.length === 0 ? (
+      ) : isGlobal && visibleFleet.length === 0 && visibleExecutions.length === 0 ? (
         <div className="agents-board-empty">
           <Bot size={28} aria-hidden="true" />
           <h4>No matches</h4>

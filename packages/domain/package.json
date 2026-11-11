@@ -92,6 +92,11 @@
       "source": "./src/squad-proposal.ts",
       "default": "./src/squad-proposal.ts"
     },
+    "./launch-options": {
+      "types": "./src/launch-options.ts",
+      "source": "./src/launch-options.ts",
+      "default": "./src/launch-options.ts"
+    },
     "./path-encoding": {
       "types": "./src/path-encoding.ts",
       "source": "./src/path-encoding.ts",

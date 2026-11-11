@@ -170,6 +170,33 @@ When you pick this Squad in the composer and have not chosen a Project, the
 composer uses the Squad's default project. Set it when a Squad always works on
 the same Project.
 
+### Launch settings
+
+Use structured **Customize launch** controls for launch overrides.
+Goal and schedule forms offer:
+
+- **Checkout**: **Inherit checkout**, **Generated new worktree**, **Project
+  checkout**, **Selected checkout**, or one existing worktree from the selected
+  Project.
+- **On complete**: **Use default**, **Keep checkout and branch**, **Merge then remove**,
+  or **Delete checkout and branch**.
+- **Push**: **Use default**, **Allow push**, or **Do not push**.
+- **Named checks**: **Use default**, **No checks**, or **Named checks**. When named
+  checks are selected, enter comma-separated check names.
+- **Reset launch settings** removes every explicit launch override. The launch
+  then inherits from the plan, then the Squad, then the default. For the default
+  rung for worktree isolation, a Project setting takes precedence over its global setting.
+
+Goal and schedule forms show **Launch preview** automatically. It lists execution
+location plus every effective value and its source. Preview is advisory; each
+run revalidates its plan, Squad, and checkout. In the new Squad composer,
+**Customize launch** and **Review settings** are separate, mutually exclusive
+disclosures below the composer buttons. **Review settings** shows effective
+values and sources; **Customize launch** contains **Worktree isolation**, **On
+complete**, **Push**, and **Named checks** overrides plus title and summary.
+The composer chooses its checkout separately. **Use default** removes an explicit
+override so the plan, Squad, and defaults decide its effective value.
+
 ### Worktree isolation
 
 - Choices: **Use default**, **On**, **Off**.
@@ -178,15 +205,17 @@ the same Project.
   default follows the effective project-or-global setting; On forces a shared
   squad worktree; Off disables it."
 
-Zana decides in this order: the launch itself, then the Squad, then the
-Project, then the global setting. The Project setting is **Settings → Project →
-Worktree isolation** (**Use global default**, **Always use worktrees**, **Never
-use worktrees**). The global setting is **Prefer a new git worktree by default**
-under **Git worktrees** in Settings, and it is off unless you turn it on.
+Zana resolves shared launch settings once when it claims a run: explicit launch,
+then plan `## Launch`, then Squad, then default. For worktree isolation, the
+default rung uses the Project/global setting: **Settings → Project → Worktree
+isolation** (**Use global default**, **Always use worktrees**, **Never use
+worktrees**) and **Git worktrees → Prefer a new git worktree by default**. The
+run stores both effective value and source, so later setting edits do not change
+an active run.
 
 Change this on a Squad when its runs should always (or never) get their own
 checkout, whatever the Project says. See
-[Worktrees and cleanup](#worktrees-and-cleanup).
+[Worktrees, push, and cleanup](#worktrees-push-and-cleanup).
 
 ### When a run finishes
 
@@ -194,13 +223,11 @@ checkout, whatever the Project says. See
   then remove**, **Delete worktree and branch**.
 - Default: **Keep worktree (default)**.
 - Applies only when the run used a shared Squad worktree. See
-  [Worktrees and cleanup](#worktrees-and-cleanup).
+  [Worktrees, push, and cleanup](#worktrees-push-and-cleanup).
 
 A failed or stopped run always keeps its worktree, whatever you choose. A
-Squad pointed at a worktree you made yourself never merges or deletes it. If a
-launch sets its own choice, that choice wins over the Squad's. Zana reads the
-Squad's setting when the run ends, so editing the Squad while a run is going
-changes what that run does.
+Squad pointed at a worktree you made yourself never merges or deletes it. The
+claim-time snapshot, not live Squad settings, controls final disposition.
 
 ### Squad routing
 
@@ -300,7 +327,7 @@ fields as a bulleted list with bold labels.
 
 The labels Zana understands are: **Depends on**, **Execution class**,
 **Required role**, **Mode**, **Read scope**, **Write scope**, **Excludes**,
-**Work**, **Verification**, **Completion criteria**, **Stop conditions**,
+**Work**, **Verification**, **Completion criteria**, **On failure**,
 **Outputs / handoff**, and **Requires**.
 
 ### The rules
@@ -318,7 +345,21 @@ The labels Zana understands are: **Depends on**, **Execution class**,
 - A plan has between 1 and 100 steps.
 - **Execution class** is `Routine`, `Standard`, or `Expert`. They ask for the
   Low, Medium, and High tier. Anything else is refused.
+- **Required role** matches a Squad slot's `personaId` or `label`. For example,
+  the Delivery Squad's `Reviewer` label can route to its
+  `builtin:squad-worker-high` slot.
 - **Requires** looks like `Skills: a, b; MCP servers: c`, or `None`.
+  It checks that named Skills and MCP servers exist before workers start. It is
+  not a capability or command list.
+- **Verification** is worker instruction, not a command Zana executes. Use a
+  named check for deterministic verification.
+- **Completion criteria** accepts only comma-separated `check:<name>`
+  references. Free text, including an empty value, is rejected. **Stop
+  conditions** is always rejected; use **On failure** for deterministic failure
+  handling.
+- **On failure** is `fail run` or `retry <step> up to N with feedback`. Omit it
+  for default `fail run`. `maxIterations` is capped at 100; repeated structured
+  failure output is a stall.
 - A **Work** field can run over several lines and can hold code blocks. A
   code block must be closed.
 - The Work text of one step can be up to 16,384 characters.
@@ -381,6 +422,34 @@ two investigations that can run side by side and one report that waits for both.
 
 Read the result in **Assembled result** in Squad details. A person still reviews
 it.
+
+### Outputs, handoff, and named checks
+
+A step with an output declaration can return structured output. Dependents and
+failure retries receive that structured value as untrusted data; it is not
+trimmed into legacy 2,048-character prose handoff. A retry stops at its declared
+bounds or when repeated structured output shows no progress.
+
+Named checks are owner-managed commands, not plan text. Configure them in
+**Settings → Named checks** at global scope or **Settings → Project → Named
+checks**. Both scopes use a compact inline list with **Name**, **Command**,
+**Scope**, and **Actions**. Use **Add check**, **Edit**, and **Save checks**.
+Project definitions override global definitions with the same name; other global
+checks show as **Inherited**. Use **Override** to create a Project copy, or
+**Remove override** then **Save checks** to inherit the global command again.
+Agents can discover names only; they cannot read or write commands. Reference a
+check as `check:<name>` in a plan. Unknown names reject launch admission, and a
+required check failure fails the step or run according to its **On failure**
+edge.
+
+Check output is untrusted and captured with bounded size, timeout, cleanup, and
+queue limits. The runner permits two active checks and 32 waiting checks by
+default. Its 60-second default timeout begins when the child process starts, not
+while it waits in the bounded queue; caller cancellation removes a queued check
+or stops a running one. Named checks currently require POSIX process-group and
+file-limit support. On Windows, a launch that references a check is rejected
+before workers spawn with a platform diagnostic. This capability is not
+all-platform support and does not defer failure until completion.
 
 ---
 
@@ -475,7 +544,7 @@ user** for a personal copy, or edit the file.
 
 ---
 
-## Worktrees and cleanup
+## Worktrees, push, and cleanup
 
 A worktree is a separate checkout of your Project on its own branch. A Squad
 run that uses one works there instead of in your working folder. Turn it on
@@ -545,3 +614,14 @@ Zana does not delete a worktree you created yourself and pointed the run at.
 Nothing is removed unless a completed run's **When a run finishes** setting is
 Merge or Delete, or you click a delete button. If you are not sure, keep
 **Keep worktree** (the default) and choose **Leave worktree**.
+
+### Pushing and pull requests
+
+A generated managed worktree blocks `git push` while its run is active unless
+the effective `push` capability is enabled in launch options or plan `## Launch`.
+The guard is default-deny and no environment token bypasses it. After the run
+ends, its retained `zcc/<slug>` branch can be pushed normally.
+
+Zana core does not open pull requests and has no delivery phase. A plan can run
+its own Git and provider tooling after push is explicitly enabled; provider
+integration remains an extension or agent capability, not a core PR feature.

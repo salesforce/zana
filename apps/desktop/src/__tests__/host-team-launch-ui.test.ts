@@ -202,6 +202,25 @@ describe('startTeamJobFromUi validation', () => {
     expect(result).toMatchObject({ ok: false, sources: { renewed: [], dropped: [{ previousId: 'cap-1', reason: 'unknown' }] } });
   });
 
+  it('rejects explicit named checks on Windows before provider or launch work', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start');
+    h.verified = [];
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+    try {
+      await expect(startTeamJobFromUi(input({ checks: ['test'] }))).resolves.toEqual({
+        ok: false,
+        code: 'ADMISSION_FAILED',
+        message: 'Named checks are unsupported on Windows. Remove checks before launching.'
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(h.creates).toEqual([]);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      start.mockRestore();
+    }
+  });
+
   it('requires a trusted window for goal-referenced source files', async () => {
     writeFileSync(join(projectDir, 'plan.md'), PLAN);
     const goal = `Execute ${join(projectDir, 'plan.md')}`;
