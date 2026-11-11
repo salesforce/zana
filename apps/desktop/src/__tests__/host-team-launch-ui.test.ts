@@ -128,7 +128,7 @@ vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
 }));
 
 
-const { startTeamJobFromUi, squadProposalService, squadProposalStore } = await import('../host.js');
+const { resolveSquadComposerPreview, startTeamJobFromUi, squadProposalService, squadProposalStore } = await import('../host.js');
 const { SquadExecutionService } = await import('@zana-ai/zcc-server/services/execution/service');
 
 // Outside h.root, which is this test's ZCC_DATA_DIR: the source policy protects Zana's data folder.
@@ -231,6 +231,25 @@ describe('startTeamJobFromUi validation', () => {
 });
 
 describe('startTeamJobFromUi launches', () => {
+  it('accepts a window-bound preview token once and rejects replay or changed launch input', async () => {
+    const previewInput = input({ coordinationMode: 'freeform' });
+    const preview = await resolveSquadComposerPreview(previewInput, { kind: 'window', windowId: 41 });
+
+    expect(await startTeamJobFromUi({ ...previewInput, previewToken: preview.previewToken }, { windowId: 41 })).toMatchObject({ ok: true });
+    expect(await startTeamJobFromUi({ ...previewInput, previewToken: preview.previewToken }, { windowId: 41 }))
+      .toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+
+    const second = await resolveSquadComposerPreview(previewInput, { kind: 'window', windowId: 41 });
+    expect(await startTeamJobFromUi({ ...previewInput, goal: 'Changed goal', previewToken: second.previewToken }, { windowId: 41 }))
+      .toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+  });
+
+  it('rejects remote preview options that cannot be reviewed on this host', async () => {
+    h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
+    await expect(resolveSquadComposerPreview(input({ coordinationMode: 'freeform', worktree: true }), { kind: 'window', windowId: 7 }))
+      .rejects.toThrow('Remote target, generated worktree, checks, or push preview is unavailable on this host.');
+  });
+
   it('starts an inferred-plan (freeform) job and opens the squad terminals', async () => {
     const result = await startTeamJobFromUi(input({ coordinationMode: 'freeform', title: ' My job ', summary: ' ctx ' }));
     expect(result).toMatchObject({ ok: true, value: { executionId: expect.any(String) } });

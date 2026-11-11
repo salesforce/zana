@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { scheduler } = vi.hoisted(() => ({ scheduler: { queryRuns: vi.fn(), retryRuns: vi.fn(), dismissRuns: vi.fn() } }));
+const { scheduler } = vi.hoisted(() => ({ scheduler: { get: vi.fn(), runNow: vi.fn(), queryRuns: vi.fn(), retryRuns: vi.fn(), dismissRuns: vi.fn() } }));
 
 vi.hoisted(() => { process.env.ZCC_SERVER_URL = 'http://127.0.0.1:9'; });
 vi.mock('@zana-ai/zcc-server/services/scheduler/scheduler', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@zana-ai/zcc-server/services/scheduler/scheduler')>()),
-  SchedulerManager: class { queryRuns = scheduler.queryRuns; retryRuns = scheduler.retryRuns; dismissRuns = scheduler.dismissRuns; on() {} }
+  SchedulerManager: class { get = scheduler.get; runNow = scheduler.runNow; queryRuns = scheduler.queryRuns; retryRuns = scheduler.retryRuns; dismissRuns = scheduler.dismissRuns; on() {} }
 }));
 vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
   PtyManager: class { setMcpBaseUrl() {} setProjectRoots() {} setRulesResolver() {} },
@@ -34,6 +34,16 @@ const ref = { scheduleId: 's', runId: 'r' };
 beforeEach(() => vi.clearAllMocks());
 
 describe('schedule run APIs', () => {
+  it('requires Scheduler review before a Team schedule can run', () => {
+    scheduler.get.mockReturnValue({ kind: 'team' });
+    expect(() => scheduleAgentApi.runNow('team-schedule')).toThrow('Review launch settings in Scheduler before running this Team schedule');
+    expect(scheduler.runNow).not.toHaveBeenCalled();
+
+    scheduler.get.mockReturnValue({ kind: 'agent' });
+    scheduleAgentApi.runNow('agent-schedule');
+    expect(scheduler.runNow).toHaveBeenCalledWith('agent-schedule');
+  });
+
   it('forwards the agent API to the manager', async () => {
     scheduler.queryRuns.mockResolvedValue({ rows: [], total: 0, truncated: false });
     scheduler.retryRuns.mockResolvedValue([]);

@@ -32,10 +32,10 @@ import { TrayController, type TrayDeps } from './tray.js';
 
 const LABEL = 'Minimize to Command Center';
 
-function makeController(commandCenter?: TrayDeps['commandCenter']) {
+function makeController(commandCenter?: TrayDeps['commandCenter'], tasks: unknown[] = []) {
   const emitter = () => ({ on: vi.fn(), off: vi.fn() });
   const deps = {
-    scheduler: { ...emitter(), list: () => [] },
+    scheduler: { ...emitter(), list: () => tasks, runNow: vi.fn(), setEnabled: vi.fn() },
     ptys: { ...emitter(), list: () => [], listAll: () => [] },
     agentStatus: { ...emitter(), get: () => 'idle' },
     projectName: () => 'p',
@@ -76,6 +76,26 @@ describe('TrayController "Minimize to Command Center" item', () => {
   it('is absent when commandCenter is not provided', () => {
     const ctl = makeController(undefined);
     expect(menus.at(-1)!.some((i) => i.label === LABEL)).toBe(false);
+    ctl.stop();
+  });
+});
+
+describe('TrayController reviewed Team schedules', () => {
+  it('omits Run now for a Team schedule but keeps it for an agent schedule', () => {
+    const task = (id: string, kind: 'team' | 'agent') => ({
+      id,
+      kind,
+      name: id,
+      projectId: 'p1',
+      enabled: true,
+      status: { runs: [] }
+    });
+    const ctl = makeController(undefined, [task('reviewed-team', 'team'), task('agent-task', 'agent')]);
+    const menu = menus.at(-1)!;
+    const team = menu.find((item) => typeof item.label === 'string' && item.label.startsWith('reviewed-team'))!;
+    const agent = menu.find((item) => typeof item.label === 'string' && item.label.startsWith('agent-task'))!;
+    expect((team.submenu as Electron.MenuItemConstructorOptions[]).some((item) => item.label === 'Run now')).toBe(false);
+    expect((agent.submenu as Electron.MenuItemConstructorOptions[]).some((item) => item.label === 'Run now')).toBe(true);
     ctl.stop();
   });
 });

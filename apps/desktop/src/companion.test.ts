@@ -1423,6 +1423,15 @@ it('audit regression: scheduler rejection is returned as refusal rather than suc
   expect(await c.runSchedule('known-task')).toBe(false);
 });
 
+it('audit regression: companion refuses Team schedules before calling runNow', async () => {
+  const runNow = vi.fn();
+  const c = new CompanionController({
+    scheduler: { list: () => [{ id: 'reviewed-team', kind: 'team', status: { runs: [] } }], runNow }
+  } as unknown as CompanionDeps);
+  expect(await c.runSchedule('reviewed-team')).toBe(false);
+  expect(runNow).not.toHaveBeenCalled();
+});
+
 it('audit regression: a failed Modern thread is not waiting for user input', () => {
   expect(threadAgentState({ status: 'error', hasPendingInteraction: false })).toBe('idle');
 });

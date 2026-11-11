@@ -620,6 +620,16 @@ describe('git worktree support', () => {
       await expect(readFile(join(dir, 'pre-push'), 'utf8')).resolves.toContain('Zana blocked push');
     });
 
+    it('fails protected setup when resolving the existing hooks directory has an unexpected filesystem error', async () => {
+      const loop = join(base, 'loop-hooks');
+      await symlink(loop, loop);
+      await git(main, 'config', 'core.hooksPath', loop);
+
+      const result = await createWorktree(main, join(base, 'wt', 'loop-hooks'), 'zcc/loop-hooks', undefined, true);
+      expect(result).toMatchObject({ ok: false });
+      if (!result.ok) expect(result.reason).toMatch(/ELOOP|too many levels/i);
+    });
+
     it('re-guards a reused worktree and rejects when its guard cannot be installed', async () => {
       const target = join(base, 'wt', 'reuse');
       const first = await createWorktree(main, target, 'zcc/reuse', undefined, true);
