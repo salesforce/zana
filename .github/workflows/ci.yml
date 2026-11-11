@@ -311,6 +311,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The mounted workspace belongs to the host runner, not container root.
+      # Trust only this checkout so Git can select the affected boundaries.
+      - name: Trust checked-out repository in container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v7
