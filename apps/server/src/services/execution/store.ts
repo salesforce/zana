@@ -39,6 +39,7 @@ import {
   type RouteFitProposalV1,
   type WorkOutputDeclarationV1
 } from './contracts.js';
+import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS } from './loop-constants.js';
 
 export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
 /** States an execution never leaves. BLOCKED is not terminal: it can resume. */
@@ -187,7 +188,22 @@ export interface ExecutionWorkUnitInput {
   routing?: WorkUnitRoutingV1;
   output?: WorkOutputDeclarationV1;
   requires?: WorkUnitRequirementsV1;
+  loop?: WorkUnitLoopV1;
 }
+
+/**
+ * A bounded review loop on a review unit: while its verdict is CHANGES the engine
+ * reopens `fixUnitId` and then the review, up to `max` rounds (#583).
+ */
+export interface WorkUnitLoopV1 {
+  version: 1;
+  fixUnitId: string;
+  until: 'PASS';
+  max: number;
+}
+
+/** The verdict a loop review unit reports through its typed output. */
+export type WorkUnitLoopVerdict = 'PASS' | 'CHANGES';
 
 /** Optional capabilities a work unit must have before the execution can launch. */
 export interface WorkUnitRequirementsV1 {
@@ -251,7 +267,11 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   result?: string;
   structuredResult?: unknown;
   repairDigests?: string[];
-  history: Array<{ action: 'claimed' | 'released' | 'retried' | 'blocked' | 'failed' | 'completed'; slotId?: string; attempt: number; at: number; detail?: string }>;
+  /** Runtime only (excluded from plan identity): current review round of a loop unit, starting at 1. */
+  loopRound?: number;
+  /** Runtime only (excluded from plan identity): rounds granted by a Retry at the loop limit. */
+  loopExtraRounds?: number;
+  history: Array<{ action: 'claimed' | 'released' | 'retried' | 'blocked' | 'failed' | 'completed' | 'reopened'; slotId?: string; attempt: number; at: number; detail?: string }>;
 }
 
 /**
@@ -892,6 +912,9 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.routing === undefined || validRouting(unit.routing))
     && (unit.output === undefined || validOutputDeclaration(unit.output))
     && (unit.requires === undefined || validWorkUnitRequirements(unit.requires))
+    && (unit.loop === undefined || validWorkUnitLoop(unit.loop))
+    && (unit.loopRound === undefined || Number.isInteger(unit.loopRound) && unit.loopRound >= 1)
+    && (unit.loopExtraRounds === undefined || validNonNegativeInteger(unit.loopExtraRounds))
     && (unit.state === 'PENDING' || unit.state === 'READY' || unit.state === 'CLAIMED' || unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')
     && (unit.assignedSlotId === undefined || validString(unit.assignedSlotId)) && Number.isInteger(unit.attempt) && (unit.attempt ?? -1) >= 0
     && (unit.claimGeneration === undefined || validNonNegativeInteger(unit.claimGeneration))
@@ -917,6 +940,12 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && Array.isArray(unit.history) && unit.history.length <= MAX_UNIT_LIST * 10;
 }
 
+function validWorkUnitLoop(value: unknown): value is WorkUnitLoopV1 {
+  const loop = value as Partial<WorkUnitLoopV1> | null;
+  return !!loop && typeof loop === 'object' && loop.version === 1 && loop.until === 'PASS' && validString(loop.fixUnitId)
+    && Number.isInteger(loop.max) && loop.max! >= LOOP_MIN_ROUNDS && loop.max! <= LOOP_MAX_ROUNDS;
+}
+
 function validWorkUnitRequirements(value: unknown): value is WorkUnitRequirementsV1 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const requires = value as WorkUnitRequirementsV1;
@@ -928,6 +957,125 @@ function validWorkUnitRequirements(value: unknown): value is WorkUnitRequirement
 function validRequirementNames(values: unknown): values is string[] {
   return Array.isArray(values) && values.length <= 50
     && values.every((value) => typeof value === 'string' && value.trim().length >= 1 && value.length <= 256);
+}
+
+export const LOOP_LIMIT_BLOCKER_PREFIX = 'loop-limit:';
+
+/** The verdict a loop review unit last reported, or undefined when it holds none. */
+function loopVerdictOf(unit: ExecutionWorkUnit): WorkUnitLoopVerdict | undefined {
+  const verdict = (unit.structuredResult as { verdict?: unknown } | undefined)?.verdict;
+  return verdict === 'PASS' || verdict === 'CHANGES' ? verdict : undefined;
+}
+
+/** The loop review unit whose fix unit is `fixUnitId`, if any. */
+function loopReviewOf(record: ExecutionRecord, fixUnitId: string): ExecutionWorkUnit | undefined {
+  return record.workUnits?.find((unit) => unit.loop?.fixUnitId === fixUnitId);
+}
+
+/** Review rounds a loop allows right now: the plan's `max` plus any rounds a Retry granted. */
+function loopBound(review: ExecutionWorkUnit): number {
+  return (review.loop?.max ?? 0) + (review.loopExtraRounds ?? 0);
+}
+
+function openLoopLimitBlocker(record: ExecutionRecord, unit: ExecutionWorkUnit): ExecutionBlocker | undefined {
+  return record.blockers?.find((blocker) => !blocker.resolved && blocker.workUnitId === unit.id && blocker.id.startsWith(LOOP_LIMIT_BLOCKER_PREFIX));
+}
+
+/** Put a unit back to READY for another pass: no claim, no stale worker state, one `reopened` history entry. */
+function reopenUnit(unit: ExecutionWorkUnit, timestamp: number, detail: string): void {
+  unit.state = 'READY';
+  clearClaim(unit);
+  unit.assignedSlotId = undefined;
+  unit.reclaimedClaim = undefined;
+  unit.noProgressSlots = undefined;
+  unit.kickoffFailures = undefined;
+  unit.apiErrorRecovery = undefined;
+  unit.repairDigests = undefined;
+  unit.failureCode = undefined;
+  unit.failure = undefined;
+  unit.history.push({ action: 'reopened', attempt: unit.attempt, at: timestamp, detail });
+}
+
+/** The fix unit completed while its review last said CHANGES: reopen the review for the next round. */
+function reopenLoopReview(record: ExecutionRecord, fix: ExecutionWorkUnit, timestamp: number): string | undefined {
+  const review = loopReviewOf(record, fix.id);
+  if (!review || review.state !== 'COMPLETED' || loopVerdictOf(review) !== 'CHANGES') return undefined;
+  reopenUnit(review, timestamp, `round ${(review.loopRound ?? 1) + 1} after ${fix.id}`);
+  review.structuredResult = undefined;
+  review.loopRound = (review.loopRound ?? 1) + 1;
+  return `Review loop ${review.id} round ${review.loopRound - 1}: CHANGES; reopened`;
+}
+
+function blockReviewAtLimit(record: ExecutionRecord, review: ExecutionWorkUnit, timestamp: number): void {
+  const rounds = loopBound(review);
+  const blockerId = `${LOOP_LIMIT_BLOCKER_PREFIX}${record.attempt}:${review.loopRound ?? 1}:${review.id}`.slice(0, MAX_STRING);
+  const question = `${review.id} still found changes after ${rounds} review round${rounds === 1 ? '' : 's'}. Press Retry on the Squad's job board to give it one more round, or stop the run and fix the rest by hand.`.slice(0, MAX_STRING);
+  review.state = 'BLOCKED';
+  review.history.push({ action: 'blocked', slotId: review.assignedSlotId, attempt: review.attempt, at: timestamp, detail: question });
+  const slotId = review.assignedSlotId ?? 'engine';
+  review.assignedSlotId = undefined;
+  record.blockers ??= [];
+  record.blockers.push({ id: blockerId, workUnitId: review.id, slotId, question, audience: 'human', resolved: false, createdAt: timestamp });
+  record.noticeIntents ??= [];
+  record.noticeIntents.push({ key: `execution-blocker:${record.id}:${blockerId}`, blockerId, status: 'PENDING', attempts: 0, nextAttemptAt: timestamp, createdAt: timestamp, updatedAt: timestamp });
+  record.state = 'BLOCKED';
+}
+
+/**
+ * Apply a loop review unit's verdict inside the completing mutation: PASS completes a never-run
+ * fix unit as not needed, CHANGES below the bound releases the fix unit, CHANGES at the bound
+ * blocks the review unit with a human blocker (#583). Returns an event summary when the loop blocks at the bound.
+ */
+export function applyLoopVerdict(record: ExecutionRecord, review: ExecutionWorkUnit, verdict: WorkUnitLoopVerdict, timestamp: number): string | undefined {
+  const fix = findUnit(record, review.loop!.fixUnitId);
+  if (verdict === 'PASS') {
+    if (fix.state !== 'COMPLETED') {
+      fix.state = 'COMPLETED';
+      fix.result = `Not needed: ${review.id} passed`;
+      fix.history.push({ action: 'completed', attempt: fix.attempt, at: timestamp, detail: fix.result });
+    }
+    return undefined;
+  }
+  if ((review.loopRound ?? 1) >= loopBound(review)) {
+    blockReviewAtLimit(record, review, timestamp);
+    return `Review loop ${review.id} reached its limit of ${loopBound(review)} rounds; blocked`;
+  }
+  if (fix.state === 'COMPLETED') reopenUnit(fix, timestamp, `round ${review.loopRound ?? 1} said CHANGES`);
+  return `Review loop ${review.id} round ${review.loopRound ?? 1}: CHANGES; reopened ${fix.id}`;
+}
+
+/** Retry at the loop limit: one more round, the review keeps its CHANGES verdict and the fix unit runs again. */
+function grantLoopRound(record: ExecutionRecord, review: ExecutionWorkUnit, timestamp: number): void {
+  for (const blocker of record.blockers ?? []) {
+    if (blocker.workUnitId === review.id && !blocker.resolved && blocker.id.startsWith(LOOP_LIMIT_BLOCKER_PREFIX)) {
+      blocker.resolved = true;
+      blocker.resolvedAt = timestamp;
+      failActiveDeliveries(record, blocker.id, 'blocker resolved by work retry', timestamp);
+    }
+  }
+  review.loopExtraRounds = (review.loopExtraRounds ?? 0) + 1;
+  review.state = 'COMPLETED';
+  review.history.push({ action: 'retried', attempt: review.attempt, at: timestamp, detail: 'one more review round granted' });
+  const fix = findUnit(record, review.loop!.fixUnitId);
+  reopenUnit(fix, timestamp, 'extra review round granted');
+  fix.state = 'PENDING';
+  record.state = record.blockers?.some((blocker) => !blocker.resolved) ? 'BLOCKED' : 'RUNNING';
+  deriveReadiness(record, true);
+}
+
+/** Whether `dependency` lets `asker` start: a loop holds back everything except its own fix unit until the review passes. */
+function dependencySatisfied(reviewOf: ReadonlyMap<string, ExecutionWorkUnit>, dependency: ExecutionWorkUnit, asker: ExecutionWorkUnit): boolean {
+  if (dependency.state !== 'COMPLETED') return false;
+  if (dependency.loop && asker.id !== dependency.loop.fixUnitId && loopVerdictOf(dependency) !== 'PASS') return false;
+  const review = reviewOf.get(dependency.id);
+  return !review || review.state === 'COMPLETED' && loopVerdictOf(review) === 'PASS';
+}
+
+/** Whether `dependency` can never satisfy a dependant: it failed, was skipped, or is the fix unit of a dead review. */
+function dependencyDead(reviewOf: ReadonlyMap<string, ExecutionWorkUnit>, dependency: ExecutionWorkUnit): boolean {
+  if (dependency.state === 'FAILED' || dependency.state === 'SKIPPED') return true;
+  const review = reviewOf.get(dependency.id);
+  return review !== undefined && (review.state === 'FAILED' || review.state === 'SKIPPED');
 }
 
 function clearClaim(unit: ExecutionWorkUnit): void {
@@ -2215,7 +2363,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function mutateRecord(executionId: string, expectedStateVersion: number | undefined, operation: (record: ExecutionRecord, timestamp: number) => void, summary: string): Promise<ExecutionRecord> {
+  async function mutateRecord(executionId: string, expectedStateVersion: number | undefined, operation: (record: ExecutionRecord, timestamp: number) => void, summary: string | ((record: ExecutionRecord) => string)): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -2226,7 +2374,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       operation(record, timestamp);
       record.stateVersion += 1;
       record.updatedAt = timestamp;
-      append(snapshot.state, record, record.state, 'info', summary, timestamp, { kind: 'command' });
+      append(snapshot.state, record, record.state, 'info', typeof summary === 'string' ? summary : summary(record), timestamp, { kind: 'command' });
       persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
@@ -2504,6 +2652,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   }
 
   async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown): Promise<ExecutionRecord> {
+    let loopNote: string | undefined;
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (structuredResult !== undefined && !unit.output) throw new Error('structuredResult requires a work output declaration');
@@ -2553,6 +2702,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
         assertClaimFence(unit, claim, requireClaim);
       }
+      const verdict = unit.loop ? loopVerdictOf({ structuredResult } as ExecutionWorkUnit) : undefined;
+      if (unit.loop && !verdict) throw new Error('a loop review must report a verdict of PASS or CHANGES');
       unit.state = 'COMPLETED';
       const slotId = unit.assignedSlotId ?? unit.reclaimedClaim?.slotId ?? authority.slotId;
       unit.reclaimedClaim = undefined;
@@ -2560,8 +2711,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       unit.result = string(result, 'work unit result');
       if (structuredResult !== undefined) unit.structuredResult = clone(structuredResult);
       unit.history.push({ action: 'completed', slotId, attempt: unit.attempt, at: timestamp, detail: unit.result });
+      loopNote = (verdict ? applyLoopVerdict(record, unit, verdict, timestamp) : undefined) ?? reopenLoopReview(record, unit, timestamp);
       deriveReadiness(record);
-    }, `Work unit completed: ${workUnitId}`);
+    }, () => loopNote ?? `Work unit completed: ${workUnitId}`);
   }
 
   async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
@@ -2942,6 +3094,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           blocker.id === delivery.blockerId && !blocker.resolved && blocker.workUnitId === unit.id))) {
         throw new Error('work unit has an in-flight blocker response; retry the delivery or wait for acknowledgement');
       }
+      if (unit.loop && unit.state === 'BLOCKED' && openLoopLimitBlocker(record, unit)) return grantLoopRound(record, unit, timestamp);
       if (assignedSlotId) assertAuthorizedSlot(record, assignedSlotId);
       unit.state = 'READY';
       unit.assignedSlotId = assignedSlotId ? string(assignedSlotId, 'assigned slot id') : undefined;
@@ -3719,12 +3872,13 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
     ...unit,
     state: unit.dependencies.length ? 'PENDING' as const : 'READY' as const,
     attempt: 0,
+    ...(unit.loop ? { loopRound: 1 } : {}),
     history: []
   }));
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, reclaimedClaim: _reclaimedClaim, apiErrorRecovery: _apiErrorRecovery, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, reclaimedClaim: _reclaimedClaim, apiErrorRecovery: _apiErrorRecovery, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, loopRound: _loopRound, loopExtraRounds: _loopExtraRounds, history: _history, ...input } = unit;
   return input;
 }
 
@@ -3766,6 +3920,7 @@ function assertAuthorizedSlot(record: ExecutionRecord, slotId: string): void {
 function deriveReadiness(record: ExecutionRecord, recoverSkipped = false): void {
   const units = record.workUnits ?? [];
   const byId = new Map(units.map((unit) => [unit.id, unit]));
+  const reviewOf = new Map(units.filter((unit) => unit.loop).map((unit) => [unit.loop!.fixUnitId, unit]));
   if (recoverSkipped) {
     for (const unit of units) if (unit.state === 'SKIPPED') unit.state = 'PENDING';
   }
@@ -3777,10 +3932,10 @@ function deriveReadiness(record: ExecutionRecord, recoverSkipped = false): void 
       const dependencies = unit.dependencies.map((dependency) => byId.get(dependency));
       if (dependencies.some((dependency) => !dependency)) continue;
       const knownDependencies = dependencies.filter((dependency): dependency is ExecutionWorkUnit => dependency !== undefined);
-      if (knownDependencies.some((dependency) => dependency.state === 'FAILED' || dependency.state === 'SKIPPED')) {
+      if (knownDependencies.some((dependency) => dependencyDead(reviewOf, dependency))) {
         unit.state = 'SKIPPED';
         changed = true;
-      } else if (knownDependencies.every((dependency) => dependency.state === 'COMPLETED')) {
+      } else if (knownDependencies.every((dependency) => dependencySatisfied(reviewOf, dependency, unit))) {
         unit.state = 'READY';
         changed = true;
       }

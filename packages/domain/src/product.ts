@@ -6876,6 +6876,9 @@ export interface ExecutionBoardProjection {
        *  gen that keeps bumping with no `progressAt` advance is the wedge signature
        *  (re-claimed but never emitting output). Absent on a never-claimed unit. */
       attempt?: number;
+      /** Review loop only: the current review round and the rounds allowed so far. */
+      loopRound?: number;
+      loopMax?: number;
       turnCount?: number;
        claimId?: string;
        claimGeneration?: number;

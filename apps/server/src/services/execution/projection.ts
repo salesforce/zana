@@ -61,6 +61,7 @@ function workProjection(record: ExecutionRecord, now: number): WorkProjection {
       ...(unit.progressAt !== undefined ? { progressAt: unit.progressAt } : {}),
       ...(unit.leaseExpiresAt !== undefined ? { leaseExpiresAt: unit.leaseExpiresAt } : {}),
       ...(unit.attempt !== undefined ? { attempt: unit.attempt } : {}),
+      ...(unit.loop ? { loopRound: unit.loopRound ?? 1, loopMax: unit.loop.max + (unit.loopExtraRounds ?? 0) } : {}),
       ...(unit.turnCount !== undefined ? { turnCount: unit.turnCount } : {}),
       ...(unit.claimId !== undefined ? { claimId: unit.claimId } : {}),
       ...(unit.claimGeneration !== undefined ? { claimGeneration: unit.claimGeneration } : {})
