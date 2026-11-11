@@ -136,7 +136,9 @@ describe('plugin page resource scopes', () => {
     expect(parsePluginPanelScope({ id: 'a', view: 'v'.repeat(500) })?.view).toHaveLength(500);
     expect(parsePluginPanelScope({ id: 'a' })).toEqual({ id: 'a' });
     expect(parsePluginPanelScope(null)).toBeNull();
-    for (const value of [undefined, [], {}, 'a', { id: 1 }, { id: ' ' }, { id: 'a'.repeat(4097) }, { id: 'a\n' }, { id: 'a', view: ' ' }, { id: 'a', view: 1 }, { id: 'a', view: 'v'.repeat(501) }, { id: 'a', view: 'a\u0000b' }]) {
+    expect(parsePluginPanelScope({ id: 'a', projectId: 'p1' })).toEqual({ id: 'a', projectId: 'p1' });
+    expect(parsePluginPanelScope({ id: 'a', projectId: 'p'.repeat(200) })?.projectId).toHaveLength(200);
+    for (const value of [undefined, [], {}, 'a', { id: 1 }, { id: ' ' }, { id: 'a'.repeat(4097) }, { id: 'a\n' }, { id: 'a', view: ' ' }, { id: 'a', view: 1 }, { id: 'a', view: 'v'.repeat(501) }, { id: 'a', view: 'a\u0000b' }, { id: 'a', projectId: '' }, { id: 'a', projectId: ' ' }, { id: 'a', projectId: 7 }, { id: 'a', projectId: 'p'.repeat(201) }, { id: 'a', projectId: 'p\n' }]) {
       expect(parsePluginPanelScope(value)).toBeUndefined();
     }
   });

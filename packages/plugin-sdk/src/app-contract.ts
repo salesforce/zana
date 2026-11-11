@@ -943,6 +943,13 @@ export interface ZccPanelScope {
   id: string;
   /** Optional view identity, e.g. a tool group within the resource. */
   view?: string;
+  /**
+   * Project the resource belongs to, for a page without its own project (a
+   * global nav page with a project picker). The side panel's new conversations
+   * and tools then run in that project. Ignored on project tabs, whose project
+   * always wins. A preselection only: main authorizes the project on create.
+   */
+  projectId?: string;
 }
 
 export interface ZccNavigate {

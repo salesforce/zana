@@ -34,7 +34,7 @@ Users choose their own MP3, WAV, or OGG directly in Settings â†’ Notifications â
 
 `projectTab({ statusbar: "hidden", ... })` omits the host project-path/Git footer for this tab; other project views keep their footer. `openInWindow(projectId, { tabId, resourceId })` opens one window per opaque resource and preserves the main tab. `useZccContext().resourceId` identifies the resource; it grants no file access. In main, watch `resourceRequestId` too, so repeat navigation reselects the resource. `toProject(projectId, { tabId, inMainWindow: true })` explicitly opens the main tab instead of focusing its detached window.
 
-Call `setPanelScope?.({ id, view? })` when the active resource changes, or `null` to restore page scope. Each resource retains its tools, assistant conversation and panel layout independently. Persist running work separately and arrange a single editor owner across main/native presentation.
+Call `setPanelScope?.({ id, view?, projectId? })` when the active resource changes, or `null` to restore page scope. A global page passes `projectId` so new panel conversations and tools run in its selected project; project tabs ignore it. Each resource retains its tools, assistant conversation and panel layout independently. Persist running work separately and arrange a single editor owner across main/native presentation.
 
 `useWindowCloseHandler(handlerOrNull)` registers an asynchronous detached-window close preflight. Flush unsaved updates and release ownership before resolving; reject to keep the window open. Respect its `AbortSignal` on timeout and restore editing when aborted. Registration is removed on unmount.
 
