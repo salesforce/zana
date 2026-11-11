@@ -1577,7 +1577,7 @@ export class PtyManager extends EventEmitter {
     // Squad seat (#675): only a launch that carries the main-owned marker gets the
     // persona's contract. Without it `seat` is undefined and nothing below changes.
     const seat = opts.squadSeat
-      ? prepareSeatSpawn({ capability: provider.squadSeat, persona: spawnPersona, harnessCommand: command, refusedForSquads: provider.refusedForSquads })
+      ? prepareSeatSpawn({ capability: provider.squadSeat, persona: spawnPersona, harnessCommand: command, refusedForSquads: provider.refusedForSquads, sessionId })
       : undefined;
     if (seat) this.seatSpawns.set(sessionId, seat);
     // Both Codex's folded guidance and OpenCode's instructions file ride the MCP integration,

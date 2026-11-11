@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { providerFor } from '../harness/registry.js';
 import { OpenCodeProvider } from '../harness/opencode/provider.js';
+import { planSeatContract } from '../squad-seat-contract.js';
 
 /** Internal helpers of the seat contract (#675) that the acceptance tests do not reach directly. */
 
@@ -45,15 +46,13 @@ describe('OpenCode instructionsFile', () => {
 });
 
 describe('planSeatContract reserved commands and advisory mode (A1, A4)', () => {
-  it.each(['curl', 'sh', 'dirname', 'pwd', 'printf'])('never shims %s, which Zana hooks or the shim script call through PATH', async (command) => {
-    const { planSeatContract } = await import('../squad-seat-contract.js');
+  it.each(['curl', 'sh', 'dirname', 'pwd', 'printf'])('never shims %s, which Zana hooks or the shim script call through PATH', (command) => {
     const plan = planSeatContract({ persona: { deniedTools: [`Bash(${command}:*)`] } });
     expect(plan.shimFiles).toEqual([]);
     expect(plan.advisoryLines.join('\n')).toContain(`Bash(${command}:*)`);
   });
 
-  it('lists every shimmable deny as advisory and plans no shim when the harness does not shim', async () => {
-    const { planSeatContract } = await import('../squad-seat-contract.js');
+  it('lists every shimmable deny as advisory and plans no shim when the harness does not shim', () => {
     const plan = planSeatContract({ persona: { appendSystemPrompt: 'ROLE', deniedTools: ['Bash(gh:*)'] }, enforceShims: false });
     expect(plan.shimFiles).toEqual([]);
     expect(plan.instructionsText).toContain('ROLE');

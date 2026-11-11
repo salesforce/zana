@@ -236,7 +236,7 @@ export interface RemoteCommandResult {
 export interface SquadSeatCapability {
   /** The harness can carry the persona's `appendSystemPrompt`. */
   readonly instructions: boolean;
-  /** How the persona's command denylist is enforced: by the harness itself, by a Zana PATH shim, or not at all. */
+  /** How the persona's command denylist is enforced: by the harness itself, by a Zana PATH shim, or not at all (`shim` is kept for provider opt-in and tested even when no shipped harness declares it). */
   readonly commandDeny: 'native' | 'shim' | 'none';
   /** The harness can reach the zcc-inbox execution tools. */
   readonly executionTools: boolean;

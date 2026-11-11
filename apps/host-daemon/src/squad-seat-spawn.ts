@@ -1,11 +1,11 @@
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, opendirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { removeTreeWithoutFollowingLinks, removeTreeWithoutFollowingLinksAsync } from '@zana-ai/zcc-agent-process-utils';
+import { removeTreeWithoutFollowingLinks } from '@zana-ai/zcc-agent-process-utils';
 import type { Persona } from '@zana-ai/zcc-domain/product';
 import type { SquadSeatCapability } from './harness/launch-provider.js';
 import { planSeatContract } from './squad-seat-contract.js';
+import { listLocalTmuxSessionIds } from './tmux.js';
 
 /**
  * File and directory work for a Squad seat (#675): the per-session shim directory
@@ -23,8 +23,10 @@ const SEAT_ROOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SEAT_SWEEP_MIN_INTERVAL_MS = 60_000;
 /** Bound on roots examined per sweep (Rule 5); the next sweep continues. */
 const SEAT_SWEEP_MAX_ENTRIES = 500;
+const SEAT_OWNER_SESSION_FILE = '.owner-session-id';
 let lastSeatSweepAt = 0;
 let sweepInFlight: Promise<void> | undefined;
+let lastSweepName: string | undefined;
 /** Roots of seats this process still owns: the sweep never removes them, however old (a tmux seat can outlive 7 days). */
 const liveSeatRoots = new Set<string>();
 
@@ -34,21 +36,67 @@ function isNotFound(error: unknown): boolean {
 
 async function sweepOnce(parent: string, now: number): Promise<void> {
   try {
-    let examined = 0;
-    for (const name of await readdir(parent)) {
-      if (!name.startsWith('zcc-seat-')) continue;
-      if (++examined > SEAT_SWEEP_MAX_ENTRIES) break;
+    const liveTmuxSessionIds = new Set(await listLocalTmuxSessionIds());
+    let remaining = SEAT_SWEEP_MAX_ENTRIES;
+    let lastProcessed: string | undefined;
+    const processName = (name: string): boolean => {
+      if (!name.startsWith('zcc-seat-')) return false;
+      if (remaining <= 0) return true;
+      remaining -= 1;
+      lastProcessed = name;
       const path = join(parent, name);
-      if (liveSeatRoots.has(path)) continue;
+      if (liveSeatRoots.has(path)) return false;
+      const ownerSession = seatOwnerSessionId(path);
+      if (ownerSession && liveTmuxSessionIds.has(ownerSession)) return false;
       try {
-        if (now - (await stat(path)).mtimeMs > SEAT_ROOT_MAX_AGE_MS) await removeTreeWithoutFollowingLinksAsync(path);
+        if (now - statSync(path).mtimeMs > SEAT_ROOT_MAX_AGE_MS) removeTreeWithoutFollowingLinks(path);
       } catch (error) {
         console.warn(`[squad-seat] stale seat dir not removed: ${path}`, error);
       }
+      return false;
+    };
+    const first = opendirSync(parent);
+    let seenCursor = !lastSweepName;
+    try {
+      while (remaining > 0) {
+        const entry = first.readSync();
+        if (!entry) break;
+        if (entry.name === lastSweepName) {
+          seenCursor = true;
+          continue;
+        }
+        if (!seenCursor) continue;
+        if (processName(entry.name)) break;
+      }
+    } finally {
+      first.closeSync();
     }
+    if (remaining > 0 && lastSweepName) {
+      const second = opendirSync(parent);
+      try {
+        while (remaining > 0) {
+          const entry = second.readSync();
+          if (!entry || (seenCursor && entry.name === lastSweepName)) break;
+          if (processName(entry.name)) break;
+        }
+      } finally {
+        second.closeSync();
+      }
+    }
+    if (lastProcessed) lastSweepName = lastProcessed;
+    else if (!seenCursor) lastSweepName = undefined;
   } catch (error) {
     // A missing parent is normal (nothing spawned yet); anything else (EACCES, ENOTDIR) is worth a line.
     if (!isNotFound(error)) console.warn(`[squad-seat] seat sweep failed for ${parent}`, error);
+  }
+}
+
+function seatOwnerSessionId(root: string): string | undefined {
+  try {
+    const id = readFileSync(join(root, SEAT_OWNER_SESSION_FILE), 'utf8').trim();
+    return id.length > 0 ? id : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -118,6 +166,8 @@ export interface SeatSpawnInput {
   readonly harnessCommand: string;
   /** Parent directory for the per-session root. Defaults to a Zana-owned folder in the temp directory. */
   readonly baseDir?: string;
+  /** Owning session id, written into the seat root so restart sweeps can spare reattached tmux sessions. */
+  readonly sessionId?: string;
 }
 
 /**
@@ -147,7 +197,7 @@ export function prepareSeatSpawn(input: SeatSpawnInput): SeatSpawnPlan | undefin
   if (!needsFile && plan.shimFiles.length === 0) {
     return { instructionsText: plan.instructionsText, foldIntoGuidance, release() {} };
   }
-  return materialiseSeat(plan, foldIntoGuidance, needsFile, input.baseDir);
+  return materialiseSeat(plan, foldIntoGuidance, needsFile, input.baseDir, input.sessionId);
 }
 
 /** Create the seat's root and write its shims and instructions file; removes the root again if any write fails. */
@@ -155,7 +205,8 @@ function materialiseSeat(
   plan: ReturnType<typeof planSeatContract>,
   foldIntoGuidance: boolean,
   needsFile: boolean,
-  baseDir: string | undefined
+  baseDir: string | undefined,
+  sessionId: string | undefined
 ): SeatSpawnPlan {
   const defaultParent = baseDir === undefined ? trustedSeatParent(join(tmpdir(), SEAT_ROOTS_DIRNAME)) : undefined;
   if (defaultParent) void sweepStaleSeatRoots(defaultParent);
@@ -177,6 +228,9 @@ function materialiseSeat(
     if (needsFile) {
       instructionsFile = join(root, 'instructions.md');
       writeFileSync(instructionsFile, plan.instructionsText, { mode: 0o600 });
+    }
+    if (sessionId) {
+      writeFileSync(join(root, SEAT_OWNER_SESSION_FILE), sessionId, { mode: 0o600 });
     }
     return {
       instructionsText: plan.instructionsText,

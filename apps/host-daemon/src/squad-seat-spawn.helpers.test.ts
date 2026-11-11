@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { assertRemoteSeatContract, prepareSeatSpawn, shimFirstPath, sweepStaleSeatRoots, trustedSeatParent } from './squad-seat-spawn.js';
 import type { SquadSeatCapability } from './harness/launch-provider.js';
+import * as tmux from './tmux.js';
 
 /** Helpers behind PtyManager's Squad seat handling (#675) that the spawn tests only reach through a whole launch. */
 
@@ -17,6 +18,7 @@ const base = () => {
 };
 afterEach(() => {
   while (bases.length > 0) rmSync(bases.pop()!, { recursive: true, force: true });
+  vi.restoreAllMocks();
 });
 
 describe('prepareSeatSpawn', () => {
@@ -87,6 +89,7 @@ describe('prepareSeatSpawn', () => {
   });
 
   it('puts seat roots under one Zana-owned parent and sweeps stale ones by age (A3)', async () => {
+    vi.spyOn(tmux, 'listLocalTmuxSessionIds').mockResolvedValue([]);
     const parent = base();
     const stale = join(parent, 'zcc-seat-old');
     const fresh = join(parent, 'zcc-seat-new');
@@ -139,6 +142,7 @@ describe('prepareSeatSpawn', () => {
 
 describe('seat sweep safety (F12, A9, F15, A8, F20)', () => {
   it('never removes the root of a seat this process still owns, however old', async () => {
+    vi.spyOn(tmux, 'listLocalTmuxSessionIds').mockResolvedValue([]);
     const baseDir = base();
     const plan = prepareSeatSpawn({ capability: cap(), persona: { appendSystemPrompt: 'ROLE' }, harnessCommand: 'x', baseDir })!;
     const root = dirname(plan.instructionsFile!);
@@ -151,6 +155,7 @@ describe('seat sweep safety (F12, A9, F15, A8, F20)', () => {
   });
 
   it('removes an old orphan root once its owner has released nothing (not tracked)', async () => {
+    vi.spyOn(tmux, 'listLocalTmuxSessionIds').mockResolvedValue([]);
     const parent = base();
     const orphan = join(parent, 'zcc-seat-orphan');
     mkdirSync(orphan);
@@ -161,6 +166,7 @@ describe('seat sweep safety (F12, A9, F15, A8, F20)', () => {
   });
 
   it('is quiet for a missing parent but warns for any other failure', async () => {
+    vi.spyOn(tmux, 'listLocalTmuxSessionIds').mockResolvedValue([]);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await sweepStaleSeatRoots(join(base(), 'missing'), Date.now(), true);
@@ -175,11 +181,40 @@ describe('seat sweep safety (F12, A9, F15, A8, F20)', () => {
   });
 
   it('runs one sweep at a time and returns the running one to an overlapping caller', async () => {
+    vi.spyOn(tmux, 'listLocalTmuxSessionIds').mockResolvedValue([]);
     const parent = base();
     const first = sweepStaleSeatRoots(parent, Date.now(), true);
     const second = sweepStaleSeatRoots(parent, Date.now(), true);
     expect(second).toBe(first);
     await first;
+  });
+
+  it('eventually removes a stale orphan even after more than 500 retained roots (fair sweep rotation)', async () => {
+    vi.spyOn(tmux, 'listLocalTmuxSessionIds').mockResolvedValue([]);
+    const parent = base();
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    for (let i = 0; i < 550; i++) {
+      mkdirSync(join(parent, `zcc-seat-fresh-${String(i).padStart(4, '0')}`));
+    }
+    const orphan = join(parent, 'zcc-seat-stale-target');
+    mkdirSync(orphan);
+    utimesSync(orphan, old, old);
+    await sweepStaleSeatRoots(parent, Date.now(), true);
+    if (!existsSync(orphan)) return;
+    await sweepStaleSeatRoots(parent, Date.now(), true);
+    expect(existsSync(orphan)).toBe(false);
+  });
+
+  it('spares a stale root owned by a reattached tmux session after restart', async () => {
+    vi.spyOn(tmux, 'listLocalTmuxSessionIds').mockResolvedValue(['reattached-session']);
+    const parent = base();
+    const root = join(parent, 'zcc-seat-owned-by-tmux');
+    mkdirSync(root);
+    writeFileSync(join(root, '.owner-session-id'), 'reattached-session');
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    utimesSync(root, old, old);
+    await sweepStaleSeatRoots(parent, Date.now(), true);
+    expect(existsSync(root)).toBe(true);
   });
 });
 

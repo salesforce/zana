@@ -34,8 +34,7 @@ import type {
   HarnessAuthInjection,
   RemoteCommandInput,
   RemoteCommandResult,
-  ResolvedLaunch,
-  SquadSeatCapability
+  ResolvedLaunch
 } from '../launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
 import { BaseLaunchProvider } from '../base-provider.js';
@@ -136,12 +135,6 @@ export class CursorProvider extends BaseLaunchProvider {
   readonly id = 'cursor-agent';
   /** Squad seat contract (#675, D1). No per-session MCP flag or env, so no execution tools; seats are refused in every Squad launch (D7), durable or not. */
   readonly refusedForSquads = true;
-  readonly squadSeat: SquadSeatCapability = {
-    instructions: false,
-    commandDeny: 'none',
-    executionTools: false,
-    foldPersonaIntoGuidance: false
-  };
   /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`default`, `grok-4.6`). */
   readonly acceptsUnlistedModelTargets = true;
   // The native tool veto is a plugin directory named on argv (`--plugin-dir`); local launches only.
