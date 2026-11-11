@@ -1,0 +1,25 @@
+.grid > div, .grid > div { position: relative; }
+.card.card { position: relative; overflow: hidden; isolation: isolate; padding: 28px; border-radius: 16px; background: radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--accent-lavender) 10%, transparent), transparent 55%), var(--bg-panel); box-shadow: 0 6px 24px #0001; transition: border-color .2s, box-shadow .2s; }
+.card.card:hover, .card.card:focus-within { border-color: var(--accent-blue); box-shadow: 0 0 28px var(--accent-soft); }
+.primary.primary { border-color: color-mix(in srgb, var(--accent-blue) 55%, var(--border)); }
+.primary.primary::after { content: ''; position: absolute; inset: auto -20% -60% 30%; height: 60%; z-index: -1; background: radial-gradient(ellipse, color-mix(in srgb, var(--accent-blue) 14%, transparent), transparent 70%); }
+.head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.head h2 { margin: 0 !important; }
+.tile { display: grid; place-items: center; width: 52px; height: 52px; flex: none; border: 1px solid var(--border); border-radius: 14px; background: var(--accent-soft); color: var(--text); }
+.tile svg { width: 28px; height: 28px; }
+.sub { margin: 0 0 18px !important; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; padding: 0; list-style: none; }
+.chips li { padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-elevated); color: var(--muted-2); font-size: 11px; letter-spacing: .02em; }
+.soon.soon { display: flex; align-items: center; gap: 14px; border-style: dashed; border-radius: 14px; padding: 14px 18px; background: transparent; }
+.soon .tile { width: 40px; height: 40px; border-radius: 11px; opacity: .8; }
+.soon .tile svg { width: 22px; height: 22px; }
+.soon h3 { margin: 0; font-size: 15px; }
+.source.source { position: relative; overflow: hidden; border-radius: 18px; background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--accent-blue) 9%, transparent), transparent 50%), radial-gradient(ellipse at 0% 100%, color-mix(in srgb, var(--accent-lavender) 10%, transparent), transparent 50%), var(--bg-panel); padding: 32px; }
+.source h2 span { background: linear-gradient(100deg, #6296ff, #2dd4bf 52%, #d99bc6); background-clip: text; -webkit-text-fill-color: transparent; }
+.term { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg-input); box-shadow: 0 10px 30px -18px #0007; }
+.termBar { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
+.termBar i { width: 9px; height: 9px; border-radius: 50%; background: var(--border); }
+.termBar i:nth-child(1) { background: #ff6b6b99; } .termBar i:nth-child(2) { background: #f5c15999; } .termBar i:nth-child(3) { background: #2dd4bf99; }
+.termBar span { margin-left: 8px; color: var(--muted-2); font: 11px var(--font-mono); }
+.term pre.pre { border: 0; border-radius: 0; background: transparent; }
+@media (max-width: 760px) { .card.card, .source.source { padding: 22px; } }

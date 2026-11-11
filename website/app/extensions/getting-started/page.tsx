@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { AuroraGrid } from '../../components/AuroraGrid';
+import { Icon, ProofCard, NextCard, SectionHead, Grad, styles as s, type IconName } from '../blocks';
 
 export const metadata: Metadata = {
   title: 'Build your first plugin',
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/extensions/getting-started/' }
 };
 
+const STEP_ICONS: IconName[] = ['seed', 'terminal', 'panel', 'refresh', 'eye'];
 const STEPS = [
   ['1', 'Seed a thread', 'Plugins → New plugin (or Browse → Create a plugin) inserts “Create a new zcc plugin that …”. Send it from the current project — not a dedicated Extensions folder. Folder/git/npm install stays install, not create.'],
   ['2', 'Scaffold, install, iterate', 'The agent runs `zcc plugin new hello --app`, then `cd zcc-plugin-hello`, `zcc plugin install .`, and `zcc plugin dev`. That writes package.json zcc, server.ts, and app.tsx.'],
@@ -35,7 +37,7 @@ export default function ExtensionGettingStartedPage() {
         <div className="wrap">
           <div data-reveal>
             <span className="zcc-kicker">Plugin quickstart</span>
-            <h1>A working panel in five focused steps.</h1>
+            <h1>A working panel in <span className={s.grad}>five focused steps.</span></h1>
             <p>Build a React panel that runs inside Zana using <code>@zana-ai/zcc-plugin-sdk</code>. Plugins are full-trust after install — confirm each install, and keep host-daemon tokens on the server.</p>
             <div className="zcc-actions">
               <a className="zcc-btn zcc-btn-primary" href="#steps">Start building</a>
@@ -46,25 +48,24 @@ export default function ExtensionGettingStartedPage() {
       </section>
 
       <div className="wrap">
-        <div className="prereq" data-reveal>
+        <div className={`${s.card} ${s.prereq}`} data-reveal>
+          <span className={s.tile}><Icon name="check" /></span>
           <strong>Before you begin</strong>
-          <span>Node 20+, a local Zana installation, and a working TypeScript environment.</span>
+          <span className="t" style={{ flex: '1 1 260px', color: 'var(--muted-2)' }}>Node 20+, a local Zana installation, and a working TypeScript environment.</span>
           <Link href="/download/">Get Zana →</Link>
         </div>
       </div>
 
       <section id="steps">
         <div className="wrap">
-          <div className="section-head" data-reveal>
-            <span className="zcc-kicker">The build loop</span>
-            <h2>Small surface area, fast feedback.</h2>
-            <p className="section-lede">Everything begins with <code>package.json</code> <code>zcc</code>. The host owns slots, reload, and the full-trust install confirm.</p>
-          </div>
-          <ol className="steps-grid" data-reveal-stagger>
-            {STEPS.map(([number, title, body]) => (
-              <li className="zcc-panel" key={number}>
-                <span>{number}</span>
-                <div><h3>{title}</h3><p>{body}</p></div>
+          <SectionHead eyebrow="The build loop" lede={<>Everything begins with <code>package.json</code> <code>zcc</code>. The host owns slots, reload, and the full-trust install confirm.</>}>
+            Small surface area, <Grad>fast feedback.</Grad>
+          </SectionHead>
+          <ol className={s.steps} data-reveal-stagger>
+            {STEPS.map(([number, title, body], i) => (
+              <li key={number}>
+                <span className={s.stepNode}><Icon name={STEP_ICONS[i]} size={24} /><span className={s.stepNum}>{number}</span></span>
+                <div className={`${s.card} ${s.stepBody}`}><h3>{title}</h3><p>{body}</p></div>
               </li>
             ))}
           </ol>
@@ -73,11 +74,12 @@ export default function ExtensionGettingStartedPage() {
 
       <section style={{ paddingTop: 8 }}>
         <div className="wrap proof-split">
-          <div className="proof" data-reveal>
-            <span className="zcc-kicker">The starting manifest</span>
-            <h2>Declare the smallest useful plugin.</h2>
-            <p>The contract lives in <code>package.json</code> <code>zcc</code>. Start with a panel, then add skills or MCP only when you have a concrete need. Install is the full-trust confirm.</p>
-            <p style={{ marginTop: 16 }}><Link className="text-link" href="/docs/extensions-authoring/">Read the manifest contract →</Link></p>
+          <div data-reveal>
+            <span className={s.tile}><Icon name="code" size={26} /></span>
+            <p className={s.eyebrowLeft}>The starting manifest</p>
+            <h2 style={{ margin: '0 0 12px', letterSpacing: '-.04em' }}>Declare the smallest useful plugin.</h2>
+            <p className={s.body}>The contract lives in <code>package.json</code> <code>zcc</code>. Start with a panel, then add skills or MCP only when you have a concrete need. Install is the full-trust confirm.</p>
+            <Link className={s.link} href="/docs/extensions-authoring/">Read the manifest contract →</Link>
           </div>
           <pre className="guide-code"><code>{MANIFEST}</code></pre>
         </div>
@@ -85,32 +87,31 @@ export default function ExtensionGettingStartedPage() {
 
       <section style={{ paddingTop: 8 }}>
         <div className="wrap">
-          <div className="proof" data-reveal>
-            <span className="zcc-kicker">A live local loop</span>
-            <h2>Keep the source editable and the result visible.</h2>
-            <p>Once the folder is connected as a local source, build changes can refresh the installed artifact without an application restart.</p>
-            <ul>
-              <li>Source remains in your working directory</li>
-              <li>zcc plugin dev watches, rebuilds, and reloads</li>
-              <li>A failed reload keeps the last good generation</li>
-            </ul>
-          </div>
+          <ProofCard
+            eyebrow="A live local loop"
+            title="Keep the source editable and the result visible."
+            icon="refresh"
+            body="Once the folder is connected as a local source, build changes can refresh the installed artifact without an application restart."
+            items={[
+              'Source remains in your working directory',
+              'zcc plugin dev watches, rebuilds, and reloads',
+              'A failed reload keeps the last good generation'
+            ]}
+          />
         </div>
       </section>
 
       <section style={{ paddingTop: 8, paddingBottom: 64 }}>
         <div className="wrap">
-          <div className="next-card zcc-panel" data-reveal>
-            <div>
-              <span className="zcc-kicker">Continue when ready</span>
-              <h2>From a panel to a complete integration.</h2>
-              <p>Add project tabs, skills, MCP servers, settings, or extra metadata as the plugin earns the extra complexity.</p>
-            </div>
-            <div className="next-actions">
+          <NextCard
+            eyebrow="Continue when ready"
+            title="From a panel to a complete integration."
+            body="Add project tabs, skills, MCP servers, settings, or extra metadata as the plugin earns the extra complexity."
+            actions={<>
               <Link className="zcc-btn zcc-btn-primary" href="/extensions/sdk/">Explore the SDK</Link>
               <Link className="zcc-btn zcc-btn-ghost" href="/docs/extensions-quickstart/">Read the canonical quickstart</Link>
-            </div>
-          </div>
+            </>}
+          />
         </div>
       </section>
     </div>

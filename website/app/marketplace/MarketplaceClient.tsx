@@ -11,6 +11,7 @@ import {
   type OfficialMarketplaceIndex
 } from '@/lib/official-marketplace';
 import { AuroraGrid } from '../components/AuroraGrid';
+import styles from './marketplace.module.css';
 
 type Status = 'loading' | 'live' | 'sample';
 
@@ -72,15 +73,16 @@ export function MarketplaceClient({ publicBaseUrl }: { publicBaseUrl: string }) 
           </p>
         </div>
 
-        <div className="mk-install zcc-panel" data-reveal>
+        <div className={`mk-install zcc-panel ${styles.install}`} data-reveal>
+          <div className={styles.hub} aria-hidden="true"><img src="/zana-icon-512.png" alt="" width={92} height={92} /></div>
           <div>
             <span className="zcc-kicker">How installation works</span>
-            <h2>Discover here. Install from Zana.</h2>
+            <h2>Discover here. <span>Install from Zana.</span></h2>
             <p>
               Add this catalog, then install from <strong>Plugins → Browse</strong>. Plugins run
               in-process on the server after a loud full-trust confirm.
             </p>
-            <p className="mk-cmd">
+            <p className={`mk-cmd ${styles.cmd}`}>
               <code>{addCommand}</code>
             </p>
           </div>
@@ -111,20 +113,21 @@ export function MarketplaceClient({ publicBaseUrl }: { publicBaseUrl: string }) 
         </div>
 
         {filtered.length === 0 ? (
-          <div className="empty">No plugins match “{q}”.</div>
+          <div className={`empty ${styles.empty}`}>No plugins match “{q}”.</div>
         ) : (
-          <div className="mk-grid" data-reveal-stagger>
+          <div className={`mk-grid ${styles.grid}`} data-reveal-stagger>
             {filtered.map((e) => (
-              <div className="zcc-panel" key={e.id}>
+              <div className={`zcc-panel ${styles.card}`} key={e.id}>
                 <div className="mk-head">
-                  <span className="mk-icon">{e.title.charAt(0).toUpperCase()}</span>
+                  <span className={`mk-icon ${styles.icon}`} aria-hidden="true">{e.title.charAt(0).toUpperCase()}</span>
                   <h3>{e.title}</h3>
-                  <span className="mk-badge">{e.version}</span>
+                  <span className={`mk-badge ${styles.badge}`}>{e.version}</span>
                 </div>
-                {e.author && <p className="mk-meta">by {e.author}</p>}
-                <p className="mk-meta" style={{ marginTop: 8, fontSize: 13 }}>{e.description}</p>
-                <p className="mk-cmd">
-                  Install in Zana: <code>Plugins → Browse → {e.id}</code>
+                {e.author && <p className={`mk-meta ${styles.author}`}>by {e.author}</p>}
+                <p className={styles.desc}>{e.description}</p>
+                <p className={`mk-cmd ${styles.foot}`}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 20h14"/></svg>
+                  <span>Install in Zana: <code>Plugins → Browse → {e.id}</code></span>
                 </p>
               </div>
             ))}
