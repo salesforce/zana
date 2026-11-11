@@ -133,6 +133,8 @@ function cursorBinary(config: AppConfig): string {
 
 export class CursorProvider extends BaseLaunchProvider {
   readonly id = 'cursor-agent';
+  /** Squad seat contract (#675, D1). No per-session MCP flag or env, so no execution tools; seats are refused in every Squad launch (D7), durable or not. */
+  readonly refusedForSquads = true;
   /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`default`, `grok-4.6`). */
   readonly acceptsUnlistedModelTargets = true;
   // The native tool veto is a plugin directory named on argv (`--plugin-dir`); local launches only.

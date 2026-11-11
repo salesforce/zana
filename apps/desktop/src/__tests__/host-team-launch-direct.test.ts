@@ -582,8 +582,10 @@ describe('launchTeam non-claude recovery, orchestrator binding failure and orche
       expect(partial.value.failedSlots.map((s) => s.reason).join()).toContain('cannot bind initial task');
     }
     const durable = await launchTeam('team1', 'p1', { callerPrincipalId: 'owner', launchRequestId: reqId(), coordinationMode: 'structured', slots } as never);
-    expect(durable).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
-    expect(durable.ok ? '' : durable.message).toContain('cannot bind initial task');
+    // #675: a durable launch whose orchestrator harness has no execution tools is now refused
+    // by the seat preflight before any seat spawns (it used to fail later, at task binding).
+    expect(durable).toMatchObject({ ok: false, code: 'UNSUPPORTED' });
+    expect(durable.ok ? '' : durable.message).toMatch(/execution tools/i);
   });
 
   it('launches an orchestrator-less team and skips the orchestrator step', async () => {
@@ -1446,6 +1448,195 @@ describe('launchTeam CLI planless durable coordinator plan-file grant (B2)', () 
     h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
     const { orchestrator } = await launchPlanless();
     expect(orchestrator.authoredPlanPaths).toBeUndefined();
+  });
+});
+
+describe('launchTeam Squad seat preflight and marker (#675)', () => {
+  const lifecycleRecords = (): TeamLifecycleRecord[] => {
+    try {
+      return (JSON.parse(readFileSync(join(h.root, 'team-lifecycle.json'), 'utf8')) as { records: TeamLifecycleRecord[] }).records;
+    } catch {
+      return [];
+    }
+  };
+  const seatReq = (coordinationMode?: string) => ({
+    callerPrincipalId: 'owner', launchRequestId: reqId(), ...(coordinationMode ? { coordinationMode } : {}),
+    slots: SLOT_IDS.map((slotId) => ({ slotId, initialTask: `t ${slotId}` }))
+  });
+  const durable = { coordinationMode: 'structured' };
+
+  it.each(['cursor', 'grok'])('refuses a durable launch with a %s seat before any PTY or claim (REQ-5, REQ-16)', async (harness) => {
+    h.personas = [persona('orch'), persona('w1', { baseProfile: harness }), persona('w2')];
+    const before = lifecycleRecords().length;
+    const req = seatReq(durable.coordinationMode);
+    const result = await launchTeam('team1', 'p1', req as never);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.message).toContain('W1');
+    expect(result.message.toLowerCase()).toContain(harness);
+    expect(result.message).toMatch(/execution tools/i);
+    expect(h.creates).toHaveLength(0);
+    expect(lifecycleRecords()).toHaveLength(before);
+    expect(lifecycleRecords().some((r) => r.launchRequestId === req.launchRequestId)).toBe(false);
+  });
+
+  it.each(['cursor', 'grok'])('also refuses a non-durable launch with a %s seat, since D7 refuses these harnesses for Squads (CodeNod OBL-005)', async (harness) => {
+    h.personas = [persona('orch'), persona('w1', { baseProfile: harness }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq() as never);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toMatch(/execution tools/i);
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('refuses a non-durable pi seat whose persona has only advisory denies, since nothing could deliver them (CodeNod OBL-006)', async () => {
+    h.personas = [persona('orch'), persona('w1', { baseProfile: 'pi', deniedTools: ['Bash(/usr/bin/gh:*)'] }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq() as never);
+    expect(result.ok).toBe(false);
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('names every refused seat in one message (REQ-6)', async () => {
+    h.personas = [persona('orch', { baseProfile: 'grok' }), persona('w1', { baseProfile: 'cursor' }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.message).toContain('ORCH');
+    expect(result.message).toContain('W1');
+    expect(result.message).not.toContain('W2');
+    expect(h.creates).toHaveLength(0);
+  });
+
+  // Decision B (owner, 5 Nov): a Codex seat's shimmable denies are listed as advisory lines in its instructions and the seat launches.
+  it('launches a Codex seat with shimmable denies, which ride its persona as advisory lines (REQ-6, decision B)', async () => {
+    h.personas = [persona('orch'), persona('w1', { baseProfile: 'codex', deniedTools: ['Bash(gh:*)'] }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
+    expect(result.ok).toBe(true);
+    expect(h.creates.length).toBeGreaterThan(0);
+    expect(h.creates.every((create) => create.squadSeat === true)).toBe(true);
+  });
+
+  it('launches a pre-#675 Codex persona holding Bash(gh:*) that launched before (existing users unaffected, F1)', async () => {
+    h.personas = [persona('orch'), persona('w1', { baseProfile: 'codex', appendSystemPrompt: 'Review only.', deniedTools: ['Bash(gh:*)', 'Edit(/etc/*)'] }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq('job-team') as never);
+    expect(result.ok).toBe(true);
+    expect(h.creates).toHaveLength(4);
+  });
+
+  it('refuses a Codex seat with persona instructions on a remote project (REQ-6)', async () => {
+    h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, remote: { host: 'ssh-box' } }];
+    h.personas = [persona('orch'), persona('w1', { baseProfile: 'codex', appendSystemPrompt: 'role' }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
+    expect(result.ok).toBe(false);
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('refuses an OpenCode seat with shimmable denies on a remote project (REQ-6)', async () => {
+    h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, remote: { host: 'ssh-box' } }];
+    h.personas = [persona('orch'), persona('w1', { baseProfile: 'opencode', deniedTools: ['Bash(gh:*)'] }), persona('w2')];
+    const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
+    expect(result.ok).toBe(false);
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('launches an OpenCode seat with shimmable denies on Windows, since they are advisory (REQ-6, decision B)', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      h.personas = [persona('orch'), persona('w1', { baseProfile: 'opencode', deniedTools: ['Bash(gh:*)'] }), persona('w2')];
+      const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
+      // OpenCode's denylist is 'none' (decision B): the deny is advisory, so Windows no longer refuses it.
+      expect(result.ok).toBe(true);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
+  it('keeps a non-durable launch on a shell orchestrator working beside a refusal (REQ-16)', async () => {
+    h.personas = [persona('orch', { baseProfile: 'shell' }), persona('w1'), persona('w2')];
+    const partial = await launchTeam('team1', 'p1', seatReq() as never);
+    expect(partial.ok).toBe(true);
+    expect(h.creates.length).toBeGreaterThan(0);
+  });
+
+  it('passes the squadSeat marker to every Claude worker and the coordinator, and still launches (REQ-7, REQ-15)', async () => {
+    const result = await launchTeam('team1', 'p1', seatReq('structured') as never);
+    expect(result.ok).toBe(true);
+    expect(h.creates).toHaveLength(4);
+    expect(h.creates.every((create) => create.squadSeat === true)).toBe(true);
+    expect(h.creates.some((create) => create.cohort?.role === 'orchestrator')).toBe(true);
+  });
+});
+
+describe('Squad seat marker stays off a non-Squad launch (#675, REQ-8, F4)', () => {
+  it('launches a real single CLI agent through the host path with no squadSeat marker', async () => {
+    h.personas = [persona('solo', { baseProfile: 'codex' })];
+    h.creates.length = 0;
+    const result = await host.createInteractiveTerminal({ projectId: 'p1', profile: 'codex', personaId: 'solo', cols: 80, rows: 24 } as never);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(h.creates).toHaveLength(1);
+    expect(h.creates[0].squadSeat).toBeUndefined();
+  });
+});
+
+describe('Squad seat marker on restart and restore (#675, REQ-11)', () => {
+  it('carries the squadSeat marker when a worker is restored from its capability', async () => {
+    const { restoreCapabilityLaunch } = await import('../terminal-restore-launch.js');
+    const launch = vi.fn(async () => ({ ok: true as const, value: { id: 's1' } as never }));
+    const cohort = { cohortId: 'c1', teamId: 'team1', teamName: 'T', role: 'worker' as const, executionId: 'e1', slotId: '0:w1:0' };
+    const capability = { id: 'cap1', sessionId: 's1', request: { projectId: 'p1', cohort }, followUpExecutionId: undefined };
+    await restoreCapabilityLaunch({
+      capability, reservationId: 'r1', reservations: { consume: () => {}, release: () => {} }, followUp: { claim: async () => {}, release: async () => {}, isClaimed: () => false }, resolveWorktree: async (request: unknown) => ({ ok: true as const, value: request }),
+      restorePrincipal: () => ({ kind: 'team', id: 'restore:cap1' }), isTeamWorkerRestore: () => true, launch
+    } as never);
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect((launch.mock.calls[0] as any[])[0].spawnOpts).toMatchObject({ preallocatedSessionId: 's1', squadSeat: true });
+  });
+
+  it('carries the squadSeat marker for a restored coordinator seat too (REQ-15)', async () => {
+    const { restoreCapabilityLaunch } = await import('../terminal-restore-launch.js');
+    const launch = vi.fn(async () => ({ ok: true as const, value: { id: 's2' } as never }));
+    const cohort = { cohortId: 'c1', teamId: 'team1', teamName: 'T', role: 'orchestrator' as const, executionId: 'e1', slotId: 'orchestrator:orch' };
+    const capability = { id: 'cap2', sessionId: 's2', request: { projectId: 'p1', cohort }, followUpExecutionId: undefined };
+    await restoreCapabilityLaunch({
+      capability, reservationId: 'r1', reservations: { consume: () => {}, release: () => {} }, followUp: { claim: async () => {}, release: async () => {}, isClaimed: () => false }, resolveWorktree: async (request: unknown) => ({ ok: true as const, value: request }),
+      restorePrincipal: () => ({ kind: 'automation', id: 'restore:cap2' }), isTeamWorkerRestore: () => false, launch
+    } as never);
+    expect((launch.mock.calls[0] as any[])[0].spawnOpts).toMatchObject({ squadSeat: true });
+  });
+
+  it('does not mark an orchestrator-child terminal or a restore with no team cohort (REQ-8)', async () => {
+    const { restoreCapabilityLaunch } = await import('../terminal-restore-launch.js');
+    const run = async (request: Record<string, unknown>) => {
+      const launch = vi.fn(async () => ({ ok: true as const, value: { id: 's3' } as never }));
+      await restoreCapabilityLaunch({
+        capability: { id: 'cap3', sessionId: 's3', request, followUpExecutionId: undefined }, reservationId: 'r1', reservations: { consume: () => {}, release: () => {} }, followUp: { claim: async () => {}, release: async () => {}, isClaimed: () => false },
+        resolveWorktree: async (r: unknown) => ({ ok: true as const, value: r }),
+        restorePrincipal: () => ({ kind: 'team', id: 'restore:cap3' }), isTeamWorkerRestore: () => true, launch
+      } as never);
+      return (launch.mock.calls[0] as any[])[0].spawnOpts;
+    };
+    const child = await run({ projectId: 'p1', cohort: { cohortId: 'c', teamId: 'team1', teamName: 'T', role: 'worker', slotId: 'orchestrator-child:abc' } });
+    expect(child?.squadSeat).toBeUndefined();
+    const plain = await run({ projectId: 'p1' });
+    expect(plain?.squadSeat).toBeUndefined();
+  });
+
+  it('carries the squadSeat marker when a worker is restarted', async () => {
+    const { relaunchSquadWorker } = await import('../squad-worker-restart.js');
+    const cohort = { cohortId: 'c1', teamId: 't', teamName: 'T', role: 'worker' as const, executionId: 'e1', slotId: 's1' };
+    const sess = { id: 'w1', projectId: 'p1', title: 'W', profile: 'claude', cwd: projectDir, status: 'running', createdAt: 1, restoreCapabilityId: 'cap1', cohort };
+    const capability = { id: 'cap1', sessionId: 'w1', request: { projectId: 'p1', cohort }, followUpExecutionId: undefined };
+    const launchAuthorizedTerminal = vi.fn(async () => ({ ok: true as const, value: sess }));
+    const deps = {
+      getSession: () => sess, getProject: () => ({ path: projectDir, remote: undefined }),
+      getExecution: async () => ({ coordinationMode: 'job-team' }), teamLaunchEnabled: () => false,
+      restoreCapabilities: { reserve: () => ({ capability, reservationId: 'r1' }), consume: () => {}, release: () => {} },
+      followUp: { claim: async () => {}, release: async () => {}, isClaimed: () => false },
+      restorePrincipal: () => ({ kind: 'team', id: 'restore:cap1' }), isTeamWorkerRestore: () => true,
+      launchAuthorizedTerminal, closeSession: async () => {}, onRelaunched: () => {}
+    };
+    await relaunchSquadWorker(deps as never, sess as never);
+    expect((launchAuthorizedTerminal.mock.calls[0] as any[])[2]).toMatchObject({ preallocatedSessionId: 'w1', squadSeat: true });
   });
 });
 

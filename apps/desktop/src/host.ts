@@ -156,6 +156,7 @@ import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type S
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
+import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
@@ -4493,6 +4494,8 @@ export function createTerminalConfined(
     tabNamerPrompt?: string | null;
     /** Keep a main-owned retained squad worktree after this agent exits. */
     retainWorktree?: boolean;
+    /** MAIN-only (#675): this launch is a Squad seat; PtyManager applies the seat contract. */
+    squadSeat?: true;
     /**
      * MAIN-only: the digest-bound model id the launch preflight resolved for a
      * portable model level. Spawn uses it verbatim (local, SSH remote, and the
@@ -4667,6 +4670,7 @@ export function createTerminalConfined(
       // forbidden by managed policy). Never sourced from the renderer req.
       autonomous: opts?.autonomous === true,
       coordinationMode: opts?.coordinationMode,
+      squadSeat: opts?.squadSeat,
       ...(opts?.authoredPlanPaths?.length ? { authoredPlanPaths: opts.authoredPlanPaths } : {}),
       suppressPersonaInitialPrompt: opts?.suppressPersonaInitialPrompt,
       // MAIN-only wake-reconnect params (remote only). The pty layer UUID-checks
@@ -6281,6 +6285,11 @@ export async function launchTeam(
       return { ok: false, code: 'UNSUPPORTED', message: error instanceof Error ? error.message : String(error) };
     }
   }
+  const refused = squadSeatRefusal({
+    transport: team.transport, expectedSlots, personas: personaSnapshot, profileFor, personaName, coordinationMode, project,
+    platform: process.platform, revoke: revokeRequestAuthorizations
+  });
+  if (refused) return refused;
   const runPrincipal = bindLaunchPrincipal(teamPrincipalRef, {
     id: teamPrincipalRef.id, allowedProjectIds: [targetProjectId], maxConcurrent: concurrentLimit, maxLaunchesPerRun: runLimit
   }, team.id) as Extract<LaunchPrincipal, { kind: 'team' }>;
@@ -6511,7 +6520,7 @@ export async function launchTeam(
     const result = await launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
-       { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...spawnExtras },
+       { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...SQUAD_SEAT_MARKER, ...spawnExtras },
        team.id,
        async (identity) => {
          const delivery = initialTaskDeliveryState(

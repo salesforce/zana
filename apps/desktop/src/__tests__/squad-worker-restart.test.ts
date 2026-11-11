@@ -361,7 +361,7 @@ describe('relaunchSquadWorker', () => {
       { projectId: 'p1', cohort, worktreeInfo: { path: worktree, branch: 'zcc/x' } },
       { kind: 'team', id: 'restore:cap1' },
       {
-        preallocatedSessionId: 'w1', retainWorktree: false,
+        preallocatedSessionId: 'w1', retainWorktree: false, squadSeat: true,
         coordinationMode: 'job-team', autonomous: false, suppressPersonaInitialPrompt: true, tabNamerPrompt: null
       },
       't',

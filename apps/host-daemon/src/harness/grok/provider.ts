@@ -93,6 +93,8 @@ function grokBinary(config: AppConfig): string {
 export class GrokProvider extends BaseLaunchProvider {
   readonly id = 'grok';
   readonly adapter = GROK_ADAPTER;
+  /** Squad seat contract (#675, D1). MCP through the config overlay is unproven, so no execution tools; seats are refused in every Squad launch (D7), durable or not. */
+  readonly refusedForSquads = true;
   readonly acceptsUnlistedModelTargets = true;
 
   modelContribution(targetId: string, _level?: ModelLevel) {

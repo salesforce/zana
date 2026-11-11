@@ -306,9 +306,22 @@ describe('launchTeam', () => {
     }
   });
 
+  it('refuses a Team slot on cursor: the seat cannot reach the execution tools (#675 D7)', async () => {
+    PERSONAS.push({ id: 'worker-cursor', name: 'cursor worker', baseProfile: 'cursor' });
+    try {
+      TEAMS = [{ id: 'team-cursor', name: 'cursor Team', slots: [{ personaId: 'worker-cursor' }] }];
+
+      const result = await launchTeam('team-cursor', 'p1');
+
+      expect(result).toMatchObject({ ok: false, code: 'UNSUPPORTED' });
+      expect(createCalls).toHaveLength(0);
+    } finally {
+      PERSONAS.pop();
+    }
+  });
+
   it.each([
     ['claude', 'claude'],
-    ['cursor', 'cursor'],
     ['codex', 'codex'],
     ['pi', 'pi'],
     ['opencode', 'opencode']
