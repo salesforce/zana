@@ -59,19 +59,29 @@ export function shortenProjectPath(path: string, home: string | undefined, keepT
 
 /**
  * `path` relative to `root`, with `/` separators, or null when `path` isn't
- * strictly inside `root`. Either separator may follow the root: a Windows
- * checkout's paths use `\`, POSIX and remote ones `/`. Case is compared
- * exactly, because every path here starts from the same root string.
+ * strictly inside `root`. Under a Windows root (drive letter or UNC) `\` and
+ * `/` are both separators, so `C:/repo` and the host's `C:\repo\a.ts` match.
+ * Under a POSIX root only `/` is, because `\` is an ordinary filename
+ * character there. The root prefix ignores case under a Windows root, where
+ * `C:\Repo` and `c:\repo` are the same folder; POSIX compares it exactly.
  */
 export function relativeUnder(root: string, path: string): string | null {
-  const base = root.replace(/[\\/]+$/, '');
-  if (path.length <= base.length + 1 || !path.startsWith(base)) return null;
-  const sep = path[base.length];
-  if (sep !== '/' && sep !== '\\') return null;
-  return path.slice(base.length + 1).replace(/\\/g, '/');
+  const windows = WINDOWS_ABSOLUTE_PATH.test(root);
+  const norm = (value: string) => (windows ? value.replace(/\\/g, '/') : value);
+  const base = norm(root).replace(/\/+$/, '');
+  const target = norm(path);
+  if (target.length <= base.length + 1) return null;
+  const prefix = target.slice(0, base.length + 1);
+  const expected = base + '/';
+  if (windows ? prefix.toLowerCase() !== expected.toLowerCase() : prefix !== expected) return null;
+  return target.slice(base.length + 1);
 }
 
-/** Parent folder of `path`, splitting on the last `/` or `\`; '' when there is none. */
-export function parentPath(path: string): string {
-  return path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'), 0));
+/**
+ * Parent folder of `path`, or '' when there is none. `\` splits only when
+ * `root` is a Windows path; on a POSIX root it stays part of the name.
+ */
+export function parentPath(path: string, root: string): string {
+  const last = WINDOWS_ABSOLUTE_PATH.test(root) ? Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) : path.lastIndexOf('/');
+  return path.slice(0, Math.max(last, 0));
 }

@@ -911,7 +911,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
       if (relativeUnder(viewRoot, abs) === null) continue;
       let dir = abs;
       while (true) {
-        dir = parentPath(dir);
+        dir = parentPath(dir, viewRoot);
         if (relativeUnder(viewRoot, dir) === null) break;
         if (set.has(dir)) break;
         set.add(dir);

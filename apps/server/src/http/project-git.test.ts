@@ -58,6 +58,10 @@ it('keys a Windows checkout\'s files with its own separator, matching its direct
   const status = await projectGit(ctx, { operation: 'status', path: root, scope });
   expect(Object.keys(status!.files)).toEqual([`${root}\\src\\feature\\nested\\a05.ts`, `${root}\\README.md`]);
   expect(status!.files[`${root}\\src\\feature\\nested\\a05.ts`]).toBe('M');
+  // A root registered with `/` gets the same `\` keys the host lists under it.
+  ctx.toProjects = () => [{ id: 'project', path: '/original', sources: [{ id: 'source', hostId: 'remote', path: 'C:/work/repo' }, { id: 'posix', hostId: 'posix', path: '/checkout' }] }];
+  rpc.mockResolvedValueOnce({ isGitRepo: true, branchName: 'main', checkout: { kind: 'branch' }, dirty: true, files: [{ path: 'src/a.ts', kind: 'modified' }] });
+  expect(Object.keys((await projectGit(ctx, { operation: 'status', path: 'C:/work/repo', scope }))!.files)).toEqual(['C:\\work\\repo\\src\\a.ts']);
   // A POSIX checkout keeps `/`, where `\` is an ordinary filename character.
   rpc.mockResolvedValueOnce({ isGitRepo: true, branchName: 'main', checkout: { kind: 'branch' }, dirty: true, files: [{ path: 'dir/a\\b.ts', kind: 'modified' }] });
   expect(Object.keys((await projectGit(ctx, { operation: 'status', path: '/checkout', scope: { projectId: 'project', hostId: 'posix' } }))!.files)).toEqual(['/checkout/dir/a\\b.ts']);

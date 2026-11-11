@@ -145,6 +145,22 @@ it('names a Windows change by its path under the root when discarding it', async
   expect(mocks.discard.mock.calls[0][0]).toBe(`${ROOT}\\src\\feature\\a05.ts`);
 });
 
+it('lists changes for a Windows project registered with forward slashes', async () => {
+  // The host lists and keys `C:/work/repo` with `\`; the project keeps its `/` spelling.
+  mocks.gitStatus.mockResolvedValue({
+    branch: 'main',
+    detached: false,
+    ahead: 0,
+    behind: 0,
+    dirty: true,
+    toplevel: 'C:/work/repo',
+    files: { 'C:\\work\\repo\\src\\b.ts': 'M' }
+  });
+  useUi.setState({ explorerTreeMode: { p: 'changes' } });
+  render(<ExplorerView project={{ ...project, path: 'C:/work/repo' }} />);
+  expect((await screen.findByText('b.ts', { selector: '.tree-name' })).textContent).toBe('b.ts · src');
+});
+
 it('leaves out git keys outside the root and the root itself', async () => {
   mocks.gitStatus.mockResolvedValue({
     branch: 'main',
