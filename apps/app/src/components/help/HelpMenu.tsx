@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowRight, Bot, ChevronRight, CircleHelp, Clapperboard, Play, Rocket, RotateCcw, Sparkles, Users } from 'lucide-react';
+import { ArrowRight, Bot, ChevronRight, CircleHelp, Clapperboard, Play, Rocket, RotateCcw, Sparkles, Users, Video, X } from 'lucide-react';
 import type { HelpVideo } from '../../lib/help-videos.js';
 import { useUi } from '../../store.js';
 import type { ReleaseNote } from '@zana-ai/zcc-domain/product';
 import { HelpReleaseNotesSection, ReleaseNotesBrowser } from './HelpReleaseNotes.js';
 import { useHelp } from './HelpProvider.js';
 import { useHelpVideos } from './help-videos-store.js';
+import { useTutorialDiscovery } from './useTutorialDiscovery.js';
 import '../../styles/contextual-help.css';
 import './help-menu.css';
 
@@ -25,15 +26,18 @@ function categoryPresentation(group: string) {
  * stays highlighted while hints are on), then the video catalogue and the
  * other ways to learn the app.
  */
-export function HelpMenu() {
+export function HelpMenu({ discoveryEnabled = false }: { discoveryEnabled?: boolean }) {
   const { enabled, setEnabled } = useHelp();
   const watched = useHelpVideos((s) => s.watched);
   const openVideos = useHelpVideos((s) => s.open);
   const videos = useHelpVideos((s) => s.videos);
   const refreshVideos = useHelpVideos((s) => s.refresh);
+  const libraryOpen = useHelpVideos((s) => s.openId !== null);
   const [open, setOpen] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [releaseNotes, setReleaseNotes] = useState<ReleaseNote[] | null>(null);
+  const discovery = useTutorialDiscovery(discoveryEnabled && !open && !releaseNotes);
+  const discoveryId = useId();
   const categoryId = useId();
   const grouped = new Map<string, HelpVideo[]>();
   for (const video of videos) {
@@ -47,6 +51,8 @@ export function HelpMenu() {
   const trigger = useRef<HTMLButtonElement>(null);
   const popover = useRef<HTMLDivElement>(null);
 
+  useEffect(() => { if (libraryOpen) discovery.dismiss(); }, [libraryOpen, discovery.dismiss]);
+
   useEffect(() => {
     if (!open) return;
     void refreshVideos();
@@ -59,6 +65,7 @@ export function HelpMenu() {
   }, [open, refreshVideos]);
 
   const close = () => { setOpen(false); trigger.current?.focus(); };
+  const dismissDiscovery = () => { discovery.dismiss(); trigger.current?.focus(); };
   // Focus the trigger first so a dialog opened by the action returns there.
   const run = (action: () => void) => { setOpen(false); trigger.current?.focus(); action(); };
   const onKeyDown = (event: KeyboardEvent) => {
@@ -73,14 +80,37 @@ export function HelpMenu() {
 
   return (
     <>
-      <div className="help-menu" ref={root} onKeyDown={open ? onKeyDown : undefined}
+      <div className="help-menu" ref={root} onKeyDown={open ? onKeyDown : discovery.visible ? (event) => {
+        if (event.key === 'Escape') { event.stopPropagation(); dismissDiscovery(); }
+      } : undefined}
         onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }}>
         <button ref={trigger} type="button" data-help-toggle="titlebar" data-testid="titlebar-help-toggle"
           className={`titlebar-help${enabled ? ' is-active' : ''}${open ? ' is-open' : ''}`}
           aria-label="Help" aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? 'help-menu-popover' : undefined}
-          title="Help, videos and page hints" onClick={() => { setOpen((value) => !value); setExpandedCategory(null); }}>
+          aria-describedby={discovery.visible ? discoveryId : undefined}
+          title="Help, videos and page hints" onClick={() => { discovery.dismiss(); setOpen((value) => !value); setExpandedCategory(null); }}>
           <CircleHelp size={15} aria-hidden="true" />
+          {discovery.visible && <span className="help-discovery-dot" aria-hidden="true" />}
         </button>
+        {discovery.visible && <>
+          <span className="help-discovery-pointer" aria-hidden="true" />
+          <section className="help-tutorial-discovery" aria-label="Discover video tutorials">
+            <div className="help-tutorial-discovery-eyebrow">
+              <Video size={16} aria-hidden="true" /><span>Learn at your own pace</span>
+              <button type="button" className="help-tutorial-discovery-dismiss" aria-label="Dismiss tutorial hint" onClick={dismissDiscovery}>
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
+            <h2>Learn Zana in a few minutes</h2>
+            <p id={discoveryId}>Short video tutorials for projects, Squads and Agentforce. Find them any time under <span className="help-tutorial-discovery-anchor">?</span>.</p>
+            <div className="help-tutorial-discovery-actions">
+              <button type="button" className="settings-btn primary" onClick={() => { dismissDiscovery(); openVideos(); }}>
+                <Play size={13} aria-hidden="true" /> Watch tutorials
+              </button>
+              <button type="button" className="help-tutorial-discovery-later" onClick={dismissDiscovery}>Not now</button>
+            </div>
+          </section>
+        </>}
         {open && (
           <div className="help-menu-popover" id="help-menu-popover" ref={popover} role="dialog" tabIndex={-1} aria-label="Help">
             <button type="button" role="switch" aria-checked={enabled} className="help-menu-row" data-testid="help-hints-switch"
@@ -91,7 +121,7 @@ export function HelpMenu() {
             </button>
             <div className="help-menu-separator" />
             <div className="help-menu-heading">
-              <span>Watch</span>
+              <span>Video tutorials</span>
               <button type="button" className="help-menu-all" onClick={() => run(() => openVideos())}>
                 All videos <ArrowRight size={12} aria-hidden="true" />
               </button>

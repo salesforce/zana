@@ -273,6 +273,28 @@ it('shares Help between the titlebar and navigation and clears exploration on qu
   expect(toggle.className).not.toContain('is-active');
   expect(screen.queryByTestId('mobile-help-toggle')).toBeNull();
 });
+it('offers tutorial discovery only after configuration and onboarding finish on a full-size window', async () => {
+  const { useOnboarding } = await import('./components/onboarding/onboarding-store.js');
+  const onboarding = useOnboarding.getState();
+  const configLoaded = store.useData.getState().configLoaded;
+  fixtures.compact = false;
+  store.useData.setState({ configLoaded: false });
+  useOnboarding.setState({ loaded: true, open: true });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  try {
+    expect(screen.queryByRole('region', { name: 'Discover video tutorials' })).toBeNull();
+    act(() => { store.useData.setState({ configLoaded: true }); });
+    expect(screen.queryByRole('region', { name: 'Discover video tutorials' })).toBeNull();
+    act(() => { useOnboarding.setState({ open: false }); });
+    await screen.findByRole('region', { name: 'Discover video tutorials' });
+    fixtures.compact = true;
+    view.rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.queryByRole('region', { name: 'Discover video tutorials' })).toBeNull();
+  } finally {
+    view.unmount(); fixtures.compact = false;
+    useOnboarding.setState(onboarding); store.useData.setState({ configLoaded });
+  }
+});
 it.each([0, 2, 105])('shares the mobile Help state and closes navigation for %s unread notifications', unread => {
   fixtures.compact = true; fixtures.unread = unread;
   const notifications = vi.fn(); store.useUi.setState({ toggleNotificationsDrawer: notifications });
