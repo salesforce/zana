@@ -15,6 +15,7 @@ import { LAUNCH_REVIEW_REQUIRED_MESSAGE, type LaunchApproval } from '@zana-ai/zc
 import { MAX_EXECUTION_PLAN_BYTES, validOutputDeclaration } from './contracts.js';
 import { assembledResultProjection } from './projection.js';
 import { answerReceipt } from './answer-receipt.js';
+import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS } from './loop-constants.js';
 
 const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
@@ -57,7 +58,10 @@ const workUnitSchema = z.strictObject({
   }).optional(),
   output: z.unknown().refine(validOutputDeclaration, { message: 'invalid bounded output declaration' }).optional(),
   loop: z.strictObject({
-    version: z.literal(1), fixUnitId: z.string().min(1).max(2048), until: z.literal('PASS'), max: z.number().int().min(1).max(5)
+    version: z.literal(1),
+    fixUnitId: z.string().min(1).max(2048),
+    until: z.literal('PASS'),
+    max: z.number().int().min(LOOP_MIN_ROUNDS).max(LOOP_MAX_ROUNDS)
   }).optional()
 });
 const executionStartSchema = z.strictObject({

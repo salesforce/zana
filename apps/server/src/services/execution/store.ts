@@ -39,6 +39,7 @@ import {
   type RouteFitProposalV1,
   type WorkOutputDeclarationV1
 } from './contracts.js';
+import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS } from './loop-constants.js';
 
 export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
 /** States an execution never leaves. BLOCKED is not terminal: it can resume. */
@@ -942,7 +943,7 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
 function validWorkUnitLoop(value: unknown): value is WorkUnitLoopV1 {
   const loop = value as Partial<WorkUnitLoopV1> | null;
   return !!loop && typeof loop === 'object' && loop.version === 1 && loop.until === 'PASS' && validString(loop.fixUnitId)
-    && Number.isInteger(loop.max) && loop.max! >= 1 && loop.max! <= 5;
+    && Number.isInteger(loop.max) && loop.max! >= LOOP_MIN_ROUNDS && loop.max! <= LOOP_MAX_ROUNDS;
 }
 
 function validWorkUnitRequirements(value: unknown): value is WorkUnitRequirementsV1 {
@@ -1023,7 +1024,7 @@ function blockReviewAtLimit(record: ExecutionRecord, review: ExecutionWorkUnit, 
 /**
  * Apply a loop review unit's verdict inside the completing mutation: PASS completes a never-run
  * fix unit as not needed, CHANGES below the bound releases the fix unit, CHANGES at the bound
- * blocks the review unit with a human blocker (#583). Returns an event summary when the loop moved.
+ * blocks the review unit with a human blocker (#583). Returns an event summary when the loop blocks at the bound.
  */
 export function applyLoopVerdict(record: ExecutionRecord, review: ExecutionWorkUnit, verdict: WorkUnitLoopVerdict, timestamp: number): string | undefined {
   const fix = findUnit(record, review.loop!.fixUnitId);
@@ -1040,7 +1041,7 @@ export function applyLoopVerdict(record: ExecutionRecord, review: ExecutionWorkU
     return `Review loop ${review.id} reached its limit of ${loopBound(review)} rounds; blocked`;
   }
   if (fix.state === 'COMPLETED') reopenUnit(fix, timestamp, `round ${review.loopRound ?? 1} said CHANGES`);
-  return undefined;
+  return `Review loop ${review.id} round ${review.loopRound ?? 1}: CHANGES; reopened ${fix.id}`;
 }
 
 /** Retry at the loop limit: one more round, the review keeps its CHANGES verdict and the fix unit runs again. */
@@ -1055,7 +1056,9 @@ function grantLoopRound(record: ExecutionRecord, review: ExecutionWorkUnit, time
   review.loopExtraRounds = (review.loopExtraRounds ?? 0) + 1;
   review.state = 'COMPLETED';
   review.history.push({ action: 'retried', attempt: review.attempt, at: timestamp, detail: 'one more review round granted' });
-  reopenUnit(findUnit(record, review.loop!.fixUnitId), timestamp, 'extra review round granted');
+  const fix = findUnit(record, review.loop!.fixUnitId);
+  reopenUnit(fix, timestamp, 'extra review round granted');
+  fix.state = 'PENDING';
   record.state = record.blockers?.some((blocker) => !blocker.resolved) ? 'BLOCKED' : 'RUNNING';
   deriveReadiness(record, true);
 }

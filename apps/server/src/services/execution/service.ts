@@ -1777,9 +1777,14 @@ export class ExecutionService {
   ): Promise<void> {
     this.fireHumanBlocker(record, blocker);
     // The Inbox entry goes first so a failing coordinator wake cannot keep the blocker from the person.
-    void this.appendHumanBlockerNotice(record, blocker, questionData).catch((err) => {
-      console.error('Failed to append linked inbox entry for execution blocker', err);
-    });
+    try {
+      await this.appendHumanBlockerNotice(record, blocker, questionData);
+    } catch (error) {
+      (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(
+        `execution human-blocker inbox append failed for ${record.id}/${workUnitId}/${blocker.id}`,
+        error
+      );
+    }
     await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration });
   }
 

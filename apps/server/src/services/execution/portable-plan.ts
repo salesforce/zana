@@ -1,4 +1,5 @@
 import type { ExecutionWorkUnitInput, WorkUnitLoopV1 } from './store.js';
+import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, LOOP_RANGE_TEXT } from './loop-constants.js';
 
 /**
  * Deterministic parser for the portable-executable Markdown plan format so a
@@ -197,9 +198,9 @@ const KNOWN_LABELS = [
   'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires', 'loop'
 ] as const;
 
-/** `<unit-id> until PASS, max <N>` (N 1-5); a trailing sentence period is tolerated like other label values. */
-const LOOP_GRAMMAR = /^\s*([a-z0-9][a-z0-9-]*)\s+until\s+PASS,\s*max\s+([1-5])\s*\.?\s*$/i;
-const LOOP_EXPECTED = 'expected "Loop: <unit-id> until PASS, max <N>" with N from 1 to 5';
+/** `<unit-id> until PASS, max <N>` (N in LOOP_MIN_ROUNDS..LOOP_MAX_ROUNDS); a trailing sentence period is tolerated like other label values. */
+const LOOP_GRAMMAR = new RegExp(`^\\s*([a-z0-9][a-z0-9-]*)\\s+until\\s+PASS,\\s*max\\s+([${LOOP_MIN_ROUNDS}-${LOOP_MAX_ROUNDS}])\\s*\\.?\\s*$`, 'i');
+const LOOP_EXPECTED = `expected "Loop: <unit-id> until PASS, max <N>" with N from ${LOOP_RANGE_TEXT}`;
 const isLoopKey = (key: string): boolean => key === 'loop' || nearMissLabel(key) === 'loop';
 
 function editDistance(a: string, b: string): number {

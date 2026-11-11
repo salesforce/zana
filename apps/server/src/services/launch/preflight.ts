@@ -18,6 +18,7 @@ import type { WorkUnitLoopV1, WorkUnitRequirementsV1 } from '../execution/store.
 import type { WorkOutputDeclarationV1 } from '../execution/contracts.js';
 import { canonicalJson, LOOP_VERDICT_OUTPUT, validOutputDeclaration } from '../execution/contracts.js';
 import { evaluateSlotEligibility, LEVEL_UNMET_REASON, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
+import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, LOOP_RANGE_TEXT } from '../execution/loop-constants.js';
 
 export type AdmissionCheckStatus = 'PASS' | 'FAIL' | 'SKIPPED' | 'UNKNOWN';
 
@@ -445,8 +446,8 @@ function loopGateCycle(units: readonly AdmissionWorkUnitInput[]): string | undef
 function normalizeLoop(loop: WorkUnitLoopV1 | undefined, unitId: string): WorkUnitLoopV1 | undefined {
   if (loop === undefined) return undefined;
   if (!loop || typeof loop !== 'object' || loop.version !== 1 || loop.until !== 'PASS' || typeof loop.fixUnitId !== 'string'
-    || !loop.fixUnitId.trim() || !Number.isInteger(loop.max) || loop.max < 1 || loop.max > 5) {
-    throw new PlanValidationError('dag', `invalid loop on work unit ${unitId} (expected a fix unit, until PASS, max 1 to 5)`);
+    || !loop.fixUnitId.trim() || !Number.isInteger(loop.max) || loop.max < LOOP_MIN_ROUNDS || loop.max > LOOP_MAX_ROUNDS) {
+    throw new PlanValidationError('dag', `invalid loop on work unit ${unitId} (expected a fix unit, until PASS, max ${LOOP_RANGE_TEXT})`);
   }
   return { version: 1, fixUnitId: boundedString(loop.fixUnitId, 'loop fix unit'), until: 'PASS', max: loop.max };
 }

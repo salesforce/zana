@@ -133,6 +133,13 @@ describe('REQ-6 CHANGES then fix reopens the review', () => {
     expect(unitOf(rec, 'f')).toMatchObject({ state: 'READY' });
     expect(unitOf(rec, 'f').history.some((h) => h.action === 'reopened')).toBe(true);
   }));
+
+  it('records an explicit loop event summary when CHANGES reopens the fix unit', async () => fixture(async (filePath) => {
+    const { store, id } = await start(filePath, plan(3));
+    await complete(store, id, 'r', { verdict: 'CHANGES' });
+    const events = (await store.events('session-1', 'project-1', id)).events;
+    expect(events.at(-1)?.summary).toContain('Review loop r round 1: CHANGES; reopened f');
+  }));
 });
 
 describe('REQ-7 stale round refused', () => {
@@ -200,6 +207,21 @@ describe('REQ-9 limit blocker and Retry', () => {
     expect(unitOf(rec, 'r').state).toBe('BLOCKED'); // 1 + 1 extra = 2 rounds, now exhausted again
   }));
 
+  it('Retry keeps the fix unit blocked by unfinished dependencies', async () => fixture(async (filePath) => {
+    const units: ExecutionWorkUnitInput[] = [
+      { id: 'r', title: 'Review', task: 'Review', dependencies: [], readOnly: true, loop: { version: 1, fixUnitId: 'f', until: 'PASS', max: 1 }, output: LOOP_VERDICT_OUTPUT },
+      { id: 'x', title: 'Prereq', task: 'Prereq', dependencies: [], readOnly: true },
+      { id: 'f', title: 'Fix', task: 'Fix', dependencies: ['r', 'x'], readOnly: true }
+    ];
+    const { store, id } = await start(filePath, units);
+    let rec = (await store.get(id))!;
+    rec = await store.claimWork(id, rec.stateVersion, worker, 'x');
+    await complete(store, id, 'r', { verdict: 'CHANGES' });
+    rec = (await store.get(id))!;
+    rec = await store.retryWork(id, rec.stateVersion, lead, 'r');
+    expect(unitOf(rec, 'f').state).toBe('PENDING');
+  }));
+
   it('Retry leaves an unrelated open blocker on the review unit alone', async () => fixture(async (filePath) => {
     const { store, id } = await start(filePath, plan(1));
     await complete(store, id, 'r', { verdict: 'CHANGES' });
@@ -259,6 +281,65 @@ describe('REQ-9 service side effects at the limit', () => {
     expect(after.coordinatorWakes?.[0]?.message).toContain('HUMAN_BLOCKER');
     const appended = [...inbox.append.mock.calls, ...inbox.appendOnce.mock.calls].flat();
     expect(appended).toContainEqual(expect.objectContaining({ executionId: 'execution-1', blockerId: expect.stringMatching(/^loop-limit:/) }));
+  }));
+
+  it('awaits Inbox append before the coordinator wake', async () => fixture(async (filePath) => {
+    let releaseAppend: (() => void) | undefined;
+    const inbox = {
+      append: vi.fn(() => new Promise((resolve) => { releaseAppend = () => resolve({ id: 'inbox-1' }); })),
+      appendOnce: undefined
+    };
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService({
+      store, inbox,
+      artifacts: createExecutionArtifactStore({ filePath: `${filePath}.artifacts`, id: () => 'artifact-1' }),
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [] } } }),
+      launchTeam: async () => ({ ok: true }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] }),
+      cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
+      replyToSession: () => false,
+      resolveExactNativeRecoverySnapshots: (record: ExecutionRecord) => record.nativeRecoverySnapshots ?? []
+    } as never);
+    await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Loop', slots: [{ initialTask: 'x' }] });
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, plan(1));
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'r');
+    const unit = unitOf(record, 'r');
+    const binding = { executionId: record.id, projectId: record.projectId, role: 'worker' as const, slotId: 'slot-1', principalId: 'worker-1' };
+    const completion = service.completeWork(binding, 'r', 'changes found', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true, { verdict: 'CHANGES' });
+    await vi.waitFor(() => expect(inbox.append).toHaveBeenCalledTimes(1));
+    expect(((await store.get('execution-1'))!).coordinatorWakes ?? []).toHaveLength(0);
+    if (!releaseAppend) throw new Error('append was not called');
+    releaseAppend();
+    await completion;
+    expect(((await store.get('execution-1'))!).coordinatorWakes?.[0]?.message).toContain('HUMAN_BLOCKER');
+  }));
+
+  it('logs inbox-append failures with execution, unit and blocker ids and still wakes coordinator', async () => fixture(async (filePath) => {
+    const logError = vi.fn();
+    const inbox = { append: vi.fn(async () => { throw new Error('inbox down'); }), appendOnce: undefined };
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService({
+      store, inbox, logError,
+      artifacts: createExecutionArtifactStore({ filePath: `${filePath}.artifacts`, id: () => 'artifact-1' }),
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [] } } }),
+      launchTeam: async () => ({ ok: true }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] }),
+      cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
+      replyToSession: () => false,
+      resolveExactNativeRecoverySnapshots: (record: ExecutionRecord) => record.nativeRecoverySnapshots ?? []
+    } as never);
+    await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Loop', slots: [{ initialTask: 'x' }] });
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, plan(1));
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'r');
+    const unit = unitOf(record, 'r');
+    const binding = { executionId: record.id, projectId: record.projectId, role: 'worker' as const, slotId: 'slot-1', principalId: 'worker-1' };
+    await service.completeWork(binding, 'r', 'changes found', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true, { verdict: 'CHANGES' });
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('execution human-blocker inbox append failed for execution-1/r/loop-limit:'), expect.any(Error));
+    expect(((await store.get('execution-1'))!).coordinatorWakes?.[0]?.message).toContain('HUMAN_BLOCKER');
   }));
 });
 
