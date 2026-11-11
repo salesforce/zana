@@ -138,13 +138,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Electron needs a display + Chromium shared libs; xvfb-run supplies a
-      # virtual X server and playwright's installer pulls the libs.
-      - name: Install system deps for headless Electron
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          npx playwright install-deps chromium
+      # Hosted runners already include Xvfb and Electron's shared libraries.
+      # Validate them without making the app smoke depend on font downloads.
+      - name: Check system deps for headless Electron
+        run: node scripts/check-electron-linux-deps.mjs
 
       # ubuntu-24.04 (ubuntu-latest) sets
       # kernel.apparmor_restrict_unprivileged_userns=1, which blocks Chromium's
