@@ -15,6 +15,7 @@ vi.mock('./shared-product-registration.js', () => ({
 }));
 vi.mock('./ctx.js', () => ({ ctx: {
   scheduler: { get: h.get, on: vi.fn() },
+  safeHandleFromWindow: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler),
   ptys: { list: h.list },
   createInteractiveTerminal: h.create, logMainError: h.logMainError,
   goals: { on: vi.fn() }, followups: { on: vi.fn() }, feedStore: { on: vi.fn() },

@@ -429,6 +429,8 @@ function httpProduct(): Pick<
       delete: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       setEnabled: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       runNow: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
+      previewTeamLaunch: async () => ({ ok: false, code: 'unavailable', message: 'scheduled Squad review requires the desktop app' }),
+      runReviewedTeamNow: async () => ({ ok: false, code: 'unavailable', message: 'scheduled Squad review requires the desktop app' }),
       queryRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       retryRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       resumeRun: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),

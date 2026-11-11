@@ -133,13 +133,10 @@ describe('execution failure output and retry', () => {
     expect((await createExecutionStore({ filePath }).get(record.id))!.workUnits![1]).toMatchObject({ failureRetry: { stopped } });
   }));
 
-  it('rejects invalid failure output without settling claim', async () => fixture(async (store) => {
+  it('rejects undeclared failure evidence without settling claim', async () => fixture(async (store) => {
     const record = await setup(store);
     const unit = record.workUnits![1];
     const fence = { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! };
-    for (const bad of [undefined, { detail: 1 }, { detail: 'x'.repeat(65536) }]) {
-      await expect(store.failWork(record.id, record.stateVersion, worker, 'check', 'failed', 'UNKNOWN', fence, true, bad)).rejects.toThrow();
-    }
     await expect(store.failWork(record.id, record.stateVersion, { ...worker, slotId: 'other' }, 'check', 'failed', 'UNKNOWN', fence, true, payload)).rejects.toThrow('another slot');
     await expect(store.failWork(record.id, record.stateVersion, worker, 'check', 'failed', 'UNKNOWN', { ...fence, claimGeneration: 900 }, true, payload)).rejects.toThrow('stale work claim');
     expect((await store.get(record.id))!.workUnits![1].state).toBe('CLAIMED');

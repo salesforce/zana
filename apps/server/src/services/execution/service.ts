@@ -53,6 +53,13 @@ const STALLED_WORKER_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.STALLED;
 const DEAD_WORKER_PROCESSES = new Set(['exited', 'spawn-failed', 'canceled']);
 const TELEMETRY_GAP_GRACE_SAMPLES = 3;
 class NamedCheckAdmissionError extends Error {}
+const MAX_NAMED_CHECK_FAILURE_OUTPUT_CHARS = 4_000;
+
+class NamedCheckFailureError extends Error {
+  constructor(reference: string, readonly receipt?: ExecutionCheckResultV1) {
+    super(`CHECK_FAILED: ${reference}`);
+  }
+}
 
 /**
  * Inner-agent liveness verdict, distinct from the outer `worker.process` shell state.
@@ -304,6 +311,8 @@ export interface ExecutionServiceDeps {
   resolveTeamModelSnapshots?: (projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'slots'>) => Promise<ResolvedModelSnapshotV1[]> | ResolvedModelSnapshotV1[];
   /** Main-only checkout preparation after execution identity is durable but before any slot spawns. */
   prepareSquadWorktree?: (record: ExecutionRecord, request: ExecutionRequestV1) => Promise<ExecutionRecord>;
+  /** Main-only reviewed generated-worktree base captured atomically with execution claim. */
+  resolveReviewedSquadWorktreeBase?: (projectId: string, request: ExecutionRequestV1) => Promise<ExecutionRecord['reviewedSquadWorktreeBase']> | ExecutionRecord['reviewedSquadWorktreeBase'];
   /**
    * Host-owned serialization for retained execution lifecycle effects. The generic
    * service invokes it before advancing a retained run into its next generation,
@@ -669,7 +678,6 @@ export function availabilityUnknownFromAdmission(admission: TeamAdmissionResultV
 const MAX_PLAN_CORRECTION_STOP_ATTEMPTS = 5;
 
 export class ExecutionService {
-  private checkLaneTail: Promise<void> = Promise.resolve();
   private runCheckCompletions = new Map<string, { controller: AbortController; pending: Promise<readonly string[]> }>();
   private checkCompletions = new Map<string, { executionId: string; workUnitId: string; claimId?: string; claimGeneration?: number; controller: AbortController; running?: Promise<ExecutionCheckResultV1>; pending: ReturnType<ExecutionService['completeWorkChecked']> }>();
   private readonly starting = new Map<string, number>();
@@ -794,6 +802,7 @@ export class ExecutionService {
     const effectivePolicy = withDurableClaimWallClockBackstop(request.coordinationMode, request.policy);
     let claim;
     try {
+      const reviewedSquadWorktreeBase = await this.deps.resolveReviewedSquadWorktreeBase?.(projectId, request);
       claim = await this.deps.store.claim({
         callerPrincipalId, projectId, teamId: request.teamId, launchKind: request.launchKind ?? 'team',
         ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), jobTitle, summary,
@@ -801,6 +810,7 @@ export class ExecutionService {
         ...(request.origin ? { origin: request.origin } : {}),
         ...(opts?.proposal ? { proposal: opts.proposal } : {}),
         ...(opts?.reportTo ? { reportTo: opts.reportTo } : {}),
+        ...(reviewedSquadWorktreeBase ? { reviewedSquadWorktreeBase } : {}),
         launchRequestId: request.launchRequestId,
         resolveNamedChecks: (launch) => this.resolveChecks(projectId, [...(request.workUnits ?? []).flatMap(unit => unit.checks ?? []), ...launch.checks.value]),
         ...(this.deps.resolveLaunchOptions ? { resolveLaunchOptions: () => this.deps.resolveLaunchOptions!(projectId, request) } : {}),
@@ -1740,8 +1750,15 @@ export class ExecutionService {
     }
   }
 
-  completeWork(binding: ExecutionCohortBinding, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown) {
-    const key = JSON.stringify([binding.executionId, workUnitId, binding.role, binding.slotId, binding.principalId, binding.authorizationId, claim?.claimId, claim?.claimGeneration]);
+  async completeWork(binding: ExecutionCohortBinding, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown) {
+    const record = await this.getBound(binding);
+    const unit = record?.workUnits?.find((candidate) => candidate.id === workUnitId);
+    // Only named checks need a retained completion and runner drain. Check-free
+    // outcomes must not consume this bounded runner queue.
+    if (!record || !unit || !workCheckReferences(record, unit).length) {
+      return this.completeWorkChecked(binding, workUnitId, result, claim, requireClaim, structuredResult);
+    }
+    const key = JSON.stringify([binding.executionId, workUnitId, binding.role, binding.slotId, binding.principalId, binding.authorizationId, claim?.claimId, claim?.claimGeneration, result, structuredResultIdentity(structuredResult)]);
     const existing = this.checkCompletions.get(key);
     if (existing) return existing.pending;
     if (this.checkCompletions.size >= 100) return Promise.resolve(invalidBound(new Error('Too many pending work completions')));
@@ -1763,27 +1780,11 @@ export class ExecutionService {
     } catch (error) { throw new NamedCheckAdmissionError(error instanceof Error ? error.message : 'Named check resolution failed'); }
   }
 
-  /** Service-wide lane keeps runner capacity failures out of work failure budgets. */
+  /** Runner owns concurrency bounds; service must not serialize unrelated executions. */
   private async runCheckInLane(record: ExecutionRecord, reference: string, signal?: AbortSignal): Promise<ExecutionCheckResultV1> {
-    const previous = this.checkLaneTail;
-    let release!: () => void;
-    const held = new Promise<void>(resolve => { release = resolve; });
-    this.checkLaneTail = previous.then(() => held);
-    let abortWaiting: (() => void) | undefined;
-    try {
-      await Promise.race([previous, new Promise<never>((_resolve, reject) => {
-        abortWaiting = () => reject(new Error('Named check cancelled'));
-        signal?.addEventListener('abort', abortWaiting, { once: true });
-        if (signal?.aborted) abortWaiting();
-      })]);
-      if (abortWaiting) signal?.removeEventListener('abort', abortWaiting);
-      if (signal?.aborted) throw new Error('Named check cancelled');
-      if (!this.deps.runNamedCheck) throw new Error('Named check runner unavailable');
-      return await this.deps.runNamedCheck(record, reference, signal);
-    } finally {
-      if (abortWaiting) signal?.removeEventListener('abort', abortWaiting);
-      release();
-    }
+    if (signal?.aborted) throw new Error('Named check cancelled');
+    if (!this.deps.runNamedCheck) throw new Error('Named check runner unavailable');
+    return this.deps.runNamedCheck(record, reference, signal);
   }
 
   private async completionChecks(record: ExecutionRecord): Promise<readonly string[]> {
@@ -1802,7 +1803,7 @@ export class ExecutionService {
         if (controller.signal.aborted) throw new Error('Named check cancelled');
         const live = await this.deps.store.get(record.id);
         if (!live || isTerminalExecutionState(live.state) || live.attempt !== record.attempt || live.stateVersion !== record.stateVersion) throw new Error('stale execution state');
-        if (!checked || checked.name !== reference.slice(6) || checked.status !== 'passed' || checked.exitCode !== 0 || checked.untrusted !== true || typeof checked.output !== 'string') throw new Error(`CHECK_FAILED: ${reference}`);
+        if (!checked || checked.name !== reference.slice(6) || checked.status !== 'passed' || checked.exitCode !== 0 || checked.untrusted !== true || typeof checked.output !== 'string') throw new NamedCheckFailureError(reference, checked);
       }
       return references;
     })();
@@ -2671,7 +2672,11 @@ export class ExecutionService {
     if (!current) return deniedBound('execution not found for bound cohort');
     let passedChecks: readonly string[];
     try { passedChecks = await this.completionChecks(current); }
-    catch (error) { return { ok: false as const, code: error instanceof Error && error.message.startsWith('CHECK_FAILED:') ? 'CHECK_FAILED' : 'INVALID', message: error instanceof Error ? error.message : String(error) }; }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith('CHECK_FAILED:')) await this.failNoDagCheckCompletion(current, namedCheckFailureSummary(error));
+      return { ok: false as const, code: message.startsWith('CHECK_FAILED:') ? 'CHECK_FAILED' : 'INVALID', message };
+    }
     const result = await this.mutateBound(binding, (record) => {
       if (passedChecks.length && record.stateVersion !== current.stateVersion) throw new Error('stale execution state');
       return this.deps.store.completeExecution(record.id, record.stateVersion, summary, evidence.artifacts, this.deps.routeFitObserveEnabled?.() === true, passedChecks);
@@ -3369,7 +3374,31 @@ export class ExecutionService {
       await this.teardownCompleted(completed);
       return { ok: true as const, value: completed };
     } catch (error) {
-      return { ok: false as const, code: error instanceof Error && error.message.startsWith('CHECK_FAILED:') ? 'CHECK_FAILED' : 'CONFLICT', message: error instanceof Error ? error.message : String(error) };
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith('CHECK_FAILED:')) await this.failNoDagCheckCompletion(record, namedCheckFailureSummary(error));
+      return { ok: false as const, code: message.startsWith('CHECK_FAILED:') ? 'CHECK_FAILED' : 'CONFLICT', message };
+    }
+  }
+
+  /** A global check failure is terminal for a no-DAG run, not an active retry loop. */
+  private async failNoDagCheckCompletion(record: ExecutionRecord, message: string): Promise<void> {
+    const current = await this.deps.store.get(record.id);
+    if (!current || current.workUnits?.length || isTerminalExecutionState(current.state)) return;
+    try {
+      const evidence = await this.terminalEvidence(current);
+      const failed = await this.deps.store.failExecution(
+        current.id,
+        current.stateVersion,
+        message,
+        evidence.artifacts,
+        this.deps.routeFitObserveEnabled?.() === true
+      );
+      await this.cleanupTerminal(failed);
+      await this.deps.cancelTeamLaunch(failed.callerPrincipalId, failed.teamLaunchRequestId);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'stale execution state') {
+        this.deps.logError?.(`execution no-DAG check failure persistence failed for ${record.id}`, error);
+      }
     }
   }
 
@@ -4198,6 +4227,21 @@ function invalidBound(error: unknown) {
 
 function terminalBound(record: ExecutionRecord) {
   return { ok: false as const, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
+}
+
+/** Bounded canonical identity prevents distinct structured receipts sharing a check run. */
+function structuredResultIdentity(value: unknown): string {
+  const bounded = validateStructuredJson(value);
+  return bounded.ok
+    ? `sha256:${createHash('sha256').update(bounded.canonical).digest('hex')}`
+    : `<invalid:${bounded.reason}>`;
+}
+
+/** Store has no run-level check receipt field; retain bounded untrusted evidence in final summary. */
+function namedCheckFailureSummary(error: unknown): string {
+  if (!(error instanceof NamedCheckFailureError) || !error.receipt) return error instanceof Error ? error.message : String(error);
+  const { name, status, exitCode, output } = error.receipt;
+  return `${error.message}\n\nNamed check receipt (untrusted): ${name} status=${status} exitCode=${exitCode}\n${output.slice(0, MAX_NAMED_CHECK_FAILURE_OUTPUT_CHARS)}`;
 }
 
 /** One line per review loop the recovery splits (one half finished): it continues as plain units, so say so. */

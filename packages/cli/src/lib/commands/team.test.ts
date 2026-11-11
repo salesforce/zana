@@ -51,6 +51,15 @@ describe('team project and terminal result contracts', () => {
     const result = await runCli([...launch, '--project', 'p1'], { fetchImpl: router({ 'POST /api/v1/teams/preview': trustedPreview, 'POST /api/v1/teams/launch': { ok: true, value: { ...launched.value, path: '/repo/.worktrees/actual', branch: 'actual' } } }) });
     expect(result.stdout).toContain('actual — /repo/.worktrees/actual');
   });
+  it('shows generated worktree base in preview diagnostics', async () => {
+    const events: string[] = [];
+    const preview = { ...trustedPreview, value: { ...trustedPreview.value, location: { kind: 'new-worktree' as const, projectId: 'p1', baseBranch: 'release/2.6', isolationSource: 'launch' as const }, path: undefined, branch: undefined } };
+    const result = await runTeamCommand('launch', ['--team', 't1', '--project', 'p1', '--goal', 'ship'], false, {
+      onStderr: text => events.push(text), fetchImpl: router({ 'POST /api/v1/teams/preview': preview, 'POST /api/v1/teams/launch': launched })
+    });
+    expect(result?.exitCode).toBe(0);
+    expect(events[0]).toContain('New worktree from release/2.6 (path assigned at launch)');
+  });
   it('forwards all launch policies and branch-only target, preserving false', async () => {
     const seen: unknown[] = [];
     const result = await runCli([...launch, '--project', 'p1', '--worktree=false', '--on-complete', 'leave', '--push=false', '--check', 'unit', '--check', 'lint', '--failure-policy-default', 'fail-run', '--target', 'worktree:feature/x'], {

@@ -27,4 +27,12 @@ describe('named checks search entries', () => {
       expect(searchSettings(query, snapshot, { entries, providers: [] })).toEqual([]);
     }
   });
+
+  it('describes same check-name rules enforced by owner settings', () => {
+    const entries = [...globalEntries, ...projectEntries].filter((entry) => entry.anchor === 'named-checks');
+    for (const entry of entries) {
+      expect(entry.help).toContain('start with a letter or underscore');
+      expect(entry.help).not.toContain('numbers, dots, underscores');
+    }
+  });
 });

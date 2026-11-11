@@ -135,6 +135,9 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
   const launchOptions = assignment.kind === 'team'
     ? launchOptionsSchema.safeParse(r.launchOptions)
     : undefined;
+  const launchOptionsError = assignment.kind === 'team' && r.launchOptions !== undefined && !launchOptions?.success
+    ? 'Saved Squad launch settings are invalid. Replace them before resuming this goal.'
+    : undefined;
   const goal: Goal = {
     id: r.id,
     projectId: r.projectId,
@@ -145,6 +148,7 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
     driver,
     assignment,
     ...(launchOptions?.success ? { launchOptions: launchOptions.data } : {}),
+    ...(launchOptionsError ? { launchOptionsError } : {}),
     cadence: sanitizeCadence(r.cadence),
     maxIterations:
       typeof r.maxIterations === 'number' && r.maxIterations > 0
@@ -168,5 +172,6 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
   // operator can edit them; an active one is demoted to paused because it
   // cannot launch. Create/update still require teamId (goal-manager).
   if (goal.assignment.kind === 'team' && !goal.assignment.teamId && goal.status === 'active') goal.status = 'paused';
+  if (launchOptionsError && !['achieved', 'exhausted', 'escalated', 'cancelled'].includes(goal.status)) goal.status = 'paused';
   return goal;
 }

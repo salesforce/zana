@@ -117,10 +117,12 @@ export function ScheduleInfoPanel({
     const result = await product.scheduler.setEnabled(task.id, !task.enabled);
     if (!result.ok) pushToast(result.message, 'error');
   };
-  const runNow = async (reviewed = false) => {
-    if (task.kind === 'team' && !reviewed) { setReviewLaunch(true); return; }
+  const runNow = async (previewToken?: string) => {
+    if (task.kind === 'team' && !previewToken) { setReviewLaunch(true); return; }
     setReviewLaunch(false);
-    const result = await product.scheduler.runNow(task.id);
+    const result = task.kind === 'team'
+      ? await product.scheduler.runReviewedTeamNow(task.id, previewToken!)
+      : await product.scheduler.runNow(task.id);
     if (!result.ok) {
       pushToast(`Run failed: ${result.message}`, 'error');
       return;
@@ -174,7 +176,7 @@ export function ScheduleInfoPanel({
 
   return (
     <div className="schedule-info-panel" data-testid="schedule-info-panel">
-      {reviewLaunch && <ScheduleLaunchReview task={task} onCancel={() => setReviewLaunch(false)} onConfirm={() => { void runNow(true); }} />}
+      {reviewLaunch && <ScheduleLaunchReview task={task} onCancel={() => setReviewLaunch(false)} onConfirm={(previewToken) => { void runNow(previewToken); }} />}
       {pending.length > 0 && <PendingWorkerRecovery key={task.id} kind="schedule" id={task.id} sessionIds={pending.flatMap(run => run.sessionId ? [run.sessionId] : [])} />}
       <section className="schedule-info-section">
         <h3>Status</h3>

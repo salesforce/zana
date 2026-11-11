@@ -16,6 +16,7 @@ vi.mock('../ipc/shared-product-registration.js', () => ({
 }));
 vi.mock('../ipc/ctx.js', () => ({ ctx: {
   scheduler: { on: vi.fn() }, goals: { list: ipc.goalsList, on: vi.fn() }, ptys: { list: ipc.ptysList },
+  safeHandleFromWindow: (channel: string, handler: (...args: unknown[]) => unknown) => ipc.handlers.set(channel, handler),
   createInteractiveTerminal: ipc.create, logMainError: ipc.logMainError,
   followups: { on: vi.fn() }, feedStore: { on: vi.fn() }, templates: { on: vi.fn() }, scheduleGroups: { on: vi.fn() }
 } }));

@@ -201,7 +201,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
   async function prepareSquadWorktree(
     initial: ExecutionRecord,
     request: { worktree?: boolean; onComplete?: 'leave' | 'merge' | 'delete'; target?: SquadExecutionTargetSelector },
-    reviewedBase?: { path: string; branch: string; head: string }
+    reviewedBase?: NonNullable<ExecutionRecord['reviewedSquadWorktreeBase']>
   ): Promise<ExecutionRecord> {
     return withSquadWorktreeLifecycleLock(initial.id, async () => {
       // Lifecycle lock precedes Git's existing worktree locks, avoiding inversion.
@@ -230,7 +230,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       if (preparation === 'reattach') return reattach(record, project, retainedWorktree);
       if (!project || !team) return record;
       if (preparation === 'project-root') return record;
-       return create(record, project, team, retainedWorktree, reviewedBase);
+       return create(record, project, team, retainedWorktree, reviewedBase ?? record.reviewedSquadWorktreeBase);
     });
   }
 
@@ -282,11 +282,18 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     const beforeCreate = await executionStore.get(record.id);
     if (!beforeCreate || beforeCreate.stateVersion !== record.stateVersion) return beforeCreate ?? record;
     if (beforeCreate.squadWorktree && beforeCreate.squadWorktree.branch !== branch) return beforeCreate;
+    const resolvesTo = (candidate: string, expected: string) => {
+      try {
+        return fs.realpathSync(candidate) === expected;
+      } catch {
+        return false;
+      }
+    };
     const assertReviewedBase = async () => {
       if (!reviewedBase) return;
       const root = fs.realpathSync(project.path);
       const entries = await git.listWorktrees?.(root);
-      const base = entries?.find(entry => fs.realpathSync(entry.path) === root);
+      const base = entries?.find(entry => resolvesTo(entry.path, root));
       if (root !== reviewedBase.path || !base || base.detached || base.branch !== reviewedBase.branch || base.head !== reviewedBase.head) throw new Error('Reviewed worktree base changed');
     };
     await assertReviewedBase();
@@ -302,7 +309,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     }
     if (reviewedBase) {
       await assertReviewedBase();
-      const generated = (await git.listWorktrees?.(project.path))?.find(entry => fs.realpathSync(entry.path) === path);
+      const generated = (await git.listWorktrees?.(project.path))?.find(entry => resolvesTo(entry.path, path));
       if (path !== fs.realpathSync(target) || created.branch !== branch || !generated || generated.detached || generated.branch !== branch || generated.head !== reviewedBase.head) throw new Error('Reviewed generated worktree changed');
     }
     const baseBranch = retainedWorktree?.baseBranch ?? (await git.getGitStatus(project.path))?.branch;

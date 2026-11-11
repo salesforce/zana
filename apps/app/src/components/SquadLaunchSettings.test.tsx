@@ -20,7 +20,7 @@ function Harness({ initial = {}, valid = vi.fn() }: { initial?: LaunchOptions; v
   return <SquadLaunchSettings teamId="team" projectId="p1" goal="goal" coordinationMode="structured" value={value} onChange={setValue} disabled={false} onValidityChange={valid} />;
 }
 function setup() { listProjects.mockResolvedValue([project]); listWorktrees.mockResolvedValue([]); }
-afterEach(() => { cleanup(); preview.mockReset(); listProjects.mockReset(); listWorktrees.mockReset(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); preview.mockReset(); listProjects.mockReset(); listWorktrees.mockReset(); });
 
 describe('SquadLaunchSettings', () => {
   it('shows trusted path and every readable resolved setting; preview token stays private', async () => {
@@ -34,6 +34,23 @@ describe('SquadLaunchSettings', () => {
     expect(launchPreview.textContent).toContain('lint (Default)');
     expect(launchPreview.textContent).toContain('Fail run (Default)');
     expect(screen.queryByText('secret')).toBeNull();
+  });
+
+  it('invalidates approval immediately and debounces an expensive preview', async () => {
+    vi.useFakeTimers();
+    setup(); preview.mockResolvedValue(response());
+    const valid = vi.fn();
+    render(<Harness valid={valid} />);
+    expect(valid).toHaveBeenCalledWith(false);
+    expect(preview).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(preview).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(valid).toHaveBeenLastCalledWith(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Customize launch' }));
+    fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'true' } });
+    expect(valid).toHaveBeenLastCalledWith(false);
+    expect(preview).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 
   it('makes named checks editable from empty mode and preserves typing', () => {
@@ -115,11 +132,14 @@ describe('SquadLaunchSettings', () => {
   });
 
   it('rejects failed preview and ignores stale success after input changes', async () => {
+    vi.useFakeTimers();
     setup(); let first!: (value: ReturnType<typeof response>) => void;
     preview.mockImplementationOnce(() => new Promise((resolve) => { first = resolve; })).mockRejectedValueOnce(new Error('New preview failed'));
     const valid = vi.fn(); render(<Harness valid={valid} />);
+    await vi.advanceTimersByTimeAsync(250);
     fireEvent.click(screen.getByRole('button', { name: 'Customize launch' }));
     fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'true' } });
+    await vi.advanceTimersByTimeAsync(250);
     await vi.waitFor(() => expect(screen.getByRole('alert').textContent).toBe('New preview failed'));
     first(response());
     await vi.waitFor(() => expect(screen.getByRole('alert').textContent).toBe('New preview failed'));
@@ -127,8 +147,10 @@ describe('SquadLaunchSettings', () => {
   });
 
   it('invalidates pending preview after unmount', async () => {
+    vi.useFakeTimers();
     setup(); let resolve!: (value: ReturnType<typeof response>) => void;
     preview.mockImplementation(() => new Promise((done) => { resolve = done; })); const valid = vi.fn(); const view = render(<Harness valid={valid} />);
+    await vi.advanceTimersByTimeAsync(250);
     view.unmount(); resolve(response()); await Promise.resolve(); expect(valid).not.toHaveBeenCalledWith(true);
   });
 
@@ -160,6 +182,12 @@ describe('SquadLaunchSettings', () => {
     preview.mockResolvedValueOnce(response({ location: { kind: 'worktree', projectId: 'p1', branch: 'topic', ownership: 'user' }, branch: 'topic', path: '/trees/topic' }));
     render(<Harness />);
     await vi.waitFor(() => expect(screen.getByText('Location: topic at /trees/topic (user-owned)')).toBeTruthy());
+  });
+
+  it('falls back to HEAD when a project-root preview omits its branch', async () => {
+    setup(); preview.mockResolvedValue(response({ branch: undefined }));
+    render(<Harness />);
+    await vi.waitFor(() => expect(screen.getByText('Location: Project root (HEAD) at /project')).toBeTruthy());
   });
 
   it('renders readable resolved labels for schedule reuse', () => {

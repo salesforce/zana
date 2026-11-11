@@ -1,5 +1,6 @@
 import type { ExecutionWorkUnitInput, WorkUnitLoopV1 } from './store.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, LOOP_RANGE_TEXT } from './loop-constants.js';
+import { RETRY_CEILING } from './retry-feedback.js';
 
 /**
  * Deterministic parser for the portable-executable Markdown plan format so a
@@ -439,8 +440,8 @@ function parseFailurePolicy(labels: Map<string, string>, id: string): { ok: true
   const match = /^retry (.+?) up to (\d+) with feedback$/.exec(value);
   const stepId = match ? normalizeStepId(stripBackticks(match[1])) : '';
   const maxRetries = match ? positiveInteger(match[2]) : undefined;
-  if (!STEP_ID.test(stepId) || maxRetries === undefined) {
-    return { ok: false, reason: `step ${id} On failure must be "fail run" or "retry <step> up to N with feedback" with a positive safe integer cap` };
+  if (!STEP_ID.test(stepId) || maxRetries === undefined || maxRetries > RETRY_CEILING) {
+    return { ok: false, reason: `step ${id} On failure must be "fail run" or "retry <step> up to N with feedback" with a positive safe integer cap of at most ${RETRY_CEILING}` };
   }
   return { ok: true, onFailure: { kind: 'retry', stepId, maxRetries, ...limits } };
 }

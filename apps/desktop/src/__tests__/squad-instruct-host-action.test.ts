@@ -114,6 +114,24 @@ describe('retained squad instruct host action', () => {
     expect(runtime).toContain('retained = await retainedSquadWorktreeForInstruct(current);');
   });
 
+  it('reads prepared checkout status once before checking detached and branch state', () => {
+    const preparation = host.slice(
+      host.indexOf('prepareSquadWorktree: async (record, request) =>'),
+      host.indexOf('onTerminal: async (record) =>')
+    );
+    expect(preparation.match(/getGitStatus\(path\)/g)).toHaveLength(1);
+    expect(preparation).toContain('const actualBranch = status?.detached');
+  });
+
+  it('bounds transient reviewed previews and uses one detached-aware location description for receipts and lookups', () => {
+    expect(host).toContain('const PENDING_SQUAD_PREVIEW_TTL_MS = 5 * 60_000;');
+    expect(host).toContain('const PENDING_SQUAD_PREVIEW_MAX = 200;');
+    expect(host).toContain('function retainPendingSquadPreview(');
+    expect(host).toContain('async function describeExecutionLocation(');
+    expect(host.match(/describeExecutionLocation\(project, record\)/g)).toHaveLength(2);
+    expect(host).toContain("status?.detached ? undefined : status?.branch ?? undefined");
+  });
+
   it('projects stale, missing-resource, and active-follow-up safety rejections into Inbox status', () => {
     expect(runtime).toContain("new InboxActionOperatorError('This action is unavailable because the Squad run resumed or changed state.', true)");
     expect(runtime).toContain('new InboxActionOperatorError(RETAINED_UNAVAILABLE_MESSAGE, true)');

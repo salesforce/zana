@@ -131,9 +131,16 @@ type SquadObserverStore = Parameters<typeof createSquadObservers>[0];
 type StartTriggeredSquad = (input: TriggeredSquadInput) => Promise<{ executionId: string }>;
 
 /** Scheduler dependency bundle: launch plus read-only run observers scoped to schedules. */
-export function scheduledSquadTrigger(startTriggeredSquad: StartTriggeredSquad, executionStore: SquadObserverStore) {
+export function scheduledSquadTrigger(
+  startTriggeredSquad: StartTriggeredSquad,
+  executionStore: SquadObserverStore,
+  beforeLaunch?: (args: Parameters<typeof scheduledSquadInput>[0]) => void
+) {
   return {
-    launchSquad: (args: Parameters<typeof scheduledSquadInput>[0]) => startTriggeredSquad(scheduledSquadInput(args)),
+    launchSquad: (args: Parameters<typeof scheduledSquadInput>[0]) => {
+      beforeLaunch?.(args);
+      return startTriggeredSquad(scheduledSquadInput(args));
+    },
     ...createSquadObservers(executionStore, 'schedule')
   };
 }

@@ -237,6 +237,20 @@ describe('GoalsPanel squad assignment', () => {
     expect(within(screen.getByRole('dialog')).getByText('Squad requirements are unavailable')).toBeTruthy();
   });
 
+  it('keeps an invalid saved Squad policy visible but blocks resume and run now', () => {
+    storeGoals.push({
+      id: 'goal-invalid-policy', projectId: 'p1', title: 'Needs repair', statement: 'Plan', successCriteria: [],
+      assignment: { kind: 'team', teamId: 'team-1' }, status: 'paused', maxIterations: 10, iteration: 0, noProgressLimit: 2,
+      launchOptionsError: 'Saved Squad launch settings are invalid. Replace them before resuming this goal.',
+      source: 'p1', createdAt: 1, updatedAt: 1, history: { retain: 20, iterations: [] }
+    });
+    render(<GoalsPanel />);
+    expect((screen.getByRole('button', { name: 'Resume' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Run now' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('Toggle details'));
+    expect(screen.getByText('Saved Squad launch settings are invalid. Replace them before resuming this goal.')).toBeTruthy();
+  });
+
   it('creates a goal assigned to an executable squad', async () => {
     create.mockResolvedValue({ ok: true, value: { id: 'goal-1' } });
     render(<GoalsPanel />);

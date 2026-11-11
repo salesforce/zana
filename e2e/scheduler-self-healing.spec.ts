@@ -19,7 +19,9 @@ type Task = { id: string; name: string; status: { runs: Array<Record<string, unk
 const HOUR = 3_600_000;
 const startOfUtcHour = (ms: number) => Math.floor(ms / HOUR) * HOUR;
 const launchEnv = process.platform === 'linux' ? { ZCC_E2E_VISIBLE: '1' } : {};
-test.use({ launchEnv });
+// Fresh E2E config falls back to /bin/zsh when SHELL is absent. Ubuntu runners
+// do not install zsh, so scheduler shell fixtures must pin portable /bin/sh.
+test.use({ launchEnv, initialConfig: { shell: '/bin/sh' } });
 
 async function addProject(app: Handle, name: string): Promise<string> {
   // Screenshots go into the PR: dismiss the first-run "Star on GitHub" nudge so it isn't in every image.

@@ -17,6 +17,7 @@ import { assembledResultProjection } from './projection.js';
 import { answerReceipt } from './answer-receipt.js';
 import { planLaunchSchema } from '@zana-ai/zcc-domain/launch-options';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS } from './loop-constants.js';
+import { RETRY_CEILING } from './retry-feedback.js';
 
 const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
@@ -45,7 +46,7 @@ const workUnitSchema = z.strictObject({
   dependencies: z.array(z.string().min(1).max(2048)).max(100), preferredRole: z.string().min(1).max(2048).optional(),
   onFailure: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('fail-run') }),
-    z.strictObject({ kind: z.literal('retry'), stepId: z.string().min(1).max(2048), maxRetries: z.number().int().min(1).max(100), maxIterations: z.number().int().min(1).optional(), noProgressLimit: z.number().int().min(1).optional() })
+    z.strictObject({ kind: z.literal('retry'), stepId: z.string().min(1).max(2048), maxRetries: z.number().int().min(1).max(RETRY_CEILING), maxIterations: z.number().int().min(1).optional(), noProgressLimit: z.number().int().min(1).optional() })
   ]).optional(),
   checks: z.array(z.string().max(100).regex(/^[A-Za-z_][A-Za-z0-9_-]*$/)).max(100).optional(),
   files: z.array(z.string().min(1).max(2048)).max(100).optional(), verification: z.array(z.string().min(1).max(2048)).max(100).optional(), readOnly: z.boolean().optional(),

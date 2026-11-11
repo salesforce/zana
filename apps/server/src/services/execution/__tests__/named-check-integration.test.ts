@@ -50,33 +50,6 @@ describe('named-check execution integration', () => {
       return { name: 'verify', status: 'passed', exitCode: 0, output: '', untrusted: true };
     } });
   });
-  it('queued no-DAG stop cancels without waiting for unrelated runner', async () => {
-    let settle!: () => void;
-    await fixture(async ctx => {
-      await ctx.service.start('owner', 'p', request);
-      await ctx.service.claimWork(ctx.binding, 'a');
-      const unit = (await ctx.store.get('e'))!.workUnits![0];
-      const workerCompletion = ctx.service.completeWork(ctx.binding, 'a', 'done', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true);
-      await vi.waitFor(() => expect(settle).toBeDefined());
-      // Separate run using the same service lane; store ids are host-controlled.
-      const record = (await ctx.store.get('e'))!;
-      const raw = JSON.parse(await readFile(ctx.filePath, 'utf8'));
-      raw.records.push({ ...raw.records[0], id: 'other', workUnits: undefined, resolvedLaunch: resolveAllLaunch({ launch: { checks: ['verify'] } }) });
-      await writeFile(ctx.filePath, JSON.stringify(raw));
-      const other = { ...ctx.binding, executionId: 'other', role: 'orchestrator' as const, slotId: 'lead' };
-      const queued = ctx.service.completeByCoordinatorBinding(other, 'other', 'done');
-      await new Promise(resolve => setTimeout(resolve, 20));
-      const stop = ctx.service.stop('owner', 'p', 'other', record.stateVersion);
-      try {
-        await vi.waitFor(async () => expect((await ctx.store.get('other'))!.state).toBe('STOPPED'), { timeout: 500 });
-        expect(await queued).toMatchObject({ ok: false });
-      } finally { settle(); await workerCompletion; await stop; }
-    }, { runNamedCheck: async () => {
-      await new Promise<void>(resolve => { settle = resolve; });
-      return { name: 'verify', status: 'passed', exitCode: 0, output: '', untrusted: true };
-    } });
-  });
-
   it('changed no-DAG execution version rejects late successful receipt', async () => {
     let settle!: () => void;
     await fixture(async ctx => {
@@ -141,13 +114,16 @@ describe('named-check execution integration', () => {
     } });
   });
 
-  it.each(['bound', 'legacy'])('no-DAG %s coordinator completion runs frozen global checks', async path => fixture(async ctx => {
+  it.each(['bound', 'legacy'])('no-DAG %s coordinator completion persists failed global checks', async path => fixture(async ctx => {
     expect(await ctx.service.start('owner', 'p', { ...request, workUnits: undefined, checks: ['verify'] })).toMatchObject({ ok: true });
     const outcome = path === 'bound'
       ? await ctx.service.completeByCoordinatorBinding({ ...ctx.binding, role: 'orchestrator', slotId: 'lead' }, 'e', 'done')
       : await ctx.service.completeByCoordinator('lead', 'p', 'e', 'done');
     expect(outcome).toMatchObject({ ok: false, code: 'CHECK_FAILED' });
-    expect((await ctx.store.get('e'))!.state).not.toBe('COMPLETED');
+    expect((await ctx.store.get('e'))!).toMatchObject({
+      state: 'FAILED',
+      finalSummary: expect.stringContaining('Named check receipt (untrusted): verify status=failed exitCode=1\nbad')
+    });
   }, { getTeamLaunch: async () => ({ orchestratorSessionId: 'lead', workers: [] }), runNamedCheck: async () => ({ name: 'verify', status: 'failed', exitCode: 1, output: 'bad', untrusted: true }) }));
 
   it.each(['complete', 'transition'])('store %s cannot bypass global checks without trusted receipt', async path => fixture(async ctx => {
@@ -172,8 +148,7 @@ describe('named-check execution integration', () => {
     expect(completed.failureRetry).toEqual(failed.failureRetry);
   }));
 
-  it('queues simultaneous check completions instead of failing runner saturation', async () => {
-    let active = 0;
+  it('runs simultaneous check completions without service-wide serialization', async () => {
     const releases: Array<() => void> = [];
     await fixture(async ctx => {
       await ctx.service.start('owner', 'p', { ...request, workUnits: [work, { ...work, id: 'b' }] });
@@ -182,19 +157,14 @@ describe('named-check execution integration', () => {
       await ctx.service.claimWork(peer, 'b');
       const record = (await ctx.store.get('e'))!;
       const pending = record.workUnits!.map(unit => ctx.service.completeWork(unit.id === 'a' ? ctx.binding : peer, unit.id, 'done', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true));
-      await vi.waitFor(() => expect(releases.length).toBe(1));
-      expect((await ctx.store.get('e'))!.workUnits!.every(unit => unit.state === 'CLAIMED')).toBe(true);
-      releases[0]();
-      await vi.waitFor(() => expect(releases.length).toBe(2));
-      releases[1]();
+       await vi.waitFor(() => expect(releases.length).toBe(2));
+       expect((await ctx.store.get('e'))!.workUnits!.every(unit => unit.state === 'CLAIMED')).toBe(true);
+       releases.splice(0).forEach(release => release());
       expect((await Promise.all(pending)).every(outcome => outcome.ok)).toBe(true);
       expect((await ctx.store.get('e'))!.workUnits!.every(unit => !unit.failureRetry)).toBe(true);
-    }, { runNamedCheck: async () => {
-      if (active) throw new Error('Named-check concurrency limit reached');
-      active++;
-      await new Promise<void>(resolve => releases.push(resolve));
-      active--;
-      return { name: 'verify', status: 'passed', exitCode: 0, output: '', untrusted: true };
+     }, { runNamedCheck: async () => {
+       await new Promise<void>(resolve => releases.push(resolve));
+       return { name: 'verify', status: 'passed', exitCode: 0, output: '', untrusted: true };
     } });
   });
   it('admits only effective launch checks plus unit checks, not shadowed plan checks', async () => fixture(async ctx => {
@@ -312,13 +282,33 @@ describe('named-check execution integration', () => {
       expect(ctx.launchTeam).not.toHaveBeenCalled();
     }, { [missing]: undefined });
   });
-  it('runs checks before completion using frozen command and deduplicates concurrent completion', async () => fixture(async ctx => {
+   it('runs checks before completion using frozen command and deduplicates concurrent identical completion', async () => fixture(async ctx => {
     const fence = await claim(ctx);
     const replies = await Promise.all([ctx.service.completeWork(ctx.binding, 'a', 'done', fence, true), ctx.service.completeWork(ctx.binding, 'a', 'done', fence, true)]);
     expect(replies.every(reply => reply.ok)).toBe(true);
     expect(ctx.runNamedCheck).toHaveBeenCalledTimes(1);
     expect(ctx.runNamedCheck).toHaveBeenCalledWith(expect.objectContaining({ resolvedChecks: [{ reference: 'check:verify', name: 'verify', command: 'owner-command' }] }), 'check:verify', expect.any(AbortSignal));
-    expect((await ctx.store.get('e'))!.workUnits![0].state).toBe('COMPLETED');
+   expect((await ctx.store.get('e'))!.workUnits![0].state).toBe('COMPLETED');
+  }));
+  it('does not deduplicate completions with different results', async () => fixture(async ctx => {
+    const fence = await claim(ctx);
+    const [first, second] = await Promise.all([
+      ctx.service.completeWork(ctx.binding, 'a', 'first result', fence, true),
+      ctx.service.completeWork(ctx.binding, 'a', 'second result', fence, true)
+    ]);
+    expect(ctx.runNamedCheck).toHaveBeenCalledTimes(2);
+  }));
+  it('does not deduplicate same result with different structured output', async () => fixture(async ctx => {
+    const outputWork = { ...work, output: { version: 1 as const, schema: { type: 'string' as const } } };
+    expect((await ctx.service.start('owner', 'p', { ...request, workUnits: [outputWork] })).ok).toBe(true);
+    await ctx.service.claimWork(ctx.binding, 'a');
+    const unit = (await ctx.store.get('e'))!.workUnits![0];
+    const fence = { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! };
+    await Promise.all([
+      ctx.service.completeWork(ctx.binding, 'a', 'done', fence, true, 'first output'),
+      ctx.service.completeWork(ctx.binding, 'a', 'done', fence, true, 'second output')
+    ]);
+    expect(ctx.runNamedCheck).toHaveBeenCalledTimes(2);
   }));
   it('nonzero check output enters atomic retry without worker output declaration', async () => fixture(async ctx => {
     const fence = await claim(ctx);

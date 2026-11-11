@@ -206,7 +206,7 @@ test('invalid, wrong-repository and conflicting targets reject before cohort spa
   finally { await teardownJobTeam(ctx); }
 });
 
-test('review revalidates branch checkout and rejects changed target without fallback', async ({ app, home }) => {
+test('review Launch revalidates branch checkout and rejects changed target without fallback', async ({ app, home }) => {
   const ctx = createJobTeamContext(app, { tmpPrefix: 'review-revalidate-', root: home });
   try {
     const git = initSquadRepo(ctx);
@@ -223,12 +223,13 @@ test('review revalidates branch checkout and rejects changed target without fall
     await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
     const modal = ctx.window.getByTestId('launch-modal');
     await expect(modal).toBeVisible();
-    git('-C', linked, 'switch', '-c', 'feature/changed-after-review');
-    // Main revalidates the reviewed target at admission and must reject this stale branch.
     const preview = modal.getByLabel('Effective launch settings');
-    await expect(preview).toBeVisible();
-    await expect(preview).toContainText('Launch preview could not validate the plan, sources, or target. Retry after correcting them.');
-    await expect(modal.getByTestId('team-command-send')).toBeDisabled();
+    await expect(preview).toContainText('feature/review-owned');
+    await expect(modal.getByTestId('team-command-send')).toBeEnabled();
+    git('-C', linked, 'switch', '-c', 'feature/changed-after-review');
+    // Click before the 250 ms passive-preview debounce. Admission must revalidate the stale target.
+    await modal.getByTestId('team-command-send').click();
+    await expect(modal.getByTestId('team-command-error')).toContainText('Squad launch failed: Launch preview could not validate the plan, sources, or target. Retry after correcting them.');
     expect((await ctx.window.evaluate(id => window.cc.executionBoard.listProject(id), projectId)).executions).toEqual([]);
     expect(await ctx.window.evaluate(async id => (await window.cc.terminals.list(id)).filter(s => s.cohort), projectId)).toEqual([]);
     expect(existsSync(linked)).toBe(true);
@@ -257,17 +258,10 @@ for (const outcome of ['passed', 'failed', 'timeout', 'output-limit', 'missing-e
       // Absolute shebang avoids invoking Electron-as-Node; command resolution still goes through PATH.
       writeFileSync(executable, `#!${process.execPath}\n${String.raw`
 const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const fd = fs.fstatSync(1);
-const capture = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('named-check-')).map(n => path.join(os.tmpdir(), n)).find(d => {
-  try { const s = fs.statSync(path.join(d, 'output')); return s.ino === fd.ino && s.dev === fd.dev; } catch { return false; }
-});
 const output = 'X'.repeat(12000) + '\nCHECK-END-12000\n';
 fs.writeSync(1, output);
-const bytes = Buffer.alloc(output.length);
-fs.readSync(1, bytes, 0, bytes.length, 0);
-fs.writeFileSync('.e2e-check.json', JSON.stringify({ cwd: process.cwd(), home: process.env.HOME, env: process.env.E2E_NAMED_CHECK_ENV, executable: fs.realpathSync(process.argv[1]), mode: fd.mode & 511, capture, bytes: fs.fstatSync(1).size, tail: bytes.toString().slice(-17), pid: process.pid, captured: bytes.toString() === output }));
+if (process.argv[2] === 'passed') fs.writeFileSync('.e2e-oversized-artifact.bin', Buffer.alloc(12000, 65));
+fs.writeFileSync('.e2e-check.json', JSON.stringify({ cwd: process.cwd(), home: process.env.HOME, env: process.env.E2E_NAMED_CHECK_ENV, executable: fs.realpathSync(process.argv[1]), output, pid: process.pid }));
 const outcome = process.argv[2];
 if (outcome === 'timeout') setInterval(() => {}, 1000);
 else if (outcome === 'output-limit') { for (;;) fs.writeSync(1, 'X'.repeat(16384)); }
@@ -303,12 +297,15 @@ else process.exit(outcome === 'failed' ? 7 : 0);
       }
       if (outcome !== 'missing-executable') {
         const proof = JSON.parse(readFileSync(join(receipt.path!, '.e2e-check.json'), 'utf8'));
-        expect(proof).toMatchObject({ cwd: realpathSync(receipt.path!), home, env: 'isolated-check-env', executable: realpathSync(executable), mode: 0o600, captured: true });
-        expect(proof.tail).toMatch(/CHECK-END-12000\n$/);
-        expect(proof.bytes).toBeGreaterThan(8192);
-        expect(proof.capture).toBeTruthy();
-        await expect.poll(() => existsSync(proof.capture), { timeout: 15_000 }).toBe(false);
+        expect(proof).toMatchObject({ cwd: realpathSync(receipt.path!), home, env: 'isolated-check-env', executable: realpathSync(executable) });
+        expect(Buffer.byteLength(proof.output), 'fixture must emit output beyond Electron pipe truncation threshold').toBeGreaterThan(8192);
+        expect(proof.output).toMatch(/CHECK-END-12000\n$/);
         await expect.poll(() => isRunningProcess(proof.pid), { timeout: 15_000 }).toBe(false);
+      }
+      if (outcome === 'passed') {
+        const artifact = readFileSync(join(receipt.path!, '.e2e-oversized-artifact.bin'));
+        expect(artifact.byteLength, 'successful checks retain oversized project artifacts').toBeGreaterThan(8192);
+        expect(artifact.every((byte) => byte === 65)).toBe(true);
       }
       await expect.poll(() => readdirSync(captureRoot).filter(name => name.startsWith('named-check-')), { timeout: 15_000 }).toEqual([]);
       await openSquadBoard(ctx, `Named ${outcome}`);

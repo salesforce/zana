@@ -7,15 +7,13 @@ import { SquadResolvedLaunchDetails } from '../SquadLaunchSettings.js';
 
 export function ScheduleLaunchReview({ task, onConfirm, onCancel }: {
   task: ScheduledTask;
-  onConfirm: () => void;
+  onConfirm: (previewToken: string) => void;
   onCancel: () => void;
 }) {
-  const [review, setReview] = useState<{ task: ScheduledTask; resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPreview; error?: string } | null>(null);
+  const [review, setReview] = useState<{ task: ScheduledTask; resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPreview & { previewToken: string }; error?: string } | null>(null);
   useEffect(() => {
     let active = true;
-    const goal = [task.prompt, task.description, task.name].map(value => value?.trim()).find(Boolean) ?? '';
-    void product.teams.preview({ teamId: task.teamId ?? '', projectId: task.projectId, goal,
-      coordinationMode: task.planSource === 'provided' ? 'structured' : 'freeform', ...task.launchOptions })
+    void product.scheduler.previewTeamLaunch(task.id)
       .then(result => {
         if (active) setReview(result.ok ? { task, resolved: result.value.resolvedLaunch, preview: result.value } : { task, error: result.message });
       }).catch(error => {
@@ -32,12 +30,14 @@ export function ScheduleLaunchReview({ task, onConfirm, onCancel }: {
         <>
           {current.preview?.location ? <p>Location: {current.preview.location.kind === 'new-worktree'
             ? `New worktree from ${current.preview.location.baseBranch}; path assigned at launch`
-            : `${current.preview.branch} - ${current.preview.path}`}</p> : null}
+            : `${current.preview.branch ?? 'HEAD'} - ${current.preview.path}`}</p> : null}
           <SquadResolvedLaunchDetails resolved={current.resolved} />
         </>
       ) : <p>Resolving launch settings…</p>}
       <button type="button" onClick={onCancel}>Cancel</button>
-      <button type="button" disabled={!current?.resolved} onClick={onConfirm}>Launch schedule</button>
+      <button type="button" disabled={!current?.resolved || !current?.preview?.previewToken} onClick={() => {
+        if (current?.preview?.previewToken) onConfirm(current.preview.previewToken);
+      }}>Launch schedule</button>
     </div>
   );
 }

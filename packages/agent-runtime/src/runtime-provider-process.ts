@@ -401,8 +401,12 @@ export class RuntimeProviderProcessManager {
             });
 
             providerProcess.child.kill("SIGTERM");
-          }),
+          }).then(() => providerProcess.exitFinalized),
         );
+      } else {
+        // An exited bridge can still be draining stdio. Its recorder owns the
+        // files until `close` finalizes, so app shutdown must await that too.
+        shutdownPromises.push(providerProcess.exitFinalized);
       }
       for (const [, pending] of providerProcess.pending) {
         pending.reject(new Error("Runtime shutting down"));

@@ -300,7 +300,10 @@ export class GoalManager extends EventEmitter {
     this.live.clear(); this.startMsBySession.clear(); this.launchedSessions.clear();
     for (const timer of this.squadPollTimers.values()) clearTimeout(timer);
     this.squadPollTimers.clear();
-    for (const goal of goals) this.live.set(goal.id, this.makeLive(goal));
+    for (const goal of goals) {
+      if (goal.launchOptionsError) this.log(`load ${goal.id}`, goal.launchOptionsError);
+      this.live.set(goal.id, this.makeLive(goal));
+    }
     for (const goal of goals) {
       const live = this.live.get(goal.id)!;
       if (live.goal.terminalStatus || (live.goal.terminalMessage && !live.goal.terminalNotificationDelivered)) {
@@ -402,6 +405,9 @@ export class GoalManager extends EventEmitter {
     if (patch.launchOptions !== undefined) {
       if (assignment.kind !== 'team') throw new Error('launchOptions are only supported for team goals');
       next.launchOptions = launchOptionsSchema.parse(patch.launchOptions);
+      delete next.launchOptionsError;
+    } else if (next.launchOptionsError) {
+      throw new Error('Replace invalid saved Squad launch settings before editing this goal');
     } else if (assignment.kind !== 'team') {
       // Agent goals must never retain Squad launch policy after reassignment.
       delete next.launchOptions;
@@ -430,6 +436,7 @@ export class GoalManager extends EventEmitter {
   private async setStatusNow(id: string, status: GoalStatus): Promise<Goal | null> {
     const live = this.live.get(id);
     if (!live) return null;
+    if (status === 'active' && live.goal.launchOptionsError) throw new Error(live.goal.launchOptionsError);
     if (status === 'cancelled') {
       // Cancellation fences every terminal path. Evaluators may still finish and
       // record iteration evidence, but cannot resurrect a terminal intent.
@@ -491,6 +498,7 @@ export class GoalManager extends EventEmitter {
   private async runNowInternal(id: string): Promise<Goal> {
     const live = this.live.get(id);
     if (!live) throw new Error(`goal not found: ${id}`);
+    if (live.goal.launchOptionsError) throw new Error(live.goal.launchOptionsError);
     if (live.goal.terminalStatus) {
       if (live.goal.status !== 'active') await this.commit(live, { ...live.goal, status: 'active', updatedAt: new Date().toISOString() });
       await this.completeTerminalization(live);
@@ -843,7 +851,7 @@ export class GoalManager extends EventEmitter {
   /** Try to spawn the next iteration; if the cap is hit, retry shortly. */
   private async arm(id: string): Promise<void> {
     const live = this.live.get(id);
-    if (!live || live.goal.status !== 'active' || live.goal.terminalStatus || this.hasLiveSessionFor(id) || this.evaluating.has(id)) return;
+    if (!live || live.goal.status !== 'active' || live.goal.terminalStatus || live.goal.launchOptionsError || this.hasLiveSessionFor(id) || this.evaluating.has(id)) return;
     if (live.goal.history.iterations.some(it => it.launchState === 'pending') || this.missingSquad(live)) return;
     this.clearRetry(live);
     if (live.goal.iteration >= live.goal.maxIterations) {

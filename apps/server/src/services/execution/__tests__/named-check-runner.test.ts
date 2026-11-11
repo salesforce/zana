@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as childProcess from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNamedCheckDiscovery } from '../../../named-check-registry.js';
 import { createNamedCheckRunner } from '../check-runner.js';
+import { CHECK_CAPTURE_SUPERVISOR, parseCheckCaptureReceipt } from '../check-capture-supervisor.js';
 import { createProjectSettingsStore } from '../../../project-settings-store.js';
 
 vi.mock('node:child_process', { spy: true });
@@ -31,6 +33,71 @@ async function fixture(command: string, options: Record<string, unknown> = {}) {
   return { root, store, runner, run: (signal?: AbortSignal) => runner.run({ projectId: 'p1', reference: 'check:test', cwd: root, signal }) };
 }
 const node = (script: string) => `'${process.execPath.replaceAll("'", "'\\''")}' -e '${script.replaceAll("'", "'\\''")}'`;
+
+it('fails closed for absent or malformed capture receipts', () => {
+  expect(parseCheckCaptureReceipt('')).toBeNull();
+  expect(parseCheckCaptureReceipt('{"status":"done","exitCode":0}')).toBeNull();
+  expect(parseCheckCaptureReceipt('{"status":"done","exitCode":256}\n')).toBeNull();
+  expect(parseCheckCaptureReceipt('{"status":"done","exitCode":0}\ntrailing')).toBeNull();
+  expect(parseCheckCaptureReceipt('{"status":"done","exitCode":0}\n')).toEqual({ status: 'done', exitCode: 0 });
+  expect(parseCheckCaptureReceipt('{"status":"incomplete","exitCode":null}\n')).toEqual({ status: 'incomplete', exitCode: null });
+});
+
+it('supervisor writes complete receipts and output across deterministic short writes', () => {
+  const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+  const writes = new Map<number, Buffer>();
+  let grace!: () => void;
+  runInNewContext(CHECK_CAPTURE_SUPERVISOR, {
+    Buffer,
+    SharedArrayBuffer,
+    Int32Array,
+    Number,
+    JSON,
+    Math,
+    setInterval: () => 0,
+    setTimeout: (callback: () => void) => { grace = callback; return 0; },
+    clearTimeout: () => undefined,
+    process: { argv: ['node', '/bin/sh', 'echo ignored', '16'] },
+    require: (id: string) => id === 'node:child_process' ? { spawn: () => child } : {
+      writeSync: (fd: number, bytes: Buffer, offset = 0, length = bytes.length) => {
+        const chunk = bytes.subarray(offset, offset + Math.min(length, 2));
+        writes.set(fd, Buffer.concat([writes.get(fd) ?? Buffer.alloc(0), chunk]));
+        return chunk.length;
+      }
+    }
+  });
+  child.stdout.emit('data', Buffer.from('hello'));
+  child.stdout.emit('end');
+  child.stderr.emit('end');
+  child.emit('exit', 0);
+  expect(writes.get(1)?.toString()).toBe('hello');
+  expect(writes.get(3)?.toString()).toBe('{"status":"done","exitCode":0}\n');
+
+  const heldChild = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+  const heldWrites = new Map<number, Buffer>();
+  runInNewContext(CHECK_CAPTURE_SUPERVISOR, {
+    Buffer,
+    SharedArrayBuffer,
+    Int32Array,
+    Number,
+    JSON,
+    Math,
+    setInterval: () => 0,
+    setTimeout: (callback: () => void) => { grace = callback; return 0; },
+    clearTimeout: () => undefined,
+    process: { argv: ['node', '/bin/sh', 'echo ignored', '16'] },
+    require: (id: string) => id === 'node:child_process' ? { spawn: () => heldChild } : {
+      writeSync: (fd: number, bytes: Buffer, offset = 0, length = bytes.length) => {
+        const chunk = bytes.subarray(offset, offset + Math.min(length, 2));
+        heldWrites.set(fd, Buffer.concat([heldWrites.get(fd) ?? Buffer.alloc(0), chunk]));
+        return chunk.length;
+      }
+    }
+  });
+  heldChild.emit('exit', 0);
+  grace();
+  expect(heldWrites.get(3)?.toString()).toBe('{"status":"incomplete","exitCode":null}\n');
+});
 
 it('run rejects Windows before resolving cwd, creating capture, spawning, or checking shell', async () => {
   const resolveCwd = vi.fn(async () => 'unreachable');
@@ -99,18 +166,59 @@ it('preserves output below configured byte cap', async () => {
   expect(await run()).toMatchObject({ status: 'passed', output: 'x'.repeat(6000) });
 });
 
-it('kills timed out process groups and cleans files', async () => {
-  const { root, run } = await fixture('sleep 10 & echo $! > child.pid; wait', { timeoutMs: 100 });
-  expect(await run()).toMatchObject({ status: 'timeout', exitCode: null });
-  const pid = Number(await readFile(join(root, 'child.pid'), 'utf8'));
-  let alive = true;
-  for (let i = 0; i < 100 && alive; i++) {
-    try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 5)); }
-    catch { alive = false; }
-  }
-  expect(alive).toBe(false);
-  expect((await readdir(root)).sort()).toEqual(['child.pid', 'settings.json']);
-});
+  it('drains finite burst output after direct shell exit and still enforces its cap', async () => {
+    const burst = node('process.stdout.write("x".repeat(1_000_000))');
+    const complete = await fixture(burst, { maxBytes: 1_048_576 });
+    expect(await complete.run()).toMatchObject({ status: 'passed', output: 'x'.repeat(1_000_000) });
+    const capped = await fixture(burst, { maxBytes: 8192 });
+    const result = await capped.run();
+    expect(result.status).toBe('output-limit');
+    expect(Buffer.byteLength(result.output)).toBe(8192);
+  });
+
+  it('bounds only captured output, not project writes, and preserves UTF-8 output beyond 8192 bytes', async () => {
+    const command = node('require("node:fs").writeFileSync("large-project-file", Buffer.alloc(2_500_000)); process.stdout.write("€".repeat(4_000))');
+    const { root, run } = await fixture(command, { maxBytes: 16_384 });
+    const result = await run();
+    expect(result).toMatchObject({ status: 'passed', output: '€'.repeat(4_000) });
+    expect((await stat(join(root, 'large-project-file'))).size).toBe(2_500_000);
+  });
+
+  it('scrubs host credentials while preserving explicit non-sensitive build variables', async () => {
+    const command = node('process.stdout.write([process.env.CHECK_MARKER, process.env.ZCC_SESSION_TOKEN, process.env.HOST_DAEMON_TOKEN].join("|"))');
+    const { run } = await fixture(command, { env: { ...process.env, CHECK_MARKER: 'build-value', ZCC_SESSION_TOKEN: 'secret', HOST_DAEMON_TOKEN: 'secret' } });
+    expect(await run()).toMatchObject({ status: 'passed', output: 'build-value||' });
+  });
+
+  it('kills timed out process groups and cleans files', async () => {
+    const { root, run } = await fixture('sleep 10 & echo $! > child.pid; wait', { timeoutMs: 100 });
+    expect(await run()).toMatchObject({ status: 'timeout', exitCode: null });
+    const pid = Number(await readFile(join(root, 'child.pid'), 'utf8'));
+    let alive = true;
+    for (let i = 0; i < 100 && alive; i++) {
+      try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 5)); }
+      catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+    expect((await readdir(root)).sort()).toEqual(['child.pid', 'settings.json']);
+  });
+
+  it('fails closed after bounded drain grace while cleaning background descendants', async () => {
+    const { root, runner, run } = await fixture('sleep 10 & echo $! > child.pid', { maxConcurrent: 1 });
+    const first = run();
+    const second = runner.runResolved({ projectId: 'p1', check: { name: 'second', command: 'printf second' }, cwd: root });
+
+    expect(await first).toMatchObject({ status: 'failed', error: 'Named-check output capture incomplete' });
+    const pid = Number(await readFile(join(root, 'child.pid'), 'utf8'));
+    let alive = true;
+    for (let i = 0; i < 100 && alive; i++) {
+      try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 5)); }
+      catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+    expect(await second).toMatchObject({ status: 'passed', output: 'second' });
+    expect((await readdir(root)).sort()).toEqual(['child.pid', 'settings.json']);
+  });
 
 it('uses 0600 capture, bounds concurrency, cancels active work and shuts down', async () => {
   const { root, run, runner } = await fixture('sleep 10', { maxConcurrent: 1 });
@@ -263,7 +371,7 @@ it('arms child deadline only after spawn event, not queued or launch setup time'
   expect(vi.getTimerCount()).toBe(1);
   await vi.advanceTimersByTimeAsync(49);
   child.emit('close', 0, null);
-  expect(await pending).toMatchObject({ status: 'passed' });
+  expect(await pending).toMatchObject({ status: 'spawn-error', error: 'Named-check capture supervisor exited without valid receipt' });
   expect(vi.getTimerCount()).toBe(0);
   expect(await readdir(root)).toEqual(['settings.json']);
 });
@@ -322,12 +430,12 @@ it('does not signal reaped child PID when deadline precedes pending close callba
   await vi.advanceTimersByTimeAsync(75);
   child.emit('exit', 0, null);
   child.emit('close', 0, null);
-  expect(await pending).toMatchObject({ status: 'passed', exitCode: 0 });
+  expect(await pending).toMatchObject({ status: 'spawn-error', error: 'Named-check capture supervisor exited without valid receipt' });
   expect(kill).not.toHaveBeenCalled();
   expect(await readdir(root)).toEqual(['settings.json']);
 });
 
-it('reports genuine live process-group EPERM as failure and cleans capture without unhandled error', async () => {
+it('poisons admission after live process-group EPERM until observed close', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setImmediate', 'clearImmediate'] });
   const child = Object.assign(new EventEmitter(), { pid: 123456, exitCode: null, signalCode: null });
   const spawn = vi.mocked(childProcess.spawn).mockReturnValueOnce(child as unknown as childProcess.ChildProcess);
@@ -337,16 +445,17 @@ it('reports genuine live process-group EPERM as failure and cleans capture witho
   await vi.waitFor(() => expect(spawn).toHaveReturnedWith(child));
   child.emit('spawn');
   await vi.advanceTimersByTimeAsync(75);
-  expect(await pending).toMatchObject({ status: 'failed', error: 'Named-check process-group termination failed: EPERM' });
   expect(kill).toHaveBeenCalledTimes(1);
   expect(kill).toHaveBeenCalledWith(-123456, 'SIGKILL');
-  expect(await readdir(root)).toEqual(['settings.json']);
+  await expect(run()).rejects.toThrow('Named-check process-group termination failed: EPERM');
   child.emit('close', 0, null);
+  expect(await pending).toMatchObject({ status: 'failed', error: 'Named-check process-group termination failed: EPERM' });
+  expect(await readdir(root)).toEqual(['settings.json']);
   expect(kill).toHaveBeenCalledTimes(1);
 });
 
 it('handles real short-lived child completion after 75ms parent stall with safe cleanup', async () => {
-  const { run, root } = await fixture('printf complete', { timeoutMs: 50 });
+  const { run, root } = await fixture('printf complete', { timeoutMs: 200 });
   const spawn = vi.mocked(childProcess.spawn);
   const before = spawn.mock.calls.length;
   const pending = run();

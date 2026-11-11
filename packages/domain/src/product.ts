@@ -5634,6 +5634,8 @@ export interface Goal {
   planSource?: 'provided' | 'infer';
   /** Squad goals only. Omit to leave the current launch policy unchanged. */
   launchOptions?: LaunchOptions;
+  /** Loader-owned attention marker for malformed persisted Squad launch policy. */
+  launchOptionsError?: string;
   /** Execution engine. Defaults to `native`. */
   driver: GoalDriver;
   assignment: GoalAssignment;

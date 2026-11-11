@@ -752,6 +752,8 @@ export const IPC = {
     delete: 'scheduler:delete',
     setEnabled: 'scheduler:setEnabled',
     runNow: 'scheduler:runNow',
+    previewTeamLaunch: 'scheduler:previewTeamLaunch',
+    runReviewedTeamNow: 'scheduler:runReviewedTeamNow',
     queryRuns: 'scheduler:queryRuns',
     retryRuns: 'scheduler:retryRuns',
     resumeRun: 'scheduler:resumeRun',

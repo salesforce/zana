@@ -1950,6 +1950,10 @@ export interface CcApi {
     delete(id: string): Promise<Result<true>>;
     setEnabled(id: string, enabled: boolean): Promise<Result<ScheduledTask>>;
     runNow(id: string): Promise<Result<ScheduledTask>>;
+    /** Main-owned review binding for a manual Team schedule launch. */
+    previewTeamLaunch(id: string): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
+    /** Consumes the review binding; Team schedules cannot use unbound runNow. */
+    runReviewedTeamNow(id: string, previewToken: string): Promise<Result<ScheduledTask>>;
     /** Cross-schedule run history (open problems by default). */
     queryRuns(query: ScheduleRunQuery): Promise<Result<ScheduleRunQueryResult>>;
     /** Re-run failed or missed runs now (max 50). */

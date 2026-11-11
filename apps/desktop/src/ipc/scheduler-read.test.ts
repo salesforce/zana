@@ -4,14 +4,16 @@ import { registerSchedulerIpc } from './scheduler.js';
 
 const h = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
-  get: vi.fn(), reload: vi.fn()
+  get: vi.fn(), reload: vi.fn(), runNow: vi.fn(), preview: vi.fn(), reviewed: vi.fn()
 }));
 vi.mock('./shared-product-registration.js', () => ({
   productHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler),
   safeProductHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler)
 }));
 vi.mock('./ctx.js', () => ({ ctx: {
-  scheduler: { get: h.get, reload: h.reload, on: vi.fn() },
+  scheduler: { get: h.get, reload: h.reload, runNow: h.runNow, on: vi.fn() },
+  safeHandleFromWindow: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler),
+  previewScheduledTeamLaunch: h.preview, runReviewedScheduledTeamNow: h.reviewed,
   goals: { on: vi.fn() }, followups: { on: vi.fn() }, feedStore: { on: vi.fn() },
   templates: { on: vi.fn() }, scheduleGroups: { on: vi.fn() }
 } }));
@@ -39,5 +41,24 @@ describe.each([[IPC.scheduler.get, 'get'], [IPC.scheduler.reload, 'reload']] as 
     await expect(h.handlers.get(channel)!('owned')).resolves.toEqual({ ok: false, code: 'SCHEDULE_FAILED', message: 'Missing schedule' });
     h[action].mockRejectedValueOnce('Unreadable schedule');
     await expect(h.handlers.get(channel)!('owned')).resolves.toEqual({ ok: false, code: 'SCHEDULE_FAILED', message: 'Unreadable schedule' });
+  });
+});
+
+describe('Team schedule review IPC', () => {
+  const window = { id: 7 };
+  it('issues a caller-bound preview then consumes exact schedule and token', async () => {
+    h.preview.mockResolvedValueOnce({ previewToken: 'opaque', fingerprint: 'f' });
+    await expect(h.handlers.get(IPC.scheduler.previewTeamLaunch)!(window, 'team')).resolves.toEqual({ ok: true, value: { previewToken: 'opaque', fingerprint: 'f' } });
+    expect(h.preview).toHaveBeenCalledWith('team', 7);
+    h.reviewed.mockResolvedValueOnce({ id: 'team' });
+    await expect(h.handlers.get(IPC.scheduler.runReviewedTeamNow)!(window, 'team', 'opaque')).resolves.toEqual({ ok: true, value: { id: 'team' } });
+    expect(h.reviewed).toHaveBeenCalledWith('team', 'opaque', 7);
+  });
+  it('rejects malformed input and direct Team runs before scheduler launch', async () => {
+    await expect(h.handlers.get(IPC.scheduler.previewTeamLaunch)!({ id: 7 }, '')).resolves.toMatchObject({ ok: false, code: 'BAD_INPUT' });
+    await expect(h.handlers.get(IPC.scheduler.runReviewedTeamNow)!({ id: 7 }, 'team', '')).resolves.toMatchObject({ ok: false, code: 'BAD_INPUT' });
+    h.get.mockReturnValueOnce({ id: 'team', kind: 'team' });
+    await expect(h.handlers.get(IPC.scheduler.runNow)!('team')).resolves.toMatchObject({ ok: false, code: 'REVIEW_REQUIRED' });
+    expect(h.runNow).not.toHaveBeenCalled();
   });
 });

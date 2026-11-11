@@ -188,18 +188,45 @@ describe('agent runtime thread adapter', () => {
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, 'SKILL.md'), 'demo');
     let runtime!: ReturnType<typeof createAgentRuntimeWithAdapters>;
+    let capturedSkillRoots: Array<{ skills?: unknown[] }> = [];
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
       dataDir: cwd,
       createRuntime: options => {
         runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => {
+          capturedSkillRoots = input.skillRoots;
+          return { providerThreadId: 'provider-thread' };
+        });
         return runtime;
       }
     });
     try {
       await adapter.startWork({ threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd, headless: true });
-      expect(runtime.getLiveThreadIds()).toHaveLength(1);
+      expect(capturedSkillRoots.flatMap(root => root.skills ?? [])).toEqual([]);
     } finally { adapter.dispose(); }
+  });
+
+  it('waits for every runtime to shut down before disposal completes', async () => {
+    let releaseShutdown!: () => void;
+    const shutdown = new Promise<void>(resolve => { releaseShutdown = resolve; });
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'shutdown').mockReturnValue(shutdown);
+        return runtime;
+      }
+    });
+    await adapter.startWork({ threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd });
+    const disposing = adapter.dispose();
+    let settled = false;
+    void disposing.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseShutdown();
+    await expect(disposing).resolves.toBeUndefined();
   });
 
   it('cancels only the expected live plan and keeps the thread usable', async () => {

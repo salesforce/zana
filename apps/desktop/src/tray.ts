@@ -434,7 +434,7 @@ export class TrayController {
       }
     });
     sub.push({ type: 'separator' });
-    sub.push({
+    if (task.kind !== 'team') sub.push({
       label: 'Run now',
       click: async () => {
         try {

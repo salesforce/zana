@@ -395,6 +395,8 @@ export interface ExecutionRecord {
   resolvedChecks?: ExecutionResolvedCheckV1[];
   /** Main-created shared checkout for this squad execution, if isolation applied. */
   squadWorktree?: SquadWorktreeRecord;
+  /** Main-reviewed generated-worktree base frozen at claim until its checkout binds. */
+  reviewedSquadWorktreeBase?: { path: string; branch: string; head: string };
   /** User completed retained-worktree handling without deleting its checkout. */
   squadWorktreeDisposition?: 'left';
   /** Terminal worktree effects completed for this exact terminal generation. */
@@ -800,6 +802,13 @@ function validSquadWorktree(value: unknown): value is SquadWorktreeRecord {
       : worktree.targetKind === undefined);
 }
 
+function validReviewedSquadWorktreeBase(value: unknown): value is NonNullable<ExecutionRecord['reviewedSquadWorktreeBase']> {
+  if (!value || typeof value !== 'object') return false;
+  const base = value as Partial<NonNullable<ExecutionRecord['reviewedSquadWorktreeBase']>>;
+  return hasOnlyKeys(value as Record<string, unknown>, ['path', 'branch', 'head'])
+    && validString(base.path) && validString(base.branch) && validString(base.head);
+}
+
 function validRecord(value: unknown): value is ExecutionRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Partial<ExecutionRecord>;
@@ -821,6 +830,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.authorizationContextDigest === undefined || validString(record.authorizationContextDigest))
     && (record.launchIntent === undefined || validLaunchIntent(record.launchIntent))
     && (record.squadWorktree === undefined || validSquadWorktree(record.squadWorktree))
+    && (record.reviewedSquadWorktreeBase === undefined || validReviewedSquadWorktreeBase(record.reviewedSquadWorktreeBase))
     && (record.effectiveOwnerPrincipalIds === undefined || Array.isArray(record.effectiveOwnerPrincipalIds) && record.effectiveOwnerPrincipalIds.every(validString))
     && (record.recoveryGeneration === undefined || Number.isInteger(record.recoveryGeneration) && record.recoveryGeneration >= 0)
     && (record.recoveryDeadlineAt === undefined || typeof record.recoveryDeadlineAt === 'number' && Number.isFinite(record.recoveryDeadlineAt))
@@ -1804,8 +1814,13 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (!validResolvedChecks(resolvedChecks)) throw new Error('invalid resolved named checks');
       const target = request.target;
       if (target && (resolvedLaunch.worktree.value || resolvedLaunch.onComplete.value !== 'leave')) throw new Error('user-owned target requires worktree false and onComplete leave');
+      const reviewedSquadWorktreeBase = input.reviewedSquadWorktreeBase;
+      if (reviewedSquadWorktreeBase && !validReviewedSquadWorktreeBase(reviewedSquadWorktreeBase)) {
+        throw new Error('invalid reviewed squad worktree base');
+      }
       const record: ExecutionRecord = {
         ...bounded, resolvedChecks: clone(resolvedChecks), resolvedLaunch: clone(resolvedLaunch), ...(localReport ? { localReport: true as const } : {}), id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, attemptStartedAt: timestamp, state: 'READY', stateVersion: 0, lastEventSequence: 0,
+        ...(reviewedSquadWorktreeBase ? { reviewedSquadWorktreeBase: clone(reviewedSquadWorktreeBase) } : {}),
         deliveries: [], noticeIntents: [], recoveryGeneration: 0, recoveryDeadlineAt: timestamp + EXECUTION_RECOVERY_TTL_MS, createdAt: timestamp, updatedAt: timestamp
       };
       snapshot.state.records.push(record);
@@ -2793,7 +2808,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const bounded = validateStructuredJson(checkFailure, MAX_ENGINE_CHECK_JSON_BYTES);
         if (!bounded.ok) throw new Error(bounded.reason);
         structuredResult = bounded.value;
-      } else if (!unit.loop || structuredResult !== undefined) authorizeWorkOutput(unit, structuredResult);
+      } else {
+        structuredResult = authorizeFailureEvidence(unit, structuredResult);
+      }
       unit.state = 'FAILED';
       const slotId = unit.assignedSlotId;
       clearClaim(unit);
@@ -4012,6 +4029,15 @@ function authorizeWorkOutput(unit: ExecutionWorkUnit, structuredResult: unknown)
   if (structuredResult === undefined) throw new Error('structuredResult is required by work output declaration');
   const validation = validateStructuredResult(unit.output, structuredResult);
   if (!validation.ok) throw new Error(validation.reason);
+}
+
+/** Failure evidence is optional and must not be constrained by a success-output schema. */
+function authorizeFailureEvidence(unit: ExecutionWorkUnit, structuredResult: unknown): unknown {
+  if (structuredResult === undefined) return undefined;
+  if (!unit.output) throw new Error('structuredResult requires a work output declaration');
+  const validation = validateStructuredJson(structuredResult);
+  if (!validation.ok) throw new Error(validation.reason);
+  return validation.value;
 }
 
 function applyFailureRetry(record: ExecutionRecord, unit: ExecutionWorkUnit, timestamp: number): void {

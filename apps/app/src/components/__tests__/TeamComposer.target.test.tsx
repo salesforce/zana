@@ -201,7 +201,7 @@ describe('TeamComposer Squad target picker', () => {
     expect(screen.queryByLabelText('Summary Optional')).toBeNull();
 
     openReviewSettings();
-    expect(reviewedSettings().textContent).toContain('Blocked (Default)');
+    await waitFor(() => expect(reviewedSettings().textContent).toContain('Blocked (Default)'));
     expect(screen.queryByLabelText('Push')).toBeNull();
     expect(screen.queryByLabelText('Title Optional')).toBeNull();
     const actions = screen.getByRole('button', { name: 'Review settings' }).parentElement!;
@@ -294,7 +294,7 @@ describe('TeamComposer Squad target picker', () => {
     render(<TeamComposer resolveLaunchPreview={resolveLaunchPreview} />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     openCustomizeLaunch();
-    expect(resolveLaunchPreview).toHaveBeenCalledWith(expect.objectContaining({ teamId: 't1', projectId: 'p1', goal: 'do the thing', sourceCapabilityIds: [] }));
+    await waitFor(() => expect(resolveLaunchPreview).toHaveBeenCalledWith(expect.objectContaining({ teamId: 't1', projectId: 'p1', goal: 'do the thing', sourceCapabilityIds: [] })));
     fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'false' } });
     await waitFor(() => expect(resolveLaunchPreview).toHaveBeenLastCalledWith(expect.objectContaining({ push: false })));
   });
@@ -346,7 +346,7 @@ describe('TeamComposer Squad target picker', () => {
     expect(screen.queryByLabelText('Failure policy')).toBeNull();
     expect(screen.getByText('Reviewed launch policies and target are fixed. Prepare a new proposal to change them.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Review settings' }).getAttribute('aria-expanded')).toBe('true');
-    expect(reviewedSettings().textContent).toContain('Allowed (This launch)');
+    await waitFor(() => expect(reviewedSettings().textContent).toContain('Allowed (This launch)'));
     openCustomizeLaunch();
     expect(screen.getByLabelText('Title Optional')).toBeTruthy();
     expect(screen.getByLabelText('Summary Optional')).toBeTruthy();

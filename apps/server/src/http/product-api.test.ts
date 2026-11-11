@@ -907,6 +907,14 @@ describe('product HTTP', () => {
     expect(missingFields.status).toBe(400);
     await expect(missingFields.json()).resolves.toMatchObject({ ok: false, code: 'INVALID' });
 
+    const nullBody = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'null'
+    });
+    expect(nullBody.status).toBe(400);
+    await expect(nullBody.json()).resolves.toMatchObject({ ok: false, code: 'INVALID' });
+
     const disabled = await fetch(`${server.url}api/v1/teams/launch`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

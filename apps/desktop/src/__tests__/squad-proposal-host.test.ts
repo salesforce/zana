@@ -300,6 +300,15 @@ describe('squadProposalMcpDeps', () => {
       await expect(host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'go', worktree: true }, { kind: 'window', windowId: 7 })).rejects.toThrow();
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  it('projects implicit isolation on a non-Git checkout as the project root', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nongit-isolation-preview-'));
+    try {
+      h.config = { worktreeIsolationDefault: true };
+      h.projects = [{ id: 'p1', path: dir, name: 'NonGit' }];
+      await expect(host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'go', coordinationMode: 'freeform' }, { kind: 'window', windowId: 7 }))
+        .resolves.toMatchObject({ location: { kind: 'project-root' }, path: realpathSync(dir) });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 
   it('binds preview token to trusted window and input, denies root HEAD drift before start', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bound-preview-'));
@@ -315,6 +324,18 @@ describe('squadProposalMcpDeps', () => {
       execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'head changed']);
       await expect(host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 7 })).resolves.toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
       expect(start).not.toHaveBeenCalled();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('sanitizes unexpected preview revalidation errors before returning them to the renderer', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'preview-error-'));
+    try {
+      initializeRepo(dir);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      const input = { teamId: 'team1', projectId: 'p1', goal: 'go', coordinationMode: 'freeform' as const };
+      const preview = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+      rmSync(dir, { recursive: true, force: true });
+      await expect(host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 7 }))
+        .resolves.toEqual({ ok: false, code: 'LAUNCH_CHANGED', message: 'Launch preview changed. Prepare the launch again.' });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it('evicts old opaque tokens at bounded retention cap', async () => {
@@ -796,6 +817,28 @@ describe('squad_launch wiring (launchNow deps)', () => {
     else execFileSync('git', ['-C', dir, 'checkout', '--detach']);
     expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: `root ${kind}` })).toMatchObject({ ok: true, value: { location: { kind: 'project-root' }, path: realpathSync(dir) } });
     expect(start).toHaveBeenCalledOnce();
+  });
+  it('sends reviewed non-Git isolation fallback through worktree preparation', async () => {
+    setup();
+    h.config = { worktreeIsolationDefault: true };
+    rmSync(join(h.projects[0].path, '.git'), { recursive: true, force: true });
+    const prepare = vi.spyOn(host.squadWorktreeRuntime, 'prepareSquadWorktree').mockImplementation(async record => record as never);
+    vi.spyOn(SquadExecutionService.prototype, 'start').mockImplementation(async (_owner, projectId, request: any) => {
+      const resolvedLaunch = await host.resolveSquadLaunchOptions(projectId as string, request);
+      const record = { id: 'non-git-isolation', projectId, teamId: 'team1', teamLaunchRequestId: request.launchRequestId, request, stateVersion: 1, resolvedLaunch };
+      await h.executionDeps.prepareSquadWorktree(record, request);
+      return { ok: true, value: { id: record.id, state: 'RUNNING' } } as never;
+    });
+
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'non-Git isolation fallback' })).toMatchObject({
+      ok: true,
+      value: { location: { kind: 'project-root' }, path: realpathSync(h.projects[0].path) }
+    });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'non-git-isolation',
+      resolvedLaunch: expect.objectContaining({ worktree: expect.objectContaining({ value: true }) })
+    }), expect.anything(), undefined);
   });
   it('preserves remote proposal now/review with locally staged plan sources', async () => {
     const start = setup();

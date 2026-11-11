@@ -63,10 +63,12 @@ export const ScheduleRow = React.memo(function ScheduleRow({
     const result = await product.scheduler.setEnabled(task.id, !task.enabled);
     if (!result.ok) pushToast(result.message, 'error');
   };
-  const runNow = async (reviewed = false) => {
-    if (task.kind === 'team' && !reviewed) { setReviewLaunch(true); return; }
+  const runNow = async (previewToken?: string) => {
+    if (task.kind === 'team' && !previewToken) { setReviewLaunch(true); return; }
     setReviewLaunch(false);
-    const result = await product.scheduler.runNow(task.id);
+    const result = task.kind === 'team'
+      ? await product.scheduler.runReviewedTeamNow(task.id, previewToken!)
+      : await product.scheduler.runNow(task.id);
     if (!result.ok) {
       pushToast(`Run failed: ${result.message}`, 'error');
       return;
@@ -136,7 +138,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
 
   return (
     <li className={`scheduler-card ${task.enabled ? '' : 'is-disabled'} ${isWorking ? 'is-running' : ''} ${isFinishedOpen ? 'is-done' : ''}`}>
-      {reviewLaunch && <ScheduleLaunchReview task={task} onCancel={() => setReviewLaunch(false)} onConfirm={() => { void runNow(true); }} />}
+      {reviewLaunch && <ScheduleLaunchReview task={task} onCancel={() => setReviewLaunch(false)} onConfirm={(previewToken) => { void runNow(previewToken); }} />}
       <div
         className="scheduler-card-main scheduler-card-main--compact"
         role="button"

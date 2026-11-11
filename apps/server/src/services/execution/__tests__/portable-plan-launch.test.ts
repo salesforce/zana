@@ -93,6 +93,11 @@ describe('portable plan On failure edges', () => {
     expect(parsePortablePlan(step('- On failure: retry review up to 1 with feedback'))).toMatchObject({ ok: true, units: [{ onFailure: { stepId: 'review' } }] });
   });
 
+  it('accepts retry ceilings matching the execution store', () => {
+    expect(parsePortablePlan(step('- On failure: retry review up to 100 with feedback'))).toMatchObject({ ok: true, units: [{ onFailure: { maxRetries: 100 } }] });
+    expect(parsePortablePlan(step('- On failure: retry review up to 101 with feedback'))).toMatchObject({ ok: false, reason: expect.stringContaining('at most 100') });
+  });
+
   it.each(['retry absent up to 2 with feedback', 'retry --- up to 2 with feedback', 'retry review up to 0 with feedback', 'retry review up to 1.5 with feedback', 'retry review up to 9007199254740992 with feedback', 'retry review up to 2', 'ignore', ''])('rejects invalid failure edge %s', (value) => {
     const parsed = parsePortablePlan(step(`- On failure: ${value}`));
     expect(parsed).toMatchObject({ ok: false, reason: expect.stringContaining('On failure') });

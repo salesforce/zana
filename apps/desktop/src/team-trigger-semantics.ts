@@ -24,8 +24,10 @@ function checkCandidatePlan(text: string): CandidateCheck {
   const parsed = parsePortablePlan(text);
   if (!parsed.ok) return { reason: parsed.reason };
   try {
+    const parsedUnits = new Map(parsed.units.map(unit => [unit.id, unit]));
     const units = (normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[]).map(unit => {
-      const parsedUnit = parsed.units.find(candidate => candidate.id === unit.id)!;
+      const parsedUnit = parsedUnits.get(unit.id);
+      if (!parsedUnit) throw new Error(`normalized plan unit ${unit.id} is missing from parsed plan`);
       return { ...unit, ...(parsedUnit.checks ? { checks: parsedUnit.checks } : {}), ...(parsedUnit.onFailure ? { onFailure: parsedUnit.onFailure } : {}) };
     });
     return {

@@ -139,10 +139,12 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     const result = await product.scheduler.setEnabled(t.id, !t.enabled);
     if (!result.ok) useUi.getState().pushToast(result.message, 'error');
   };
-  const runScheduleNow = async (t: ScheduledTask, reviewed = false) => {
-    if (t.kind === 'team' && !reviewed) { setReviewLaunch(t); return; }
+  const runScheduleNow = async (t: ScheduledTask, previewToken?: string) => {
+    if (t.kind === 'team' && !previewToken) { setReviewLaunch(t); return; }
     setReviewLaunch(null);
-    const result = await product.scheduler.runNow(t.id);
+    const result = t.kind === 'team'
+      ? await product.scheduler.runReviewedTeamNow(t.id, previewToken ?? '')
+      : await product.scheduler.runNow(t.id);
     if (!result.ok) {
       useUi.getState().pushToast(`Run failed: ${result.message}`, 'error');
       return;
@@ -208,7 +210,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     >
       <MobilePageHeader title="Schedules" primary={<button type="button" className="icon-btn" aria-label="New schedule" disabled={projects.length === 0} onClick={() => openNew()}><Plus size={20} /></button>}>{secondaryActions}</MobilePageHeader>
       <AuroraGrid />
-      {reviewLaunch && <ScheduleLaunchReview task={reviewLaunch} onCancel={() => setReviewLaunch(null)} onConfirm={() => { void runScheduleNow(reviewLaunch, true); }} />}
+      {reviewLaunch && <ScheduleLaunchReview task={reviewLaunch} onCancel={() => setReviewLaunch(null)} onConfirm={(previewToken) => { void runScheduleNow(reviewLaunch, previewToken); }} />}
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">

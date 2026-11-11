@@ -28,6 +28,8 @@ export interface TeamProductOpDeps {
     clientRequestId: string,
     message: string
   ): Promise<Result<ExecutionRecord>>;
+  /** Operational errors only; contexts contain ids, never goal text, commands, or credentials. */
+  logError?(context: string, error: unknown): void;
 }
 
 function jobStatus(record: ExecutionRecord): ProductTeamStatus {
@@ -84,10 +86,16 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
         ...(input.title ? { title: input.title } : {}),
         ...(input.summary ? { summary: input.summary } : {})
       });
-      const location = started.ok && deps.resolveLocation ? await deps.resolveLocation(input.projectId, started.value.executionId) : {};
-      return started.ok
-        ? { ok: true, value: { kind: 'job', id: started.value.executionId, state: started.value.state, ...location } }
-        : started;
+      if (!started.ok) return started;
+      // Location enriches successful launch response only; failure must not make caller retry a live job.
+      let location: Pick<import('@zana-ai/zcc-domain/product').ProductTeamLaunchResult, 'location' | 'path' | 'branch'> = {};
+      try {
+        if (deps.resolveLocation) location = await deps.resolveLocation(input.projectId, started.value.executionId);
+      } catch (error) {
+        try { deps.logError?.(`team launch location project=${input.projectId} execution=${started.value.executionId}`, error); } catch { /* logging must not affect a live launch */ }
+        // Job start succeeded. Status exposes location when this best-effort read recovers.
+      }
+      return { ok: true, value: { kind: 'job', id: started.value.executionId, state: started.value.state, ...location } };
     },
 
     async status(id: string) {
@@ -101,7 +109,10 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
     async preview(input) {
       if (!deps.resolvePreview) return { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview unavailable' };
       try { return { ok: true, value: await deps.resolvePreview(input) }; }
-      catch { return { ok: false, code: 'INVALID', message: 'Launch preview could not validate the plan or target.' }; }
+      catch (error) {
+        try { deps.logError?.(`team preview project=${input.projectId} team=${input.teamId}`, error); } catch { /* logging must not affect preview response */ }
+        return { ok: false, code: 'INVALID', message: 'Launch preview could not validate the plan or target.' };
+      }
     },
 
     async answer(input) {

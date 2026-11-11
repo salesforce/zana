@@ -446,10 +446,13 @@ Check output is untrusted and captured with bounded size, timeout, cleanup, and
 queue limits. The runner permits two active checks and 32 waiting checks by
 default. Its 60-second default timeout begins when the child process starts, not
 while it waits in the bounded queue; caller cancellation removes a queued check
-or stops a running one. Named checks currently require POSIX process-group and
-file-limit support. On Windows, a launch that references a check is rejected
-before workers spawn with a platform diagnostic. This capability is not
-all-platform support and does not defer failure until completion.
+or stops a running one. The default 1 MiB capture cap covers only combined
+standard output and standard error, not files a check writes in the Project.
+Checks do not inherit environment variables whose names indicate credentials,
+sessions, or tokens. Named checks currently require POSIX process-group
+support. On Windows, a launch that references a check is rejected before workers
+spawn with a platform diagnostic. This capability is not all-platform support
+and does not defer failure until completion.
 
 ---
 

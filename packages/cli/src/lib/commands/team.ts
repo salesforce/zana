@@ -180,7 +180,9 @@ export async function runTeamCommand(
     if (!parsed.success || typeof previewToken !== 'string' || !previewToken) return errResult('invalid trusted launch preview');
     const preview = parsed.data;
     const policies = Object.entries(preview.resolvedLaunch).map(([name, policy]) => `${name}: ${Array.isArray(policy.value) ? policy.value.join(', ') || 'none' : policy.value} (${policy.source})`).join('; ');
-    const previewLocation = preview.location.kind === 'new-worktree' ? 'New worktree (path assigned at launch)' : `${preview.branch ?? 'HEAD'} — ${preview.path}`;
+    const previewLocation = preview.location.kind === 'new-worktree'
+      ? `New worktree from ${preview.location.baseBranch} (path assigned at launch)`
+      : `${preview.branch ?? 'HEAD'} — ${preview.path}`;
     const diagnostic = `Launch preview: ${policies}\nLocation: ${previewLocation}\n`;
     deps?.onStderr?.(diagnostic);
     const withPreview = (result: CliResult): CliResult => ({ ...result, stderr: `${deps?.onStderr ? '' : diagnostic}${result.stderr ?? ''}` });

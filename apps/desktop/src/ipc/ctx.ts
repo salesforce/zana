@@ -58,6 +58,8 @@ export interface IpcCtx {
     input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0],
     caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }
   ) => Promise<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>;
+  previewScheduledTeamLaunch: (scheduleId: string, windowId: number) => Promise<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>;
+  runReviewedScheduledTeamNow: (scheduleId: string, previewToken: string, windowId: number) => Promise<import('@zana-ai/zcc-domain/product').ScheduledTask>;
   squadProposals: any;
   executionStore: any;
   exitedSessionStats: any;

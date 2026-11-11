@@ -618,6 +618,24 @@ describe('execution admission', () => {
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ worktree: true }));
   }));
 
+  it('persists a main-reviewed generated-worktree base before checkout preparation', async () => fixture(async (filePath) => {
+    const reviewedSquadWorktreeBase = { path: '/repo', branch: 'main', head: 'reviewed-a' };
+    const prepareSquadWorktree = vi.fn(async (record: ExecutionRecord) => {
+      expect(record.reviewedSquadWorktreeBase).toEqual(reviewedSquadWorktreeBase);
+      return record;
+    });
+    const serviceDeps = deps(filePath, {
+      prepareSquadWorktree,
+      resolveReviewedSquadWorktreeBase: () => reviewedSquadWorktreeBase
+    });
+    const service = new ExecutionService(serviceDeps);
+
+    const started = await service.start('owner', 'project-1', { ...request, worktree: true });
+
+    expect(started).toMatchObject({ ok: true, value: { reviewedSquadWorktreeBase } });
+    expect((await serviceDeps.store.get(started.ok ? started.value.id : '')).reviewedSquadWorktreeBase).toEqual(reviewedSquadWorktreeBase);
+  }));
+
   it('persists and forwards requested squad worktree completion policy', async () => fixture(async (filePath) => {
     const launchTeam = vi.fn(async () => ({ ok: true }));
     const service = new ExecutionService(deps(filePath, { launchTeam }));

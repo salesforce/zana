@@ -86,14 +86,20 @@ describe('validateGoalFile', () => {
     expect(agent.launchOptions).toBeUndefined();
   });
 
-  it('drops malformed Squad launch options without dropping an otherwise valid goal', () => {
-    const result = validateGoalFile({
+  it('keeps malformed persisted Squad launch options visible and paused without dropping policy checks', () => {
+    const raw = {
       ...baseGoal,
       assignment: { kind: 'team', teamId: 'release-squad' },
       launchOptions: { push: 'yes' }
+    };
+    const result = validateGoalFile(raw);
+    expect(result).toMatchObject({
+      status: 'paused',
+      assignment: { kind: 'team', teamId: 'release-squad' },
+      launchOptionsError: expect.stringContaining('invalid')
     });
-    if ('error' in result) throw new Error('unexpected error');
-    expect(result.launchOptions).toBeUndefined();
+    expect(result).not.toHaveProperty('launchOptions');
+    expect(raw.launchOptions).toEqual({ push: 'yes' });
   });
 
   it('trims and drops blank success criteria', () => {

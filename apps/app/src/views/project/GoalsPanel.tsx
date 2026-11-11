@@ -362,7 +362,7 @@ function GoalRow({
               onClick={() => setStatus('active', 'Activate')}
               title="Activate (arm the loop)"
               aria-label="Activate"
-              disabled={pending.length > 0}
+              disabled={pending.length > 0 || !!goal.launchOptionsError}
             >
               <Play size={14} />
             </button>
@@ -383,7 +383,7 @@ function GoalRow({
               onClick={() => setStatus('active', 'Resume')}
               title="Resume the loop"
               aria-label="Resume"
-              disabled={pending.length > 0}
+              disabled={pending.length > 0 || !!goal.launchOptionsError}
             >
               <PlayCircle size={14} />
             </button>
@@ -394,7 +394,7 @@ function GoalRow({
               onClick={runNow}
               title="Run one iteration now"
               aria-label="Run now"
-              disabled={pending.length > 0}
+              disabled={pending.length > 0 || !!goal.launchOptionsError}
             >
               <Flag size={14} />
             </button>
@@ -417,6 +417,7 @@ function GoalRow({
       {expanded && (
         <div className="scheduler-card-detail">
           <div className="scheduler-card-desc">{goal.statement}</div>
+          {goal.launchOptionsError && <div className="modal-error">{goal.launchOptionsError}</div>}
           {goal.successCriteria.length > 0 && (
             <ul className="goal-criteria">
               {goal.successCriteria.map((c, i) => (

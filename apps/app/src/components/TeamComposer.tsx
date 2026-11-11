@@ -178,22 +178,24 @@ export function TeamComposer({
     setPreviewState((current) => current?.key === previewKey ? current : undefined);
     if (!teamId || !projectId || !optionsValid.success) return;
     let cancelled = false;
-    const pending = resolveLaunchPreview
-      ? resolveLaunchPreview(previewRequest).then((value) => ({ resolved: value }))
-      : Promise.resolve().then(() => product.teams.preview(previewRequest)).then((result) => {
-        if (!result.ok) throw new Error(result.message);
-        return { resolved: result.value.resolvedLaunch, preview: result.value };
+    const timer = setTimeout(() => {
+      const pending = resolveLaunchPreview
+        ? resolveLaunchPreview(previewRequest).then((value) => ({ resolved: value }))
+        : Promise.resolve().then(() => product.teams.preview(previewRequest)).then((result) => {
+          if (!result.ok) throw new Error(result.message);
+          return { resolved: result.value.resolvedLaunch, preview: result.value };
+        });
+      pending.then((value) => {
+        if (cancelled) return;
+        if (currentPreview?.resolved && previewSnapshot(value) !== previewSnapshot(currentPreview)) {
+          setError('Launch preview changed. Review effective settings and location, then Launch again.');
+        }
+        setPreviewState({ key: previewKey, generation: previewGeneration, ...value });
+      }, (error) => {
+        if (!cancelled) setPreviewState({ key: previewKey, generation: previewGeneration, error: error instanceof Error ? error.message : 'Launch preview unavailable' });
       });
-    pending.then((value) => {
-      if (cancelled) return;
-      if (currentPreview?.resolved && previewSnapshot(value) !== previewSnapshot(currentPreview)) {
-        setError('Launch preview changed. Review effective settings and location, then Launch again.');
-      }
-      setPreviewState({ key: previewKey, generation: previewGeneration, ...value });
-    }, (error) => {
-      if (!cancelled) setPreviewState({ key: previewKey, generation: previewGeneration, error: error instanceof Error ? error.message : 'Launch preview unavailable' });
-    });
-    return () => { cancelled = true; };
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [resolveLaunchPreview, previewKey, previewGeneration]);
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 

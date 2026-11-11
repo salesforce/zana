@@ -103,7 +103,8 @@ export function registerExecutionBoardIpc(): void {
         const value = await ctx.resolveSquadComposerPreview(parsed.data, caller.kind === 'window'
           ? { kind: 'window', windowId: caller.window.id } : { kind: 'shared-owner' });
         return { ok: true, value };
-      } catch {
+      } catch (error) {
+        ctx.logMainError(`teams preview (teamId=${parsed.data.teamId}, projectId=${parsed.data.projectId})`, error);
         return { ok: false, code: 'UNAVAILABLE', message: 'Launch preview could not validate the plan, sources, or target. Retry after correcting them.' };
       }
     },

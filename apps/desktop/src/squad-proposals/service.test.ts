@@ -171,6 +171,16 @@ describe('trusted launch preview', () => {
     expect(appendOnce.mock.calls[0]![0].comments).not.toContain(join(root, 'proj'));
   });
 
+  it('labels a detached project-root preview as HEAD, not undefined', async () => {
+    previewDep = async ({ projectId }) => ({
+      launchOptions: {}, resolvedLaunch: resolveAllLaunch({}),
+      location: { kind: 'project-root', projectId }, path: join(root, 'proj'), fingerprint: 'detached-v1'
+    });
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: true });
+    expect(appendOnce.mock.calls[0]![0].comments).toContain(`- Location: HEAD (Project) — ${join(root, 'proj')}`);
+    expect(appendOnce.mock.calls[0]![0].comments).not.toContain('undefined');
+  });
+
   it('fails closed when requested options have no resolver', async () => {
     previewDep = undefined;
     const store = createSquadProposalStore({ filePath: join(root, 'unwired.json'), now: () => clock });
@@ -1434,6 +1444,17 @@ describe('attachments kept for review', () => {
     ] } });
     expect(r.ok && r.value.sources[1]).not.toHaveProperty('outsideProject');
     expect(r.ok && r.value.sources[0]).not.toHaveProperty('attachment');
+  });
+
+  it('revalidates a staged attachment with its frozen content before review', async () => {
+    previewDep = vi.fn(async ({ projectId, attachments }) => ({
+      launchOptions: {}, resolvedLaunch: resolveAllLaunch({}),
+      location: { kind: 'project-root' as const, projectId }, path: join(root, 'proj'), branch: 'main',
+      fingerprint: JSON.stringify(attachments)
+    }));
+    await svc.service.propose(route, { teamId: 'team1', goal: 'Use notes', planning: 'infer', attachments: [{ name: 'notes.md', text: '# frozen' }] });
+    expect(await svc.service.review(1, 'prop-1', allow)).toMatchObject({ ok: true });
+    expect(previewDep).toHaveBeenLastCalledWith(expect.objectContaining({ sourcePaths: [], attachments: [{ name: 'notes.md', text: '# frozen' }] }));
   });
 
   it('refuses review once the staged copy is gone, with a message', async () => {

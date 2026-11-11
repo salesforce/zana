@@ -92,6 +92,10 @@ Goals are off by default. Turn them on in **Settings → Experimental → Goals*
 
 Each iteration runs as a durable squad job. Launch overrides are saved with the Goal and apply to every iteration. Changing **Run as** back to **Agent** clears Squad launch overrides.
 
+If a saved Squad launch configuration becomes invalid, its Goal remains visible
+and paused with a repair message. **Resume** and **Run now** stay unavailable
+until you edit the Goal and replace its launch settings.
+
 ## Schedules
 
 A schedule can also run a Squad.

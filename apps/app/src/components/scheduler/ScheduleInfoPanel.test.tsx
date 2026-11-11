@@ -9,6 +9,8 @@ import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product
 
 const setEnabled = vi.fn();
 const runNow = vi.fn();
+const previewTeamLaunch = vi.fn(async () => ({ ok: false, message: 'Unavailable' }));
+const runReviewedTeamNow = vi.fn();
 const retryRuns = vi.fn();
 const dismissRuns = vi.fn();
 const close = vi.fn();
@@ -26,10 +28,11 @@ vi.mock('./resumeScheduledRun.js', async (importOriginal) => ({
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
-    teams: { preview: vi.fn(async () => ({ ok: false, message: 'Unavailable' })) },
     scheduler: {
       setEnabled: (...args: unknown[]) => setEnabled(...args),
       runNow: (...args: unknown[]) => runNow(...args),
+      previewTeamLaunch: (...args: unknown[]) => previewTeamLaunch(...args),
+      runReviewedTeamNow: (...args: unknown[]) => runReviewedTeamNow(...args),
       retryRuns: (...args: unknown[]) => retryRuns(...args),
       dismissRuns: (...args: unknown[]) => dismissRuns(...args)
     },

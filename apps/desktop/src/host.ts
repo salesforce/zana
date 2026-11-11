@@ -1517,7 +1517,10 @@ export const scheduleAgentApi = {
   get: (id: string) => scheduler.get(id),
   update: (id: string, patch: ScheduleUpdateInput) => scheduler.update(id, patch),
   reload: (id: string) => scheduler.reload(id),
-  runNow: (id: string) => scheduler.runNow(id),
+  runNow: (id: string) => {
+    if (scheduler.get(id).kind === 'team') throw new Error('Review launch settings in Scheduler before running this Team schedule');
+    return scheduler.runNow(id);
+  },
   queryRuns: async (query: ScheduleRunQuery) => slimRunQueryResult(await scheduler.queryRuns(query)),
   retryRuns: (refs: ScheduleRunRef[]) => scheduler.retryRuns(refs),
   dismissRuns: (refs: ScheduleRunRef[]) => scheduler.dismissRuns(refs),
@@ -3713,7 +3716,10 @@ export const namedChecksSettings = {
   }
 };
 
-const pendingSquadPreviews = new Map<string, SquadLaunchPreview>();
+const pendingSquadPreviews = new Map<string, { preview: SquadLaunchPreview; expiresAt: number }>();
+const PENDING_SQUAD_PREVIEW_TTL_MS = 5 * 60_000;
+const PENDING_SQUAD_PREVIEW_MAX = 200;
+const reviewedSchedulePreviews = new Map<string, SquadLaunchPreview>();
 const composerPreviewTokens = new Map<string, { key: string; preview: SquadLaunchPreview; expiresAt: number }>();
 const COMPOSER_PREVIEW_TTL_MS = 5 * 60_000;
 const COMPOSER_PREVIEW_MAX = 200;
@@ -3724,6 +3730,16 @@ function composerPreviewKey(input: Parameters<import('@zana-ai/zcc-desktop-contr
 function pruneComposerPreviewTokens(): void {
   for (const [token, entry] of composerPreviewTokens) if (entry.expiresAt <= Date.now()) composerPreviewTokens.delete(token);
   while (composerPreviewTokens.size > COMPOSER_PREVIEW_MAX) composerPreviewTokens.delete(composerPreviewTokens.keys().next().value!);
+}
+function pendingSquadPreview(launchRequestId: string | undefined): SquadLaunchPreview | undefined {
+  if (!launchRequestId) return undefined;
+  for (const [id, entry] of pendingSquadPreviews) if (entry.expiresAt <= Date.now()) pendingSquadPreviews.delete(id);
+  return pendingSquadPreviews.get(launchRequestId)?.preview;
+}
+function retainPendingSquadPreview(launchRequestId: string, preview: SquadLaunchPreview): void {
+  pendingSquadPreview(launchRequestId);
+  while (pendingSquadPreviews.size >= PENDING_SQUAD_PREVIEW_MAX) pendingSquadPreviews.delete(pendingSquadPreviews.keys().next().value!);
+  pendingSquadPreviews.set(launchRequestId, { preview, expiresAt: Date.now() + PENDING_SQUAD_PREVIEW_TTL_MS });
 }
 export async function resolveSquadLaunchOptions(projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'worktree' | 'onComplete' | 'target' | 'push' | 'checks' | 'failurePolicyDefault' | 'planLaunch'> & { launchRequestId?: string }) {
   if (!store.listProjects().some(project => project.id === projectId)) throw new Error('project not registered');
@@ -3736,7 +3752,7 @@ export async function resolveSquadLaunchOptions(projectId: string, request: Pick
     squad: { worktreeIsolation: team.worktreeIsolation, worktreeOnComplete: team.worktreeOnComplete, push: team.push, checks: team.checks, failurePolicyDefault: team.failurePolicyDefault },
     fallback: { worktree: settings.worktreeIsolation ?? store.getConfig().worktreeIsolationDefault }
   });
-  const preview = request.launchRequestId ? pendingSquadPreviews.get(request.launchRequestId) : undefined;
+  const preview = pendingSquadPreview(request.launchRequestId);
   if (preview) {
     const project = store.listProjects().find(project => project.id === projectId)!;
     if ((await resolveSquadLocationPreview(project, preview.launchOptions, resolved)).fingerprint !== preview.fingerprint) throw new Error('Launch settings or target changed before claim');
@@ -3808,6 +3824,22 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
   return { ...preview, previewToken };
 }
 
+async function claimSquadComposerPreview(
+  input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0],
+  previewToken: unknown,
+  caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }
+): Promise<SquadLaunchPreview> {
+  pruneComposerPreviewTokens();
+  const entry = typeof previewToken === 'string' ? composerPreviewTokens.get(previewToken) : undefined;
+  if (!entry || entry.key !== composerPreviewKey(input, caller)) throw new Error('Launch preview expired or does not match this window and input');
+  // Reserve before revalidation so concurrent callers cannot share this token.
+  composerPreviewTokens.delete(previewToken as string);
+  const current = await resolveSquadComposerPreview(input, caller);
+  composerPreviewTokens.delete(current.previewToken);
+  if (current.fingerprint !== entry.preview.fingerprint) throw new Error('Launch settings or target changed. Prepare the launch again.');
+  return entry.preview;
+}
+
 async function resolveSquadLocationPreview(project: Project, launchOptions: LaunchOptions, resolvedLaunch: Awaited<ReturnType<typeof resolveSquadLaunchOptions>>): Promise<SquadLaunchPreview> {
   let location: SquadLaunchLocation;
   let path: string | undefined;
@@ -3835,7 +3867,7 @@ async function resolveSquadLocationPreview(project: Project, launchOptions: Laun
   } else {
     const root = await realpath(project.path);
     const status = await getGitStatus(root);
-    const eligible = !project.quickAgent && !!status?.branch && !status.detached;
+    const eligible = !project.quickAgent && await isGitRepo(root) && !!status?.branch && !status.detached;
     if (!eligible && (launchOptions.worktree === true || resolvedLaunch.worktree.source === 'plan' && resolvedLaunch.worktree.value || resolvedLaunch.push.value || resolvedLaunch.checks.value.length)) throw new Error('TARGET_UNAVAILABLE');
     location = resolvedLaunch.worktree.value && eligible
       ? { kind: 'new-worktree', projectId: project.id, baseBranch: status!.branch!, isolationSource: resolvedLaunch.worktree.source }
@@ -3844,6 +3876,7 @@ async function resolveSquadLocationPreview(project: Project, launchOptions: Laun
   }
   const checkout = path ?? await realpath(project.path);
   head = (await listWorktrees(checkout)).find(entry => entry.path === checkout)?.head ?? undefined;
+  if (location.kind === 'new-worktree' && !head) throw new Error('TARGET_UNAVAILABLE');
   const projection = { launchOptions, resolvedLaunch, location, ...(path ? { path, ...(branch ? { branch } : {}) } : {}), ...(head ? { head } : {}) };
   return squadLaunchPreviewSchema.parse({ ...projection, fingerprint: createHash('sha256').update(JSON.stringify(projection)).digest('hex') });
 }
@@ -7200,6 +7233,19 @@ const squadAttachmentStaging = createStagingStore({ root: join(electronZccDataDi
 const SQUAD_STAGING_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 let squadStagingSweepTimer: NodeJS.Timeout | null = null;
 
+async function describeExecutionLocation(project: { id: string; path: string; remote?: unknown }, record: ExecutionRecord): Promise<{ location: SquadLaunchLocation; path: string; branch?: string }> {
+  const path = record.squadWorktree?.path ?? (project.remote ? project.path : await realpath(project.path));
+  const status = record.squadWorktree || project.remote ? undefined : await getGitStatus(path);
+  const branch = record.squadWorktree?.branch ?? (status?.detached ? undefined : status?.branch ?? undefined);
+  if (record.squadWorktree && !branch) throw new Error('launched execution branch unavailable');
+  const location: SquadLaunchLocation = record.squadWorktree
+    ? record.squadWorktree.ownership === 'user'
+      ? record.squadWorktree.targetKind === 'project-root' ? { kind: 'project-root', projectId: project.id } : { kind: 'worktree', projectId: project.id, branch: branch!, ownership: 'user' }
+      : { kind: 'new-worktree', projectId: project.id, baseBranch: record.squadWorktree.baseBranch!, isolationSource: record.resolvedLaunch.worktree.source }
+    : { kind: 'project-root', projectId: project.id };
+  return { location, path, ...(branch ? { branch } : {}) };
+}
+
 const squadProposalServiceDeps: SquadProposalServiceDeps = {
   resolveLaunchPreview: resolveSquadLaunchPreview,
   store: squadProposalStore,
@@ -7243,16 +7289,7 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
       if (!result.ok) return result;
       const record = await executionStore.getInProject(project.id, result.value.executionId);
       if (!record) throw new Error('launched execution receipt unavailable');
-      const path = record.squadWorktree?.path ?? (project.remote ? project.path : await realpath(project.path));
-      const status = record.squadWorktree || project.remote ? undefined : await getGitStatus(path);
-      const branch = record.squadWorktree?.branch ?? (status?.detached ? undefined : status?.branch ?? undefined);
-      if (record.squadWorktree && !branch) throw new Error('launched execution branch unavailable');
-      const location: SquadLaunchLocation = record.squadWorktree
-        ? record.squadWorktree.ownership === 'user'
-          ? record.squadWorktree.targetKind === 'project-root' ? { kind: 'project-root', projectId: project.id } : { kind: 'worktree', projectId: project.id, branch: branch!, ownership: 'user' }
-          : { kind: 'new-worktree', projectId: project.id, baseBranch: record.squadWorktree.baseBranch!, isolationSource: record.resolvedLaunch.worktree.source }
-        : { kind: 'project-root', projectId: project.id };
-      return { ...result, value: { ...result.value, location, path, branch } };
+      return { ...result, value: { ...result.value, ...await describeExecutionLocation(project, record) } };
     }
   }
 };
@@ -7474,17 +7511,25 @@ const squadExecutionService = new SquadExecutionService({
   isRegisteredProject: (projectId) => store.listProjects().some((project) => project.id === projectId),
   withExecutionLifecycleLock: withSquadWorktreeLifecycleLock,
   mayResumeRetainedWorktree: (executionId) => !squadWorktreeHasActiveFollowUp(executionId),
+  resolveReviewedSquadWorktreeBase: async (projectId, request) => {
+    const preview = pendingSquadPreview(request.launchRequestId);
+    if (!preview || preview.location.kind !== 'new-worktree') return undefined;
+    const project = store.listProjects().find(candidate => candidate.id === projectId);
+    if (!project || project.remote || project.quickAgent || !preview.head) throw new Error('Reviewed worktree base unavailable');
+    return { path: await realpath(project.path), branch: preview.location.baseBranch, head: preview.head };
+  },
   prepareSquadWorktree: async (record, request) => {
-    const preview = pendingSquadPreviews.get(record.teamLaunchRequestId);
+    const preview = pendingSquadPreview(record.teamLaunchRequestId);
     const project = store.listProjects().find(project => project.id === record.projectId);
     if (preview && !project) throw new Error('TARGET_UNAVAILABLE');
     if (preview && project && (await resolveSquadLocationPreview(project, preview.launchOptions, record.resolvedLaunch)).fingerprint !== preview.fingerprint) throw new Error('Launch target changed before preparation');
-    const reviewedBase = preview?.location.kind === 'new-worktree'
-      ? { path: await realpath(project!.path), branch: preview.location.baseBranch, head: preview.head ?? '' } : undefined;
+    const reviewedBase = record.squadWorktree
+      ? undefined
+      : record.reviewedSquadWorktreeBase ?? (preview?.location.kind === 'new-worktree'
+        ? { path: await realpath(project!.path), branch: preview.location.baseBranch, head: preview.head ?? '' }
+        : undefined);
     if (reviewedBase && !reviewedBase.head) throw new Error('Reviewed worktree base HEAD unavailable');
-    // Legacy ineligible isolation is explicitly shown as project-root; do not attempt a generated checkout after that review.
-    const deliberateRootFallback = preview?.location.kind === 'project-root' && !record.request.target && record.resolvedLaunch.worktree.value && !record.squadWorktree;
-    const prepared = deliberateRootFallback ? record : await squadWorktreeRuntime.prepareSquadWorktree(record, request, reviewedBase);
+    const prepared = await squadWorktreeRuntime.prepareSquadWorktree(record, request, reviewedBase);
     if (preview && preview.location.kind === 'new-worktree' && !prepared.squadWorktree) throw new Error('Reviewed worktree was not created');
     if (preview && preview.location.kind !== 'new-worktree') {
       const project = store.listProjects().find(project => project.id === record.projectId);
@@ -7494,9 +7539,10 @@ const squadExecutionService = new SquadExecutionService({
         return prepared;
       }
       const path = prepared.squadWorktree?.path ?? await realpath(project.path);
-      const branch = prepared.squadWorktree?.branch ?? (await getGitStatus(path))?.branch;
       const status = await getGitStatus(path);
-      const actualBranch = status?.detached ? undefined : branch ?? undefined;
+      const actualBranch = status?.detached
+        ? undefined
+        : prepared.squadWorktree?.branch ?? status?.branch ?? undefined;
       const head = (await listWorktrees(path)).find(entry => entry.path === path)?.head ?? undefined;
       if (path !== preview.path || actualBranch !== preview.branch || head !== preview.head) throw new Error('Launch target changed after claim');
     }
@@ -7859,18 +7905,14 @@ export async function startTeamJobFromUi(
   let composerPreview: SquadLaunchPreview | undefined;
   if (input.previewToken !== undefined) {
     try {
-      pruneComposerPreviewTokens();
-      const entry = typeof input.previewToken === 'string' ? composerPreviewTokens.get(input.previewToken) : undefined;
       const caller = sourceContext ? { kind: 'window' as const, windowId: sourceContext.windowId } : { kind: 'shared-owner' as const };
       const previewInput = { teamId, projectId, goal: originalGoal, coordinationMode, sourceCapabilityIds, ...parsedOptions.data };
-      if (!entry || entry.key !== composerPreviewKey(previewInput, caller)) throw new Error('Launch preview expired or does not match this window and input');
-      // Reserve synchronously: revalidation awaits IO, so concurrent calls must not share this token.
-      composerPreviewTokens.delete(input.previewToken!);
-      const current = await resolveSquadComposerPreview(previewInput, caller);
-      composerPreviewTokens.delete(current.previewToken);
-      if (current.fingerprint !== entry.preview.fingerprint) throw new Error('Launch settings or target changed. Prepare the launch again.');
-      composerPreview = entry.preview;
-    } catch (error) { return { ok: false, code: 'LAUNCH_CHANGED', message: error instanceof Error ? error.message : 'Launch preview changed' }; }
+      composerPreview = await claimSquadComposerPreview(previewInput, input.previewToken, caller);
+    } catch (error) {
+      if (error instanceof SquadPreviewAdmissionError) return { ok: false, code: 'LAUNCH_CHANGED', message: error.message };
+      logMainError('revalidate Squad launch preview', error);
+      return { ok: false, code: 'LAUNCH_CHANGED', message: 'Launch preview changed. Prepare the launch again.' };
+    }
   }
   // Goal paths follow the one source policy. Reserve preview tokens before this first source IO.
   const sourceBases = squadSourceBases();
@@ -7932,7 +7974,7 @@ const squadLaunchDeps: SquadLaunchDeps = {
     const resolved = await resolveSquadLaunchOptions(projectId, request);
     const current = await resolveSquadLocationPreview(project, preview.launchOptions, resolved);
     if (current.fingerprint !== preview.fingerprint) throw new Error('Launch settings or target changed. Prepare the launch again.');
-    if (request.launchRequestId) pendingSquadPreviews.set(request.launchRequestId, preview);
+    if (request.launchRequestId) retainPendingSquadPreview(request.launchRequestId, preview);
   },
   log: (message, error) => logMainError(message, error)
 };
@@ -8016,14 +8058,7 @@ function createMainTeamProductOps() {
       const record = await executionStore.getInProject(projectId, executionId);
       const project = store.listProjects().find(project => project.id === projectId);
       if (!record || !project) return {};
-      const path = record.squadWorktree?.path ?? (project.remote ? project.path : await realpath(project.path));
-      const branch = record.squadWorktree?.branch ?? (project.remote ? undefined : (await getGitStatus(path))?.branch ?? undefined);
-      const location: SquadLaunchLocation = record.squadWorktree
-        ? record.squadWorktree.ownership === 'user'
-          ? record.squadWorktree.targetKind === 'project-root' ? { kind: 'project-root', projectId } : { kind: 'worktree', projectId, branch: record.squadWorktree.branch, ownership: 'user' }
-          : { kind: 'new-worktree', projectId, baseBranch: record.squadWorktree.baseBranch!, isolationSource: record.resolvedLaunch.worktree.source }
-        : { kind: 'project-root', projectId };
-      return { location, path, ...(branch ? { branch } : {}) };
+      return describeExecutionLocation(project, record);
     },
     startTeamJobFromUi: (input) => startTeamJobFromUi(input),
     getExecution: (executionId) => executionStore.get(executionId),
@@ -8033,6 +8068,35 @@ function createMainTeamProductOps() {
     respondToBlocker: (owner, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message) =>
       squadExecutionService.respondToBlocker(owner, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message)
   });
+}
+
+function scheduledTeamPreviewInput(schedule: ScheduledTask): Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0] {
+  if (schedule.kind !== 'team' || !schedule.teamId) throw new Error('schedule is not a Team schedule');
+  return {
+    teamId: schedule.teamId,
+    projectId: schedule.projectId,
+    goal: [schedule.prompt, schedule.description, schedule.name].map(value => value?.trim()).find(Boolean) ?? '',
+    coordinationMode: schedule.planSource === 'provided' ? 'structured' : 'freeform',
+    ...schedule.launchOptions
+  };
+}
+
+/** Issue a window-bound preview for one persisted Team schedule definition. */
+export async function previewScheduledTeamLaunch(scheduleId: string, windowId: number): Promise<SquadLaunchPreview & { previewToken: string }> {
+  return resolveSquadComposerPreview(scheduledTeamPreviewInput(scheduler.get(scheduleId)), { kind: 'window', windowId });
+}
+
+/** Consume review token, revalidate current definition, then enter scheduler's manual path. */
+export async function runReviewedScheduledTeamNow(scheduleId: string, previewToken: string, windowId: number): Promise<ScheduledTask> {
+  try {
+    return await scheduler.runReviewedTeamNow(scheduleId, async (schedule) => {
+      const preview = await claimSquadComposerPreview(scheduledTeamPreviewInput(schedule), previewToken, { kind: 'window', windowId });
+      reviewedSchedulePreviews.set(scheduleId, preview);
+    });
+  } finally {
+    // Recovery or a failed launch may not consume the binding; never leak it to a later automatic fire.
+    reviewedSchedulePreviews.delete(scheduleId);
+  }
 }
 
 /**
@@ -8955,6 +9019,8 @@ function registerIpc() {
     get executionResumeTokens() { return executionResumeTokens; },
     get executionSources() { return executionSources; },
     get resolveSquadComposerPreview() { return resolveSquadComposerPreview; },
+    get previewScheduledTeamLaunch() { return previewScheduledTeamLaunch; },
+    get runReviewedScheduledTeamNow() { return runReviewedScheduledTeamNow; },
     get squadProposals() { return squadProposalService; },
     get executionStore() { return executionStore; },
     get exitedSessionStats() { return exitedSessionStats; },
@@ -9522,7 +9588,12 @@ async function bootstrapNormal() {
     logger: logMainError,
     getPendingSubagentCount: (sessionId) => agentStatus.subagents(sessionId),
     resolvePersona: (id) => personas.list().find((p) => p.id === id),
-    ...scheduledSquadTrigger(startTriggeredSquad, executionStore)
+    ...scheduledSquadTrigger(startTriggeredSquad, executionStore, (args) => {
+      const preview = reviewedSchedulePreviews.get(args.schedule.id);
+      if (!preview) return;
+      reviewedSchedulePreviews.delete(args.schedule.id);
+      retainPendingSquadPreview(`schedule:${args.schedule.id}:${args.runId}`, preview);
+    })
   });
   await scheduler.loadAll(store.listProjects());
   // Watch schedule dirs so a skill- or hand-authored schedule file goes live
@@ -10958,6 +11029,7 @@ async function bootstrapNormal() {
     ...scheduleControlApi,
     runScheduleNow: async (id) => {
       try {
+        if (scheduler.get(id).kind === 'team') return { ok: false, code: 'REVIEW_REQUIRED', message: 'Review launch settings in Scheduler before running this Team schedule.' };
         return { ok: true, value: await scheduler.runNow(id) };
       } catch (err) {
         return { ok: false, code: 'RUN_FAILED', message: String(err) };

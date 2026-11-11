@@ -171,6 +171,22 @@ describe('prepareSquadWorktree', () => {
     deps.git.listWorktrees = vi.fn(async () => [{ path: ROOT, branch: 'main', head: 'reviewed' }, { path: target, branch: `zcc/team-${record.id}`, head: 'reviewed' }]);
     await expect(createSquadWorktreeRuntime(deps).prepareSquadWorktree(record, {}, { path: ROOT, branch: 'main', head: 'reviewed' })).resolves.toMatchObject({ squadWorktree: { path: target, baseBranch: 'main' } });
   });
+  it('ignores stale listed worktrees while matching reviewed base and generated checkout', async () => {
+    const { deps } = setup({ realpath: (path) => {
+      if (path === '/p/.worktrees/stale') throw new Error('ENOENT');
+      return path;
+    } });
+    const record = rec({ squadWorktree: undefined, resolvedLaunch: resolveAllLaunch({ launch: { worktree: true } }) });
+    const target = `${ROOT}/.worktrees/team-${record.id}`;
+    serve(deps, record);
+    deps.git.listWorktrees = vi.fn(async () => [
+      { path: ROOT, branch: 'main', head: 'reviewed' },
+      { path: '/p/.worktrees/stale', branch: 'stale', head: 'old' },
+      { path: target, branch: `zcc/team-${record.id}`, head: 'reviewed' }
+    ]);
+    await expect(createSquadWorktreeRuntime(deps).prepareSquadWorktree(record, {}, { path: ROOT, branch: 'main', head: 'reviewed' }))
+      .resolves.toMatchObject({ squadWorktree: { path: target, baseBranch: 'main' } });
+  });
   it.each(['failure', 'head-drift', 'wrong-head'])('refuses reviewed generated checkout %s without binding fallback', async kind => {
     const { deps } = setup();
     const record = rec({ squadWorktree: undefined, resolvedLaunch: resolveAllLaunch({ launch: { worktree: true } }) });
@@ -185,6 +201,31 @@ describe('prepareSquadWorktree', () => {
     });
     await expect(createSquadWorktreeRuntime(deps).prepareSquadWorktree(record, {}, { path: ROOT, branch: 'main', head: 'reviewed' })).rejects.toThrow();
     expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
+  });
+  it('rejects unbound recovery when the durably reviewed base changed', async () => {
+    const { deps } = setup();
+    const record = rec({
+      squadWorktree: undefined,
+      reviewedSquadWorktreeBase: { path: ROOT, branch: 'main', head: 'reviewed-a' },
+      resolvedLaunch: resolveAllLaunch({ launch: { worktree: true } })
+    });
+    serve(deps, record);
+    deps.git.listWorktrees = vi.fn(async () => [{ path: ROOT, branch: 'main', head: 'reviewed-b' }]);
+    await expect(createSquadWorktreeRuntime(deps).prepareSquadWorktree(record, {})).rejects.toThrow('Reviewed worktree base changed');
+    expect(deps.git.createWorktree).not.toHaveBeenCalled();
+    expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
+  });
+  it('reattaches a bound recovery after the original reviewed base has advanced', async () => {
+    const { deps } = setup();
+    const record = rec({
+      reviewedSquadWorktreeBase: { path: ROOT, branch: 'main', head: 'reviewed-a' },
+      resolvedLaunch: resolveAllLaunch({ launch: { worktree: true } })
+    });
+    serve(deps, record);
+    deps.executionStore.setSquadWorktree.mockResolvedValue(record);
+    deps.git.listWorktrees = vi.fn(async () => [{ path: ROOT, branch: 'main', head: 'reviewed-b' }]);
+    await expect(createSquadWorktreeRuntime(deps).prepareSquadWorktree(record, {})).resolves.toBe(record);
+    expect(deps.git.setWorktreePushProtection).toHaveBeenCalledWith(ROOT, WT, true);
   });
   it.each([true, false])('snapshot push=%s controls real managed-worktree push to local bare origin', async push => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'runtime-push-')));

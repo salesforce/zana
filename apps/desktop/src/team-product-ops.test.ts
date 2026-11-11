@@ -44,6 +44,29 @@ describe('createTeamProductOps', () => {
     expect(await ops.launch({ teamId: 't', projectId: 'p', goal: 'go', mode: 'freeform', previewToken: 'opaque' })).toMatchObject({ ok: true, value: { id: 'e', state: 'RUNNING', location, path: '/actual', branch: 'main' } });
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ previewToken: 'opaque' }));
   });
+  it('returns successful start when location lookup fails, preventing a retry from duplicating the job', async () => {
+    const start = vi.fn(async () => ({ ok: true as const, value: { executionId: 'e', state: 'RUNNING' } }));
+    const logError = vi.fn();
+    const ops = createTeamProductOps({ resolveLocation: async () => { throw new Error('transient lookup failure'); }, startTeamJobFromUi: start,
+      getExecution: vi.fn(), status: vi.fn(), stopJob: vi.fn(), respondToBlocker: vi.fn(), logError });
+    await expect(ops.launch({ teamId: 't', projectId: 'p', goal: 'go', mode: 'freeform' })).resolves.toEqual({
+      ok: true, value: { kind: 'job', id: 'e', state: 'RUNNING' }
+    });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(logError).toHaveBeenCalledWith('team launch location project=p execution=e', expect.any(Error));
+    expect(logError.mock.calls[0]![0]).not.toContain('go');
+  });
+  it('logs trusted preview failure with safe identifiers before returning a sanitized error', async () => {
+    const logError = vi.fn();
+    const ops = createTeamProductOps({ resolvePreview: async () => { throw new Error('preview failed'); }, startTeamJobFromUi: vi.fn(),
+      getExecution: vi.fn(), status: vi.fn(), stopJob: vi.fn(), respondToBlocker: vi.fn(), logError });
+    await expect(ops.preview!({ teamId: 't', projectId: 'p', goal: 'secret command --token=abc', mode: 'freeform' })).resolves.toMatchObject({
+      ok: false, code: 'INVALID', message: 'Launch preview could not validate the plan or target.'
+    });
+    expect(logError).toHaveBeenCalledWith('team preview project=p team=t', expect.any(Error));
+    expect(logError.mock.calls[0]![0]).not.toContain('secret');
+    expect(logError.mock.calls[0]![0]).not.toContain('token');
+  });
   it('forwards every explicit launch option without dropping false or empty values', async () => {
     const start = vi.fn(async () => ({ ok: true as const, value: { executionId: 'e', state: 'RUNNING' } }));
     const ops = createTeamProductOps({ startTeamJobFromUi: start, getExecution: vi.fn(), status: vi.fn(), stopJob: vi.fn(), respondToBlocker: vi.fn() });

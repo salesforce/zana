@@ -5,8 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { NamedCheckSchema, NamedCheckScopeSchema, type NamedCheck } from '@zana-ai/zcc-contracts/project-settings';
+import { buildChildEnv } from '@zana-ai/zcc-process-utils';
 import type { ProjectSettingsStore } from '../../project-settings-store.js';
 import { listCheckNames, resolveNamedCheck } from '../../named-check-registry.js';
+import { CHECK_CAPTURE_SUPERVISOR, parseCheckCaptureReceipt, type CheckCaptureReceipt } from './check-capture-supervisor.js';
+
+const CHECK_REFERENCE_PATTERN = /^check:[A-Za-z_][A-Za-z0-9_-]{0,99}$/;
+const RECEIPT_MAX_BYTES = 96;
+const SENSITIVE_ENV_KEY = /(?:AUTH|CREDENTIAL|KEY|PASS(?:WORD)?|SECRET|SESSION|TOKEN)/i;
 
 export interface NamedCheckRunInput {
   projectId: string;
@@ -52,7 +58,6 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
   const maxBytes = options.maxBytes ?? 1_048_576;
   const maxConcurrent = options.maxConcurrent ?? 2;
   const maxQueued = options.maxQueued ?? 32;
-  const captureLimit = Math.floor(maxBytes / 512) * 512;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000
     || !Number.isInteger(maxBytes) || maxBytes < 1024 || maxBytes > 4_194_304
     || !Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 8
@@ -60,6 +65,7 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
     throw new Error('Invalid named-check runner bounds');
   }
   let closed = false;
+  let poisoned: Error | undefined;
   const active = new Map<AbortController, Promise<NamedCheckRunResult>>();
   interface Waiter {
     input: ResolvedNamedCheckRunInput;
@@ -69,6 +75,15 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
   }
   const waiting: Waiter[] = [];
   const cancelledResult = (name: string): NamedCheckRunResult => ({ name, status: 'cancelled', exitCode: null, output: '', untrusted: true });
+  // Default bounds intentionally remain 60s, 1 MiB, two active and 32 queued.
+  const childEnv = (source: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv => {
+    const inherited = source ?? process.env;
+    const env = buildChildEnv(inherited);
+    for (const [key, value] of Object.entries(inherited)) {
+      if (typeof value === 'string' && !SENSITIVE_ENV_KEY.test(key)) env[key] = value;
+    }
+    return env;
+  };
 
   function start(input: ResolvedNamedCheckRunInput): Promise<NamedCheckRunResult> {
     const controller = new AbortController();
@@ -76,7 +91,7 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
     active.set(controller, pending);
     void pending.finally(() => {
       active.delete(controller);
-      while (!closed && active.size < maxConcurrent && waiting.length) {
+      while (!closed && !poisoned && active.size < maxConcurrent && waiting.length) {
         const waiter = waiting.shift()!;
         waiter.input.signal?.removeEventListener('abort', waiter.cancel);
         void start(waiter.input).then(waiter.resolve, waiter.reject);
@@ -93,6 +108,7 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
     if (input.signal?.aborted) controller.abort();
     let directory: string | undefined;
     let file: Awaited<ReturnType<typeof open>> | undefined;
+    let exitFile: Awaited<ReturnType<typeof open>> | undefined;
     try {
       if (controller.signal.aborted) return result;
       if (process.platform === 'win32') throw new Error('Named checks require process-group and file-limit support');
@@ -100,36 +116,73 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
       if (controller.signal.aborted) return result;
       directory = await mkdtemp(join(options.tempRoot ?? tmpdir(), 'named-check-'));
       file = await open(join(directory, 'output'), 'wx+', 0o600);
+      exitFile = await open(join(directory, 'receipt'), 'wx+', 0o600);
       if (controller.signal.aborted) return result;
       const shell = options.shell ?? process.env.SHELL ?? '/bin/sh';
       try { await access(shell, constants.X_OK); }
       catch { result.status = 'spawn-error'; return result; }
-      // POSIX sh uses 512-byte units (bash requires POSIX mode). The limit is
-      // inherited by the user's normal shell and bounds growth off the JS loop.
-      const child = spawn('/bin/sh', [
-        '-c', `if [ -n "\${BASH_VERSION-}" ]; then set -o posix; fi\nulimit -f ${Math.floor(maxBytes / 512)} || exit 125\nexec "$@"`,
-        'named-check', shell, '-c', check.command
-      ], { cwd, env: options.env ?? process.env, windowsHide: true, detached: true, stdio: ['ignore', file.fd, file.fd] });
+      const child = spawn(process.execPath, ['-e', CHECK_CAPTURE_SUPERVISOR, shell, check.command, String(maxBytes)], {
+        cwd,
+        env: { ...childEnv(options.env), ELECTRON_RUN_AS_NODE: '1' },
+        windowsHide: true,
+        detached: true,
+        // fd 3 remains private to trusted supervisor; checks inherit only pipes.
+        stdio: ['ignore', file.fd, 'ignore', exitFile.fd]
+      });
       let groupKilled = false;
       let ended = false;
+      let commandFinished = false;
       let finish: () => void = () => {};
       const reaped = () => ended || child.exitCode != null || child.signalCode != null;
       const killGroup = () => {
         if (!child.pid || groupKilled || reaped()) return;
         // One attempt for this child identity. Never retry a PID after settlement.
-        groupKilled = true;
-        try { process.kill(-child.pid, 'SIGKILL'); groupKilled = true; } catch (error) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+          groupKilled = true;
+        } catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
           if (code !== 'ESRCH') {
             result.status = 'failed';
             result.error = `Named-check process-group termination failed: ${code ?? 'unknown'}`;
-            finish();
+            poisoned = new Error(result.error);
+            closed = true;
+            for (const waiter of waiting.splice(0)) {
+              waiter.input.signal?.removeEventListener('abort', waiter.cancel);
+              waiter.resolve(cancelledResult(waiter.input.check.name));
+            }
           }
         }
       };
       let timer: ReturnType<typeof setTimeout> | undefined;
       let deadline: ReturnType<typeof setImmediate> | undefined;
       let poll: ReturnType<typeof setInterval> | undefined;
+      const readReceipt = async (): Promise<CheckCaptureReceipt | null> => {
+        const { size } = await exitFile!.stat();
+        if (size === 0 || size > RECEIPT_MAX_BYTES) return null;
+        const bytes = Buffer.alloc(size);
+        const { bytesRead } = await exitFile!.read(bytes, 0, bytes.length, 0);
+        return parseCheckCaptureReceipt(bytes.subarray(0, bytesRead).toString('utf8'));
+      };
+      const applyReceipt = (receipt: CheckCaptureReceipt | null, complete: boolean) => {
+        if (!receipt) {
+          if (complete && !result.error && result.status !== 'timeout' && !controller.signal.aborted) {
+            result.status = 'spawn-error';
+            result.error = 'Named-check capture supervisor exited without valid receipt';
+          }
+          return;
+        }
+        commandFinished = true;
+        result.exitCode = receipt.exitCode;
+        if (receipt.status === 'output-limit') result.status = 'output-limit';
+        else if (receipt.status === 'incomplete') {
+          result.status = 'failed';
+          result.error = 'Named-check output capture incomplete';
+        }
+        else if (receipt.status === 'spawn-error') result.status = 'spawn-error';
+        else if (result.status === 'cancelled' && !controller.signal.aborted) result.status = receipt.exitCode === 0 ? 'passed' : 'failed';
+        killGroup();
+      };
       const abort = () => { if (!reaped()) { result.status = 'cancelled'; killGroup(); } };
       const onExit = () => {
         ended = true;
@@ -142,12 +195,9 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
           finish = resolve;
           child.once('exit', onExit);
           child.once('error', () => { result.status = 'spawn-error'; resolve(); });
-          child.once('close', (code, signal) => {
+          child.once('close', () => {
             onExit();
-            result.exitCode = code;
-            if (signal === 'SIGXFSZ') result.status = 'output-limit';
-            else if (result.status === 'cancelled' && !controller.signal.aborted) result.status = code === 0 ? 'passed' : 'failed';
-            resolve();
+            void readReceipt().then(receipt => { applyReceipt(receipt, true); resolve(); }, () => { applyReceipt(null, true); resolve(); });
           });
           controller.signal.addEventListener('abort', abort, { once: true });
           child.once('spawn', () => {
@@ -164,9 +214,9 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
           poll = setInterval(() => {
             if (checking) return;
             checking = true;
-            void file!.stat().then(({ size }) => {
-              if (!reaped() && size >= captureLimit) { result.status = 'output-limit'; killGroup(); }
-            }).catch(() => { if (!reaped()) { result.status = 'spawn-error'; killGroup(); } }).finally(() => { checking = false; });
+            void readReceipt().then(receipt => applyReceipt(receipt, false))
+              .catch(() => { if (!reaped()) { result.status = 'spawn-error'; killGroup(); } })
+              .finally(() => { checking = false; });
           }, 10);
           if (controller.signal.aborted) abort();
         });
@@ -180,19 +230,19 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
         killGroup();
       }
       const { size } = await file.stat();
-      if (!result.error && (size >= captureLimit || (result.status === 'failed' && result.exitCode === 153))) result.status = 'output-limit';
       const bytes = Buffer.alloc(Math.min(size, maxBytes));
       const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
       result.output = bytes.subarray(0, bytesRead).toString('utf8');
       return result;
     } finally {
       input.signal?.removeEventListener('abort', cancel);
-      try { await file?.close(); } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+      try { await file?.close(); await exitFile?.close(); } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
     }
   }
 
   function runResolved(input: ResolvedNamedCheckRunInput): Promise<NamedCheckRunResult> {
     if (closed) return Promise.reject(new Error('Named-check runner closed'));
+    if (poisoned) return Promise.reject(poisoned);
     try {
       if (Object.keys(input).some((key) => !['projectId', 'check', 'cwd', 'signal'].includes(key))) {
         throw new Error('Named-check runner rejects unknown input');
@@ -220,18 +270,18 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
   return {
     listNames: (projectId: string) => listCheckNames(options.store, projectId),
     resolve: (projectId: string, reference: string) => {
-      if (!/^check:[A-Za-z_][A-Za-z0-9_-]{0,99}$/.test(reference)) throw new Error('Invalid check reference; expected check:<name>');
+      if (!CHECK_REFERENCE_PATTERN.test(reference)) throw new Error('Invalid check reference; expected check:<name>');
       return ResolvedCheckSchema.parse(resolveNamedCheck(options.store, projectId, reference));
     },
     /** Trusted admission-snapshot adapter only. Never register as an MCP, IPC or public command API. */
     runResolved,
     run(input: NamedCheckRunInput): Promise<NamedCheckRunResult> {
-      if (closed) return Promise.reject(new Error('Named-check runner closed'));
+    if (closed) return Promise.reject(poisoned ?? new Error('Named-check runner closed'));
       if (Object.keys(input).some((key) => !['projectId', 'reference', 'cwd', 'signal'].includes(key))) {
         return Promise.reject(new Error('Named-check runner rejects command or unknown input'));
       }
       try {
-        if (!/^check:[A-Za-z_][A-Za-z0-9_-]{0,99}$/.test(input.reference)) throw new Error('Invalid check reference; expected check:<name>');
+        if (!CHECK_REFERENCE_PATTERN.test(input.reference)) throw new Error('Invalid check reference; expected check:<name>');
         const check = resolveNamedCheck(options.store, input.projectId, input.reference);
         return runResolved({ projectId: input.projectId, check, cwd: input.cwd, signal: input.signal });
       } catch (error) { return Promise.reject(error); }
@@ -243,6 +293,7 @@ export function createNamedCheckRunner(options: NamedCheckRunnerOptions) {
         waiter.resolve(cancelledResult(waiter.input.check.name));
       }
       for (const controller of active.keys()) controller.abort();
+      if (poisoned) return;
       await Promise.allSettled(active.values());
     }
   };

@@ -120,14 +120,16 @@ export function SquadLaunchSettings({ teamId, projectId, goal, coordinationMode,
       setPreviewState({ key: previewKey, error: validOptions ? 'Choose a squad and registered Project.' : 'Launch options are invalid.' });
       return () => { request.current++; };
     }
-    void product.teams.preview({ teamId, projectId, goal, coordinationMode, ...value }).then((result) => {
-      if (request.current !== current) return;
-      if (!result.ok) { setPreviewState({ key: previewKey, error: result.message }); return; }
-      setPreviewState({ key: previewKey, preview: result.value }); onValidityChange?.(true);
-    }, (cause) => {
-      if (request.current === current) setPreviewState({ key: previewKey, error: cause instanceof Error ? cause.message : 'Launch preview unavailable.' });
-    });
-    return () => { if (request.current === current) request.current++; };
+    const timer = setTimeout(() => {
+      void product.teams.preview({ teamId, projectId, goal, coordinationMode, ...value }).then((result) => {
+        if (request.current !== current) return;
+        if (!result.ok) { setPreviewState({ key: previewKey, error: result.message }); return; }
+        setPreviewState({ key: previewKey, preview: result.value }); onValidityChange?.(true);
+      }, (cause) => {
+        if (request.current === current) setPreviewState({ key: previewKey, error: cause instanceof Error ? cause.message : 'Launch preview unavailable.' });
+      });
+    }, 250);
+    return () => { clearTimeout(timer); if (request.current === current) request.current++; };
   }, [previewKey]);
 
   const change = (next: LaunchOptions) => { onValidityChange?.(false); onChange(next); };

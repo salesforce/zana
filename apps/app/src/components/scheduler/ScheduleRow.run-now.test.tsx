@@ -7,10 +7,12 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 
 const runNow = vi.hoisted(() => vi.fn());
+const previewTeamLaunch = vi.hoisted(() => vi.fn(async () => ({ ok: false, message: 'Unavailable' })));
+const runReviewedTeamNow = vi.hoisted(() => vi.fn());
 const pushToast = vi.hoisted(() => vi.fn());
 
 vi.mock('../../lib/product-client.js', () => ({
-  product: { teams: { preview: vi.fn(async () => ({ ok: false, message: 'Unavailable' })) }, scheduler: { setEnabled: vi.fn(), runNow: (...a: unknown[]) => runNow(...a) }, terminals: { close: vi.fn() } }
+  product: { scheduler: { setEnabled: vi.fn(), runNow: (...a: unknown[]) => runNow(...a), previewTeamLaunch: (...a: unknown[]) => previewTeamLaunch(...a), runReviewedTeamNow: (...a: unknown[]) => runReviewedTeamNow(...a) }, terminals: { close: vi.fn() } }
 }));
 vi.mock('../../store.js', () => ({
   useData: (selector: (s: { terminals: Record<string, never> }) => unknown) => selector({ terminals: {} }),

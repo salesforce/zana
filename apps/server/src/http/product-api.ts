@@ -900,7 +900,7 @@ export async function handleProductHttp(
     }
 
     if ((path === '/api/v1/teams/launch' || path === '/api/v1/teams/preview') && method === 'POST') {
-      const body = (await readJsonBody(request)) as Partial<ProductTeamLaunchInput>;
+      const body = (await readJsonBody(request)) as Partial<ProductTeamLaunchInput> | null;
       const teamId = typeof body?.teamId === 'string' ? body.teamId.trim() : '';
       const projectId = typeof body?.projectId === 'string' ? body.projectId.trim() : '';
       const goal = typeof body?.goal === 'string' ? body.goal.trim() : '';
@@ -913,7 +913,7 @@ export async function handleProductHttp(
         ['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault', 'target']
           .filter((key) => body && key in body).map((key) => [key, (body as Record<string, unknown>)[key]])
       ));
-      if (!options.success || body.previewToken !== undefined && (typeof body.previewToken !== 'string' || body.previewToken.length > 256)) {
+      if (!options.success || body?.previewToken !== undefined && (typeof body.previewToken !== 'string' || body.previewToken.length > 256)) {
         sendJson(response, 400, { ok: false, code: 'INVALID', message: 'Invalid launch options' });
         return true;
       }
@@ -944,7 +944,7 @@ export async function handleProductHttp(
           goal,
           mode,
           ...options.data,
-          ...(body.previewToken ? { previewToken: body.previewToken } : {}),
+          ...(body?.previewToken ? { previewToken: body.previewToken } : {}),
           ...(title ? { title } : {}),
           ...(summary ? { summary } : {})
         };

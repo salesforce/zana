@@ -119,6 +119,13 @@ describe('plan normalization pass-through', () => {
     expect(resolved).not.toHaveProperty('planError');
   });
 
+  it('preserves parsed checks and failures after a normalized id lookup', () => {
+    const plan = `${recoverable}\n- **Completion criteria:** check:lint\n- **On failure:** fail run`;
+    expect(resolveSquadPlan('provided', [plan])).toMatchObject({
+      coordinationMode: 'structured', workUnits: [{ id: 'write', checks: ['lint'], onFailure: { kind: 'fail-run' } }]
+    });
+  });
+
   it('carries notes through the triggered-squad resolver', () => {
     expect(resolveTriggeredSquadPlan('provided', recoverable).normalizations).toHaveLength(1);
   });

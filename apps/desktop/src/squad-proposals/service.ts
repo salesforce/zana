@@ -452,7 +452,7 @@ function launchPreviewLines(preview?: SquadLaunchPreview): string[] {
   const location = preview.location;
   const description = location.kind === 'new-worktree'
     ? `New worktree from ${location.baseBranch} — isolation: ${location.isolationSource} (path assigned at launch)`
-    : `${preview.branch}${location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'} — ${preview.path}`;
+    : `${preview.branch ?? 'HEAD'}${location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'} — ${preview.path}`;
   return [`- Location: ${description}`, ...Object.entries(preview.resolvedLaunch).map(([name, setting]) =>
     `- ${name}: ${Array.isArray(setting.value) ? setting.value.join(', ') || 'none' : setting.value} (${setting.source})`)];
 }
@@ -907,14 +907,25 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (!pending.ok) return pending;
         const record = pending.value;
         if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
-        const prepared = await prepare(deps, record.projectId, record.teamId, record.goal, record.planning, record.sources.map((s) => s.path), [], record.launchOptions);
+        const stagedAttachments: SquadLaunchAttachment[] = [];
+        for (const source of record.sources.filter((entry) => entry.attachment)) {
+          const project = deps.projects.get(record.projectId);
+          if (!project) return fail('NOT_FOUND', 'Project not found.');
+          const scope = await sourceScope(deps.fs, project.path, deps.sourceBases(), { remote: Boolean(project.remote) });
+          if (!scope) return fail('NOT_FOUND', 'The project folder is not available.');
+          const confined = await confineSource(deps.fs, scope, source.path);
+          if (!confined.ok) return confined;
+          stagedAttachments.push({ name: basename(source.relPath), text: await readConfinedSource(deps.fs, scope, confined) });
+        }
+        const prepared = await prepare(deps, record.projectId, record.teamId, record.goal, record.planning,
+          record.sources.filter((source) => !source.attachment).map((source) => source.path), stagedAttachments, record.launchOptions);
         if (!prepared.ok) return prepared;
         if (record.launchPreview && record.launchPreview.fingerprint !== prepared.value.launchPreview?.fingerprint) return fail('INVALID', 'Launch target changed since proposal. Prepare a new launch; no fallback was used.');
         // A staged copy is an ordinary file to the policy; here it is named and flagged as the attachment it is.
         const attachments = new Map(record.sources.filter((s) => s.attachment).map((s) => [s.path, s]));
         const reviewed: Prepared = {
           ...prepared.value,
-          sources: prepared.value.sources.map((s) => {
+          sources: [...prepared.value.sources, ...record.sources.filter((source) => source.attachment)].map((s) => {
             const kept = attachments.get(s.path);
             return kept ? { path: s.path, relPath: kept.relPath, bytes: s.bytes, attachment: true } : s;
           })

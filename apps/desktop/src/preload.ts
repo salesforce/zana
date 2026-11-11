@@ -1201,6 +1201,8 @@ const api: CcApi = {
     setEnabled: (id, enabled) =>
       ipcRenderer.invoke(IPC.scheduler.setEnabled, id, enabled),
     runNow: (id) => ipcRenderer.invoke(IPC.scheduler.runNow, id),
+    previewTeamLaunch: (id) => ipcRenderer.invoke(IPC.scheduler.previewTeamLaunch, id),
+    runReviewedTeamNow: (id, previewToken) => ipcRenderer.invoke(IPC.scheduler.runReviewedTeamNow, id, previewToken),
     queryRuns: (query) => ipcRenderer.invoke(IPC.scheduler.queryRuns, query),
     retryRuns: (refs) => ipcRenderer.invoke(IPC.scheduler.retryRuns, refs),
     resumeRun: (input) => ipcRenderer.invoke(IPC.scheduler.resumeRun, input),

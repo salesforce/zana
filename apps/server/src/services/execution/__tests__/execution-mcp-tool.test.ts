@@ -142,13 +142,14 @@ describe('execution MCP tools', () => {
     expect(text(result)).not.toContain('nested-secret');
     expect(text(result)).not.toContain('fingerprint-secret');
   });
-  it('accepts parsed failure edges and checks in registered work units', () => {
+  it('accepts retry limits matching parser and store boundaries in registered work units', () => {
     const execution = service();
     const { server, definitions } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 's', projectId: 'p', service: execution as never, validateRouteIdentity: () => true });
     const definition = definitions.get('execution.plan.register') as { inputSchema: Record<string, z.ZodType> };
-    const work = { id: 'a', title: 'A', task: 'Work', dependencies: [], onFailure: { kind: 'retry', stepId: 'a', maxRetries: 2, maxIterations: 4, noProgressLimit: 2 }, checks: ['verify'] };
+    const work = { id: 'a', title: 'A', task: 'Work', dependencies: [], onFailure: { kind: 'retry', stepId: 'a', maxRetries: 100, maxIterations: 150, noProgressLimit: 101 }, checks: ['verify'] };
     expect(z.object(definition.inputSchema).safeParse({ executionId: 'e', workUnits: [work] }).success).toBe(true);
+    expect(z.object(definition.inputSchema).safeParse({ executionId: 'e', workUnits: [{ ...work, onFailure: { ...work.onFailure, maxRetries: 101 } }] }).success).toBe(false);
   });
   it('awaits async false authorization across every execution and handoff verb', async () => {
     const execution = service();
