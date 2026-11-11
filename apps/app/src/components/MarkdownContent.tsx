@@ -37,7 +37,7 @@ import {
   languageFromMarkdownClassName
 } from './markdown-code-highlight.js';
 import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
-import { CodeBlockCopyButton } from './CodeBlockCopyButton.js';
+import { CodeBlockWithCopy, fencedCodeText } from './FencedCodeBlock.js';
 
 /**
  * Shared markdown / doc rendering for the inbox.
@@ -377,29 +377,11 @@ function inlineCodeText(children: ReactNode): string {
 
 function withCodeCopy(copyable: boolean, children: ReactNode, pre: ReactNode): ReactNode {
   if (!copyable) return pre;
-  return (
-    <div className="inbox-md-codeblock">
-      {pre}
-      <CodeBlockCopyButton code={fencedCodeText(children)} />
-    </div>
-  );
+  return <CodeBlockWithCopy code={fencedCodeText(children)}>{pre}</CodeBlockWithCopy>;
 }
 
-/**
- * The fence body as written: hast appends a newline before the closing fence,
- * which is not part of the code, so drop exactly one. Any other leading,
- * trailing or inner whitespace (including deliberate blank last lines) stays.
- */
-export function fencedCodeText(children: ReactNode): string {
-  return nodeText(children).replace(/\n$/, '');
-}
-
-function nodeText(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node);
-  if (Array.isArray(node)) return node.map(nodeText).join('');
-  if (isValidElement(node)) return nodeText((node.props as { children?: ReactNode }).children);
-  return '';
-}
+/** Re-exported for existing importers; it lives with the shared `pre` helper. */
+export { fencedCodeText };
 
 function highlightFencedPre(children: ReactNode): {
   className: string;

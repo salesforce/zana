@@ -13,6 +13,7 @@ import type { LibraryDoc } from '@zana-ai/zcc-domain/product';
 import { useUi } from '@/store';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
 import { extractMermaid } from '@/components/markdown-mermaid';
+import { CopyableFencedPre } from '@/components/FencedCodeBlock';
 import { useMonacoTheme } from '@/hooks/useMonacoTheme';
 import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
 import { StencilLines } from '@/components/ui/Skeleton';
@@ -332,7 +333,7 @@ function renderMarkdownBody(text: string) {
         pre: (props) => {
           const mermaid = extractMermaid(props.children);
           if (mermaid !== null) return <MermaidDiagram code={mermaid} exportable />;
-          return <pre {...props} />;
+          return <CopyableFencedPre {...props} />;
         }
       }}
     >
