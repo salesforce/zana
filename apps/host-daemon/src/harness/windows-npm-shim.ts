@@ -25,7 +25,7 @@
  */
 
 import { statSync } from 'node:fs';
-import { isAbsolute, join, normalize } from 'node:path';
+import { join, normalize, win32 } from 'node:path';
 
 export function isFile(path: string): boolean {
   try {
@@ -183,7 +183,7 @@ export function parsePackageManagerShim(text: string, shimDir: string): PackageM
     const target = resolveShimRelative(groups.target!, shimDir);
     if (template.kind === 'exe') return /\.exe$/i.test(target) ? { kind: 'exe', command: target } : null;
     const node = groups.node;
-    if (node !== undefined && !isAbsolute(node)) return null;
+    if (node !== undefined && !win32.isAbsolute(node)) return null;
     return {
       kind: 'node',
       script: target,

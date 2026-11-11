@@ -5,7 +5,7 @@
  * is too long."), and a launch that still can't fit fails before spawning
  * with the limit named.
  */
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +56,7 @@ writeFileSync(codexJs, '');
 const codexCmd = join(npmDir, 'codex.cmd');
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), '..', 'harness', '__tests__', 'fixtures', 'windows-shims');
 copyFileSync(join(fixtures, 'npm-codex.cmd'), codexCmd);
+chmodSync(codexCmd, 0o700);
 const nodeDir = join(root, 'nodejs');
 mkdirSync(nodeDir);
 const nodeExe = join(nodeDir, 'node.exe');
@@ -81,12 +82,14 @@ const config = { version: 1, theme: 'dark', shell: 'cmd.exe', claudeBinary: 'cla
 // The real inbox guidance alone is ~8.7 K characters; pad well past cmd.exe's cap.
 const longPrompt = 'Project house rules. '.repeat(500);
 
-function launch(profile: 'claude' | 'codex' = 'claude') {
+// The codex shim is passed by path: PATH here uses Windows's `;`, which the
+// PATH lookup only splits on when the tests run on Windows.
+function launch(profile: 'claude' | 'codex' = 'claude', codexBinary = codexCmd) {
   const mgr = new PtyManager();
   mgr.setMcpBaseUrl('http://127.0.0.1:39999');
   return mgr.create({
     projectId: 'proj1', profile, cwd: root, cols: 80, rows: 24,
-    config: config as never, projectSettings: { appendSystemPrompt: longPrompt }
+    config: { ...config, codexBinary } as never, projectSettings: { appendSystemPrompt: longPrompt }
   });
 }
 
@@ -147,9 +150,11 @@ describe('PtyManager.create on win32 with the npm codex.cmd on PATH', () => {
     mkdirSync(dirname(script), { recursive: true });
     mkdirSync(pnpmBin, { recursive: true });
     writeFileSync(script, '');
-    copyFileSync(join(fixtures, 'pnpm-node-path.cmd'), join(pnpmBin, 'codex.cmd'));
+    const pnpmCodex = join(pnpmBin, 'codex.cmd');
+    copyFileSync(join(fixtures, 'pnpm-node-path.cmd'), pnpmCodex);
+    chmodSync(pnpmCodex, 0o700);
     process.env.PATH = `${pnpmBin};${nodeDir}`;
-    launch('codex');
+    launch('codex', pnpmCodex);
     expect(spawns).toHaveLength(1);
     expect(spawns[0]!.command).toBe(nodeExe);
     expect(spawns[0]!.args[0]).toBe(script);
