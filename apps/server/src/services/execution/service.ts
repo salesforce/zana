@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, unitSlotEligibility, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, unitSlotEligibility, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -571,9 +571,11 @@ export function deterministicTerminalSummary(record: ExecutionRecord, artifacts:
  */
 export function dependencyResultsSection(record: ExecutionRecord, workUnitId: string): string {
   const unit = record.workUnits?.find((candidate) => candidate.id === workUnitId);
-  if (!unit?.dependencies?.length) return '';
+  if (!unit) return '';
   const lines: string[] = [];
-  for (const depId of unit.dependencies) {
+  // A reopened loop review reads the fix it is re-checking, although it does not depend on it.
+  const upstreamIds = unit.loop && (unit.loopRound ?? 1) > 1 ? [...unit.dependencies, unit.loop.fixUnitId] : unit.dependencies;
+  for (const depId of upstreamIds) {
     const dependency = record.workUnits?.find((candidate) => candidate.id === depId);
     if (dependency?.result === undefined) continue;
     const title = dependency.title ? ` (${dependency.title})` : '';
@@ -617,9 +619,12 @@ function verificationSection(steps: string[] | undefined): string {
   return section;
 }
 
+const LOOP_VERDICT_LINE = '\nThis unit is a review loop: pass structuredResult { "verdict": "PASS" | "CHANGES" } to execution.work.complete.';
+
 /** The text a worker receives for an assignment; shared by first delivery and recovery redelivery. */
 export function assignmentText(record: ExecutionRecord, assignment: ExecutionDispatchAssignment): string {
-  const upstream = dependencyResultsSection(record, assignment.workUnitId);
+  const loopVerdict = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId)?.loop ? LOOP_VERDICT_LINE : '';
+  const upstream = `${dependencyResultsSection(record, assignment.workUnitId)}${loopVerdict}`;
   const claim = assignment.claimId && assignment.claimGeneration
     ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.\n${longCommandLine(record, assignment.turnCount)}`
     : '';
@@ -1765,10 +1770,45 @@ export class ExecutionService {
         try { await this.deps.onWorkSettled({ ...settled, workerSessionId: binding.principalId }); }
         catch (error) { this.deps.logError?.(`execution work receipt settlement failed for ${outcome.value.id}/${workUnitId}`, error); }
       }
+      await this.announceLoopLimit(outcome.value, workUnitId, String(claim?.claimGeneration ?? outcome.value.state));
       await this.cascadeDispatch(outcome.value.id, binding.slotId);
       await this.maybeAutoFinalize(outcome.value.id);
     }
     return outcome;
+  }
+
+  /** A completed review that hit its loop bound is now blocked: tell the person and the coordinator at once. */
+  private async announceLoopLimit(record: ExecutionRecord, workUnitId: string, stateOrClaimGeneration: string): Promise<void> {
+    if (!record.workUnits?.find((candidate) => candidate.id === workUnitId)?.loop) return;
+    try {
+      // A Retry can land while the settlement hook runs: act on the current record, not the one from before the await.
+      const current = await this.deps.store.get(record.id) ?? record;
+      const unit = current.workUnits?.find((candidate) => candidate.id === workUnitId);
+      const blocker = unit?.state === 'BLOCKED'
+        ? current.blockers?.find((candidate) => !candidate.resolved && candidate.workUnitId === workUnitId && candidate.id.startsWith(LOOP_LIMIT_BLOCKER_PREFIX))
+        : undefined;
+      if (blocker) await this.announceHumanBlocker(current, blocker, workUnitId, stateOrClaimGeneration, {});
+    } catch (error) {
+      this.deps.logError?.(`execution loop-limit announcement failed for ${record.id}/${workUnitId}`, error);
+    }
+  }
+
+  /** Shared tail of a human blocker: hook, coordinator wake and Inbox entry. */
+  private async announceHumanBlocker(
+    record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number], workUnitId: string,
+    stateOrClaimGeneration: string, questionData: Record<string, unknown>
+  ): Promise<void> {
+    this.fireHumanBlocker(record, blocker);
+    // The Inbox entry goes first so a failing coordinator wake cannot keep the blocker from the person.
+    try {
+      await this.appendHumanBlockerNotice(record, blocker, questionData);
+    } catch (error) {
+      (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(
+        `execution human-blocker inbox append failed for ${record.id}/${workUnitId}/${blocker.id}`,
+        error
+      );
+    }
+    await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration });
   }
 
   /**
@@ -2277,9 +2317,6 @@ export class ExecutionService {
         // needs to answer, plus the worker's question.
         await this.wakeCoordinator(record, { cause: 'SEMANTIC_CONFLICT', message: `SEMANTIC_CONFLICT: work unit ${workUnitId} needs a coordinator decision (blockerId=${blocker.id}). Answer with execution.work.answer. Worker asks: ${blocker.question}`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
       } else {
-        const hookBlocker = record.blockers?.find((candidate) => candidate.id === blocker.id);
-        if (hookBlocker) this.fireHumanBlocker(record, hookBlocker);
-        await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
         // Human blockers must always accept a concrete typed value. Workers may
         // provide useful quick choices, but labels such as "Provide path" are
         // actions rather than answers and cannot resolve the blocker by themselves.
@@ -2287,9 +2324,9 @@ export class ExecutionService {
           ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true)
           : {};
         const persistedBlocker = record.blockers?.find((candidate) => candidate.id === blocker.id);
-        if (persistedBlocker) void this.appendHumanBlockerNotice(record, persistedBlocker, questionData).catch((err) => {
-          console.error('Failed to append linked inbox entry for execution blocker', err);
-        });
+        const generation = String(claim?.claimGeneration ?? record.state);
+        if (persistedBlocker) await this.announceHumanBlocker(record, persistedBlocker, workUnitId, generation, questionData);
+        else await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration: generation });
       }
     }
     return result;
@@ -2710,6 +2747,7 @@ export class ExecutionService {
     const unfinished = units.filter((unit) => unit.state !== 'COMPLETED');
     const completed = units.filter((unit) => unit.state === 'COMPLETED');
     const completedIds = new Set(completed.map((unit) => unit.id));
+    const unfinishedIds = new Set(unfinished.map((unit) => unit.id));
     const completedContext = completed
       .filter((unit) => unit.result !== undefined)
       .map((unit) => `${unit.title}: ${unit.result!.slice(0, 2_048)}`)
@@ -2723,7 +2761,7 @@ export class ExecutionService {
     const recoveryText = {
       objective: reserved.request.objective,
       header: 'Recovery run: completed read-only work must not be repeated.',
-      sections: [completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.'],
+      sections: [completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.', ...splitLoopNotes(units)],
       pinnedSection: unresolvedBlockers
         ? `Unresolved human input from the timed-out run:\n${unresolvedBlockers}\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.`
         : undefined,
@@ -2737,8 +2775,10 @@ export class ExecutionService {
       // execution's record. Members cannot read that record, so a shortened
       // preview is lossy for the successor's coordinator by design.
       objective: fitRecoveryObjective(recoveryText),
-      workUnits: unfinished.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => ({
+      workUnits: unfinished.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, loopRound: _round, loopExtraRounds: _extra, loop, ...unit }) => ({
         ...unit,
+        // A loop needs both its review and its fix unit; once one of them finished, the successor runs the other as a plain unit.
+        ...(loop && unfinishedIds.has(loop.fixUnitId) ? { loop } : {}),
         dependencies: unit.dependencies.filter((dependency) => !completedIds.has(dependency))
       })),
       coordinationMode: reserved.coordinationMode
@@ -3998,4 +4038,14 @@ function invalidBound(error: unknown) {
 
 function terminalBound(record: ExecutionRecord) {
   return { ok: false as const, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
+}
+
+/** One line per review loop the recovery splits (one half finished): it continues as plain units, so say so. */
+function splitLoopNotes(units: NonNullable<ExecutionRecord['workUnits']>): string[] {
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+  return units.flatMap((review) => {
+    const fix = review.loop ? byId.get(review.loop.fixUnitId) : undefined;
+    if (!review.loop || !fix || (review.state === 'COMPLETED') === (fix.state === 'COMPLETED')) return [];
+    return [`Review loop ${review.id} was interrupted in round ${review.loopRound ?? 1}; it continues as plain units, so check by hand that ${fix.id}'s changes were re-reviewed.`];
+  });
 }

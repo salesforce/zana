@@ -54,7 +54,7 @@ describe('restoreCapabilityLaunch', () => {
     expect(launch).toHaveBeenCalledWith({
       request: expect.objectContaining({ projectId: 'p1' }),
       principal: { kind: 'team', id: 'restore:cap-1' },
-      spawnOpts: { preallocatedSessionId: 'sess-1', retainWorktree: true },
+      spawnOpts: { preallocatedSessionId: 'sess-1', retainWorktree: true, squadSeat: true },
       teamId: 'team-1',
       legacyPersonaFacetCompatibility: true,
       followUpExecutionId: 'exec-1'
@@ -115,7 +115,8 @@ describe('restoreCapabilityLaunch', () => {
     const cap = capability({ followUpExecutionId: undefined, sessionId: undefined });
     const launch = vi.fn(async () => ({ ok: false, code: 'X', message: 'm' }) as never);
     await restoreCapabilityLaunch(restoreOpts(h, launch, cap));
-    expect(launch.mock.calls[0][0].spawnOpts).toBeUndefined();
+    // A team-worker cohort is a Squad seat (#675): the marker is the only option, so no preallocation and no retain.
+    expect(launch.mock.calls[0][0].spawnOpts).toEqual({ squadSeat: true });
     expect(h.followUp.release).not.toHaveBeenCalled();
   });
 });

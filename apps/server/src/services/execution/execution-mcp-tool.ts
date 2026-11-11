@@ -15,6 +15,7 @@ import { LAUNCH_REVIEW_REQUIRED_MESSAGE, type LaunchApproval } from '@zana-ai/zc
 import { MAX_EXECUTION_PLAN_BYTES, validOutputDeclaration } from './contracts.js';
 import { assembledResultProjection } from './projection.js';
 import { answerReceipt } from './answer-receipt.js';
+import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS } from './loop-constants.js';
 
 const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
@@ -55,7 +56,13 @@ const workUnitSchema = z.strictObject({
     requiredRole: z.string().min(1).max(2048).optional(), preferredRole: z.string().min(1).max(2048).optional(),
     hardSlotId: z.string().min(1).max(2048).optional()
   }).optional(),
-  output: z.unknown().refine(validOutputDeclaration, { message: 'invalid bounded output declaration' }).optional()
+  output: z.unknown().refine(validOutputDeclaration, { message: 'invalid bounded output declaration' }).optional(),
+  loop: z.strictObject({
+    version: z.literal(1),
+    fixUnitId: z.string().min(1).max(2048),
+    until: z.literal('PASS'),
+    max: z.number().int().min(LOOP_MIN_ROUNDS).max(LOOP_MAX_ROUNDS)
+  }).optional()
 });
 const executionStartSchema = z.strictObject({
   version: z.literal(1),
@@ -484,7 +491,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (!await authorized()) return denied('execution.work.dispatch_ready'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.dispatch_ready');
     return boundResult('execution.work.dispatch_ready', await options.service.dispatchReady(bound));
   });
-  register('execution.work.complete', { description: 'Complete one assigned work unit. Preserve required prose result and include structuredResult when plan declares bounded output schema.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result, structuredResult, claimId, claimGeneration }) => {
+  register('execution.work.complete', { description: 'Complete one assigned work unit. Preserve required prose result and include structuredResult when plan declares bounded output schema. A loop review unit passes structuredResult { "verdict": "PASS" | "CHANGES" }.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result, structuredResult, claimId, claimGeneration }) => {
     if (!await authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
     if (result.length > EXECUTION_RESULT_MAX_CHARS) {
       // structuredResult is only accepted for a unit that declares an output, so only then is it advice that works.

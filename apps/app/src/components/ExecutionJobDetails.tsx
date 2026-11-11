@@ -67,6 +67,7 @@ function workUnitLines(work: ExecutionProjection['work']): string[] {
     lines.push(`  - ${assignment.title} [${assignment.workUnitId}]`);
     lines.push(`      state: ${assignment.state} · assignedSlotId: ${assignment.slotId ?? 'unassigned'}${assignment.failureCode ? ` · failureCode: ${assignment.failureCode}` : ''}`);
     lines.push(`      claimedAt: ${formatTimestamp(assignment.claimedAt)} · heartbeatAt: ${formatTimestamp(assignment.heartbeatAt)} · progressAt: ${formatTimestamp(assignment.progressAt)} · leaseExpiresAt: ${formatTimestamp(assignment.leaseExpiresAt)}`);
+    if (assignment.loopRound !== undefined && assignment.loopMax !== undefined) lines.push(`      loop: ${reviewRoundText(assignment.loopRound, assignment.loopMax).toLowerCase()}`);
     lines.push(`      attempt: ${assignment.attempt ?? '—'} · turnCount: ${assignment.turnCount ?? '—'} · claimGeneration: ${assignment.claimGeneration ?? '—'} · claimId: ${assignment.claimId ?? '—'}`);
     lines.push(`      health: ${assignment.healthState ?? 'HEALTHY'} · reclaims: ${assignment.reclaimCount ?? 0} · attemptedSlots: ${assignment.attemptedSlots?.join(', ') || '—'} · quarantinedSlots: ${assignment.quarantinedSlots?.join(', ') || '—'}`);
     if (assignment.recovery) lines.push(`      recovery: ${assignment.recovery.step}${assignment.recovery.errorKind ? ` (${assignment.recovery.errorKind})` : ''} since ${formatTimestamp(assignment.recovery.since)}`);
@@ -86,6 +87,11 @@ function usageLines(usage: ExecutionProjection['usage']): string[] {
     lines.push(`    ${role.role}: input ${role.inputTokens ?? '—'} · output ${role.outputTokens ?? '—'} · cacheRead ${role.cacheReadTokens ?? '—'} · cacheWrite ${role.cacheWriteTokens ?? '—'} · provider-reported cost ${formatCost(role.providerCostUsd)}`);
   }
   return lines;
+}
+
+/** "Review round 2 of 3": the round a loop review unit is on and the rounds allowed so far. */
+function reviewRoundText(round: number, max: number): string {
+  return `Review round ${round} of ${max}`;
 }
 
 /** Historical blockers + the current blocker's delivery state. */
@@ -412,6 +418,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         return <div key={assignment.workUnitId}>
           {assignment.title} → {assignment.slotId ?? 'unassigned'} · {assignment.state}
           {assignment.slotId !== undefined && freshSlots.has(assignment.slotId) && <span className="scheduler-pill">Fresh session per unit</span>}
+          {assignment.loopRound !== undefined && assignment.loopMax !== undefined && <p role="status" className="execution-details-recovery-reason">{reviewRoundText(assignment.loopRound, assignment.loopMax)}</p>}
           {assignment.recovery && <p role="status" className="execution-details-recovery-reason">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}
           {!isTerminal && (assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
             <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>

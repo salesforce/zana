@@ -137,6 +137,12 @@ const MAX_SCHEMA_DEPTH = 6;
 const MAX_SCHEMA_PROPERTIES = 64;
 const MAX_SCHEMA_ITEMS = 100;
 const MAX_STRUCTURED_BYTES = 64 * 1024;
+/** Typed output a loop review unit gets when its plan declares none: the verdict is never parsed from text (#583). */
+export const LOOP_VERDICT_OUTPUT: WorkOutputDeclarationV1 = {
+  version: 1,
+  schema: { type: 'object', properties: { verdict: { type: 'string', enum: ['PASS', 'CHANGES'] } }, required: ['verdict'] }
+};
+
 export const MAX_OUTPUT_DECLARATION_BYTES = 16 * 1024;
 export const MAX_EXECUTION_PLAN_BYTES = 512 * 1024;
 

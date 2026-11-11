@@ -33,6 +33,8 @@ export interface HarnessIntegrationRequest {
   readonly profile: string;
   readonly mcp?: HarnessMcpConnection;
   readonly guidance?: string;
+  /** Absolute path of a per-session file holding a Squad seat's persona instructions (#675). */
+  readonly instructionsFile?: string;
   readonly lifecycle?: HarnessLifecycleEndpoints;
   readonly auth?: Readonly<{ baseUrl?: string; token?: string }>;
 }
