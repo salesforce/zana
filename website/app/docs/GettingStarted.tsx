@@ -6,6 +6,17 @@ import type { HelpVideo } from '../../lib/help-videos';
 import { helpVideoAssetUrl } from '../../lib/help-video-assets';
 import styles from './getting-started.module.css';
 
+const STEP_ICONS = [
+  'M12 3v12m0 0l-4-4m4 4l4-4M5 20h14',
+  'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 11v5M9.5 13.5h5',
+  'M4 5h16v11H9l-5 4z'
+];
+const StepIcon = ({ n }: { n: number }) => (
+  <span className={styles.stepIcon} aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={STEP_ICONS[n]} /></svg>
+  </span>
+);
+
 export function GettingStarted({ videos }: { videos: HelpVideo[] }) {
   const [selectedId, setSelectedId] = useState(videos[0]?.id);
   const [failed, setFailed] = useState(false);
@@ -26,9 +37,9 @@ export function GettingStarted({ videos }: { videos: HelpVideo[] }) {
       </header>
 
       <ol className={styles.steps} aria-label="Set up Zana">
-        <li><span>01</span><h2>Install Zana</h2><p>Get the app for macOS or Windows.</p><Link href="/download/">Download Zana →</Link></li>
-        <li><span>02</span><h2>Add a project</h2><p>Click <strong>Add project</strong> in the sidebar and choose your folder.</p></li>
-        <li><span>03</span><h2>Start a thread</h2><p>Open <strong>New Chat</strong>, pick your agent, and describe what you want done.</p></li>
+        <li><StepIcon n={0} /><span>01</span><h2>Install Zana</h2><p>Get the app for macOS or Windows.</p><Link href="/download/">Download Zana →</Link></li>
+        <li><StepIcon n={1} /><span>02</span><h2>Add a project</h2><p>Click <strong>Add project</strong> in the sidebar and choose your folder.</p></li>
+        <li><StepIcon n={2} /><span>03</span><h2>Start a thread</h2><p>Open <strong>New Chat</strong>, pick your agent, and describe what you want done.</p></li>
       </ol>
 
       <details className={styles.requirements}>
