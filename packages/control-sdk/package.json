@@ -24,16 +24,17 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --config vitest.config.ts",
-    "live:smoke": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts live/thread-smoke.test.ts live/cli-agent-smoke.test.ts",
-    "live:matrix": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts live/thread-matrix.test.ts live/cli-agent-matrix.test.ts live/combo.test.ts",
-    "live:cli-scenarios": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 180000 live/cli-agent-scenarios.test.ts",
-    "live:mode-reasoning": "ZCC_LIVE_CONTROL=1 vitest run --reporter=default --config vitest.config.ts --testTimeout 60000 live/harness-mode-reasoning.test.ts",
-    "live:browser": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 120000 live/desktop-browser.test.ts",
-    "live:memory": "ZCC_LIVE_CONTROL=1 vitest run --reporter=default --config vitest.config.ts --testTimeout 120000 live/plugin-memory.test.ts"
+    "live:smoke": "cross-env ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts live/thread-smoke.test.ts live/cli-agent-smoke.test.ts",
+    "live:matrix": "cross-env ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts live/thread-matrix.test.ts live/cli-agent-matrix.test.ts live/combo.test.ts",
+    "live:cli-scenarios": "cross-env ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 180000 live/cli-agent-scenarios.test.ts",
+    "live:mode-reasoning": "cross-env ZCC_LIVE_CONTROL=1 vitest run --reporter=default --config vitest.config.ts --testTimeout 60000 live/harness-mode-reasoning.test.ts",
+    "live:browser": "cross-env ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 120000 live/desktop-browser.test.ts",
+    "live:memory": "cross-env ZCC_LIVE_CONTROL=1 vitest run --reporter=default --config vitest.config.ts --testTimeout 120000 live/plugin-memory.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
     "@zana-ai/zcc-tsconfig": "workspace:*",
+    "cross-env": "^10.1.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "@zana-ai/zcc-contracts": "workspace:*"
