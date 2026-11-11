@@ -220,16 +220,14 @@
 .fairy-section {
   padding: 100px 0;
 }
-.fairy-section h2,
-.fairy-final h2 {
+.fairy-section h2 {
   margin: 0 0 25px;
   font-size: clamp(34px, 3.6vw, 48px);
   line-height: 1.14;
   letter-spacing: -0.045em;
   font-weight: 550;
 }
-.fairy-section h2 > span,
-.fairy-final h2 > span {
+.fairy-section h2 > span {
   color: var(--muted);
 }
 .fairy-section-heading {
@@ -666,38 +664,6 @@
 .architecture-overview > a {
   margin-top: 22px;
 }
-.fairy-final {
-  padding: 90px 0 100px;
-  border-top: 1px solid var(--border);
-  text-align: center;
-  background: radial-gradient(
-    ellipse at 50% 100%,
-    color-mix(in srgb, var(--accent-blue) 9%, transparent),
-    transparent 65%
-  );
-}
-.fairy-final .fairy-kicker {
-  justify-content: center;
-  margin: 25px 0;
-}
-.fairy-final h2 {
-  font-size: clamp(46px, 5vw, 68px);
-}
-.fairy-final h2 > span {
-  color: var(--accent-blue);
-}
-.fairy-final p:not(.fairy-kicker) {
-  color: var(--muted);
-  font-size: 15px;
-}
-.fairy-final .zcc-actions {
-  justify-content: center;
-  margin: 30px 0 20px;
-}
-.fairy-final-note {
-  color: var(--muted-2);
-  font-size: 11px;
-}
 .plugin-brand-intro {
   padding-bottom: 70px;
 }
@@ -977,13 +943,6 @@
   .story-answer {
     margin-left: 24px;
   }
-  .fairy-final {
-    padding-block: 60px;
-  }
-  .fairy-final .zcc-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
 }
 
 /* Preserve primary-button contrast inside the mobile link list. */
@@ -1010,15 +969,5 @@
 /* The homepage keeps its proof and supporting benefits together. */
 .architecture-reference .wrap { max-width:780px; }
 .fairy-walkthrough-link { margin: 18px 0 0; text-align: right; }
-.fairy-benefits { list-style:none; padding:0; margin:30px 0 22px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:36px; }
-.fairy-benefits h3 { font-size:16px; font-weight:550; margin:0 0 8px; letter-spacing:-.02em; }
-.fairy-benefits p { font-size:13px; line-height:1.7; color:var(--muted); margin:0; }
-.fairy-plugin-teaser { padding:36px 0; border-block:1px solid var(--border); }
-.fairy-plugin-teaser>.wrap { display:flex; align-items:center; justify-content:space-between; gap:30px; }
-.fairy-plugin-teaser .fairy-kicker { margin-bottom:10px; }
-.fairy-plugin-teaser h2 { font-size:28px; margin:0 0 12px; letter-spacing:-.035em; }
-.fairy-plugin-teaser p:not(.fairy-kicker) { font-size:14px; color:var(--muted); max-width:460px; line-height:1.7; margin:0; }
-.fairy-plugin-teaser .zcc-actions { flex-shrink:0; align-items:center; }
 @media(max-width:1050px) { .fairy-hero-grid { gap:28px; } .fairy-hero h1 { font-size:58px; } }
-@media(max-width:760px) { .fairy-hero { padding:40px 0; } .fairy-hero-grid { grid-template-columns:1fr; gap:28px; } .fairy-hero h1 { font-size:clamp(42px,9vw,64px); } .fairy-plugin-teaser>.wrap { display:block; } .fairy-plugin-teaser .zcc-actions { margin-top:24px; } .fairy-benefits { gap:20px; } }
-@media(max-width:600px) { .fairy-benefits { grid-template-columns:1fr; gap:20px; } }
+@media(max-width:760px) { .fairy-hero { padding:40px 0; } .fairy-hero-grid { grid-template-columns:1fr; gap:28px; } .fairy-hero h1 { font-size:clamp(42px,9vw,64px); } }
