@@ -378,18 +378,7 @@ function wellKnownClaudeExecutablePaths(
       join(home, ".claude", "local", executableName),
     );
   }
-  if (platform === "win32") {
-    const appData = env.APPDATA?.trim();
-    const programFiles = (env.ProgramFiles ?? env.PROGRAMFILES)?.trim();
-    if (appData) {
-      candidatePaths.push(join(appData, "npm", ...WINDOWS_NPM_CLAUDE_EXE_SEGMENTS));
-    }
-    if (programFiles) {
-      candidatePaths.push(
-        join(programFiles, "nodejs", ...WINDOWS_NPM_CLAUDE_EXE_SEGMENTS),
-      );
-    }
-  } else {
+  if (platform !== "win32") {
     candidatePaths.push("/opt/homebrew/bin/claude", "/usr/local/bin/claude");
   }
   return candidatePaths;

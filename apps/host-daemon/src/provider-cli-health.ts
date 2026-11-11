@@ -378,15 +378,22 @@ function resolveClaudeCodeVersionStatus(args: {
   return { latestVersion: null, needsUpdate: definitelyNeedsUpdate };
 }
 
+function npmDistTagForUpdate(
+  updateChannel: 'latest' | 'stable' | null | undefined
+): 'latest' | 'stable' {
+  return updateChannel === 'stable' ? 'stable' : 'latest';
+}
+
 function npmInstallActionCommand(
   definition: ProviderCliDefinition,
-  nodePlatform: NodeJS.Platform
+  nodePlatform: NodeJS.Platform,
+  distTag: 'latest' | 'stable' = 'latest'
 ): ProviderCliActionCommand {
   if (!definition.npmPackageName) {
     throw new Error(`${definition.displayName} CLI does not define an npm package installer.`);
   }
   const command = npmExecutableName(nodePlatform);
-  const args = ['install', '-g', `${definition.npmPackageName}@latest`];
+  const args = ['install', '-g', `${definition.npmPackageName}@${distTag}`];
   return { commandKind: 'exec', displayCommand: formatCommand(command, args), command, args };
 }
 
@@ -601,6 +608,7 @@ export function resolveProviderCliUpdateCommand(args: {
   nodePlatform?: NodeJS.Platform;
   installSource?: ProviderCliInstallSource;
   npmPrefix?: string | null;
+  updateChannel?: 'latest' | 'stable' | null;
 }): ProviderCliActionCommand {
   // `claude update` probes the registry with a 5s timeout and reports a
   // firewall failure. Global npm installs update through npm itself, the
@@ -609,7 +617,11 @@ export function resolveProviderCliUpdateCommand(args: {
     args.definition.key === 'claudeCode'
     && (args.installSource === 'npmGlobal' || (args.npmPrefix !== null && args.npmPrefix !== undefined))
   ) {
-    return npmInstallActionCommand(args.definition, args.nodePlatform ?? process.platform);
+    return npmInstallActionCommand(
+      args.definition,
+      args.nodePlatform ?? process.platform,
+      npmDistTagForUpdate(args.updateChannel)
+    );
   }
   const nativeArgs = nativeUpdateArgs(args.definition.key);
   if (nativeArgs) {
@@ -788,7 +800,8 @@ function buildInstallAction(args: {
       executablePath: args.executablePath,
       nodePlatform: args.nodePlatform,
       installSource: args.installSource,
-      npmPrefix: args.classification.kind === 'updatable' ? args.classification.npmPrefix : null
+      npmPrefix: args.classification.kind === 'updatable' ? args.classification.npmPrefix : null,
+      updateChannel: args.claudeCodeDoctorStatus?.updateChannel ?? null
     });
     return { kind: 'update', label: 'Update', commandKind: command.commandKind, command: command.displayCommand };
   }
@@ -802,6 +815,7 @@ function resolveProviderCliActionCommand(args: {
   nodePlatform: NodeJS.Platform;
   installSource: ProviderCliInstallSource;
   npmPrefix: string | null;
+  updateChannel?: 'latest' | 'stable' | null;
 }): ProviderCliActionCommand {
   return args.actionKind === 'install'
     ? installActionCommand(args.definition, args.nodePlatform)
@@ -810,7 +824,8 @@ function resolveProviderCliActionCommand(args: {
       executablePath: args.executablePath,
       nodePlatform: args.nodePlatform,
       installSource: args.installSource,
-      npmPrefix: args.npmPrefix
+      npmPrefix: args.npmPrefix,
+      updateChannel: args.updateChannel
     });
 }
 
@@ -856,14 +871,17 @@ export function createSpawnProviderCliCommandRunner(
   return { run: (args) => runProviderCliCommand(args, env) };
 }
 
-export async function inspectProviderCli(args: {
+async function inspectProviderCliState(args: {
   definition: ProviderCliDefinition;
   runner: ProviderCliCommandRunner;
   nodePlatform: NodeJS.Platform;
   pathExists?: ProviderCliPathExists;
   resolvePath?: ProviderCliPathResolver;
   readFileHead?: ProviderCliFileHead;
-}): Promise<ProviderCliStatus> {
+}): Promise<{
+  status: ProviderCliStatus;
+  updateChannel: 'latest' | 'stable' | null;
+}> {
   const pathExists = args.pathExists ?? existsSync;
   const resolvePath = args.resolvePath ?? defaultResolvePath;
   const readFileHead = args.readFileHead ?? defaultReadFileHead;
@@ -985,31 +1003,45 @@ export async function inspectProviderCli(args: {
   const updateUnavailableReason =
     (needsUpdate || versionUnsupported) && blockedReason ? blockedReason : null;
   return {
-    displayName: args.definition.displayName,
-    executableName: args.definition.executableName,
-    executablePath,
-    installed,
-    installSource,
-    currentVersion,
-    latestVersion,
-    minimumSupportedVersion: args.definition.minimumSupportedVersion,
-    npmPackageName,
-    npmGlobalPackageVersion,
-    installAction: buildInstallAction({
-      definition: args.definition,
-      installed,
+    status: {
+      displayName: args.definition.displayName,
+      executableName: args.definition.executableName,
       executablePath,
+      installed,
       installSource,
+      currentVersion,
+      latestVersion,
+      minimumSupportedVersion: args.definition.minimumSupportedVersion,
+      npmPackageName,
+      npmGlobalPackageVersion,
+      installAction: buildInstallAction({
+        definition: args.definition,
+        installed,
+        executablePath,
+        installSource,
+        needsUpdate,
+        versionUnsupported,
+        nodePlatform: args.nodePlatform,
+        claudeCodeDoctorStatus,
+        classification
+      }),
       needsUpdate,
       versionUnsupported,
-      nodePlatform: args.nodePlatform,
-      claudeCodeDoctorStatus,
-      classification
-    }),
-    needsUpdate,
-    versionUnsupported,
-    updateUnavailableReason
+      updateUnavailableReason
+    },
+    updateChannel: claudeCodeDoctorStatus?.updateChannel ?? null
   };
+}
+
+export async function inspectProviderCli(args: {
+  definition: ProviderCliDefinition;
+  runner: ProviderCliCommandRunner;
+  nodePlatform: NodeJS.Platform;
+  pathExists?: ProviderCliPathExists;
+  resolvePath?: ProviderCliPathResolver;
+  readFileHead?: ProviderCliFileHead;
+}): Promise<ProviderCliStatus> {
+  return (await inspectProviderCliState(args)).status;
 }
 
 export async function getProviderCliStatus(args: {
@@ -1109,7 +1141,7 @@ export async function runProviderCliInstall(args: {
   let outputBytes = 0;
 
   try {
-    const before = await inspectProviderCli({
+    const inspected = await inspectProviderCliState({
       definition,
       runner,
       nodePlatform,
@@ -1117,6 +1149,7 @@ export async function runProviderCliInstall(args: {
       resolvePath,
       readFileHead
     });
+    const before = inspected.status;
     if (args.actionKind === 'update' && before.updateUnavailableReason) {
       events.push({
         type: 'error',
@@ -1139,7 +1172,8 @@ export async function runProviderCliInstall(args: {
       executablePath: before.executablePath,
       nodePlatform,
       installSource: before.installSource,
-      npmPrefix
+      npmPrefix,
+      updateChannel: inspected.updateChannel
     });
     events.push({
       type: 'started',

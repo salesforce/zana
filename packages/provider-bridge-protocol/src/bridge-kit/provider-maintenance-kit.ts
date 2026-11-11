@@ -119,9 +119,10 @@ export function formatCommand(
 
 export function npmGlobalInstallCommand(
   npmPackage: string,
+  distTag: "latest" | "stable" = "latest",
 ): ProviderInstallationCommand {
   const command = npmCommand();
-  const args = ["install", "-g", `${npmPackage}@latest`];
+  const args = ["install", "-g", `${npmPackage}@${distTag}`];
   return { command, args, displayCommand: formatCommand(command, args) };
 }
 

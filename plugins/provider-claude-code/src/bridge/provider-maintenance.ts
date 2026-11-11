@@ -106,11 +106,18 @@ function claudeDoctor(value: string | null): {
   };
 }
 
+function claudeNpmDistTag(
+  updateChannel: "latest" | "stable" | null,
+): "latest" | "stable" {
+  return updateChannel === "stable" ? "stable" : "latest";
+}
+
 function claudeUpdateExecution(
   installSource: ProviderInstallationStatus["installSource"],
+  updateChannel: "latest" | "stable" | null = null,
 ) {
   if (installSource === "npmGlobal") {
-    return npmGlobalInstallCommand(CLAUDE_NPM_PACKAGE);
+    return npmGlobalInstallCommand(CLAUDE_NPM_PACKAGE, claudeNpmDistTag(updateChannel));
   }
   const command = claudeExecutable();
   return {
@@ -130,7 +137,10 @@ function isDefaultNativeClaudePath(executablePath: string | null): boolean {
   );
 }
 
-export async function getClaudeProviderInstallationStatus(): Promise<ProviderInstallationStatus> {
+async function inspectClaudeInstallation(): Promise<{
+  status: ProviderInstallationStatus;
+  updateChannel: "latest" | "stable" | null;
+}> {
   const command = claudeExecutable();
   const [
     resolvedExecutable,
@@ -191,40 +201,48 @@ export async function getClaudeProviderInstallationStatus(): Promise<ProviderIns
   const displayCommand =
     actionKind === "install"
       ? downloadedInstallerCommand(CLAUDE_INSTALL_SCRIPT_URL).displayCommand
-      : claudeUpdateExecution(installSource).displayCommand;
+      : claudeUpdateExecution(installSource, doctor.updateChannel).displayCommand;
   return {
-    executableName: command,
-    executablePath: resolvedExecutable,
-    installed,
-    installSource,
-    currentVersion,
-    latestVersion,
-    minimumSupportedVersion: null,
-    npmPackageName: CLAUDE_NPM_PACKAGE,
-    npmGlobalPackageVersion: npmGlobal.npmGlobalPackageVersion,
-    installAction:
-      actionKind === null
-        ? null
-        : {
-            kind: actionKind,
-            label: actionKind === "install" ? "Install" : "Update",
-            command: displayCommand,
-          },
-    needsUpdate,
-    versionUnsupported: false,
+    status: {
+      executableName: command,
+      executablePath: resolvedExecutable,
+      installed,
+      installSource,
+      currentVersion,
+      latestVersion,
+      minimumSupportedVersion: null,
+      npmPackageName: CLAUDE_NPM_PACKAGE,
+      npmGlobalPackageVersion: npmGlobal.npmGlobalPackageVersion,
+      installAction:
+        actionKind === null
+          ? null
+          : {
+              kind: actionKind,
+              label: actionKind === "install" ? "Install" : "Update",
+              command: displayCommand,
+            },
+      needsUpdate,
+      versionUnsupported: false,
+    },
+    updateChannel: doctor.updateChannel,
   };
+}
+
+export async function getClaudeProviderInstallationStatus(): Promise<ProviderInstallationStatus> {
+  return (await inspectClaudeInstallation()).status;
 }
 
 export async function getClaudeProviderInstallationRun(
   action: "install" | "update",
 ): Promise<ProviderInstallationRunResult> {
-  const status = await getClaudeProviderInstallationStatus();
-  return buildClaudeProviderInstallationRun(status, action);
+  const { status, updateChannel } = await inspectClaudeInstallation();
+  return buildClaudeProviderInstallationRun(status, action, updateChannel);
 }
 
 function buildClaudeProviderInstallationRun(
   status: ProviderInstallationStatus,
   action: "install" | "update",
+  updateChannel: "latest" | "stable" | null = null,
 ): ProviderInstallationRunResult {
   if (status.installAction?.kind !== action) {
     return {
@@ -235,7 +253,7 @@ function buildClaudeProviderInstallationRun(
   const execution =
     action === "install"
       ? downloadedInstallerCommand(CLAUDE_INSTALL_SCRIPT_URL)
-      : claudeUpdateExecution(status.installSource);
+      : claudeUpdateExecution(status.installSource, updateChannel);
   return {
     available: true,
     command: execution,
