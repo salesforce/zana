@@ -146,7 +146,9 @@ function legacyMcpKickoffLines(hasSources: boolean): string[] {
  *    register, so the coordinator STILL never calls `dispatch_ready`.
  */
 /** A seat is either running (has a session id) or waiting to start; never neither. */
-export type RosterEntry = { slotId: string; label: string; /** Model tier of the seat, when known; drives the tier roster. */ tier?: ModelLevel } & ({ sessionId: string; startsWhenNeeded?: undefined } | { startsWhenNeeded: true; sessionId?: undefined });
+export type RosterEntry = { slotId: string; label: string; /** Model tier of the seat, when known; drives the tier roster. */ tier?: ModelLevel } & ({ sessionId: string; startsWhenNeeded?: undefined; freshSessionPerUnit?: undefined }
+  /** `freshSessionPerUnit` (#579): the seat gets a new session for each unit, so no session id is listed. */
+  | { startsWhenNeeded: true; sessionId?: undefined; freshSessionPerUnit?: true });
 
 /** Attach each seat's resolved model tier (by slot id) to its roster entry; entries without a known tier are untouched. */
 export function rosterWithTiers(roster: readonly RosterEntry[], routes: readonly { slotId: string; level?: ModelLevel }[] | undefined): RosterEntry[] {
@@ -226,12 +228,20 @@ export function jobCoordinatorPrompt(input: {
   const sourceMetadata = JSON.stringify(sources.length ? sources : []);
   const running = input.roster.filter((worker) => worker.sessionId);
   const rosterLines = running.map((worker) => `- ${worker.label} — session \`${worker.sessionId}\`, slot \`${worker.slotId}\``);
-  const waiting = input.roster.filter((worker) => worker.startsWhenNeeded);
-  const waitingBlock = waiting.length === 0 ? '' : [
-    'Seats that start when their first unit is ready (not running yet, so no session id):',
-    ...waiting.map((worker) => `- ${worker.label}, slot \`${worker.slotId}\``),
-    'The engine starts each of these seats when it assigns its first unit. Do not message them or wait for them to appear; assign work to their slots as normal.'
-  ].join('\n');
+  const waiting = input.roster.filter((worker) => worker.startsWhenNeeded && !worker.freshSessionPerUnit);
+  const fresh = input.roster.filter((worker) => worker.freshSessionPerUnit);
+  const waitingBlock = [
+    waiting.length === 0 ? '' : [
+      'Seats that start when their first unit is ready (not running yet, so no session id):',
+      ...waiting.map((worker) => `- ${worker.label}, slot \`${worker.slotId}\``),
+      'The engine starts each of these seats when it assigns its first unit. Do not message them or wait for them to appear; assign work to their slots as normal.'
+    ].join('\n'),
+    fresh.length === 0 ? '' : [
+      'Seats that get a new session for each unit (no session id to message):',
+      ...fresh.map((worker) => `- ${worker.label}, slot \`${worker.slotId}\``),
+      'The engine starts a new session for each unit it assigns to these seats. Do not message them; assign work to their slots as normal.'
+    ].join('\n')
+  ].filter(Boolean).join('\n\n');
   const tierBlock = tierRosterBlock(input.roster);
   const hasSources = sources.length > 0;
   // One of four kickoff arms, keyed on host-computed plan readiness then on

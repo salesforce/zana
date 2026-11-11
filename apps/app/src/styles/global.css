@@ -41922,13 +41922,18 @@ body.split-frame-guard webview {
   border-radius: 8px;
 }
 
-.team-slot-on-demand {
+.team-slot-on-demand,
+.team-slot-fresh-session {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.team-slot-fresh-session-help {
+  padding-left: 22px;
 }
 
 .team-slot-reorder {

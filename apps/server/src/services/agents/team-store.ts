@@ -85,7 +85,8 @@ export function sanitizeTeam(raw: unknown): Team | null {
       ...(typeof slot.label === 'string' && slot.label.trim()
         ? { label: slot.label.trim() }
         : {}),
-      ...(slot.startOnDemand === true ? { startOnDemand: true } : {})
+      ...(slot.startOnDemand === true ? { startOnDemand: true } : {}),
+      ...(slot.freshContextPerUnit === true ? { freshContextPerUnit: true } : {})
     });
   }
 
