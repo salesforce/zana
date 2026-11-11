@@ -301,10 +301,14 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     await window.waitForSelector('#root', { timeout: 30_000 });
     if (!opts.tutorialDiscovery) {
       // Other specs start after discovery, just as their default config skips setup.
+      // Reload so useTutorialDiscovery reads the persisted preference during its
+      // initial state setup instead of scheduling its invitation before this runs.
       await window.evaluate(() => {
         localStorage.setItem('zcc.helpVideos.discoveryDismissed', '1');
         dispatchEvent(new Event('zcc-prefs'));
       });
+      await window.reload();
+      await window.waitForSelector('#root', { timeout: 30_000 });
     }
     await dismissConsentOverlays(window);
     return { electron: app, window, home };

@@ -135,7 +135,9 @@ afterEach(() => vi.restoreAllMocks());
 const pty = (extra: Record<string, unknown> = {}) => ({ id: 's1', projectId: 'p1', status: 'running', profile: 'claude', title: 'Design chat', cwd: '/work', ...extra });
 function initializeRepo(dir: string) {
   execFileSync('git', ['init', '-b', 'main', dir]);
-  execFileSync('git', ['-C', dir, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial']);
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
+  execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'initial']);
 }
 
 describe('lookupProposer', () => {

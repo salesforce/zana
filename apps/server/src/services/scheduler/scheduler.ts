@@ -1856,7 +1856,10 @@ export class SchedulerManager extends EventEmitter {
       message: undefined,
       ...(conversation ? { conversation } : {})
     }, wasEnabled);
-    const actual = this.deps?.ptys.list(project.id).find(candidate => candidate.id === session.id);
+    // A short-lived command can exit after launch resolves but before this
+    // listener is registered. The PTY manager removes it from `list()` first,
+    // but retains its terminal state briefly so this check can finish the run.
+    const actual = this.deps?.ptys.getRememberedSession(session.id);
     if (actual?.status === 'exited') onExit(session.id, actual.exitCode ?? -1);
 
     if (live.task.enabled) this.arm(id);

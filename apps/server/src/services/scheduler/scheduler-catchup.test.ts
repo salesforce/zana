@@ -25,7 +25,8 @@ class FakePtys extends EventEmitter {
   createCalls: Array<Record<string, unknown>> = [];
   sessions: Array<{ id: string; projectId: string; title: string; profile: string; cwd: string; status: 'running' | 'exited'; exitCode?: number; createdAt: number }> = [];
   closeExpectedCalls: string[] = [];
-  list(projectId: string) { return this.sessions.filter(s => s.projectId === projectId); }
+  list(projectId: string) { return this.sessions.filter(s => s.projectId === projectId && s.status === 'running'); }
+  getRememberedSession(id: string) { return this.sessions.find(s => s.id === id) ?? null; }
   reapDeadSessions() { return []; }
   create(opts: Record<string, unknown>) {
     this.createCalls.push(opts);
@@ -133,6 +134,26 @@ describe('reason stamping', () => {
     const ok = T(manager, tasks[2].id).status.runs[0];
     expect(ok.result).toBe('success');
     expect(ok.reasonCode).toBeUndefined();
+  });
+
+  it('finishes a command that exits before its scheduler listener is attached', async () => {
+    const { manager, ptys, tasks } = await makeFixture([{}], {
+      launchTerminal: ((opts) => {
+        const session = ptys.create(opts as unknown as Record<string, unknown>);
+        ptys.simulateExit(session.id, 0);
+        return session;
+      }) as Deps['launchTerminal']
+    });
+
+    await manager.runNow(tasks[0].id);
+    // The exit callback serializes behind the runNow launch operation.
+    await manager.attachReport('drain', 'x');
+
+    expect(T(manager, tasks[0].id).status.runs[0]).toMatchObject({
+      result: 'success',
+      launchState: 'running',
+      durationMs: expect.any(Number)
+    });
   });
 
   it('stamps timeout and subagent-timeout', async () => {

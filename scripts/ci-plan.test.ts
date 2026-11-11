@@ -22,9 +22,13 @@ it('verifies Electron, Chromium and WebKit when Linux dependency preparation cha
   expect(trust).toBeGreaterThan(0);
   expect(workflow.jobs.e2e.steps[trust].run).toBe('git config --global --add safe.directory "$GITHUB_WORKSPACE"');
   expect(trust).toBeLessThan(workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install dependencies'));
+  const tmux = workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install tmux for native PTY coverage');
+  expect(workflow.jobs.e2e.steps[tmux].run).toBe('apt-get update && apt-get install -y --no-install-recommends tmux');
+  expect(tmux).toBeGreaterThan(trust);
+  expect(tmux).toBeLessThan(workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install dependencies'));
   const commands = workflow.jobs.e2e.steps.map((step: any) => step.run || '').join('\n');
   expect(commands).toContain('node scripts/check-electron-linux-deps.mjs');
-  expect(commands).not.toMatch(/apt-get|playwright install|sysctl/);
+  expect(commands).not.toMatch(/playwright install|sysctl/);
   expect(commands).toContain('xvfb-run -a node scripts/ci-verification.mjs');
   const preview = workflow.jobs['preview-cross-platform'].steps.find((step: any) => step.name === 'Check Linux Electron display dependencies');
   expect(preview.if).toBe("runner.os == 'Linux'");

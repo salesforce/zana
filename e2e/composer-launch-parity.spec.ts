@@ -308,7 +308,7 @@ else process.exit(outcome === 'failed' ? 7 : 0);
         expect(proof.bytes).toBeGreaterThan(8192);
         expect(proof.capture).toBeTruthy();
         await expect.poll(() => existsSync(proof.capture), { timeout: 15_000 }).toBe(false);
-        await expect.poll(() => { try { process.kill(proof.pid, 0); return true; } catch { return false; } }, { timeout: 15_000 }).toBe(false);
+        await expect.poll(() => isRunningProcess(proof.pid), { timeout: 15_000 }).toBe(false);
       }
       await expect.poll(() => readdirSync(captureRoot).filter(name => name.startsWith('named-check-')), { timeout: 15_000 }).toEqual([]);
       await openSquadBoard(ctx, `Named ${outcome}`);
@@ -323,4 +323,14 @@ async function openSquadBoard(ctx: ReturnType<typeof createJobTeamContext>, titl
   if (await owner.count()) await owner.getByRole('button', { name: 'Close' }).click();
   await ctx.window.getByTestId('nav-agents').or(ctx.window.getByTestId('project-nav-agents')).click();
   await ctx.window.locator('.agent-card').filter({ hasText: title }).first().click();
+}
+
+function isRunningProcess(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    // Linux CI can retain an already-reaped group member as a zombie until PID 1 reaps it.
+    return !execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim().startsWith('Z');
+  } catch {
+    return false;
+  }
 }
