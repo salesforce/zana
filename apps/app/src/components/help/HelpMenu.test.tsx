@@ -85,7 +85,7 @@ it('discovers a remote video, pins its playing cut across refreshes and offers r
   useHelpVideos.setState({ videos: [remote, ...HELP_VIDEOS] });
   renderMenu(); fireEvent.click(trigger());
   fireEvent.click(category('Getting started'));
-  fireEvent.click(screen.getByRole('button', { name: 'Play New tutorial, 0:30' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Play New tutorial, 0:34' }));
   const player = screen.getByTestId('help-video-player');
   expect(player.querySelector('source')?.getAttribute('src')).toBe(remote.src);
   act(() => { useHelpVideos.setState({ videos: [{ ...remote, title: 'Changed', src: '/changed.mp4' }, ...HELP_VIDEOS] }); });
@@ -188,7 +188,7 @@ it('opens a video, switches clips, tracks watched state and closes back to the t
   renderMenu();
   fireEvent.click(trigger());
   fireEvent.click(category('What’s new · 2.3.0'));
-  fireEvent.click(screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:04' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:08' }));
   expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull();
   const player = () => screen.getByTestId('help-video-player') as HTMLVideoElement;
   expect(player().getAttribute('aria-label')).toBe('Use Zana everywhere');
@@ -231,7 +231,7 @@ it('opens a video, switches clips, tracks watched state and closes back to the t
   expect(document.activeElement).toBe(trigger());
   fireEvent.click(trigger());
   fireEvent.click(category('Getting started'));
-  expect(screen.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:30, watched' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:34, watched' })).toBeTruthy();
 });
 
 it('opens the first clip from All videos and leaves reduced motion paused', () => {
@@ -291,7 +291,7 @@ it('skips the disabled release action during keyboard navigation while notes loa
   renderMenu();
   fireEvent.click(trigger());
   fireEvent.click(category('What’s new · 2.3.0'));
-  const lastVideo = screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:04' });
+  const lastVideo = screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:08' });
   lastVideo.focus();
   fireEvent.keyDown(lastVideo, { key: 'ArrowDown' });
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Replay walkthrough' }));
@@ -327,7 +327,7 @@ it('groups the live catalogue, counts clips and starts with all categories colla
   fireEvent.click(category('Agentforce'));
   expect(screen.queryByRole('button', { name: /^Play / })).toBeNull();
   fireEvent.click(category('New topic'));
-  fireEvent.click(screen.getByRole('button', { name: 'Play new-topic, 0:30' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Play new-topic, 0:34' }));
   expect(screen.getByTestId('help-video-player').getAttribute('aria-label')).toBe('new-topic');
 });
 
@@ -341,7 +341,7 @@ it('updates category counts during refresh and resets expansion when reopening t
   expect(category('Getting started').getAttribute('aria-label')).toBe('Getting started, 3 videos');
   expect(category('Getting started').getAttribute('aria-expanded')).toBe('true');
   expect(document.activeElement).toBe(category('Getting started'));
-  expect(screen.getByRole('button', { name: 'Play Fresh tutorial, 0:30' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Play Fresh tutorial, 0:34' })).toBeTruthy();
   fireEvent.keyDown(category('Getting started'), { key: 'Escape' });
   fireEvent.click(trigger());
   expect(category('Getting started').getAttribute('aria-expanded')).toBe('false');
@@ -364,5 +364,5 @@ it('navigates category headers and expanded clips without focusing collapsed cli
   fireEvent.click(highlights);
   highlights.focus();
   fireEvent.keyDown(highlights, { key: 'ArrowDown' });
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:04' }));
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:08' }));
 });

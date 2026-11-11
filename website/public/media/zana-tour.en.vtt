@@ -1,50 +1,53 @@
 WEBVTT
 
-00:00:00.500 --> 00:00:04.625
+00:00:00.400 --> 00:00:03.400
+Zana · Every agent, one command center
+
+00:00:04.000 --> 00:00:08.125
 Your agents are everywhere: terminals, tabs, chats.
 
-00:00:04.900 --> 00:00:07.823
+00:00:08.400 --> 00:00:11.323
 Zana brings them all into one command center.
 
-00:00:10.800 --> 00:00:20.030
+00:00:14.300 --> 00:00:23.530
 Then pick any agent: Claude Code, Codex, OpenCode, and
 more, all from one composer. Let's ask for a pricing page.
 
-00:00:21.230 --> 00:00:26.819
+00:00:24.730 --> 00:00:30.319
 The agent writes the page into your project, and
 the result opens right beside the conversation.
 
-00:00:26.702 --> 00:00:36.125
+00:00:30.202 --> 00:00:39.625
 For bigger goals, just ask for a Squad. The agent launches it: an
 orchestrator plans the work and hands tasks to agents working in parallel.
 
-00:00:36.006 --> 00:00:41.466
+00:00:39.506 --> 00:00:44.966
 Flow view shows how the work hands off, from the
 plan to the review, until the Squad is done.
 
-00:00:42.666 --> 00:00:51.744
+00:00:46.166 --> 00:00:55.244
 And Zana is modular: everything beyond the core is a plugin.
 Here, our team's GUS plugin, from the marketplace in one click.
 
-00:00:51.626 --> 00:00:56.460
+00:00:55.126 --> 00:00:59.960
 GUS opens as a panel with my sprint
 board: every ticket I'm working on.
 
-00:00:56.342 --> 00:01:01.988
+00:00:59.842 --> 00:01:05.488
 Open a ticket, press Work with agent, and the
 agent starts with the whole ticket as context.
 
-00:01:01.869 --> 00:01:07.933
+00:01:05.369 --> 00:01:11.433
 And because plugins are just code, an agent
 can change them too. Let's add a dashboard.
 
-00:01:09.133 --> 00:01:17.960
+00:01:12.633 --> 00:01:21.460
 It edits the plugin, Zana rebuilds it, and the new Dashboard tab is
 live: tickets by status, the sprint countdown, and what's blocked.
 
-00:01:17.841 --> 00:01:22.591
+00:01:21.341 --> 00:01:26.091
 And Zana goes where you go: the same app
 on your phone, with Slack on the way.
 
-00:01:23.791 --> 00:01:27.416
+00:01:27.291 --> 00:01:30.916
 That's Zana: every agent, one command center.

@@ -27,11 +27,11 @@ test('the title-bar Help menu keeps page hints and plays the bundled video catal
   await expect(gettingStarted).toHaveAttribute('aria-expanded', 'true');
   await gettingStarted.focus();
   await page.keyboard.press('ArrowDown');
-  await expect(menu.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:30' })).toBeFocused();
+  await expect(menu.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:34' })).toBeFocused();
 
   // The repository seam is offline; the shipped media stays on the app origin.
   const origin = new URL(page.url()).origin;
-  await menu.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:30' }).click();
+  await menu.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:34' }).click();
   await expect(menu).toHaveCount(0);
   const library = page.getByTestId('help-video-library');
   const video = library.getByTestId('help-video-player');
@@ -44,11 +44,11 @@ test('the title-bar Help menu keeps page hints and plays the bundled video catal
     expect(response.headers()['content-type']).toContain(type);
   }
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeGreaterThan(.2);
-  expect(await video.evaluate((node: HTMLVideoElement) => node.duration)).toBeCloseTo(30, 0);
+  expect(await video.evaluate((node: HTMLVideoElement) => node.duration)).toBeCloseTo(33.5, 0);
   expect(await video.evaluate((node: HTMLVideoElement) => node.error)).toBeNull();
 
   // Near the end the clip counts as watched, and that survives a reload.
-  await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 28.5; });
+  await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 32; });
   await expect(library.getByRole('button', { name: /Your first project/ })).toContainText('Watched');
   await page.screenshot({ path: testInfo.outputPath('help-video-library.png') });
 
@@ -90,7 +90,7 @@ test('the title-bar Help menu keeps page hints and plays the bundled video catal
   await help.click();
   await expect(gettingStarted).toHaveAttribute('aria-expanded', 'false');
   await gettingStarted.click();
-  await expect(menu.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:30, watched' })).toBeVisible();
+  await expect(menu.getByRole('button', { name: 'Play Your first project in 30 seconds, 0:34, watched' })).toBeVisible();
   await menu.getByRole('button', { name: 'Replay walkthrough' }).click();
   const tour = page.getByTestId('walkthrough-dialog');
   await expect(tour).toHaveAttribute('data-walkthrough-step', 'intro');
