@@ -128,7 +128,7 @@ function serveGitRequest(
 ): void {
   const requestedPath = (req.url ?? '').split('?', 1)[0];
   const bareRepo = requestedPath.match(/^\/[A-Za-z0-9][A-Za-z0-9._-]*\/([A-Za-z0-9][A-Za-z0-9._-]*)$/);
-  if (bareRepo && isSafeRepoName(bareRepo[1]!)) {
+  if (bareRepo && !requestedPath.split('/')[1]!.endsWith('.git') && isSafeRepoName(bareRepo[1]!)) {
     // Catalog Sources probes a bare HTTPS value as a manifest first. A normal
     // Git web front door responds successfully with non-JSON before its smart
     // HTTP endpoints handle /info/refs and /git-upload-pack.
@@ -171,7 +171,8 @@ function serveGitRequest(
 /** Build repositories and serve them through Git's smart HTTPS transport. */
 export async function startGitHttpServer(
   workDir: string,
-  specs: GitHttpRepoSpec[]
+  specs: GitHttpRepoSpec[],
+  options: { authorize?: (authorization: string | undefined) => boolean } = {}
 ): Promise<GitHttpServer> {
   const srcRoot = join(workDir, 'src');
   const bareRoot = join(workDir, 'bare');
@@ -214,7 +215,13 @@ export async function startGitHttpServer(
 
   const server: Server = createServer(
     { key: readFileSync(tlsKey), cert: readFileSync(tlsCert) },
-    (req, res) => serveGitRequest(req, res, bareRoot)
+    (req, res) => {
+      if (options.authorize && !options.authorize(req.headers.authorization)) {
+        res.writeHead(401, { 'www-authenticate': 'Basic realm="Git fixture"' }).end('Authentication required');
+        return;
+      }
+      serveGitRequest(req, res, bareRoot);
+    }
   );
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

@@ -68,6 +68,22 @@ it('accepts existing non-gh credentials (SSH / credential manager) without askin
   expect(screen.getByText('Your existing Git credentials work.')).toBeTruthy();
 });
 
+it('releases the navigation lock when connecting advances away from this step', async () => {
+  respond('/onboarding/git/status', status({ signedIn: 'yes', login: 'ada' }));
+  let finish!: () => void;
+  connect.mockReturnValue(new Promise<void>(resolve => { finish = resolve; }));
+  const busy = vi.fn();
+  const view = mount(busy);
+  check();
+  await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+  expect(busy).toHaveBeenLastCalledWith(true);
+  view.unmount();
+  expect(busy).toHaveBeenLastCalledWith(false);
+  busy.mockClear();
+  await act(async () => { finish(); });
+  expect(busy).not.toHaveBeenCalled();
+});
+
 it('asks to connect the VPN when the host is unreachable, without cloning', async () => {
   respond('/onboarding/git/status', status({ reachable: false, signedIn: 'unknown' }));
   mount();
@@ -147,17 +163,34 @@ it('maps a start-time missing CLI and a start request failure', async () => {
   await screen.findByText('Could not start the browser sign-in.');
 });
 
-it('explains a missing repository grant for a signed-in account and lets the user switch account', async () => {
+it('reports a download failure without claiming the signed-in account lacks permission and lets the user switch account', async () => {
   respond('/onboarding/git/status', status({ signedIn: 'yes', login: 'ada' }));
   connect.mockRejectedValue(new Error('remote: Repository not found.'));
   respond('/onboarding/git/sign-in/start', waiting);
   respond('/onboarding/git/sign-in', waiting);
   mount();
   check();
-  await screen.findByText('Signed in as ada, but this account can’t read the marketplace repository.');
-  expect(screen.getByText(/Ask your marketplace administrator/)).toBeTruthy();
+  await screen.findByText('Signed in as ada, but the marketplace download failed.');
+  expect(screen.queryByText(/Ask your marketplace administrator/)).toBeNull();
+  expect(screen.getByText('Could not access the repository')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Use a different account' }));
   await screen.findByText('AB12-CD34');
+});
+
+it.each([
+  ['Could not connect to the Git server. Check your network or VPN.', 'Could not connect to the Git server'],
+  ['Git certificate verification failed.', 'Could not verify the Git server’s certificate'],
+  ['Plugin source command timed out', 'The clone timed out'],
+  ['git clone failed', 'Could not clone the repository']
+])('shows the actual failure category for an existing login: %s', async (message, title) => {
+  respond('/onboarding/git/status', status({ signedIn: 'yes', login: 'ada' }));
+  connect.mockRejectedValue(new Error(message));
+  mount();
+  check();
+  await screen.findByText(title);
+  expect(screen.queryByText(/this account can’t read/)).toBeNull();
+  expect(screen.queryByText(/Ask your marketplace administrator/)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Retry access check' })).toBeTruthy();
 });
 
 it('cancels an in-flight sign-in from the row and when the step unmounts', async () => {

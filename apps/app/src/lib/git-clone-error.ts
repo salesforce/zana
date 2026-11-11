@@ -21,7 +21,7 @@ export function explainGitCloneError(message: string, code?: string): GitCloneEr
       'Check the repository URL. For a private repository, sign in to Git with an account that has access.',
       'Already signed in? Switch the account used by your Git credential helper or SSH key, then try again. Signing in in your browser does not update Git’s account.'
     ];
-  } else if (/could not resolve|couldn.t resolve|failed to connect|connection (?:refused|reset)|network is unreachable/i.test(message)) {
+  } else if (/could not resolve|couldn.t resolve|could not connect|failed to connect|connection (?:refused|reset)|network is unreachable/i.test(message)) {
     title = 'Could not connect to the Git server';
     guidance = ['Check your internet connection, VPN, and repository URL, then try again.'];
   } else if (/certificate|ssl.*error/i.test(message)) {

@@ -1,4 +1,5 @@
 import { runPluginSourceCommand as run } from './plugin-source-command.js';
+import { pluginGitFailure, runPluginGitCommand } from './plugin-git-command.js';
 import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { resolveBundledNpmCli } from '@zana-ai/zcc-plugin-build';
 import { dirname, join, resolve } from 'node:path';
@@ -39,16 +40,18 @@ export async function defaultCloneGit(
     const commit = spec.replace(/^commit:/, '');
     if (!/^[a-f0-9]{7,40}$/i.test(commit)) throw new Error('Invalid Git commit');
     for (const args of [['init', dest], ['-C', dest, 'fetch', '--depth', '1', '--', url, commit], ['-C', dest, 'checkout', '--detach', 'FETCH_HEAD']]) {
-      const result = await run('git', args, cwd, { signal });
-      if (result.code !== 0) throw new Error('Git could not materialize the selected commit');
+      const result = args.includes('fetch')
+        ? await runPluginGitCommand(args, cwd, url, { signal })
+        : await run('git', args, cwd, { signal });
+      if (result.code !== 0) throw new Error(pluginGitFailure(result.stderr, 'Git could not materialize the selected commit'));
     }
   } else {
     if (spec.startsWith('semver:')) throw new Error('Git ranges must be resolved before cloning');
     const cloneArgs = ['clone', '--depth', '1'];
     if (spec && spec !== 'HEAD') cloneArgs.push('--branch', spec.replace(/^ref:/, ''));
     cloneArgs.push('--', url, dest);
-    const cloned = await run('git', cloneArgs, cwd, { signal });
-    if (cloned.code !== 0) throw new Error('Git clone failed');
+    const cloned = await runPluginGitCommand(cloneArgs, cwd, url, { signal });
+    if (cloned.code !== 0) throw new Error(pluginGitFailure(cloned.stderr, 'Git clone failed'));
   }
   const head = await run('git', ['-C', dest, 'rev-parse', 'HEAD'], cwd, { signal });
   if (head.code !== 0) throw new Error('Git rev-parse failed');

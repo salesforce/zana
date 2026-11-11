@@ -290,4 +290,6 @@ it('uses the access checklist with browser Git sign-in when the profile configur
   fireEvent.click(within(footer).getByRole('button', { name: 'Check access and continue' }));
   await screen.findByRole('button', { name: 'Install fixture bundle' });
   expect(api.add).toHaveBeenCalledWith('path:/fixture');
+  click('Back to access check');
+  await screen.findByText('Corporate network (VPN)');
 });

@@ -9,6 +9,7 @@ import { EMPTY_THREAD_ACTIVITY } from '@zana-ai/zcc-thread-view';
 import { startProductServer, type ProductServer } from './product-server.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import { PLUGIN_GIT_FAILURE_MESSAGES } from '../plugins/plugin-git-command.js';
 
 const reconcileMock = vi.hoisted(() => ({ failure: undefined as unknown, active: false, count: 0 }));
 vi.mock('../services/hosts/host-bootstrap.js', async (importActual) => {
@@ -2902,6 +2903,27 @@ describe('product HTTP plugins', () => {
     const listed = await fetch(`${server.url}api/v1/marketplaces`);
     expect(listed.status).toBe(200);
     await expect(listed.json()).resolves.toEqual({ catalogs: [] });
+  });
+
+  it.each([...Object.values(PLUGIN_GIT_FAILURE_MESSAGES), 'Plugin source command timed out'])('projects the fixed Git failure message: %s', async message => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-git-error-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    server.ctx.plugins = { addMarketplace: async () => { throw new Error(message); } } as never;
+    const response = await fetch(`${server.url}api/v1/marketplaces`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'git:https://example.test/catalog' })
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: message === 'Plugin source command timed out' ? 'git clone timed out' : message });
+  });
+
+  it('does not expose diagnostics appended to an otherwise safe Git failure', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-git-secret-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    server.ctx.plugins = { addMarketplace: async () => { throw new Error(`${PLUGIN_GIT_FAILURE_MESSAGES.auth} private-token`); } } as never;
+    const response = await fetch(`${server.url}api/v1/marketplaces`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'git:https://example.test/catalog' })
+    });
+    expect(await response.json()).toEqual({ error: 'marketplace operation failed; check source and try again' });
   });
 
   it('projects marketplace errors without credentials or command output', async () => {
