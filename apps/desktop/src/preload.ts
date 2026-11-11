@@ -1323,7 +1323,8 @@ const api: CcApi = {
         'app:toggleProjectView',
         'app:openPalette',
         'app:openShortcuts',
-        'app:openHome'
+        'app:openHome',
+        'app:toggleInbox'
       ];
       const handlers = events.map((name) => {
         const h = () => cb(name);
