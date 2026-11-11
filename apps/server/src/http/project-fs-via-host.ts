@@ -70,7 +70,8 @@ function mapHostError(error: unknown): never {
   throw error;
 }
 
-const WINDOWS_ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+/** A drive-letter or UNC path: a Windows checkout, whose entries use `\` separators. */
+export const WINDOWS_ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/;
 
 /**
  * Map a renderer-supplied absolute path onto one registered local project.

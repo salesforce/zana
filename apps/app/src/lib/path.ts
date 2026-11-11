@@ -56,3 +56,22 @@ export function shortenProjectPath(path: string, home: string | undefined, keepT
   const head = anchor === '' ? `/${rest[0]}` : anchor;
   return `${head}/…/${tail}`;
 }
+
+/**
+ * `path` relative to `root`, with `/` separators, or null when `path` isn't
+ * strictly inside `root`. Either separator may follow the root: a Windows
+ * checkout's paths use `\`, POSIX and remote ones `/`. Case is compared
+ * exactly, because every path here starts from the same root string.
+ */
+export function relativeUnder(root: string, path: string): string | null {
+  const base = root.replace(/[\\/]+$/, '');
+  if (path.length <= base.length + 1 || !path.startsWith(base)) return null;
+  const sep = path[base.length];
+  if (sep !== '/' && sep !== '\\') return null;
+  return path.slice(base.length + 1).replace(/\\/g, '/');
+}
+
+/** Parent folder of `path`, splitting on the last `/` or `\`; '' when there is none. */
+export function parentPath(path: string): string {
+  return path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'), 0));
+}

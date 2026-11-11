@@ -47,3 +47,18 @@ it('handles non-repositories and returns current branch markers', async () => {
   createEnvironment(db, { projectId: 'project', hostId: 'primary', path: '/other', workspaceProvisionType: 'managed-worktree', status: 'ready' });
   expect(await projectGit(ctx, { operation: 'worktrees', path: '/checkout', scope })).toEqual([expect.objectContaining({ path: '/checkout', isMain: true }), expect.objectContaining({ path: '/managed', branch: 'feature' })]);
 });
+it('keys a Windows checkout\'s files with its own separator, matching its directory listing', async () => {
+  // Git reports `/`-separated relative paths; the host lists a Windows checkout
+  // with `\`. The keys must equal the listed paths for Explorer's exact lookups.
+  const root = "C:\\work\\reveal test's repo";
+  ctx.toProjects = () => [{ id: 'project', path: '/original', sources: [{ id: 'source', hostId: 'remote', path: root }, { id: 'posix', hostId: 'posix', path: '/checkout' }] }];
+  rpc.mockResolvedValueOnce({ isGitRepo: true, branchName: 'main', checkout: { kind: 'branch' }, dirty: true, files: [
+    { path: 'src/feature/nested/a05.ts', kind: 'modified' }, { path: 'README.md', kind: 'untracked' }, { path: '../secret', kind: 'untracked' }
+  ] });
+  const status = await projectGit(ctx, { operation: 'status', path: root, scope });
+  expect(Object.keys(status!.files)).toEqual([`${root}\\src\\feature\\nested\\a05.ts`, `${root}\\README.md`]);
+  expect(status!.files[`${root}\\src\\feature\\nested\\a05.ts`]).toBe('M');
+  // A POSIX checkout keeps `/`, where `\` is an ordinary filename character.
+  rpc.mockResolvedValueOnce({ isGitRepo: true, branchName: 'main', checkout: { kind: 'branch' }, dirty: true, files: [{ path: 'dir/a\\b.ts', kind: 'modified' }] });
+  expect(Object.keys((await projectGit(ctx, { operation: 'status', path: '/checkout', scope: { projectId: 'project', hostId: 'posix' } }))!.files)).toEqual(['/checkout/dir/a\\b.ts']);
+});

@@ -3,6 +3,7 @@ import { projectSources } from '@zana-ai/zcc-domain/project';
 import { useHosts } from '../../hooks/useHosts.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
+import { parentPath, relativeUnder } from '../../lib/path.js';
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { FsEntry, GitBranch as GitBranchInfo, GitFileCode, GitShowResult, GitStatus, OpenTarget, FsReadResult, Project, Worktree } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '@/store';
@@ -626,9 +627,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
 
   const discardFile = async (path: string) => {
     const code = gitFiles?.[path];
-    const rel = path.startsWith(viewRoot + '/')
-      ? path.slice(viewRoot.length + 1)
-      : path;
+    const rel = relativeUnder(viewRoot, path) ?? path;
     const verb = code === '?' || code === 'A' ? 'Delete' : 'Discard changes to';
     if (!window.confirm(`${verb} ${rel}? This cannot be undone.`)) return;
     try {
@@ -832,11 +831,10 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   // changes from sibling projects sharing a toplevel.
   const changedFiles = useMemo(() => {
     if (!gitFiles) return [];
-    const prefix = viewRoot + '/';
     const list: Array<{ path: string; rel: string; code: GitFileCode }> = [];
     for (const [abs, code] of Object.entries(gitFiles)) {
-      if (!abs.startsWith(prefix)) continue;
-      list.push({ path: abs, rel: abs.slice(prefix.length), code });
+      const rel = relativeUnder(viewRoot, abs);
+      if (rel !== null) list.push({ path: abs, rel, code });
     }
     list.sort((a, b) => {
       if (a.code !== b.code) return a.code.localeCompare(b.code);
@@ -907,14 +905,14 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   const dirtyDirs = useMemo(() => {
     const set = new Set<string>();
     if (!gitFiles) return set;
+    // Keys use the checkout's own separator (`\` on Windows), so walk up on
+    // either one; each folder keeps the spelling the tree lists it under.
     for (const abs of Object.keys(gitFiles)) {
-      if (!abs.startsWith(viewRoot + '/')) continue;
+      if (relativeUnder(viewRoot, abs) === null) continue;
       let dir = abs;
       while (true) {
-        const slash = dir.lastIndexOf('/');
-        if (slash <= 0) break;
-        dir = dir.slice(0, slash);
-        if (dir === viewRoot) break;
+        dir = parentPath(dir);
+        if (relativeUnder(viewRoot, dir) === null) break;
         if (set.has(dir)) break;
         set.add(dir);
       }
