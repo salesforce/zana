@@ -126,7 +126,9 @@ describe('a fresh-context seat in a pre-authorised plan', () => {
       // the old session's exit completes its approval, which frees the run's concurrency
       h.launchAuthorization().complete(approvalBefore);
       await vi.advanceTimersByTimeAsync(SEAT_EXIT_WAIT_MS);
-      return await finishRecycleCheck(done, id, first, launchedBefore, approvalBefore);
+      // a slow exit does not respawn (nor quarantine): the seat stays detached and the next unit retries the start
+      await expect(done).resolves.toEqual({});
+      return await finishRecycleCheck(recycle(first.id, '0:w1:0'), id, first, launchedBefore, approvalBefore);
     } finally { vi.useRealTimers(); }
   });
 

@@ -160,14 +160,12 @@ describe('createSeatRecycler', () => {
   });
 
   it('declines at once, without the 90 second wait, when the harness reports no agent state', async () => {
-    for (const reported of [undefined, 'unknown']) {
-      const { recycler, state, timers, order, respawn } = setup();
-      state.current = reported;
-      await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ declined: true });
-      expect(timers).toHaveLength(0);
-      expect(order).toEqual([]);
-      expect(respawn).not.toHaveBeenCalled();
-    }
+    const { recycler, state, timers, order, respawn } = setup();
+    state.current = undefined;
+    await expect(recycler.recycle('r1', 's1')).resolves.toEqual({ declined: true });
+    expect(timers).toHaveLength(0);
+    expect(order).toEqual([]);
+    expect(respawn).not.toHaveBeenCalled();
   });
 
   it('declines, logging, when detaching the seat throws, and leaves the old session open', async () => {

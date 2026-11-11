@@ -373,11 +373,11 @@ export function createSeatRecycler(deps: SeatRecyclerDeps) {
     for (const waiter of [...set]) if (waiter.sessionId === sessionId) waiter.settle();
   };
 
-  /** A session whose harness reports no agent state can never be proven at rest: waiting for it would only stall the unit. */
-  const reportsState = (sessionId: string) => {
-    const state = deps.stateOf(sessionId);
-    return state !== undefined && state !== 'unknown';
-  };
+  /**
+   * A session with no agent state at all can never be proven at rest: waiting for it would only stall the unit.
+   * 'unknown' is different: the tracker reports it before its debounced first transition, so that one still waits.
+   */
+  const reportsState = (sessionId: string) => deps.stateOf(sessionId) !== undefined;
 
   /**
    * Close the seat's old session in the fixed order. Returns `released` when the run was released on the way
