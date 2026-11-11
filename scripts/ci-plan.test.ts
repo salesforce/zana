@@ -113,11 +113,15 @@ it('gates selective jobs on successful planning and keeps all required checks lo
   }
   const builder = workflow.jobs['e2e-build'];
   expect(builder.if).toBe(workflow.jobs.e2e.if);
+  const native = builder.steps.findIndex((step: any) => step.name === 'Prepare Electron native ABI cache');
+  expect(native).toBeGreaterThan(builder.steps.findIndex((step: any) => step.name === 'Build production Electron runtime'));
+  expect(builder.steps[native].run).toBe('pnpm run rebuild:electron');
+  expect(native).toBeLessThan(builder.steps.findIndex((step: any) => step.name?.startsWith('Archive')));
   // Re-run-all replaces the same-run artifact; re-run-failed consumers can
   // still download it when the successful build job was not re-run.
   expect(builder.steps.find((step: any) => step.uses === 'actions/upload-artifact@v7').with.overwrite).toBe(true);
   const archive = builder.steps.find((step: any) => step.name?.startsWith('Archive')).run;
-  for (const path of ['out', 'plugins', 'resources', 'packages/cli/dist', 'packages/plugin-sdk/dist', 'apps/host-daemon/dist']) expect(archive).toContain(path);
+  for (const path of ['out', 'plugins', 'resources', 'packages/cli/dist', 'packages/plugin-sdk/dist', 'apps/host-daemon/dist', 'node_modules/.cache/zcc-native-abi']) expect(archive).toContain(path);
   expect(archive).toContain("--exclude='plugins/*/node_modules'");
   // The bundled npm runtime needs its nested node_modules (graceful-fs etc.).
   expect(archive).not.toContain("--exclude='*/node_modules'");

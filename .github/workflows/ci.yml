@@ -274,11 +274,16 @@ jobs:
         run: pnpm run build
         env:
           NODE_OPTIONS: --max-old-space-size=6144
+      # Browser images supply runtime libraries, not a C++ compiler. Prepare the
+      # verified ABI cache on the build runner without replacing Node's addon.
+      - name: Prepare Electron native ABI cache
+        run: pnpm run rebuild:electron
       - name: Archive runtime and generated plugin assets
         run: >-
           tar --exclude='plugins/*/node_modules' --exclude='*/.git'
           -czf "$RUNNER_TEMP/electron-e2e-build.tgz"
           out plugins resources packages/cli/dist packages/plugin-sdk/dist apps/host-daemon/dist
+          node_modules/.cache/zcc-native-abi
       - uses: actions/upload-artifact@v7
         with:
           name: electron-e2e-build

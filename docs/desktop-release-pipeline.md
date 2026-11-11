@@ -15,6 +15,10 @@ Chromium and WebKit checks when dependency preparation changes. Those boundary
 jobs use a digest-pinned official Playwright image, matching the lockfile version
 and Ubuntu 26.04 build environment, with browser libraries already installed.
 Update the image version and digest alongside Playwright lockfile upgrades.
+The producer prepares the verified Electron native ABI cache with
+`pnpm run rebuild:electron` and archives it with the app. Container consumers
+probe that cache using the normal private-snapshot preparation; they need no C++
+compiler or installed-addon replacement.
 
 Root unit tests run on four separate Ubuntu runners, matching merge CI. Each
 shard keeps serial file execution to isolate real bridge and PTY subprocesses.
