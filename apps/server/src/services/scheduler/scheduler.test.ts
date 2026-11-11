@@ -102,6 +102,9 @@ class FakePtyManager extends EventEmitter {
   list(projectId: string) {
     return this.sessions.filter((s) => s.projectId === projectId);
   }
+  getRememberedSession(id: string) {
+    return this.sessions.find((s) => s.id === id) ?? null;
+  }
   /** Reap sessions flagged dead via {@link killProcess} — emits `exit` and flips
    *  status, mirroring the real manager's pid-probe sweep. The scheduler calls
    *  this before its overlap/concurrency guards on every auto fire. */

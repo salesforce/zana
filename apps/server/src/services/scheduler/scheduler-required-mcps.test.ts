@@ -19,6 +19,7 @@ class FakePtys extends EventEmitter {
   createCalls: Array<Record<string, unknown>> = [];
   sessions: Array<{ id: string; projectId: string; profile: string; cwd: string; status: string; createdAt: number; title: string }> = [];
   list(projectId: string) { return this.sessions.filter((s) => s.projectId === projectId); }
+  getRememberedSession(id: string) { return this.sessions.find(s => s.id === id) ?? null; }
   reapDeadSessions(): string[] { return []; }
   failWith: Error | null = null;
   create(opts: Record<string, unknown>) {
