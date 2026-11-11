@@ -7,6 +7,7 @@ import { HelpToggle } from './HelpToggle.js';
 import { HelpVideoLibrary } from './HelpVideoLibrary.js';
 import { HELP_VIDEOS_WATCHED_KEY, useHelpVideos } from './help-videos-store.js';
 import { HELP_VIDEOS } from '../../lib/help-videos.js';
+import { TUTORIAL_DISCOVERY_DISMISSED_KEY } from './useTutorialDiscovery.js';
 
 const ui = vi.hoisted(() => ({ setWalkthroughOpen: vi.fn(), getReleaseNotes: vi.fn(async () => [{ version: '2.5.1', markdown: '# Plugin packs' }, { version: '2.3.0', markdown: '# Use Zana everywhere' }]) }));
 vi.mock('../../store.js', () => ({
@@ -27,9 +28,57 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 const trigger = () => screen.getByTestId('titlebar-help-toggle');
 const hints = () => screen.getByRole('switch', { name: /Page hints/ });
 const category = (group: string) => screen.getByRole('button', { name: name => name.startsWith(`${group}, `) });
-function renderMenu() {
-  return render(<HelpProvider><HelpMenu /><HelpToggle /><HelpVideoLibrary /><input aria-label="Outside" /></HelpProvider>);
+function renderMenu(discoveryEnabled = false) {
+  return render(<HelpProvider><HelpMenu discoveryEnabled={discoveryEnabled} /><HelpToggle /><HelpVideoLibrary /><input aria-label="Outside" /></HelpProvider>);
 }
+
+it('offers tutorials without stealing focus and opens the library with hints off', async () => {
+  localStorage.setItem(HELP_ENABLED_KEY, '0');
+  renderMenu(true);
+  screen.getByLabelText('Outside').focus();
+  await screen.findByRole('region', { name: 'Discover video tutorials' });
+  expect(document.activeElement).toBe(screen.getByLabelText('Outside'));
+  expect(trigger().getAttribute('aria-describedby')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Watch tutorials' }));
+  expect(screen.queryByRole('region', { name: 'Discover video tutorials' })).toBeNull();
+  expect(screen.getByRole('dialog', { name: 'Video tutorials' })).toBeTruthy();
+  expect(localStorage.getItem(TUTORIAL_DISCOVERY_DISMISSED_KEY)).toBe('1');
+  expect(localStorage.getItem(HELP_ENABLED_KEY)).toBe('0');
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(document.activeElement).toBe(trigger());
+});
+
+it.each(['Not now', 'Dismiss tutorial hint'])('retires discovery with %s and keeps Help reachable', async name => {
+  renderMenu(true);
+  await screen.findByRole('region', { name: 'Discover video tutorials' });
+  fireEvent.click(screen.getByRole('button', { name }));
+  expect(document.activeElement).toBe(trigger());
+  expect(trigger().hasAttribute('aria-describedby')).toBe(false);
+  expect(localStorage.getItem(TUTORIAL_DISCOVERY_DISMISSED_KEY)).toBe('1');
+  fireEvent.click(trigger());
+  expect(screen.getByText('Video tutorials')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /All videos/ })).toBeTruthy();
+});
+
+it('dismisses discovery with Escape from its controls or the Help trigger', async () => {
+  renderMenu(true);
+  await screen.findByRole('region', { name: 'Discover video tutorials' });
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Not now' }), { key: 'Tab' });
+  expect(screen.getByRole('region', { name: 'Discover video tutorials' })).toBeTruthy();
+  fireEvent.keyDown(trigger(), { key: 'Escape' });
+  expect(screen.queryByRole('region', { name: 'Discover video tutorials' })).toBeNull();
+  expect(document.activeElement).toBe(trigger());
+});
+
+it('retires discovery when Help is opened before the hint appears', async () => {
+  renderMenu(true);
+  fireEvent.click(trigger());
+  expect(localStorage.getItem(TUTORIAL_DISCOVERY_DISMISSED_KEY)).toBe('1');
+  fireEvent.keyDown(hints(), { key: 'Escape' });
+  cleanup();
+  renderMenu(true);
+  expect(screen.queryByRole('region', { name: 'Discover video tutorials' })).toBeNull();
+});
 
 it('discovers a remote video, pins its playing cut across refreshes and offers retry on failure', async () => {
   const remote = { ...HELP_VIDEOS[0], id: 'new-tutorial', title: 'New tutorial', revision: 'new', src: '/api/v1/help/videos/assets/new.mp4' };

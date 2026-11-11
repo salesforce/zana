@@ -11,7 +11,7 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "clean": "node -e \"for (const p of ['dist', 'tsconfig.tsbuildinfo']) require('node:fs').rmSync(p, { recursive: true, force: true })\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts"
   },

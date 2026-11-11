@@ -26,7 +26,8 @@ import type {
   HarnessAuthInjection,
   RemoteCommandInput,
   RemoteCommandResult,
-  ResolvedLaunch
+  ResolvedLaunch,
+  SquadSeatCapability
 } from '../launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
 import { BaseLaunchProvider } from '../base-provider.js';
@@ -297,6 +298,13 @@ function withLayerModel(args: string[], model: string | undefined, trailingArgs 
 export class ClaudeCodeProvider extends BaseLaunchProvider {
   readonly id = 'claude-code';
   readonly adapter = CLAUDE_ADAPTER;
+  /** Squad seat contract (#675, D1). Persona prompt and denylist are native argv flags. */
+  readonly squadSeat: SquadSeatCapability = {
+    instructions: true,
+    commandDeny: 'native',
+    executionTools: true,
+    foldPersonaIntoGuidance: false
+  };
   readonly acceptsUnlistedModelTargets = true;
 
   launchMetadata(_input: {

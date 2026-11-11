@@ -17,7 +17,7 @@
 .caption > div > p:last-child { margin: 0; color: var(--muted); max-width: 510px; font-size: 13px; line-height: 1.7; }
 .caption > a { flex-shrink: 0; }
 .resources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; padding-top: 28px; }
-.resources article { padding: 28px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); display: flex; flex-direction: column; align-items: flex-start; }
+.resources article { padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--accent-lavender) 9%, transparent), transparent 60%), var(--panel); transition: border-color .2s, box-shadow .2s; display: flex; flex-direction: column; align-items: flex-start; }
 .resources h2 { margin: 0 0 14px; font-size: 20px; font-weight: 550; letter-spacing: -.03em; }
 .resources article > p:not(.eyebrow) { font-size: 14px; line-height: 1.8; margin: 0 0 24px; color: var(--muted); }
 .resources a, .textLink { font-size: 13px; font-weight: 550; color: var(--accent-blue); }
@@ -37,3 +37,12 @@
   .playLabel { bottom: 12px; right: 12px; padding: 6px 12px 6px 6px; font-size: 11px; gap: 8px; }
   .playIcon { width: 26px; height: 26px; font-size: 18px; }
 }
+
+.resources article:hover, .resources article:focus-within { border-color: var(--accent-blue); box-shadow: 0 0 24px var(--accent-soft); }
+.tile { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--accent-soft); color: var(--accent-blue); }
+.tile svg { width: 22px; height: 22px; }
+.about h2 span { background: linear-gradient(100deg, #6296ff, #2dd4bf 52%, #d99bc6); background-clip: text; -webkit-text-fill-color: transparent; }
+.about { position: relative; padding: 36px; border: 1px solid var(--border); border-radius: 18px; background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--accent-blue) 8%, transparent), transparent 50%), var(--panel); max-width: none; }
+.about > p:not(.fairy-kicker) { max-width: 700px; }
+@media (max-width: 760px) { .about { padding: 24px; } }
+@media (prefers-reduced-motion: reduce) { .resources article { transition: none; } }

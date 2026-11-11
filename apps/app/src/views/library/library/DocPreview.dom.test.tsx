@@ -10,8 +10,10 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(async () => null),
   exportPdf: vi.fn(async () => ({ ok: true })),
   renderReportHtml: vi.fn(async () => '<html>note</html>'),
-  pushToast: vi.fn()
+  pushToast: vi.fn(),
+  copyText: vi.fn(async (_text: string) => undefined)
 }));
+vi.mock('../../../lib/copy-text.js', () => ({ copyTextOrFail: mocks.copyText }));
 vi.mock('../../../lib/product-client.js', () => ({ product: {
   library: { read: mocks.read, write: mocks.write, update: mocks.update }, inbox: { exportPdf: mocks.exportPdf }
 } }));
@@ -193,6 +195,22 @@ it('handles a rejected read and a document with no path', async () => {
 it('renders fenced text and Mermaid while preserving the source text for editing', async () => {
   mocks.read.mockResolvedValueOnce({ ok: true, content: '```text\nplain code\n```\n\n```mermaid\ngraph TD; A-->B;\n```', sha256: 'a'.repeat(64) });
   const view = render(<DocPreview doc={note} />); await view.findByText('plain code'); await view.findByText(/Diagram: graph TD/);
+  // Only the plain fence gets a Copy code button; the diagram doesn't.
+  expect(view.getAllByRole('button', { name: 'Copy code' })).toHaveLength(1);
+});
+
+it('copies a Library fence verbatim and announces it', async () => {
+  // Tab, HTML entities, a blank inner line and a deliberate blank last line;
+  // only the newline before the closing fence is dropped.
+  const code = 'if (a < b && c) {\n\treturn "it’s";\n\n}\n';
+  mocks.read.mockResolvedValueOnce({ ok: true, content: '```ts\n' + code + '\n```', sha256: 'a'.repeat(64) });
+  const view = render(<DocPreview doc={note} />);
+  const button = await view.findByRole('button', { name: 'Copy code' });
+  fireEvent.click(button);
+  await waitFor(() => expect(view.getByRole('status').textContent).toBe('Copied'));
+  expect(mocks.copyText).toHaveBeenCalledTimes(1);
+  expect(mocks.copyText).toHaveBeenCalledWith(code);
+  expect(button.getAttribute('aria-label')).toBe('Copy code');
 });
 
 it('opens preview links inside the library, including bare and file hrefs', async () => {

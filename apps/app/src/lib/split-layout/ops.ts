@@ -65,7 +65,10 @@ export const EMPTY_PANE_CONTENT: PaneContent = { kind: 'empty' };
 /** Byte-for-byte pane identity, including plugin subpaths and session project ids. */
 export function paneContentEquals(a: PaneContent, b: PaneContent): boolean {
   if (a.kind !== b.kind) return false;
-  if (a.kind === 'home' || a.kind === 'inbox' || a.kind === 'agents' || a.kind === 'scheduler' || a.kind === 'empty') {
+  if (a.kind === 'inbox') {
+    return b.kind === 'inbox' && (a.projectId ?? null) === (b.projectId ?? null);
+  }
+  if (a.kind === 'home' || a.kind === 'agents' || a.kind === 'scheduler' || a.kind === 'empty') {
     return true;
   }
   if (a.kind === 'new-thread' || a.kind === 'new-schedule') {
@@ -107,6 +110,9 @@ export function paneContentMatches(a: PaneContent, b: PaneContent): boolean {
   if (a.kind === 'plugin-panel' && b.kind === 'plugin-panel') {
     return a.pluginId === b.pluginId && a.panelPath === b.panelPath;
   }
+  // One Inbox pane per layout: a pane saved as the plain `/inbox` takes the
+  // project's Inbox instead of opening a second Inbox beside it.
+  if (a.kind === 'inbox' && b.kind === 'inbox') return true;
   return paneContentEquals(a, b);
 }
 

@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { AuroraGrid } from '../components/AuroraGrid';
 import { PluginOverview } from '../components/BrandStories';
 import { PluginGuideMap } from '../components/plugin-guide/PluginGuideMap';
+import { Icon, ProofCard, SectionHead, Grad, styles as s, type IconName } from './blocks';
 
 export const metadata: Metadata = {
   title: 'Plugins',
@@ -18,6 +19,7 @@ export const metadata: Metadata = {
   }
 };
 
+const PATH_ICONS: IconName[] = ['download', 'code', 'layers'];
 const PATHS = [
   {
     label: 'Install',
@@ -80,75 +82,78 @@ export default function ExtensionsPage() {
 
       <section style={{ paddingTop: 12 }}>
         <div className="wrap">
-          <div className="path-list" data-reveal-stagger>
-            {PATHS.map((path) => (
-              <Link key={path.href} className="path-row zcc-panel" href={path.href}>
-                <span className="path-label">{path.label}</span>
-                <div>
+          <SectionHead eyebrow="Choose your path">Install it. <Grad>Build it.</Grad> Extend it.</SectionHead>
+          <ol className={s.paths} data-reveal-stagger>
+            {PATHS.map((path, i) => (
+              <li key={path.href}>
+                <Link className={`${s.card} ${s.path}`} href={path.href}>
+                  <span className={s.tag}>{path.label}</span>
+                  <span className={s.tile}><Icon name={PATH_ICONS[i]} size={26} /></span>
                   <h3>{path.title}</h3>
                   <p>{path.body}</p>
-                </div>
-                <span className="path-go">{path.action} →</span>
-              </Link>
+                  <span className={s.go}>{path.action} <Icon name="arrow" size={16} /></span>
+                </Link>
+              </li>
             ))}
-          </div>
+          </ol>
         </div>
       </section>
 
       <section style={{ paddingTop: 8 }}>
         <div className="wrap">
-          <div className="proof" data-reveal>
-            <span className="zcc-kicker">Install with confidence</span>
-            <h2>Understand what you install.</h2>
-            <p>
-              Marketplace entries describe what a plugin contributes. Official catalogs install offline;
-              community catalogs list npm/git pointers only. After install, plugins run in-process on the server.
-            </p>
-            <ul>
-              <li>Install published plugins from the same catalog the app reads</li>
-              <li>Use a local folder, git, or npm source for private development workflows</li>
-              <li>Confirm the full-trust install before the plugin loads</li>
-            </ul>
-            <p style={{ marginTop: 16 }}><Link className="text-link" href="/extensions/install/">Read the install guide →</Link></p>
-          </div>
+          <ProofCard
+            eyebrow="Install with confidence"
+            title="Understand what you install."
+            icon="shield"
+            body="Marketplace entries describe what a plugin contributes. Official catalogs install offline; community catalogs list npm/git pointers only. After install, plugins run in-process on the server."
+            items={[
+              'Install published plugins from the same catalog the app reads',
+              'Use a local folder, git, or npm source for private development workflows',
+              'Confirm the full-trust install before the plugin loads'
+            ]}
+            link={{ href: '/extensions/install/', label: 'Read the install guide →' }}
+          />
         </div>
       </section>
 
       <section style={{ paddingTop: 8 }}>
         <div className="wrap">
-          <div className="proof" data-reveal>
-            <span className="zcc-kicker">Your development loop</span>
-            <h2>Build locally. Reload live. Keep core untouched.</h2>
-            <p>
-              A local plugin is an ordinary disk plugin with an editable source folder. Author{' '}
-              <code>package.json</code> <code>zcc</code>, then <code>zcc plugin dev</code> watches, rebuilds, and
-              reloads.
-            </p>
-            <ul>
-              <li>Use @zana-ai/zcc-plugin-sdk instead of internal app modules</li>
-              <li>Register app.slots.navPanel and optional server hooks</li>
-              <li>A failed reload keeps the last good generation</li>
-            </ul>
-            <p style={{ marginTop: 16 }}><Link className="text-link" href="/extensions/getting-started/">Follow the five-minute quickstart →</Link></p>
-          </div>
+          <ProofCard
+            eyebrow="Your development loop"
+            title="Build locally. Reload live. Keep core untouched."
+            icon="refresh"
+            body={<>A local plugin is an ordinary disk plugin with an editable source folder. Author{' '}<code>package.json</code> <code>zcc</code>, then <code>zcc plugin dev</code> watches, rebuilds, and reloads.</>}
+            items={[
+              'Use @zana-ai/zcc-plugin-sdk instead of internal app modules',
+              'Register app.slots.navPanel and optional server hooks',
+              'A failed reload keeps the last good generation'
+            ]}
+            link={{ href: '/extensions/getting-started/', label: 'Follow the five-minute quickstart →' }}
+          />
         </div>
       </section>
 
       <section style={{ paddingTop: 8, paddingBottom: 64 }}>
         <div className="wrap">
-          <div className="ref-box zcc-panel" data-reveal>
-            <div>
-              <span className="zcc-kicker">Reference</span>
-              <h2>Short path to action. Deep documentation behind it.</h2>
-              <p>Use the task guides for a focused workflow, then move into the maintained reference for contracts, permissions, lifecycle details, and publishing.</p>
-            </div>
-            <div className="ref-links">
-              <Link href="/docs/extensions-quickstart/">Build your first plugin <span aria-hidden="true">→</span></Link>
-              <Link href="/docs/extensions-authoring/">Plugin authoring guide <span aria-hidden="true">→</span></Link>
-              <Link href="/docs/extensions-sdk-reference/">SDK reference <span aria-hidden="true">→</span></Link>
-              <Link href="/docs/extensions/">Plugin architecture overview <span aria-hidden="true">→</span></Link>
-            </div>
-          </div>
+          <SectionHead eyebrow="Reference" lede="Use the task guides for a focused workflow, then move into the maintained reference for contracts, permissions, lifecycle details, and publishing.">
+            Short path to action. <Grad>Deep documentation</Grad> behind it.
+          </SectionHead>
+          <ul className={s.refGrid} data-reveal-stagger>
+            {[
+              ['/docs/extensions-quickstart/', 'Build your first plugin', 'seed'],
+              ['/docs/extensions-authoring/', 'Plugin authoring guide', 'edit'],
+              ['/docs/extensions-sdk-reference/', 'SDK reference', 'book'],
+              ['/docs/extensions/', 'Plugin architecture overview', 'box']
+            ].map(([href, label, icon]) => (
+              <li key={href}>
+                <Link className={s.card} href={href}>
+                  <span className={s.tile}><Icon name={icon as IconName} /></span>
+                  <span>{label}</span>
+                  <span className={s.go}><Icon name="arrow" size={16} /></span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
     </div>

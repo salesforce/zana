@@ -6,6 +6,7 @@ import { site } from '../../lib/site';
 import { VideoChapters } from './VideoChapters';
 import { walkthroughVideos } from './videos';
 import { AgentConstellation } from './AgentConstellation';
+import { Glyph } from './WalkthroughIcons';
 import styles from './walkthrough.module.css';
 
 const description = 'One workspace for every AI agent. See how Zana brings your projects, agents, and tools together, then get started with short videos and real app demos.';
@@ -55,10 +56,10 @@ export default async function WalkthroughPage() {
             <caption className="sr-only">Working across separate tools compared with using Zana</caption>
             <thead><tr><th scope="col">Today</th><th scope="col">With Zana</th></tr></thead>
             <tbody>
-              <tr><td>Sessions spread across terminals and tabs</td><td>Agents and projects together in one place</td></tr>
-              <tr><td>Checking every session for an update</td><td>A clear view of what needs your attention</td></tr>
-              <tr><td>Useful tools stay with the person who built them</td><td>Team capabilities, built once and shared as plugins</td></tr>
-              <tr><td>Results buried in conversation history</td><td>Readable reports delivered to your Inbox</td></tr>
+              <tr><td><span className={styles.cellMark} aria-hidden="true"><Glyph name="minus" size={14} /></span>Sessions spread across terminals and tabs</td><td><span className={`${styles.cellMark} ${styles.cellMarkOn}`} aria-hidden="true"><Glyph name="check" size={14} /></span>Agents and projects together in one place</td></tr>
+              <tr><td><span className={styles.cellMark} aria-hidden="true"><Glyph name="minus" size={14} /></span>Checking every session for an update</td><td><span className={`${styles.cellMark} ${styles.cellMarkOn}`} aria-hidden="true"><Glyph name="check" size={14} /></span>A clear view of what needs your attention</td></tr>
+              <tr><td><span className={styles.cellMark} aria-hidden="true"><Glyph name="minus" size={14} /></span>Useful tools stay with the person who built them</td><td><span className={`${styles.cellMark} ${styles.cellMarkOn}`} aria-hidden="true"><Glyph name="check" size={14} /></span>Team capabilities, built once and shared as plugins</td></tr>
+              <tr><td><span className={styles.cellMark} aria-hidden="true"><Glyph name="minus" size={14} /></span>Results buried in conversation history</td><td><span className={`${styles.cellMark} ${styles.cellMarkOn}`} aria-hidden="true"><Glyph name="check" size={14} /></span>Readable reports delivered to your Inbox</td></tr>
             </tbody>
           </table>
         </section>
@@ -77,12 +78,13 @@ export default async function WalkthroughPage() {
             <p>Use the agent you already know. Zana gives it a place to work, and gives you a clear view of what happens next.</p>
           </div>
           <ol className={styles.steps} aria-label="Start using Zana">
-            <li><span className={styles.eyebrow}>01 / Install</span><h3>Make yourself at home.</h3><p>Download Zana for macOS or Windows. Have your preferred coding agent CLI installed and signed in.</p><Link className={styles.textLink} href="/download/">Get Zana <span aria-hidden="true">→</span></Link></li>
-            <li><span className={styles.eyebrow}>02 / Add a project</span><h3>It starts with a folder.</h3><p>Click <strong>Add project</strong> in the sidebar and choose your folder. Your conversations and work stay with that project.</p></li>
-            <li><span className={styles.eyebrow}>03 / Start a thread</span><h3>Ask for something useful.</h3><p>Open <strong>New Chat</strong>, choose an agent, and describe your task. Follow along, answer questions, and review the result.</p></li>
+            <li><span className={styles.stepIcon} aria-hidden="true"><Glyph name="download" size={22} /></span><span className={styles.eyebrow}>01 / Install</span><h3>Make yourself at home.</h3><p>Download Zana for macOS or Windows. Have your preferred coding agent CLI installed and signed in.</p><Link className={styles.textLink} href="/download/">Get Zana <span aria-hidden="true">→</span></Link></li>
+            <li><span className={styles.stepIcon} aria-hidden="true"><Glyph name="folder" size={22} /></span><span className={styles.eyebrow}>02 / Add a project</span><h3>It starts with a folder.</h3><p>Click <strong>Add project</strong> in the sidebar and choose your folder. Your conversations and work stay with that project.</p></li>
+            <li><span className={styles.stepIcon} aria-hidden="true"><Glyph name="chat" size={22} /></span><span className={styles.eyebrow}>03 / Start a thread</span><h3>Ask for something useful.</h3><p>Open <strong>New Chat</strong>, choose an agent, and describe your task. Follow along, answer questions, and review the result.</p></li>
           </ol>
           <div className={styles.prompt}>
-            <div><span className={styles.eyebrow}>Try a first prompt</span><p>“Explore this project and explain how it works. Suggest one small improvement.”</p></div>
+            <Image className={styles.promptAvatar} src="/zana-icon-512.png" alt="" width={44} height={44} />
+            <div className={styles.promptBody}><span className={styles.eyebrow}>Try a first prompt</span><p>“Explore this project and explain how it works. Suggest one small improvement.”<span className={styles.caret} aria-hidden="true" /></p></div>
             <Link className={styles.textLink} href="/docs/getting-started/">Setup details <span aria-hidden="true">↗</span></Link>
           </div>
         </section>
@@ -97,17 +99,36 @@ export default async function WalkthroughPage() {
             <figure className={styles.productShot}><Image src="/walkthrough/thread-preview.jpg" alt="Zana thread building an Atlas pricing page, with the finished page preview beside the conversation" width={1440} height={900} sizes="(max-width: 820px) 92vw, 62vw" /><figcaption>From the overview · A result you can see beside the conversation</figcaption></figure>
           </article>
           <article id="squads" className={`${styles.productStory} ${styles.reverseStory}`}>
-            <div className={styles.storyCopy}><span className={styles.eyebrow}>02 / Bigger goals, together</span><h3>Give an objective.<br />Get a team.</h3><p>A Squad turns a goal into a plan and shares the work across agents. Follow the handoffs, answer questions, and review what the team delivers.</p><ol className={styles.handoffs} aria-label="Squad workflow"><li>Plan</li><li>Build</li><li>Review</li></ol><Link className={styles.textLink} href="/docs/using-zana/#squads">Discover Squads <span aria-hidden="true">→</span></Link></div>
+            <div className={styles.storyCopy}><span className={styles.eyebrow}>02 / Bigger goals, together</span><h3>Give an objective.<br />Get a team.</h3><p>A Squad turns a goal into a plan and shares the work across agents. Follow the handoffs, answer questions, and review what the team delivers.</p><ol className={styles.handoffs} aria-label="Squad workflow"><li><span aria-hidden="true"><Glyph name="plan" size={16} /></span>Plan</li><li><span aria-hidden="true"><Glyph name="build" size={16} /></span>Build</li><li><span aria-hidden="true"><Glyph name="review" size={16} /></span>Review</li></ol><Link className={styles.textLink} href="/docs/using-zana/#squads">Discover Squads <span aria-hidden="true">→</span></Link></div>
             <figure className={styles.productShot}><Image src="/walkthrough/squad-flow.jpg" alt="Zana Squad flow showing an orchestrator, two workers, and a code reviewer on the Atlas project" width={1440} height={900} sizes="(max-width: 820px) 92vw, 62vw" /><figcaption>From the overview · The team and its handoffs, in one view</figcaption></figure>
           </article>
           <div className={styles.strengths}>
-            <article><span className={styles.eyebrow}>03 / Attention where it counts</span><h3>Agents report outcomes.<br />You make the decisions.</h3><p>See which agents are working, waiting, or done across projects. Your Inbox brings together questions and readable reports from agents and scheduled work.</p><figure className={styles.reportExample}><figcaption>Example report <span>Ready for review</span></figcaption><strong>The pricing page is ready.</strong><p>Three plans built. Layout checked.<br />Next step: review the page and choose what to ship.</p></figure><Link className={styles.textLink} href="/features/#inbox">Meet your Inbox <span aria-hidden="true">→</span></Link></article>
-            <article id="shared-tools"><span className={styles.eyebrow}>04 / Built once, shared with your team</span><h3>Your tools.<br />Part of the conversation.</h3><p>Add capabilities through plugins, from pull request monitoring to Salesforce development. Build a tool for your team and share it through a catalogue.</p><div className={styles.pluginExamples} aria-label="Example plugin capabilities"><span><i aria-hidden="true">↗</i>PR Monitor</span><span><i aria-hidden="true">✦</i>Agentforce Studio</span><span><i aria-hidden="true">＋</i>Your team’s tools</span></div><Link className={styles.textLink} href="/marketplace/">Explore the marketplace <span aria-hidden="true">→</span></Link></article>
+            <article><span className={styles.eyebrow}>03 / Attention where it counts</span><h3>Agents report outcomes.<br />You make the decisions.</h3><p>See which agents are working, waiting, or done across projects. Your Inbox brings together questions and readable reports from agents and scheduled work.</p><figure className={styles.reportExample}>
+              <figcaption><span className={styles.exampleLabel}>Example report</span></figcaption>
+              <div className={styles.inboxCard}>
+                <div className={styles.inboxHead}>
+                  <span className={styles.agentAvatar} aria-hidden="true"><Image src="/walkthrough/icons/claude-code.svg" width={22} height={22} alt="" /><i /></span>
+                  <span className={styles.agentName}>Claude Code<small><span className={styles.projectChip}><Glyph name="folder" size={11} />Atlas</span><time>2 min ago</time></small></span>
+                  <span className={styles.statusPill}>Ready for review</span>
+                </div>
+                <strong>The pricing page is ready.</strong>
+                <p>Three plans built. Layout checked.<br />Next step: review the page and choose what to ship.</p>
+                <div className={styles.inboxActions} aria-hidden="true"><span className={styles.actionPrimary}>Review</span><span>Reply</span><span>Dismiss</span></div>
+              </div>
+            </figure><Link className={styles.textLink} href="/features/#inbox">Meet your Inbox <span aria-hidden="true">→</span></Link></article>
+            <article id="shared-tools"><span className={styles.eyebrow}>04 / Built once, shared with your team</span><h3>Your tools.<br />Part of the conversation.</h3><p>Add capabilities through plugins, from pull request monitoring to Salesforce development. Build a tool for your team and share it through a catalogue.</p><div className={styles.pluginCatalogue}>
+              <div className={styles.pluginHub} aria-hidden="true"><Image src="/zana-icon-512.png" alt="" width={40} height={40} /></div>
+              <ul className={styles.pluginExamples} aria-label="Example plugin capabilities">
+                <li><span className={styles.pluginIcon} aria-hidden="true"><Glyph name="pr" size={22} /></span>PR Monitor</li>
+                <li><span className={styles.pluginIcon} aria-hidden="true"><Image src="/walkthrough/icons/afcode.svg" alt="" width={24} height={24} /></span>Agentforce Studio</li>
+                <li><span className={`${styles.pluginIcon} ${styles.pluginIconAdd}`} aria-hidden="true"><Glyph name="plus" size={22} /></span>Your team’s tools</li>
+              </ul>
+            </div><Link className={styles.textLink} href="/marketplace/">Explore the marketplace <span aria-hidden="true">→</span></Link></article>
           </div>
           <div className={styles.principles}>
-            <div><strong>Local or remote.</strong><p>Work on your computer or connect a remote machine.</p></div>
-            <div><strong>Your tools and accounts.</strong><p>Keep using the coding agents you already work with.</p></div>
-            <div><strong>Your judgment at the center.</strong><p>Review plans, answer questions, and inspect the result.</p></div>
+            <div><span className={styles.principleIcon} aria-hidden="true"><Glyph name="laptop" size={22} /></span><strong>Local or remote.</strong><p>Work on your computer or connect a remote machine.</p></div>
+            <div><span className={styles.principleIcon} aria-hidden="true"><Glyph name="key" size={22} /></span><strong>Your tools and accounts.</strong><p>Keep using the coding agents you already work with.</p></div>
+            <div><span className={styles.principleIcon} aria-hidden="true"><Glyph name="eye" size={22} /></span><strong>Your judgment at the center.</strong><p>Review plans, answer questions, and inspect the result.</p></div>
           </div>
         </section>
 

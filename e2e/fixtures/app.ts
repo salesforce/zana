@@ -204,6 +204,8 @@ export interface LaunchOptions {
   e2e?: boolean;
   /** Config fields written before app boot for startup-path coverage. */
   initialConfig?: Record<string, unknown>;
+  /** Keep the first-run tutorial invitation for discovery-specific coverage. */
+  tutorialDiscovery?: boolean;
   /** Explicit opt-in for tests that intentionally invoke an authenticated Claude. */
   allowLiveClaude?: boolean;
   /** Explicit opt-in for tests that intentionally invoke real OpenCode/Codex/Cursor binaries. */
@@ -297,6 +299,13 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   try {
     const window = await appWindow(app);
     await window.waitForSelector('#root', { timeout: 30_000 });
+    if (!opts.tutorialDiscovery) {
+      // Other specs start after discovery, just as their default config skips setup.
+      await window.evaluate(() => {
+        localStorage.setItem('zcc.helpVideos.discoveryDismissed', '1');
+        dispatchEvent(new Event('zcc-prefs'));
+      });
+    }
     await dismissConsentOverlays(window);
     return { electron: app, window, home };
   } catch (err) {
@@ -356,6 +365,8 @@ type Fixtures = {
   launchEnv: Record<string, string>;
   /** Config fields written before Electron starts. */
   initialConfig: Record<string, unknown>;
+  /** Exercise first-run tutorial discovery instead of starting after dismissal. */
+  tutorialDiscovery: boolean;
   /**
    * Seed the sandbox HOME with the developer's real `claude` auth/onboarding
    * state so a launched real agent can run a turn. Opt-in — only the AI specs
@@ -381,6 +392,7 @@ export const test = base.extend<Fixtures>({
   e2e: [false, { option: true }],
   launchEnv: [{}, { option: true }],
   initialConfig: [{}, { option: true }],
+  tutorialDiscovery: [false, { option: true }],
   seedClaudeAuth: [false, { option: true }],
   seedOpenCodeAuth: [false, { option: true }],
 
@@ -410,7 +422,7 @@ export const test = base.extend<Fixtures>({
     }
   },
 
-  app: async ({ useAppManifest, home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth, seedOpenCodeAuth, isolateBundledCatalog }, use) => {
+  app: async ({ useAppManifest, home, registry, requireSignature, e2e, launchEnv, initialConfig, tutorialDiscovery, seedClaudeAuth, seedOpenCodeAuth, isolateBundledCatalog }, use) => {
     if (registry) {
       writeRegistryConfig(home, {
         enabled: true,
@@ -440,6 +452,7 @@ export const test = base.extend<Fixtures>({
       e2e,
       env,
       initialConfig,
+      tutorialDiscovery,
       allowLiveClaude: seedClaudeAuth,
       allowLiveHarnesses: seedOpenCodeAuth,
     });

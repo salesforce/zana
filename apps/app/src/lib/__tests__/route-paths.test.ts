@@ -17,6 +17,8 @@ import {
   getPluginsRoutePath,
   getProjectRoutePath,
   getProjectSettingsRoutePath,
+  getProjectInboxRoutePath,
+  isProjectInboxRoutePath,
   getAgentSessionRoutePath,
   decodeRouteParam,
   getProjectModeRoutePath,
@@ -211,6 +213,17 @@ describe('route path helpers', () => {
     expect(decodeRouteParam('salesforce%3Aagent-script')).toBe('salesforce:agent-script');
     expect(decodeRouteParam('salesforce:agent-script')).toBe('salesforce:agent-script');
     expect(decodeRouteParam('%E0%A4')).toBe('%E0%A4');
+  });
+
+  it("builds and recognizes a project's Inbox route", () => {
+    expect(getProjectInboxRoutePath('p1')).toBe('/projects/p1/inbox');
+    expect(getProjectInboxRoutePath('a/b')).toBe('/projects/a%2Fb/inbox');
+    expect(isProjectInboxRoutePath('/projects/p1/inbox')).toBe(true);
+    expect(isProjectInboxRoutePath('/inbox')).toBe(false);
+    expect(isProjectInboxRoutePath('/projects/p1')).toBe(false);
+    expect(isProjectInboxRoutePath('/projects/p1/terminals')).toBe(false);
+    expect(isRoutePath({ path: '/projects/p1/inbox?x=1#y' })).toBe(true);
+    expect(isProjectRoutePath('/projects/p1/inbox')).toBe(true);
   });
 
   it('lets static settings/plugins/browse segments win over params', () => {

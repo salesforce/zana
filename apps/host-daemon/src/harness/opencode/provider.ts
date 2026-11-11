@@ -55,7 +55,8 @@ import type {
   AgentLiveness,
   RemoteCommandInput,
   RemoteCommandResult,
-  ResolvedLaunch
+  ResolvedLaunch,
+  SquadSeatCapability
 } from '../launch-provider.js';
 import { BaseLaunchProvider } from '../base-provider.js';
 import { mergeOpenCodeGatePlugin, openCodeNativeToolGateSource } from './native-tool-gate.js';
@@ -521,6 +522,13 @@ export function classifyOpenCodePaneCommand(command: string): AgentLiveness {
 
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
+  /** Squad seat contract (#675, D1). Persona text rides an instructions file. Denylist stays none until the pane-side PATH delivery is built and re-proven (u-spike: shim-wins: no). */
+  readonly squadSeat: SquadSeatCapability = {
+    instructions: true,
+    commandDeny: 'none',
+    executionTools: true,
+    foldPersonaIntoGuidance: false
+  };
 
   /**
    * The shared (registry singleton) adapter has no installation-specific models.
@@ -733,8 +741,13 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * "remote"` + `url` is OpenCode's `StreamableHTTPClientTransport` server shape,
    * matching the zcc-inbox streamable-http server the claude path points at.
    */
-  mcpEnv(_profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): Record<string, string> {
-    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(this.zccInboxConfig(mcpUrl, servers)) };
+  mcpEnv(
+    _profile: LaunchProfileId,
+    mcpUrl: string,
+    servers?: readonly HarnessMcpServer[],
+    instructionsFile?: string
+  ): Record<string, string> {
+    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(this.zccInboxConfig(mcpUrl, servers, instructionsFile)) };
   }
 
   /**
@@ -753,8 +766,13 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * Local spawns only — the remote path carries MCP in its own inline env
    * (buildRemoteCommand), where a host-local file wouldn't exist.
    */
-  mcpConfigFile(_profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): { envVar: string; contents: string } {
-    return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl, servers)) };
+  mcpConfigFile(
+    _profile: LaunchProfileId,
+    mcpUrl: string,
+    servers?: readonly HarnessMcpServer[],
+    instructionsFile?: string
+  ): { envVar: string; contents: string } {
+    return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl, servers, instructionsFile)) };
   }
 
   nativeToolGatePluginSource(_profile: LaunchProfileId, nativeToolUrl: string): string {
@@ -776,7 +794,7 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   }
 
   /** The zcc-inbox `mcp` config block — shared by the env and file channels. */
-  private zccInboxConfig(mcpUrl: string, servers?: readonly HarnessMcpServer[]) {
+  private zccInboxConfig(mcpUrl: string, servers?: readonly HarnessMcpServer[], instructionsFile?: string) {
     const plugin: Record<string, unknown> = {};
     for (const server of servers ?? []) {
       const entry = openCodeServerEntry(server);
@@ -790,7 +808,10 @@ export class OpenCodeProvider extends BaseLaunchProvider {
           url: mcpUrl,
           enabled: true
         }
-      }
+      },
+      // A Squad seat's persona text (#675): OpenCode's `instructions` key takes file
+      // paths. Both config channels carry it, like the MCP block. Absent otherwise.
+      ...(instructionsFile ? { instructions: [instructionsFile] } : {})
     };
   }
 

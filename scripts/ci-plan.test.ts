@@ -6,6 +6,33 @@ import { planVerification, previewAffected, runPlan } from './ci-plan.mjs';
 import { boundarySpecs } from './ci-boundaries.mjs';
 import { runVerification } from './ci-verification.mjs';
 
+it('verifies Electron, Chromium and WebKit when Linux dependency preparation changes', () => {
+  for (const path of ['scripts/check-electron-linux-deps.mjs', '.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining([
+      'e2e/contextual-help.spec.ts', 'e2e/mobile-composer-layout.spec.ts',
+    ]));
+  }
+  const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
+  const lock = load(readFileSync('pnpm-lock.yaml', 'utf8')) as any;
+  const playwrightVersion = lock.importers['.'].devDependencies['@playwright/test'].version;
+  expect(workflow.jobs.e2e.container.image.split('@')[0]).toBe(`mcr.microsoft.com/playwright:v${playwrightVersion}-resolute`);
+  expect(workflow.jobs.e2e.container.image).toMatch(/@sha256:[a-f0-9]{64}$/);
+  expect(workflow.jobs.e2e.container.options).toBe('--ipc=host');
+  const trust = workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Trust checked-out repository in container');
+  expect(trust).toBeGreaterThan(0);
+  expect(workflow.jobs.e2e.steps[trust].run).toBe('git config --global --add safe.directory "$GITHUB_WORKSPACE"');
+  expect(trust).toBeLessThan(workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install dependencies'));
+  const commands = workflow.jobs.e2e.steps.map((step: any) => step.run || '').join('\n');
+  expect(commands).toContain('node scripts/check-electron-linux-deps.mjs');
+  expect(commands).not.toMatch(/apt-get|playwright install|sysctl/);
+  expect(commands).toContain('xvfb-run -a node scripts/ci-verification.mjs');
+  const preview = workflow.jobs['preview-cross-platform'].steps.find((step: any) => step.name === 'Check Linux Electron display dependencies');
+  expect(preview.if).toBe("runner.os == 'Linux'");
+  expect(preview.run).toContain('node scripts/check-electron-linux-deps.mjs');
+  expect(preview.run).toContain('pnpm exec playwright install chromium');
+  expect(preview.run).not.toMatch(/apt-get|--with-deps/);
+});
+
 it('keeps cross-platform preview checks for native, path, render and distribution changes', () => {
   for (const path of [
     'apps/desktop/src/preload.ts', 'apps/host-daemon/src/remote-fs.ts', 'apps/server/src/http/product-api.ts',
@@ -86,11 +113,15 @@ it('gates selective jobs on successful planning and keeps all required checks lo
   }
   const builder = workflow.jobs['e2e-build'];
   expect(builder.if).toBe(workflow.jobs.e2e.if);
+  const native = builder.steps.findIndex((step: any) => step.name === 'Prepare Electron native ABI cache');
+  expect(native).toBeGreaterThan(builder.steps.findIndex((step: any) => step.name === 'Build production Electron runtime'));
+  expect(builder.steps[native].run).toBe('pnpm run rebuild:electron');
+  expect(native).toBeLessThan(builder.steps.findIndex((step: any) => step.name?.startsWith('Archive')));
   // Re-run-all replaces the same-run artifact; re-run-failed consumers can
   // still download it when the successful build job was not re-run.
   expect(builder.steps.find((step: any) => step.uses === 'actions/upload-artifact@v7').with.overwrite).toBe(true);
   const archive = builder.steps.find((step: any) => step.name?.startsWith('Archive')).run;
-  for (const path of ['out', 'plugins', 'resources', 'packages/cli/dist', 'packages/plugin-sdk/dist', 'apps/host-daemon/dist']) expect(archive).toContain(path);
+  for (const path of ['out', 'plugins', 'resources', 'packages/cli/dist', 'packages/plugin-sdk/dist', 'apps/host-daemon/dist', 'node_modules/.cache/zcc-native-abi']) expect(archive).toContain(path);
   expect(archive).toContain("--exclude='plugins/*/node_modules'");
   // The bundled npm runtime needs its nested node_modules (graceful-fs etc.).
   expect(archive).not.toContain("--exclude='*/node_modules'");

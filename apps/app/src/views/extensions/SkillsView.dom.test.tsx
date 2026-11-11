@@ -84,6 +84,44 @@ beforeEach(() => {
   state.off.mockReset();
 });
 afterEach(cleanup);
+it('restarts the saved feedback timer and cancels it when the page unmounts', async () => {
+  const view = render(<SkillsBody />);
+  await screen.findByText('review');
+  vi.useFakeTimers();
+  try {
+    await act(async () => { fireEvent.click(screen.getByRole('checkbox')); });
+    expect(screen.getByText('Saved')).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { fireEvent.click(screen.getByRole('checkbox')); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(screen.getByText('Saved')).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.queryByText('Saved')).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole('checkbox')); });
+    expect(screen.getByText('Saved')).toBeTruthy();
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});
+it('does not schedule saved feedback when a write finishes after unmount', async () => {
+  let finish!: () => void;
+  state.toggle.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+  const view = render(<SkillsBody />);
+  await screen.findByText('review');
+  vi.useFakeTimers();
+  try {
+    fireEvent.click(screen.getByRole('checkbox'));
+    view.unmount();
+    await act(async () => { finish(); });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});
 it('shows commands, origins and author flags, and only offers authorized toggles/reveal', async () => {
   render(<SkillsBody projectId="p" />);
   await screen.findByText('grill-me');

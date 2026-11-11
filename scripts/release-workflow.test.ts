@@ -8,6 +8,16 @@ const workflow = load(readFileSync(new URL('../.github/workflows/release.yml', i
 const builder = load(readFileSync(new URL('../apps/desktop/electron-builder.yml', import.meta.url), 'utf8'));
 
 describe('Release verification', () => {
+  it('checks installed Electron dependencies without apt or browser font downloads', () => {
+    const smoke = workflow.jobs.smoke;
+    const preflight = smoke.steps.find((step: any) => step.name === 'Check system deps for headless Electron');
+    expect(preflight.run).toBe('node scripts/check-electron-linux-deps.mjs');
+    const commands = smoke.steps.map((step: any) => step.run || '').join('\n');
+    expect(commands).not.toMatch(/apt-get|install-deps|--with-deps/);
+    expect(commands).toContain('xvfb-run -a pnpm run test:smoke:only');
+    expect(commands.indexOf(preflight.run)).toBeLessThan(commands.indexOf('pnpm run build'));
+  });
+
   it('splits the complete root suite across the same isolated runners as merge CI', () => {
     const ci = load(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
     const unit = workflow.jobs.unit;

@@ -19,6 +19,7 @@ import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
 import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync, sessionPluginMcpServers } from './mcp-config.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
+import { assertWindowsCommandLineFits, windowsDirectLaunch } from './harness/windows-command.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
 import {
   SESSION_CALLBACK_ENV_KEYS,
@@ -28,6 +29,7 @@ import {
   withBlankedSessionCallbacks,
   writeSessionEnvFile
 } from './tmux-session-env.js';
+import { assertRemoteSeatContract, prepareSeatSpawn, shimFirstPath, type SeatSpawnPlan } from './squad-seat-spawn.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import type { SkillSettings } from './harness/registration.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
@@ -552,6 +554,8 @@ export class PtyManager extends EventEmitter {
    *  written on spawn and unlinked in {@link finalizeExit}. Absent for providers
    *  that carry MCP another way (claude file-arg, codex `-c`, shell none). */
   private sessionMcpConfigFiles = new Map<string, string>();
+  /** Squad seat files (#675) by session id: shim directory + instructions file; removed in {@link finalizeExit}. */
+  private seatSpawns = new Map<string, SeatSpawnPlan>();
   /** Per-session plugin instruction files (OpenCode); unlinked in {@link finalizeExit}. */
   private sessionInstructionFiles = new Map<string, string>();
   /** Per-session native tool gate modules (OpenCode); unlinked in {@link finalizeExit}. */
@@ -911,6 +915,24 @@ export class PtyManager extends EventEmitter {
     }
   }
 
+  /** Remove a session's Squad seat files (#675) and forget the entry. */
+  private releaseSeatSpawn(sessionId: string): void {
+    const plan = this.seatSpawns.get(sessionId);
+    if (!plan) return;
+    this.seatSpawns.delete(sessionId);
+    plan.release();
+  }
+
+  /** Session ids that hold any per-session launch file (MCP config, instructions, native tool gate). */
+  private sessionLaunchFileIds(): string[] {
+    return [...new Set([
+      ...this.sessionMcpConfigFiles.keys(),
+      ...this.sessionInstructionFiles.keys(),
+      ...this.sessionNativeToolGateFiles.keys(),
+      ...this.sessionNativeToolGateDirs.keys()
+    ])];
+  }
+
   /** Unlink every per-session launch file written so far for a spawn that is being refused. */
   private releaseSessionLaunchFiles(sessionId: string): void {
     for (const files of [this.sessionNativeToolGateFiles, this.sessionInstructionFiles, this.sessionMcpConfigFiles]) {
@@ -1002,11 +1024,19 @@ export class PtyManager extends EventEmitter {
    */
   create(opts: Parameters<PtyManager['createUnguarded']>[0]): TerminalSession {
     const before = new Set(this.automatedConfigDirs.keys());
+    const beforeSeats = new Set(this.seatSpawns.keys());
+    const beforeLaunchFiles = new Set(this.sessionLaunchFileIds());
     try {
       return this.createUnguarded(opts);
     } catch (error) {
       for (const id of [...this.automatedConfigDirs.keys()]) {
         if (!before.has(id) && !this.live.has(id)) this.releaseAutomatedConfigDir(id);
+      }
+      for (const id of [...this.seatSpawns.keys()]) {
+        if (!beforeSeats.has(id) && !this.live.has(id)) this.releaseSeatSpawn(id);
+      }
+      for (const id of this.sessionLaunchFileIds()) {
+        if (!beforeLaunchFiles.has(id) && !this.live.has(id)) this.releaseSessionLaunchFiles(id);
       }
       throw error;
     }
@@ -1141,6 +1171,11 @@ export class PtyManager extends EventEmitter {
      */
     cohort?: SessionCohort;
     /**
+     * MAIN-only (#675): this launch is a Squad seat, so its harness must carry the
+     * persona's contract. Set by the Squad spawn paths; never from a renderer request.
+     */
+    squadSeat?: true;
+    /**
      * Wake-from-sleep reconnect (REMOTE only): the original session id whose
      * dead `ssh` proxy we're replacing. Re-attaches the live `cc-<id>` tmux
      * session on the box. See {@link createRemote}. Ignored on local spawns.
@@ -1215,6 +1250,12 @@ export class PtyManager extends EventEmitter {
     skillSettings?: SkillSettings;
   }): TerminalSession {
     if (opts.remote) {
+      // A remote spawn carries no seat contract (host-local files), so a Squad seat that needs one fails
+      // instead of respawning silently without it (restore or restart after a persona edit).
+      if (opts.squadSeat) {
+        const remoteProvider = providerFor(opts.profile);
+        assertRemoteSeatContract({ capability: remoteProvider.squadSeat, persona: opts.persona, refusedForSquads: remoteProvider.refusedForSquads });
+      }
       return this.createRemote({ ...opts, remote: opts.remote });
     }
     // Live-session cap: refuse cleanly before spawning anything. Checked here
@@ -1534,9 +1575,25 @@ export class PtyManager extends EventEmitter {
     // byte-identical (guarded by the golden-argv net). `env` is merged into the
     // child env below; `args` splice into fullArgs alongside the other `-c` args.
     const authFamily = provider.authKey(effectiveProfile);
+    // Squad seat (#675): only a launch that carries the main-owned marker gets the
+    // persona's contract. Without it `seat` is undefined and nothing below changes.
+    const seat = opts.squadSeat
+      ? prepareSeatSpawn({ capability: provider.squadSeat, persona: spawnPersona, harnessCommand: command, refusedForSquads: provider.refusedForSquads, sessionId })
+      : undefined;
+    if (seat) this.seatSpawns.set(sessionId, seat);
+    // Both Codex's folded guidance and OpenCode's instructions file ride the MCP integration,
+    // so with no MCP URL (server not up yet, or failed to start) the contract would vanish silently.
+    // Fail the spawn instead; create() releases the seat files.
+    if (seat && seat.instructionsText.length > 0 && !mcpServerUrl) {
+      throw new Error("Squad seat contract can't be delivered: the MCP server is not available yet. Retry once it is up.");
+    }
+    const seatGuidanceText = seat?.foldIntoGuidance
+      ? [composedGuidanceText, seat.instructionsText].filter((part) => part.length > 0).join('\n\n')
+      : composedGuidanceText;
     const providerIntegration = provider.integration.configure({
       profile: effectiveProfile,
-      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl, servers: sessionPluginMcpServers(opts.persona?.mcpServers) }, guidance: composedGuidanceText } : {}),
+      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl, servers: sessionPluginMcpServers(opts.persona?.mcpServers) }, guidance: seatGuidanceText } : {}),
+      ...(seat?.instructionsFile ? { instructionsFile: seat.instructionsFile } : {}),
       ...(providerHookBase || providerHookUrls.nativeTool ? {
         lifecycle: {
           stop: providerHookUrls.stop,
@@ -1989,6 +2046,8 @@ export class PtyManager extends EventEmitter {
     // `posix_spawnp` does not always honor env PATH the way `execFile` does,
     // so we also resolve the harness basename against the augmented PATH.
     env.PATH = augmentPath(env.PATH ?? process.env.PATH);
+    // Squad seat shims (#675) go first, so a denied command resolves to its shim.
+    if (seat?.shimDir) env.PATH = shimFirstPath(seat.shimDir, env.PATH);
     // Drop Claude Code's own nested-session markers before they reach a claude
     // WE spawn. When ZCC itself runs inside a Claude session (e.g. `npm run dev`
     // from a Claude shell), `...process.env` above carries CLAUDECODE /
@@ -2092,7 +2151,9 @@ export class PtyManager extends EventEmitter {
       OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT,
       // A tmux pane inherits the server's env, not this client's: hand the
       // isolated config dir over explicitly (omitted for every other launch).
-      ...(automatedClaude ? automatedClaude.env : {})
+      ...(automatedClaude ? automatedClaude.env : {}),
+      // A tmux pane takes its PATH from the tmux server, so a Squad seat's shim-first PATH is handed over here.
+      ...(seat?.shimDir ? { PATH: env.PATH } : {})
     };
     // The provider MCP-config-file env var (OpenCode's `OPENCODE_CONFIG`) is
     // session-scoped exactly like the vars above — its file carries this session's
@@ -2123,6 +2184,10 @@ export class PtyManager extends EventEmitter {
       && !wantsTmux
       && !opts.remote
       && (requestedEnvironment === undefined || requestedEnvironment === 'local');
+    // Seat files are host-local paths; a sandbox, container or microVM cannot see them.
+    if (seat && requestedEnvironment !== undefined && requestedEnvironment !== 'local') {
+      throw new Error("Squad seat contract can't be delivered in this execution environment. Run the seat locally.");
+    }
     const execEnv = environmentFor(useRuntimeHost ? 'runtime-host' : requestedEnvironment);
     const envCtx: ExecEnvContext = {
       sessionId,
@@ -2137,9 +2202,12 @@ export class PtyManager extends EventEmitter {
       microVmMemoryMib: opts.microVmMemoryMib
     };
     const wrapped = execEnv.wrap({ command, args: fullArgs }, envCtx);
+    // On Windows a trivial `.cmd` forwarder (`@"…\claude.exe" %*`) earlier on
+    // PATH than the exe would route the launch through cmd.exe and its
+    // 8191-character cap; run the exe it forwards to instead. Identity off win32.
     const inner = {
       ...wrapped,
-      command: resolveHarnessCommand(wrapped.command, env.PATH)
+      ...windowsDirectLaunch(resolveHarnessCommand(wrapped.command, env.PATH), wrapped.args)
     };
     const isolationStatus = execEnv.status(envCtx);
     // Callback-env rewrite: identity for local/sandbox (a sandboxed process shares
@@ -2321,7 +2389,11 @@ export class PtyManager extends EventEmitter {
       try {
         writeSessionEnvFile(
           sessionId,
-          Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]])),
+          {
+            ...Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]])),
+            // tmux ignores `-e PATH` for the pane (proved on tmux 3.8), so the pane also sources the seat PATH from this file.
+            ...(seat?.shimDir ? { PATH: env.PATH } : {})
+          },
           spillArgv
         );
         this.sessionEnvFiles.set(sessionId, identityEnvFile);
@@ -2335,6 +2407,9 @@ export class PtyManager extends EventEmitter {
       : opts.scheduled && process.platform !== 'win32'
       ? this.scheduledSupervisor(inner.command, inner.args)
       : inner;
+    // Fail with the limit named, not cmd.exe's bare "The command line is too
+    // long." in an exited terminal. No-op off win32.
+    assertWindowsCommandLineFits(spawnCmd.command, spawnCmd.args);
     (this.hostServices.prepareNativePty ?? ensureNodePtySpawnHelperExecutable)();
     const proc = pty.spawn(spawnCmd.command, spawnCmd.args, {
       name: 'xterm-256color',
@@ -2600,6 +2675,7 @@ export class PtyManager extends EventEmitter {
         /* best-effort — already gone or swept */
       }
     }
+    this.releaseSeatSpawn(sessionId);
     if (!live) return;
     if (live.session.status === 'running') this.startupFailures.delete(sessionId);
     live.session.status = 'exited';

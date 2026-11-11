@@ -126,6 +126,16 @@ describe('split layout operations', () => {
     expect(paneContentEquals({ kind: 'scheduler' }, { kind: 'scheduler', projectId: 'p1' })).toBe(true);
   });
 
+  it("keeps one Inbox pane, telling a project's Inbox apart from the cross-project Inbox", () => {
+    const projectInbox: PaneContent = { kind: 'inbox', projectId: 'p1' };
+    expect(paneContentEquals(projectInbox, { kind: 'inbox', projectId: 'p1' })).toBe(true);
+    expect(paneContentEquals(projectInbox, { kind: 'inbox' })).toBe(false);
+    expect(paneContentEquals({ kind: 'inbox' }, { kind: 'inbox', projectId: null })).toBe(true);
+    expect(paneContentEquals(projectInbox, { kind: 'home' })).toBe(false);
+    const layout = splitPane(singlePaneLayout(), 'pane-1', 'right', { kind: 'inbox' });
+    expect(findPaneByContent(layout.root, projectInbox)?.paneId).toBe('pane-2');
+  });
+
   it('matches an agent-session pane by session id across project ids', () => {
     const session: PaneContent = { kind: 'agent-session', projectId: 'p1', sessionId: 's1' };
     const layout = splitPane(singlePaneLayout(), 'pane-1', 'right', session);

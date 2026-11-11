@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, unitSlotEligibility, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, unitSlotEligibility, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-grant-store.js';
@@ -14,6 +14,7 @@ import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-watchdog.js';
 import { PlanReadinessWatchdog, type PlanReadinessExpiryReason } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
+import { recycleDecision } from './idle-gated-injector.js';
 import { transitionCircuit, type CircuitState } from './retry-policy.js';
 import { usageCursorIdentity, usageRollup, validateStructuredJson, validateStructuredResult, workCheckReferences, validResolvedChecks, type ExecutionResolvedCheckV1, type ExecutionCheckResultV1, type ExecutionUsageObservationV1, type UsageSampleKind, type ExecutionResolvedLaunchV1 } from './contracts.js';
 import { CoordinatorWakeConfirmations, type CoordinatorWakeConfirmation, type PendingWakeConfirmation } from './coordinator-wake-confirmation.js';
@@ -214,6 +215,9 @@ function assignmentCorrelation(executionId: string, claim: { claimId?: string; c
   return { executionId, assignmentId: claim.claimId, idempotencyKey: `${executionId}:${claim.claimId}:${claim.claimGeneration}` };
 }
 
+/** How a recycle ended: the new session to deliver to, no session (`final` when the seat will never start), or `declined` when nothing could recycle it and the unit stays with the current session. */
+export interface RecycleOutcome { sessionId?: string; final?: true; declined?: true }
+
 export type DeferredWorkerSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string; retryable?: true };
 
 export interface ExecutionServiceDeps {
@@ -266,6 +270,16 @@ export interface ExecutionServiceDeps {
    * session id, or a failure message; the engine then delivers the assignment or releases it.
    */
   spawnDeferredWorker?: (recordId: string, slotId: string) => Promise<DeferredWorkerSpawnResult>;
+  /**
+   * Replace a seat's finished session with a fresh one and deliver the assignment to it (#579). Not awaited by
+   * the engine: the worker's own completion call is still waiting on the dispatch that hands over the entry.
+   * Failures are the host's to settle (a failed respawn releases the assignment undelivered).
+   */
+  recycleSeat?: (recordId: string, slotId: string, assignment: ExecutionDispatchAssignment) => Promise<RecycleOutcome | void>;
+  /** Record that a unit was accepted by a seat's current session (#579); feeds the lifecycle `deliveredUnitCount`. */
+  recordUnitDelivered?: (recordId: string, slotId: string) => Promise<void>;
+  /** Messages queued for a session by the idle-gated injector (#579): a session with any is never closed. */
+  queuedForSession?: (sessionId: string) => number;
   /** Project a runtime receipt only after authenticated work completion is durable. */
   onWorkSettled?: (correlation: ExecutionAssignmentCorrelation & { workerSessionId: string }) => void | Promise<void>;
   triggerDeliveryDrain?: (sessionId: string) => void;
@@ -407,6 +421,8 @@ interface ExtractedLifecycle {
     process?: string;
     /** Set on a seat that starts on demand (it may have no session). */
     onDemand?: true;
+    /** Units the current session accepted; present only for a seat that starts a fresh session per unit (#579). */
+    deliveredUnitCount?: number;
     task?: string;
     exitCode?: number;
     exitSignal?: number;
@@ -420,6 +436,12 @@ interface ExtractedLifecycle {
     status?: string;
     result?: { ok?: boolean; message?: string };
   };
+}
+
+/** The lifecycle record id when the slot's worker counts delivered units (a seat on a fresh session per unit), else undefined. */
+function countedRecordId(record: ExecutionRecord, lifecycle: ExtractedLifecycle | undefined, slotId: string): string | undefined {
+  const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
+  return worker?.deliveredUnitCount === undefined ? undefined : lifecycle?.recordId;
 }
 
 function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
@@ -560,9 +582,11 @@ export function deterministicTerminalSummary(record: ExecutionRecord, artifacts:
  */
 export function dependencyResultsSection(record: ExecutionRecord, workUnitId: string): string {
   const unit = record.workUnits?.find((candidate) => candidate.id === workUnitId);
-  if (!unit?.dependencies?.length) return '';
+  if (!unit) return '';
   const lines: string[] = [];
-  for (const depId of unit.dependencies) {
+  // A reopened loop review reads the fix it is re-checking, although it does not depend on it.
+  const upstreamIds = unit.loop && (unit.loopRound ?? 1) > 1 ? [...unit.dependencies, unit.loop.fixUnitId] : unit.dependencies;
+  for (const depId of upstreamIds) {
     const dependency = record.workUnits?.find((candidate) => candidate.id === depId);
     if (!dependency || dependency.result === undefined && dependency.failure === undefined && dependency.structuredResult === undefined) continue;
     const title = dependency.title ? ` (${dependency.title})` : '';
@@ -606,9 +630,12 @@ function verificationSection(steps: string[] | undefined): string {
   return section;
 }
 
+const LOOP_VERDICT_LINE = '\nThis unit is a review loop: pass structuredResult { "verdict": "PASS" | "CHANGES" } to execution.work.complete.';
+
 /** The text a worker receives for an assignment; shared by first delivery and recovery redelivery. */
 export function assignmentText(record: ExecutionRecord, assignment: ExecutionDispatchAssignment): string {
-  const upstream = dependencyResultsSection(record, assignment.workUnitId);
+  const loopVerdict = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId)?.loop ? LOOP_VERDICT_LINE : '';
+  const upstream = `${dependencyResultsSection(record, assignment.workUnitId)}${loopVerdict}`;
   const feedback = buildFeedbackPrompt(record.workUnits?.find((unit) => unit.id === assignment.workUnitId)?.retryFeedback);
   const claim = assignment.claimId && assignment.claimGeneration
     ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.\n${longCommandLine(record, assignment.turnCount)}`
@@ -1624,12 +1651,12 @@ export class ExecutionService {
   }
 
   /** Capture one immutable main-owned transcript usage sample. */
-  async observeSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind): Promise<void> {
+  async observeSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind, slotHint?: string): Promise<void> {
     const key = `${executionId}\0${sessionId}`;
     const flightKey = `${key}\0${sampleKind}`;
     const existing = this.usageFlights.get(flightKey);
     if (existing) return existing;
-    const flight = this.serializeUsage(key, () => this.captureSessionUsage(executionId, sessionId, sampleKind));
+    const flight = this.serializeUsage(key, () => this.captureSessionUsage(executionId, sessionId, sampleKind, slotHint));
     this.usageFlights.set(flightKey, flight);
     void flight.finally(() => {
       if (this.usageFlights.get(flightKey) === flight) this.usageFlights.delete(flightKey);
@@ -1637,7 +1664,7 @@ export class ExecutionService {
     return flight;
   }
 
-  private async captureSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind): Promise<void> {
+  private async captureSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind, slotHint?: string): Promise<void> {
     if (!this.deps.readSessionStats) return;
     const record = await this.deps.store.get(executionId);
     if (!record || isResumeGrantTerminal(record.state)) return;
@@ -1647,7 +1674,8 @@ export class ExecutionService {
     }
     const worker = lifecycle?.workers?.find((candidate) => candidate.sessionId === sessionId);
     const role = lifecycle?.orchestratorSessionId === sessionId ? 'orchestrator' as const : 'worker' as const;
-    const slotId = role === 'orchestrator' ? 'orchestrator' : worker?.slotId ?? 'main:unmapped';
+    // A seat detached between sessions (#579) no longer lists the old session id; the caller's slot keeps its cursor.
+    const slotId = role === 'orchestrator' ? 'orchestrator' : worker?.slotId ?? slotHint ?? 'main:unmapped';
     const unit = role === 'worker' ? record.workUnits?.find((candidate) => candidate.assignedSlotId === slotId && candidate.state === 'CLAIMED') : undefined;
     const resolved = record.resolvedModels.find((candidate) => candidate.slotId === slotId);
     let stats: SessionStats | null = null;
@@ -1880,10 +1908,45 @@ export class ExecutionService {
         try { await this.deps.onWorkSettled({ ...settled, workerSessionId: binding.principalId }); }
         catch (error) { this.deps.logError?.(`execution work receipt settlement failed for ${outcome.value.id}/${workUnitId}`, error); }
       }
+      await this.announceLoopLimit(outcome.value, workUnitId, String(claim?.claimGeneration ?? outcome.value.state));
       await this.cascadeDispatch(outcome.value.id, binding.slotId);
       await this.maybeAutoFinalize(outcome.value.id);
     }
     return outcome;
+  }
+
+  /** A completed review that hit its loop bound is now blocked: tell the person and the coordinator at once. */
+  private async announceLoopLimit(record: ExecutionRecord, workUnitId: string, stateOrClaimGeneration: string): Promise<void> {
+    if (!record.workUnits?.find((candidate) => candidate.id === workUnitId)?.loop) return;
+    try {
+      // A Retry can land while the settlement hook runs: act on the current record, not the one from before the await.
+      const current = await this.deps.store.get(record.id) ?? record;
+      const unit = current.workUnits?.find((candidate) => candidate.id === workUnitId);
+      const blocker = unit?.state === 'BLOCKED'
+        ? current.blockers?.find((candidate) => !candidate.resolved && candidate.workUnitId === workUnitId && candidate.id.startsWith(LOOP_LIMIT_BLOCKER_PREFIX))
+        : undefined;
+      if (blocker) await this.announceHumanBlocker(current, blocker, workUnitId, stateOrClaimGeneration, {});
+    } catch (error) {
+      this.deps.logError?.(`execution loop-limit announcement failed for ${record.id}/${workUnitId}`, error);
+    }
+  }
+
+  /** Shared tail of a human blocker: hook, coordinator wake and Inbox entry. */
+  private async announceHumanBlocker(
+    record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number], workUnitId: string,
+    stateOrClaimGeneration: string, questionData: Record<string, unknown>
+  ): Promise<void> {
+    this.fireHumanBlocker(record, blocker);
+    // The Inbox entry goes first so a failing coordinator wake cannot keep the blocker from the person.
+    try {
+      await this.appendHumanBlockerNotice(record, blocker, questionData);
+    } catch (error) {
+      (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(
+        `execution human-blocker inbox append failed for ${record.id}/${workUnitId}/${blocker.id}`,
+        error
+      );
+    }
+    await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration });
   }
 
   /**
@@ -2094,25 +2157,12 @@ export class ExecutionService {
     }
     const deferred = ready.filter((entry) => entry.sessionId === undefined);
     for (const entry of ready.filter((candidate) => candidate.sessionId !== undefined)) {
-      await this.deliverAssignment(record, entry.assignment, entry.sessionId!);
+      if (this.handOffToRecycle(record, lifecycle, entry.assignment)) continue;
+      await this.deliverAssignment(record, entry.assignment, entry.sessionId!, countedRecordId(record, lifecycle, entry.assignment.slotId));
     }
     const started = await this.startDeferredSeats(lifecycle?.recordId, deferred.map((entry) => entry.assignment.slotId));
     for (const entry of deferred) {
-      const outcome = started.get(entry.assignment.slotId);
-      if (outcome?.sessionId === undefined) {
-        // A refusal that will not pass takes the seat out of rotation, so the unit is not offered to it again.
-        if (outcome?.final) quarantined = (await this.quarantineDeadSeat(record, entry.assignment)) || quarantined;
-        else await this.releaseUndeliveredAssignments(record.id, [entry.assignment]);
-        continue;
-      }
-      // The run may have ended while the seat was starting: stop the session, give it nothing, release the unit.
-      const current = await this.deps.store.get(record.id);
-      if (!current || isResumeGrantTerminal(current.state)) {
-        try { this.deps.closeWorkerSession?.(outcome.sessionId); } catch (error) { this.deps.logError?.(`on-demand seat ${entry.assignment.slotId} could not be closed after the run ended`, error); }
-        await this.releaseUndeliveredAssignments(record.id, [entry.assignment]);
-        continue;
-      }
-      await this.deliverAssignment(record, entry.assignment, outcome.sessionId);
+      quarantined = (await this.deliverStartedSeat(record, entry.assignment, started.get(entry.assignment.slotId), lifecycle)) || quarantined;
     }
     // A unit re-homed or blocked by the quarantine is dispatched again; the quarantined seat is excluded this time.
     if (quarantined) await this.cascadeDispatch(record.id);
@@ -2162,7 +2212,7 @@ export class ExecutionService {
   }
 
   /** Push one assignment's text to a live session; the receipt rules are explained inline. */
-  private async deliverAssignment(record: ExecutionRecord, assignment: ExecutionDispatchAssignment, sessionId: string): Promise<void> {
+  private async deliverAssignment(record: ExecutionRecord, assignment: ExecutionDispatchAssignment, sessionId: string, lifecycleRecordId?: string): Promise<void> {
     const text = assignmentText(record, assignment);
     if (this.deps.deliverAssignment) {
       const correlation = assignmentCorrelation(record.id, assignment);
@@ -2184,6 +2234,7 @@ export class ExecutionService {
         const receipt = await this.deps.deliverAssignment(sessionId, text, correlation);
         // Runtime completion is delivery evidence, never an authenticated work outcome.
         if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
+        else await this.countDeliveredUnit(lifecycleRecordId, assignment.slotId);
       } catch (error) {
         // A lost receipt may follow acceptance. Preserve the claim; never retry blindly.
         this.deps.logError?.(`execution assignment delivery uncertain for ${record.id}/${assignment.workUnitId}`, error);
@@ -2197,12 +2248,121 @@ export class ExecutionService {
       const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
       const delivered = await deliver(sessionId, text);
       if (delivered) {
+        await this.countDeliveredUnit(lifecycleRecordId, assignment.slotId);
         try { this.deps.triggerDeliveryDrain?.(sessionId); } catch { /* nudge best-effort */ }
       } else {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
       }
     } catch {
       await this.releaseUndeliveredAssignments(record.id, [assignment]);
+    }
+  }
+
+  /**
+   * Deliver to a seat once its start settled: stop it and release the unit when the run ended meanwhile, quarantine
+   * a seat that will never start, or release the unit for a refusal that may pass. Returns true when the unit was
+   * re-homed or blocked by a quarantine.
+   */
+  private async deliverStartedSeat(
+    record: ExecutionRecord, assignment: ExecutionDispatchAssignment, outcome: { sessionId?: string; final?: true } | undefined, lifecycle: ExtractedLifecycle | undefined
+  ): Promise<boolean> {
+    if (outcome?.sessionId === undefined) {
+      // A refusal that will not pass takes the seat out of rotation, so the unit is not offered to it again.
+      if (outcome?.final) return this.quarantineDeadSeat(record, assignment);
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      return false;
+    }
+    // The run may have ended while the seat was starting: stop the session, give it nothing, release the unit.
+    const current = await this.deps.store.get(record.id);
+    if (!current || isResumeGrantTerminal(current.state)) {
+      try { this.deps.closeWorkerSession?.(outcome.sessionId); } catch (error) { this.deps.logError?.(`on-demand seat ${assignment.slotId} could not be closed after the run ended`, error); }
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      return false;
+    }
+    // The snapshot predates the start: the bind has since stored the seat's delivered-unit count, so read it again.
+    const bound = await this.freshLifecycle(record, lifecycle);
+    // That read was asynchronous: look again before handing work to a run that was stopped or dismissed meanwhile.
+    const afterRead = await this.deps.store.get(record.id);
+    if (!afterRead || isResumeGrantTerminal(afterRead.state)) {
+      try { this.deps.closeWorkerSession?.(outcome.sessionId); } catch (error) { this.deps.logError?.(`on-demand seat ${assignment.slotId} could not be closed after the run ended`, error); }
+      await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      return false;
+    }
+    await this.deliverAssignment(record, assignment, outcome.sessionId, countedRecordId(record, bound, assignment.slotId));
+    return false;
+  }
+
+  /** The lifecycle read again, or the earlier one when the read fails. */
+  private async freshLifecycle(record: ExecutionRecord, earlier: ExtractedLifecycle | undefined): Promise<ExtractedLifecycle | undefined> {
+    try { return extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)) ?? earlier; } catch (error) {
+      this.deps.logError?.(`fresh session lifecycle re-read failed for ${record.id}; the delivered unit may not be counted`, error);
+      return earlier;
+    }
+  }
+
+  /**
+   * Finish a recycle (#579): the host started the seat's new session (or failed to). The assignment goes to it, or is
+   * released, exactly as for a seat that starts on demand; a seat that can never start is quarantined and the unit
+   * dispatched again.
+   */
+  private async finishRecycle(
+    executionId: string, assignment: ExecutionDispatchAssignment, outcome: RecycleOutcome
+  ): Promise<void> {
+    const record = await this.deps.store.get(executionId);
+    if (!record) return;
+    let lifecycle: ExtractedLifecycle | undefined;
+    try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); } catch (error) {
+      this.deps.logError?.(`fresh session lifecycle read failed for ${executionId}/${assignment.slotId}`, error);
+    }
+    const current = outcome.declined ? lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId)?.sessionId : undefined;
+    // Nothing could start a new session: the unit goes to the one the seat has, or back to the board.
+    const settled = outcome.declined ? { sessionId: current } : outcome;
+    if (await this.deliverStartedSeat(record, assignment, settled, lifecycle)) await this.cascadeDispatch(record.id);
+  }
+
+  /**
+   * A seat that starts a fresh session per unit and has already been given a unit (#579): hand the next one to the
+   * host's `recycleSeat` hook instead of typing it into the old session. The hook is NOT awaited: this dispatch runs
+   * inside the worker's own `execution.work.complete` call, so closing the session here would cut that call short.
+   * Returns true when the entry was handed over.
+   */
+  private handOffToRecycle(record: ExecutionRecord, lifecycle: ExtractedLifecycle | undefined, assignment: ExecutionDispatchAssignment): boolean {
+    const recycle = this.deps.recycleSeat;
+    const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
+    // A session's first unit is just delivered; only a later one may start a new session.
+    if (!recycle || !lifecycle?.recordId || !worker?.deliveredUnitCount) return false;
+    const skip = this.recycleSkipReason(record, assignment.slotId, worker.sessionId, worker.deliveredUnitCount);
+    if (skip) {
+      this.deps.logError?.(`fresh session skipped for ${record.id}/${assignment.slotId}: ${skip}`, new Error(skip));
+      return false;
+    }
+    const where = `${record.id}/${assignment.slotId}`;
+    void Promise.resolve().then(() => recycle(lifecycle.recordId!, assignment.slotId, assignment))
+      .then((outcome) => (outcome ? this.finishRecycle(record.id, assignment, outcome) : undefined))
+      .catch(async (error) => {
+        this.deps.logError?.(`fresh session for ${where} failed`, error);
+        // The unit must not stay claimed with no session to take it: release it undelivered, like a failed respawn.
+        await this.finishRecycle(record.id, assignment, {}).catch((settleError) => this.deps.logError?.(`fresh session for ${where} could not be settled`, settleError));
+      });
+    return true;
+  }
+
+  /** Why a seat's next unit stays in its current session, or undefined when it may start a new one. */
+  private recycleSkipReason(record: ExecutionRecord, slotId: string, sessionId: string | undefined, deliveredUnitCount: number): string | undefined {
+    const decision = recycleDecision({
+      deliveredUnitCount,
+      hasBlockedUnit: (record.workUnits ?? []).some((unit) => unit.state === 'BLOCKED' && unit.assignedSlotId === slotId),
+      hasOpenBlockerDelivery: (record.deliveries ?? []).some((delivery) => delivery.slotId === slotId && (delivery.state === 'PENDING' || delivery.state === 'LEASED')),
+      queuedInInjector: (sessionId === undefined ? 0 : this.deps.queuedForSession?.(sessionId) ?? 0)
+    });
+    return decision.recycle ? undefined : decision.reason;
+  }
+
+  /** Tell the lifecycle a unit was accepted, so the next one can start a new session. Never fails a delivery. */
+  private async countDeliveredUnit(lifecycleRecordId: string | undefined, slotId: string): Promise<void> {
+    if (!lifecycleRecordId || !this.deps.recordUnitDelivered) return;
+    try { await this.deps.recordUnitDelivered(lifecycleRecordId, slotId); } catch (error) {
+      this.deps.logError?.(`delivered unit not counted for ${lifecycleRecordId}/${slotId}`, error);
     }
   }
 
@@ -2311,9 +2471,6 @@ export class ExecutionService {
         // needs to answer, plus the worker's question.
         await this.wakeCoordinator(record, { cause: 'SEMANTIC_CONFLICT', message: `SEMANTIC_CONFLICT: work unit ${workUnitId} needs a coordinator decision (blockerId=${blocker.id}). Answer with execution.work.answer. Worker asks: ${blocker.question}`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
       } else {
-        const hookBlocker = record.blockers?.find((candidate) => candidate.id === blocker.id);
-        if (hookBlocker) this.fireHumanBlocker(record, hookBlocker);
-        await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
         // Human blockers must always accept a concrete typed value. Workers may
         // provide useful quick choices, but labels such as "Provide path" are
         // actions rather than answers and cannot resolve the blocker by themselves.
@@ -2321,9 +2478,9 @@ export class ExecutionService {
           ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true)
           : {};
         const persistedBlocker = record.blockers?.find((candidate) => candidate.id === blocker.id);
-        if (persistedBlocker) void this.appendHumanBlockerNotice(record, persistedBlocker, questionData).catch((err) => {
-          console.error('Failed to append linked inbox entry for execution blocker', err);
-        });
+        const generation = String(claim?.claimGeneration ?? record.state);
+        if (persistedBlocker) await this.announceHumanBlocker(record, persistedBlocker, workUnitId, generation, questionData);
+        else await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration: generation });
       }
     }
     return result;
@@ -2757,6 +2914,7 @@ export class ExecutionService {
     const unfinished = units.filter((unit) => unit.state !== 'COMPLETED');
     const completed = units.filter((unit) => unit.state === 'COMPLETED');
     const completedIds = new Set(completed.map((unit) => unit.id));
+    const unfinishedIds = new Set(unfinished.map((unit) => unit.id));
     const completedContext = completed
       .filter((unit) => unit.result !== undefined)
       .map((unit) => `${unit.title}: ${unit.result!.slice(0, 2_048)}`)
@@ -2770,7 +2928,7 @@ export class ExecutionService {
     const recoveryText = {
       objective: reserved.request.objective,
       header: 'Recovery run: completed read-only work must not be repeated.',
-      sections: [completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.'],
+      sections: [completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.', ...splitLoopNotes(units)],
       pinnedSection: unresolvedBlockers
         ? `Unresolved human input from the timed-out run:\n${unresolvedBlockers}\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.`
         : undefined,
@@ -2784,8 +2942,10 @@ export class ExecutionService {
       // execution's record. Members cannot read that record, so a shortened
       // preview is lossy for the successor's coordinator by design.
       objective: fitRecoveryObjective(recoveryText),
-      workUnits: unfinished.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => ({
+      workUnits: unfinished.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, loopRound: _round, loopExtraRounds: _extra, loop, ...unit }) => ({
         ...unit,
+        // A loop needs both its review and its fix unit; once one of them finished, the successor runs the other as a plain unit.
+        ...(loop && unfinishedIds.has(loop.fixUnitId) ? { loop } : {}),
         dependencies: unit.dependencies.filter((dependency) => !completedIds.has(dependency))
       })),
       coordinationMode: reserved.coordinationMode
@@ -4038,4 +4198,14 @@ function invalidBound(error: unknown) {
 
 function terminalBound(record: ExecutionRecord) {
   return { ok: false as const, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
+}
+
+/** One line per review loop the recovery splits (one half finished): it continues as plain units, so say so. */
+function splitLoopNotes(units: NonNullable<ExecutionRecord['workUnits']>): string[] {
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+  return units.flatMap((review) => {
+    const fix = review.loop ? byId.get(review.loop.fixUnitId) : undefined;
+    if (!review.loop || !fix || (review.state === 'COMPLETED') === (fix.state === 'COMPLETED')) return [];
+    return [`Review loop ${review.id} was interrupted in round ${review.loopRound ?? 1}; it continues as plain units, so check by hand that ${fix.id}'s changes were re-reviewed.`];
+  });
 }

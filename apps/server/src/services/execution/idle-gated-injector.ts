@@ -96,7 +96,7 @@ const BUSY_STATES = new Set(['working', 'blocked', 'waiting', 'unknown']);
  * `waiting` from the busy set and makes that rest edge deliverable. The two-role
  * split is the point: the latch is role-agnostic, the flush gate is not.
  */
-const REST_STATES = new Set(['idle', 'waiting', 'done']);
+export const REST_STATES: ReadonlySet<string> = new Set(['idle', 'waiting', 'done']);
 
 /**
  * The narrowed busy set for a HEADLESS worker (see
@@ -277,4 +277,25 @@ export class IdleGatedInjector {
   pendingCount(sessionId: string): number {
     return this.pending.get(sessionId)?.length ?? 0;
   }
+}
+
+/** What the engine knows about a seat when it is about to deliver a unit to it (#579). */
+export interface RecycleFacts {
+  deliveredUnitCount: number;
+  hasBlockedUnit: boolean;
+  hasOpenBlockerDelivery: boolean;
+  queuedInInjector: number;
+}
+
+/**
+ * Whether a seat that starts a fresh session per unit may take its next unit in a new session, or why it stays in
+ * the current one. The first unit of a session never recycles; a blocked unit, an open blocker answer or queued
+ * messages mean the session still has work in flight.
+ */
+export function recycleDecision(facts: RecycleFacts): { recycle: true } | { recycle: false; reason: string } {
+  if (facts.deliveredUnitCount < 1) return { recycle: false, reason: 'first unit of this session' };
+  if (facts.hasBlockedUnit) return { recycle: false, reason: 'the seat has a blocked unit' };
+  if (facts.hasOpenBlockerDelivery) return { recycle: false, reason: 'a blocker answer is waiting to be delivered' };
+  if (facts.queuedInInjector > 0) return { recycle: false, reason: 'messages are queued for the session' };
+  return { recycle: true };
 }

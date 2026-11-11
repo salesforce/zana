@@ -41,6 +41,24 @@ describe('route memory', () => {
     expect(visible.projectBackRoutePath).toBe('/agents');
   });
 
+  it("treats a project's Inbox as the cross-project Inbox for project-rail Back", () => {
+    let stored = INITIAL_STORED_ROUTE_MEMORY;
+    stored = nextStoredRouteMemory(stored, loc('/agents'));
+    stored = nextStoredRouteMemory(stored, loc('/projects/p1/inbox'));
+    expect(stored.lastAppRoutePath).toBe('/projects/p1/inbox');
+    stored = nextStoredRouteMemory(stored, loc('/projects/p1/terminals'));
+    expect(visibleRouteMemory(stored, loc('/projects/p1/terminals')).projectBackRoutePath).toBe('/inbox');
+    expect(resolveProjectBackPath('/projects/p1/inbox')).toBe('/inbox');
+    expect(resolveProjectBackPath('/projects/p1/inbox?x=1#h')).toBe('/inbox?x=1#h');
+  });
+
+  it("closes global Settings opened from a project's Inbox to the cross-project Inbox", () => {
+    let stored = INITIAL_STORED_ROUTE_MEMORY;
+    stored = nextStoredRouteMemory(stored, loc('/projects/p1/inbox'));
+    stored = nextStoredRouteMemory(stored, loc('/settings'));
+    expect(visibleRouteMemory(stored, loc('/settings')).appRoutePath).toBe('/inbox');
+  });
+
   it('rejects a project URL as the Back destination', () => {
     expect(resolveProjectBackPath(undefined)).toBe('/agents');
     expect(resolveProjectBackPath('')).toBe('/agents');

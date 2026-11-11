@@ -1,5 +1,6 @@
 /** First-run and upgrade onboarding through real Electron, catalog access, Git install and restart. */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { startGitDaemon } from './fixtures/git-daemon.js';
@@ -160,4 +161,52 @@ test('existing users see the question once, can skip, resume and choose general 
     app = await launchApp(home, { env });
     await expect(wizard(app.window)).not.toBeVisible();
   } finally { if (app) await closeApp(app.electron); }
+});
+
+test('employee setup signs in to Git with a browser device code through the real main-process gh boundary', async ({ home }, testInfo) => {
+  test.skip(process.platform === 'win32', 'fake gh is a POSIX shell script');
+  test.setTimeout(180_000);
+  // Stands in for the corporate Git host so the reachability probe succeeds.
+  const listener = createServer(socket => socket.destroy());
+  await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
+  const host = `127.0.0.1:${(listener.address() as { port: number }).port}`;
+  const catalog = join(home, 'device-catalog');
+  const state = join(home, 'fake-gh-state');
+  mkdirSync(state, { recursive: true });
+  const gh = join(home, 'fake-gh');
+  // Large output proves capture is not truncated at the 8 KiB pipe boundary seen in Electron main.
+  writeFileSync(gh, `#!/bin/sh
+case "$1 $2" in
+  "auth status") if [ -f "${state}/approved" ]; then echo '{"hosts":{"${host}":[{"state":"success","active":true,"login":"e2e-user"}]}}'; else echo '{"hosts":{}}'; fi ;;
+  "auth login") head -c 12000 /dev/zero | tr '\\0' ' ' >&2
+    echo '! First copy your one-time code: E2E1-CODE' >&2
+    echo 'Open this URL to continue in your web browser: https://${host}/login/device' >&2
+    while [ ! -f "${state}/approve" ]; do sleep 0.1; done; touch "${state}/approved" ;;
+  "auth setup-git") mkdir -p "${catalog}"
+    printf '%s' '{"schemaVersion":1,"name":"device-fixtures","displayName":"Device Fixtures","plugins":[]}' > "${catalog}/marketplace.json"
+    printf '%s' '{"schemaVersion":1,"packs":[]}' > "${catalog}/packs.json" ;;
+  *) exit 2 ;;
+esac
+`);
+  chmodSync(gh, 0o755);
+  const env = { ...envFor(home, `path:${catalog}`), ZCC_GH_BINARY: gh,
+    ZCC_ONBOARDING_PROFILE: JSON.stringify({ ...profile(`path:${catalog}`), gitAuth: { host, method: 'gh-device' } }) };
+  let app: Awaited<ReturnType<typeof launchApp>> | undefined;
+  try {
+    app = await launchApp(home, { env, initialConfig: { onboarding: undefined, sponsorPromptDismissed: true, theme: 'light' } });
+    const win = app.window;
+    await win.getByRole('button', { name: 'Yes, set up Salesforce tools' }).click();
+    await expect(wizard(win)).toContainText('Corporate network (VPN)');
+    await expectFooterNavigation(win, 'Check access and continue', 'Change setup choice');
+    await wizard(win).getByRole('button', { name: 'Check access and continue' }).click();
+    await expect(wizard(win)).toContainText('Connected to the corporate network');
+    await wizard(win).getByRole('button', { name: 'Sign in with browser', exact: true }).click();
+    await expect(wizard(win).getByRole('group', { name: 'One-time sign-in code' })).toContainText('E2E1-CODE');
+    await expect(wizard(win).getByRole('button', { name: `Open ${host}` })).toBeVisible();
+    await testInfo.attach('employee-device-code', { body: await win.screenshot(), contentType: 'image/png' });
+    writeFileSync(join(state, 'approve'), '');
+    await expect(wizard(win)).toContainText('Choose your starting bundle', { timeout: 30_000 });
+    expect(existsSync(join(state, 'approved'))).toBe(true);
+    expect((await win.evaluate(() => window.cc.config.get())).onboarding).toMatchObject({ step: 'bundles', marketplaceSource: `path:${catalog}` });
+  } finally { if (app) await closeApp(app.electron); listener.close(); }
 });

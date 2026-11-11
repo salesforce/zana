@@ -4984,6 +4984,11 @@ export interface TeamSlot {
    * Only the boolean `true` is stored; absent means the seat starts at launch.
    */
   startOnDemand?: boolean;
+  /**
+   * Opt-in (#579): close the seat's session after each unit and start a new one for the next.
+   * Only the boolean `true` is stored; absent means one session for the whole run.
+   */
+  freshContextPerUnit?: boolean;
 }
 
 /** Whole-squad execution transport. Mixed transports are deliberately unsupported. */
@@ -6886,6 +6891,9 @@ export interface ExecutionBoardProjection {
        *  gen that keeps bumping with no `progressAt` advance is the wedge signature
        *  (re-claimed but never emitting output). Absent on a never-claimed unit. */
       attempt?: number;
+      /** Review loop only: the current review round and the rounds allowed so far. */
+      loopRound?: number;
+      loopMax?: number;
       turnCount?: number;
        claimId?: string;
        claimGeneration?: number;

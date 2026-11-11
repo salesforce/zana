@@ -274,11 +274,16 @@ jobs:
         run: pnpm run build
         env:
           NODE_OPTIONS: --max-old-space-size=6144
+      # Browser images supply runtime libraries, not a C++ compiler. Prepare the
+      # verified ABI cache on the build runner without replacing Node's addon.
+      - name: Prepare Electron native ABI cache
+        run: pnpm run rebuild:electron
       - name: Archive runtime and generated plugin assets
         run: >-
           tar --exclude='plugins/*/node_modules' --exclude='*/.git'
           -czf "$RUNNER_TEMP/electron-e2e-build.tgz"
           out plugins resources packages/cli/dist packages/plugin-sdk/dist apps/host-daemon/dist
+          node_modules/.cache/zcc-native-abi
       - uses: actions/upload-artifact@v7
         with:
           name: electron-e2e-build
@@ -293,6 +298,11 @@ jobs:
   e2e:
     name: Affected Electron boundaries (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    # Match the lockfile's Playwright version and the build runner's Ubuntu 26.04.
+    # The immutable image supplies WebKit libraries absent from hosted runners.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-resolute@sha256:b022639ae9197f864040f92eef7b57c6d4b47db2190f77c909d8a5d902dd4b7e
+      options: --ipc=host
     needs: [plan, e2e-build]
     if: needs.plan.outputs.e2e == 'true'
     # Pack whole spec files by measured duration; empty shards never provision.
@@ -305,6 +315,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # The mounted workspace belongs to the host runner, not container root.
+      # Trust only this checkout so Git can select the affected boundaries.
+      - name: Trust checked-out repository in container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - uses: pnpm/action-setup@v4
 
@@ -330,20 +345,10 @@ jobs:
       - name: Restore the same-run Electron build
         run: tar -xzf "$RUNNER_TEMP/electron-e2e-build.tgz"
 
-      # Electron needs a display + the usual Chromium shared libs. xvfb-run
-      # supplies a virtual X server; playwright's dep installer pulls the libs.
-      # WebKit backs the mobile Safari checks in contextual-help and
-      # mobile-composer-layout.
-      - name: Install system deps for headless Electron
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          pnpm exec playwright install --with-deps chromium webkit
-
-      # ubuntu-24.04 blocks Chromium's sandbox via AppArmor; Electron never
-      # creates a window without this (microsoft/playwright#34251).
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Browsers and their libraries are supplied together by the pinned image.
+      # Electron still validates its own binary before the real app tests.
+      - name: Check system deps for headless Electron
+        run: node scripts/check-electron-linux-deps.mjs
 
       - name: Test affected Electron boundaries from private snapshots
         run: xvfb-run -a node scripts/ci-verification.mjs
@@ -395,12 +400,11 @@ jobs:
 
       - uses: ./.github/actions/electron-cache
 
-      - name: Install Linux Electron display dependencies
+      - name: Check Linux Electron display dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          pnpm exec playwright install --with-deps chromium
+          node scripts/check-electron-linux-deps.mjs
+          pnpm exec playwright install chromium
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Run file preview production-boundary regression

@@ -5,6 +5,8 @@ export function boundarySpecs(paths) {
   const specs = new Set();
   const add = (...names) => names.forEach(name => specs.add(`e2e/${name}.spec.ts`));
   for (const path of paths) {
+    // Dependency preparation must prove Electron and both standalone browsers.
+    if (/check-electron-linux-deps|^\.github\/workflows\/(ci|release)\.yml$/.test(path)) add('contextual-help', 'mobile-composer-layout');
     // A changed test must verify itself, including CI-only regression repairs.
     if (/^e2e\/[^/]+\.spec\.ts$/.test(path) && existsSync(path)) specs.add(path);
     if (/^(apps\/|packages\/|plugins\/|e2e\/|scripts\/.*(electron|e2e|build)|electron\.vite|package\.json|pnpm-lock)/.test(path)) add('smoke');

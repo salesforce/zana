@@ -157,11 +157,12 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch, summarizePlanTierFit } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
-import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, deferredSeatsOf, lateSeatApprovalProblem, onDemandLaunchProblem, preissuedDeadlineMatches, seatApprovalWindow } from './on-demand-seat.js';
+import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
+import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
@@ -1315,6 +1316,24 @@ const teamLifecycleIntegration = createTeamLifecycleIntegration({
     launchAuthorization.restoreCapacity(capacity.principal, capacity.launched, activeAuthorizationIds);
   }
 });
+/** Lifecycle steps of a recycle, with the lifecycle record kept tracked. */
+const seatLifecycle = lifecycleRecycleOps(teamLifecycle, teamLifecycleIntegration.track);
+/** Replaces a finished session with a fresh one between two units of a seat that asks for it (#579). */
+const seatRecycler = createSeatRecycler({
+  stateOf: (sessionId) => agentStatus.get(sessionId),
+  sessionOf: seatLifecycle.sessionOf,
+  sampleUsage: (executionId, sessionId, slotId) => squadExecutionService.observeSessionUsage(executionId, sessionId, 'terminal', slotId),
+  detach: seatLifecycle.detach,
+  clearRecovery: async (executionId, slotId) => { await executionStore.clearNativeRecoverySnapshot(executionId, slotId); },
+  queuedFor: (sessionId) => workerInjector.pendingCount(sessionId),
+  close: terminateSession,
+  log: (message, error) => logMainError(message, error)
+});
+/** A run's spawners and recyclers are forgotten together when it ends, is stopped or is dismissed. */
+function releaseRunSeats(recordId: string): void {
+  deferredSeats.release(recordId);
+  seatRecycler.release(recordId);
+}
 const executionConsentStore = createExecutionConsentStore({
   filePath: join(app.getPath('userData'), 'execution-consent.json')
 });
@@ -4656,6 +4675,8 @@ export function createTerminalConfined(
     tabNamerPrompt?: string | null;
     /** Keep a main-owned retained squad worktree after this agent exits. */
     retainWorktree?: boolean;
+    /** MAIN-only (#675): this launch is a Squad seat; PtyManager applies the seat contract. */
+    squadSeat?: true;
     /**
      * MAIN-only: the digest-bound model id the launch preflight resolved for a
      * portable model level. Spawn uses it verbatim (local, SSH remote, and the
@@ -4830,6 +4851,7 @@ export function createTerminalConfined(
       // forbidden by managed policy). Never sourced from the renderer req.
       autonomous: opts?.autonomous === true,
       coordinationMode: opts?.coordinationMode,
+      squadSeat: opts?.squadSeat,
       ...(opts?.authoredPlanPaths?.length ? { authoredPlanPaths: opts.authoredPlanPaths } : {}),
       suppressPersonaInitialPrompt: opts?.suppressPersonaInitialPrompt,
       // MAIN-only wake-reconnect params (remote only). The pty layer UUID-checks
@@ -5093,6 +5115,7 @@ async function launchAuthorizedTerminal(
   let currentAuthorizationId = preissuedAuthorizationId;
   let jitPreissuedAuthorization = preissuedAuthorization;
   if (preissuedAuthorizationId && preissuedAuthorization) {
+    const respawnOf = launchAuthorization.respawnPriorOf(preissuedAuthorizationId);
     launchAuthorization.revoke(preissuedAuthorizationId);
     const JITExpiresAt = Math.min(Date.now() + TEAM_AUTHORIZATION_TTL_MS, preissuedAuthorization.binding.deadlineAt ?? Infinity);
     const JITDecision = launchAuthorization.authorize({
@@ -5100,7 +5123,8 @@ async function launchAuthorizedTerminal(
       projectId: preissuedAuthorization.projectId,
       launchDigest: preissuedAuthorization.launchDigest,
       binding: preissuedAuthorization.binding,
-      expiresAt: JITExpiresAt
+      expiresAt: JITExpiresAt,
+      respawnOf
     });
     if (JITDecision.decision === 'denied') {
       return { ok: false, code: 'DENIED', message: JITDecision.reason };
@@ -6375,7 +6399,9 @@ export async function launchTeam(
       return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'team launch deadline elapsed before spawn' };
     }
   }
-  const onDemandProblem = onDemandLaunchProblem(team, onDemandSeats, { durable: durableCoordination, structured: !!structured });
+  const freshSlotIds = new Set(freshContextSeatsOf(team, expectedSlots).map((seat) => seat.slotId));
+  const seatApprovals = createSeatApprovals(freshSlotIds);
+  const onDemandProblem = seatLaunchProblem(team, expectedSlots, { durable: durableCoordination, structured: !!structured }, structured?.requirePreauthorization === true);
   if (onDemandProblem) {
     revokeRequestAuthorizations();
     return { ok: false, code: 'UNSUPPORTED', message: onDemandProblem };
@@ -6445,6 +6471,11 @@ export async function launchTeam(
       return { ok: false, code: 'UNSUPPORTED', message: error instanceof Error ? error.message : String(error) };
     }
   }
+  const refused = squadSeatRefusal({
+    transport: team.transport, expectedSlots, personas: personaSnapshot, profileFor, personaName, coordinationMode, project,
+    platform: process.platform, revoke: revokeRequestAuthorizations
+  });
+  if (refused) return refused;
   const runPrincipal = bindLaunchPrincipal(teamPrincipalRef, {
     id: teamPrincipalRef.id, allowedProjectIds: [targetProjectId], maxConcurrent: concurrentLimit, maxLaunchesPerRun: runLimit
   }, team.id) as Extract<LaunchPrincipal, { kind: 'team' }>;
@@ -6482,10 +6513,12 @@ export async function launchTeam(
      * persona or team edited since then does not change a seat that has not started yet; this is deliberate, the
      * run keeps the configuration it was approved with.
      */
-    lateSeat = false
+    lateSeat = false,
+    /** A seat starting a new session (#579): the single-use approval `authorizeRespawn` minted for it. */
+    respawnApprovalId?: string
   ): Promise<Result<{ id: string }>> => {
     const { slotId, personaId } = expectedSlot;
-    let authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
+    let authorizationId = seatApprovalId(respawnApprovalId, structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId);
     const approvalProblem = lateSeat && structured?.requirePreauthorization
       ? lateSeatApprovalProblem(authorizationId ? launchAuthorization.get(authorizationId) : undefined, Date.now())
       : undefined;
@@ -6675,18 +6708,20 @@ export async function launchTeam(
     const result = await launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
-       { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...spawnExtras },
+       { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...SQUAD_SEAT_MARKER, ...spawnExtras },
        team.id,
        async (identity) => {
          const delivery = initialTaskDeliveryState(
            providerFor(profileFor(personaId)),
            project.remote ? 'remote' : 'local'
          );
+         const bindExtras = seatBindExtras(respawnApprovalId !== undefined, freshSlotIds.has(slotId));
+         seatApprovals.remember(slotId, launchAuthorization.get(identity.authorizationId));
          const record = await (lateSeat
-           ? teamLifecycle.bindDeferredWorker(claim.record.id, slotId, { sessionId: identity.sessionId, authorizationId: identity.authorizationId, delivery })
+           ? teamLifecycle.bindDeferredWorker(claim.record.id, slotId, { sessionId: identity.sessionId, authorizationId: identity.authorizationId, delivery, ...bindExtras })
            : teamLifecycle.addWorker(claim.record.id, {
                sessionId: identity.sessionId, authorizationId: identity.authorizationId, cohortId,
-               slotId, personaId, projectId: targetProjectId, process: 'spawning', attention: 'active', task: 'unknown', delivery
+               slotId, personaId, projectId: targetProjectId, process: 'spawning', attention: 'active', task: 'unknown', delivery, ...bindExtras
              }));
          durableIdentity = identity;
          teamLifecycleIntegration.track(record);
@@ -6728,13 +6763,14 @@ export async function launchTeam(
   };
 
   /** Open one worker seat's session. `lateSeat` is a seat that starts on demand, after the launch call has returned. */
-  const startWorkerSeat = (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean) => {
+  const startWorkerSeat = (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean, respawnApprovalId?: string) => {
      const { slotId, personaId, label: slotLabel } = expectedSlot;
        // Job/Team identity belongs to ZCC, not whichever harness happens to
        // provide an OSC title or registration hook. Every worker gets a stable
        // host-owned label before the harness starts.
        const label = slotLabel || personaName(personaId) || slotId;
-       const recovery = recoveryFor(slotId, 'worker', personaId);
+       // A new session of a seat is a new conversation: it never resumes the one before it.
+       const recovery = seatRecovery(recoveryFor(slotId, 'worker', personaId), respawnLaunchShape(seatLaunchMode(lateSeat, respawnApprovalId)).dropsRecovery);
        const workerTask = durableCoordination
          ? jobWorkerPrompt({ executionId: structured?.executionId, slotId, label, personaName: personaName(personaId), ...(recovery.recoveryResume ? { recoveryResume: true } : {}) })
           : taskFor(slotId);
@@ -6764,7 +6800,8 @@ export async function launchTeam(
          },
          null,
          undefined,
-         lateSeat
+         lateSeat,
+         respawnApprovalId
         );
   };
 
@@ -6797,7 +6834,7 @@ export async function launchTeam(
            authorizationId: waitingApprovalId ?? randomUUID(), cohortId, slotId, personaId, projectId: targetProjectId,
            attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
          }));
-         roster.push({ slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label, startsWhenNeeded: true });
+         roster.push(seatRosterEntry({ slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label }, { fresh: freshSlotIds.has(slotId) }));
          continue;
        }
        const res = await startWorkerSeat(expectedSlot, false);
@@ -6805,7 +6842,7 @@ export async function launchTeam(
         launched += 1;
         // quantity>1 → suffix so two tabs of one slot are distinguishable in the
         // roster (the orchestrator addresses each by its own session id).
-         roster.push({ sessionId: res.value.id, slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label });
+         roster.push(seatRosterEntry({ slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label }, { sessionId: res.value.id, fresh: freshSlotIds.has(slotId) }));
         // Squad grouping: every launched tab shares the one cohortId so the
         // registry namespaces this launch (renderer squad view + discovery).
         teamLaunchSessions.set(res.value.id, cohortId);
@@ -6818,15 +6855,21 @@ export async function launchTeam(
        }
   }
 
-  deferredSeats.register(claim.record.id, deferredSlotIds, createDeferredSeatHooks({
+  const seatStarter = createSeatStarter({
+    hasStarted: (slotId) => seatLifecycle.hadSession(claim.record.id, slotId),
+    mintApproval: async (slotId) => respawnApproval(launchAuthorization, await seatLifecycle.priorApprovalOf(claim.record.id, slotId), seatApprovals.expectedFor(slotId)),
+    start: (slotId, approvalId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true, approvalId)
+  });
+  deferredSeats.register(claim.record.id, [...deferredSlotIds, ...freshSlotIds], createDeferredSeatHooks({
     recordId: claim.record.id,
     lifecycle: teamLifecycle,
-    startSeat: (slotId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true),
+    startSeat: seatStarter,
     closeSession: terminateSession,
     track: teamLifecycleIntegration.track,
     onStarted: (sessionId) => teamLaunchSessions.set(sessionId, cohortId),
     revokeWaiting: () => revokeWaitingApprovals(deferredSlotIds)
   }));
+  seatRecycler.register(claim.record.id, [...freshSlotIds], { executionId: structured?.executionId, respawn: (slotId) => deferredSeats.spawn(claim.record.id, slotId) });
 
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
   // a declared slot or a standalone persona id, it opens exactly once here.
@@ -6953,7 +6996,7 @@ export async function launchTeam(
 
   const result: LaunchTeamResult = { launchRequestId, launched, cohortId, workers, failedSlots, orchestratorSessionId, workerSessionIds };
   if (durableCoordination && !orchestratorSessionId) {
-    deferredSeats.release(claim.record.id);
+    releaseRunSeats(claim.record.id);
     await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
   }
   const operationResult: Result<LaunchTeamResult> = durableCoordination && !orchestratorSessionId
@@ -6999,7 +7042,7 @@ export async function cancelTeamLaunch(
   }
   let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   const record = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
-  if (record) deferredSeats.release(record.id);
+  if (record) releaseRunSeats(record.id);
   if (record?.workers.some(worker => worker.transport === 'MODERN' && !worker.capacityReleased)) {
     await reconcileModernMembers([record]);
     canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
@@ -7270,7 +7313,7 @@ async function releaseDeferredSeatsOf(record: { callerPrincipalId: string; teamL
     logMainError(`could not look up the lifecycle record of ${record.teamLaunchRequestId} to release its on-demand seats`, error);
     return undefined;
   });
-  if (lifecycle) deferredSeats.release(lifecycle.id);
+  if (lifecycle) releaseRunSeats(lifecycle.id);
 }
 
 export async function handleSquadTerminalWithReport(
@@ -7399,6 +7442,9 @@ const squadExecutionService = new SquadExecutionService({
     deliverToWorker: (sessionId, text) => ptys.getSession(sessionId)
       ? workerInjector.deliver(sessionId, text) : replyToSquadMember(sessionId, text),
    spawnDeferredWorker: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
+   recycleSeat: (recordId, slotId) => seatRecycler.recycle(recordId, slotId),
+   recordUnitDelivered: seatLifecycle.recordDelivered,
+   queuedForSession: (sessionId) => workerInjector.pendingCount(sessionId),
    deliverAssignment: async (sessionId, text, correlation) => {
      const execution = await executionStore.get(correlation.executionId);
      if (!execution) return { state: 'rejected' };
@@ -8343,6 +8389,7 @@ function wireBridgeListeners() {
     const authorizationId = launchAuthorizationBySession.get(sessionId);
     launchAuthorizationBySession.delete(sessionId);
     if (authorizationId) launchAuthorization.complete(authorizationId);
+    seatRecycler.onExit(sessionId);
     if (ledgerEntryId) {
       void launchLedger.transition(ledgerEntryId, 'exited').catch((error) =>
         logMainError(`launch ledger exit ${sessionId}`, error)
@@ -8357,7 +8404,7 @@ function wireBridgeListeners() {
     // terminal. Then forward exit detail so FAILED settlement includes provider cause.
     squadWorkerRestarter.onSessionExit(sessionId, async () => {
       if (exitedSession?.cohort?.executionId) {
-        await squadExecutionService.observeSessionUsage(exitedSession.cohort.executionId, sessionId, 'terminal').catch((error) =>
+        await squadExecutionService.observeSessionUsage(exitedSession.cohort.executionId, sessionId, 'terminal', exitedSession.cohort.slotId).catch((error) =>
           logMainError(`execution usage terminal ${sessionId}`, error)
         );
       }
@@ -8577,6 +8624,7 @@ function wireBridgeListeners() {
     // (see `workerInjector`): the moment it lands on idle its next unit's task is
     // safe to inject. Cheap no-op for non-idle states or an empty queue.
     workerInjector.onState(sessionId, state);
+    seatRecycler.onState(sessionId, state);
     squadProposalNotifier.onState(sessionId, state);
     squadExecutionService.observeCoordinatorState(sessionId, state);
     wrapUpClose.observe(sessionId, state);

@@ -1,6 +1,7 @@
 import { createPeerToolVerifier } from './peer-tool-proof.js';
 import { createMachineProjectSync, type MachineProjectSync } from '../services/hosts/machine-project-sync.js';
 import { HelpVideoCatalogueService } from '../services/help-video-catalogue.js';
+import { OnboardingGitAuthService } from '../services/onboarding-git-auth.js';
 import { closeThreadReads } from '../services/threads/thread-reads.js';
 import { closeQueuedMessages } from '../services/threads/queued-messages.js';
 import { previewService, disposePreviews } from '../services/previews/preview-service.js';
@@ -109,6 +110,8 @@ export interface ProductTerminalRecord extends TerminalSession {
 
 export interface ProductHttpContext {
   helpVideos?: HelpVideoCatalogueService;
+  /** Onboarding browser Git sign-in (host comes from the onboarding profile only). */
+  onboardingGitAuth?: OnboardingGitAuthService;
   productInstanceId: string;
   origins: LocalAppOriginArgs;
   dataDir: string;
@@ -643,6 +646,7 @@ export function createProductHttpContext(
   );
   ctx = {
     helpVideos: new HelpVideoCatalogueService(dataDir),
+    onboardingGitAuth: new OnboardingGitAuthService(),
     productInstanceId,
     origins: options.origins,
     dataDir,
@@ -704,6 +708,7 @@ export function createProductHttpContext(
       disposed = true;
       ptyInteractions.dispose();
       ctx.helpVideos?.dispose();
+      ctx.onboardingGitAuth?.dispose();
       stopPeerAuthority();
       ctx.peerInstaller?.dispose();
       ctx.peerLinks?.dispose();
