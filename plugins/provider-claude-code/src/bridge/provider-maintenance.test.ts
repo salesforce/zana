@@ -156,6 +156,41 @@ describe("Claude Code provider maintenance", () => {
     );
   });
 
+  it("uses the same npm update command for display and execution", () => {
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    for (const channel of ["latest", "stable", null] as const) {
+      const tag = channel === "stable" ? "stable" : "latest";
+      const execution = __testing.claudeUpdateExecution("npmGlobal", channel);
+      const displayCommand = `${npm} install -g @anthropic-ai/claude-code@${tag}`;
+      expect(execution.displayCommand).toBe(displayCommand);
+      const run = __testing.buildProviderInstallationRun(
+        {
+          ...missingInstallationStatus(),
+          installed: true,
+          executablePath: "C:/npm/claude.cmd",
+          installSource: "npmGlobal",
+          currentVersion: "2.0.0",
+          latestVersion: "2.1.0",
+          needsUpdate: true,
+          installAction: {
+            kind: "update",
+            label: "Update",
+            command: execution.displayCommand,
+          },
+        },
+        "update",
+        channel,
+      );
+      expect(run).toMatchObject({
+        available: true,
+        command: execution,
+      });
+      expect(run.available && run.command.displayCommand).toBe(
+        execution.displayCommand,
+      );
+    }
+  });
+
   it("keeps claude update for a native install", () => {
     const run = __testing.buildProviderInstallationRun(
       {

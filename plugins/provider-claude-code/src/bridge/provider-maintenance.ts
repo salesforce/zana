@@ -564,5 +564,6 @@ export async function getClaudeProviderUsage(): Promise<ProviderUsageResult> {
 
 export const __testing = {
   buildProviderInstallationRun: buildClaudeProviderInstallationRun,
+  claudeUpdateExecution,
   normalizeUsage,
 };

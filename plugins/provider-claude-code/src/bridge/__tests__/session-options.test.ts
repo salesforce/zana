@@ -97,16 +97,37 @@ describe("resolveClaudeCodeExecutable on PATH", () => {
     const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-cmd-"));
     try {
       const prefix = join(root, "npm");
-      const exe = join(prefix, "vendor", "claude.exe");
-      mkdirSync(join(prefix, "vendor"), { recursive: true });
+      const exe = join(prefix, "node_modules", "@anthropic-ai", "claude-code", "claude.exe");
+      mkdirSync(join(exe, ".."), { recursive: true });
       writeFileSync(
         join(prefix, "claude.cmd"),
-        '@ECHO off\r\n"%dp0%\\vendor\\claude.exe" %*\r\n',
+        '@ECHO off\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\claude.exe" %*\r\n',
       );
       writeExecutable(exe);
       expect(
         resolveClaudeCodeExecutable({ env: { PATH: prefix }, platform: "win32" }),
       ).toBe(exe);
+    } finally { rmSync(root, { force: true, recursive: true }); }
+  });
+
+  it("accepts an absolute claude.exe path only under the shim's package directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-cmd-abs-"));
+    try {
+      const prefix = join(root, "npm");
+      const packaged = join(prefix, "node_modules", "@anthropic-ai", "claude-code", "claude.exe");
+      const outside = join(root, "outside", "claude.exe");
+      mkdirSync(join(packaged, ".."), { recursive: true });
+      mkdirSync(join(root, "outside"));
+      writeExecutable(packaged);
+      writeExecutable(outside);
+      writeFileSync(join(prefix, "claude.cmd"), `@ECHO off\r\n"${packaged}" %*\r\n`);
+      expect(
+        resolveClaudeCodeExecutable({ env: { PATH: prefix }, platform: "win32" }),
+      ).toBe(packaged);
+      writeFileSync(join(prefix, "claude.cmd"), `@ECHO off\r\n"${outside}" %*\r\n`);
+      expect(
+        resolveClaudeCodeExecutable({ env: { PATH: prefix }, platform: "win32" }),
+      ).toBeNull();
     } finally { rmSync(root, { force: true, recursive: true }); }
   });
 

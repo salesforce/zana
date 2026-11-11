@@ -5,7 +5,7 @@ import {
   type RuntimePermissionScope,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Options, Settings } from "@anthropic-ai/claude-agent-sdk";
 import type { ClaudePermissionMode } from "../interactive-contract.js";
 import { buildReadonlyBashUpdatedInput } from "./readonly-bash-policy.js";
@@ -318,22 +318,36 @@ function resolveWindowsNpmClaudeOnPath(pathEnv: string | undefined): string | nu
 }
 
 /** `%dp0%` / `%~dp0` is the directory of the `.cmd` shim npm writes. */
+function windowsNpmClaudePackageRoot(shimDir: string): string {
+  return join(shimDir, "node_modules", "@anthropic-ai", "claude-code");
+}
+
+function isInsideDirectory(candidate: string, directory: string): boolean {
+  const relativePath = relative(resolve(directory), resolve(candidate));
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+
 function claudeExeTargetFromCmdToken(raw: string, shimDir: string): string | null {
   const hasDp0 = /%~dp0%?|%dp0%/iu.test(raw);
   const stripped = raw.replace(/%~dp0%?/giu, "").replace(/%dp0%/giu, "");
   if (stripped.includes("%") || !/claude\.exe$/iu.test(stripped)) return null;
+  let resolved: string;
   if (!hasDp0 && (isAbsolute(stripped) || /^[A-Za-z]:[\\/]/u.test(stripped))) {
-    return stripped;
+    resolved = stripped;
+  } else {
+    const segments = stripped.split(/[/\\]+/u).filter((segment) => segment.length > 0);
+    if (
+      segments.length === 0 ||
+      segments.some((segment) => segment === "." || segment === "..") ||
+      segments[segments.length - 1]?.toLowerCase() !== "claude.exe"
+    ) {
+      return null;
+    }
+    resolved = join(shimDir, ...segments);
   }
-  const segments = stripped.split(/[/\\]+/u).filter((segment) => segment.length > 0);
-  if (
-    segments.length === 0 ||
-    segments.some((segment) => segment === "." || segment === "..") ||
-    segments[segments.length - 1]?.toLowerCase() !== "claude.exe"
-  ) {
-    return null;
-  }
-  return join(shimDir, ...segments);
+  return isInsideDirectory(resolved, windowsNpmClaudePackageRoot(shimDir))
+    ? resolved
+    : null;
 }
 
 function claudeExeFromNpmCmdShim(cmdPath: string): string | null {

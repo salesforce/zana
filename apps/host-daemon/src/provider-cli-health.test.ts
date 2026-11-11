@@ -347,6 +347,10 @@ describe('provider CLI health', () => {
     await first;
   });
 
+  it('sets Claude Code npmPackageName so npm install can run', () => {
+    expect(getProviderCliDefinition('claudeCode').npmPackageName).toBe('@anthropic-ai/claude-code');
+  });
+
   it('updates a Windows global npm Claude Code install with npm.cmd', async () => {
     const prefix = path.join(path.sep, 'npm-global');
     const executable = path.join(prefix, 'claude.cmd');
