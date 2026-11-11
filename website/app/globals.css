@@ -508,17 +508,6 @@ section .section-lede { color: var(--muted); margin: 0; font-size: 15px; }
 .hub-hero h1 { margin: 12px 0 14px; font-size: clamp(32px, 5vw, 48px); line-height: 1.08; }
 .hub-hero p { margin: 0 0 22px; color: var(--muted); max-width: 620px; font-size: 16px; }
 
-.path-list { display: grid; gap: 8px; }
-.path-row {
-  display: grid; grid-template-columns: auto 1fr auto; gap: 16px; align-items: center;
-  padding: 16px 18px; color: inherit;
-}
-.path-row:hover { border-color: var(--border-strong); color: inherit; background: var(--bg-elevated); }
-.path-row .path-label { font-family: var(--font-mono); font-size: 11px; color: var(--accent-blue); letter-spacing: 0.08em; }
-.path-row h3 { margin: 0 0 4px; font-size: 15px; }
-.path-row p { margin: 0; color: var(--muted); font-size: 13px; }
-.path-row .path-go { color: var(--accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
-
 .proof-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 28px; align-items: start; }
 .proof { max-width: 720px; }
 .proof h2 { margin: 10px 0 10px; font-size: clamp(22px, 3vw, 28px); }
@@ -530,15 +519,6 @@ section .section-lede { color: var(--muted); margin: 0; font-size: 15px; }
   background: var(--success);
 }
 
-.ref-box { display: grid; grid-template-columns: 1fr minmax(260px, 0.9fr); gap: 28px; align-items: center; }
-.ref-links { display: grid; gap: 6px; }
-.ref-links a {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px;
-  background: var(--bg-base); color: var(--text-2); font-size: 13px; font-weight: 600;
-}
-.ref-links a:hover { border-color: var(--accent-border); color: var(--accent); }
-
 .prereq {
   display: flex; align-items: center; gap: 16px;
   padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -547,52 +527,16 @@ section .section-lede { color: var(--muted); margin: 0; font-size: 15px; }
 .prereq span { color: var(--muted); font-size: 13px; }
 .prereq a { margin-left: auto; font-size: 13px; font-weight: 650; }
 
-.steps-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; padding: 0; margin: 0; list-style: none; }
-.steps-grid li { padding: 16px; }
-.steps-grid li > span {
-  display: grid; width: 24px; height: 24px; place-items: center;
-  border: 1px solid var(--accent-border); border-radius: 6px;
-  color: var(--accent); background: var(--accent-soft);
-  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
-}
-.steps-grid h3 { margin: 12px 0 6px; font-size: 14px; }
-.steps-grid p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
-
 .guide-code {
   margin: 0; padding: 18px; overflow: auto;
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--code-bg); color: var(--code-text);
   font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65;
 }
-
-.next-card {
-  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 28px;
-}
-.next-card h2 { margin: 10px 0 8px; font-size: clamp(20px, 3vw, 28px); }
-.next-card p { margin: 0; color: var(--muted); max-width: 620px; }
-.next-actions { display: grid; gap: 8px; min-width: 220px; }
-.next-actions .zcc-btn, .next-actions .btn { width: 100%; }
-
-.install-methods, .sdk-layers { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.sdk-layers { grid-template-columns: repeat(4, 1fr); }
-.install-methods article, .sdk-layers article { padding: 18px; }
-.install-methods h3, .sdk-layers h3 { margin: 0 0 6px; font-size: 16px; }
-.install-methods strong { display: block; color: var(--accent); font-size: 12px; }
-.install-methods p, .sdk-layers p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
-.sdk-layers article > span { color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; }
-
-@media (max-width: 950px) {
-  .steps-grid { grid-template-columns: 1fr 1fr; }
-  .sdk-layers { grid-template-columns: 1fr 1fr; }
-}
 @media (max-width: 720px) {
-  .path-row { grid-template-columns: 1fr; }
-  .path-row .path-go { display: none; }
-  .ref-box, .next-card, .install-methods, .proof-split { grid-template-columns: 1fr; }
-  .steps-grid { grid-template-columns: 1fr; }
+  .proof-split { grid-template-columns: 1fr; }
   .prereq { flex-wrap: wrap; }
   .prereq a { margin-left: 0; }
-  .next-actions { min-width: 0; }
 }
 
 /* ================= MARKETPLACE ================= */
