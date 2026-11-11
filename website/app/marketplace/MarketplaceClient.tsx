@@ -9,7 +9,7 @@ import {
   OFFICIAL_MARKETPLACE_FEED_PATH,
   type MarketplaceCard,
   type OfficialMarketplaceIndex
-} from '@/lib/official-marketplace';
+} from '../../lib/official-marketplace';
 import { AuroraGrid } from '../components/AuroraGrid';
 import styles from './marketplace.module.css';
 
