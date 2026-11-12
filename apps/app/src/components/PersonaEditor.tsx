@@ -1,5 +1,5 @@
 import { product } from '../lib/product-client.js';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult, HarnessRoleTarget } from '@zana-ai/zcc-domain/harness-adapter';
 import { PERSONA_REASONING_LEVELS, type HarnessFamily, type LaunchProfileId, type Persona, type PersonaInput, type PersonaReasoningLevel } from '@zana-ai/zcc-domain/product';
@@ -52,6 +52,23 @@ function parseList(raw: string): string[] {
     .split(/[\n,]/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** JSON comparison must ignore object insertion order from async routing controls. */
+function stablePersonaDraftJson(value: unknown): string {
+  const normalize = (current: unknown): unknown => {
+    if (Array.isArray(current)) return current.map(normalize);
+    if (current && typeof current === 'object') {
+      return Object.fromEntries(
+        Object.entries(current as Record<string, unknown>)
+          .filter(([, child]) => child !== undefined)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, child]) => [key, normalize(child)])
+      );
+    }
+    return current;
+  };
+  return JSON.stringify(normalize(value));
 }
 
 /** Notice shown with the skills field: it is a context filter, never a sandbox. */
@@ -376,24 +393,28 @@ export function PersonaEditor({
 }) {
   const [mode, setMode] = useState(initialMode);
   const ref = useRef<HTMLDivElement | null>(null);
+  const dirtyRef = useRef(false);
   const renderKey = `${mode}:${persona?.id ?? 'new'}`;
+  const requestClose = (bypassDirty = false) => {
+    if (!bypassDirty && dirtyRef.current && !window.confirm('Discard unsaved changes?')) return;
+    onClose();
+  };
+  const onEscape = useEffectEvent((event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return;
+    event.stopPropagation();
+    requestClose();
+  });
 
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    node.addEventListener('keydown', onKey);
+    node.addEventListener('keydown', onEscape);
     node.focus();
-    return () => node.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => node.removeEventListener('keydown', onEscape);
+  }, []);
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && requestClose()}>
       <div
         ref={ref}
         className="modal persona-editor-modal"
@@ -406,11 +427,17 @@ export function PersonaEditor({
           <PersonaDetail
             key={renderKey}
             persona={persona}
-            onClose={onClose}
+            onClose={() => requestClose()}
             onEdit={() => setMode('edit')}
           />
         ) : (
-          <PersonaForm key={renderKey} persona={persona} projectId={projectId} onClose={onClose} />
+          <PersonaForm
+            key={renderKey}
+            persona={persona}
+            projectId={projectId}
+            onClose={requestClose}
+            onDirtyChange={(dirty) => { dirtyRef.current = dirty; }}
+          />
         )}
       </div>
     </div>
@@ -439,7 +466,7 @@ function PersonaDetail({
           </span>
           {persona.name}
         </h3>
-        <button className="icon-button" onClick={onClose} aria-label="Close">
+        <button className="icon-button" onClick={() => onClose()} aria-label="Close">
           <X size={16} />
         </button>
       </header>
@@ -541,7 +568,17 @@ const REASONING_LEVEL_LABELS: Record<PersonaReasoningLevel, string> = {
 };
 
 /** The create/edit form. */
-function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null; projectId?: string; onClose: () => void }) {
+function PersonaForm({
+  persona,
+  projectId,
+  onClose,
+  onDirtyChange
+}: {
+  persona: Persona | null;
+  projectId?: string;
+  onClose: (bypassDirty?: boolean) => void;
+  onDirtyChange: (dirty: boolean) => void;
+}) {
   const pushToast = useUi((s) => s.pushToast);
 
   // A project persona opened for "edit" becomes a NEW user persona (we never
@@ -619,47 +656,64 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
     });
   };
 
+  const draftInput = (): PersonaInput => ({
+    name: name.trim(),
+    icon: icon || undefined,
+    description: description.trim() || undefined,
+    baseProfile: baseProfile || undefined,
+    modelLevel: !baseProfile && modelLevel !== 'default' ? modelLevel as any : undefined,
+    reasoningLevel: showReasoning && reasoningLevel !== 'default' ? reasoningLevel as PersonaReasoningLevel : undefined,
+    executionState: !baseProfile && executionState !== 'default' ? executionState as any : undefined,
+    model: undefined,
+    permissionMode: undefined,
+    codexSandbox: undefined,
+    codexApproval: undefined,
+    harnessRouting: Object.keys(harnessRouting).length
+      ? { schemaVersion: 1, byAdapter: harnessRouting }
+      : undefined,
+    appendSystemPrompt: appendSystemPrompt.trim() || undefined,
+    initialPrompt: initialPrompt.trim() || undefined,
+    allowedTools: parseList(allowedTools),
+    deniedTools: parseList(deniedTools),
+    addDirs: parseList(addDirs),
+    mcpServers: persona?.mcpServers,
+    skills: restrictSkills ? parseList(skills) : undefined,
+    microVmImage: microVmEnabled && microVmImage.trim() ? microVmImage.trim() : undefined
+  });
+  const baselineRef = useRef<string | null>(null);
+  // Compare raw controls too: hidden values are still unsaved edits and must not disappear.
+  const draftJson = stablePersonaDraftJson({
+    name,
+    icon,
+    description,
+    baseProfile,
+    modelLevel,
+    reasoningLevel,
+    executionState,
+    harnessRouting,
+    appendSystemPrompt,
+    initialPrompt,
+    allowedTools,
+    deniedTools,
+    addDirs,
+    microVmImage,
+    restrictSkills,
+    skills
+  });
+  if (baselineRef.current === null) baselineRef.current = draftJson;
+  const dirty = baselineRef.current !== draftJson;
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+    return () => onDirtyChange(false);
+  }, [dirty, onDirtyChange]);
+
   const canSave = name.trim().length > 0 && !saving;
 
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
-    const input: PersonaInput = {
-      name: name.trim(),
-      icon: icon || undefined,
-      description: description.trim() || undefined,
-      baseProfile: baseProfile || undefined,
-      modelLevel: !baseProfile && modelLevel !== 'default' ? modelLevel as any : undefined,
-      // Reasoning effort is saved for a neutral persona or one pinned to an agent
-      // harness (each maps it to its own setting); a shell persona drops it.
-      // 'default' clears it.
-      reasoningLevel: showReasoning && reasoningLevel !== 'default' ? (reasoningLevel as PersonaReasoningLevel) : undefined,
-      executionState: !baseProfile && executionState !== 'default' ? executionState as any : undefined,
-      // Structured controls replace legacy routing fields. Keeping old values
-      // here makes a profile change silently route through hidden stale state.
-      model: undefined,
-      permissionMode: undefined,
-      codexSandbox: undefined,
-      codexApproval: undefined,
-      // Portable model level is the persona model contract. Exact harness targets
-      // belong to launch/project settings, not a reusable persona.
-      harnessRouting: Object.keys(harnessRouting).length
-        ? { schemaVersion: 1, byAdapter: harnessRouting }
-        : undefined,
-      // Portable persona capabilities remain stored even when a selected harness
-      // cannot express them. Existing MCP references are legacy Claude-local data:
-      // preserve them on edit, but do not advertise an inert free-text control.
-      appendSystemPrompt: appendSystemPrompt.trim() || undefined,
-      initialPrompt: initialPrompt.trim() || undefined,
-      allowedTools: parseList(allowedTools),
-      deniedTools: parseList(deniedTools),
-      addDirs: parseList(addDirs),
-      mcpServers: persona?.mcpServers,
-      skills: restrictSkills ? parseList(skills) : undefined,
-      // Persist the microVM image only while the feature is enabled AND a value
-      // is set; base-profile-agnostic (applies in the microVM env for any CLI).
-      microVmImage: microVmEnabled && microVmImage.trim() ? microVmImage.trim() : undefined
-    };
+    const input = draftInput();
     if (keepsId && persona) input.id = persona.id;
 
     const result = await savePersona(input, (value) => product.personas.save(value));
@@ -669,11 +723,16 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
       return;
     }
     pushToast(`Saved persona “${result.value.name}”`, 'info');
-    onClose();
+    onClose(true);
   };
 
   const remove = async () => {
     if (!persona) return;
+    if (dirty && !window.confirm(
+      persona.id.startsWith('builtin:')
+        ? 'Discard unsaved changes and reset to the built-in default?'
+        : 'Discard unsaved changes and delete this persona?'
+    )) return;
     const result = await product.personas.delete(persona.id);
     if (!result.ok) {
       pushToast(`Delete failed: ${result.message}`, 'error');
@@ -685,15 +744,16 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
         : `Deleted persona “${persona.name}”`,
       'info'
     );
-    onClose();
+    onClose(true);
   };
 
   const isUserPersona = persona?.source === 'user';
+  const isBuiltinOverride = !!persona?.id.startsWith('builtin:');
   const title = !persona
     ? 'New persona'
     : isProjectSource
       ? `Duplicate ${persona.name}`
-      : persona.source === 'builtin'
+      : isBuiltinOverride
         ? `Override ${persona.name}`
         : `Edit ${persona.name}`;
 
@@ -701,7 +761,7 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
     <>
       <header className="modal-header">
         <h3>{title}</h3>
-        <button className="icon-button" onClick={onClose} aria-label="Close">
+        <button className="icon-button" onClick={() => onClose()} aria-label="Close">
           <X size={16} />
         </button>
       </header>
@@ -936,15 +996,15 @@ function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null;
             className="btn danger persona-form-delete"
             onClick={remove}
             title={
-              persona.source === 'builtin'
+              isBuiltinOverride
                 ? 'Reset to the built-in default'
                 : 'Delete this persona'
             }
           >
-            <Trash2 size={14} /> {persona.source === 'builtin' ? 'Reset' : 'Delete'}
+            <Trash2 size={14} /> {isBuiltinOverride ? 'Reset' : 'Delete'}
           </button>
         ) : null}
-        <button className="btn" onClick={onClose}>
+        <button className="btn" onClick={() => onClose()}>
           Cancel
         </button>
         <button className="btn primary" onClick={save} disabled={!canSave}>
