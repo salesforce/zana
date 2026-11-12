@@ -237,8 +237,10 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
   }
 
   function upsert(document: MarketplaceStoreDocument, next: MarketplaceCatalogRow): MarketplaceCatalogRow[] {
+    // Replace in place: a refresh or recorded error must not reorder the user's sources.
+    const at = document.catalogs.findIndex((item) => marketplaceSourcesEqual(item.source, next.source));
     const catalogs = document.catalogs.filter((item) => !marketplaceSourcesEqual(item.source, next.source));
-    catalogs.push(next);
+    catalogs.splice(at < 0 ? catalogs.length : at, 0, next);
     return mergeCatalogs(catalogs);
   }
 

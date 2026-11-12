@@ -38,7 +38,9 @@ import {
   sortPluginsByRequires,
   type ParsedPluginSource,
   type PluginMcpServerContribution,
-  type PluginManifest
+  type PluginManifest,
+  marketplaceCatalogFreshness,
+  marketplaceCatalogNeedsAutoRefresh
 } from '@zana-ai/zcc-domain';
 import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { shimLegacyExtensionManifest } from '@zana-ai/zcc-plugin-sdk';
@@ -643,6 +645,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const serverRuntimes = new Set<ReturnType<typeof createIsolatedPluginRuntime>>();
   const updateChecks = createPluginUpdateStore(join(opts.dataDir, 'plugins', 'update-checks.json'));
   let pendingUpdateCheck: Promise<PluginUpdateRow[]> | undefined;
+  let pendingCatalogRefresh: Promise<number> | undefined;
   let hardReloadRunning = false;
   let recoveryState: PluginRecoveryState = { phase: 'idle', total: 0, restored: [], skipped: [], failed: [] };
   let pendingCheckOverdueOnly = false;
@@ -2024,11 +2027,41 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     return check;
   }
+  /**
+   * Refresh out-of-date marketplace catalogs, at most three at a time, so
+   * update checks compare against current indexes. The startup check
+   * (`respectBackoff`) leaves recently attempted sources alone so failing or
+   * rate-limited catalogs back off; explicit and 6-hourly checks retry every
+   * stale or failed source. Failures are recorded on the row, never thrown.
+   */
+  function refreshStaleMarketplaces(respectBackoff: boolean): Promise<number> {
+    if (pendingCatalogRefresh) return pendingCatalogRefresh;
+    const run = (async () => {
+      const at = now();
+      const due = marketplaces.list().slice(0, 64).filter((row) => respectBackoff
+        ? marketplaceCatalogNeedsAutoRefresh(row, at)
+        : marketplaceCatalogFreshness(row, at) !== 'fresh');
+      let index = 0;
+      let refreshed = 0;
+      await Promise.all(Array.from({ length: Math.min(3, due.length) }, async () => {
+        while (index < due.length && !stopped) {
+          const row = due[index++]!;
+          const next = await service.refreshMarketplace(row.source).catch(() => null);
+          if (next && next.lastError == null) refreshed++;
+        }
+      }));
+      return refreshed;
+    })();
+    pendingCatalogRefresh = run;
+    void run.finally(() => { if (pendingCatalogRefresh === run) pendingCatalogRefresh = undefined; }).catch(() => undefined);
+    return run;
+  }
   function checkInstalledUpdates(overdueOnly: boolean): Promise<PluginUpdateRow[]> {
     if (pendingUpdateCheck) return !overdueOnly && pendingCheckOverdueOnly
       ? pendingUpdateCheck.then(() => checkInstalledUpdates(false)) : pendingUpdateCheck;
     const run = (async () => {
       const generation = lifecycleGeneration;
+      const catalogs = refreshStaleMarketplaces(overdueOnly).catch(() => 0);
       const rows = store.list().slice(0, 256).filter((row) => !bundledPluginById(row.id) && (row.sourceKind === 'npm' || row.sourceKind === 'git'));
       let index = 0;
       await Promise.all(Array.from({ length: Math.min(4, rows.length) }, async () => {
@@ -2038,6 +2071,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           if (!overdueOnly || !saved || now() - saved.checkedAt >= PLUGIN_UPDATE_CHECK_INTERVAL_MS) await checkOneUpdate(row);
         }
       }));
+      await catalogs;
       if (!stopped && lifecycleGeneration === generation) await emitAppsChanged();
       return rows.flatMap((row) => {
         const installed = store.get(row.id);

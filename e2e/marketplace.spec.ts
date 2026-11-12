@@ -249,6 +249,38 @@ test.describe('marketplace — catalog sources from the on-disk store', () => {
     }
   });
 
+  test('summarizes catalog freshness in one Browse pill and lists problem sources first', async ({ home }) => {
+    const now = Date.now();
+    const catalog = (name: string, over: Record<string, unknown>) => ({
+      source: `https://${name}.example.test/catalog.json`, sourceKind: 'https', name, displayName: name,
+      addedAt: 1, entryCount: 0, lastRefreshAt: now - 60_000, lastAttemptAt: now - 60_000, lastError: null, official: false,
+      // The store only reports lastRefreshAt for rows with a cached index.
+      cachedIndex: { schemaVersion: 1, name, displayName: name, plugins: [] }, ...over
+    });
+    mkdirSync(join(home, '.zcc', 'plugins'), { recursive: true });
+    writeFileSync(join(home, '.zcc', 'plugins', 'marketplaces.json'), JSON.stringify({ version: 2, catalogs: [
+      catalog('fresh-catalog', {}),
+      // Failed a minute ago: inside the retry backoff, so opening Browse must not refetch it.
+      catalog('rate-limited', { lastError: 'HTTP 429 rate limited', lastRefreshAt: now - 2 * 3_600_000 })
+    ] }));
+    const handle = await launchApp(home, { env: { ZCC_OFFICIAL_MARKETPLACE_URL: 'off', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off' } });
+    try {
+      const market = new MarketplacePage(handle.window);
+      await market.open();
+      const pill = handle.window.getByRole('button', { name: 'Marketplace sources: 1 failed' });
+      await expect(pill).toBeVisible({ timeout: 15_000 });
+      await pill.click();
+      const pop = handle.window.getByRole('dialog', { name: 'Marketplace sources' });
+      await expect(pop.getByRole('listitem')).toHaveCount(2);
+      await expect(pop.getByRole('listitem').first()).toContainText('HTTP 429 rate limited');
+      await expect(pop.getByRole('button', { name: 'Retry rate-limited' })).toBeVisible();
+      await handle.window.keyboard.press('Escape');
+      await expect(pop).toHaveCount(0);
+    } finally {
+      await handle.electron.close();
+    }
+  });
+
   test('adds a bare HTTPS Git catalog through Catalog Sources and persists its canonical identity', async ({ home }) => {
     const fixtureDir = mkdtempSync(join(tmpdir(), 'zcc-marketplace-git-http-'));
     const git = await startGitHttpServer(fixtureDir, [{

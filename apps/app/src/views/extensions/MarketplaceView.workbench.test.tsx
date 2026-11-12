@@ -80,7 +80,7 @@ it('manages real marketplace sources in a dialog, with errors and official remov
   fireEvent.change(screen.getByLabelText('Marketplace catalog source'), { target: { value: 'https://new.test/catalog' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add catalog' }));
   await screen.findByText('Invalid catalog');
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh', exact: true }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Manage marketplaces' })).getByRole('button', { name: 'Refresh', exact: true }));
   await waitFor(() => expect(api.refresh).toHaveBeenCalledWith('https://example.test/catalog'));
   fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
   expect(screen.queryByRole('dialog')).toBeNull();
@@ -116,13 +116,85 @@ it('preserves folder, archive, repository and npm installation flows with action
   open(); fireEvent.keyDown(document, { key: 'Escape' }); expect(screen.queryByRole('menu')).toBeNull();
   open(); fireEvent.mouseDown(document.body); expect(screen.queryByRole('menu')).toBeNull();
 });
-it('sorts names in both directions and reloads discovery from the toolbar', async () => {
+it('sorts names in both directions', async () => {
   const view = setup(); await screen.findByText('Useful tool');
   fireEvent.click(screen.getByRole('button', { name: 'Show all 7' }));
   fireEvent.click(screen.getByRole('button', { name: 'Sort by name descending' }));
   fireEvent.click(screen.getByRole('button', { name: 'Sort by name descending' }));
   expect(within(screen.getByRole('region', { name: 'Already in your app' })).getAllByTestId(/^plugin-card-/)[0]?.getAttribute('data-testid')).toBe('plugin-card-Installed 6');
-  fireEvent.click(screen.getByRole('button', { name: 'Reload the catalog' }));
-  await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
   view.unmount();
+});
+
+const HOUR = 3_600_000;
+const catalog = (name: string, over: Record<string, unknown> = {}) => ({
+  source: `https://${name}.test/catalog`, displayName: name, sourceKind: 'https', entryCount: 1, official: false,
+  name, addedAt: 0, lastRefreshAt: Date.now() - HOUR, lastAttemptAt: Date.now() - HOUR, lastError: null, ...over
+});
+
+it('auto-refreshes out-of-date sources once on open, skipping fresh and recently failed ones', async () => {
+  const stale = catalog('Stale', { lastRefreshAt: Date.now() - 48 * HOUR, lastAttemptAt: Date.now() - 48 * HOUR });
+  const failedRecently = catalog('Flaky', { lastError: 'HTTP 429', lastAttemptAt: Date.now() - 60_000 });
+  api.catalogs.mockResolvedValue([catalog('Fresh'), stale, failedRecently]);
+  api.refresh.mockResolvedValue({});
+  setup(); await screen.findByText('Useful tool');
+  await waitFor(() => expect(api.refresh).toHaveBeenCalledWith(stale.source));
+  expect(api.refresh).toHaveBeenCalledTimes(1);
+  // The catalogue list re-fetches after the refresh but must not trigger another auto pass.
+  await waitFor(() => expect(api.catalogs.mock.calls.length).toBeGreaterThan(1));
+  expect(api.refresh).toHaveBeenCalledTimes(1);
+});
+
+it('shows a quiet pill when every source is fresh and lists sources in its popover', async () => {
+  api.catalogs.mockResolvedValue([catalog('Alpha'), catalog('Beta')]);
+  setup(); await screen.findByText('Useful tool');
+  const pill = await screen.findByRole('button', { name: 'Marketplace sources: 2 sources · up to date' });
+  expect(screen.queryByRole('button', { name: 'Refresh', exact: true })).toBeNull();
+  fireEvent.click(pill);
+  const pop = screen.getByRole('dialog', { name: 'Marketplace sources' });
+  expect(within(pop).getByText('all up to date', { exact: false })).toBeTruthy();
+  expect(within(pop).getAllByRole('listitem')).toHaveLength(2);
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: 'Marketplace sources' })).toBeNull();
+  fireEvent.click(pill);
+  fireEvent.mouseDown(document.body);
+  expect(screen.queryByRole('dialog', { name: 'Marketplace sources' })).toBeNull();
+  fireEvent.click(pill);
+  fireEvent.click(screen.getByRole('button', { name: 'Manage…' }));
+  expect(await screen.findByRole('dialog', { name: 'Manage marketplaces' })).toBeTruthy();
+});
+
+it('flags failed sources, retries them from the pill, and refreshes single rows or all from the popover', async () => {
+  const failed = catalog('Team', { lastError: 'HTTP 429 rate limited', lastAttemptAt: Date.now() - 60_000 });
+  const fresh = catalog('Official');
+  api.catalogs.mockResolvedValue([fresh, failed]);
+  let release: () => void = () => {};
+  api.refresh.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+  setup(); await screen.findByText('Useful tool');
+  await screen.findByRole('button', { name: 'Marketplace sources: 1 failed' });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh', exact: true }));
+  await waitFor(() => expect(api.refresh).toHaveBeenCalledWith(failed.source));
+  await screen.findByRole('button', { name: 'Marketplace sources: Refreshing 1 of 2…' });
+  release();
+  await waitFor(() => expect(screen.queryByText('Refreshing 1 of 2…')).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: /^Marketplace sources:/ }));
+  const pop = screen.getByRole('dialog', { name: 'Marketplace sources' });
+  const rows = within(pop).getAllByRole('listitem');
+  expect(rows[0]?.textContent).toContain('Team');
+  expect(rows[0]?.textContent).toContain('HTTP 429 rate limited');
+  api.refresh.mockResolvedValue({});
+  fireEvent.click(within(pop).getByRole('button', { name: 'Retry Team' }));
+  await waitFor(() => expect(api.refresh).toHaveBeenCalledTimes(2));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Marketplace sources' })).getByRole('button', { name: 'Refresh Official' }));
+  await waitFor(() => expect(api.refresh).toHaveBeenCalledWith(fresh.source));
+  await waitFor(() => expect((within(screen.getByRole('dialog', { name: 'Marketplace sources' })).getByRole('button', { name: /Refresh all/ }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Marketplace sources' })).getByRole('button', { name: /Refresh all/ }));
+  await waitFor(() => expect(api.refresh).toHaveBeenCalledTimes(5));
+});
+it('keeps the pill usable when a source refresh rejects', async () => {
+  const stale = catalog('Stale', { lastRefreshAt: null, lastAttemptAt: null });
+  api.catalogs.mockResolvedValue([stale]);
+  api.refresh.mockRejectedValue(new Error('offline'));
+  setup(); await screen.findByText('Useful tool');
+  await waitFor(() => expect(api.refresh).toHaveBeenCalledWith(stale.source));
+  expect(await screen.findByRole('button', { name: 'Marketplace sources: 1 out of date' })).toBeTruthy();
 });
