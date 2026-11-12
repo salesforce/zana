@@ -179,7 +179,7 @@ test('bounded negative: run stops with unresolved-blocker only after blockedWait
     expect(stoppedAt - anchor).toBeGreaterThanOrEqual(55_000);
 
     const inbox = JSON.stringify(await window.evaluate(() => window.cc.inbox.history({ limit: 100 })));
-    expect(inbox).toContain('will be stopped soon');
+    expect(inbox).toContain('will be stopped in about');
   } catch (error) {
     throw jobTeamFailure(ctx, error);
   } finally {
