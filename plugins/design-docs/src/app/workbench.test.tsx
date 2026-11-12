@@ -944,9 +944,58 @@ describe('doc list sections', () => {
     await waitFor(() => expect(sectionNames()).toEqual([]));
     expect(within(row('Checkout')).getByText('App')).toBeTruthy();
 
-    // Filtering to one project hides the grouping toggle.
+    // Filtering to one project keeps the controls but disables them.
     pick('project', /^Site/);
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Group by project' })).toBeNull());
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Group by project' }) as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByRole('button', { name: 'Group by project' }).getAttribute('data-tip')).toBe('Show All projects to group');
+  });
+
+  it('collapses and expands every section from one button, and disables it during search', async () => {
+    const harness = createHarness();
+    seed(harness.store, { title: 'Glossary', projectId: null });
+    seed(harness.store, { title: 'Payments API', projectId: 'p1' });
+    seed(harness.store, { title: 'Landing page', projectId: 'p2' });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    await waitFor(() => expect(sectionNames().sort()).toEqual(['App', 'Global', 'Site']));
+
+    const group = screen.getByRole('button', { name: 'Group by project' });
+    expect(group.getAttribute('aria-pressed')).toBe('true');
+    const stored = () => JSON.parse(JSON.parse(localStorage.getItem('zcc.design-docs.list-collapsed')!)) as string[];
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all sections' }));
+    expect(stored().sort()).toEqual(['project:', 'project:p1', 'project:p2']);
+    expect(screen.queryByText('Payments API')).toBeNull();
+
+    // Mixed state: one open section keeps the action as collapse.
+    fireEvent.click(within(screen.getByRole('region', { name: 'App' })).getByRole('button', { name: /App/ }));
+    expect(screen.getByRole('button', { name: 'Collapse all sections' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all sections' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all sections' }));
+    expect(stored()).toEqual([]);
+    expect(await screen.findByText('Payments API')).toBeTruthy();
+
+    // Search overrides collapse, so the action is disabled with a reason.
+    fireEvent.change(screen.getByLabelText('Search design docs'), { target: { value: 'Payments' } });
+    const disabled = screen.getByRole('button', { name: /sections$/ });
+    await waitFor(() => expect((disabled as HTMLButtonElement).disabled).toBe(true));
+    expect(disabled.getAttribute('data-tip')).toContain('Clear search');
+
+    // Flat mode keeps both buttons: the group toggle flips glyph, collapse-all disables with a reason.
+    fireEvent.change(screen.getByLabelText('Search design docs'), { target: { value: '' } });
+    const groupTip = () => screen.getByRole('button', { name: 'Group by project' }).getAttribute('data-tip');
+    await waitFor(() => expect(groupTip()).toContain('Grouped by project'));
+    fireEvent.click(screen.getByRole('button', { name: 'Group by project' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Group by project' }).getAttribute('aria-pressed')).toBe('false'));
+    expect(groupTip()).toContain('Flat list');
+    const flatCollapse = screen.getByRole('button', { name: /all sections$/ }) as HTMLButtonElement;
+    expect(flatCollapse.disabled).toBe(true);
+    expect(flatCollapse.getAttribute('data-tip')).toBe('Group by project to collapse sections');
+
+    // A project filter disables both.
+    await screen.findByText('Landing page');
+    pick('project', /^Site/);
+    await waitFor(() => expect((screen.getByRole('button', { name: /all sections$/ }) as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByRole('button', { name: /all sections$/ }).getAttribute('data-tip')).toBe('Show All projects to use');
   });
 
   it('lists the current project first in the nav panel', async () => {
