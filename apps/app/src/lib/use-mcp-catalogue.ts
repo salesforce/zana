@@ -12,12 +12,17 @@ export type McpCatalogueState =
   | { status: 'idle' | 'loading' | 'unavailable' }
   | { status: 'ready'; servers: McpCatalogueServer[]; notes: string[] };
 
-/** Plugin/extension keys end in `:<name>`; user/project keys are the bare name. */
+/** Plugin/extension keys end in `:<name>`; user/project keys are the full bare name (it may contain ':'). */
+export function catalogueName(entry: { key: string; source: string }): string {
+  if (entry.source !== 'plugin' && entry.source !== 'extension') return entry.key;
+  return entry.key.split(':').pop() ?? entry.key;
+}
+
 export function catalogueServer(entry: { key: string; source: string; available: boolean; reason?: string }): McpCatalogueServer {
   return {
     key: entry.key,
     source: entry.source,
-    name: entry.key.split(':').pop() ?? entry.key,
+    name: catalogueName(entry),
     available: entry.available,
     ...(entry.reason ? { reason: entry.reason } : {})
   };

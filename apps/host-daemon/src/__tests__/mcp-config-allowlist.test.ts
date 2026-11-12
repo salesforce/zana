@@ -223,6 +223,14 @@ describe('per-session strict-mode file (prepareSessionMcpConfig)', () => {
     expect(names(run(['usrA']).path)).toEqual(['zcc-inbox']);
   });
 
+  it('an allowlisted server is never dropped by the server-count cap in a large combined set', () => {
+    const many = Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`bulk${i}`, { command: 'node', args: [`b${i}.js`] }]));
+    writeFileSync(join(claudeDir, '.claude.json'), JSON.stringify({ mcpServers: { ...many, lateServer: { command: 'node' } } }));
+    const { path, warnings } = run(['lateServer', 'bulk69']);
+    expect(names(path)).toEqual(['bulk69', 'lateServer', 'zcc-inbox']);
+    expect(warnings).toEqual([]);
+  });
+
   it('works without a cwd and with the default environment', () => {
     const { path } = mod.prepareSessionMcpConfig({ dir, sessionId: 'no-cwd', allowlist: [], env: { CLAUDE_CONFIG_DIR: claudeDir } as NodeJS.ProcessEnv });
     expect(names(path)).toEqual(['zcc-inbox']);

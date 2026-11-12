@@ -373,6 +373,16 @@ describe('PtyManager.create: persona MCP allowlist for Codex and OpenCode', () =
       expect(ev[0]!.warnings.map((w) => w.code)).toEqual(['mcp-allowlist-ignored']);
     });
 
+    it('an unavailable local MCP server on a Claude profile also says the allowlist was not applied', () => {
+      const m = new PtyManager();
+      const ev = events(m);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      create(m, 'claude', { persona: persona(['usrA']) });
+      expect(spawned).toHaveLength(1);
+      expect(ev[0]!.warnings.map((w) => w.code)).toEqual(['mcp-allowlist-ignored']);
+      expect(ev[0]!.warnings[0]!.message).toContain('not available at launch');
+    });
+
     it('a remote (SSH) session ignores the list with a notice and still launches', () => {
       const m = mgr();
       const ev = events(m);

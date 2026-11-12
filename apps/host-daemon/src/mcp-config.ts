@@ -454,7 +454,14 @@ export function prepareSessionMcpConfig(input: SessionMcpConfigInput): SessionMc
     ...Object.entries(projectRaw),
     ...Object.entries(userRaw)
   ]);
-  const sanitized = sanitizeMcpServers(rawServers);
+  // Narrow to allowlisted names BEFORE the sanitizer so its server-count cap can never drop (and then
+  // misreport as unsafe) an allowlisted server in a large combined user + project set.
+  const candidates: Record<string, unknown> = Object.fromEntries(
+    Object.entries(rawServers).filter(([name]) =>
+      name === 'zcc-inbox' || input.allowlist.some((entry) => mcpAllowlistCovers(entry, { key: name, source: 'user', name }))
+    )
+  );
+  const sanitized = sanitizeMcpServers(candidates);
   const kept = filterMcpServersByAllowlist(sanitized, input.allowlist) ?? {};
   const registryEntries = selectedServerEntries([...input.allowlist]);
   // Entries a registry server answers to (e.g. a bare name covering a plugin server) are delivered by the registry.

@@ -9,6 +9,7 @@ import { resolveIcon } from '../lib/resolveIcon.js';
 import { personaIcon } from '../lib/profileIcon.js';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
 import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
+import { catalogueName } from '../lib/use-mcp-catalogue.js';
 import { ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
@@ -32,9 +33,9 @@ import { isLaunchApproval, type LaunchApproval } from '@zana-ai/zcc-domain/squad
 
 const TEAM_SLOT_MAX = 16;
 
-/** Catalogue entry -> matcher ref. Plugin/extension keys end in `:<name>`; user/project keys are the name. */
+/** Catalogue entry -> matcher ref (see `catalogueName`: only plugin/extension keys carry a prefix). */
 function catalogueRef(entry: { key: string; source: string }): McpServerRef {
-  return { key: entry.key, source: entry.source, name: entry.key.split(':').pop() ?? entry.key };
+  return { key: entry.key, source: entry.source, name: catalogueName(entry) };
 }
 
 /**
@@ -923,7 +924,7 @@ function TeamForm({
               </p>
             )}
             {allWorkersMcpRestricted && (
-              <p className="settings-help" role="alert" data-testid="team-mcp-requires-hardfail">
+              <p className="settings-help" role="status" data-testid="team-mcp-requires-hardfail">
                 Launch fails for work that Requires an MCP server no worker allows. Servers workers can reach: {workerReachableMcp.join(', ')}.
               </p>
             )}

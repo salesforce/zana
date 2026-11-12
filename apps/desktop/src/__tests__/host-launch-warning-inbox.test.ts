@@ -1,7 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 const h = vi.hoisted(() => ({
   root: (require('node:fs') as typeof import('node:fs')).mkdtempSync(

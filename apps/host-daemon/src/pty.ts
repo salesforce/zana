@@ -505,8 +505,6 @@ export class SpawnRefusedError extends Error {
   }
 }
 
-/** Supplied by the process that owns execution. The standalone daemon must
- * receive only a session credential, never the shared instance's signing key. */
 /**
  * A non-fatal launch notice. {@link PtyManager.surfaceLaunchWarnings} is the ONE
  * consumer: every launch path (Claude isolated seed, the interactive session
@@ -529,6 +527,8 @@ export interface LaunchWarningEvent {
   warnings: LaunchWarning[];
 }
 
+/** Supplied by the process that owns execution. The standalone daemon must
+ * receive only a session credential, never the shared instance's signing key. */
 export interface PtyManagerHostServices {
   resolveHarnessAuth?: (family: HarnessAuthKey) => HarnessAuthCredential;
   sessionCredential?: (sessionId: string) => string;
@@ -1527,9 +1527,7 @@ export class PtyManager extends EventEmitter {
     // earlier async write to have landed. The async writers race app boot;
     // pointing `--mcp-config` at a not-yet-written file would silently drop
     // the inbox server. If even the sync write fails, fall back to no MCP
-    // injection so the terminal still opens. When a persona requests extra MCP
-    // servers, merge them into the config (resolved against the registry;
-    // unknown names are silently ignored).
+    // injection so the terminal still opens.
     //
     // An allowlisted persona (array, including `[]`) gets a private per-session
     // strict-mode file holding exactly zcc-inbox plus the allowlisted servers
@@ -1555,6 +1553,9 @@ export class PtyManager extends EventEmitter {
       } else {
         mcpConfigPath = this.safeEnsureMcpConfig(opts.projectId, undefined);
       }
+    } else if (caps.injectsClaudeMcpConfig && personaMcpAllowlist) {
+      // D7: no MCP server to deliver through, so the allowlist cannot apply; say so instead of silently loading everything.
+      launchWarnings.push(allowlistIgnoredWarning('the MCP server was not available at launch'));
     }
     // The inbox/mesh/report GUIDANCE text — one assembled string, delivered two
     // ways below. Teaches the agent when to use inbox_push (and, for scheduled

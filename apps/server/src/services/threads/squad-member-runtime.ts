@@ -34,7 +34,7 @@ import { validateProviderModelSelection } from './provider-model-validation.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
 import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
 import { personaMcpAllowlistNotice } from './persona-mcp-allowlist.js';
-import { emitPersonaMcpNotice } from '../../http/thread-create.js';
+import { emitPersonaMcpNotice } from './persona-notice.js';
 
 /** Host-owned namespace. Only trusted IPC (or an authenticated main seam) may write it. */
 export const MODERN_SQUAD_BINDING_ORIGIN = MODERN_SQUAD_THREAD_ORIGIN;

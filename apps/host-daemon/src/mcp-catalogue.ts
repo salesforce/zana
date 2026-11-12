@@ -10,6 +10,7 @@ import {
 } from './harness/claude/automated-isolation.js';
 import { registeredMcpServerKeys } from './mcp-config.js';
 import { homedir } from 'node:os';
+import { PERSONA_MCP_NAME_MAX } from '@zana-ai/zcc-domain/product';
 
 /**
  * Host-side MCP server catalogue for the Persona picker and name resolution.
@@ -91,7 +92,7 @@ function scopeEntries(
       notes.push(`${label} servers beyond ${MAX_SOURCE_ENTRIES} omitted`);
       break;
     }
-    if (name.length === 0 || name.length > 128) continue;
+    if (name.length === 0 || name.length > PERSONA_MCP_NAME_MAX) continue;
     if (isReservedMcpName(name)) {
       notes.push(`${label} server "${safeName(name)}" ignored: plugin:/ext: names are reserved`);
       continue;

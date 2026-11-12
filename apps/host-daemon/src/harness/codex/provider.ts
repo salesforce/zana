@@ -81,6 +81,7 @@ import { codexInteractionHook } from './interaction-hooks.js';
 import { buildCodexHookSpecs, renderHookOverrides, tomlBasic } from './hook-trust-specs.js';
 import { resolveHarnessCommand, verificationSearchPath } from '../harness-command.js';
 import { CODEX_BYPASS_HOOK_TRUST_FLAG, codexHookStateArgs, type CodexHookTrustMode } from './hook-trust.js';
+import { BARE_KEY } from '../../mcp-allowlist-disable.js';
 
 export const CODEX_EVIDENCE_VERSION = '0.140.0';
 const codexEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -186,8 +187,6 @@ function tomlValue(s: string): string {
  * keys are dropped rather than quoted. A stdio server without a command and a
  * URL server without a URL contribute nothing.
  */
-const BARE_KEY = /^[A-Za-z0-9_-]+$/;
-
 export function codexServerArgs(server: HarnessMcpServer): string[] {
   const base = `mcp_servers.${server.name}`;
   if (server.type === 'stdio') {

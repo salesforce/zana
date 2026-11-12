@@ -15,7 +15,7 @@ import type { UserMcpEnumeration } from '../launch-provider.js';
 
 export const MAX_OPENCODE_CONFIG_BYTES = 1024 * 1024;
 
-/** Strip JSONC comments and trailing commas, string-aware. */
+/** Strip JSONC comments and trailing commas, string-aware (string contents are never altered). */
 export function stripJsonc(text: string): string {
   let out = '';
   let inString = false;
@@ -34,11 +34,30 @@ export function stripJsonc(text: string): string {
     } else if (ch === '/' && text[i + 1] === '*') {
       const end = text.indexOf('*/', i + 2);
       i = end === -1 ? text.length : end + 1;
+    } else if (ch === ',' && closesAfterWhitespace(text, i + 1)) {
+      // Trailing comma outside a string: drop it.
     } else {
       out += ch;
     }
   }
-  return out.replace(/,(\s*[}\]])/g, '$1');
+  return out;
+}
+
+/** True when the next significant character (skipping whitespace and comments) closes an object or array. */
+function closesAfterWhitespace(text: string, from: number): boolean {
+  for (let i = from; i < text.length; i++) {
+    const ch = text[i]!;
+    if (/\s/.test(ch)) continue;
+    if (ch === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i++; continue; }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end === -1) return false;
+      i = end + 1;
+      continue;
+    }
+    return ch === '}' || ch === ']';
+  }
+  return false;
 }
 
 type Read = { kind: 'missing' } | { kind: 'unreadable' } | { kind: 'ok'; names: string[] };

@@ -173,6 +173,15 @@ describe('production execution routing preflight', () => {
       expect(blocked).toMatchObject({ decision: 'blocked', reason: expect.stringContaining('tool-allowlist') });
     });
 
+    it('keeps a context-directories persona blocking on a harness lacking it', async () => {
+      const services = { ...deps(), provider: new CursorProvider() };
+      const input = { config: config(), profile: 'cursor' as const, projectId: 'p1', scope: 'local' as const, mode: 'interactive' as const };
+      const withDirs = await preflightTerminalExecution({ ...input, idempotencyKey: 'dirs', persona: { ...noMcp, addDirs: ['/extra'] } }, services);
+      const without = await preflightTerminalExecution({ ...input, idempotencyKey: 'dirs-none', persona: { ...noMcp, addDirs: [] } }, services);
+      expect(withDirs).toMatchObject({ decision: 'blocked', reason: expect.stringContaining('context-directories') });
+      expect(without).not.toMatchObject({ reason: expect.stringContaining('context-directories') });
+    });
+
     it('keeps a skills-only persona decision unchanged', async () => {
       const services = { ...deps(), provider: new CursorProvider() };
       const input = { config: config(), profile: 'cursor' as const, projectId: 'p1', scope: 'local' as const, mode: 'interactive' as const };

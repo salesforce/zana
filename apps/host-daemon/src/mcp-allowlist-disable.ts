@@ -22,7 +22,7 @@ export interface McpDisableWarning {
 /** Disable-argv growth bound (one `-c` pair, or one config key, per name). */
 export const MAX_DISABLED_MCP_SERVERS = 128;
 
-const BARE_KEY = /^[A-Za-z0-9_-]+$/;
+export const BARE_KEY = /^[A-Za-z0-9_-]+$/;
 const ALWAYS_ALLOWED = new Set<string>(ALWAYS_ALLOWED_MCP_SERVERS);
 
 function printable(name: string): string {

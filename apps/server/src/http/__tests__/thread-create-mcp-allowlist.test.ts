@@ -39,6 +39,14 @@ describe('resolveModernMcpAllowlist', () => {
     expect(resolveModernMcpAllowlist({ mcpServers: ['github'] })).toEqual(expect.arrayContaining(['github', 'zcc-inbox']));
   });
 
+  it('fails closed on a malformed list: invalid entries are dropped, never widened to unrestricted', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(resolveModernMcpAllowlist({ mcpServers: ['github', 'bad*glob', 7 as never] })).toEqual(['zcc-inbox', 'github']);
+    expect(resolveModernMcpAllowlist({ mcpServers: ['*'] })).toEqual(['zcc-inbox']);
+    const many = Array.from({ length: 80 }, (_, i) => `s${i}`);
+    expect(resolveModernMcpAllowlist({ mcpServers: many })).toHaveLength(64);
+  });
+
   it('keeps an empty list restricted to zcc-inbox only', () => {
     expect(resolveModernMcpAllowlist({ mcpServers: [] })).toEqual(['zcc-inbox']);
   });

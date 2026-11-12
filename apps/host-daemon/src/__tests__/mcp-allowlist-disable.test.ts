@@ -90,6 +90,12 @@ describe('user MCP enumerators', () => {
     expect(JSON.parse(out)).toEqual({ u: 'http://a//b /* x */', k: [1, 2] });
     expect(stripJsonc('{"a":"q\\"//z"} /* open')).toContain('q\\"//z');
   });
+  it('stripJsonc keeps comma-plus-bracket sequences inside keys and values', () => {
+    const out = stripJsonc('{"mcp":{"server,}":{"a":"x,]", "b":"y, }",}, "k,]":1,},}');
+    expect(JSON.parse(out)).toEqual({ mcp: { 'server,}': { a: 'x,]', b: 'y, }' }, 'k,]': 1 } });
+    expect(JSON.parse(stripJsonc('{"a":[1, /* c */ ],\n"b":2, // t\n}'))).toEqual({ a: [1], b: 2 });
+    expect(stripJsonc('{"a":1, /* never closed')).toBe('{"a":1, ');
+  });
   it('opencode: reads global, user OPENCODE_CONFIG and project files, keys only', () => {
     mkdirSync(join(root, 'xdg', 'opencode'), { recursive: true });
     writeFileSync(join(root, 'xdg', 'opencode', 'opencode.json'), JSON.stringify({ mcp: { g: { environment: { K: 'SECRET' } } } }));

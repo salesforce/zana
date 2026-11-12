@@ -70,7 +70,7 @@ describe('SquadEditor MCP allowlist state', () => {
     catalogue.mockResolvedValue(okCatalogue);
     render(<SquadEditor team={mk(['orch', 'w1', 'w2'], 'orch')} mode="edit" onClose={vi.fn()} />);
     const hard = screen.getByTestId('team-mcp-requires-hardfail');
-    expect(hard.getAttribute('role')).toBe('alert');
+    expect(hard.getAttribute('role')).toBe('status');
     expect(hard.textContent).toContain('Launch fails for work that Requires');
     expect(hard.textContent).toContain('zcc-inbox, github, ghost');
   });
