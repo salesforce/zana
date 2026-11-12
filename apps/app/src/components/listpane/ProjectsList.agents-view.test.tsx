@@ -89,8 +89,8 @@ function LocationProbe() {
   return <span data-testid="location">{useLocation().pathname}</span>;
 }
 
-function renderList() {
-  render(<MemoryRouter><ProjectsList placement="sidebar" /><LocationProbe /></MemoryRouter>);
+function renderList(placement: 'sidebar' | 'pane' = 'sidebar') {
+  render(<MemoryRouter><ProjectsList placement={placement} /><LocationProbe /></MemoryRouter>);
 }
 
 function chooseView(label: 'Projects' | 'Agents only') {
@@ -115,6 +115,32 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ProjectsList agents-only view', () => {
+  it('opens local folder, clone and machine setup directly from the project list', () => {
+    h.hosts = [{ id: 'local', name: 'Laptop', isPrimary: true, status: 'connected' }] as typeof h.hosts;
+    renderList('pane');
+    fireEvent.click(screen.getByRole('button', { name: 'Add a local folder as a project' }));
+    expect(h.openSetup).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'project', mode: 'open', group: expect.objectContaining({ primary: true, hostId: 'local' }) }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import a project from a git URL' }));
+    expect(h.openSetup).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'project', mode: 'clone', group: expect.objectContaining({ primary: true, hostId: 'local' }) }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect a machine', exact: true }));
+    expect(h.openSetup).toHaveBeenLastCalledWith({ kind: 'machine' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('keeps the organize menu open inside and dismisses it on Escape or outside click', () => {
+    renderList();
+    const trigger = screen.getByRole('button', { name: 'Organize projects' });
+    fireEvent.click(trigger);
+    fireEvent.mouseDown(screen.getByRole('menuitemradio', { name: 'Projects', exact: true }));
+    expect(screen.getByRole('menuitemradio', { name: 'Projects', exact: true })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'a' });
+    expect(screen.getByRole('menuitemradio', { name: 'Projects', exact: true })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('menuitemradio', { name: 'Projects', exact: true })).toBeNull();
+    fireEvent.click(trigger);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menuitemradio', { name: 'Projects', exact: true })).toBeNull();
+  });
   it('defaults to the project tree', () => {
     renderList();
     expect(screen.getByRole('button', { name: 'Open local-core' })).toBeTruthy();
@@ -305,4 +331,13 @@ it('offers plugin project creators only on the primary machine and gives offline
   expect(screen.getByText('This machine is offline. Reconnect it to add a project.')).toBeTruthy();
   fireEvent.click(screen.getByRole('menuitem', { name: 'Manage connection' }));
   expect(screen.getByTestId('location').textContent).toBe('/settings/machines');
+});
+
+it('uses the registered plugin title and default icon when a creator supplies no overrides', () => {
+  h.hosts = [{ id: 'local', name: 'Laptop', isPrimary: true, status: 'connected' }] as typeof h.hosts;
+  h.creators = [{ id: 'new', pluginId: 'crm', generation: 1, title: 'CRM project', component: () => null, run: ctx => { ctx.openDialog(); } }];
+  renderList();
+  fireEvent.click(within(document.querySelector('[data-machine-id="local"]') as HTMLElement).getByRole('button', { name: /^Add project on / }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'CRM project' }));
+  expect(h.openSetup).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'plugin', state: expect.objectContaining({ title: 'CRM project', params: null }) }));
 });

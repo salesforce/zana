@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true } });
 
-test('machine menus open nonmodal setup pages and retain drafts across navigation', async ({ app, home }) => {
+test('machine menus open nonmodal setup pages and retain drafts across navigation', async ({ app, home }, testInfo) => {
   const page = app.window;
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -14,6 +15,7 @@ test('machine menus open nonmodal setup pages and retain drafts across navigatio
   await add.click();
   const menu = page.getByRole('menu', { name: /^Add project on / });
   await expect(menu.getByRole('menuitem')).toHaveText(['Add folder', 'New folder', 'Clone from Git']);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('machine-project-dropdown.png'));
   await menu.getByRole('menuitem', { name: 'New folder' }).click();
   const create = page.getByRole('region', { name: 'Create project folder', exact: true });
   await expect(create).toBeVisible();
@@ -27,9 +29,11 @@ test('machine menus open nonmodal setup pages and retain drafts across navigatio
   await expect(connect.getByTestId('add-machine-method-ssh')).toBeVisible();
   await expect(connect.getByTestId('add-machine-method-command')).toBeVisible();
   await connect.getByTestId('add-machine-method-command').click();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('connect-machine-page.png'));
   await page.getByRole('tab', { name: /^New folder · / }).click();
   await expect(create.getByRole('textbox', { name: 'Folder name' })).toHaveValue('new-api');
   await expect(create.getByRole('textbox', { name: 'Parent folder', exact: true })).toHaveValue(home);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('new-folder-page.png'));
   await create.getByRole('button', { name: 'Create & add' }).click();
   await expect(create).toHaveCount(0);
   expect(existsSync(join(home, 'new-api'))).toBe(true);

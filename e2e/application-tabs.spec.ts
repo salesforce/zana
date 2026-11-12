@@ -1,4 +1,5 @@
 import { test, expect, dismissConsentOverlays } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -60,7 +61,7 @@ test('one application tab bar orders, searches and closes threads and setup draf
   await setup.press('End');
   await expect(draft).toBeVisible();
   await expect(draft.getByRole('textbox', { name: 'Folder name' })).toHaveValue('application-tab-draft');
-  await page.screenshot({ path: testInfo.outputPath('mixed-application-tabs.png') });
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('mixed-application-tabs.png'));
   // Closing an active setup chooses the neighboring setup to its right.
   await setup.click();
   await bar.getByRole('button', { name: 'Close tab: Connect a machine' }).click();

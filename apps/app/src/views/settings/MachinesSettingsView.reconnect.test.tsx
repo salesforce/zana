@@ -6,9 +6,9 @@ import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../../lib/product-client.js';
 import { MachinesSettingsView } from './MachinesSettingsView.js';
 
-const h = vi.hoisted(() => ({ hosts: [] as unknown[], appendLogs: vi.fn() }));
+const h = vi.hoisted(() => ({ hosts: [] as unknown[], appendLogs: vi.fn(), connectMachines: false }));
 
-vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: async () => ({ connectMachines: false }) }));
+vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: async () => ({ connectMachines: h.connectMachines }) }));
 vi.mock('../../components/setup/useSetupNavigation.js', () => ({ useSetupNavigation: () => () => undefined }));
 vi.mock('../../lib/product-client.js', () => ({ product: {
   hosts: { repair: vi.fn(), updateSshIdentity: vi.fn(), providerCliStatus: vi.fn(async () => ({})) }
@@ -25,7 +25,8 @@ vi.mock('../../lib/host-install-run.js', () => ({
     return events;
   })
 }));
-vi.mock('./AddMachineDialog.js', () => ({ AddMachineDialog: () => null }));
+vi.mock('./AddMachineDialog.js', () => ({ AddMachineDialog: ({ open, repairHost, onClose }: { open: boolean; repairHost?: { name: string }; onClose(): void }) =>
+  open ? <section aria-label={`Pair ${repairHost?.name}`}><button onClick={onClose}>Close pairing</button></section> : null }));
 vi.mock('../../components/HostSshIdentityDialog.js', () => ({ HostSshIdentityDialog: ({ hostName }: { hostName: string }) =>
   <div data-testid="ssh-dialog">{hostName}</div> }));
 
@@ -41,9 +42,18 @@ function setup() {
   render(<MachinesSettingsView config={config} onConfigDraft={() => undefined} onUpdate={async () => undefined} />);
 }
 const reconnect = () => fireEvent.click(screen.getByTestId('machine-reconnect-h1'));
-afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); h.connectMachines = false; });
 
 describe('Machines reconnect onSettled handling', () => {
+  it('closes re-pairing without leaving the machines settings page', async () => {
+    h.connectMachines = true;
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Pair again' }));
+    expect(screen.getByRole('region', { name: 'Pair devbox' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close pairing' }));
+    expect(screen.queryByRole('region', { name: 'Pair devbox' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Pair again' })).toBeTruthy();
+  });
   it('shows the repair error, then clears it when a retry succeeds', async () => {
     setup();
     vi.mocked(product.hosts.repair).mockResolvedValueOnce([{ type: 'error', code: 'daemon_down', message: 'ssh timed out' }])
