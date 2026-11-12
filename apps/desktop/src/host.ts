@@ -7723,7 +7723,7 @@ const squadExecutionService = new SquadExecutionService({
         ? [{ id: model.targetId, provider: provider.adapter.descriptor.id }]
         : [];
     }))).flat().sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
-    const { requiredSkills, personaMcpServers, inventoryMcpServers } = teamAdmissionRequirements(slotPersonas, request.workUnits);
+    const { requiredSkills, requiredMcpServers, inventoryMcpServers } = teamAdmissionRequirements(slotPersonas, request.workUnits);
     const inventory = await collectTeamAdmissionInventory({ requiredSkills, requiredMcpServers: inventoryMcpServers, requiredModels, requiredProviders }, {
       listSkills: () => project ? listSkills({ projectPath: project.path, projectId }) : Promise.resolve([]),
       listMcpServers: () => project ? listMcpServers(project.path) : Promise.resolve([]),
@@ -7795,7 +7795,7 @@ const squadExecutionService = new SquadExecutionService({
       maxSlots: Math.min(request.policy?.maxLaunches ?? 32, 32),
       initialTasks: request.slots.map((slot) => slot.initialTask),
       sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0),
-      requiredMcpServers: personaMcpServers, requiredModels, requiredProviders, inventory, slotRoutes,
+      requiredMcpServers, requiredModels, requiredProviders, inventory, slotRoutes,
       enforceRouting
     };
   }

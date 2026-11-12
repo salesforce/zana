@@ -161,13 +161,7 @@ test('two workers with different lists get different notices', async ({ app }) =
   expect(texts.some((m) => m.includes(USER_BLOCKED) && !m.includes(USER_ALLOWED))).toBe(true);
 });
 
-// Known product defect (see report): teamAdmissionRequirements() still feeds persona
-// mcpServers into admission as a required capability, so an allowlisted server absent from the
-// inventory fails the whole Squad launch (ADMISSION_FAILED, "availability is unknown") although
-// the plan (D7) makes it advisory. test.fail() keeps this honest: it passes only while the
-// defect exists and starts failing, prompting removal of the annotation, once the launch is fixed.
 test('allowlisted-but-missing server does not block the Squad launch', async ({ app }) => {
-  test.fail(true, 'persona MCP allowlist is still a blocking admission requirement');
   const { window: page, home } = app;
   await runModernTeam(page, home, [{ id: 'e2e-mcp-worker', mcpServers: [USER_ALLOWED, MISSING_SERVER] }]);
   const found = await noticeSet(page, 1, home);
