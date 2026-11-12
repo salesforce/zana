@@ -4792,8 +4792,8 @@ export type PersonaInput = Omit<Persona, 'id' | 'name' | 'source'> & {
 /**
  * Non-sensitive persona metadata — the shape returned by discovery surfaces
  * (the `persona.list` control-plane op and the `list_personas` MCP tool). It
- * deliberately OMITS the launch internals (`appendSystemPrompt`, `allowedTools`,
- * `mcpServers`, …): a discovery caller only needs to pick a persona by id/name,
+ * deliberately OMITS the launch internals (`appendSystemPrompt`, `allowedTools`, …;
+ * the skill and MCP server allowlists are exposed as policy metadata): a discovery caller only needs to pick a persona by id/name,
  * not read its system prompt. Keeping the projected shape in one place means the
  * CLI and MCP tool can't drift on what they expose.
  */
@@ -4809,6 +4809,8 @@ export interface PersonaSummary {
   executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
   /** Skill allowlist (see `Persona.skills`). Absent = unrestricted. */
   skills?: string[];
+  /** MCP server allowlist (see `Persona.mcpServers`). Server names only, no launch internals. Absent = unrestricted. */
+  mcpServers?: string[];
   /** Provenance (builtin / user / project / extension). Non-sensitive; lets a
    *  discovery surface show the source badge. */
   source?: PersonaSource;
@@ -4826,6 +4828,7 @@ export function toPersonaSummary(p: Persona): PersonaSummary {
     reasoningLevel: p.reasoningLevel,
     executionState: p.executionState,
     ...(p.skills !== undefined ? { skills: p.skills } : {}),
+    ...(p.mcpServers !== undefined ? { mcpServers: p.mcpServers } : {}),
     source: p.source
   };
 }
