@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { preflightTerminalExecution } from '../execution-routing.js';
 import { CursorProvider } from '@zana-ai/zcc-host-daemon/harness/cursor/provider';
+import { GrokProvider } from '@zana-ai/zcc-host-daemon/harness/grok/provider';
+import { PiProvider } from '@zana-ai/zcc-host-daemon/harness/pi/provider';
 import { CodexProvider } from '@zana-ai/zcc-host-daemon/harness/codex/provider';
 import { OpenCodeProvider } from '@zana-ai/zcc-host-daemon/harness/opencode/provider';
 
@@ -136,15 +138,48 @@ describe('production execution routing preflight', () => {
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
-  it('treats an empty persona MCP allowlist as a requested mcp-references facet, an unset one as none', async () => {
-    const services = deps();
-    const base = { config: config(), profile: 'opencode' as const, projectId: 'p1', scope: 'local' as const, mode: 'interactive' as const };
-    for (const [key, mcpServers] of [['empty', []], ['listed', ['zcc-inbox', 'github']]] as const) {
-      await expect(preflightTerminalExecution({ ...base, idempotencyKey: key, persona: { id: 'p', name: 'P', mcpServers: [...mcpServers] } }, services))
-        .resolves.toMatchObject({ decision: 'allowed', scope: 'local' });
+  describe('persona MCP allowlist is advisory (plan D7)', () => {
+    const noMcp = { id: 'p', name: 'P' };
+    const cases = [
+      ['cursor', () => new CursorProvider()], ['grok', () => new GrokProvider()], ['pi', () => new PiProvider()],
+      ['codex', () => new CodexProvider()], ['opencode', () => new OpenCodeProvider()]
+    ] as const;
+    const values = [['unset', undefined], ['empty', []], ['listed', ['zcc-inbox', 'github']]] as const;
+    for (const [profile, make] of cases) {
+      for (const scope of ['local', 'remote'] as const) {
+        it.each(values)(`never blocks ${profile} ${scope} with %s allowlist and matches a persona without the field`, async (key, mcpServers) => {
+          const input = { config: config(), profile, projectId: 'p1', scope, mode: 'interactive' as const };
+          const services = { ...deps(), provider: make() };
+          const withList = await preflightTerminalExecution({
+            ...input, idempotencyKey: key, persona: { ...noMcp, ...(mcpServers ? { mcpServers: [...mcpServers] } : {}) }
+          }, services);
+          const without = await preflightTerminalExecution({ ...input, idempotencyKey: `${key}-base`, persona: noMcp }, { ...deps(), provider: make() });
+          expect(withList).toEqual(without);
+          expect(withList).not.toMatchObject({ decision: 'blocked' });
+        });
+      }
     }
-    await expect(preflightTerminalExecution({ ...base, idempotencyKey: 'unset', persona: { id: 'p', name: 'P' } }, services))
-      .resolves.toEqual({ decision: 'allowed', scope: 'local' });
+
+    it('keeps other facets blocking on a harness lacking them, even alongside an allowlist', async () => {
+      const persona = { ...noMcp, mcpServers: ['github'], allowedTools: ['Read'] };
+      const blocked = await preflightTerminalExecution({
+        config: config(), profile: 'cursor', projectId: 'p1', scope: 'local', mode: 'interactive', idempotencyKey: 'tools', persona
+      }, { ...deps(), provider: new CursorProvider() });
+      const baseline = await preflightTerminalExecution({
+        config: config(), profile: 'cursor', projectId: 'p1', scope: 'local', mode: 'interactive', idempotencyKey: 'tools-base',
+        persona: { ...noMcp, allowedTools: ['Read'] }
+      }, { ...deps(), provider: new CursorProvider() });
+      expect(blocked).toEqual(baseline);
+      expect(blocked).toMatchObject({ decision: 'blocked', reason: expect.stringContaining('tool-allowlist') });
+    });
+
+    it('keeps a skills-only persona decision unchanged', async () => {
+      const services = { ...deps(), provider: new CursorProvider() };
+      const input = { config: config(), profile: 'cursor' as const, projectId: 'p1', scope: 'local' as const, mode: 'interactive' as const };
+      const a = await preflightTerminalExecution({ ...input, idempotencyKey: 's1', persona: { ...noMcp, skills: ['x'] } }, services);
+      const b = await preflightTerminalExecution({ ...input, idempotencyKey: 's2', persona: noMcp }, services);
+      expect(a).toEqual(b);
+    });
   });
 
   it('preserves legacy Team persona facets without weakening explicit routing evidence', async () => {

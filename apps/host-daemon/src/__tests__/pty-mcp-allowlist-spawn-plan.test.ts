@@ -385,6 +385,28 @@ describe('PtyManager.create: persona MCP allowlist for Codex and OpenCode', () =
       expect(ev[0]!.warnings[0]!.message).toContain('remote');
     });
 
+    it.each(['cursor', 'grok', 'pi'] as const)('%s ignores an empty or listed allowlist with a notice and still launches', (profile) => {
+      for (const list of [[], ['usrA']]) {
+        const m = mgr();
+        const ev = events(m);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const before = spawned.length;
+        create(m, profile, { persona: persona(list) });
+        expect(spawned).toHaveLength(before + 1);
+        expect(ev[0]!.warnings.map((w) => w.code)).toEqual(['mcp-allowlist-ignored']);
+      }
+    });
+
+    it.each(['codex', 'opencode'] as const)('a remote %s session ignores the list with a notice and still launches', (profile) => {
+      const m = mgr();
+      const ev = events(m);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      create(m, profile, { persona: persona([]), remote: { host: 'devbox', remotePath: '/work/p1' } });
+      expect(spawned).toHaveLength(1);
+      expect(ev[0]!.warnings.map((w) => w.code)).toEqual(['mcp-allowlist-ignored']);
+      expect(ev[0]!.warnings[0]!.message).toContain('remote');
+    });
+
     it('a remote session with no allowlist is silent', () => {
       const m = mgr();
       const ev = events(m);

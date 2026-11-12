@@ -11,7 +11,8 @@ vi.mock('node-pty', () => ({
 }));
 vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProjectSync: () => '/tmp/proj1/.mcp.json',
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [],
+  sessionPluginMcpServers: () => []
 }));
 vi.mock('@zana-ai/zcc-host-daemon/tmux', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
