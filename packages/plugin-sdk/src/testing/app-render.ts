@@ -41,6 +41,7 @@ export type NavigateCall =
   | { method: 'openPanelAgent'; options: ZccPanelAgentOptions }
   | { method: 'openPanelTool'; options: ZccPanelToolOptions }
   | { method: 'setPanelScope'; scope: ZccPanelScope | null }
+  | { method: 'setPageContext'; context: import('../app-contract.js').ZccPageContext | null }
   | { method: 'openInWindow'; projectId: string; options?: { tabId?: string; resourceId?: string } };
 
 export interface RenderSlotOptions {
@@ -207,6 +208,9 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     },
     setPanelScope(scope) {
       navigateCalls.push({ method: 'setPanelScope', scope });
+    },
+    setPageContext(context) {
+      navigateCalls.push({ method: 'setPageContext', context });
     },
     openInWindow(projectId, windowOptions) {
       navigateCalls.push({

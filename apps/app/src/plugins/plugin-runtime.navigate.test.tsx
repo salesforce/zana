@@ -20,7 +20,7 @@ import { installPluginRuntime } from './plugin-runtime.js';
 import { PluginRuntimeContext } from './PluginSlotBoundary.js';
 import { onPluginPanelAgentRequest } from './plugin-panel-agent.js';
 import { parsePanelAgentTarget } from './plugin-panel-agent.js';
-import { onPluginPanelToolRequest, PluginPagePanelProvider } from './plugin-page-panel.js';
+import { getPluginPageContext, onPluginPanelToolRequest, PluginPagePanelProvider } from './plugin-page-panel.js';
 
 afterEach(cleanup);
 
@@ -51,6 +51,23 @@ function renderNavigate(pluginId: string): ZccNavigate {
 }
 
 describe('navigate.openPanelAgent', () => {
+  it('publishes current page context only for the enclosing plugin page', () => {
+    const page = { pluginId: 'notes', page: 'main' };
+    const beside = (children: ReactNode) => <PluginPagePanelProvider page={page}>{children}</PluginPagePanelProvider>;
+    const context = { title: 'Current document', resourceId: 'doc-a', mention: { providerId: 'doc', itemId: 'doc-a' } };
+    const owner = renderRuntime('notes', beside).navigate;
+    owner.setPageContext?.(context);
+    expect(getPluginPageContext(page)).toEqual(context);
+    cleanup();
+    renderRuntime('other', beside).navigate.setPageContext?.({ title: 'Wrong plugin' });
+    expect(getPluginPageContext(page)).toEqual(context);
+    owner.setPageContext?.(null);
+    expect(getPluginPageContext(page)).toBeNull();
+    cleanup();
+    renderNavigate('notes').setPageContext?.({ title: 'No enclosing page' });
+    expect(getPluginPageContext(page)).toBeNull();
+  });
+
   it('accepts bounded selection snapshots and drops malformed metadata', () => {
     const selection = { version: 1, path: 'README.md', text: 'Selected passage' };
     expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection } })).toEqual({ draft: 'Explain', selection });

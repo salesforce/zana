@@ -1,6 +1,7 @@
 import { registerThreadContextControls, notifyThreadSubmitted } from '../plugins/thread-context-target.js';
+import { usePluginAssistantPageContext } from '../plugins/plugin-assistant-context.js';
 import { z } from 'zod';
-import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
+import { promptInputSchema, type PluginPageContext, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowUp, Laptop, Loader2, Minimize2, Paperclip, Square } from 'lucide-react';
@@ -137,6 +138,12 @@ export function ThreadCommandComposer(props: ThreadCommandComposerProps) {
   return <ComposerDraftProvider sessionKey={sessionKey}><ThreadComposerContent key={sessionKey} {...props} /></ComposerDraftProvider>;
 }
 
+/** Starting resource metadata is fixed once; current-page context changes per message. */
+function panelAtSubmission(panel: ThreadCommandComposerProps['pluginPanel'], context?: PluginPageContext) {
+  if (!panel || panel.view || context?.pluginId !== panel.pluginId || !context.page?.resourceId) return panel;
+  return { ...panel, view: context.page.resourceId };
+}
+
 function ThreadComposerContent({
   project: pinnedProject,
   initialHostId,
@@ -168,6 +175,7 @@ function ThreadComposerContent({
   onPlanActionPending,
   onPlanActionHandled
 }: ThreadCommandComposerProps) {
+  const capturePageContext = usePluginAssistantPageContext();
   const session = useComposerSession(threadId ? JSON.stringify(['thread', threadId]) : undefined);
   const compact = useCompactLayout();
   const navigate = useNavigate();
@@ -624,6 +632,7 @@ function ThreadComposerContent({
     if (options.selectionError) { setError(options.selectionError); return; }
     const revision = field.captureRevision();
     const snapshot = field.serialize();
+    const pageContext = capturePageContext?.();
     const images = [...field.images];
     const attachments = [...field.restoredAttachments];
     const selected = pinnedProject ?? projects.find(row => row.id === projectId);
@@ -637,6 +646,7 @@ function ThreadComposerContent({
         const input = [{type:'text' as const, text, mentions:applied.mentions, ...(applied.references ? {references:applied.references} : {})}, ...attachments, ...paths.map(path => ({type:'localImage' as const, path}))];
         if (threadId) {
           await product.threads.send(threadId, input, resolveThreadSendMode({pickerMode:composerSendMode, modifierEnter:false}), {
+            ...(pageContext ? { pageContext } : {}),
             permissionMode, serviceTier, model:options.model, reasoningLevel:options.reasoningLevel,
             acpMode:selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
           });
@@ -645,7 +655,7 @@ function ThreadComposerContent({
           const created = await product.threads.create({projectId:selected!.id, providerId:resolvedProviderId!, input,
             hostId, environment:selected!.quickAgent && foreignHost ? {kind:'personal'} : workspace,
             cwd:foreignHost ? undefined : selected!.path, permissionMode, serviceTier, model:options.model, reasoningLevel:options.reasoningLevel,
-            acpMode:selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue, pluginPanel});
+            acpMode:selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue, pluginPanel: panelAtSubmission(pluginPanel, pageContext), ...(pageContext ? { pageContext } : {})});
           if (!created.ok) throw new Error(created.message ?? 'Could not send voice message');
           upsertThread(created.value);
           if (currentVoiceOwner.current === voiceOwner) {
@@ -670,6 +680,7 @@ function ThreadComposerContent({
     if (options.selectionError) { setError(options.selectionError); return; }
     if (field.typeaheadOpen && field.suggestions.length > 0) return;
     const serialized = field.serialize();
+    const pageContext = capturePageContext?.();
     const revision = field.captureRevision();
     if (parseComposerTerminalCommand(serialized.text)) {
       setBusy(true);
@@ -757,6 +768,7 @@ function ThreadComposerContent({
         if (sendMode !== 'queue-if-active') dispatchOptimisticUserMessage(threadId, text, imagePaths);
         try {
           await product.threads.send(threadId, input, sendMode, {
+            ...(pageContext ? { pageContext } : {}),
             permissionMode,
             serviceTier,
             model: options.model,
@@ -784,7 +796,8 @@ function ThreadComposerContent({
         model: options.model,
         reasoningLevel: options.reasoningLevel,
         acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue,
-        pluginPanel
+        pluginPanel: panelAtSubmission(pluginPanel, pageContext),
+        ...(pageContext ? { pageContext } : {})
       });
       if (!created.ok) {
         setError(created.message ?? 'Could not create thread');
@@ -807,6 +820,7 @@ function ThreadComposerContent({
       setUploadProgress(null);
     }
   }, [
+    capturePageContext,
     permissionSelectionError,
     composerModeError,
     busy,
@@ -828,6 +842,7 @@ function ThreadComposerContent({
     options.providers,
     permissionMode,
     pinnedProject,
+    pluginPanel,
     projectId,
     projects,
     resolvedProviderId,

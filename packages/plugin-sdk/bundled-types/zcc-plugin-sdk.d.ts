@@ -935,6 +935,15 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
   export type ZccPanelAgentOptions =
     | { threadId: string; title?: string }
     | { draft: { prompt: string; projectId?: string; view?: string; references?: readonly ContextReference[]; selection?: { version: 1; path: string; text: string; startLine?: number; endLine?: number } }; title?: string };
+  /** Lightweight identity beside an assistant; IDs and paths grant no access. */
+  export interface ZccPageContext {
+    title: string;
+    resourceId?: string;
+    path?: string;
+    view?: string;
+    /** Reference for a live server read with page_context_read when needed. */
+    mention?: { providerId: string; itemId: string };
+  }
   export interface ZccNavigate {
     toThread(threadId: string): void;
     toProject(projectId: string, options?: { tabId?: string; inMainWindow?: boolean }): void;
@@ -943,6 +952,10 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     supportsContextReferences?: true;
     addThreadContext?(reference: ContextReference): boolean;
     openPanelAgent(options: ZccPanelAgentOptions): boolean;
+    /** Update on navigation; clear with null on unmount. Each message retains
+     * identity/reference for queueing and retries; the agent fetches live content
+     * on demand with page_context_read through the owning plugin. */
+    setPageContext?(context: ZccPageContext | null): void;
   }
   export function useComposer(): PluginComposerApi;
   export function useZccNavigate(): ZccNavigate;

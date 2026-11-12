@@ -6,7 +6,18 @@ import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
+async function dismissTutorialHint(win: Page): Promise<void> {
+  const hint = win.getByRole('button', { name: 'Dismiss tutorial hint', exact: true });
+  await win.removeLocatorHandler(hint);
+  if (await hint.isVisible()) await hint.click();
+  // The discovery hint can arrive after the fixture's initial dismissal.
+  await win.addLocatorHandler(hint, async button => {
+    await button.click();
+  }, { times: 1 });
+}
+
 async function setUpDoc(win: Page, home: string, folder: string): Promise<{ docId: string; projectId: string }> {
+  await dismissTutorialHint(win);
   await win.setViewportSize({ width: 1440, height: 900 }).catch(() => undefined);
   const install = await win.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'design-docs' }));
   expect(install).toMatchObject({ ok: true });
@@ -16,7 +27,7 @@ async function setUpDoc(win: Page, home: string, folder: string): Promise<{ docI
 
   const projectPath = join(home, folder);
   mkdirSync(projectPath, { recursive: true });
-  return win.evaluate(async (path) => {
+  const created = await win.evaluate(async (path) => {
     const result = await window.cc.projects.add(path);
     if (!result.ok) throw new Error(result.message);
     const doc = await window.cc.pluginApps.callRpc('design-docs', 'create', {
@@ -26,6 +37,8 @@ async function setUpDoc(win: Page, home: string, folder: string): Promise<{ docI
     }) as { id: string };
     return { docId: doc.id, projectId: result.value.id };
   }, projectPath);
+  await dismissTutorialHint(win);
+  return created;
 }
 
 /** Ask agent → Review, check the prefilled panel composer, send; returns the started thread. */
@@ -33,6 +46,7 @@ async function askReviewAndSend(
   win: Page,
   { docId, panel, owner = panel, stayOn }: { docId: string; panel: string; owner?: string; stayOn: string }
 ): Promise<string> {
+  await dismissTutorialHint(win);
   await win.getByRole('button', { name: /Ask agent/ }).first().click();
   await win.getByRole('menuitem', { name: /^Review/ }).click();
 
@@ -118,6 +132,153 @@ test('Design Docs Ask agent opens the side panel composer from a project tab', a
   // The panel is the project tab's, kept per project; the draft names the doc.
   await askReviewAndSend(win, { docId, panel: 'design', owner: `design@${projectId}`, stayOn: tabPath });
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-project-agent.png'));
+});
+
+test('generic Design Docs panel follows the current page and snapshots queued context', async ({ app, home }) => {
+  test.setTimeout(120_000);
+  const win = app.window;
+  const { docId, projectId } = await setUpDoc(win, home, 'design-docs-current-page');
+  const firstContent = 'Canonical ALPHA-401 describes offline retries.';
+  const secondContent = 'Canonical BRAVO-902 describes release rollback.';
+  const laterContent = 'Canonical CHARLIE-803 was written after the message was queued.';
+  const secondTitle = 'Release rollback design';
+  const secondDocId = await win.evaluate(async ({ docId, projectId, firstContent, secondContent, secondTitle }) => {
+    const file = await window.cc.pluginApps.callRpc('design-docs', 'readFile', { doc: docId, path: 'README.md' }) as { revision: number };
+    await window.cc.pluginApps.callRpc('design-docs', 'writeFile', {
+      doc: docId, path: 'README.md', content: `# Offline retries\n\n${firstContent}\n`, baseRevision: file.revision
+    });
+    const next = await window.cc.pluginApps.callRpc('design-docs', 'create', {
+      title: secondTitle, projectId, template: 'blank'
+    }) as { id: string };
+    const nextFile = await window.cc.pluginApps.callRpc('design-docs', 'readFile', { doc: next.id, path: 'README.md' }) as { revision: number };
+    await window.cc.pluginApps.callRpc('design-docs', 'writeFile', {
+      doc: next.id, path: 'README.md', content: `# Release rollback\n\n${secondContent}\n`, baseRevision: nextFile.revision
+    });
+    return next.id;
+  }, { docId, projectId, firstContent, secondContent, secondTitle });
+
+  // Project tabs keep their document selection inside the plugin rather than in the URL.
+  const tabPath = `/projects/${encodeURIComponent(projectId)}/design-docs`;
+  await win.evaluate(path => {
+    history.pushState({}, '', path);
+    dispatchEvent(new PopStateEvent('popstate'));
+  }, tabPath);
+  await win.locator('.dd-doc-row').filter({ hasText: 'Panel agent doc' }).click();
+  await expect(win.locator('.dd-main')).toContainText(firstContent);
+  await win.getByTestId('plugin-panel-agent-show').click();
+  const composer = win.getByTestId('panel-agent-tab-composer');
+  const firstPrompt = 'What does this page describe?';
+  await composer.getByTestId('thread-command-input').fill(firstPrompt);
+  await expect(composer.getByTestId('thread-command-input')).toHaveText(firstPrompt);
+  await expect(composer.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  const createdResponse = win.waitForResponse(response =>
+    response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/threads');
+  await composer.getByTestId('thread-command-send').click();
+  const created = await (await createdResponse).json() as { thread: { id: string } };
+  const threadId = created.thread.id;
+  const binding = await win.evaluate(async id =>
+    (await fetch(`/api/v1/threads/${id}/plugin-metadata?pluginId=design-docs`)).json(), threadId);
+  expect(binding).toMatchObject({ panelAgent: { panel: 'design', view: docId } });
+  const chat = win.getByTestId('panel-agent-tab-chat');
+  const replies = chat.getByTestId('thread-assistant-text');
+  // Every message carries a small page identity and retrieval reference, without document content.
+  await expect(replies.nth(0)).toContainText(firstPrompt, { timeout: 30_000 });
+  await expect(replies.nth(0)).toContainText(docId);
+  await expect(replies.nth(0)).toContainText('Panel agent doc');
+  await expect(replies.nth(0)).toContainText('README.md');
+  await expect(replies.nth(0)).toContainText('page_context_read');
+  await expect(replies.nth(0)).toContainText('design-doc');
+  await expect(replies.nth(0)).not.toContainText(firstContent);
+  await expect.poll(() => win.evaluate(async id =>
+    ((await window.cc.pluginApps.callRpc('design-docs', 'get', { doc: id })) as { threads: Array<{ threadId: string }> })
+      .threads.map(row => row.threadId), docId)).toContain(threadId);
+  await expect.poll(() => win.evaluate(async id =>
+    (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, threadId)).toBe('idle');
+
+  // Continue the same conversation after selecting a different document.
+  await win.locator('.dd-doc-row').filter({ hasText: secondTitle }).click();
+  await expect(win.locator('.dd-main')).toContainText(secondContent);
+  const followUp = 'delay:15000 Explain the current page.';
+  await chat.getByTestId('thread-command-input').fill(followUp);
+  await chat.getByTestId('thread-command-send').click();
+  await expect(chat.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Queue');
+  const queuedPrompt = 'Check this page again on the next turn.';
+  await chat.getByTestId('thread-command-input').fill(queuedPrompt);
+  await chat.getByTestId('thread-command-send').click();
+  const queue = chat.getByTestId('thread-queued-messages');
+  await expect(queue.locator('.thread-queued-item-text')).toHaveText(queuedPrompt);
+  await expect(queue).not.toContainText(secondDocId);
+  await expect(queue).not.toContainText(secondContent);
+  const queued = await win.evaluate(async id =>
+    (await (await fetch(`/api/v1/threads/${id}/next-turn`)).json()).items as Array<{ text: string }>, threadId);
+  expect(queued.map(item => item.text)).toEqual([queuedPrompt]);
+  await queue.getByRole('button', { name: 'Edit queued message', exact: true }).click();
+  const queuedEditor = queue.getByRole('textbox', { name: 'Queued message text' });
+  await expect(queuedEditor).toHaveValue(queuedPrompt);
+  const editedQueuedPrompt = 'Explain the saved page reference in one sentence.';
+  await queuedEditor.fill(editedQueuedPrompt);
+
+  // Navigation cannot retarget a queued reference; content is fetched only when needed.
+  await win.evaluate(async ({ docId, laterContent }) => {
+    const file = await window.cc.pluginApps.callRpc('design-docs', 'readFile', { doc: docId, path: 'README.md' }) as { revision: number };
+    await window.cc.pluginApps.callRpc('design-docs', 'writeFile', {
+      doc: docId, path: 'README.md', content: laterContent, baseRevision: file.revision
+    });
+  }, { docId: secondDocId, laterContent });
+  await win.locator('.dd-doc-row').filter({ hasText: 'Panel agent doc' }).click();
+  await expect(win.locator('.dd-main')).toContainText(firstContent);
+  await expect(replies.nth(1)).toContainText(followUp, { timeout: 30_000 });
+  // Saving changes the user's words while retaining the original hidden B reference.
+  const savedResponse = win.waitForResponse(response =>
+    response.request().method() === 'PATCH' && new URL(response.url()).pathname.includes(`/threads/${threadId}/next-turn/`));
+  await queue.getByRole('button', { name: 'Save', exact: true }).click();
+  const saved = await savedResponse;
+  expect(saved.status()).toBe(200);
+  expect((await saved.json()).item.text).toBe(editedQueuedPrompt);
+  await expect(replies.nth(2)).toContainText(editedQueuedPrompt, { timeout: 30_000 });
+  await expect(replies.nth(2)).not.toContainText(queuedPrompt);
+  for (const reply of [replies.nth(1), replies.nth(2)]) {
+    await expect(reply).toContainText(secondDocId);
+    await expect(reply).toContainText(secondTitle);
+    await expect(reply).toContainText('README.md');
+    await expect(reply).toContainText('page_context_read');
+    await expect(reply).toContainText('design-doc');
+    await expect(reply).not.toContainText(secondContent);
+    await expect(reply).not.toContainText(firstContent);
+    await expect(reply).not.toContainText(laterContent);
+  }
+  expect(win.url()).toContain(tabPath);
+
+  // A plugin's internal Settings page must replace the last document context too.
+  await expect.poll(() => win.evaluate(async id =>
+    (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, threadId)).toBe('idle');
+  await win.getByTitle('Design Docs settings: peers and agent', { exact: true }).click();
+  await expect(win.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
+  const settingsPrompt = 'Explain the page I am looking at now.';
+  await chat.getByTestId('thread-command-input').fill(settingsPrompt);
+  await chat.getByTestId('thread-command-send').click();
+  const settingsReply = replies.nth(3);
+  await expect(settingsReply).toContainText(settingsPrompt, { timeout: 30_000 });
+  await expect(settingsReply).toContainText('Design Docs settings');
+  await expect(settingsReply).not.toContainText(docId);
+  await expect(settingsReply).not.toContainText(secondDocId);
+  await expect(settingsReply).not.toContainText(firstContent);
+  await expect(settingsReply).not.toContainText(secondContent);
+  await expect(settingsReply).not.toContainText(laterContent);
+
+  // The agent can read a saved reference on demand, receiving the current canonical content.
+  await expect.poll(() => win.evaluate(async id =>
+    (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, threadId)).toBe('idle');
+  const readArgs = Buffer.from(JSON.stringify({
+    pluginId: 'design-docs', providerId: 'design-doc', itemId: secondDocId
+  })).toString('base64url');
+  await chat.getByTestId('thread-command-input').fill(`report_tool_result call_tool:page_context_read tool_args:${readArgs}`);
+  await chat.getByTestId('thread-command-send').click();
+  const readReply = replies.nth(4);
+  await expect(readReply).toContainText('Tool called: page_context_read', { timeout: 30_000 });
+  await expect(readReply).toContainText(laterContent);
+  await expect(readReply).not.toContainText(firstContent);
+  await expect(readReply).not.toContainText(secondContent);
 });
 
 test('selected passages stay compact, inspectable and removable in a roomy Ask agent composer', async ({ app, home }, testInfo) => {

@@ -8,12 +8,13 @@ test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAK
 test('plugin pages share the rail, tabs, resizing and maximize layout across global and project views', async ({ app, home }, testInfo) => {
   test.setTimeout(180_000);
   const win = app.window;
+  await win.addLocatorHandler(win.getByRole('button', { name: 'Dismiss tutorial hint', exact: true }), async button => { await button.click(); });
   await win.setViewportSize({ width: 1440, height: 900 });
   const pages = [
-    ['pr-monitor', '/plugins/pr-monitor/main'],
-    ['design-docs', '/plugins/design-docs/design-docs'],
-    ['tasks', '/plugins/tasks/tasks'],
-    ['storage-retention', '/plugins/storage-retention/storage'],
+    ['pr-monitor', '/extensions/pages/pr-monitor/main'],
+    ['design-docs', '/extensions/pages/design-docs/design-docs'],
+    ['tasks', '/extensions/pages/tasks/tasks'],
+    ['storage-retention', '/extensions/pages/storage-retention/storage'],
     ['plugin-guide', '/extensions/pages/plugin-guide/plugin-guide']
   ];
   for (const [id] of [...pages, ['docs', '']]) {
@@ -29,7 +30,7 @@ test('plugin pages share the rail, tabs, resizing and maximize layout across glo
   }, path);
   const destinations = [
     ...pages.map(([, path]) => path),
-    '/plugins/docs/panel',
+    '/extensions/pages/docs/panel',
     `/projects/${projectId}/design-docs`,
     `/projects/${projectId}/library`
   ];

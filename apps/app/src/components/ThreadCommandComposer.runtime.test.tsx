@@ -13,6 +13,8 @@ import { composerSession, resetComposerSessions } from './composer/composer-sess
 import { ComposerDraftProvider } from './composer/ComposerDraft.js';
 import { Schema } from '@tiptap/pm/model';
 import { EditorState } from '@tiptap/pm/state';
+import { PluginAssistantPageContext } from '../plugins/plugin-assistant-context.js';
+import type { PluginPageContext } from '@zana-ai/zcc-domain/thread-runtime';
 
 const h = vi.hoisted(() => {
   const provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
@@ -264,6 +266,45 @@ describe('Modern composer catalogue scope', () => {
 });
 
 describe('Modern composer beside a plugin page', () => {
+  it('captures current context on initial and follow-up sends, before asynchronous uploads', async () => {
+    let current: PluginPageContext = { pluginId: 'notes', panel: 'main', page: { title: 'A', resourceId: 'a' } };
+    const capture = () => structuredClone(current);
+    let release!: (paths: string[]) => void;
+    h.images = [{ id: 'image', file: new File(['image'], 'image.png') }] as any;
+    h.persistImages.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const ui = (threadId?: string) => <PluginAssistantPageContext.Provider value={capture}>{composer({ threadId, pluginPanel: { pluginId: 'notes', panel: 'main' } })}</PluginAssistantPageContext.Provider>;
+    const view = render(ui(undefined));
+    fireEvent.click(screen.getByTestId('thread-command-send'));
+    await waitFor(() => expect(h.persistImages).toHaveBeenCalled());
+    current = { ...current, page: { title: 'B', resourceId: 'b' } };
+    await act(async () => { release([]); });
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ pluginPanel: { pluginId: 'notes', panel: 'main', view: 'a' }, pageContext: expect.objectContaining({ page: { title: 'A', resourceId: 'a' } }) })));
+    h.images = [];
+    view.rerender(ui('t1'));
+    fireEvent.click(screen.getByTestId('thread-command-send'));
+    await waitFor(() => expect(h.send).toHaveBeenCalledWith('t1', expect.any(Array), 'queue-if-active', expect.objectContaining({ pageContext: current })));
+  });
+
+  it('retains page context for voice transcription after navigation', async () => {
+    h.voice.state = 'recording';
+    let current: PluginPageContext = { pluginId: 'notes', panel: 'main', page: { title: 'A' } };
+    render(<PluginAssistantPageContext.Provider value={() => structuredClone(current)}>{composer()}</PluginAssistantPageContext.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Transcribe and send recording' }));
+    current = { ...current, page: { title: 'B' } };
+    await act(async () => { await h.frozenSend!('Explain it'); });
+    expect(h.send).toHaveBeenCalledWith('t1', expect.any(Array), 'queue-if-active', expect.objectContaining({ pageContext: expect.objectContaining({ page: { title: 'A' } }) }));
+  });
+
+  it('keeps an explicit initial task binding while voice captures the current page', async () => {
+    h.voice.state = 'recording'; h.threads = [];
+    let current: PluginPageContext = { pluginId: 'notes', panel: 'main', page: { title: 'B', resourceId: 'b' } };
+    const pluginPanel = { pluginId: 'notes', panel: 'main', view: 'task-a' };
+    render(<PluginAssistantPageContext.Provider value={() => structuredClone(current)}>{composer({ threadId: undefined, pluginPanel })}</PluginAssistantPageContext.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Transcribe and send recording' }));
+    current = { ...current, page: { title: 'C', resourceId: 'c' } };
+    await act(async () => { await h.frozenSend!('Explain it'); });
+    expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ pluginPanel, pageContext: expect.objectContaining({ page: { title: 'B', resourceId: 'b' } }) }));
+  });
   const pluginPanel = { pluginId: 'salesforce', panel: 'salesforce' };
 
   it('fixes the page project and run target, and drops Create plugin', async () => {
