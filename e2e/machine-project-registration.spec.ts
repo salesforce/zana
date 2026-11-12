@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync,
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { startGitDaemon, type GitDaemon } from './fixtures/git-daemon.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true } });
@@ -65,7 +66,7 @@ test('machine projects create, register aliases, clone, and retain registrations
     // Daemon invalidation -> server reconciliation -> viewer broadcast, without a manual refresh.
     await expect(machine.getByRole('button', { name: 'Open Live remote web', exact: true })).toBeVisible({ timeout: 30_000 });
     await machine.getByRole('button', { name: `Add project on ${machineName}`, exact: true }).click();
-    await win.screenshot({ path: testInfo.outputPath('machine-add-project.png') });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('machine-add-project.png'));
     await win.getByRole('menuitem', { name: 'New folder', exact: true }).click();
     const create = win.getByRole('region', { name: 'Create project folder', exact: true });
     await expect(create.getByRole('textbox', { name: 'Parent folder', exact: true })).toHaveValue(remoteHome);
@@ -105,7 +106,7 @@ test('machine projects create, register aliases, clone, and retain registrations
     const overview = win.getByRole('dialog', { name: machineName, exact: true });
     await expect(overview.getByText('Folder missing', { exact: true })).toBeVisible();
     await expect(overview.getByRole('status')).toContainText('Last synced');
-    await win.screenshot({ path: testInfo.outputPath('machine-folder-missing.png') });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('machine-folder-missing.png'));
     await stop();
     await expect.poll(async () => (await remote()).status).not.toBe('connected');
     await expect(overview.getByRole('status')).toContainText('Offline · showing saved projects');
@@ -122,6 +123,6 @@ test('machine projects create, register aliases, clone, and retain registrations
     expect(finalProjects.find((p: any) => p.path === existingFolder).id).toBe(existingId);
     expect(finalProjects.find((p: any) => p.id === created.id).path).toBe(folder);
     expect(new Set(finalProjects.map((p: any) => p.id)).size).toBe(finalProjects.length);
-    await win.screenshot({ path: testInfo.outputPath('machine-projects-reconnected.png') });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('machine-projects-reconnected.png'));
   } finally { await stop(); await git?.close(); }
 });
