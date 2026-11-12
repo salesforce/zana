@@ -1,0 +1,43 @@
+WEBVTT
+
+00:00:00.400 --> 00:00:03.400
+Zana · Your first Squad run
+
+00:00:04.100 --> 00:00:05.546
+Your first Squad run.
+
+00:00:06.500 --> 00:00:07.803
+The Research Squad.
+
+00:00:09.300 --> 00:00:10.849
+Launched in a few steps.
+
+00:00:14.302 --> 00:00:21.684
+Before you start, you need a Project open in Zana and one signed-in agent tool. Claude is the recommended choice.
+
+00:00:22.308 --> 00:00:25.774
+Click New agent, and under Launch mode, choose Squad.
+
+00:00:26.078 --> 00:00:32.338
+Pick Research Squad. It has two Low-tier investigators, a good fit for comparing options.
+
+00:00:32.638 --> 00:00:39.028
+Leave Squad planning on Infer plan from goal. You describe what you want, and the Orchestrator writes the plan.
+
+00:00:39.330 --> 00:00:48.495
+Describe the goal in plain words: what to look at, and what the report should contain. Be specific, and name the files or areas that matter.
+
+00:00:48.798 --> 00:00:56.817
+Goals hold up to 2,048 characters. Over that, Launch is disabled, so attach a plan or source instead.
+
+00:00:57.994 --> 00:01:02.474
+Check the Project, add a Title if you like, then press Launch squad.
+
+00:01:02.778 --> 00:01:09.267
+Zana checks the Squad's requirements first. If something is missing, it says what, and no workers start.
+
+00:01:09.568 --> 00:01:12.210
+A run takes as long as the plan needs.
+
+00:01:13.210 --> 00:01:15.448
+Next: watch a Squad run.

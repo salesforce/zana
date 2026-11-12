@@ -43,14 +43,14 @@ test('discovers a content-only video and plays, seeks, captions and saves it thr
   await page.getByTestId('titlebar-help-toggle').click();
   const menu = page.getByRole('dialog', { name: 'Help' });
   await menu.getByRole('button', { name: /^Getting started, / }).click();
-  const published = menu.getByRole('button', { name: 'Play Published without an app update, 0:30' });
+  const published = menu.getByRole('button', { name: 'Play Published without an app update, 0:34' });
   await expect(published).toBeVisible();
   await expect(menu.getByRole('button', { name: /Future only/ })).toHaveCount(0);
   await published.click();
   const player = page.getByTestId('help-video-player');
   await expect(player).toHaveAttribute('aria-label', 'Published without an app update');
   await expect.poll(() => player.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeGreaterThan(.2);
-  expect(await player.evaluate((node: HTMLVideoElement) => node.duration)).toBeCloseTo(30, 0);
+  expect(await player.evaluate((node: HTMLVideoElement) => node.duration)).toBeCloseTo(33.5, 0);
   expect(await player.evaluate((node: HTMLVideoElement) => node.error)).toBeNull();
   const src = await player.locator('source').getAttribute('src');
   const ranged = await page.request.get(new URL(src!, page.url()).href, { headers: { range: 'bytes=0-31' } });
@@ -71,7 +71,7 @@ test('discovers a content-only video and plays, seeks, captions and saves it thr
   await page.reload();
   await page.getByTestId('titlebar-help-toggle').click();
   await menu.getByRole('button', { name: /^Getting started, / }).click();
-  await page.getByRole('button', { name: 'Play Published without an app update, 0:30, watched' }).click();
+  await page.getByRole('button', { name: 'Play Published without an app update, 0:34, watched' }).click();
   await expect.poll(() => player.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeGreaterThan(.2);
   expect(contentRepo.requests.filter(path => path.endsWith('.mp4')).length).toBe(downloadsBefore);
 });
@@ -95,7 +95,7 @@ test('a browser without the Electron bridge uses the same catalogue and media en
     expect(await page.evaluate(() => 'cc' in window && window.cc != null)).toBe(false);
     await page.getByTestId('titlebar-help-toggle').click();
     await page.getByRole('button', { name: /^Getting started, / }).click();
-    await page.getByRole('button', { name: 'Play Published without an app update, 0:30' }).click();
+    await page.getByRole('button', { name: 'Play Published without an app update, 0:34' }).click();
     const player = page.getByTestId('help-video-player');
     await expect.poll(() => player.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeGreaterThan(.2);
     const track = await player.locator('track').getAttribute('src');
@@ -120,7 +120,7 @@ test('keeps a large category scrollable with release notes reachable and only on
   await expect(menu.getByRole('button', { name: 'Replay walkthrough' })).toBeInViewport();
   const scroller = menu.locator('.help-menu-categories');
   expect(await scroller.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
-  const lastClip = menu.getByRole('button', { name: 'Play Build your own Persona and Squad, 0:30' });
+  const lastClip = menu.getByRole('button', { name: 'Play Build your own Persona and Squad, 0:34' });
   await lastClip.scrollIntoViewIfNeeded();
   await expect(lastClip).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('help-squads-expanded.png') });

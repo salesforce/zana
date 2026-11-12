@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('next/link', () => ({
   default: ({ children, ...props }: ComponentProps<'a'>) => createElement('a', props, children)
 }));
-import { AgentArchitecture } from './AgentArchitecture';
+import { AgentArchitecture, PLUGIN_VIDEO } from './AgentArchitecture';
 import Home from '../page';
 
 describe('homepage agent architecture', () => {
@@ -35,6 +35,20 @@ describe('homepage agent architecture', () => {
       expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
       expect(svg).not.toMatch(/<script|https?:\/\/(?!www\.w3\.org)/);
     }
+  });
+
+  it('shows the plugins video with captions, a poster, and no automatic download', () => {
+    const doc = new DOMParser().parseFromString(renderToStaticMarkup(createElement(AgentArchitecture)), 'text/html');
+    const video = doc.querySelector('figure video')!;
+    expect(video.getAttribute('aria-label')).toMatch(/Built from plugins/);
+    expect(video.hasAttribute('controls')).toBe(true);
+    expect(video.hasAttribute('autoplay')).toBe(false);
+    expect(video.getAttribute('preload')).toBe('none');
+    expect(video.getAttribute('poster')).toBe(PLUGIN_VIDEO.poster);
+    expect(video.querySelector('source')?.getAttribute('src')).toBe(PLUGIN_VIDEO.src);
+    expect(video.querySelector('track[kind="captions"]')?.getAttribute('src')).toBe(PLUGIN_VIDEO.captions);
+    for (const asset of Object.values(PLUGIN_VIDEO)) expect(existsSync(join(__dirname, '../../public', asset))).toBe(true);
+    expect(doc.querySelector('figcaption a')?.getAttribute('href')).toBe('/extensions/getting-started/');
   });
 
   it('places the architecture between the tour and the plugin section on the main page', () => {

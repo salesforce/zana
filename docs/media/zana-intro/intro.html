@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- Standalone Zana intro, captured by render.mjs and prepended to a video by prepend.py.
+     ?w=1120&h=630      stage size in CSS px (the aspect ratio of the target video)
+     ?theme=light|dark  ?tagline=…&accent=…  (accent is drawn with the gradient)
+     ?bg=<file url>     the video's first frame, revealed as the intro zooms through -->
+<html><head><meta charset="utf-8"><title>Zana intro</title>
+<style>
+  html, body { margin:0; background:#000; }
+  .stage { position:relative; overflow:hidden; background:#0d1424; }
+  .stage > img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+</style></head>
+<body>
+<div class="stage" id="stage"></div>
+<script src="zana-intro.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const stage = document.getElementById('stage');
+  stage.style.width = (+q.get('w') || 1120) + 'px';
+  stage.style.height = (+q.get('h') || 630) + 'px';
+  if (q.get('bg')) { const img = new Image(); img.src = q.get('bg'); stage.appendChild(img); }
+  const intro = ZanaIntro.mount(stage, { theme: q.get('theme') || 'dark', tagline: q.get('tagline') ?? 'Built from plugins.', accent: q.get('accent') ?? 'Including yours.' });
+  window.render = (t) => intro.render(t);
+  window.__seek = () => {};
+  // Preview in a browser: plays on load, click to replay.
+  if (!navigator.webdriver) {
+    let t0 = performance.now();
+    stage.onclick = () => { t0 = performance.now(); };
+    const tick = () => { intro.render(Math.min(((performance.now() - t0) / 1000), ZanaIntro.DURATION - 0.001)); requestAnimationFrame(tick); };
+    tick();
+  }
+</script>
+</body></html>
