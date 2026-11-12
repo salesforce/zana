@@ -18,13 +18,22 @@
  * `registerMcpServer`.
  */
 
-import { join, basename } from 'node:path';
+import { join, basename, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
-import { mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync, rmSync, statSync, readFileSync } from 'node:fs';
 import { mcpAllowlistCovers, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { rewritePluginMcpArgs } from '@zana-ai/zcc-host-workspace';
 import { resolveZccDataDir } from './host-config.js';
+import {
+  MAX_GLOBAL_CONFIG_BYTES,
+  filterMcpServersByAllowlist,
+  mcpAllowlistWarnings,
+  sanitizeMcpServers,
+  sourceGlobalConfig,
+  type McpLaunchWarning
+} from './harness/claude/automated-isolation.js';
 
 function mcpConfigDir(): string {
   return join(resolveZccDataDir(), 'mcp');
@@ -367,41 +376,105 @@ export function ensureMcpConfigForProjectSync(
   return target;
 }
 
+/**
+ * Allowlist entries a registered plugin/extension server answers to (a bare
+ * name covers both). They reach the session from the registry, not from the
+ * user's Claude config, so they are never reported as missing there.
+ */
+export function externallyProvidedAllowlistEntries(allowlist: readonly string[]): string[] {
+  const refs = registeredMcpServerKeys().map(serverRef);
+  return allowlist.filter((entry) => refs.some((ref) => mcpAllowlistCovers(entry, ref)));
+}
+
 const SESSION_FILE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
-/** Path of the per-session allowlist-mode `.mcp.json`; ids are validated (never path-joined raw). */
-export function sessionMcpConfigPath(projectId: string, sessionId: string): string {
-  if (!SESSION_FILE_ID_RE.test(projectId) || !SESSION_FILE_ID_RE.test(sessionId)) {
-    throw new Error('invalid projectId or sessionId for MCP session config');
+/**
+ * Path of a session's private MCP config inside `dir` (the PTY manager's
+ * `<os tmpdir>/zcc-session-mcp`, the same convention as the OpenCode session
+ * file). The PTY session id is unique per launch, so concurrent sessions never
+ * share a path. The id is validated, never path-joined raw.
+ */
+export function sessionMcpConfigPath(dir: string, sessionId: string): string {
+  if (!SESSION_FILE_ID_RE.test(sessionId)) throw new Error('invalid sessionId for MCP session config');
+  return join(dir, `${sessionId}.json`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** `mcpServers` of a bounded JSON object file; empty on any read, parse or size problem. */
+function readMcpServersFile(file: string): Record<string, unknown> {
+  try {
+    if (statSync(file).size > MAX_GLOBAL_CONFIG_BYTES) return {};
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    return isRecord(parsed) && isRecord(parsed.mcpServers) ? parsed.mcpServers : {};
+  } catch {
+    return {};
   }
-  return join(mcpConfigDir(), 'sessions', `${projectId}.${sessionId}.json`);
+}
+
+export interface SessionMcpConfigInput {
+  /** Directory that holds per-session launch files. */
+  dir: string;
+  sessionId: string;
+  /** Effective persona allowlist (an array; the unset case never reaches this builder). */
+  allowlist: readonly string[];
+  /** Launch cwd; its `.mcp.json` contributes project-scope definitions. */
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface SessionMcpConfigResult {
+  path: string;
+  warnings: McpLaunchWarning[];
 }
 
 /**
- * Allowlist-mode writer: a private (0600) per-session `.mcp.json` so two
- * sessions of one project with different allowlists never overwrite each
- * other. Atomic (tmp + uniquely-suffixed rename). Used only when a persona
- * carries an `mcpServers` list; unset personas keep the shared per-project file.
+ * Claude strict mode loads exactly the servers its `--mcp-config` file names, so
+ * an allowlisted interactive launch needs the user and project definitions in
+ * that file (D12). They come from the host-side Claude config
+ * (`CLAUDE_CONFIG_DIR`-aware) and `<cwd>/.mcp.json` through the SAME sanitizer
+ * as the isolated seed (env, headers, oauth and auth stripped), keep only
+ * allowlisted names, and are written beside `zcc-inbox` and the allowlisted
+ * plugin/extension registry entries (which are Zana-managed and unchanged).
+ * A user server beats a project server of the same name; a registry key beats
+ * both (reserved prefixes are dropped by the sanitizer). Warnings name every
+ * allowlisted server that is missing, unsafe or lost credential fields.
+ * Atomic (tmp + uniquely-suffixed rename), mode 0600.
  */
-export function ensureSessionMcpConfigSync(projectId: string, sessionId: string, allowlist: string[]): string {
-  const target = sessionMcpConfigPath(projectId, sessionId);
-  mkdirSync(join(mcpConfigDir(), 'sessions'), { recursive: true });
+export function prepareSessionMcpConfig(input: SessionMcpConfigInput): SessionMcpConfigResult {
+  const env = input.env ?? process.env;
+  const target = sessionMcpConfigPath(input.dir, input.sessionId);
+  const claudeDir = env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude');
+  const userRaw = readMcpServersFile(sourceGlobalConfig(claudeDir, env, false));
+  const projectRaw = input.cwd ? readMcpServersFile(join(resolve(input.cwd), '.mcp.json')) : {};
+  // fromEntries defines own properties (a `__proto__` name stays plain data); later entries win, so user beats project.
+  const rawServers: Record<string, unknown> = Object.fromEntries([
+    ...Object.entries(projectRaw),
+    ...Object.entries(userRaw)
+  ]);
+  const sanitized = sanitizeMcpServers(rawServers);
+  const kept = filterMcpServersByAllowlist(sanitized, input.allowlist) ?? {};
+  const registryEntries = selectedServerEntries([...input.allowlist]);
+  // Entries a registry server answers to (e.g. a bare name covering a plugin server) are delivered by the registry.
+  const externallyProvided = externallyProvidedAllowlistEntries(input.allowlist);
+  const warnings = mcpAllowlistWarnings(input.allowlist, rawServers, sanitized, externallyProvided);
+
+  const servers = new Map<string, unknown>(Object.entries(kept));
+  for (const [name, def] of registryEntries) servers.set(name, def);
+  // zcc-inbox is delivered by this file and cannot be shadowed by a same-named user server.
+  servers.set('zcc-inbox', { type: 'streamable-http', url: '${ZCC_MCP_URL}' });
+  const body = JSON.stringify({ mcpServers: Object.fromEntries(servers) }, null, 2) + '\n';
+
+  mkdirSync(input.dir, { recursive: true });
   const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`;
   try {
-    writeFileSync(tmp, configBody(allowlist), { encoding: 'utf-8', mode: 0o600 });
+    writeFileSync(tmp, body, { encoding: 'utf-8', mode: 0o600 });
     renameSync(tmp, target);
   } catch (err) {
     rmSync(tmp, { force: true });
     throw err;
   }
-  return target;
-}
-
-/** Remove a session's config on its shutdown path. Best-effort; never throws. */
-export function removeSessionMcpConfig(projectId: string, sessionId: string): void {
-  try {
-    rmSync(sessionMcpConfigPath(projectId, sessionId), { force: true });
-  } catch {
-    /* already gone or invalid ids */
-  }
+  return { path: target, warnings };
 }

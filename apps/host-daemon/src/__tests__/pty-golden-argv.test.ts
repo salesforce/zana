@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 
 // Automated launches create a per-run Claude config dir under the Zana data dir;
@@ -74,11 +74,20 @@ vi.mock('node-pty', () => ({
 }));
 
 // Deterministic MCP config path so the snapshot doesn't depend on ~/.zcc.
-vi.mock('../mcp-config.js', () => ({
-  ensureMcpConfigForProjectSync: (id: string, extra?: string[]) =>
-    `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`,
-  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
-}));
+vi.mock('../mcp-config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../mcp-config.js')>();
+  return {
+    ensureMcpConfigForProjectSync: (id: string, extra?: string[]) =>
+      `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`,
+    alwaysOnPluginMcpAllowlist: () => [],
+    sessionPluginMcpServers: () => [],
+    // Allowlist launches use the REAL builder against an empty Claude config so the
+    // written file (zcc-inbox presence, AC-14d) is asserted, not stubbed.
+    externallyProvidedAllowlistEntries: actual.externallyProvidedAllowlistEntries,
+    prepareSessionMcpConfig: (input: Parameters<typeof actual.prepareSessionMcpConfig>[0]) =>
+      actual.prepareSessionMcpConfig({ ...input, env: { CLAUDE_CONFIG_DIR: goldenDataDir } as NodeJS.ProcessEnv })
+  };
+});
 
 // tmux never wraps in tests (keep the bare argv), regardless of the host.
 vi.mock('../tmux.js', () => ({
@@ -803,5 +812,77 @@ describe('inherited parent-session callback env', () => {
       expect(call.command).toBe('ssh');
       for (const key of Object.keys(AMBIENT)) expect(call.env[key], key).toBeUndefined();
     });
+  });
+});
+
+describe('golden argv: persona MCP allowlist on Claude interactive (D9, AC-14d)', () => {
+  type SkillCase = 'none' | 'restricted' | 'lean';
+  const SKILLS: Record<SkillCase, { skillOverrides?: Record<string, 'off'>; strictMcp?: true } | undefined> = {
+    none: undefined,
+    restricted: { skillOverrides: { drop: 'off' } },
+    lean: { strictMcp: true }
+  };
+
+  const launch = (mcpServers: string[] | undefined, skills: SkillCase) => {
+    spawns.length = 0;
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: BASE_CONFIG,
+      persona: { id: 'persona-1', name: 'P', ...(mcpServers ? { mcpServers } : {}) },
+      ...(SKILLS[skills] ? { skillSettings: SKILLS[skills] } : {})
+    });
+    const args = spawns[0]!.args as string[];
+    const file = args[args.indexOf('--mcp-config') + 1]!;
+    return { args, file, strictCount: args.filter((a) => a === '--strict-mcp-config').length };
+  };
+  const written = (file: string) => Object.keys(JSON.parse(readFileSync(file, 'utf8')).mcpServers as object);
+
+  it.each([
+    ['none', 0],
+    ['restricted', 0],
+    ['lean', 1]
+  ] as const)('unset MCP list, skills %s: shared per-project file, strict only for lean', (skills, strict) => {
+    const { file, strictCount } = launch(undefined, skills);
+    expect(file).toBe('/tmp/proj1/.mcp.json');
+    expect(strictCount).toBe(strict);
+  });
+
+  it.each([['none'], ['restricted'], ['lean']] as const)(
+    'empty list, skills %s: one strict flag, per-session file holds only zcc-inbox',
+    (skills) => {
+      const { file, strictCount } = launch([], skills);
+      expect(strictCount).toBe(1);
+      expect(file).toMatch(/zcc-session-mcp\/[0-9a-f-]{36}\.json$/);
+      expect(written(file)).toEqual(['zcc-inbox']);
+    }
+  );
+
+  it.each([['none'], ['restricted'], ['lean']] as const)(
+    'listed servers, skills %s: strict flag once, zcc-inbox survives beside the registry entries',
+    (skills) => {
+      const { file, strictCount } = launch(['plugin:absent:server'], skills);
+      expect(strictCount).toBe(1);
+      expect(written(file)).toContain('zcc-inbox');
+    }
+  );
+
+  it('argv with a set list differs from the unset argv only by the file path and the strict flag', () => {
+    const unset = launch(undefined, 'restricted');
+    const listed = launch([], 'restricted');
+    const strip = (a: string[], file: string) => a.filter((x) => x !== file && x !== '--strict-mcp-config');
+    expect(strip(listed.args, listed.file).map((x) => x.replace(UUID_RE, '<UUID>'))).toEqual(
+      strip(unset.args, unset.file).map((x) => x.replace(UUID_RE, '<UUID>'))
+    );
+  });
+
+  it('AC-14d: the always-allowed constant is pinned to zcc-inbox', async () => {
+    const { ALWAYS_ALLOWED_MCP_SERVERS } = await import('@zana-ai/zcc-domain/product');
+    expect([...ALWAYS_ALLOWED_MCP_SERVERS]).toEqual(['zcc-inbox']);
   });
 });
