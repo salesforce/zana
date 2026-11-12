@@ -23,6 +23,7 @@ import {
   prepareSessionMcpConfig,
   sessionPluginMcpServers
 } from './mcp-config.js';
+import { allowlistIgnoredWarning, planUserMcpDisable } from './mcp-allowlist-disable.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { assertWindowsCommandLineFits, windowsDirectLaunch } from './harness/windows-command.js';
@@ -1718,9 +1719,42 @@ export class PtyManager extends EventEmitter {
     const seatGuidanceText = seat?.foldIntoGuidance
       ? [composedGuidanceText, seat.instructionsText].filter((part) => part.length > 0).join('\n\n')
       : composedGuidanceText;
+    // Persona MCP allowlist on a harness that is not the Claude CLI. Zana's own servers
+    // (zcc-inbox + the persona-selected plugin servers) follow the allowlist through
+    // sessionPluginMcpServers; the harness's own user/project servers are disabled by
+    // name (no clear-all exists, and nothing is materialised: names only). A harness
+    // that cannot do that ignores the list with a notice, never a block (D7).
+    const sessionServers = sessionPluginMcpServers(opts.persona?.mcpServers);
+    let disabledUserServers: string[] = [];
+    if (personaMcpAllowlist && !caps.injectsClaudeMcpConfig) {
+      const enumeration = provider.enumerateUserMcpServers({ cwd: opts.cwd, env: process.env });
+      if (!enumeration) {
+        launchWarnings.push(allowlistIgnoredWarning('this harness cannot apply an MCP server allowlist'));
+      } else if (!mcpServerUrl) {
+        launchWarnings.push(allowlistIgnoredWarning('the MCP server was not available at launch'));
+      } else {
+        const plan = planUserMcpDisable({
+          allowlist: personaMcpAllowlist,
+          enumeration,
+          injectedNames: new Set(sessionServers.map((server) => server.name)),
+          externallyProvided: externallyProvidedAllowlistEntries(personaMcpAllowlist)
+        });
+        disabledUserServers = plan.disabled;
+        launchWarnings.push(...plan.warnings);
+      }
+    }
     const providerIntegration = provider.integration.configure({
       profile: effectiveProfile,
-      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl, servers: sessionPluginMcpServers(opts.persona?.mcpServers) }, guidance: seatGuidanceText } : {}),
+      ...(mcpServerUrl
+        ? {
+            mcp: {
+              url: mcpServerUrl,
+              servers: sessionServers,
+              ...(disabledUserServers.length > 0 ? { disabledServers: disabledUserServers } : {})
+            },
+            guidance: seatGuidanceText
+          }
+        : {}),
       ...(seat?.instructionsFile ? { instructionsFile: seat.instructionsFile } : {}),
       ...(providerHookBase || providerHookUrls.nativeTool ? {
         lifecycle: {
@@ -1792,6 +1826,15 @@ export class PtyManager extends EventEmitter {
             : providerIntegration.mcpConfigFile.contents)
         )
       : null;
+    // A file-channel harness delivers the disables through that file; losing it would
+    // silently load every excluded server, so refuse (the Claude interactive rule).
+    if (disabledUserServers.length > 0 && providerIntegration.mcpConfigFile && !mcpConfigFilePath) {
+      this.releaseSessionLaunchFiles(sessionId);
+      throw new SpawnRefusedError(
+        'mcp-allowlist-unavailable',
+        'persona MCP allowlist could not be applied: the per-session MCP config could not be written'
+      );
+    }
     // The gate only governs the session if the config naming it landed.
     const nativeToolGateWired = Boolean(nativeToolGatePath && mcpConfigFilePath);
     if (provider.nativeToolGateViaConfigFile && !nativeToolGateWired && nativeToolPolicyRequired) {
@@ -3386,6 +3429,14 @@ export class PtyManager extends EventEmitter {
         }
       : undefined;
     this.bindRemoteProc(session, proc, reattach, remoteReap);
+    // A remote box resolves its MCP servers on its own machine and the remote path carries
+    // at most an inline zcc-inbox (never a strict or per-session file), so a persona MCP
+    // allowlist cannot be delivered: ignore it with a visible notice, never block (D7).
+    if (opts.persona?.mcpServers !== undefined) {
+      this.surfaceLaunchWarnings(session, opts.persona.id, [
+        allowlistIgnoredWarning('remote (SSH) sessions cannot apply an MCP server allowlist')
+      ]);
+    }
     if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
       this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc, providerFor(session.profile).stdinReadyMarker);
     }

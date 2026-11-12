@@ -39,7 +39,8 @@ import type {
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch,
-  SquadSeatCapability
+  SquadSeatCapability,
+  UserMcpEnumeration
 } from './launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
@@ -77,14 +78,14 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
         ? this.authInjection(profile as LaunchProfileId, auth)
         : {};
       return {
-        mcpArgs: mcp ? this.mcpArgs(profile as LaunchProfileId, mcp.url, mcp.servers) : [],
+        mcpArgs: mcp ? this.mcpArgs(profile as LaunchProfileId, mcp.url, mcp.servers, mcp.disabledServers) : [],
         guidanceArgs: mcp && guidance ? this.guidanceArgs(profile as LaunchProfileId, guidance) : [],
         hookArgs: lifecycle ? this.hookArgs(profile as LaunchProfileId, hookUrls) : [],
         authArgs: injection.args ?? [],
         authEnv: injection.env,
         mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url, mcp.servers, instructionsFile) : {},
         mcpConfigFile: mcp
-          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url, mcp.servers, instructionsFile) ?? undefined)
+          ? (this.mcpConfigFile(profile as LaunchProfileId, mcp.url, mcp.servers, instructionsFile, mcp.disabledServers) ?? undefined)
           : undefined
       };
     }
@@ -142,8 +143,18 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    * ARGS (codex). Claude uses the launcher-owned file paths; cursor/shell have
    * no such surface. See the interface doc for the full rationale.
    */
-  mcpArgs(_profile: LaunchProfileId, _mcpUrl: string, _servers?: readonly HarnessMcpServer[]): string[] {
+  mcpArgs(
+    _profile: LaunchProfileId,
+    _mcpUrl: string,
+    _servers?: readonly HarnessMcpServer[],
+    _disabledServers?: readonly string[]
+  ): string[] {
     return [];
+  }
+
+  /** No user-config MCP enumeration by default: the harness cannot apply a persona MCP allowlist (D7). */
+  enumerateUserMcpServers(_input: { cwd: string; env: NodeJS.ProcessEnv }): UserMcpEnumeration | null {
+    return null;
   }
 
   mcpApprovalArgs(_profile: LaunchProfileId, _approval: McpToolApproval): string[] {
@@ -178,7 +189,8 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     _profile: LaunchProfileId,
     _mcpUrl: string,
     _servers?: readonly HarnessMcpServer[],
-    _instructionsFile?: string
+    _instructionsFile?: string,
+    _disabledServers?: readonly string[]
   ): { envVar: string; contents: string } | null {
     return null;
   }

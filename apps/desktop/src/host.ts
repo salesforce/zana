@@ -4661,6 +4661,35 @@ export async function resolveCliSkillSettings(input: {
 }
 
 /**
+ * Durable routing for the PTY layer's `launchWarning` event (persona MCP
+ * allowlist notices: ignored on a harness or SSH host that cannot apply it,
+ * allowlisted server not found, servers that could not be disabled). The
+ * terminal banner is transient, so each event also lands in the inbox, deduped
+ * per project, persona and warning set (the `resolveCliSkillSettings` pattern).
+ * Warnings carry names and reasons only, never a credential. Subscribed once at
+ * app init in `wireBridgeListeners`, never in `createWindow`.
+ */
+export function routeLaunchWarningToInbox(event: {
+  projectId: string;
+  personaId?: string;
+  warnings: ReadonlyArray<{ code: string; message: string; server?: string }>;
+}): void {
+  if (event.warnings.length === 0) return;
+  const project = store.listProjects().find((candidate) => candidate.id === event.projectId);
+  const persona = event.personaId ? personas.list().find((candidate) => candidate.id === event.personaId) : undefined;
+  const fingerprint = event.warnings.map((warning) => `${warning.code}:${warning.server ?? ''}`).sort().join(',');
+  void inboxStore
+    .append({
+      projectId: event.projectId,
+      projectLabel: project?.name ?? event.projectId,
+      subject: 'MCP server allowlist not fully applied',
+      comments: `${persona ? `Persona "${persona.name}": ` : ''}${event.warnings.map((warning) => warning.message).join(' ')}`,
+      dedupeKey: `mcp-allowlist-launch:${event.projectId}:${event.personaId ?? 'none'}:${fingerprint}`
+    })
+    .catch((err) => logMainError('mcp allowlist launch warning inbox', err));
+}
+
+/**
  * Spawn a terminal with the cwd confined to its project (CLAUDE.md #2). Shared
  * by the `terminals:create` IPC handler AND the CLI control plane so there is
  * exactly ONE copy of the confinement gate — a renderer- or CLI-supplied `cwd`
@@ -8494,6 +8523,7 @@ function wireBridgeListeners() {
       }
     }
   });
+  ptys.on('launchWarning', routeLaunchWarningToInbox);
   ptys.on('exit', (sessionId: string, code: number, signal?: number | null, reason?: string | null) => {
     safeSend(IPC.terminals.onExit, sessionId, code);
     ptyLifecycle.exited(sessionId, code, signal);
