@@ -1,11 +1,15 @@
 import { test, expect } from './fixtures/app.js';
 
+test.use({ initialConfig: { companionEnabled: true } });
+
 test('the shell keeps its sidebar trigger and history controls in Electron title-bar chrome', async ({ app }) => {
   const { window } = app;
   const sidebar = window.locator('aside.sidebar').first();
   const sidebarTrigger = window.getByTestId('sidebar-trigger-overlay');
 
   await expect(sidebar).toBeVisible();
+  await expect(sidebar.getByRole('button', { name: 'Minimize to Command Center' })).toHaveCount(0);
+  await expect(sidebar.getByRole('link', { name: 'Remote access' })).toBeVisible();
   await expect(sidebarTrigger).toBeVisible();
   const historyControls = window.getByTestId('sidebar-history-controls');
   await expect(historyControls).toBeVisible();

@@ -14,12 +14,9 @@ import {
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Link } from 'react-router-dom';
-import { Bug, Ellipsis, PanelRightClose, Smartphone, Settings } from 'lucide-react';
+import { Bug, Ellipsis, Smartphone, Settings } from 'lucide-react';
 import { openBugReport } from '../lib/report-bug.js';
-import { useData, useUi } from '../store.js';
-import { hasDesktopBridge } from '../lib/app-surface.js';
-import { isMacShortcutPlatform } from '../lib/platformShortcut.js';
-import { product } from '../lib/product-client.js';
+import { useUi } from '../store.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
@@ -115,8 +112,6 @@ export function SidebarRail({
   };
   const { nav, settingsTab } = useRouteState();
   const routeMemory = useAppSettingsRouteMemory();
-  // Command Center is a macOS surface; main refuses `enter()` elsewhere anyway.
-  const companionEnabled = useData((s) => s.companionEnabled) && hasDesktopBridge() && isMacShortcutPlatform();
   const footerActions = useSyncExternalStore(
     subscribePluginSlots,
     listSidebarFooterActions,
@@ -318,17 +313,6 @@ export function SidebarRail({
         >
           <Smartphone size={18} aria-hidden="true" />
         </Link>
-        {companionEnabled && (
-          <button
-            type="button"
-            className="sidebar-utility-button"
-            aria-label="Minimize to Command Center"
-            title="Minimize to Command Center (⌘M)"
-            onClick={() => void product.companion.enter().catch((err) => console.error('[companion] enter:', err))}
-          >
-            <PanelRightClose size={18} aria-hidden="true" />
-          </button>
-        )}
         {footerActions.map((action) => {
           const Icon = resolveIcon(action.icon);
           const active = nav === action.pluginId;
