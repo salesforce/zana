@@ -19,11 +19,16 @@ import {
   requiredMcpUnavailableMessage,
   removeAutomatedConfigDir,
   sanitizeMcpServers,
+  filterMcpServersByAllowlist,
   isReservedMcpName,
   sweepStaleAutomatedConfigDirs
 } from '../automated-isolation.js';
+import { mcpAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import {
   createAutomatedConfigDir,
+  createAutomatedConfigDirWithWarnings,
+  filterMcpServersByAllowlist as bridgeFilter,
+  userMcpAllowlistCovers,
   sanitizeMcpServers as bridgeSanitizeMcpServers,
   isReservedMcpName as bridgeIsReservedMcpName
 } from '../../../../../../plugins/provider-claude-code/src/bridge/automated-config-dir.js';
@@ -427,5 +432,195 @@ describe('automated claude isolation', () => {
     } finally {
       rmSync(bridgeData, { recursive: true, force: true });
     }
+  });
+
+  describe('persona MCP allowlist (AC-13/15, D10, D12)', () => {
+    const CRED_FIELDS = ['env', 'headers', 'headersHelper', 'oauth', 'auth', 'authorization'];
+    const servers = {
+      alpha: { command: 'a' },
+      beta: { command: 'b' },
+      'zcc-inbox': { command: 'z' },
+      leaky: { command: 'x', args: ['--token=secret'] },
+      cred: {
+        type: 'http',
+        url: 'https://c.example/mcp',
+        env: { T: 'SECRET_ENV' },
+        headers: { Authorization: 'SECRET_HDR' },
+        oauth: { clientId: 'SECRET_OAUTH' },
+        auth: { token: 'SECRET_AUTH' }
+      }
+    };
+    beforeEach(() => {
+      writeFileSync(join(sourceDir, 'settings.json'), JSON.stringify({ apiKeyHelper: 'h' }));
+      writeFileSync(join(sourceDir, '.claude.json'), JSON.stringify({ mcpServers: servers }));
+    });
+    const env = () => ({ ...authEnv, CLAUDE_CONFIG_DIR: sourceDir });
+    const hostPlan = (mcpAllowlist?: string[], extra: Record<string, unknown> = {}) =>
+      planAutomatedClaudeLaunch({
+        ownerId: 'al',
+        env: env(),
+        dataDir,
+        sourceConfigDir: sourceDir,
+        ...(mcpAllowlist ? { mcpAllowlist } : {}),
+        ...extra
+      });
+    const carried = (leaf: string) =>
+      Object.keys(JSON.parse(readFileSync(join(leaf, '.claude.json'), 'utf8')).mcpServers ?? {}).sort();
+
+    it('unrestricted (absent) leaves the seed byte-identical and emits no warnings', () => {
+      const plan = hostPlan();
+      expect(plan.warnings).toEqual([]);
+      expect(carried(plan.configDir)).toEqual(['alpha', 'beta', 'cred', 'zcc-inbox']);
+      const before = readFileSync(join(plan.configDir, '.claude.json'), 'utf8');
+      removeAutomatedConfigDir(dataDir, plan.configDir);
+      expect(readFileSync(join(hostPlan().configDir, '.claude.json'), 'utf8')).toBe(before);
+    });
+
+    it('list: carries only covered servers plus zcc-inbox', () => {
+      const plan = hostPlan(['alpha']);
+      expect(carried(plan.configDir)).toEqual(['alpha', 'zcc-inbox']);
+      expect(plan.warnings).toEqual([]);
+    });
+
+    it('[]: carries zcc-inbox only', () => {
+      const plan = hostPlan([]);
+      expect(carried(plan.configDir)).toEqual(['zcc-inbox']);
+      expect(plan.warnings).toEqual([]);
+    });
+
+    it('[] without a zcc-inbox user server still seeds settings and carries no servers', () => {
+      writeFileSync(join(sourceDir, '.claude.json'), JSON.stringify({ mcpServers: { alpha: { command: 'a' } } }));
+      const plan = hostPlan([]);
+      expect(JSON.parse(readFileSync(join(plan.configDir, '.claude.json'), 'utf8'))).toEqual({ hasCompletedOnboarding: true });
+    });
+
+    it('registry-keyed entries do not carry user servers and are not warned', () => {
+      const plan = hostPlan(['plugin:p:alpha', 'ext:e:alpha', 'zcc-inbox']);
+      expect(carried(plan.configDir)).toEqual(['zcc-inbox']);
+      expect(plan.warnings).toEqual([]);
+    });
+
+    it('warns (non-fatal) for a missing allowlisted server, naming it', () => {
+      const plan = hostPlan(['alpha', 'ghost']);
+      expect(plan.warnings).toEqual([
+        expect.objectContaining({ code: 'allowlisted-mcp-not-carried', server: 'ghost', reason: 'not-found' })
+      ]);
+      expect(plan.warnings[0]!.message).toContain('"ghost"');
+    });
+
+    it('warns when the sanitizer rejected an allowlisted server', () => {
+      const plan = hostPlan(['leaky']);
+      expect(plan.warnings).toEqual([
+        expect.objectContaining({ server: 'leaky', reason: 'unsafe-config', code: 'allowlisted-mcp-not-carried' })
+      ]);
+      expect(carried(plan.configDir)).toEqual(['zcc-inbox']);
+    });
+
+    it('externally provided entries and duplicates are not warned', () => {
+      const plan = hostPlan(['ghost', 'ghost', 'other'], { externallyProvidedMcps: ['ghost', 'other'] });
+      expect(plan.warnings).toEqual([]);
+    });
+
+    it('AC-15: credential-stripped allowlisted server warns by name and no credential field reaches the leaf', () => {
+      const plan = hostPlan(['cred']);
+      expect(plan.warnings).toEqual([
+        expect.objectContaining({ code: 'allowlisted-mcp-credentials-stripped', server: 'cred', reason: 'credentials-stripped' })
+      ]);
+      expect(plan.warnings[0]!.message).not.toMatch(/SECRET/);
+      const raw = readFileSync(join(plan.configDir, '.claude.json'), 'utf8');
+      const entry = JSON.parse(raw).mcpServers.cred;
+      expect(entry).toEqual({ type: 'http', url: 'https://c.example/mcp' });
+      for (const field of CRED_FIELDS) expect(entry).not.toHaveProperty(field);
+      expect(raw).not.toMatch(/SECRET/);
+    });
+
+    it('D10: a required server the allowlist excludes stays the hard admission error', () => {
+      let error: unknown;
+      try {
+        hostPlan(['alpha'], { requiredMcps: ['beta'] });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(AutomatedClaudeAdmissionError);
+      expect((error as AutomatedClaudeAdmissionError).reason).toBe('required-mcp-unavailable');
+      expect((error as AutomatedClaudeAdmissionError).missing).toEqual(['beta']);
+    });
+
+    it('a required server that is allowlisted is admitted', () => {
+      expect(() => hostPlan(['alpha'], { requiredMcps: ['alpha'] })).not.toThrow();
+    });
+
+    describe('bridge parity', () => {
+      const bridgeLeaf = (allowlist?: string[]) => {
+        const data = mkdtempSync(join(tmpdir(), 'zcc-iso-bridge-'));
+        try {
+          const out = createAutomatedConfigDirWithWarnings(data, 'al', {
+            sourceConfigDir: sourceDir,
+            env: env(),
+            ...(allowlist ? { mcpAllowlist: allowlist } : {})
+          });
+          return {
+            warnings: out.warnings,
+            files: ['settings.json', '.claude.json'].map((f) => readFileSync(join(out.configDir, f), 'utf8'))
+          };
+        } finally {
+          rmSync(data, { recursive: true, force: true });
+        }
+      };
+      it.each([
+        [undefined],
+        [[]],
+        [['alpha']],
+        [['alpha', 'cred', 'ghost', 'leaky']],
+        [['plugin:p:alpha', 'zcc-inbox']]
+      ] as Array<[string[] | undefined]>)('seed files and warnings are identical for allowlist %j', (allowlist) => {
+        const host = hostPlan(allowlist);
+        const bridge = bridgeLeaf(allowlist);
+        expect(bridge.warnings).toEqual(host.warnings);
+        expect(bridge.files).toEqual(['settings.json', '.claude.json'].map((f) => readFileSync(join(host.configDir, f), 'utf8')));
+        removeAutomatedConfigDir(dataDir, host.configDir);
+      });
+
+      it('AC-15: bridge copy warns by name and carries no credential field', () => {
+        const bridge = bridgeLeaf(['cred']);
+        expect(bridge.warnings).toEqual([
+          expect.objectContaining({ code: 'allowlisted-mcp-credentials-stripped', server: 'cred' })
+        ]);
+        expect(bridge.files[1]).not.toMatch(/SECRET/);
+        const entry = JSON.parse(bridge.files[1]!).mcpServers.cred;
+        for (const field of CRED_FIELDS) expect(entry).not.toHaveProperty(field);
+      });
+
+      it('bridge matcher equals mcpAllowlistCovers for user servers; filters agree', () => {
+        for (const entry of ['a', 'plugin:p:a', 'ext:e:a', 'b', '', 'a:tool', 'zcc-inbox']) {
+          for (const name of ['a', 'b', 'plugin:p:a']) {
+            expect(userMcpAllowlistCovers(entry, name)).toBe(mcpAllowlistCovers(entry, { key: name, source: 'user', name }));
+          }
+        }
+        const sanitized = sanitizeMcpServers({ a: { command: 'c' }, b: { command: 'c' }, 'zcc-inbox': { command: 'z' } });
+        expect(bridgeFilter(sanitized, ['a'])).toEqual(filterMcpServersByAllowlist(sanitized, ['a']));
+        expect(filterMcpServersByAllowlist(null, ['a'])).toBeNull();
+        expect(bridgeFilter(null, ['a'])).toBeNull();
+        expect(bridgeFilter(sanitized, [])).toEqual({ 'zcc-inbox': { command: 'z' } });
+      });
+
+      it('bridge: no servers in config with an allowlist yields warnings and a none seed', () => {
+        rmSync(join(sourceDir, '.claude.json'));
+        rmSync(join(sourceDir, 'settings.json'));
+        const bridge = (() => {
+          const data = mkdtempSync(join(tmpdir(), 'zcc-iso-bridge-'));
+          try {
+            return createAutomatedConfigDirWithWarnings(data, 'n', {
+              sourceConfigDir: sourceDir,
+              env: env(),
+              mcpAllowlist: ['ghost']
+            }).warnings;
+          } finally {
+            rmSync(data, { recursive: true, force: true });
+          }
+        })();
+        expect(bridge).toEqual([expect.objectContaining({ server: 'ghost', reason: 'not-found' })]);
+      });
+    });
   });
 });
