@@ -2,12 +2,14 @@
 
 TinyNod is an optional, local-only AI review of your committed changes, run automatically by `git push`. It is for authorized internal developers only. It is advisory: findings print and never change the push's exit code, and public CI never runs it (CI has no TinyNod job). No desktop app, Postgres, or Electron is required.
 
+**Verify the installation source first.** Do not install TinyNod from public npm. Use only a distribution confirmed by the CodeNod maintainers, and verify its provenance before running any `tinynod` command, importing settings, supplying a gateway key, or opting in. Running `tinynod --version` executes the installed program; it does not establish that the program is trusted.
+
 Contents: [Quick start](#quick-start) · [Set up TinyNod](#set-up-tinynod) · [Opt in and out](#opt-in-and-out) · [Read the results](#read-the-results) · [Have an AI fix the findings](#have-an-ai-fix-the-findings) · [Gateway health check](#gateway-health-check-and-endpoint) · [Troubleshooting](#troubleshooting) · [Test the hook without pushing](#test-the-hook-without-pushing) · [Agents](#agents) · [Data policy](#data-policy)
 
 ## Quick start
 
 ```bash
-# 1. Install TinyNod (see "Install" below), then confirm: tinynod --version  (2.5.0 or newer)
+# 1. Verify the installation source (see "Install" below), then check: tinynod --version  (2.5.0 or newer)
 # 2. Store a gateway key and a full model id (see the DevBar/AI Suite or manual path below)
 # 3. Opt in for this clone and all its worktrees
 git config --local zana.tinynod.enabled true
@@ -19,17 +21,21 @@ You will see one line at the end of pre-push, for example `pre-push: tinynod rev
 
 ## Set up TinyNod
 
-TinyNod is the standalone CLI flavor of CodeNod. The CodeNod homepage, which has the current install instructions and releases, is <https://git.soma.salesforce.com/cc-oms/pr-reviewer> (see its "tinynod (standalone CLI)" section).
+TinyNod is the standalone CLI flavor of CodeNod. Its internal project is <https://git.soma.salesforce.com/cc-oms/pr-reviewer>. Ask the CodeNod maintainers for the current approved internal distribution and how to verify its provenance.
 
 ### Install
 
-Pick one (all documented on the CodeNod homepage):
+Do not use the public npm package. A package name or version number is not proof that the package comes from the CodeNod maintainers. Before using an installer, confirm where it obtains its payload; an internal installer URL alone does not establish that its downloads are trusted.
 
-- **macOS `.pkg`**: download `Tinynod-<version>-arm64.pkg` (Apple Silicon) or `-x64.pkg` (Intel) from the [latest release](https://git.soma.salesforce.com/cc-oms/pr-reviewer/releases) and run it. It installs `/usr/local/bin/tinynod`.
-- **npm (Node 20+)**: `npm install -g @cc-oms/tinynod`
-- **curl installer (macOS/Linux)**: `bash <(curl -sSL https://pages.git.soma.salesforce.com/cc-oms/pr-reviewer/install-tinynod.sh)` installs `~/.local/bin/tinynod`; make sure that directory is on your `PATH`.
+If you already installed a copy from public npm, or cannot establish its source, turn off the optional review before pushing:
 
-Check it: `command -v tinynod && tinynod --version`. The minimum supported version is **2.5.0** (tested: 2.5.0). Older versions are skipped by the automatic review. Do not run `tinynod hooks install` and do not change global `core.hooksPath`: Zana owns `.githooks`.
+```bash
+git config --local zana.tinynod.enabled false
+```
+
+Also remove any `ZANA_TINYNOD_REVIEW=1` override from your push environment. For a single push, `ZANA_TINYNOD_REVIEW=0 git push` overrides the opt-in setting and still runs Zana's verification. Establish the installed executable's source without running it, then replace an untrusted copy with a verified distribution before re-enabling review. If you executed an untrusted copy, contact your internal security team for incident-response guidance.
+
+Only after verifying the installation source, check it with `command -v tinynod && tinynod --version`. The minimum supported version is **2.5.0** (tested: 2.5.0). Older versions are skipped by the automatic review. Do not run `tinynod hooks install` and do not change global `core.hooksPath`: Zana owns `.githooks`.
 
 ### Configure credentials
 
@@ -157,7 +163,7 @@ Before a review starts, the pre-push adapter checks the gateway with `GET /v1/mo
 | `Access denied. You may need additional permissions or VPN` | Most often a wrong model, not the network. `ai.model` set to an alias such as `opus` is rejected by the gateway: run `tinynod config set ai.model claude-opus-5-5` (or another full id from `tinynod models`). If the model is fine, check VPN and that your key is current. |
 | Review skipped: `TinyNod gateway ...` / `model X not allowed for this key` | The pre-push adapter probes the gateway itself (`GET /v1/models` with your stored key), not `tinynod models`, which exits 1 on a healthy gateway whose `/v1/model/info` is empty. Reasons are specific: `rejected the stored key (HTTP 401/403)` (a DevBar refresh runs once, only for this case), `unreachable: connection failed`, `unreachable: TLS error`, `timed out`, `returned an empty model list`, `response was not recognizable` (not JSON, or no `data` array), `returned HTTP <n>`, `key lacks access even after a DevBar refresh`, and (opt-in) `model <id> not allowed for this key`. The gateway is probed only when `SALESFORCE_CLAUDE_ENDPOINT` is set; otherwise the probe is skipped and the review runs, reporting any gateway error itself. The configured-model chat probe sends one 1-token request, so it is opt-in: `ZANA_TINYNOD_PROBE_MODEL=1` or `git config zana.tinynod.probeModel true`. A refresh runs at most once per push and stores the key with `tinynod config set ai.apiKey <value>`, which briefly exposes it in the process list. |
 | Auth/401 errors after previously working | A minted token expired. DevBar/AI Suite: re-run the `config set ai.apiKey "$(devbar auth claude)"` command. |
-| `tinynod` not found / `spawn_error` | Not on `PATH` for the hook. `command -v tinynod`; for the curl install, add `~/.local/bin` to `PATH` (in a shell startup file, since git hooks use your login environment). |
+| `tinynod` not found / `spawn_error` | Not on `PATH` for the hook. After verifying the installation source, use `command -v tinynod` and add the verified installation's binary directory to `PATH` in your shell startup file. |
 | Review skipped: version | `tinynod --version` is below 2.5.0. Upgrade. |
 | `timeout` | Over the 300 s budget. Run the printed `tinynod review --base <sha> --format json` manually. |
 | `too_large` / `partial` | Diff exceeded output or size caps. Push smaller changes or review manually in pieces. |
@@ -165,13 +171,13 @@ Before a review starts, the pre-push adapter checks the gateway with `GET /v1/mo
 | No review line at all | You are not opted in, `TINYNOD_SKIP_HOOK` is set, or the push shape (protected ref, multi-ref, unverified remote) was skipped. The hook logs the reason. Check `git config --get zana.tinynod.enabled`. |
 | Reviewing a private-remote clone | The review runs in an isolated snapshot; Zana maps the snapshot's origin back to your real `origin` so TinyNod identifies the right repo. If findings reference the wrong repo, check `git remote get-url origin`. |
 
-Handy checks: `command -v tinynod`, `tinynod --version`, `tinynod config show` (redacted), `tinynod models`. The gateway endpoint is overridden only via the `SALESFORCE_CLAUDE_ENDPOINT` environment variable, not the config file; the default is already the internal gateway.
+After verifying the installation source, handy checks are `command -v tinynod`, `tinynod --version`, `tinynod config show` (redacted), and `tinynod models`. The gateway endpoint is overridden only via the `SALESFORCE_CLAUDE_ENDPOINT` environment variable, not the config file; the default is already the internal gateway.
 
 Try it with no key and no cost: `TINYNOD_HOME=$(mktemp -d) tinynod config set ai.mode mock` then run the hook with that `TINYNOD_HOME` exported. Mock mode returns canned `MOCK:` findings and is for testing the plumbing only.
 
 ## Test the hook without pushing
 
-Use this to check a change to the pre-push hook or the TinyNod adapter before opening a PR. Nothing is pushed and no remote ref is created.
+Use this to check a change to the pre-push hook or the TinyNod adapter before opening a PR, only after verifying the TinyNod installation source. Nothing is pushed and no remote ref is created.
 
 1. Commit the change locally on a feature branch (the hook reviews commits, not working-tree edits).
 2. Feed the hook a simulated push for a non-protected ref and your real `origin` URL:
