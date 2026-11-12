@@ -8,7 +8,7 @@ declare module '@zana-ai/zcc-plugin-sdk' {
   export type { ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
 
   export type { PluginSdk, PluginSdkInbox, PluginSdkInboxEntry, PluginSdkInboxSearchArgs, PluginSdkInboxSearchResult, PluginSdkInboxReport, PluginSdkAssistant } from '@zana-ai/zcc-plugin-sdk/server';
-  export type { PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
+  export type { PluginNotificationSoundProviderRegistration, PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
 
 /** A JSON-safe path segment reported by a Standard Schema validation issue. */
 export type PluginRpcIssuePathSegment = string | number;
@@ -844,7 +844,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       };
       capabilities: PluginCapabilityIntrospection;
       projects: {
-        list(): Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-plugin-sdk').ProjectIcon }>>;
+        list(): Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-plugin-sdk').ProjectIcon; color?: '#2f81f7' | '#3fb950' | '#d4a017' | '#bc8cff' | '#39c5cf' | '#f85149' | '#ff7b72' | '#8b949e' }>>;
         setIcon(args: { projectId: string; icon: import('@zana-ai/zcc-plugin-sdk').ProjectIcon }): Promise<void>;
       };
     };
@@ -868,6 +868,24 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
   export function useRpc(): { call<T = unknown>(method: string, input?: unknown): Promise<T> };
+  export function useRealtime(channel: string, handler: (payload: unknown) => void): void;
+  export interface PluginAgentActivity {
+    id: string;
+    kind: 'thread' | 'cli';
+    state: 'working' | 'idle' | 'needs-you' | 'unknown';
+  }
+  export interface PluginAgentActivitySnapshot {
+    ready: boolean;
+    agents: readonly PluginAgentActivity[];
+  }
+  export interface PluginContentScriptContext {
+    readonly pluginId: string;
+    readonly generation: number;
+    readonly signal: AbortSignal;
+    /** Main-shell initial snapshot and changes; scoped windows remain unready. */
+    readonly experimental_observeAgents?: (listener: (snapshot: PluginAgentActivitySnapshot) => void) => () => void;
+    readonly experimental_onSignal?: (channel: string, listener: (payload: unknown) => void) => () => void;
+  }
   export interface ContextReference {
   version: 1;
   comment?: string;
@@ -917,6 +935,15 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
   export type ZccPanelAgentOptions =
     | { threadId: string; title?: string }
     | { draft: { prompt: string; projectId?: string; view?: string; references?: readonly ContextReference[]; selection?: { version: 1; path: string; text: string; startLine?: number; endLine?: number } }; title?: string };
+  /** Lightweight identity beside an assistant; IDs and paths grant no access. */
+  export interface ZccPageContext {
+    title: string;
+    resourceId?: string;
+    path?: string;
+    view?: string;
+    /** Reference for a live server read with page_context_read when needed. */
+    mention?: { providerId: string; itemId: string };
+  }
   export interface ZccNavigate {
     toThread(threadId: string): void;
     toProject(projectId: string, options?: { tabId?: string; inMainWindow?: boolean }): void;
@@ -925,6 +952,10 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     supportsContextReferences?: true;
     addThreadContext?(reference: ContextReference): boolean;
     openPanelAgent(options: ZccPanelAgentOptions): boolean;
+    /** Update on navigation; clear with null on unmount. Each message retains
+     * identity/reference for queueing and retries; the agent fetches live content
+     * on demand with page_context_read through the owning plugin. */
+    setPageContext?(context: ZccPageContext | null): void;
   }
   export function useComposer(): PluginComposerApi;
   export function useZccNavigate(): ZccNavigate;
@@ -980,8 +1011,21 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     onInspect(key: string): void;
   }
 
+  /** Settings → Notifications contribution; mounted only while selected and enabled. */
+  export interface PluginNotificationSoundProviderRegistration {
+    id: string;
+    title: string;
+    description?: string;
+    component: import('react').ComponentType<{ pluginId: string }>;
+    mount(context: PluginContentScriptContext): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>;
+  }
   export function definePluginApp(
-    setup: (app: { slots: Record<string, (registration: Record<string, unknown>) => void> }) => void
+    setup: (app: {
+      slots: Record<string, (registration: Record<string, unknown>) => void> & {
+        notificationSoundProvider(registration: PluginNotificationSoundProviderRegistration): void;
+      };
+      contentScripts: { register(registration: { id: string; mount(context: PluginContentScriptContext): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)> }): void };
+    }) => void
   ): unknown;
   export function isPluginAppDefinition(value: unknown): boolean;
   export type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult } from '@zana-ai/zcc-plugin-sdk/server';
@@ -1033,6 +1077,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
     navPanels: Array<{ id: string; title: string; component: unknown }>;
     browserToolbarActions: Array<{ id: string; title: string; component: unknown }>;
     settingsSections: Array<{ id: string; title?: string }>;
+    notificationSoundProviders: Array<import('@zana-ai/zcc-plugin-sdk/app').PluginNotificationSoundProviderRegistration>;
     pendingInteractions: Array<{ id: string }>;
   };
   export function installTestPluginRuntime(options?: {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DesignDocSummary } from '../shared/contract.js';
-import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, projectSwatch, toggleCollapsed } from './doc-sections.js';
+import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, toggleCollapsed } from './doc-sections.js';
 
 const actor = { kind: 'user' as const, label: 'You', threadId: null };
 
@@ -67,12 +67,6 @@ describe('buildSections', () => {
     expect(shape(buildSections([doc('c', { projectId: 'p1', openComments: 1 })], { byProject: true, projectName: names, currentProjectId: 'p1' }))).toEqual([
       ['Needs me', 1, [['c']]]
     ]);
-  });
-
-  it('colors projects stably', () => {
-    expect(projectSwatch('p1')).toBe(projectSwatch('p1'));
-    expect(projectSwatch('p1')).toMatch(/^hsl\(\d+ 62% 52%\)$/);
-    expect(projectSwatch(null)).toBe('var(--text-dim)');
   });
 
   it('keeps one timeline when not grouping by project', () => {

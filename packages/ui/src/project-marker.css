@@ -1,0 +1,44 @@
+.project-marker {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.project-marker--dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* Neutral (no color supplied). :where() keeps specificity at zero so host
+   classes layered on the root can still override the fallback. */
+:where(.project-marker--dot.project-marker--neutral) {
+  background: var(--text-dim);
+}
+
+:where(.project-marker--icon.project-marker--neutral) {
+  color: var(--text-dim);
+}
+
+.project-marker--icon {
+  width: 12px;
+  height: 12px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-marker--icon svg {
+  display: block;
+}
+
+.project-marker.unread {
+  box-shadow: 0 0 0 0 currentColor;
+  animation: project-marker-pulse 1.6s ease-out infinite;
+}
+
+@keyframes project-marker-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(47, 129, 247, 0.55); }
+  70% { box-shadow: 0 0 0 6px rgba(47, 129, 247, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(47, 129, 247, 0); }
+}

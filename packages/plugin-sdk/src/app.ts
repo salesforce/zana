@@ -2,6 +2,7 @@ export * from './context-reference.js';
 export { EDITOR_SELECTION_MIME, MAX_EDITOR_SELECTION_TEXT, parseEditorSelection, editorSelectionFromClipboard, editorSelectionLabel, editorSelectionPrompt, type EditorSelection } from './editor-selection.js';
 import type {
   ComposerView,
+  PluginProjectsState,
   HarnessRoutingEditorProps,
   MarkdownProps,
   NewThreadComposerProps,
@@ -112,6 +113,8 @@ export type {
   PluginBrowserPage,
   PluginBrowserComposer,
   PluginThreadListProps,
+  PluginAppProject,
+  PluginProjectsState,
   PluginSidebarThread,
   PluginSidebarThreadActions,
   PluginThreadListRegistration,
@@ -285,6 +288,10 @@ export function useComposer(): PluginComposerApi {
 
 export function useComposerView(): ComposerView {
   return pluginRuntime().useComposerView?.() ?? missing('useComposerView');
+}
+
+export function experimental_useProjects(): PluginProjectsState {
+  return pluginRuntime().experimental_useProjects?.() ?? { status: 'loading', projects: [] };
 }
 
 export function experimental_useSidebarThreads() {

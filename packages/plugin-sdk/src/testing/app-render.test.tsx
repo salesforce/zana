@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup } from '@testing-library/react';
-import { definePluginApp, useRpc, useWindowTitle, useZccContext, useZccDeepLinks, useZccNavigate } from '../app.js';
+import { definePluginApp, experimental_useProjects, useRpc, useWindowTitle, useZccContext, useZccDeepLinks, useZccNavigate } from '../app.js';
 import { loadPluginApp, renderSlot } from './app-render.js';
 
 afterEach(() => {
@@ -300,5 +300,33 @@ describe('useZccDeepLinks without a host runtime', () => {
     expect(links.base()).toBeNull();
     expect(links.on('join', () => undefined)()).toBeUndefined();
     await expect(links.open('x')).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+});
+
+function ProjectsPanel() {
+  const { status, projects } = experimental_useProjects();
+  return <div>{status}:{projects.map(p => `${p.name}/${p.color ?? '-'}`).join(',')}</div>;
+}
+
+describe('experimental_useProjects fake host', () => {
+  const load = () => loadPluginApp(() => Promise.resolve(definePluginApp((pluginApp) => {
+    pluginApp.slots.navPanel({ id: 'main', title: 'P', icon: 'FileText', component: ProjectsPanel });
+  })), 'projects-plugin');
+
+  it('supplies projects and defaults to a ready empty list', async () => {
+    const app = await load();
+    const withProjects = renderSlot(app.navPanels[0]!, { pluginId: 'projects-plugin', subPath: '' }, {
+      projects: { projects: [{ id: 'a', name: 'Alpha', color: '#3fb950' }] }
+    });
+    await withProjects.findByText('ready:Alpha/#3fb950');
+    cleanup();
+    const empty = renderSlot(app.navPanels[0]!, { pluginId: 'projects-plugin', subPath: '' });
+    await empty.findByText('ready:');
+  });
+
+  it('can report the loading state', async () => {
+    const app = await load();
+    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'projects-plugin', subPath: '' }, { projects: { status: 'loading' } });
+    await slot.findByText('loading:');
   });
 });

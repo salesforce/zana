@@ -22,6 +22,11 @@ export const PROJECT_COLORS = [
 
 export type ProjectColor = (typeof PROJECT_COLORS)[number];
 
+/** True only for a palette color; rejects hand-edited hex, empty and non-string values. */
+export function isProjectColor(value: unknown): value is ProjectColor {
+  return typeof value === 'string' && (PROJECT_COLORS as readonly string[]).includes(value);
+}
+
 /**
  * Pick the least-used palette color given the colors already in play, so a
  * fresh project gets a color that's visually distinct from its neighbours for

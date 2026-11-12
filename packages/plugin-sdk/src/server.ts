@@ -1,4 +1,5 @@
 import type { ProjectIcon } from '@zana-ai/zcc-domain';
+import type { ProjectColor } from '@zana-ai/zcc-domain/project-colors';
 export { PROJECT_ICONS, type ProjectIcon } from '@zana-ai/zcc-domain';
 /**
  * Server-side plugin API — the `zcc` object handed to a plugin's server factory:
@@ -660,6 +661,8 @@ export interface PluginSdkProject {
   /** Host attestation that this path belongs to the local execution host. Absence means unknown. */
   local?: boolean;
   icon?: ProjectIcon;
+  /** Palette color only (see `PROJECT_COLORS`); absent when unset or not a palette value. */
+  color?: ProjectColor;
   /** Host-owned marker for the built-in Default Project; independent of its name. */
   quickAgent?: boolean;
   id: string;

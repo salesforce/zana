@@ -37,6 +37,8 @@ export interface HarnessOptions {
   peerSync?: DesignDocPeerService;
   pairing?: DesignDocPairing;
   projects?: Array<{ id: string; name: string; quickAgent?: boolean }>;
+  /** What the host's `experimental_useProjects()` reports (icon/color). Defaults to a ready list of `projects`. */
+  hostProjects?: { status?: 'loading' | 'ready'; projects?: Array<{ id: string; name: string; icon?: string; color?: string; quickAgent?: boolean }> };
   /** What `navigate.openThreadPanel` returns (false: no thread to attach to). */
   threadPanel?: boolean;
   /** Whether the page has a side panel for agents (`navigate.openPanelAgent`). */
@@ -81,6 +83,8 @@ export interface Harness {
   emit(payload: unknown, channel?: string): void;
   /** Mutate the store as an agent would, then publish the change. */
   asAgent<T>(mutate: (store: DesignDocStore) => T): Promise<T>;
+  /** Mutable host project state; change it, then rerender, to model a live recolor. */
+  hostProjects: { status?: 'loading' | 'ready'; projects?: Array<{ id: string; name: string; icon?: string; color?: string; quickAgent?: boolean }> };
   render(element: ReactElement): RenderResult;
   call(method: string, args?: unknown): Promise<unknown>;
   /** Deliver a deep link to the handlers the app registered with `deepLinks.on(route, …)`. */
@@ -136,7 +140,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   );
 
   Object.assign(rpc, options.rpcOverrides);
-  const installed = installTestPluginRuntime({ rpc, deepLinkBase: options.deepLinkBase, context: options.context ?? {}, panelAgent: options.panelAgent });
+  const hostProjects = options.hostProjects ?? { status: 'ready' as const, projects };
+  const installed = installTestPluginRuntime({ projects: hostProjects as never, rpc, deepLinkBase: options.deepLinkBase, context: options.context ?? {}, panelAgent: options.panelAgent });
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: Record<string, unknown> }).__ZCC_PLUGIN_RUNTIME__!;
   if (options.contextReferences) {
     const navigate = (runtime.useZccNavigate as () => Record<string, unknown>)();
@@ -187,6 +192,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     toasts,
     spawn,
     harnessStore,
+    hostProjects,
     fail: (method, message) => failures.set(method, message),
     restore: (method) => failures.delete(method),
     emit: (payload, channel) => act(() => emit(payload, channel)),

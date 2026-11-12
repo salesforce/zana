@@ -1,5 +1,7 @@
 import type { ComponentType, ReactNode, HTMLAttributes } from 'react';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ProjectIcon } from '@zana-ai/zcc-domain';
+import type { ProjectColor } from '@zana-ai/zcc-domain/project-colors';
 
 export const PLUGIN_SLOT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const PLUGIN_MESSAGE_DIRECTIVE_ID_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -1177,6 +1179,21 @@ export interface PluginSidebarThread {
   branchName?: string | null;
 }
 
+/** Bounded project display projection: no paths, hosts or remote details. */
+export interface PluginAppProject {
+  id: string;
+  name: string;
+  icon?: ProjectIcon;
+  /** Palette color only; absent when unset or not a palette value. */
+  color?: ProjectColor;
+  quickAgent?: boolean;
+}
+
+export interface PluginProjectsState {
+  status: 'loading' | 'ready';
+  projects: PluginAppProject[];
+}
+
 export interface PluginSidebarThreadActions {
   open(threadId: string): void;
   openNewThread(options?: { projectId?: string }): void;
@@ -1204,6 +1221,7 @@ export interface PluginSdkApp {
   useComposer(): PluginComposerApi;
   useComposerView(): ComposerView;
   experimental_useSidebarThreads(): { status: 'loading' | 'ready' | 'error'; threads: PluginSidebarThread[]; projects: { id: string; name: string }[] };
+  experimental_useProjects(): PluginProjectsState;
   experimental_useSidebarThreadActions(): PluginSidebarThreadActions;
   experimental_useSidebarThreadPullRequest(threadId: string): {
     isLoading: boolean;

@@ -234,8 +234,8 @@ export interface FakePluginHostOptions {
   pushInbox?: (args: { projectId: string; comments: string }) => Promise<{ id: string }>;
   setProjectIcon?: ZccPluginApi['sdk']['projects']['setIcon'];
   listProjects?: () =>
-    | Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon }>
-    | Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon }>>;
+    | Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon; color?: import('@zana-ai/zcc-domain/project-colors').ProjectColor }>
+    | Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon; color?: import('@zana-ai/zcc-domain/project-colors').ProjectColor }>>;
   database?: PluginDatabase;
   /** Real backup behaviour for tests that need one; the default records a metadata-only backup. */
   backupDatabase?: ZccPluginApi['storage']['backupDatabase'];

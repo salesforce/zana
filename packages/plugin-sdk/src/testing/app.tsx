@@ -77,6 +77,7 @@ import {
   type SourceCodeProps,
   type JsonValue,
 } from "@zana-ai/zcc-plugin-sdk";
+import type { PluginProjectsState } from "../app-contract.js";
 import { isComposerDraftEmpty } from "../internal/composer-view.js";
 import { normalizePluginThreadRowStatus } from "../internal/composer-customization-validation.js";
 import { normalizeExperimentalFileOpenOptions } from "../internal/file-navigation-validation.js";
@@ -201,6 +202,7 @@ interface SlotEnv {
   composer: TestComposerStore;
   composerLog: ComposerLog;
   sidebarThreads: PluginSidebarThreadsState;
+  projectsState: PluginProjectsState;
   sidebarActions: PluginSidebarThreadActions;
   sidebarActionCalls: SidebarActionCall[];
   sidebarPullRequests: ReadonlyMap<string, PluginSidebarPullRequest>;
@@ -832,6 +834,9 @@ const testPluginSdkApp = {
   experimental_PermissionModePicker: TestPermissionModePicker,
   experimental_SourceCode: TestSourceCode,
   experimental_Diff: TestDiff,
+  experimental_useProjects(): PluginProjectsState {
+    return useSlotEnv("experimental_useProjects").projectsState;
+  },
   experimental_useSidebarThreads(): PluginSidebarThreadsState {
     return useSlotEnv("experimental_useSidebarThreads").sidebarThreads;
   },
@@ -1147,6 +1152,11 @@ export interface RenderSlotOptions<
    */
   sidebarThreads?: Partial<PluginSidebarThreadsState>;
   /**
+   * Projects `experimental_useProjects()` reports. Omitted → a ready, empty
+   * list. Pass `{ status: "loading" }` to test that branch.
+   */
+  projects?: Partial<PluginProjectsState>;
+  /**
    * The provider directory `experimental_useProviders()` reports. Omitted →
    * a ready, empty list. Pass `{ status: "loading" }` to test that branch.
    */
@@ -1403,6 +1413,10 @@ export function renderSlot<
     threads: options.sidebarThreads?.threads ?? [],
     projects: options.sidebarThreads?.projects ?? [],
   };
+  const projectsState: PluginProjectsState = {
+    status: options.projects?.status ?? "ready",
+    projects: options.projects?.projects ?? [],
+  };
   const providers: PluginProvidersState = {
     status: options.providers?.status ?? "ready",
     providers: options.providers?.providers ?? [],
@@ -1620,6 +1634,7 @@ export function renderSlot<
     composer,
     composerLog,
     sidebarThreads,
+    projectsState,
     sidebarActions,
     sidebarActionCalls,
     sidebarPullRequests,

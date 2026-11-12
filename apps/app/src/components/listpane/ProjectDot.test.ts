@@ -75,7 +75,7 @@ describe('ProjectDot', () => {
     const markup = renderToStaticMarkup(
       ProjectDot({ project: { name: 'plain-repo' } })
     );
-    expect(markup).toContain('class="project-dot "');
+    expect(markup).toContain('class="project-marker project-marker--dot project-marker--neutral project-dot"');
     expect(markup).not.toContain('style=');
   });
 

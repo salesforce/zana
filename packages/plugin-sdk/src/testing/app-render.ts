@@ -4,6 +4,7 @@ import * as ReactDOMClient from 'react-dom/client';
 import type { ComponentType, ReactElement } from 'react';
 import { render, type RenderResult } from '@testing-library/react';
 import type {
+  PluginProjectsState,
   ComposerView,
   MarkdownProps,
   PluginComposerApi,
@@ -49,6 +50,8 @@ export interface RenderSlotOptions {
   settings?: PluginSettingsState['values'];
   context?: Partial<ZccContext>;
   composer?: { text?: string; scope?: PluginComposerScope };
+  /** What `experimental_useProjects()` reports. Defaults to a ready, empty list; pass `{ status: 'loading' }` for that branch. */
+  projects?: Partial<PluginProjectsState>;
   realtimeConnectionState?: 'connecting' | 'connected' | 'reconnecting';
   /** Whether the page has a side panel to show agents in (`navigate.openPanelAgent`). Defaults to false. */
   panelAgent?: boolean;
@@ -308,6 +311,10 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
       return composerApi;
     },
     useComposerView: composerView,
+    experimental_useProjects: () => ({
+      status: options.projects?.status ?? 'ready',
+      projects: options.projects?.projects ?? []
+    }),
     toast() {
       /* test stub */
     },

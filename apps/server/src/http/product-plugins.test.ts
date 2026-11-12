@@ -1,3 +1,4 @@
+import { PROJECT_COLORS } from '@zana-ai/zcc-domain/project-colors';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -272,6 +273,13 @@ describe('product plugin sdk confinement', () => {
       {id:'ordinary', name:'Other', path:'/tmp/ordinary', local:true}
     ]);
   });
+  it('passes a palette color through the project list and drops absent or invalid ones', () => {
+    const row = (id: string, color?: string) => ({ id, name: id, path: `/tmp/${id}`, ...(color === undefined ? {} : { color }) });
+    const ctx = { projects: { list: () => [row('ok', PROJECT_COLORS[1]), row('none'), row('hex', '#123456'), row('upper', PROJECT_COLORS[0].toUpperCase()), row('empty', '')] } } as unknown as Parameters<typeof productListProjects>[0];
+    const byId = Object.fromEntries(productListProjects(ctx).map((p) => [p.id, p]));
+    expect(byId.ok.color).toBe(PROJECT_COLORS[1]);
+    for (const id of ['none', 'hex', 'upper', 'empty']) expect('color' in byId[id]).toBe(false);
+  });
   it('lists projects and rejects inbox pushes for unknown project ids', async () => {
     const dir = tempDir();
     mkdirSync(join(dir, '.zcc'), { recursive: true });
@@ -281,7 +289,7 @@ describe('product plugin sdk confinement', () => {
     const project = await projects.add(projectDir);
     const inbox = createInboxStore({ filePath: join(dir, '.zcc', 'inbox', 'entries.jsonl') });
     const ctx = { projects, inbox };
-    expect(productListProjects(ctx)).toEqual([{ id: project.id, name: project.name, path: project.path, local:true }]);
+    expect(productListProjects(ctx)).toEqual([{ id: project.id, name: project.name, path: project.path, local:true, color: project.color }]);
     await projects.update(project.id, { icon: 'Cloud' });
     expect(productListProjects(ctx)[0].icon).toBe('Cloud');
     await expect(
