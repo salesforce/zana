@@ -26,6 +26,7 @@ const CAT = {
       { key: 'slack', source: 'user', available: true },
       { key: 'github', source: 'user', available: false, reason: 'credentials-stripped' },
       { key: 'search', source: 'user', available: true },
+      { key: 'legacy', source: 'project', available: false, reason: 'not-carried' },
       { key: 'plugin:enterprise:search', source: 'plugin', available: true },
       { key: 'plugin:gus:gus', source: 'plugin', available: true }
     ],
@@ -96,9 +97,56 @@ describe('PersonaEditor Restrict MCP servers', () => {
     expect((await saved()).mcpServers).toEqual(['slack', 'jira']);
   });
 
-  it('flags an installed-but-unavailable server', async () => {
+  it('shows a credentials-stripped server as a soft info note, not a warning', async () => {
     edit({ id: 'p', name: 'P', source: 'user', mcpServers: ['github'] });
-    expect((await screen.findByTestId('persona-mcp-unavailable-warning')).textContent).toContain('credentials-stripped');
+    const note = await screen.findByTestId('persona-mcp-signin-note');
+    expect(note.textContent).toContain('github starts without sign-in in restricted sessions (credentials are not copied). Sign in through your harness.');
+    expect(note.className).not.toContain('allowlist-warn');
+    expect(screen.queryByTestId('persona-mcp-unavailable-warning')).toBeNull();
+    const chip = screen.getAllByTestId('allowlist-chip')[0];
+    expect(chip.getAttribute('data-state')).toBe('info');
+    expect(chip.className).not.toContain('allowlist-chip--warn');
+    expect(chip.querySelector('.allowlist-chip-mark')?.textContent).toBe('i');
+    expect(chip.querySelector('[role="img"]')?.getAttribute('title')).toContain('without sign-in');
+    expect((await saved()).mcpServers).toEqual(['github']);
+  });
+
+  it('flags a not-carried server as a warning that cannot load when restricted', async () => {
+    edit({ id: 'p', name: 'P', source: 'user', mcpServers: ['legacy'] });
+    const warn = await screen.findByTestId('persona-mcp-unavailable-warning');
+    expect(warn.textContent).toContain('legacy cannot be loaded in restricted sessions');
+    expect(warn.className).toContain('allowlist-warn');
+    const chip = screen.getAllByTestId('allowlist-chip')[0];
+    expect(chip.getAttribute('data-state')).toBe('unavailable');
+    expect(chip.querySelector('.allowlist-chip-mark')?.textContent).toBe('!');
+    expect((await saved()).mcpServers).toEqual(['legacy']);
+  });
+
+  it('focus opens the full catalogue list with source-aware hints; picking adds a chip', async () => {
+    edit({ id: 'p', name: 'P', source: 'user', mcpServers: ['slack'] });
+    await waitFor(() => expect(screen.getByTestId('persona-mcp-effective').textContent).toContain('Restricted: 1 of'));
+    fireEvent.focus(input());
+    const opts = screen.getAllByRole('option').map((o) => o.textContent);
+    expect(opts).toContain('githubuser, signs in separately');
+    expect(opts).toContain('legacyproject, not loadable when restricted');
+    expect(opts).toContain('searchuser');
+    expect(opts.some((o) => o?.startsWith('slack'))).toBe(false);
+    expect(opts.join()).not.toContain('unavailable');
+    fireEvent.mouseDown(screen.getByRole('option', { name: /^search/ }));
+    expect((await saved()).mcpServers).toEqual(['slack', 'search']);
+  });
+
+  it('chevron opens the list; Escape closes it without a discard prompt', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    edit({ id: 'p', name: 'P', source: 'user', mcpServers: [] });
+    await waitFor(() => expect(screen.getByTestId('persona-mcp-effective').textContent).toContain('Restricted: 0 of'));
+    fireEvent.click(screen.getByTestId('persona-mcp-field').querySelector('[data-testid="allowlist-toggle"]')!);
+    expect(input().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'dirty' } });
+    fireEvent.keyDown(input(), { key: 'Escape' });
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 
   it.each([
@@ -149,7 +197,7 @@ describe('PersonaEditor Restrict MCP servers', () => {
 
   it('effective line counts catalogue servers covered', async () => {
     edit({ id: 'p', name: 'P', source: 'user', mcpServers: ['search'] });
-    await waitFor(() => expect(screen.getByTestId('persona-mcp-effective').textContent).toBe('Restricted: 2 of 5 known servers, plus zcc-inbox.'));
+    await waitFor(() => expect(screen.getByTestId('persona-mcp-effective').textContent).toBe('Restricted: 2 of 6 known servers, plus zcc-inbox.'));
   });
 
   it('built-in detail is read-only with the override affordance and lists the MCP list', () => {

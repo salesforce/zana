@@ -63,15 +63,53 @@ describe('AllowlistField', () => {
     expect(input().value).toBe('alp');
   });
 
-  it('re-opens the suggestions on focus only when a draft is present', () => {
-    render(<Harness />);
-    fireEvent.focus(input());
-    expect(input().getAttribute('aria-expanded')).toBe('false');
-    fireEvent.change(input(), { target: { value: 'alp' } });
-    fireEvent.keyDown(input(), { key: 'Escape' });
+  it('opens the full list on focus and on click with an empty draft, minus added entries', () => {
+    render(<Harness initial={['beta']} />);
     expect(input().getAttribute('aria-expanded')).toBe('false');
     fireEvent.focus(input());
     expect(input().getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['alphauser', 'alphabet']);
+    fireEvent.keyDown(input(), { key: 'Escape' });
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(input());
+    expect(input().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.mouseDown(screen.getByRole('option', { name: /alphabet/ }));
+    expect(chips()).toEqual(['beta', 'alphabet']);
+  });
+
+  it('caps the full list at 50 suggestions', () => {
+    const many = Array.from({ length: 80 }, (_, i) => ({ value: `s${i}` }));
+    render(<Harness suggestions={many} />);
+    fireEvent.focus(input());
+    expect(screen.getAllByRole('option')).toHaveLength(50);
+  });
+
+  it('chevron toggles the list without stealing a typed draft, and is its own tab stop', () => {
+    render(<Harness />);
+    const toggle = screen.getByRole('button', { name: 'Show suggestions' });
+    expect(toggle.getAttribute('tabindex')).toBeNull();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(fireEvent.mouseDown(toggle)).toBe(false); // default prevented: input keeps focus
+    fireEvent.click(toggle);
+    expect(input().getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(input());
+    fireEvent.click(toggle);
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+    fireEvent.change(input(), { target: { value: 'typed' } });
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(input().value).toBe('typed');
+    expect(chips()).toEqual([]);
+  });
+
+  it('Escape on the focused chevron closes the open list (aria-expanded target)', () => {
+    render(<Harness />);
+    const toggle = screen.getByRole('button', { name: 'Show suggestions' });
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('opens the full list on ArrowDown with an empty draft; clicking an option adds it', () => {
@@ -151,5 +189,23 @@ describe('AllowlistField', () => {
   it('renders the warnings slot', () => {
     render(<Harness><p>slot content</p></Harness>);
     expect(screen.getByText('slot content')).toBeTruthy();
+  });
+
+  it('renders an info state with a soft marker distinct from the warning', () => {
+    render(<Harness initial={['a', 'b']}
+      entryState={(e) => (e === 'a' ? { kind: 'info', label: 'signs in elsewhere' } : { kind: 'unavailable', label: 'cannot load' })} />);
+    const [a, b] = screen.getAllByTestId('allowlist-chip');
+    expect(a.className).toContain('allowlist-chip--info');
+    expect(a.className).not.toContain('allowlist-chip--warn');
+    expect(a.querySelector('.allowlist-chip-mark--info')?.textContent).toBe('i');
+    expect(screen.getByLabelText('signs in elsewhere')).toBeTruthy();
+    expect(b.className).toContain('allowlist-chip--warn');
+    expect(b.querySelector('.allowlist-chip-mark')?.textContent).toBe('!');
+    expect(screen.getByLabelText('cannot load')).toBeTruthy();
+  });
+
+  it('info without a label falls back to a generic marker label', () => {
+    render(<Harness initial={['a']} entryState={() => ({ kind: 'info' })} />);
+    expect(screen.getByLabelText('Note')).toBeTruthy();
   });
 });

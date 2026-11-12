@@ -94,8 +94,8 @@ test('catalogue typeahead suggests host servers and a missing name warns without
   const listbox = field.getByRole('listbox');
   await expect(listbox.getByRole('option', { name: new RegExp(USER_ALLOWED) })).toBeVisible();
   await expect(listbox.getByRole('option', { name: new RegExp(USER_BLOCKED) })).toBeVisible();
-  // A credentialed server is listed but flagged unavailable (catalogue exposes names, never secrets).
-  await expect(listbox.getByRole('option', { name: new RegExp(USER_CREDENTIALED) })).toContainText('unavailable');
+  // A credentialed server is listed but flagged as signing in separately (catalogue exposes names, never secrets).
+  await expect(listbox.getByRole('option', { name: new RegExp(USER_CREDENTIALED) })).toContainText('signs in separately');
   await listbox.getByRole('option', { name: new RegExp(USER_ALLOWED) }).click();
   await expect(field.getByTestId('allowlist-chip')).toHaveText(new RegExp(USER_ALLOWED));
   await expect(window.getByTestId('persona-mcp-effective')).toContainText('Restricted: 1 of');

@@ -594,6 +594,7 @@ function McpFieldWarnings({
   const states = entries.map((entry) => ({ entry, state: entryState(entry) }));
   const missing = states.filter((s) => s.state.kind === 'missing').map((s) => s.entry);
   const unavailable = states.filter((s) => s.state.kind === 'unavailable');
+  const signIn = states.filter((s) => s.state.kind === 'info');
   const ambiguous = states.filter((s) => s.state.kind === 'ambiguous');
   let effective: string;
   if (!restricted) effective = 'Unrestricted: every user, project and plugin server loads.';
@@ -621,9 +622,14 @@ function McpFieldWarnings({
           Not installed: {missing.join(', ')}. You can still save; launches will warn until they are installed.
         </p>
       )}
-      {restricted && unavailable.map(({ entry, state }) => (
+      {restricted && unavailable.map(({ entry }) => (
         <p key={entry} className="settings-help persona-form-hint allowlist-warn" role="status" data-testid="persona-mcp-unavailable-warning">
-          {entry} is installed but unavailable{state.kind === 'unavailable' && state.reason ? ` (${state.reason})` : ''}. It may start without sign-in.
+          {entry} cannot be loaded in restricted sessions. You can still save.
+        </p>
+      ))}
+      {restricted && signIn.map(({ entry }) => (
+        <p key={entry} className="settings-help persona-form-hint allowlist-info" role="status" data-testid="persona-mcp-signin-note">
+          {entry} starts without sign-in in restricted sessions (credentials are not copied). Sign in through your harness.
         </p>
       ))}
       {restricted && ambiguous.map(({ entry, state }) => (
@@ -702,14 +708,22 @@ function PersonaForm({
     if (mcpCatalogue.status !== 'ready') return [];
     return mcpCatalogue.servers.map((s) => ({
       value: s.key,
-      hint: s.available ? s.source : `${s.source}, unavailable`
+      hint: s.available ? s.source
+        : s.reason === 'credentials-stripped' ? `${s.source}, signs in separately`
+        : `${s.source}, not loadable when restricted`
     }));
   }, [mcpCatalogue]);
   const mcpEntryState = (entry: string): AllowlistEntryState => {
     if (mcpCatalogue.status !== 'ready' || (ALWAYS_ALLOWED_MCP_SERVERS as readonly string[]).includes(entry)) return { kind: 'ok' };
     const matches = mcpCatalogue.servers.filter((s) => mcpAllowlistCovers(entry, s));
     if (matches.length === 0) return { kind: 'missing' };
-    if (matches.every((s) => !s.available)) return { kind: 'unavailable', reason: matches[0]?.reason };
+    if (matches.every((s) => !s.available)) {
+      // Credentials are dropped from the restricted copy but the server still starts; auth is harness-owned.
+      if (matches.every((s) => s.reason === 'credentials-stripped')) {
+        return { kind: 'info', label: 'Starts without sign-in in restricted sessions' };
+      }
+      return { kind: 'unavailable', reason: matches[0]?.reason, label: 'Cannot be loaded in restricted sessions' };
+    }
     if (matches.length > 1 && !/^(plugin|ext):/.test(entry)) return { kind: 'ambiguous', matches: matches.map((s) => s.key) };
     return { kind: 'ok' };
   };

@@ -1,5 +1,5 @@
 import { useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
 
 /**
  * Shared allowlist control (checkbox, typeahead, chips, inline warnings, fixed
@@ -15,7 +15,10 @@ import { X } from 'lucide-react';
 export type AllowlistEntryState =
   | { kind: 'ok' }
   | { kind: 'missing' }
-  | { kind: 'unavailable'; reason?: string }
+  /** Present but cannot load in a restricted session; a warning. `label` is the chip tooltip. */
+  | { kind: 'unavailable'; reason?: string; label?: string }
+  /** Informational, not a fault (e.g. starts without sign-in); a softer marker than the warning. */
+  | { kind: 'info'; label?: string }
   | { kind: 'ambiguous'; matches: readonly string[] };
 
 export interface AllowlistSuggestion {
@@ -181,9 +184,26 @@ export function AllowlistField(props: AllowlistFieldProps) {
             placeholder={placeholder}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={onKeyDown}
-            onFocus={() => { if (draft) setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            onClick={() => setOpen(true)}
             onBlur={commitDraft}
           />
+          <button
+            type="button"
+            className="allowlist-toggle"
+            data-testid="allowlist-toggle"
+            aria-label="Show suggestions"
+            aria-expanded={listVisible}
+            aria-controls={listboxId}
+            // Keep focus where it is so a typed draft is not committed by the click.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              if (listVisible) { setOpen(false); setActive(-1); }
+              else { setOpen(true); inputRef.current?.focus(); }
+            }}
+          >
+            <ChevronDown size={14} />
+          </button>
           <div
             id={listboxId}
             role="listbox"
@@ -226,17 +246,18 @@ export function AllowlistField(props: AllowlistFieldProps) {
             {entries.map((entry, i) => {
               const state = entryState?.(entry) ?? { kind: 'ok' as const };
               const flagged = state.kind !== 'ok';
+              const soft = state.kind === 'info';
               return (
                 <span
                   key={`${i}:${entry}`}
-                  className={`settings-chip allowlist-chip${flagged ? ' allowlist-chip--warn' : ''}`}
+                  className={`settings-chip allowlist-chip${flagged ? (soft ? ' allowlist-chip--info' : ' allowlist-chip--warn') : ''}`}
                   data-testid="allowlist-chip"
                   data-state={state.kind}
                 >
                   <span className="settings-chip-text" title={entry}>{entry}</span>
                   {flagged && (
-                    <span className="allowlist-chip-mark" role="img" aria-label={markLabel(state)} title={markLabel(state)}>
-                      {state.kind === 'ambiguous' ? '?' : '!'}
+                    <span className={`allowlist-chip-mark${soft ? ' allowlist-chip-mark--info' : ''}`} role="img" aria-label={markLabel(state)} title={markLabel(state)}>
+                      {state.kind === 'ambiguous' ? '?' : soft ? 'i' : '!'}
                     </span>
                   )}
                   <button
@@ -278,7 +299,8 @@ export function AllowlistField(props: AllowlistFieldProps) {
 function markLabel(state: AllowlistEntryState): string {
   switch (state.kind) {
     case 'missing': return 'Not installed';
-    case 'unavailable': return 'Unavailable';
+    case 'unavailable': return state.label ?? 'Unavailable';
+    case 'info': return state.label ?? 'Note';
     case 'ambiguous': return 'Matches several sources';
     default: return '';
   }

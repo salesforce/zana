@@ -42759,6 +42759,38 @@ body.split-frame-guard webview {
 .allowlist-warn {
   color: var(--accent-gold);
 }
+.allowlist-body > input[role='combobox'] {
+  padding-right: 30px;
+}
+.allowlist-chip--info {
+  border-color: var(--border);
+}
+.allowlist-chip-mark--info,
+.allowlist-info {
+  color: var(--text-muted);
+}
+.allowlist-chip-mark--info {
+  font-style: italic;
+  font-weight: 600;
+}
+.allowlist-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.allowlist-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
 .allowlist-suggest {
   margin-top: 4px;
   max-height: 190px;
