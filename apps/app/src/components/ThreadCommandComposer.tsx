@@ -1161,7 +1161,9 @@ function ThreadComposerContent({
             </>
           ) : (
             <>
-              {!fixedRunTarget && (
+              {/* A fixed run target still names its project, read-only, so the
+                  operator sees where a side-panel conversation will run. */}
+              {(
               <div className="thread-command-project"><ComposerProjectPicker
                 projects={projects}
                 value={projectId}
