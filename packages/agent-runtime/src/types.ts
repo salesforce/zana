@@ -391,6 +391,12 @@ export interface ReapIdleProviderSessionsArgs {
   idleForMs: number;
   nowMs: number;
   providerSessionReapingEnabled: boolean;
+  /**
+   * Generic hold predicate: a thread for which this returns true is skipped by
+   * the sweep and keeps its live provider session. The runtime attaches no
+   * meaning to why a caller holds a thread.
+   */
+  isThreadHeld?: (threadId: string, nowMs: number) => boolean;
   runThreadExclusive?: (
     threadId: string,
     work: () => Promise<ReapedIdleProviderSession | null>,

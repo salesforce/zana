@@ -280,6 +280,35 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it('feeds a self-expiring hold predicate into the idle sweep', async () => {
+    let seen: ((threadId: string, nowMs: number) => boolean) | undefined;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined, dataDir: cwd,
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'reapIdleProviderSessions').mockImplementation(async (args) => { seen = args.isThreadHeld; return { reapedSessions: [] }; });
+        return runtime;
+      },
+    });
+    const threadId = randomUUID();
+    await adapter.startWork({ threadId, environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd });
+    const sweep = () => adapter.reapIdleProviderSessions({ idleForMs: 1, nowMs: Date.now(), providerSessionReapingEnabled: true });
+    const now = Date.now();
+    await sweep();
+    expect(seen!(threadId, now)).toBe(false);
+    await adapter.retainThread!({ threadId, retainUntilMs: now + 60_000 });
+    expect(seen!(threadId, now)).toBe(true);
+    expect(seen!(randomUUID(), now)).toBe(false);
+    // Past its timestamp the hold lapses with no release message.
+    expect(seen!(threadId, now + 60_001)).toBe(false);
+    expect(seen!(threadId, now)).toBe(false);
+    // An explicit clear (0) or an already-past timestamp removes a live hold.
+    await adapter.retainThread!({ threadId, retainUntilMs: now + 60_000 });
+    await adapter.retainThread!({ threadId, retainUntilMs: 0 });
+    expect(seen!(threadId, now)).toBe(false);
+    adapter.dispose();
+  });
+
   it('forwards command mentions into AgentRuntime instead of wiping them', async () => {
     let startThread: ReturnType<typeof vi.spyOn>;
     let runTurn: ReturnType<typeof vi.spyOn>;

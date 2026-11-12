@@ -10,7 +10,12 @@ import { join, basename, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
-import { normalizeApiErrorResume, SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, EXPLORER_FILE_ICON_THEME_CHOICES, EXPLORER_MINIMAP_WIDTH_CHOICES, EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES, EXPLORER_MINIMAP_SLIDER_CHOICES, EXPLORER_MINIMAP_SIDE_CHOICES, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME, CLOSE_WRAP_UP_INSTRUCTIONS_MAX } from '@zana-ai/zcc-domain/product';
+import { normalizeApiErrorResume, SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, EXPLORER_FILE_ICON_THEME_CHOICES, EXPLORER_MINIMAP_WIDTH_CHOICES, EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES, EXPLORER_MINIMAP_SLIDER_CHOICES, EXPLORER_MINIMAP_SIDE_CHOICES, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME, CLOSE_WRAP_UP_INSTRUCTIONS_MAX, MIN_AUTONOMOUS_WAIT_MS, MAX_AUTONOMOUS_WAIT_MS } from '@zana-ai/zcc-domain/product';
+
+/** Shared floor/ceiling for the autonomous idle-timeout and blocked-wait settings. */
+function clampAutonomousWaitMs(value: number): number {
+  return Math.max(MIN_AUTONOMOUS_WAIT_MS, Math.min(MAX_AUTONOMOUS_WAIT_MS, value));
+}
 import { isTerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 import { PROJECT_COLORS, pickProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -1465,7 +1470,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     // 0 = disabled (no timeout). Otherwise clamp to a sane floor (>=60_000 = 1 min)
     // so a typo can't make the watchdog fire instantly; cap at 24h (86_400_000).
     const v = Math.round(input.autonomousTimeoutMs);
-    normalized.autonomousTimeoutMs = v <= 0 ? 0 : Math.max(60_000, Math.min(86_400_000, v));
+    normalized.autonomousTimeoutMs = v <= 0 ? 0 : clampAutonomousWaitMs(v);
+  }
+  if (typeof input.autonomousBlockedWaitMs === 'number' && Number.isFinite(input.autonomousBlockedWaitMs)) {
+    // 0 is kept and means the 24h maximum at run time. Otherwise the same 1 min floor / 24h ceiling as the idle timeout.
+    const v = Math.round(input.autonomousBlockedWaitMs);
+    normalized.autonomousBlockedWaitMs = v <= 0 ? 0 : clampAutonomousWaitMs(v);
   }
   if (typeof input.autonomousMaxRounds === 'number' && Number.isFinite(input.autonomousMaxRounds)) {
     const v = Math.round(input.autonomousMaxRounds);

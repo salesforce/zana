@@ -51,6 +51,7 @@ describe('E2E Claude isolation', () => {
     const path = home();
     writeAppConfig(path, { sponsorPromptDismissed: true });
     expect(read(path)).toEqual({ walkthroughCompleted: true, setupDismissed: true, sponsorPromptDismissed: true,
+      confirmQuitOnLiveSessions: false,
       onboarding: { version: 1, profileId: 'salesforce-employees', audience: 'general', step: 'complete' },
       claudeBinary: DISABLED_CLAUDE_BINARY });
     const result = spawnSync(DISABLED_CLAUDE_BINARY, ['--print', '--model', 'haiku', '--', 'Name this test'], { env: { ...process.env, HOME: path }, encoding: 'utf8' });

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { planDeadline, type DeadlineTimings } from './deadline-watchdog.js';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
@@ -424,8 +425,10 @@ export interface ExecutionRecord {
   blockers?: ExecutionBlocker[];
   deliveries?: ExecutionDeliveryRecord[];
   noticeIntents?: ExecutionNoticeIntent[];
-  /** Fixed, non-sliding timeout extension for a committed unresolved blocker. */
+  /** @deprecated No longer written; tolerated on persisted records and cleared on blocker resolution. */
   blockerGraceUntil?: number;
+  /** When the one-time pre-stop warning for the current blocked wait was sent; cleared once no human blocker is open. */
+  blockedWarnedAt?: number;
   /** Durable explanation for a terminal stop; never implies inbox delivery. */
   timeoutReason?: 'idle' | 'unresolved-blocker' | 'plan-correction-cancelled';
   /** Stable launch request reserved for one recovered successor. */
@@ -595,6 +598,8 @@ export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['p
    *  wall-clock backstop. Reclaimed only from a lease already expired (a streaming
    *  worker keeps its lease fresh and never reaches this branch). */
   maxClaimStallMs?: number;
+  /** Maximum continuous wait on an open human blocker before the run is stopped; 0 = the 24 h maximum, absent = default (see effectiveBlockedWaitMs). */
+  blockedWaitMs?: number;
   usageBudget?: { maxTokens?: number; maxUsd?: number };
 }
 
@@ -842,6 +847,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
     && (record.noticeIntents === undefined || Array.isArray(record.noticeIntents) && record.noticeIntents.length <= MAX_WORK_UNITS && record.noticeIntents.every(validNoticeIntent))
     && (record.blockerGraceUntil === undefined || typeof record.blockerGraceUntil === 'number' && Number.isFinite(record.blockerGraceUntil))
+    && (record.blockedWarnedAt === undefined || typeof record.blockedWarnedAt === 'number' && Number.isFinite(record.blockedWarnedAt))
     && (record.timeoutReason === undefined || record.timeoutReason === 'idle' || record.timeoutReason === 'unresolved-blocker' || record.timeoutReason === 'plan-correction-cancelled')
     && (record.successorLaunchRequestId === undefined || validString(record.successorLaunchRequestId))
     && (record.successorExecutionId === undefined || validString(record.successorExecutionId))
@@ -1098,6 +1104,7 @@ function grantLoopRound(record: ExecutionRecord, review: ExecutionWorkUnit, time
   }
   review.loopExtraRounds = (review.loopExtraRounds ?? 0) + 1;
   review.state = 'COMPLETED';
+  applyBlockerResolutionEffects(record, review, timestamp);
   review.history.push({ action: 'retried', attempt: review.attempt, at: timestamp, detail: 'one more review round granted' });
   const fix = findUnit(record, review.loop!.fixUnitId);
   reopenUnit(fix, timestamp, 'extra review round granted');
@@ -1161,7 +1168,21 @@ function resetRetainedWork(record: ExecutionRecord, opts?: { keepSlotIds?: Reado
   record.noticeIntents = [];
   record.timeoutReason = undefined;
   record.blockerGraceUntil = undefined;
+  record.blockedWarnedAt = undefined;
   deriveReadiness(record, true);
+}
+
+/**
+ * Shared effects of resolving a blocker on `unit`: the answer is forward progress (so the
+ * idle window restarts from now) and, once no human blocker remains open, the stale grace
+ * and the one-time blocked-wait warning are cleared.
+ */
+function applyBlockerResolutionEffects(record: ExecutionRecord, unit: ExecutionWorkUnit, timestamp: number): void {
+  unit.progressAt = timestamp;
+  if (!(record.blockers ?? []).some((blocker) => !blocker.resolved && blocker.audience !== 'coordinator')) {
+    record.blockerGraceUntil = undefined;
+    record.blockedWarnedAt = undefined;
+  }
 }
 
 function beginRetryAttempt(record: ExecutionRecord, timestamp: number): void {
@@ -1417,11 +1438,12 @@ function validSourceBundle(value: unknown): boolean {
 
 function validExecutionPolicy(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
-  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; maxClaimStallMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } | null };
+  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; maxClaimStallMs?: unknown; blockedWaitMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } | null };
   const positiveInteger = (input: unknown, max: number) => Number.isInteger(input) && (input as number) > 0 && (input as number) <= max;
   return (policy.maxTurnsPerClaim === undefined || positiveInteger(policy.maxTurnsPerClaim, 10_000))
     && (policy.maxClaimWallClockMs === undefined || positiveInteger(policy.maxClaimWallClockMs, 24 * 60 * 60 * 1_000))
     && (policy.maxClaimStallMs === undefined || positiveInteger(policy.maxClaimStallMs, 24 * 60 * 60 * 1_000))
+    && (policy.blockedWaitMs === undefined || policy.blockedWaitMs === 0 || positiveInteger(policy.blockedWaitMs, 24 * 60 * 60 * 1_000))
     && (policy.usageBudget === undefined || policy.usageBudget !== null && typeof policy.usageBudget === 'object'
       && (policy.usageBudget.maxTokens === undefined || positiveInteger(policy.usageBudget.maxTokens, Number.MAX_SAFE_INTEGER))
       && (policy.usageBudget.maxUsd === undefined || typeof policy.usageBudget.maxUsd === 'number' && Number.isFinite(policy.usageBudget.maxUsd) && policy.usageBudget.maxUsd > 0));
@@ -1590,6 +1612,25 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   const now = options.now ?? Date.now;
   const id = options.id ?? randomUUID;
   const workClaimLeaseMs = options.workClaimLeaseMs ?? WORK_CLAIM_LEASE_MS;
+
+  /** Issue (or re-issue) the leased claim on `unit` for `slotId` at `timestamp`. */
+  function issueClaim(unit: ExecutionWorkUnit, slotId: string, timestamp: number, opts?: { keepIdentity?: boolean }): void {
+    unit.state = 'CLAIMED';
+    unit.assignedSlotId = slotId;
+    // A resumed claim keeps the fence the worker already holds (blockWork preserves it), so the
+    // worker's own execution.work.* outcome calls stay valid; a new claim mints a new fence.
+    if (!(opts?.keepIdentity && unit.claimId !== undefined)) {
+      unit.claimGeneration = (unit.claimGeneration ?? 0) + 1;
+      unit.claimId = randomUUID();
+    }
+    unit.claimedBy = { slotId };
+    unit.claimedAt = timestamp;
+    unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
+    unit.heartbeatAt = timestamp;
+    unit.progressAt = timestamp;
+    unit.turnCount = 0;
+    unit.reclaimedClaim = undefined; // a fresh claim supersedes any reclaimed-idle window
+  }
   const maxRecords = Math.min(options.maxRecords ?? MAX_RECORDS, MAX_RECORDS);
   const maxUsageObservationsPerExecution = Math.min(
     options.maxUsageObservationsPerExecution ?? MAX_USAGE_OBSERVATIONS_PER_EXECUTION,
@@ -2066,36 +2107,38 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   }
 
   /**
-   * One serialized deadline decision used by watchdog and polling callers. A
-   * committed blocker earns exactly one fixed grace window; repeated polls never
-   * extend it. The terminal transition and its reason persist together.
+   * One serialized deadline decision used by watchdog and polling callers. The due time
+   * is derived inside the queue from the live record (progress anchor, open human
+   * blockers), never from a caller-supplied value, so a resolution that committed
+   * first always wins. An open human blocker pauses the idle deadline up to a bounded
+   * wait: one `warned` decision precedes the stop; the terminal transition and its
+   * reason persist together.
    */
-  async function decideDeadline(executionId: string, deadlineAt: number, blockerGraceMs: number): Promise<{ kind: 'continue' | 'grace' | 'stopped'; record: ExecutionRecord }> {
-    if (!Number.isFinite(deadlineAt) || !Number.isInteger(blockerGraceMs) || blockerGraceMs < 0) throw new Error('invalid deadline decision');
+  async function decideDeadline(executionId: string, timings: DeadlineTimings): Promise<{ kind: 'continue' | 'warned' | 'stopped'; record: ExecutionRecord }> {
+    if (!Number.isFinite(timings.deadlineMs) || timings.deadlineMs <= 0 || !Number.isFinite(timings.blockedWaitMs) || timings.blockedWaitMs < 0) throw new Error('invalid deadline decision');
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
       const timestamp = now();
-      if (terminalStates.has(record.state) || timestamp < deadlineAt) return { kind: 'continue' as const, record: clone(record) };
-      const hasBlocker = record.blockers?.some((blocker) => !blocker.resolved) ?? false;
-      if (hasBlocker && blockerGraceMs > 0 && record.blockerGraceUntil === undefined) {
-        record.blockerGraceUntil = timestamp + blockerGraceMs;
+      if (terminalStates.has(record.state)) return { kind: 'continue' as const, record: clone(record) };
+      const plan = planDeadline(record, timings, timestamp);
+      if (!plan || timestamp < plan.at) return { kind: 'continue' as const, record: clone(record) };
+      if (plan.phase === 'blocked-warn') {
+        record.blockedWarnedAt = timestamp;
         record.stateVersion += 1;
         record.updatedAt = timestamp;
-        append(snapshot.state, record, record.state, 'warning', 'Execution deadline paused for unresolved blocker', timestamp, { kind: 'event' });
+        append(snapshot.state, record, record.state, 'warning', 'Execution will stop soon: unresolved blocker has waited too long', timestamp, { kind: 'event' });
         persist(snapshot.state, snapshot.hash);
-        return { kind: 'grace' as const, record: clone(record) };
+        return { kind: 'warned' as const, record: clone(record) };
       }
-      if (hasBlocker && record.blockerGraceUntil !== undefined && timestamp < record.blockerGraceUntil) {
-        return { kind: 'grace' as const, record: clone(record) };
-      }
+      const blocked = plan.phase === 'blocked-stop';
       const fromState = record.state;
       record.state = 'STOPPED';
-      record.timeoutReason = hasBlocker ? 'unresolved-blocker' : 'idle';
+      record.timeoutReason = blocked ? 'unresolved-blocker' : 'idle';
       record.stateVersion += 1;
       record.updatedAt = timestamp;
-      append(snapshot.state, record, 'STOPPED', 'warning', hasBlocker ? 'Execution timed out with unresolved blocker' : 'Execution timed out', timestamp, { kind: 'transition', fromState, toState: 'STOPPED' });
+      append(snapshot.state, record, 'STOPPED', 'warning', blocked ? 'Execution timed out with unresolved blocker' : 'Execution timed out', timestamp, { kind: 'transition', fromState, toState: 'STOPPED' });
       persist(snapshot.state, snapshot.hash);
       return { kind: 'stopped' as const, record: clone(record) };
     });
@@ -2500,17 +2543,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         assertAuthorizedSlot(record, slotId);
       }
       assertScopeAvailable(record, unit);
-       unit.state = 'CLAIMED';
-       unit.assignedSlotId = slotId;
-       unit.claimGeneration = (unit.claimGeneration ?? 0) + 1;
-       unit.claimId = randomUUID();
-       unit.claimedBy = { slotId };
-       unit.claimedAt = timestamp;
-       unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
-       unit.heartbeatAt = timestamp;
-       unit.progressAt = timestamp;
-       unit.turnCount = 0;
-       unit.reclaimedClaim = undefined; // a fresh claim supersedes any reclaimed-idle window
+      issueClaim(unit, slotId, timestamp);
       unit.attempt += 1;
       unit.failureCode = undefined;
       unit.failure = undefined;
@@ -3208,6 +3241,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           failActiveDeliveries(record, blocker.id, 'blocker resolved by work retry', timestamp);
         }
       }
+      applyBlockerResolutionEffects(record, unit, timestamp);
       record.state = record.blockers?.some((blocker) => !blocker.resolved) ? 'BLOCKED' : 'RUNNING';
       deriveReadiness(record, true);
     }, `Work unit retry ready: ${workUnitId}`);
@@ -3233,7 +3267,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (record.blockers?.some((blocker) => blocker.id === input.id)) throw new Error('duplicate execution blocker id');
       unit.state = 'BLOCKED';
       unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(input.question, 'blocker question') });
+      // Keep the claim fence (not the lease): the worker resumes under it once the answer is acked.
+      const heldClaimId = unit.claimId;
       clearClaim(unit);
+      unit.claimId = heldClaimId;
       record.blockers ??= [];
       record.blockers.push({ id: string(input.id, 'blocker id'), workUnitId: unit.id, slotId: authority.slotId, question: string(input.question, 'blocker question'), ...(input.options ? { options: input.options.map((option) => string(option, 'blocker option')) } : {}), ...(input.audience === 'coordinator' ? { audience: 'coordinator' as const } : {}), resolved: false, createdAt: timestamp });
       if (input.audience !== 'coordinator') {
@@ -3453,6 +3490,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         blocker.resolvedAt = timestamp;
         const unit = findUnit(record, blocker.workUnitId);
         unit.state = unit.assignedSlotId ? 'CLAIMED' : 'READY';
+        // blockWork cleared the claim; re-issue it from the ack so the resumed worker is leased,
+        // its output advances progress, and the wall-clock/stall limits measure from the answer.
+        if (unit.assignedSlotId) issueClaim(unit, unit.assignedSlotId, timestamp, { keepIdentity: true });
+        applyBlockerResolutionEffects(record, unit, timestamp);
         record.state = record.blockers?.some((candidate) => !candidate.resolved) ? 'BLOCKED' : 'RUNNING';
       } else {
         delivery.lastError = truncateUtf8(result.error?.trim() || 'delivery failed', MAX_DELIVERY_ERROR_BYTES);

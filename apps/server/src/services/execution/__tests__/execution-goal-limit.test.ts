@@ -90,7 +90,7 @@ describe('Squad goal and summary limit in the execution service and store', () =
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending', { id: 'blocker', question: 'Approve target A?' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
 
     const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-long');
     expect(recovered).toMatchObject({ ok: true, value: { id: 'execution-2' } });
@@ -128,7 +128,7 @@ describe('Squad goal and summary limit in the execution service and store', () =
       id: 'blocker-b', question: 'Which label should result.txt use?', options: ['About Atlas', 'Atlas']
     });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-context');
     expect(recovered).toMatchObject({ ok: true, value: { id: 'execution-2' } });
     return (await store.get('execution-2'))!;
@@ -160,7 +160,7 @@ describe('Squad goal and summary limit in the execution service and store', () =
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending', { id: 'blocker', question: 'Approve target A?' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-short');
     expect(recovered).toMatchObject({ ok: true });
     const successor = (await store.get('execution-2'))!;

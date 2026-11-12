@@ -18,7 +18,7 @@ import { registerThreadProvider } from './thread-provider-catalog.js';
 import { capabilityRegistry } from '../../plugins/capability-registry.js';
 import {
   activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, MODERN_SQUAD_BINDING_ORIGIN,
-  preflightSquadRuntime, squadMemberStatus, stopSquadMemberConversation, handleMainSquadRuntimeHttp,
+  preflightSquadRuntime, retainSquadMemberConversation, squadMemberStatus, stopSquadMemberConversation, handleMainSquadRuntimeHttp,
   isSquadMemberThread, resolveSquadMember
 } from './squad-member-runtime.js';
 import { createNativeToolPolicyVerifier, signNativeToolPolicyRequest } from '../../http/native-tool-policy-proof.js';
@@ -69,6 +69,7 @@ beforeEach(() => {
         if (command.type === 'environment.provision') return { path: command.path, isGitRepo: true, isWorktree: true };
         if (command.type === 'thread.start') return startResult;
         if (command.type === 'thread.stop') return { threadId: bindingId, stopped: true };
+        if (command.type === 'thread.retain') return { threadId: bindingId, retainUntilMs: (command as unknown as { retainUntilMs: number }).retainUntilMs };
         return { accepted: true };
       }) }
   } as unknown as ProductHttpContext;
@@ -440,6 +441,32 @@ describe('trusted Modern member runtime', () => {
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadStopRequested).toBe(true);
     expect(squadMemberStatus(ctx, control)).toMatchObject({ live: false, providerStarted: false, status: confirmed ? 'stopped' : 'stopping' });
     await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow('prepared squad member binding changed or stopped');
+  });
+
+  it('pushes a self-expiring retain hold to the host, stores it, and clears it', async () => {
+    await createSquadMemberConversation(ctx, member);
+    await activateSquadMemberConversation(ctx, member);
+    const until = Date.now() + 60_000;
+    commands.length = 0;
+    await expect(retainSquadMemberConversation(ctx, { ...control, retainUntilMs: until })).resolves.toBe(true);
+    expect(commands).toContainEqual({ type: 'thread.retain', threadId: bindingId, retainUntilMs: until });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadRetainUntil).toBe(until);
+    await expect(retainSquadMemberConversation(ctx, { ...control, retainUntilMs: 0 })).resolves.toBe(true);
+    expect(commands).toContainEqual({ type: 'thread.retain', threadId: bindingId, retainUntilMs: 0 });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadRetainUntil).toBeUndefined();
+  });
+
+  it('keeps the stored hold when the host is unreachable and refuses a stale or invalid binding', async () => {
+    await createSquadMemberConversation(ctx, member);
+    await activateSquadMemberConversation(ctx, member);
+    const until = Date.now() + 60_000;
+    vi.mocked(ctx.hostHub.callHostOnlineRpc).mockRejectedValueOnce(new Error('host unavailable'));
+    await expect(retainSquadMemberConversation(ctx, { ...control, retainUntilMs: until })).resolves.toBe(false);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadRetainUntil).toBe(until);
+    vi.mocked(ctx.hostHub.callHostOnlineRpc).mockResolvedValueOnce({ threadId: bindingId, retainUntilMs: until + 1 } as never);
+    await expect(retainSquadMemberConversation(ctx, { ...control, retainUntilMs: until })).resolves.toBe(false);
+    await expect(retainSquadMemberConversation(ctx, { ...control, generation: 1, retainUntilMs: until })).rejects.toThrow('stale squad member binding generation');
+    await expect(retainSquadMemberConversation(ctx, { ...control, retainUntilMs: -1 })).rejects.toThrow();
   });
 
   it('retires member resolution on confirmed stop while durable member state persists', async () => {

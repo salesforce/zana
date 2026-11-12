@@ -21,8 +21,15 @@ interface PendingDelivery {
 export interface ExecutionDeliveryDrainDeps {
   pending: (sessionId: string) => Promise<PendingDelivery[]>;
   isRestful: (sessionId: string) => boolean;
-  /** False proves rejection; true includes accepted or uncertain runtime receipts. */
-  reply: (sessionId: string, text: string, correlation?: ExecutionDeliveryNudgeCorrelation) => boolean | Promise<boolean>;
+  /**
+   * False proves rejection; true is an accepted receipt. `'uncertain'` means the runtime may or may not have
+   * the nudge: the drain retries (bounded, same correlation key so the transport cannot double-send) and
+   * never treats it as announced.
+   */
+  reply: (sessionId: string, text: string, correlation?: ExecutionDeliveryNudgeCorrelation) =>
+    boolean | 'uncertain' | Promise<boolean | 'uncertain'>;
+  /** Called once per nudge when uncertain retries are exhausted. The deliveries stay PENDING. */
+  onStalled?: (sessionId: string, deliveries: Array<{ id: string; executionId: string }>) => void | Promise<void>;
   /** Opt in only when the transport deduplicates the supplied correlation. */
   isReplyIdempotent?: (sessionId: string) => boolean;
   logError?: (message: string, error: unknown) => void;
@@ -35,7 +42,7 @@ interface Entry {
   announced: Set<string>;
   retries: number;
   retryTimer?: unknown;
-  nudge?: { keys: string[]; text: string; correlation: ExecutionDeliveryNudgeCorrelation; rejections: number };
+  nudge?: { keys: string[]; text: string; correlation: ExecutionDeliveryNudgeCorrelation; rejections: number; stalled?: boolean; deliveries: Array<{ id: string; executionId: string }> };
 }
 
 const restful = isRestfulAgentState;
@@ -106,6 +113,13 @@ export class ExecutionDeliveryDrainService {
     }, PENDING_RETRY_MS);
   }
 
+  private async reportStall(sessionId: string, nudge: NonNullable<Entry['nudge']>): Promise<void> {
+    if (nudge.stalled || !this.deps.onStalled) return;
+    nudge.stalled = true;
+    try { await this.deps.onStalled(sessionId, nudge.deliveries); }
+    catch (error) { this.logError(`execution-delivery-drain: stall notice failed for session ${sessionId}`, error); }
+  }
+
   private async announce(sessionId: string, entry: Entry): Promise<void> {
     // The entry may have been removed (session exit) between scheduling and now.
     if (this.entries.get(sessionId) !== entry || !this.deps.isRestful(sessionId)) return;
@@ -150,7 +164,7 @@ export class ExecutionDeliveryDrainService {
       const executions = [...new Set(fresh.map((delivery) => delivery.executionId))].sort();
       const count = fresh.length;
       entry.retries = 0;
-      entry.nudge = { keys, rejections: 0, correlation: { assignmentId, idempotencyKey: `${assignmentId}:0` }, text:
+      entry.nudge = { keys, rejections: 0, deliveries: fresh.map(({ id, executionId }) => ({ id, executionId })), correlation: { assignmentId, idempotencyKey: `${assignmentId}:0` }, text:
         `[execution] You have ${count} pending blocker ${count === 1 ? 'response' : 'responses'} ` +
         `for ${executions.join(', ')}. Call execution.delivery.pull, apply the response, then call execution.delivery.ack with delivered:true. ` +
         `Do NOT call execution.resume or execution.respond to accept it — those are owner-only and will fail for you; pull+ack is the whole flow.`
@@ -166,6 +180,12 @@ export class ExecutionDeliveryDrainService {
         nudge.correlation = { assignmentId: nudge.correlation.assignmentId,
           idempotencyKey: `${nudge.correlation.assignmentId}:${nudge.rejections}` };
         this.scheduleRetry(sessionId, entry);
+        return;
+      }
+      if (sent === 'uncertain') {
+        // Delivery is only ever acked by the worker's pull+ack; an unconfirmed nudge stays PENDING.
+        if (entry.retries >= MAX_PENDING_RETRIES) await this.reportStall(sessionId, nudge);
+        else this.scheduleRetry(sessionId, entry);
         return;
       }
     } catch (error) {

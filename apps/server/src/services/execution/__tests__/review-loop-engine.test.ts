@@ -122,7 +122,7 @@ describe('recovering a timed-out run with a loop', () => {
     source = await store.claimWork(source.id, source.stateVersion, slot, blockedId);
     source = await store.blockWork(source.id, source.stateVersion, slot, blockedId, { id: 'blocker', question: 'Need decision' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     const out = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover');
     return { out, store };
   };

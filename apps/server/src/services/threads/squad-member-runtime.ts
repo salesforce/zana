@@ -7,7 +7,7 @@ import {
 } from '@zana-ai/zcc-db';
 import {
   SquadMemberControlRequestSchema, SquadMemberDeliveryRequestSchema, SquadMemberRuntimeRequestSchema,
-  SquadMemberDeliveryCompletionSchema, type SquadMemberDeliveryCompletion,
+  SquadMemberDeliveryCompletionSchema, SquadMemberRetainRequestSchema, type SquadMemberDeliveryCompletion,
   SquadRuntimePreflightRequestSchema, SquadMemberResumeRequestSchema,
   type SquadMemberResumeRequest, type SquadMemberResumeResult,
   SquadRuntimeOperationSchema, SQUAD_RUNTIME_OPERATION_PATH, SQUAD_START_REFUSED_PREFIX,
@@ -103,6 +103,7 @@ export async function handleMainSquadRuntimeHttp(
       case 'squad-member-delivery-complete': value = completeSquadMemberDelivery(ctx, operation.request); break;
       case 'squad-member-status': value = squadMemberStatus(ctx, operation.request); break;
       case 'squad-member-stop': value = await stopSquadMemberConversation(ctx, operation.request); break;
+      case 'squad-member-retain': value = await retainSquadMemberConversation(ctx, operation.request); break;
       case 'squad-member-resume': value = await resumeSquadMemberConversation(ctx, operation.request); break;
     }
     sendJson(response, 200, { value });
@@ -411,6 +412,32 @@ export async function stopSquadMemberConversation(ctx: ProductHttpContext, reque
   boundMember(ctx, request);
   persistBindingMetadata(ctx, request.bindingId, { squadStopped: true });
   return true;
+}
+
+/**
+ * Idle-sweep hold on a bound member's live session. Server metadata alone never
+ * reaches the host daemon, so the timestamp is also pushed as `thread.retain`;
+ * the daemon holds the thread only until `retainUntilMs` (0 clears), so a lost
+ * release or a crashed server cannot pin a session. Resolves true when the host
+ * acknowledged the exact hold, false when the host was unreachable (the stored
+ * value lets the caller re-assert on reconnect).
+ */
+export async function retainSquadMemberConversation(ctx: ProductHttpContext, input: unknown): Promise<boolean> {
+  const request = SquadMemberRetainRequestSchema.parse(input);
+  const { thread } = boundMember(ctx, request);
+  if (request.retainUntilMs > 0) persistBindingMetadata(ctx, request.bindingId, { squadRetainUntil: request.retainUntilMs });
+  else persistBindingMetadata(ctx, request.bindingId, {}, ['squadRetainUntil']);
+  try {
+    const ack = await ctx.hostHub.callHostOnlineRpc<{ threadId?: string; retainUntilMs?: number }>({
+      hostId: thread.hostId,
+      command: { type: 'thread.retain', threadId: thread.id, retainUntilMs: request.retainUntilMs }
+    });
+    return ack?.threadId === thread.id && ack.retainUntilMs === request.retainUntilMs;
+  } catch (error) {
+    // Offline host or a malformed ack: the caller treats `false` as "hold not applied" and retries.
+    console.warn('[squad-member-runtime] thread.retain failed', { threadId: thread.id, hostId: thread.hostId, error: error instanceof Error ? error.message : String(error) });
+    return false;
+  }
 }
 
 /** Typed resume failure; `code` is stable for main, message stays bounded. */

@@ -791,6 +791,19 @@ describe('config — autonomous backstop normalization', () => {
   // Regression guard: autonomous config must preserve 0-means-disabled for
   // timeoutMs and maxRounds, while clamping positive values to prevent typos.
 
+  it('autonomousBlockedWaitMs: preserves 0 (meaning the 24 h maximum), clamps positives to [60000, 86400000], ignores non-numbers', () => {
+    store.setConfig({ autonomousBlockedWaitMs: 0 });
+    expect(store.getConfig().autonomousBlockedWaitMs).toBe(0);
+    store.setConfig({ autonomousBlockedWaitMs: 30_000 });
+    expect(store.getConfig().autonomousBlockedWaitMs).toBe(60_000);
+    store.setConfig({ autonomousBlockedWaitMs: 90_000_000 });
+    expect(store.getConfig().autonomousBlockedWaitMs).toBe(86_400_000);
+    store.setConfig({ autonomousBlockedWaitMs: 4 * 3_600_000 });
+    expect(store.getConfig().autonomousBlockedWaitMs).toBe(14_400_000);
+    store.setConfig({ autonomousBlockedWaitMs: Number.NaN });
+    expect(store.getConfig().autonomousBlockedWaitMs).toBe(14_400_000);
+  });
+
   it('autonomousTimeoutMs: preserves 0 (timeout disabled)', () => {
     store.setConfig({ autonomousTimeoutMs: 0 });
     expect(store.getConfig().autonomousTimeoutMs).toBe(0);

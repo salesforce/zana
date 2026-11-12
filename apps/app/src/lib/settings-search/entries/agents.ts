@@ -7,6 +7,7 @@ import {
 import {
   API_ERROR_RESUME_DEFAULTS,
   AUTO_CLOSE_IDLE_DEFAULTS,
+  DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS,
   HEARTBEAT_DEFAULTS,
   SESSION_MEMORY_DEFAULTS,
   THREAD_SESSION_RELEASE_DEFAULTS,
@@ -470,7 +471,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'agents',
     anchor: 'agent-heartbeat',
     label: 'Squad idle timeout (minutes, 0 = no timeout)',
-    help: 'How long a Squad run may go WITHOUT making progress before timing out. Worker output and heartbeats reset the clock, so a long but healthy run is never cut off — only a stalled one times out. Set to 0 to disable completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours).',
+    help: 'How long a Squad run may go WITHOUT making progress before timing out. Genuine worker progress, such as real output or a resolved question, resets the clock; silent keep-alives do not. The clock is paused while a question awaits a person, up to the maximum blocked wait below, and answering it restarts a full window. Set to 0 to disable completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours).',
     keywords: ['timeout', 'autonomous', 'stalled', 'minutes', 'squad run'],
     kind: 'setting',
     value: (s) => {
@@ -478,6 +479,20 @@ export const entries: readonly SettingsSearchEntry[] = [
       if (ms === 0) return '0';
       // Anything non-numeric (unset, null from an older config) is the 45-minute default, never "NaN".
       return String(Math.round((typeof ms === 'number' && Number.isFinite(ms) ? ms : 45 * 60 * 1000) / 60000));
+    },
+  },
+  {
+    id: 'agents.squad-blocked-wait',
+    section: 'agents',
+    anchor: 'agent-heartbeat',
+    label: 'Squad max blocked wait (minutes, 0 = 24 hours)',
+    help: 'How long a Squad run may wait on a question that needs a person before it is stopped. The idle timeout is paused during this wait. A single warning is sent shortly before the stop. Set to 0 for the 24-hour maximum. Default is 240 minutes (4 hours). Range 1–1440, or 0 for 1440.',
+    keywords: ['timeout', 'blocked', 'question', 'waiting', 'human', 'squad run'],
+    kind: 'setting',
+    value: (s) => {
+      const ms = s.config.autonomousBlockedWaitMs;
+      if (ms === 0) return '0';
+      return String(Math.round((typeof ms === 'number' && Number.isFinite(ms) ? ms : DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS) / 60000));
     },
   },
   {

@@ -309,7 +309,7 @@ function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags 
  * the scenario branches live as runtime `if`s in the generated script, not as
  * template-time fragments.
  */
-function renderCoordinatorScript(flags: JobTeamScenarioFlags): string {
+function renderCoordinatorScript(flags: JobTeamScenarioFlags, deadlineMs?: number): string {
   return String.raw`#!/usr/bin/env node
 'use strict';
 const fs = require('fs');
@@ -415,6 +415,8 @@ const PLAN_CORRECTION_SILENT = ${JSON.stringify(flags.planCorrectionSilent)};
 const API_ERROR_NUDGE = ${JSON.stringify(flags.apiErrorNudge)};
 const API_ERROR_RESTART = ${JSON.stringify(flags.apiErrorRestart)};
 const API_ERROR_PERMANENT = ${JSON.stringify(flags.apiErrorPermanent)};
+// Optional execution.start idle deadline (ms); null = engine default. Used by the blocked-wait E2E.
+const DEADLINE_MS = ${JSON.stringify(deadlineMs ?? null)};
 const APIERR = API_ERROR_NUDGE || API_ERROR_RESTART || API_ERROR_PERMANENT;
 const RESUMED = process.argv.includes('--resume');
 // The MCP URL's session segment survives an in-place restart (the restarted process gets a new
@@ -524,6 +526,7 @@ async function owner() {
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
     ...(ANSWERS_REPORTS ? { notify: true } : {}),
+    ...(DEADLINE_MS ? { deadlineMs: DEADLINE_MS } : {}),
     // Stalled repro shrinks the wall-clock ceiling so the backstop reclaims the
     // stuck non-restful claim in bounded test time (paired with the E2E-only
     // ZCC_WORK_CLAIM_LEASE_MS / ZCC_EXECUTION_RECONCILE_INTERVAL_MS host knobs).
@@ -1220,8 +1223,8 @@ async function worker() {
 `;
 }
 
-export function makeJobTeamCoordinatorBinary(options: { scenario?: JobTeamScenario } = {}): FakeAgentBinary {
-  const script = renderCoordinatorScript(resolveScenarioFlags(options.scenario));
+export function makeJobTeamCoordinatorBinary(options: { scenario?: JobTeamScenario; deadlineMs?: number } = {}): FakeAgentBinary {
+  const script = renderCoordinatorScript(resolveScenarioFlags(options.scenario), options.deadlineMs);
   const dir = mkdtempSync(join(tmpdir(), 'zcc-fake-coordinator-'));
   const path = join(dir, 'claude-coordinator.js');
   writeFileSync(path, script);

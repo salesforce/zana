@@ -248,6 +248,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const teams = useTeams((state) => state.teams);
   const personas = usePersonas((state) => state.personas);
   const recoveryReasonId = useId();
+  const timeoutRecoveryReasonId = useId();
   const refresh = useCallback(async (after = 0) => {
     const scope = scopeRef.current;
     if (!scope.live || scope.key !== `${projectId}:${executionId}` || scope.inFlight) return;
@@ -304,8 +305,13 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     : retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
       ? 'Existing Squad sessions cannot be restored on this device.'
       : undefined;
+  const timeoutRecoverOffered = execution.state === 'STOPPED' && execution.timeoutReason === 'unresolved-blocker' && !execution.successorExecutionId;
+  const timeoutRecoveryBlockedReason = execution.timeoutRecovery && !execution.timeoutRecovery.available
+    ? execution.timeoutRecovery.reason ?? 'recovery is not allowed for this run' : undefined;
   const recoveryActions = <div className="execution-details-actions execution-details-primary-actions">
-    {execution.state === 'STOPPED' && execution.timeoutReason === 'unresolved-blocker' && !execution.successorExecutionId && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverTimedOut(projectId, executionId, execution.stateVersion ?? 0, crypto.randomUUID()))}>Recover timed-out run</button>}
+    {timeoutRecoverOffered && (timeoutRecoveryBlockedReason
+      ? <><button className="btn primary" type="button" disabled title={timeoutRecoveryBlockedReason} aria-describedby={timeoutRecoveryReasonId}>Recover timed-out run</button><p id={timeoutRecoveryReasonId} className="execution-details-recovery-reason">Cannot recover: {timeoutRecoveryBlockedReason}</p></>
+      : <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverTimedOut(projectId, executionId, execution.stateVersion ?? 0, crypto.randomUUID()))}>Recover timed-out run</button>)}
     {retainedRecovery?.freshPlan.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'fresh-plan'))}>Relaunch Squad from retained plan</button>}
     {retainedRecovery?.exactNative.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'exact-native'))}>Resume existing Squad</button>}
     {exactNativeUnavailableReason && <><button className="btn primary" type="button" disabled title={exactNativeUnavailableReason} aria-describedby={recoveryReasonId}>Resume existing Squad</button><p id={recoveryReasonId} className="execution-details-recovery-reason">{exactNativeUnavailableReason}</p></>}

@@ -1,6 +1,7 @@
 import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isWorkerRecoveryLive, MAX_DELIVERY_ATTEMPTS, type ExecutionRecord, type ExecutionWorkUnit } from './store.js';
 import { usageRollup } from './contracts.js';
+import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { TeamLifecycleRecord } from '../launch/team-lifecycle-store.js';
 
 /**
@@ -182,6 +183,11 @@ function coordinatorWakesProjection(record: ExecutionRecord): ExecutionBoardProj
   };
 }
 
+function timeoutRecoveryProjection(record: ExecutionRecord): NonNullable<ExecutionBoardProjection['timeoutRecovery']> {
+  const reason = timeoutRecoveryBlockReason(record);
+  return reason ? { available: false, reason } : { available: true };
+}
+
 function retainedRecoveryActions(record: ExecutionRecord): NonNullable<ExecutionBoardProjection['recovery']>['actions'] {
   const eligible = !record.successorExecutionId && (record.state === 'FAILED' || record.state === 'STOPPED')
     && !(record.state === 'STOPPED' && (record.timeoutReason === 'unresolved-blocker' || record.timeoutReason === 'plan-correction-cancelled'));
@@ -337,6 +343,8 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     recoveryAttention: !terminal && !orchestratorSessionId,
     ...(record.timeoutReason ? { timeoutReason: record.timeoutReason } : {}),
     ...(record.successorExecutionId ? { successorExecutionId: record.successorExecutionId } : {}),
+    ...(record.state === 'STOPPED' && record.timeoutReason === 'unresolved-blocker'
+      ? { timeoutRecovery: timeoutRecoveryProjection(record) } : {}),
     recovery: {
       status: terminal ? 'terminal' : (record.recoveryDeadlineAt ?? 0) > now ? 'available' : 'expired',
       ...(record.recoveryDeadlineAt === undefined ? {} : { deadlineAt: record.recoveryDeadlineAt }),

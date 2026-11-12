@@ -3284,20 +3284,23 @@ describe('SquadExecutionService', () => {
     expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
   }));
 
-  it('holds one fixed grace for a committed human blocker before timing out', async () => fixture(async (filePath) => {
+  it('holds an open human blocker past the idle deadline and the old 5.5 min grace, then stops at the blocked-wait bound', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
     const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
     const service = new SquadExecutionService(deps(filePath, { store, now: () => now, cancelTeamLaunch }));
-    await service.start('session-1', 'project-1', { ...request, policy: { deadlineMs: 100 } });
+    await service.start('session-1', 'project-1', { ...request, policy: { deadlineMs: 100, blockedWaitMs: 1_000_000 } });
     let record = await store.get('execution-1');
     if (!record) throw new Error('missing execution');
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
     record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit', { id: 'blocker', question: 'Need decision' });
     now = 1_101;
-    await expect(service.status('session-1', 'project-1', record.id)).resolves.toMatchObject({ state: 'BLOCKED', blockerGraceUntil: 331_101 });
+    await expect(service.status('session-1', 'project-1', record.id)).resolves.toMatchObject({ state: 'BLOCKED' });
     now = 331_101;
+    await expect(service.status('session-1', 'project-1', record.id)).resolves.toMatchObject({ state: 'BLOCKED' });
+    expect(cancelTeamLaunch).not.toHaveBeenCalled();
+    now = 1_001_000;
     await expect(service.status('session-1', 'project-1', record.id)).resolves.toMatchObject({ state: 'STOPPED', timeoutReason: 'unresolved-blocker' });
     expect(cancelTeamLaunch).toHaveBeenCalledTimes(1);
   }));
@@ -3313,7 +3316,7 @@ describe('SquadExecutionService', () => {
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit', { id: 'blocker', question: 'Need decision' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     expect(source).toMatchObject({ state: 'STOPPED', timeoutReason: 'unresolved-blocker' });
     const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-1');
     expect(recovered).toMatchObject({ ok: true, value: { id: 'execution-2', state: 'RUNNING' } });
@@ -3338,7 +3341,7 @@ describe('SquadExecutionService', () => {
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit', { id: 'blocker', question: 'Need decision' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-1')).resolves.toMatchObject({ ok: true, value: { id: 'execution-2' } });
     expect(await store.get('execution-2')).toMatchObject({ proposal, reportTo });
   }));
@@ -3884,7 +3887,7 @@ describe('SquadExecutionService', () => {
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending', { id: 'blocker', question: 'Approve target A?' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
 
     await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, ' ')).resolves.toEqual({
       ok: false, code: 'INVALID', message: 'invalid timeout recovery request'
@@ -3931,7 +3934,8 @@ describe('SquadExecutionService', () => {
     source = await store.transition(source.id, source.stateVersion, 'RUNNING', 'info', 'run');
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'pending');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'pending', { id: 'blocker', question: 'Need input' });
-    source = (await store.decideDeadline(source.id, 0, 0)).record;
+    await new Promise((resolve) => setTimeout(resolve, 5)); // real clock: let the 1 ms blocked wait elapse
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-requires');
     expect(recovered).toMatchObject({ ok: true });
     expect((await store.get('execution-2'))?.workUnits).toEqual([
@@ -3949,7 +3953,7 @@ describe('SquadExecutionService', () => {
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit', { id: 'blocker', question: 'Approve deploy' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-mutating')).resolves.toMatchObject({
       ok: false, code: 'RECOVERY_NOT_ALLOWED', message: expect.stringContaining('mutating work')
     });
@@ -3974,7 +3978,7 @@ describe('SquadExecutionService', () => {
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'read');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'read', { id: 'blocker', question: 'Continue?' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-completed-mutating')).resolves.toMatchObject({
       ok: false, code: 'RECOVERY_NOT_ALLOWED', message: expect.stringContaining('completed mutating work')
     });
@@ -4012,7 +4016,7 @@ describe('SquadExecutionService', () => {
     source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
     source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit', { id: 'blocker', question: 'Continue?' });
     now = 1_101;
-    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    source = (await store.decideDeadline(source.id, { deadlineMs: 1, blockedWaitMs: 1 })).record;
     vi.spyOn(store, 'reserveTimeoutRecovery').mockRejectedValueOnce('storage unavailable');
     await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-failure')).resolves.toEqual({
       ok: false, code: 'RECOVERY_NOT_ALLOWED', message: 'storage unavailable'

@@ -336,6 +336,16 @@ export function createAgentRuntimeAdapter(options: {
   const runtimeMeta = new Map<string, { catalogHash: string; cwd: string }>();
   const threadLocation = new Map<string, { environmentId: string; projectId: string; cwd: string; status: 'active' | 'idle' | 'error' }>();
   const remoteProxyByThread = new Map<string, ThreadRemoteProxy>();
+  // Self-expiring idle-sweep holds (epoch ms) set by the server. Kept across
+  // stop/resume on purpose: a lazily resumed thread is still held until expiry.
+  const retainUntilByThread = new Map<string, number>();
+  const isThreadHeld = (threadId: string, nowMs: number): boolean => {
+    const until = retainUntilByThread.get(threadId);
+    if (until === undefined) return false;
+    if (until > nowMs) return true;
+    retainUntilByThread.delete(threadId);
+    return false;
+  };
   const submitByThread = new Map<string, Promise<void>>();
   const createRuntime = options.createRuntime
     ?? (fakeProviderEnabled() ? createFakeAgentRuntime : createAgentRuntime);
@@ -772,10 +782,14 @@ export function createAgentRuntimeAdapter(options: {
       const runtime = runtimeForThread(input.threadId);
       return runtime.clearThreadGoal({ threadId: input.threadId });
     },
+    async retainThread(input) {
+      if (input.retainUntilMs > Date.now()) retainUntilByThread.set(input.threadId, input.retainUntilMs);
+      else retainUntilByThread.delete(input.threadId);
+    },
     async reapIdleProviderSessions(args) {
       const reapedSessions = [];
       for (const [environmentId, runtime] of runtimes) {
-        const result = await runtime.reapIdleProviderSessions(args);
+        const result = await runtime.reapIdleProviderSessions({ ...args, isThreadHeld });
         for (const session of result.reapedSessions) {
           threadLocation.delete(session.threadId);
           remoteProxyByThread.delete(session.threadId);

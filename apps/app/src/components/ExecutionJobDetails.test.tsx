@@ -73,6 +73,55 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
   });
 
+  const timedOut = (timeoutRecovery?: { available: boolean; reason?: string }): ExecutionBoardSnapshot => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'STOPPED';
+    snapshot.execution.timeoutReason = 'unresolved-blocker';
+    if (timeoutRecovery) snapshot.execution.timeoutRecovery = timeoutRecovery;
+    return snapshot;
+  };
+
+  it('enables timeout recovery for read-only and no-work-unit runs', async () => {
+    for (const recovery of [{ available: true }, undefined]) {
+      (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(timedOut(recovery));
+      const view = render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+      const button = await screen.findByRole('button', { name: 'Recover timed-out run' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+      expect(screen.queryByText(/Cannot recover/)).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it('disables timeout recovery with a visible reason for mutating work', async () => {
+    const reason = 'recovery requires durable provenance for unfinished mutating work';
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(timedOut({ available: false, reason }));
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    const button = await screen.findByRole('button', { name: 'Recover timed-out run' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('title')).toBe(reason);
+    const text = screen.getByText(`Cannot recover: ${reason}`);
+    expect(button.getAttribute('aria-describedby')).toBe(text.id);
+    fireEvent.click(button);
+    expect(window.cc.executionBoard.recoverTimedOut).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a generic reason when the blocked projection has none', async () => {
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(timedOut({ available: false }));
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    expect(await screen.findByText('Cannot recover: recovery is not allowed for this run')).toBeTruthy();
+  });
+
+  it('shows the backend RECOVERY_NOT_ALLOWED message when recovery is still attempted', async () => {
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(timedOut({ available: true }));
+    (window.cc.executionBoard.recoverTimedOut as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false, code: 'RECOVERY_NOT_ALLOWED', message: 'recovery requires durable provenance for completed mutating work'
+    });
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Recover timed-out run' }));
+    await waitFor(() => expect(useUi.getState().toasts.some((t) =>
+      t.message === 'Squad control failed: recovery requires durable provenance for completed mutating work' && t.kind === 'error')).toBe(true));
+  });
+
   it('shows linked successor instead of offering duplicate timeout recovery', async () => {
     const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
     snapshot.execution.state = 'STOPPED';

@@ -37,18 +37,86 @@ export function executionProgressAnchor(record: ExecutionRecord): number {
   return anchor;
 }
 
+/** Default maximum wait for an open human blocker before the run is stopped (policy `blockedWaitMs` overrides). */
+export const DEFAULT_BLOCKED_WAIT_MS = 4 * 60 * 60_000;
+/** Hard ceiling on a blocked wait (24 h). A policy value of 0 means "use this ceiling". */
+export const MAX_BLOCKED_WAIT_MS = 24 * 60 * 60_000;
+
+/**
+ * The one definition of a run's blocked-wait bound, shared by the deadline plan and the
+ * parked-worker hold so a hold never ends before the run does. Absent or invalid -> default;
+ * 0 -> the 24 h ceiling; anything above the ceiling is capped to it.
+ */
+export function effectiveBlockedWaitMs(configured: unknown): number {
+  if (typeof configured !== 'number' || !Number.isFinite(configured) || configured < 0) return DEFAULT_BLOCKED_WAIT_MS;
+  return configured === 0 ? MAX_BLOCKED_WAIT_MS : Math.min(configured, MAX_BLOCKED_WAIT_MS);
+}
+/** The user is warned this long (at most a quarter of the bound) before a blocked wait expires. */
+export const BLOCKED_WAIT_WARN_LEAD_MS = 15 * 60_000;
+/** Floor between a "continue" decision and the next arm, so a past target can never spin the timer at delay 0. */
+export const DEADLINE_RECHECK_FLOOR_MS = 1_000;
+
+export interface DeadlineTimings {
+  deadlineMs: number;
+  /** Maximum continuous wait on an open human blocker, already normalized by `effectiveBlockedWaitMs` (never 0). */
+  blockedWaitMs: number;
+}
+
+export interface DeadlinePlan {
+  /** `idle` stops with reason idle; `blocked-warn` sends the pre-stop warning; `blocked-stop` stops with `unresolved-blocker`. */
+  phase: 'idle' | 'blocked-warn' | 'blocked-stop';
+  at: number;
+}
+
+/** Idle deadline plus blocked-wait bound for a record; undefined when the run has no idle deadline. */
+export function deadlineTimings(record: ExecutionRecord): DeadlineTimings | undefined {
+  const policy = record.request.policy;
+  const deadlineMs = policy?.deadlineMs;
+  if (typeof deadlineMs !== 'number' || !Number.isFinite(deadlineMs) || deadlineMs <= 0) return undefined;
+  return { deadlineMs, blockedWaitMs: effectiveBlockedWaitMs(policy?.blockedWaitMs) };
+}
+
+/** Unresolved blockers a person must answer; coordinator self-heal blockers do not pause the deadline. */
+export function openHumanBlockers(record: ExecutionRecord): NonNullable<ExecutionRecord['blockers']> {
+  return (record.blockers ?? []).filter((blocker) => !blocker.resolved && blocker.audience !== 'coordinator');
+}
+
+/**
+ * The next deadline event for a live record, derived purely from the record so every
+ * caller (watchdog arm, polling, the serialized store decision) agrees. With an open
+ * human blocker the idle deadline is paused and a bounded blocked wait applies instead
+ * (anchored at the oldest open blocker), with a single warning before it expires.
+ * Undefined means nothing is due.
+ */
+export function planDeadline(record: ExecutionRecord, timings: DeadlineTimings, now: number): DeadlinePlan | undefined {
+  const open = openHumanBlockers(record);
+  if (open.length === 0) return { phase: 'idle', at: executionProgressAnchor(record) + timings.deadlineMs };
+  const stopAt = Math.min(...open.map((blocker) => blocker.createdAt)) + timings.blockedWaitMs;
+  const warnAt = stopAt - Math.min(BLOCKED_WAIT_WARN_LEAD_MS, Math.floor(timings.blockedWaitMs / 4));
+  if (record.blockedWarnedAt === undefined && now < stopAt && warnAt < stopAt) return { phase: 'blocked-warn', at: warnAt };
+  return { phase: 'blocked-stop', at: stopAt };
+}
+
+/** When the next deadline event is due for a record, if any. */
+export function nextDeadlineAt(record: ExecutionRecord, now: number): number | undefined {
+  if (TERMINAL_STATES.has(record.state)) return undefined;
+  const timings = deadlineTimings(record);
+  return timings ? planDeadline(record, timings, now)?.at : undefined;
+}
+
 export class ExecutionDeadlineWatchdog {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private disposed = false;
 
   constructor(private readonly deps: ExecutionDeadlineWatchdogDeps) {}
 
-  schedule(record: ExecutionRecord): void {
+  /** `notBefore` floors the arm target (used after a "continue" decision so a past target cannot re-arm at delay 0). */
+  schedule(record: ExecutionRecord, notBefore?: number): void {
     this.remove(record.id);
     if (this.disposed || TERMINAL_STATES.has(record.state)) return;
-    const deadlineMs = record.request.policy?.deadlineMs;
-    if (typeof deadlineMs !== 'number' || !Number.isFinite(deadlineMs) || deadlineMs <= 0) return;
-    this.arm(record.id, record.blockerGraceUntil ?? (executionProgressAnchor(record) + deadlineMs), 1);
+    const at = nextDeadlineAt(record, this.deps.now());
+    if (at === undefined) return;
+    this.arm(record.id, notBefore === undefined ? at : Math.max(at, notBefore), 1);
   }
 
   restore(records: readonly ExecutionRecord[]): void {

@@ -51,6 +51,9 @@ export function writeAppConfig(
   const config: Record<string, unknown> = exists
     ? JSON.parse(readFileSync(configPath, 'utf8'))
     : { walkthroughCompleted: true, setupDismissed: true,
+      // Isolated runs quit with live sessions; the quit prompt would block teardown and
+      // pop a dialog on the developer's desktop. Specs that test the prompt opt back in.
+      confirmQuitOnLiveSessions: false,
       onboarding: { version: 1, profileId: 'salesforce-employees', audience: 'general', step: 'complete' },
       ...initialConfig };
   if (!allowLiveClaude && config.claudeBinary === undefined) {

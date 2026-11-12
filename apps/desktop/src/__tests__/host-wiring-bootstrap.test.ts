@@ -28,6 +28,7 @@ const h = vi.hoisted(() => {
     appHandlers: new Map<string, ((...a: any[]) => any)[]>(),
     ready: undefined as undefined | (() => void),
     squadOpts: undefined as any,
+    drainOpts: undefined as any,
     handoffOpts: undefined as any,
     ipcCtx: undefined as any,
     mcpDeps: undefined as any,
@@ -173,6 +174,13 @@ vi.mock('@zana-ai/zcc-server/services/execution/service', async () => {
     construct(target, args, nt) { h.squadOpts = args[0]; return Reflect.construct(target, args, nt); }
   });
   return { ...actual, SquadExecutionService: Wrapped };
+});
+vi.mock('@zana-ai/zcc-server/services/execution/execution-delivery-drain', async () => {
+  const actual: any = await vi.importActual('@zana-ai/zcc-server/services/execution/execution-delivery-drain');
+  const Wrapped = new Proxy(actual.ExecutionDeliveryDrainService, {
+    construct(target, args, nt) { h.drainOpts = args[0]; return Reflect.construct(target, args, nt); }
+  });
+  return { ...actual, ExecutionDeliveryDrainService: Wrapped };
 });
 vi.mock('../team-plan-handoff.js', async () => {
   const actual: any = await vi.importActual('../team-plan-handoff.js');
@@ -944,6 +952,78 @@ describe('host bootstrap wiring', () => {
       findBinding.mockRestore();
       h.lifecycleOverride = {};
       h.runtimeOverride = {};
+    }
+  });
+
+  it('retainParkedWorker holds only a bound Modern member of the same execution, passing the host generation and 0 for a release', async () => {
+    const retain = vi.fn(async () => true);
+    h.runtimeOverride.retainSquadMember = retain;
+    const find = vi.fn(async (sessionId: string) => sessionId === 'modern-1'
+      ? { generation: 4, worker: { modernContext: { executionId: 'e-1' } } }
+      : sessionId === 'other-exec' ? { generation: 4, worker: { modernContext: { executionId: 'e-2' } } } : undefined);
+    const findSpy = vi.spyOn(h.lifecycleStore, 'findModernWorkerBinding').mockImplementation(find as never);
+    try {
+      const record = { id: 'e-1', projectId: 'p1' } as never;
+      await h.squadOpts.retainParkedWorker(record, 'modern-1', 123_456);
+      expect(retain).toHaveBeenLastCalledWith({ bindingId: 'modern-1', generation: 4, projectId: 'p1', retainUntilMs: 123_456 });
+      await h.squadOpts.retainParkedWorker(record, 'modern-1', null);
+      expect(retain).toHaveBeenLastCalledWith({ bindingId: 'modern-1', generation: 4, projectId: 'p1', retainUntilMs: 0 });
+      retain.mockClear();
+      await h.squadOpts.retainParkedWorker(record, 'pty-worker', 5); // CLI/PTY worker: no Modern binding
+      await h.squadOpts.retainParkedWorker(record, 'other-exec', 5); // another execution's member
+      expect(retain).not.toHaveBeenCalled();
+    } finally {
+      findSpy.mockRestore();
+      h.runtimeOverride = {};
+    }
+  });
+
+  it('replyToSession treats an uncertain Modern receipt as delivered and a rejected one as not', async () => {
+    const deliver = vi.fn(async () => ({ state: 'uncertain' }));
+    h.runtimeOverride.deliverSquadMember = deliver;
+    const listSpy = vi.spyOn(h.lifecycleStore, 'list').mockResolvedValue([{ state: 'active', workers: [{ transport: 'MODERN', threadId: 'modern-1', bindingState: 'BOUND',
+      process: 'running', capacityReleased: false, projectId: 'p1', generation: 2 }] }] as never);
+    try {
+      expect(await h.squadOpts.replyToSession('modern-1', 'hello')).toBe(true);
+      deliver.mockResolvedValueOnce({ state: 'rejected' });
+      expect(await h.squadOpts.replyToSession('modern-1', 'hello')).toBe(false);
+      expect(await h.squadOpts.replyToSession('unbound', 'hello')).toBe(false);
+    } finally {
+      listSpy.mockRestore();
+      h.runtimeOverride = {};
+    }
+  });
+
+  it('delivery drain reply surfaces rejected/uncertain/accepted Modern receipts', async () => {
+    const deliver = vi.fn(async () => ({ state: 'uncertain' }));
+    h.runtimeOverride.deliverSquadMember = deliver;
+    const listSpy = vi.spyOn(h.lifecycleStore, 'list').mockResolvedValue([{ state: 'active', workers: [{ transport: 'MODERN', threadId: 'modern-1', bindingState: 'BOUND',
+      process: 'running', capacityReleased: false, projectId: 'p1', generation: 2 }] }] as never);
+    try {
+      expect(await h.drainOpts.reply('modern-1', 'hi', { assignmentId: 'a1', idempotencyKey: 'k1' })).toBe('uncertain');
+      deliver.mockResolvedValueOnce({ state: 'rejected' });
+      expect(await h.drainOpts.reply('modern-1', 'hi')).toBe(false);
+      deliver.mockResolvedValueOnce({ state: 'accepted' });
+      expect(await h.drainOpts.reply('modern-1', 'hi')).toBe(true);
+      expect(await h.drainOpts.reply('unbound', 'hi')).toBe(false);
+    } finally {
+      listSpy.mockRestore();
+      h.runtimeOverride = {};
+    }
+  });
+
+  it('delivery drain onStalled announces one stall per execution with only that execution\'s delivery ids', async () => {
+    const announce = vi.spyOn(ctx().squadExecutionService, 'announceDeliveryStall').mockResolvedValue(undefined as never);
+    try {
+      await h.drainOpts.onStalled('s1', [
+        { id: 'd1', executionId: 'e1' }, { id: 'd2', executionId: 'e2' }, { id: 'd3', executionId: 'e1' }
+      ]);
+      expect(announce.mock.calls).toEqual([['e1', ['d1', 'd3']], ['e2', ['d2']]]);
+      announce.mockClear();
+      await h.drainOpts.onStalled('s1', []);
+      expect(announce).not.toHaveBeenCalled();
+    } finally {
+      announce.mockRestore();
     }
   });
 

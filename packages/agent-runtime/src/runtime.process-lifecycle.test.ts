@@ -1600,10 +1600,30 @@ rl.on("line", (line) => {
         readLogLines(processLogPath).filter((line) => line.startsWith("exit:")),
       ).toHaveLength(0);
 
+      // A generic hold keeps an otherwise reapable thread resident; an
+      // unrelated held thread id does not protect this one.
+      const heldChecks: Array<[string, number]> = [];
+      const heldResult = await runtime.reapIdleProviderSessions({
+        idleForMs: 30 * 60 * 1000,
+        nowMs: Date.now() + 31 * 60 * 1000,
+        providerSessionReapingEnabled: false,
+        isThreadHeld: (threadId, nowMs) => {
+          heldChecks.push([threadId, nowMs]);
+          return threadId === "t1";
+        },
+      });
+      expect(heldResult.reapedSessions).toEqual([]);
+      expect(heldChecks.map(([threadId]) => threadId)).toContain("t1");
+      expect(runtime.hasThread("t1")).toBe(true);
+      expect(
+        readLogLines(processLogPath).filter((line) => line.startsWith("exit:")),
+      ).toHaveLength(0);
+
       const result = await runtime.reapIdleProviderSessions({
         idleForMs: 30 * 60 * 1000,
         nowMs: Date.now() + 31 * 60 * 1000,
         providerSessionReapingEnabled: false,
+        isThreadHeld: (threadId) => threadId === "other",
       });
       const reapedSession = result.reapedSessions[0];
       if (!reapedSession) {

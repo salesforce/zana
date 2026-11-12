@@ -4,6 +4,7 @@ import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
 import { EXECUTION_RETENTION_MS, unitSlotEligibility, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-grant-store.js';
@@ -11,7 +12,8 @@ import type { createExecutionSourceRegistry } from './source-registry.js';
 import { blockerCardSubject, humanBlockerDenial } from './human-blocker-denial.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
-import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-watchdog.js';
+import { BLOCKED_WAIT_WARN_LEAD_MS, DEADLINE_RECHECK_FLOOR_MS, ExecutionDeadlineWatchdog, deadlineTimings, nextDeadlineAt } from './deadline-watchdog.js';
+import { ParkedWorkerHolds } from './parked-worker-hold.js';
 import { PlanReadinessWatchdog, type PlanReadinessExpiryReason } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
 import { recycleDecision } from './idle-gated-injector.js';
@@ -37,7 +39,6 @@ const PROVEN_DEAD_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.PROVEN_DEAD;
  * genuinely stuck/parked coordinator reaches the escalation.
  */
 const COORDINATOR_BLOCKER_ESCALATE_MS = 5 * 60_000;
-const HUMAN_BLOCKER_DEADLINE_GRACE_MS = COORDINATOR_BLOCKER_ESCALATE_MS + 30_000;
 /**
  * How long a coordinator wake may sit unqueued against an `unknown`-state
  * coordinator before it is delivered anyway. A remote/opencode coordinator with
@@ -291,6 +292,11 @@ export interface ExecutionServiceDeps {
   onWorkSettled?: (correlation: ExecutionAssignmentCorrelation & { workerSessionId: string }) => void | Promise<void>;
   triggerDeliveryDrain?: (sessionId: string) => void;
   logError?: (message: string, error: unknown) => void;
+  /**
+   * Hold (epoch-ms `retainUntilMs`) or release (`null`) a parked worker's live session against the host's idle
+   * sweep. The hold self-expires, so a missed release cannot pin the session. Failures are logged by the caller.
+   */
+  retainParkedWorker?: (record: ExecutionRecord, sessionId: string, retainUntilMs: number | null) => Promise<void>;
   /** Called once when a human-audience blocker is created. Failures are logged and never fail the engine. */
   onHumanBlocker?: (record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number]) => void | Promise<void>;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
@@ -689,12 +695,19 @@ export class ExecutionService {
   private readonly autoFinalizeTimers = new Map<string, NodeJS.Timeout>();
   private readonly deadlineWatchdog: ExecutionDeadlineWatchdog;
   private readonly planReadinessWatchdog: PlanReadinessWatchdog;
+  private readonly parkedHolds: ParkedWorkerHolds;
   private activeClaimCursor?: ActiveClaimCursor;
   private activeReconcileRunning = false;
   private readonly routeFactCircuits = new Map<string, { state: CircuitState; openedAt?: number }>();
   private readonly wakeConfirmations: CoordinatorWakeConfirmations;
 
   constructor(private readonly deps: ExecutionServiceDeps) {
+    this.parkedHolds = new ParkedWorkerHolds({
+      now: deps.now ?? Date.now,
+      load: (executionId) => deps.store.get(executionId),
+      retain: (record, slotId, until) => this.retainParkedWorker(record, slotId, until),
+      ...(deps.logError ? { logError: deps.logError } : {})
+    });
     this.wakeConfirmations = new CoordinatorWakeConfirmations({
       setTimer: deps.setTimer ?? setTimeout,
       clearTimer: deps.clearTimer ?? clearTimeout,
@@ -1018,6 +1031,16 @@ export class ExecutionService {
     const active = await this.deps.store.listActive();
     this.deadlineWatchdog.restore(active);
     this.planReadinessWatchdog.restore(active);
+    for (const record of active) this.syncParkedHolds(record.id, { restore: true });
+  }
+
+  private async retainParkedWorker(record: ExecutionRecord, slotId: string, retainUntilMs: number | null): Promise<void> {
+    if (!this.deps.retainParkedWorker) return;
+    const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+    const sessionId = isOrchestratorSlotId(slotId)
+      ? lifecycle?.orchestratorSessionId
+      : lifecycle?.workers?.find((worker: { slotId?: string; projectId?: string }) => worker.slotId === slotId && worker.projectId === record.projectId)?.sessionId;
+    if (sessionId) await this.deps.retainParkedWorker(record, sessionId, retainUntilMs);
   }
 
   async flushBlockerNotices(): Promise<void> {
@@ -1938,6 +1961,8 @@ export class ExecutionService {
     stateOrClaimGeneration: string, questionData: Record<string, unknown>
   ): Promise<void> {
     this.fireHumanBlocker(record, blocker);
+    this.syncParkedHolds(record.id);
+    this.deadlineWatchdog.schedule(record);
     // The Inbox entry goes first so a failing coordinator wake cannot keep the blocker from the person.
     try {
       await this.appendHumanBlockerNotice(record, blocker, questionData);
@@ -2067,6 +2092,8 @@ export class ExecutionService {
    * coordinator dispatch_ready) re-dispatches.
    */
   private async cascadeDispatch(executionId: string, deprioritizeSlotId?: string): Promise<void> {
+    // Every blocker-resolving mutation cascades afterwards, so this re-derives the parked-worker hold.
+    this.syncParkedHolds(executionId);
     try {
       const existing = await this.deps.store.get(executionId);
       if (!existing) return;
@@ -2463,6 +2490,7 @@ export class ExecutionService {
       : this.deps.store.blockWork(record.id, record.stateVersion, binding, workUnitId, blocker, undefined, requireClaim));
     if (result.ok) {
       const record = result.value;
+      this.syncParkedHolds(record.id);
       if (blocker.audience === 'coordinator') {
         // Self-heal lane: a worker asking the coordinator for a plan/spec
         // decision it cannot make itself. Wake the coordinator to answer it via
@@ -2589,6 +2617,7 @@ export class ExecutionService {
     const admission = await this.budgetAdmission(binding.executionId);
     if (!admission.ok) return admission;
     const outcome = await this.mutateBound(binding, (record) => this.deps.store.retryWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
+    if (outcome.ok) this.deadlineWatchdog.schedule(outcome.value);
     if (outcome.ok) await this.cascadeDispatch(outcome.value.id);
     return outcome;
   }
@@ -2596,6 +2625,7 @@ export class ExecutionService {
   async retryWorkFromBoard(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId?: string) {
     const outcome = await this.mutateOwnedWork(callerPrincipalId, projectId, executionId, expectedStateVersion,
       (record, authority) => this.deps.store.retryWork(record.id, expectedStateVersion, authority, workUnitId, assignedSlotId));
+    if (outcome.ok) this.deadlineWatchdog.schedule(outcome.value);
     if (outcome.ok) await this.cascadeDispatch(outcome.value.id);
     return outcome;
   }
@@ -2892,16 +2922,7 @@ export class ExecutionService {
     if (!Number.isInteger(expectedStateVersion) || !clientRequestId.trim()) {
       return { ok: false as const, code: 'INVALID', message: 'invalid timeout recovery request' };
     }
-    const rejectUnsafeRecovery = (record: ExecutionRecord) => {
-      const units = record.workUnits ?? [];
-      if (units.some((unit) => unit.state !== 'COMPLETED' && !unit.readOnly)) {
-        return 'recovery requires durable provenance for unfinished mutating work';
-      }
-      if (units.some((unit) => unit.state === 'COMPLETED' && !unit.readOnly)) {
-        return 'recovery requires durable provenance for completed mutating work';
-      }
-      return undefined;
-    };
+    const rejectUnsafeRecovery = timeoutRecoveryBlockReason;
     const unsafeReason = rejectUnsafeRecovery(source);
     // Do not reserve an execution that policy will reject: the user may retry after
     // durable provenance becomes available.
@@ -3337,6 +3358,8 @@ export class ExecutionService {
     if (!current) return deniedBound('execution delivery route is not current');
     try {
       const ack = await this.deps.store.ackBlockerDelivery({ ...binding, ...current }, deliveryId, leaseId, result);
+      this.syncParkedHolds(record.id);
+      if (ack.outcome === 'accepted' && ack.delivery.state === 'DELIVERED') this.deadlineWatchdog.schedule(ack.record);
       return { ok: true as const, value: {
         deliveryId: ack.delivery.id, blockerId: ack.delivery.blockerId, state: ack.delivery.state,
         resolved: ack.delivery.state === 'DELIVERED', outcome: ack.outcome
@@ -3778,8 +3801,8 @@ export class ExecutionService {
 
   private async reconcile(callerPrincipalId: string, projectId: string, record: ExecutionRecord): Promise<ExecutionRecord> {
     if (record.state === 'READY') return record;
-    const deadlineMs = record.request.policy?.deadlineMs;
-    if (deadlineMs && (this.deps.now ?? Date.now)() >= executionProgressAnchor(record) + deadlineMs
+    const dueAt = nextDeadlineAt(record, (this.deps.now ?? Date.now)());
+    if (dueAt !== undefined && (this.deps.now ?? Date.now)() >= dueAt
       && record.state !== 'COMPLETED' && record.state !== 'FAILED' && record.state !== 'STOPPED') {
       return this.applyDeadlineDecision(record);
     }
@@ -3988,6 +4011,7 @@ export class ExecutionService {
     for (const check of this.checkCompletions.values()) if (check.executionId === record.id) check.controller.abort();
     this.deadlineWatchdog.remove(record.id);
     this.planReadinessWatchdog.remove(record.id);
+    this.syncParkedHolds(record.id, { restore: true });
     try {
       await this.deps.resumeGrants?.revoke(record.id, record.projectId);
     } catch {
@@ -4083,20 +4107,70 @@ export class ExecutionService {
 
   private async applyDeadlineDecision(record: ExecutionRecord): Promise<ExecutionRecord> {
     if (isResumeGrantTerminal(record.state)) return record;
-    const deadlineMs = record.request.policy?.deadlineMs;
-    if (typeof deadlineMs !== 'number' || !Number.isFinite(deadlineMs) || deadlineMs <= 0) return record;
-    const decision = await this.deps.store.decideDeadline(
-      record.id,
-      executionProgressAnchor(record) + deadlineMs,
-      HUMAN_BLOCKER_DEADLINE_GRACE_MS
-    );
-    if (decision.kind === 'continue' || decision.kind === 'grace') {
-      this.deadlineWatchdog.schedule(decision.record);
+    const timings = deadlineTimings(record);
+    if (!timings) return record;
+    // The store recomputes the due time from the live record inside its queue.
+    const decision = await this.deps.store.decideDeadline(record.id, timings);
+    if (decision.kind === 'continue' || decision.kind === 'warned') {
+      if (decision.kind === 'warned') await this.announceBlockedWaitWarning(decision.record, timings.blockedWaitMs);
+      this.deadlineWatchdog.schedule(decision.record, (this.deps.now ?? Date.now)() + DEADLINE_RECHECK_FLOOR_MS);
       return decision.record;
     }
     await this.cleanupTerminal(decision.record);
     await this.cancelTimedOutLaunch(decision.record);
     return decision.record;
+  }
+
+  /**
+   * The drain exhausted its bounded retries on an 'uncertain' resume nudge. The delivery stays PENDING and the
+   * blocker stays open; this raises ONE Inbox notice per delivery (dedupe key) so a human can look. Best effort.
+   */
+  async announceDeliveryStall(executionId: string, deliveryIds: string[]): Promise<void> {
+    const inbox = this.deps.inbox;
+    if (!inbox) return;
+    const record = await this.deps.store.get(executionId);
+    if (!record || isResumeGrantTerminal(record.state)) return;
+    for (const deliveryId of deliveryIds) {
+      const delivery = record.deliveries?.find((candidate) => candidate.id === deliveryId);
+      if (!delivery || delivery.state !== 'PENDING') continue;
+      const input: InboxInput = {
+        projectId: record.projectId,
+        subject: blockerCardSubject(record),
+        comments: 'An answer to a question is waiting, but the worker has not confirmed it received the reminder to pick it up. The question stays open and the answer is kept. Open the job to check on the worker.',
+        executionId: record.id,
+        blockerId: delivery.blockerId,
+        dedupeKey: `execution-delivery-stall:${record.id}:${delivery.id}`
+      };
+      try {
+        await (inbox.appendOnce ? inbox.appendOnce(input) : inbox.append(input));
+      } catch (error) {
+        this.deps.logError?.(`execution delivery stall notice failed for ${record.id}`, error);
+      }
+    }
+  }
+
+  /** Fire-and-forget hold sync; failures (load, lifecycle lookup) are logged, never thrown into the caller. */
+  private syncParkedHolds(executionId: string, opts?: { restore?: boolean }): void {
+    void this.parkedHolds.sync(executionId, opts).catch((error) => this.deps.logError?.(`execution parked-worker hold sync failed for ${executionId}`, error));
+  }
+
+  /** One Inbox warning before an open human blocker's bounded wait expires; best effort, idempotent by dedupe key. */
+  private async announceBlockedWaitWarning(record: ExecutionRecord, blockedWaitMs: number): Promise<void> {
+    const inbox = this.deps.inbox;
+    if (!inbox) return;
+    const blocker = (record.blockers ?? []).find((candidate) => !candidate.resolved && candidate.audience !== 'coordinator');
+    const input: InboxInput = {
+      projectId: record.projectId,
+      subject: blockerCardSubject(record),
+      comments: `This job has been waiting on an unanswered question and will be stopped in about ${Math.max(1, Math.round(Math.min(BLOCKED_WAIT_WARN_LEAD_MS, Math.floor(blockedWaitMs / 4)) / 60_000))} minutes. Answer it to keep the job running.`,
+      executionId: record.id,
+      dedupeKey: `execution-blocker-expiry:${record.id}:${blocker?.id ?? 'blocked'}`
+    };
+    try {
+      await (inbox.appendOnce ? inbox.appendOnce(input) : inbox.append(input));
+    } catch (error) {
+      this.deps.logError?.(`execution blocked-wait warning failed for ${record.id}`, error);
+    }
   }
 
   private async appendHumanBlockerNotice(
@@ -4165,11 +4239,8 @@ export class ExecutionService {
       try { await this.cancelTimedOutLaunch(current); } catch { /* watchdog retries teardown */ }
       return false;
     }
-    const deadlineMs = current.request.policy?.deadlineMs;
-    const expired = typeof deadlineMs === 'number'
-      && Number.isFinite(deadlineMs)
-      && deadlineMs > 0
-      && (this.deps.now ?? Date.now)() >= executionProgressAnchor(current) + deadlineMs;
+    const dueAt = nextDeadlineAt(current, (this.deps.now ?? Date.now)());
+    const expired = dueAt !== undefined && (this.deps.now ?? Date.now)() >= dueAt;
     if (!isResumeGrantTerminal(current.state) && !expired) return true;
     if (expired) {
       try {

@@ -263,6 +263,7 @@ describe('Agents settings search entries', () => {
     expect(valueOf('agents.idle-triage-delay')).toBe('20');
     expect(valueOf('agents.idle-triage-sensitivity')).toBe('Medium');
     expect(valueOf('agents.squad-idle-timeout')).toBe('45');
+    expect(valueOf('agents.squad-blocked-wait')).toBe('240');
     expect(valueOf('agents.max-autonomous-rounds')).toBe('30');
     expect(valueOf('agents.max-live-sessions')).toBeUndefined();
     expect(valueOf('agents.overseer-mode')).toBe('Off');
@@ -271,6 +272,32 @@ describe('Agents settings search entries', () => {
     expect(valueOf('agents.notification-default-level')).toBe('All activity');
     expect(valueOf('agents.notification-child-level')).toBe('Needs input only');
     expect(valueOf('agents.notification-previews')).toBe('On');
+  });
+
+  it('idle timeout help does not claim heartbeats reset the clock and explains blockers', () => {
+    const help = byId.get('agents.squad-idle-timeout')!.help!;
+    expect(help).not.toMatch(/heartbeat/i);
+    expect(help).toMatch(/question awaits a person/);
+    expect(byId.get('agents.squad-blocked-wait')?.help).toContain('Default is 240 minutes');
+  });
+
+  it('edits the blocked wait in minutes and clamps on blur', () => {
+    const onConfigDraft = vi.fn();
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    render(<AgentsTab config={config} onConfigDraft={onConfigDraft} onUpdate={onUpdate} />);
+    const input = screen.getByText('Squad max blocked wait (minutes, 0 = 24 hours)').closest('label, div')!.parentElement!.querySelector('input') as HTMLInputElement
+      ?? document.querySelector('[data-settings-target="agents.squad-blocked-wait"] input') as HTMLInputElement;
+    expect(input.value).toBe('240');
+    fireEvent.change(input, { target: { value: '30' } });
+    expect(onConfigDraft).toHaveBeenCalledWith(expect.objectContaining({ autonomousBlockedWaitMs: 30 * 60000 }));
+    fireEvent.change(input, { target: { value: '0' } });
+    expect(onConfigDraft).toHaveBeenCalledWith(expect.objectContaining({ autonomousBlockedWaitMs: 0 }));
+    fireEvent.blur(input, { target: { value: '99999' } });
+    expect(onUpdate).toHaveBeenCalledWith({ autonomousBlockedWaitMs: 1440 * 60000 });
+    fireEvent.blur(input, { target: { value: '' } });
+    expect(onUpdate).toHaveBeenCalledWith({ autonomousBlockedWaitMs: 240 * 60000 });
+    fireEvent.blur(input, { target: { value: '0' } });
+    expect(onUpdate).toHaveBeenCalledWith({ autonomousBlockedWaitMs: 0 });
   });
 
   it('indexes current worktree help for Squad defaults', () => {
@@ -286,6 +313,8 @@ describe('Agents settings search entries', () => {
     expect(valueOf('agents.idle-triage-sensitivity', { idleAttentionSensitivity: 'high' })).toBe('High');
     expect(valueOf('agents.squad-idle-timeout', { autonomousTimeoutMs: 0 })).toBe('0');
     expect(valueOf('agents.squad-idle-timeout', { autonomousTimeoutMs: 120_000 })).toBe('2');
+    expect(valueOf('agents.squad-blocked-wait', { autonomousBlockedWaitMs: 0 })).toBe('0');
+    expect(valueOf('agents.squad-blocked-wait', { autonomousBlockedWaitMs: 90 * 60_000 })).toBe('90');
     expect(valueOf('agents.max-live-sessions', { maxLiveSessions: 12 })).toBe('12');
     expect(valueOf('agents.overseer-mode', { overseerMode: 'dryRun' })).toBe('Dry-run (observe only)');
     expect(valueOf('agents.overseer-deny-patterns', { overseerDenyPatterns: ['git push'] })).toEqual(['git push']);

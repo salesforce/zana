@@ -20,10 +20,13 @@ import type {
   AutonomousRunLimits,
   AutonomousRunStopReason
 } from '@zana-ai/zcc-domain/product';
+import { DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS } from '@zana-ai/zcc-domain/product';
 
 export const AUTONOMOUS_DEFAULTS = {
   maxRounds: 30,
   timeoutMs: 45 * 60 * 1000,
+  /** Longest a Squad run waits on an open human question before it is stopped (0 = the 24 h maximum). */
+  blockedWaitMs: DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS,
   nudgeDelaySeconds: 45
 } as const;
 

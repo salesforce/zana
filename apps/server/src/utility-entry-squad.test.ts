@@ -15,7 +15,7 @@ const h = vi.hoisted(() => ({
     preflightSquadRuntime: vi.fn(), createSquadMemberConversation: vi.fn(), activateSquadMemberConversation: vi.fn(),
     deliverSquadMemberConversation: vi.fn(), completeSquadMemberDelivery: vi.fn(), squadMemberStatus: vi.fn(),
     stopSquadMemberConversation: vi.fn(), resolveSquadMember: vi.fn(), isSquadMemberThread: vi.fn(),
-    resumeSquadMemberConversation: vi.fn()
+    resumeSquadMemberConversation: vi.fn(), retainSquadMemberConversation: vi.fn()
   }
 }));
 vi.mock('./services/threads/local-thread-work.js', () => ({ hasLocalThreadWork: h.localWork }));
@@ -53,6 +53,7 @@ const member = {
 };
 const delivery = { ...control, assignmentId: 'a1', idempotencyKey: 'k1', message: 'go' };
 const completion = { ...control, assignmentId: 'a1', idempotencyKey: 'k1' };
+const retain = { ...control, retainUntilMs: 1_700_000_000_000 };
 const resume = { projectId, bindingId: control.bindingId, expectedGeneration: 1, newGeneration: 2, expectedProviderThreadId: 'provider-thread' };
 const preflight = { projectId, providerIds: ['claude-code'] };
 
@@ -110,6 +111,7 @@ describe('squad member runtime operations over the runtime channel', () => {
       await expect(send(op, request)).resolves.toMatchObject({ type: 'error', message: 'squad member runtime is unavailable' });
     }
     await expect(send('squad-member-stop', control)).resolves.toMatchObject({ type: 'result', value: false });
+    await expect(send('squad-member-retain', retain)).resolves.toMatchObject({ type: 'result', value: false });
     for (const name of Object.keys(h.squad)) expect(h.squad[name as keyof typeof h.squad]).not.toHaveBeenCalled();
   });
 
@@ -128,6 +130,9 @@ describe('squad member runtime operations over the runtime channel', () => {
     h.squad.stopSquadMemberConversation.mockResolvedValueOnce(true);
     await expect(send('squad-member-stop', control)).resolves.toMatchObject({ type: 'result', value: true });
     expect(h.squad.stopSquadMemberConversation).toHaveBeenCalledWith(h.context, control);
+    h.squad.retainSquadMemberConversation.mockResolvedValueOnce(true);
+    await expect(send('squad-member-retain', retain)).resolves.toMatchObject({ type: 'result', value: true });
+    expect(h.squad.retainSquadMemberConversation).toHaveBeenCalledWith(h.context, retain);
   });
 
   it('replies with an error when a squad operation throws', async () => {
@@ -137,6 +142,8 @@ describe('squad member runtime operations over the runtime channel', () => {
     await expect(send('squad-member-resume', resume)).resolves.toMatchObject({ type: 'error', message: 'resume refused' });
     h.squad.stopSquadMemberConversation.mockRejectedValueOnce(new Error('stop failed'));
     await expect(send('squad-member-stop', control)).resolves.toMatchObject({ type: 'error', message: 'stop failed' });
+    h.squad.retainSquadMemberConversation.mockRejectedValueOnce(new Error('retain failed'));
+    await expect(send('squad-member-retain', retain)).resolves.toMatchObject({ type: 'error', message: 'retain failed' });
   });
 
   it('wires the launch-config member resolver to the product context', () => {

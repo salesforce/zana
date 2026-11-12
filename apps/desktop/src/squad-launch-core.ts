@@ -64,6 +64,7 @@ export interface SquadLaunchDeps {
   planCorrectionLaunchBinding: ProvidedPlanGateDeps['planCorrectionLaunchBinding'] & { forgetLaunch(launchRequestId: string): void };
   nameTeamExecution(launchId: string, objective: string, explicitTitle?: string, sourceTexts?: readonly (string | undefined)[]): Promise<string>;
   autonomousTimeoutMs(): number | undefined;
+  autonomousBlockedWaitMs(): number | undefined;
   squadExecutionService: Pick<SquadExecutionService, 'start'>;
   /** Reports a cleanup failure that was swallowed so the launch outcome stands. */
   log?(message: string, error: unknown): void;
@@ -351,6 +352,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
       : `${sharedTask}\n\nCheck orchestrator instructions and report progress or blockers to it.`
   }));
   const autonomousTimeoutMs = deps.autonomousTimeoutMs();
+  const autonomousBlockedWaitMs = deps.autonomousBlockedWaitMs() ?? AUTONOMOUS_DEFAULTS.blockedWaitMs;
   return {
     ok: true,
     request: {
@@ -370,7 +372,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
       ...(args.target ? { target: args.target } : {}),
       ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
       policy: {
-        ...(autonomousTimeoutMs === 0 ? {} : { deadlineMs: autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })
+        ...(autonomousTimeoutMs === 0 ? {} : { deadlineMs: autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs, blockedWaitMs: autonomousBlockedWaitMs })
       }
     }
   };
