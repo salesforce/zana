@@ -4729,8 +4729,8 @@ export interface Persona {
   addDirs?: string[];
   /**
    * MCP server allowlist (a context filter, NOT a security boundary). Entries
-   * are server names: a bare `name` covers user, project and plugin servers
-   * with that name; `plugin:<id>:<name>` and `ext:<id>:<name>` pin a source.
+   * are server names: a bare `name` covers user, project, plugin and extension
+   * servers with that name; `plugin:<id>:<name>` and `ext:<id>:<name>` pin a source.
    * No globs and no `server:tool` selectors (tools stay with
    * `allowedTools`/`deniedTools`). Absent = unrestricted; an explicit empty
    * array = no servers beyond the always-allowed ones; a list = exactly those
@@ -4950,8 +4950,8 @@ export interface McpServerRef {
 }
 
 /**
- * True when allowlist `entry` covers `server`. A bare name covers user, project
- * and plugin servers with that name. `plugin:<id>:<name>` and `ext:<id>:<name>`
+ * True when allowlist `entry` covers `server`. A bare name covers user, project,
+ * plugin and extension servers with that name. `plugin:<id>:<name>` and `ext:<id>:<name>`
  * cover only the server of that source with exactly that key, so a user server
  * literally named with such a prefix is never matched. No globs; entries are
  * server-level, so a `name:tool` shaped entry is just a key that matches nothing.
@@ -4959,7 +4959,7 @@ export interface McpServerRef {
 export function mcpAllowlistCovers(entry: string, server: McpServerRef): boolean {
   if (entry.startsWith('plugin:')) return server.source === 'plugin' && server.key === entry;
   if (entry.startsWith('ext:')) return server.source === 'extension' && server.key === entry;
-  if (server.source !== 'user' && server.source !== 'project' && server.source !== 'plugin') return false;
+  if (server.source !== 'user' && server.source !== 'project' && server.source !== 'plugin' && server.source !== 'extension') return false;
   return server.name === entry;
 }
 

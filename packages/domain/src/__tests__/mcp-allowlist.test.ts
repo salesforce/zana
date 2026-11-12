@@ -31,8 +31,16 @@ describe('mcpAllowlistCovers', () => {
     expect(mcpAllowlistCovers('github', plugin('p1', 'github'))).toBe(true);
     expect(mcpAllowlistCovers('github', user('gitlab'))).toBe(false);
   });
-  it('bare name does not cover extension servers', () => {
-    expect(mcpAllowlistCovers('github', ext('e1', 'github'))).toBe(false);
+  it('bare name covers extension servers by name', () => {
+    expect(mcpAllowlistCovers('docs', ext('e1', 'docs'))).toBe(true);
+    expect(mcpAllowlistCovers('docs', ext('e1', 'other'))).toBe(false);
+  });
+  it('an ambiguous bare name covers every same-named server across sources', () => {
+    const all = [user('x'), project('x'), plugin('p1', 'x'), ext('e1', 'x')];
+    expect(all.every((s) => mcpAllowlistCovers('x', s))).toBe(true);
+  });
+  it('a bare name never matches an unknown source', () => {
+    expect(mcpAllowlistCovers('x', { key: 'x', source: 'other', name: 'x' })).toBe(false);
   });
   it('plugin: entry pins the plugin source and key', () => {
     expect(mcpAllowlistCovers('plugin:p1:github', plugin('p1', 'github'))).toBe(true);
