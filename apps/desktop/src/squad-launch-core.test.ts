@@ -70,6 +70,32 @@ function makeInput(overrides: Partial<SquadLaunchInput> = {}): SquadLaunchInput 
 const sharedTask = 'Shared job goal: Ship the fix\n\nWork toward this goal. Coordinate through the Team orchestrator when one is present.';
 
 describe('launchSquad', () => {
+  it('never resolves remote checkout locally for source policy or proposal narrowing', async () => {
+    const { deps } = makeDeps();
+    await launchSquad(deps, makeInput({ project: { id: 'p1', name: 'Remote', path: '/remote/checkout', remote: { host: 'ssh' } } as never }), { owner: { principalId: 'owner', proposal }, sources: { kind: 'window', windowId: 7 } });
+    expect(deps.realpath).not.toHaveBeenCalledWith('/remote/checkout');
+  });
+  it('fails closed before start when trusted preview validation is absent or detects drift', async () => {
+    const preview = { launchOptions: {}, resolvedLaunch: {} as never, location: { kind: 'project-root' as const, projectId: 'p1' }, path: '/repo', branch: 'main', fingerprint: 'trusted' };
+    const unavailable = makeDeps();
+    expect(await launchSquad(unavailable.deps, makeInput({ launchPreview: preview }), { owner: { principalId: 'owner' } })).toMatchObject({ ok: false, code: 'UNAVAILABLE' });
+    expect(unavailable.start).not.toHaveBeenCalled();
+    const changed = makeDeps({ validateLaunchPreview: vi.fn(async () => { throw new Error('target drift'); }) });
+    expect(await launchSquad(changed.deps, makeInput({ launchPreview: preview }), { owner: { principalId: 'owner' } })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED', message: 'target drift' });
+    expect(changed.start).not.toHaveBeenCalled();
+  });
+  it('keeps explicit launch overrides separate from provided plan launch declarations', async () => {
+    const { deps, start } = makeDeps();
+    await launchSquad(deps, makeInput({
+      coordinationMode: 'structured',
+      goal: `## Launch\n- worktree: true\n- push: true\n- checks: check:lint\n## Execution Plan\n${validPlan}`,
+      launchOptions: { worktree: false, push: false, checks: [] }
+    } as SquadLaunchInput), { owner: { principalId: 'owner' } });
+    expect(start.mock.calls[0]?.[2]).toMatchObject({
+      worktree: false, push: false, checks: [],
+      planLaunch: { worktree: true, push: true, checks: ['lint'] }
+    });
+  });
   it('builds the composer request exactly as the desktop launch always has and starts it without options', async () => {
     const { deps, start } = makeDeps();
     const result = await launchSquad(deps, makeInput(), { sources: { kind: 'window', windowId: 7 }, owner: { principalId: 'interactive:local' } });

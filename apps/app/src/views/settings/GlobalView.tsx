@@ -10,6 +10,7 @@ import { CliSkillsSettings } from './CliSkillsSettings';
 import { TrustedPreviewFoldersSection } from './TrustedPreviewFoldersSection';
 import { useSplitWorkspace } from '@/lib/split-layout/store';
 import { OnboardingSettingsAction } from '@/components/onboarding/Onboarding';
+import { NamedChecksSettings } from '@/components/settings/NamedChecksSettings';
 
 interface GlobalTabProps {
   config: AppConfig;
@@ -50,6 +51,7 @@ export function GlobalView({
       </Section>
 
       <CliSkillsSettings />
+      <NamedChecksSettings />
 
       <TrustedPreviewFoldersSection config={config} />
 

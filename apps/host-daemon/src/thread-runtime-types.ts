@@ -51,5 +51,5 @@ export interface ThreadRuntimeAdapter {
   refreshSkillCatalog(): Promise<void>;
   getRuntimeSnapshot?(): HostRuntimeSnapshot;
   listLoadedEnvironments(): string[];
-  dispose(): void;
+  dispose(): Promise<void>;
 }

@@ -1,4 +1,6 @@
 import { product } from '../../lib/product-client.js';
+import type { LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
+import { SquadLaunchSettings } from '../SquadLaunchSettings.js';
 import React, { useMemo, useState } from 'react';
 import { Sparkles, Copy } from 'lucide-react';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
@@ -154,6 +156,11 @@ export function ScheduleEditor({
   const [retryDelay, setRetryDelay] = useState<string>(String(policySource?.retry?.delayMinutes ?? 10));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [launchOptions, setLaunchOptions] = useState<LaunchOptions>(() => (task ?? seededTask)?.launchOptions ?? {});
+  const launchGoal = [prompt, description, name].map(value => value.trim()).find(Boolean) ?? '';
+  const previewKey = JSON.stringify([teamId, projectId, planSource, launchGoal, launchOptions]);
+  const [launchValidity, setLaunchValidity] = useState<{ key: string; valid: boolean }>();
+  const launchValid = launchValidity?.key === previewKey && launchValidity.valid;
 
   const isNew = task === null;
   const intervalMs = useMemo(() => parseEvery(every), [every]);
@@ -168,8 +175,8 @@ export function ScheduleEditor({
   }, [cadenceMode, cronValid, cron, tz]);
   const cadenceValid = cadenceMode === 'cron' ? cronValid : intervalValid;
   const canSave = useMemo(
-    () => !readOnly && name.trim().length > 0 && Boolean(projectId) && cadenceValid && (runAs === 'agent' || Boolean(teamId)),
-    [readOnly, name, projectId, cadenceValid, runAs, teamId]
+    () => !readOnly && name.trim().length > 0 && Boolean(projectId) && cadenceValid && (runAs === 'agent' || (Boolean(teamId) && launchValid)),
+    [readOnly, name, projectId, cadenceValid, runAs, teamId, launchValid]
   );
 
   React.useEffect(() => {
@@ -239,7 +246,7 @@ export function ScheduleEditor({
           projectId,
           profile,
           kind: runAs,
-          ...(runAs === 'team' ? { teamId, planSource } : {}),
+          ...(runAs === 'team' ? { teamId, planSource, ...(Object.keys(launchOptions).length ? { launchOptions } : {}) } : {}),
           ...cadence,
           prompt: prompt.trim() || undefined,
           extraArgs: seededTemplate?.defaults.extraArgs ?? seededTask?.extraArgs,
@@ -273,6 +280,7 @@ export function ScheduleEditor({
           kind: runAs,
           teamId: runAs === 'team' ? teamId : null,
           planSource: runAs === 'team' ? planSource : null,
+          launchOptions: runAs === 'team' && Object.keys(launchOptions).length ? launchOptions : null,
           ...cadence,
           prompt,
           inboxLevel,
@@ -427,6 +435,13 @@ export function ScheduleEditor({
               { value: 'provided', label: 'Plan provided in goal' }
             ]}
           />
+        </div>
+      ) : null}
+      {runAs === 'team' ? (
+        <div className="scheduler-form-field">
+          <SquadLaunchSettings teamId={teamId} projectId={projectId} goal={launchGoal}
+            coordinationMode={planSource === 'provided' ? 'structured' : 'freeform'} value={launchOptions}
+            onChange={setLaunchOptions} disabled={disabled} onValidityChange={(valid) => setLaunchValidity({ key: previewKey, valid })} />
         </div>
       ) : null}
       {isNew ? (

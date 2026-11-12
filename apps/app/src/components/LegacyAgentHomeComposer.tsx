@@ -955,7 +955,7 @@ export function LegacyAgentHomeComposer({
           {!project?.remote && hostRecovery.kind === 'restart' && <ComposerDaemonRestart reason={hostRecovery.reason} />}
           <button
             type="button"
-            className="launch-advanced-toggle"
+            className="launch-advanced-toggle launch-disclosure-button"
             aria-expanded={advancedOpen}
             data-testid="legacy-agent-customize-launch"
             onClick={() => setAdvancedOpen((open) => !open)}

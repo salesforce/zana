@@ -27,7 +27,8 @@ type RestartFailure = Extract<SquadWorkerRestartResult, { ok: false }>;
 
 /** The slice of an execution record a restart needs. */
 export interface RestartExecutionRecord {
-  squadWorktree?: { path: string; branch: string };
+  squadWorktree?: { path: string; branch: string; ownership?: 'user' | 'managed'; targetKind?: 'project-root' | 'worktree' };
+  request?: { target?: import('@zana-ai/zcc-domain/product').SquadExecutionTargetSelector };
   coordinationMode?: TeamCoordinationMode;
 }
 
@@ -35,6 +36,8 @@ export interface SquadWorkerRestartDeps {
   getSession(sessionId: string): TerminalSession | undefined;
   getProject(projectId: string): Pick<Project, 'path' | 'remote'> | undefined;
   getExecution(projectId: string, executionId: string): Promise<RestartExecutionRecord | undefined>;
+  /** Main-owned resolver verifies repository identity, selector and canonical checkout. */
+  resolveUserTarget?(projectId: string, selector: import('@zana-ai/zcc-domain/product').SquadExecutionTargetSelector): Promise<{ path: string; branch: string; targetKind?: 'project-root' | 'worktree' }>;
   teamLaunchEnabled(): boolean;
   restoreCapabilities: CapabilityReservations & {
     reserve(id: string): { capability: RestoreCapability; reservationId: string } | undefined;
@@ -112,7 +115,12 @@ async function resolveSquadWorktree(
     if (!project || project.remote) throw new Error('project unavailable');
     const root = realpathSync(project.path);
     const path = realpathSync(record.squadWorktree.path);
-    if (!isWithinRetainedSquadWorktreeBase(path, root)) throw new Error('squad worktree is outside the project');
+    if (record.squadWorktree.ownership === 'user') {
+      const selector = record.request?.target;
+      if (!selector || !deps.resolveUserTarget) throw new Error('user target validation unavailable');
+      const resolved = await deps.resolveUserTarget(session.projectId, selector);
+      if (path !== record.squadWorktree.path || resolved.path !== path || resolved.branch !== record.squadWorktree.branch || resolved.targetKind !== record.squadWorktree.targetKind) throw new Error('user target changed');
+    } else if (!isWithinRetainedSquadWorktreeBase(path, root)) throw new Error('squad worktree is outside the project');
     return { ok: true, value: { ...request, worktreeInfo: { path, branch: record.squadWorktree.branch } } };
   } catch (error) {
     return fail('WORKTREE_UNAVAILABLE', `squad worktree unavailable: ${errorMessage(error)}`);

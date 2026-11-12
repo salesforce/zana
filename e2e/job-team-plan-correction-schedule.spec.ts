@@ -143,6 +143,10 @@ async function runNow(window: Page, s: Setup): Promise<string> {
   const button = panel.getByRole('button', { name: 'Run now', exact: true });
   await expect(button).toBeEnabled({ timeout: 15_000 });
   await button.click();
+  const review = window.getByRole('dialog', { name: 'Review scheduled squad launch' });
+  await expect(review).toBeVisible();
+  await expect(review.getByRole('button', { name: 'Launch schedule' })).toBeEnabled();
+  await review.getByRole('button', { name: 'Launch schedule' }).click();
   let fresh = '';
   await expect.poll(async () => {
     fresh = (await executionIds(window, s.projectId)).find((id) => !before.has(id)) ?? '';

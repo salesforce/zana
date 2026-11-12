@@ -75,6 +75,33 @@ describe('validateGoalFile', () => {
     expect(r.planSource).toBe(expected);
   });
 
+  it('keeps valid launch options only for Squad assignments, including explicit false and empty checks', () => {
+    const launchOptions = { worktree: false, push: false, checks: [], onComplete: 'leave' as const, failurePolicyDefault: 'fail-run' as const };
+    const squad = validateGoalFile({ ...baseGoal, assignment: { kind: 'team', teamId: 'release-squad' }, launchOptions });
+    if ('error' in squad) throw new Error('unexpected error');
+    expect(squad.launchOptions).toEqual(launchOptions);
+
+    const agent = validateGoalFile({ ...baseGoal, launchOptions });
+    if ('error' in agent) throw new Error('unexpected error');
+    expect(agent.launchOptions).toBeUndefined();
+  });
+
+  it('keeps malformed persisted Squad launch options visible and paused without dropping policy checks', () => {
+    const raw = {
+      ...baseGoal,
+      assignment: { kind: 'team', teamId: 'release-squad' },
+      launchOptions: { push: 'yes' }
+    };
+    const result = validateGoalFile(raw);
+    expect(result).toMatchObject({
+      status: 'paused',
+      assignment: { kind: 'team', teamId: 'release-squad' },
+      launchOptionsError: expect.stringContaining('invalid')
+    });
+    expect(result).not.toHaveProperty('launchOptions');
+    expect(raw.launchOptions).toEqual({ push: 'yes' });
+  });
+
   it('trims and drops blank success criteria', () => {
     const r = validateGoalFile({ ...baseGoal });
     if ('error' in r) throw new Error('unexpected error');

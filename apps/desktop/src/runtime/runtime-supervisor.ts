@@ -63,7 +63,7 @@ import {
   type ProjectRecordSchema,
   type RuntimeOutbound
 } from '@zana-ai/zcc-contracts/runtime';
-import type { ProjectSettingsPatch } from '@zana-ai/zcc-contracts/project-settings';
+import { NamedCheckScopeSchema, NamedChecksSchema, type NamedCheckScope, type NamedCheck, type ProjectSettingsPatch } from '@zana-ai/zcc-contracts/project-settings';
 import type { TerminalHostEvent } from '@zana-ai/zcc-contracts/terminal-execution';
 import type { TerminalRequestCommand } from '@zana-ai/zcc-contracts/terminal-execution';
 import type { z } from 'zod';
@@ -143,6 +143,8 @@ export interface RuntimeSupervisor {
   removeProject(id: string): Promise<RuntimeProject | null>;
   publishProductEvent(channel: string, args: unknown[]): Promise<void>;
   getProjectSettings(id: string): Promise<RuntimeProjectSettings>;
+  getNamedChecks(scope: NamedCheckScope): Promise<NamedCheck[]>;
+  setNamedChecks(scope: NamedCheckScope, checks: NamedCheck[]): Promise<NamedCheck[]>;
   setProjectSettings(id: string, patch: RuntimeProjectSettings): Promise<RuntimeProjectSettings>;
   executeTerminal(command: TerminalRequestCommand): Promise<TerminalHostEvent[]>;
   recordTerminalEvent(event: TerminalHostEvent): Promise<boolean>;
@@ -464,6 +466,8 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     removeProject: async () => { throw new Error('runtime project storage is unavailable'); },
     publishProductEvent: async () => { throw new Error('Shared product events require the product runtime'); },
     getProjectSettings: async () => { throw new Error('runtime project settings storage is unavailable'); },
+    getNamedChecks: async () => { throw new Error('runtime named checks storage is unavailable'); },
+    setNamedChecks: async () => { throw new Error('runtime named checks storage is unavailable'); },
     setProjectSettings: async () => { throw new Error('runtime project settings storage is unavailable'); },
     executeTerminal: (command) => terminalSessions!.execute(command),
     recordTerminalEvent: async (event) => terminalSessions!.record(event),
@@ -560,6 +564,8 @@ interface UtilityRuntime {
   request(operation: 'projects-touch', projectId: string): Promise<unknown>;
   request(operation: 'projects-remove', projectId: string): Promise<unknown>;
   request(operation: 'project-settings-get', projectId: string): Promise<unknown>;
+  request(operation: 'named-checks-get', scope: NamedCheckScope): Promise<unknown>;
+  request(operation: 'named-checks-set', scope: NamedCheckScope, checks: NamedCheck[]): Promise<unknown>;
   request(operation: 'project-settings-set', projectId: string, patch: RuntimeProjectSettings): Promise<unknown>;
   request(operation: 'terminal-execute', command: TerminalRequestCommand): Promise<unknown>;
   request(operation: 'terminal-record', event: TerminalHostEvent): Promise<unknown>;
@@ -903,6 +909,8 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
       const value = await server.request('project-settings-get', id);
       return value && typeof value === 'object' ? value as RuntimeProjectSettings : {};
     },
+    getNamedChecks: async scope => NamedChecksSchema.parse(await server.request('named-checks-get', NamedCheckScopeSchema.parse(scope))),
+    setNamedChecks: async (scope, checks) => NamedChecksSchema.parse(await server.request('named-checks-set', NamedCheckScopeSchema.parse(scope), NamedChecksSchema.parse(checks))),
     setProjectSettings: (id, patch) => server.request('project-settings-set', id, patch) as Promise<RuntimeProjectSettings>,
     executeTerminal: async (command) => {
       const value = await server.request('terminal-execute', command);
@@ -1057,8 +1065,8 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'plugins-tool-settled' | 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-dispatch-admission' | 'plugins-pty-lifecycle-event' | 'plugins-pty-session-instructions' | 'plugins-pty-session-tools' | 'plugins-pty-session-tool-call' | 'plugins-tool-policy-inventory' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-        ...args: [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [DispatchAdmissionMainRequest] | [PtyLifecycleEventMainRequest] | [NativeToolSettledMainRequest] | [PtySessionInstructionsMainRequest] | [PtySessionToolsMainRequest] | [PtySessionToolCallMainRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, string?] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
+      operation: 'named-checks-get' | 'named-checks-set' | 'plugins-tool-settled' | 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-dispatch-admission' | 'plugins-pty-lifecycle-event' | 'plugins-pty-session-instructions' | 'plugins-pty-session-tools' | 'plugins-pty-session-tool-call' | 'plugins-tool-policy-inventory' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+        ...args: [NamedCheckScope] | [NamedCheckScope, NamedCheck[]] | [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [DispatchAdmissionMainRequest] | [PtyLifecycleEventMainRequest] | [NativeToolSettledMainRequest] | [PtySessionInstructionsMainRequest] | [PtySessionToolsMainRequest] | [PtySessionToolCallMainRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, string?] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
@@ -1113,6 +1121,8 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
           ...(operation === 'projects-touch' ? { projectId: args[0] as string } : {}),
           ...(operation === 'projects-remove' ? { projectId: args[0] as string } : {}),
           ...(operation === 'project-settings-get' ? { projectId: args[0] as string } : {}),
+          ...((operation === 'named-checks-get' || operation === 'named-checks-set') ? { scope: NamedCheckScopeSchema.parse(args[0]) } : {}),
+          ...(operation === 'named-checks-set' ? { checks: NamedChecksSchema.parse(args[1]) } : {}),
           ...(operation === 'project-settings-set' ? {
             projectId: args[0] as string,
             patch: args[1] as RuntimeProjectSettings

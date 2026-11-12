@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assembleExecutionResult, evaluateRouteFit, hasOnlyKeys, usageRollup, validateStructuredResult, validOutputDeclaration } from '../contracts.js';
+import { assembleExecutionResult, evaluateRouteFit, hasOnlyKeys, usageRollup, validateStructuredResult, validOutputDeclaration, validResolvedLaunch, legacyResolvedLaunch, validEngineCheckFailure } from '../contracts.js';
 import type { ExecutionRecord, ExecutionUsageObservationV1 } from '../store.js';
 
 function observation(over: Partial<ExecutionUsageObservationV1> = {}): ExecutionUsageObservationV1 {
@@ -12,6 +12,22 @@ function observation(over: Partial<ExecutionUsageObservationV1> = {}): Execution
 }
 
 describe('execution phase 5 contracts', () => {
+  it('bounds engine receipts and rejects malformed metadata without relaxing worker schemas', () => {
+    const receipt = { reference: 'check:verify', result: { name: 'verify', status: 'failed', exitCode: 1, output: '\u0000'.repeat(100000), untrusted: true } };
+    expect(validEngineCheckFailure(receipt)).toBe(true);
+    for (const bad of [null, {}, { ...receipt, extra: true }, { ...receipt, reference: 'check:bad name' },
+      ...[{ name: 'other' }, { status: 'passed' }, { exitCode: 1.5 }, { untrusted: false }, { output: 4 }, { output: 'x'.repeat(4 * 1024 * 1024 + 1) }, { extra: true }].map(over => ({ ...receipt, result: { ...receipt.result, ...over } }))]) {
+      expect(validEngineCheckFailure(bad)).toBe(false);
+    }
+    expect(validateStructuredResult({ version: 1, schema: { type: 'string' } }, 'x'.repeat(100000)).ok).toBe(false);
+  });
+  it('validates immutable launch snapshot values and sources fail-closed', () => {
+    const snapshot = legacyResolvedLaunch({ worktree: true, onComplete: 'merge' });
+    expect(validResolvedLaunch(snapshot)).toBe(true);
+    for (const bad of [null, {}, { ...snapshot, injected: true }, { ...snapshot, push: { value: true, source: 'caller' } }, { ...snapshot, checks: { value: ['run arbitrary command'], source: 'plan' } }, { ...snapshot, failurePolicyDefault: { value: 'retry', source: 'plan' } }]) {
+      expect(validResolvedLaunch(bad)).toBe(false);
+    }
+  });
   it('rolls up known counters by role without converting unknown values to zero', () => {
     const rollup = usageRollup([
       observation(),

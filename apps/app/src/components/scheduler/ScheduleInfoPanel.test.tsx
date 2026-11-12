@@ -9,6 +9,8 @@ import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product
 
 const setEnabled = vi.fn();
 const runNow = vi.fn();
+const previewTeamLaunch = vi.fn(async () => ({ ok: false, message: 'Unavailable' }));
+const runReviewedTeamNow = vi.fn();
 const retryRuns = vi.fn();
 const dismissRuns = vi.fn();
 const close = vi.fn();
@@ -29,6 +31,8 @@ vi.mock('../../lib/product-client.js', () => ({
     scheduler: {
       setEnabled: (...args: unknown[]) => setEnabled(...args),
       runNow: (...args: unknown[]) => runNow(...args),
+      previewTeamLaunch: (...args: unknown[]) => previewTeamLaunch(...args),
+      runReviewedTeamNow: (...args: unknown[]) => runReviewedTeamNow(...args),
       retryRuns: (...args: unknown[]) => retryRuns(...args),
       dismissRuns: (...args: unknown[]) => dismissRuns(...args)
     },
@@ -62,6 +66,12 @@ const baseTask = {
 } as ScheduledTask;
 
 describe('ScheduleInfoPanel', () => {
+  it('opens review before running a squad schedule', () => {
+    render(<ScheduleInfoPanel task={{ ...baseTask, kind: 'team', teamId: 't' }} />);
+    fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+    expect(screen.queryByRole('dialog', { name: 'Review scheduled squad launch' })).not.toBeNull();
+    expect(runNow).not.toHaveBeenCalled();
+  });
   it('shows a pending worker and disables actions that would start more work', () => {
     render(<ScheduleInfoPanel task={{ ...baseTask, enabled: false, status: { runCount: 0, runs: [{ at: new Date().toISOString(), launchState: 'pending', sessionId: 'reserved', result: 'skipped' }] } }} />);
     expect(screen.getByTestId('pending-worker-recovery')).toBeTruthy();

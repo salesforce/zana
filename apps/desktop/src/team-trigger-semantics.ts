@@ -1,12 +1,14 @@
 import { normalizeExecutionPlan } from '@zana-ai/zcc-server/services/launch/preflight';
 import { hasPortablePlanStep, parsePortablePlan, type PortablePlanIdRename } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
+import type { PlanLaunch } from '@zana-ai/zcc-domain/launch-options';
 
 export const NO_PLAN_STEPS_REASON = 'no portable plan steps found';
 
 export interface ResolvedSquadPlan {
   coordinationMode: 'freeform' | 'structured';
   workUnits?: ExecutionWorkUnitInput[];
+  launch?: PlanLaunch;
   /** Recoverable defects repaired in the accepted plan; informational, never a gate. */
   normalizations?: string[];
   /** Step ids rewritten to their registered form; the only repairs agents are told about. */
@@ -15,16 +17,22 @@ export interface ResolvedSquadPlan {
 }
 
 type CandidateCheck =
-  | { units: ExecutionWorkUnitInput[]; normalizations?: string[]; idRenames?: PortablePlanIdRename[] }
+  | { units: ExecutionWorkUnitInput[]; launch?: PlanLaunch; normalizations?: string[]; idRenames?: PortablePlanIdRename[] }
   | { reason: string };
 
 function checkCandidatePlan(text: string): CandidateCheck {
   const parsed = parsePortablePlan(text);
   if (!parsed.ok) return { reason: parsed.reason };
   try {
-    const units = normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
+    const parsedUnits = new Map(parsed.units.map(unit => [unit.id, unit]));
+    const units = (normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[]).map(unit => {
+      const parsedUnit = parsedUnits.get(unit.id);
+      if (!parsedUnit) throw new Error(`normalized plan unit ${unit.id} is missing from parsed plan`);
+      return { ...unit, ...(parsedUnit.checks ? { checks: parsedUnit.checks } : {}), ...(parsedUnit.onFailure ? { onFailure: parsedUnit.onFailure } : {}) };
+    });
     return {
       units,
+      ...(parsed.launch && Object.keys(parsed.launch).length ? { launch: { ...parsed.launch, checks: parsed.launch.checks ? [...parsed.launch.checks] : undefined } } : {}),
       ...(parsed.normalizations ? { normalizations: parsed.normalizations } : {}),
       ...(parsed.idRenames ? { idRenames: parsed.idRenames } : {})
     };
@@ -59,6 +67,7 @@ export function resolveSquadPlan(
       return {
         coordinationMode: 'structured',
         workUnits: checked.units,
+        ...(checked.launch ? { launch: checked.launch } : {}),
         ...(checked.normalizations ? { normalizations: checked.normalizations } : {}),
         ...(checked.idRenames ? { idRenames: checked.idRenames } : {})
       };

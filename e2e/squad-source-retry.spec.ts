@@ -4,9 +4,9 @@
  *
  *   A. The native chooser opens in the Project, shows dot folders, and then in the
  *      folder of the last pick.
- *   B. A launch that fails after consuming its attachments hands back fresh ones: the
- *      surviving chip still works, the lost one is explained, and a second Launch
- *      succeeds without touching the picker.
+ *   B. Source files are revalidated by the authoritative preview before launch. A
+ *      moved source blocks launch, while removing its stale chip restores a truthful
+ *      preview and lets the surviving source launch without reopening the picker.
  */
 import { test, expect } from './fixtures/app.js';
 import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
@@ -115,7 +115,7 @@ test('the source picker opens in the Project, shows dot folders and remembers th
   });
 });
 
-test('a Squad launch that fails after consuming its sources can be launched again without re-attaching', async ({ app }, testInfo) => {
+test('a moved Squad source invalidates preview until its stale chip is removed', async ({ app }, testInfo) => {
   const { window, electron } = app;
   await withProject(window, async ({ projectDir, projectId, projectName }) => {
     const plans = join(projectDir, '.zcc', 'plans');
@@ -127,18 +127,17 @@ test('a Squad launch that fails after consuming its sources can be launched agai
     await expect(chips.getByText('gone.md')).toBeVisible();
     unlinkSync(join(plans, 'gone.md'));
 
-    await modal.getByTestId('team-command-send').click();
-    const error = modal.getByTestId('team-command-error');
-    await expect(error).toContainText('moved');
-    await expect(error).toContainText('Attach gone.md again');
+    const launch = modal.getByTestId('team-command-send');
+    await expect(launch).toBeDisabled();
     await expect(chips.getByText('keep.md')).toBeVisible();
-    await expect(chips.getByText('gone.md')).toHaveCount(0);
-    const shot = testInfo.outputPath('failed-launch-chips.png');
+    await expect(chips.getByText('gone.md')).toBeVisible();
+    const shot = testInfo.outputPath('invalid-preview-chips.png');
     await captureElectronScreenshot(electron, window, shot, modal);
-    await testInfo.attach('failed-launch-chips', { path: shot, contentType: 'image/png' });
+    await testInfo.attach('invalid-preview-chips', { path: shot, contentType: 'image/png' });
 
-    // No picker interaction: the renewed chip must be enough.
-    await modal.getByTestId('team-command-send').click();
+    await modal.getByRole('button', { name: 'Remove gone.md' }).click();
+    await expect(launch).toBeEnabled();
+    await launch.click();
     await expect(modal).toBeHidden({ timeout: 15_000 });
     await expect.poll(async () => window.evaluate(async (pid) => {
       const page = await window.cc.executionBoard.listProject(pid);

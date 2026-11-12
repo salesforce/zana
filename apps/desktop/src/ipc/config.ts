@@ -1,5 +1,7 @@
 // @ts-nocheck
-import { dialog } from 'electron';
+import { dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { NamedCheckScopeSchema, NamedChecksSchema, ProjectSettingsPatchSchema, type NamedCheck, type NamedCheckScope } from '@zana-ai/zcc-contracts/project-settings';
+import { isTrustedRendererUrl, rendererUrl } from '../window/renderer-url.js';
 import { addPickedTrustedPreviewFolder, removeStoredTrustedPreviewFolder } from '../native/trusted-preview-folders.js';
 import { productHandle, safeProductHandle } from './shared-product-registration.js';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
@@ -11,7 +13,32 @@ import { presentAppConfig } from '@zana-ai/zcc-server/http/public-app-url';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import type { AppConfig, OverseerAuditEntry, ProjectSettings } from '@zana-ai/zcc-domain/product';
 
-export function registerConfigIpc(): void {
+export interface NamedChecksSettingsService {
+  get(scope: NamedCheckScope): Promise<NamedCheck[]> | NamedCheck[];
+  set(scope: NamedCheckScope, checks: NamedCheck[]): Promise<NamedCheck[]>;
+}
+
+export function registerConfigIpc(namedChecks?: NamedChecksSettingsService): void {
+  if (namedChecks) {
+    const authorize = (event: IpcMainInvokeEvent, scope: unknown): NamedCheckScope => {
+      const win = ctx.mainWindow();
+      if (!win || event.sender !== win.webContents || event.senderFrame !== event.sender.mainFrame
+        || !rendererUrl() || !isTrustedRendererUrl(event.sender.getURL())) {
+        throw new Error('Named-check settings require owner main window');
+      }
+      const parsed = NamedCheckScopeSchema.parse(scope);
+      if (parsed.kind === 'project' && !ctx.localProjects().some((project) => project.id === parsed.projectId)) {
+        throw new Error('Named-check project must be registered');
+      }
+      return parsed;
+    };
+    ipcMain.handle(IPC.namedChecks.get, (event, scope) => namedChecks.get(authorize(event, scope)));
+    ipcMain.handle(IPC.namedChecks.set, async (event, scope, checks) => {
+      const next = await namedChecks.set(authorize(event, scope), NamedChecksSchema.parse(checks));
+      ctx.safeSend(IPC.namedChecks.onChanged);
+      return next;
+    });
+  }
   
 
 
@@ -22,6 +49,7 @@ export function registerConfigIpc(): void {
   productHandle<[Partial<AppConfig>], AppConfig>(
     IPC.config.set,
     (patch) => {
+      if ('namedChecks' in patch || 'checks' in patch) throw new Error('Named checks require dedicated owner IPC');
       // Window state is main-owned. Renderer config writes cannot alter shared
       // unscoped-window geometry, plugin/thread view window geometry or fullscreen
       // monitor selection.
@@ -144,13 +172,14 @@ export function registerConfigIpc(): void {
   );
   // Mutations must reject on persistence failure so the renderer can roll back
   // its optimistic state and show the write error. Reads remain best-effort.
-  productHandle(IPC.projectSettings.set, (id: string, patch: Partial<ProjectSettings>) =>
-    ctx.runtimeSupervisor
-      ? ctx.runtimeSupervisor.setProjectSettings(id, patch)
+  productHandle(IPC.projectSettings.set, (id: string, patch: Partial<ProjectSettings>) => {
+    const parsed = ProjectSettingsPatchSchema.parse(patch);
+    return ctx.runtimeSupervisor
+      ? ctx.runtimeSupervisor.setProjectSettings(id, parsed)
       : (() => {
-          const settings = store.setProjectSettings(id, patch);
+          const settings = store.setProjectSettings(id, parsed);
           ctx.safeSend(IPC.projectSettings.onChanged, id);
           return settings;
         })()
-  );
+   });
 }

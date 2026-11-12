@@ -12,6 +12,7 @@ vi.mock('./shared-product-registration.js', () => ({
 }));
 vi.mock('./ctx.js', () => ({ ctx: {
   scheduler: { queryRuns: h.queryRuns, retryRuns: h.retryRuns, dismissRuns: h.dismissRuns, on: vi.fn() },
+  safeHandleFromWindow: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler),
   goals: { on: vi.fn() }, followups: { on: vi.fn() }, feedStore: { on: vi.fn() },
   templates: { on: vi.fn() }, scheduleGroups: { on: vi.fn() }
 } }));

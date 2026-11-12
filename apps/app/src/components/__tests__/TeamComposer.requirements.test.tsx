@@ -1,8 +1,9 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveAllLaunch } from '@zana-ai/zcc-domain/launch-options';
 
 const startJob = vi.fn();
 const pushToast = vi.fn();
@@ -14,7 +15,7 @@ vi.mock('../../lib/product-client.js', () => ({
   product: {
     executionSources: { pick: vi.fn() },
     projects: { ensureQuickAgent: async () => ({ ok: false as const, code: 'no-op', message: undefined }) },
-    teams: { startJob: (...args: unknown[]) => startJob(...args) },
+    teams: { startJob: (...args: unknown[]) => startJob(...args), preview: async () => ({ ok: true, value: { resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p1' }, path: '/repo', branch: 'main' } }) },
     fs: { uploadToRemote: vi.fn(), uploadProjectAttachmentToRemote: vi.fn() }
   }
 }));
@@ -70,8 +71,9 @@ const failure = {
   }
 };
 
-const launch = () => {
+const launch = async () => {
   fireEvent.click(screen.getByTestId('pick-project-p1'));
+  await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByTestId('team-command-send'));
 };
 
@@ -88,7 +90,7 @@ describe('TeamComposer requirement guidance panel', () => {
   it('shows the pre-worker guidance panel listing only missing capabilities per unit', async () => {
     startJob.mockResolvedValueOnce(failure);
     render(<TeamComposer />);
-    launch();
+    await launch();
 
     const panel = await screen.findByRole('alert');
     expect(within(panel).getByRole('heading', { name: 'Squad requirements need attention' })).toBeTruthy();
@@ -109,7 +111,7 @@ describe('TeamComposer requirement guidance panel', () => {
   it('does not raise the generic "Squad launch failed" error or toast for a requirement rejection', async () => {
     startJob.mockResolvedValueOnce(failure);
     render(<TeamComposer />);
-    launch();
+    await launch();
     await screen.findByRole('alert');
 
     expect(screen.queryByTestId('team-command-error')).toBeNull();
@@ -121,7 +123,7 @@ describe('TeamComposer requirement guidance panel', () => {
   it('keeps diagnostics under Details, naming the error code and every affected unit id', async () => {
     startJob.mockResolvedValueOnce(failure);
     render(<TeamComposer />);
-    launch();
+    await launch();
     const panel = await screen.findByRole('alert');
     const details = panel.querySelector('details') as HTMLElement;
 
@@ -137,7 +139,7 @@ describe('TeamComposer requirement guidance panel', () => {
   it('Edit plan dismisses the panel and refocuses the goal without relaunching', async () => {
     startJob.mockResolvedValueOnce(failure);
     render(<TeamComposer />);
-    launch();
+    await launch();
     await screen.findByRole('alert');
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit plan' }));
@@ -150,7 +152,7 @@ describe('TeamComposer requirement guidance panel', () => {
     startJob.mockResolvedValueOnce(failure);
     const onClose = vi.fn();
     render(<TeamComposer onClose={onClose} />);
-    launch();
+    await launch();
     await screen.findByRole('alert');
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -163,7 +165,7 @@ describe('TeamComposer requirement guidance panel', () => {
   it('Configure project opens the launching project settings', async () => {
     startJob.mockResolvedValueOnce(failure);
     render(<TeamComposer />);
-    launch();
+    await launch();
     await screen.findByRole('alert');
     fireEvent.click(screen.getByRole('button', { name: 'Configure project' }));
     expect(openProjectSettings).toHaveBeenCalledWith('p1');
@@ -172,7 +174,7 @@ describe('TeamComposer requirement guidance panel', () => {
   it('prefixes any other launch rejection with "Squad launch failed: " and does not show the panel', async () => {
     startJob.mockResolvedValueOnce({ ok: false, code: 'INVALID', message: 'dependency cycle' });
     render(<TeamComposer />);
-    launch();
+    await launch();
 
     expect((await screen.findByTestId('team-command-error')).textContent).toBe('Squad launch failed: dependency cycle');
     expect(pushToast).toHaveBeenCalledWith('Squad launch failed: dependency cycle', 'error');
@@ -182,14 +184,14 @@ describe('TeamComposer requirement guidance panel', () => {
   it('falls back to the error code when a rejection has no message', async () => {
     startJob.mockResolvedValueOnce({ ok: false, code: 'UNKNOWN_PROJECT' });
     render(<TeamComposer />);
-    launch();
+    await launch();
     expect((await screen.findByTestId('team-command-error')).textContent).toBe('Squad launch failed: UNKNOWN_PROJECT');
   });
 
   it('shows a thrown launch error with the same prefix', async () => {
     startJob.mockRejectedValueOnce(new Error('ipc down'));
     render(<TeamComposer />);
-    launch();
+    await launch();
     expect((await screen.findByTestId('team-command-error')).textContent).toBe('Squad launch failed: ipc down');
   });
 });
@@ -206,7 +208,7 @@ describe('TeamComposer availability-unknown panel', () => {
       availabilityUnknown: { failedSources: ['skills', 'mcp'] }
     });
     render(<TeamComposer />);
-    launch();
+    await launch();
     const panel = await screen.findByRole('alert');
     expect(panel.textContent).toContain('Project capabilities could not be verified');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));

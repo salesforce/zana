@@ -7,10 +7,12 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 
 const runNow = vi.hoisted(() => vi.fn());
+const previewTeamLaunch = vi.hoisted(() => vi.fn(async () => ({ ok: false, message: 'Unavailable' })));
+const runReviewedTeamNow = vi.hoisted(() => vi.fn());
 const pushToast = vi.hoisted(() => vi.fn());
 
 vi.mock('../../lib/product-client.js', () => ({
-  product: { scheduler: { setEnabled: vi.fn(), runNow: (...a: unknown[]) => runNow(...a) }, terminals: { close: vi.fn() } }
+  product: { scheduler: { setEnabled: vi.fn(), runNow: (...a: unknown[]) => runNow(...a), previewTeamLaunch: (...a: unknown[]) => previewTeamLaunch(...a), runReviewedTeamNow: (...a: unknown[]) => runReviewedTeamNow(...a) }, terminals: { close: vi.fn() } }
 }));
 vi.mock('../../store.js', () => ({
   useData: (selector: (s: { terminals: Record<string, never> }) => unknown) => selector({ terminals: {} }),
@@ -37,6 +39,12 @@ const mount = () => render(
 afterEach(() => { cleanup(); runNow.mockReset(); pushToast.mockReset(); });
 
 describe('ScheduleRow run now outcome', () => {
+  it('opens launch review instead of firing a team schedule immediately', () => {
+    render(<MemoryRouter><ScheduleRow task={{ ...task(), kind: 'team', teamId: 't' }} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Run now' }));
+    expect(screen.queryByRole('dialog', { name: 'Review scheduled squad launch' })).not.toBeNull();
+    expect(runNow).not.toHaveBeenCalled();
+  });
   it('toasts the transport failure', async () => {
     runNow.mockResolvedValue({ ok: false, message: 'denied' });
     mount();

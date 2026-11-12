@@ -5,6 +5,7 @@
  */
 import { z } from 'zod';
 import type { Persona, SquadTransport } from './product.js';
+import { launchOptionsSchema, resolvedLaunchSchema, squadLaunchLocationSchema, type LaunchOptions, type SquadLaunchLocation } from './launch-options.js';
 
 /** How the Squad's plan is produced: the orchestrator infers it, or the goal/sources provide it. */
 export type SquadPlanning = 'infer' | 'provided';
@@ -109,6 +110,7 @@ export interface SquadAttachmentMapping {
 }
 
 export interface SquadProposalInput {
+  launchOptions?: LaunchOptions;
   teamId: string;
   goal: string;
   planning?: SquadPlanning;
@@ -147,6 +149,10 @@ export interface SquadPlanStep {
 }
 
 export interface SquadProposalRecord {
+  launchPreview?: SquadLaunchPreview;
+  launchOptions?: LaunchOptions;
+  /** Host-authored advisory snapshot; launch revalidates against current project state. */
+  location?: SquadLaunchLocation;
   id: string;
   projectId: string;
   proposer: SquadProposer;
@@ -170,12 +176,30 @@ export interface SquadProposalRecord {
 
 const timestamp = z.number().finite().nonnegative();
 
+export const squadLaunchPreviewSchema = z.strictObject({
+  launchOptions: launchOptionsSchema,
+  resolvedLaunch: resolvedLaunchSchema,
+  location: squadLaunchLocationSchema,
+  path: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+  /** Host-observed checkout HEAD; fences reviewed bases without inventing a branch. */
+  head: z.string().min(1).optional(),
+  fingerprint: z.string().min(1)
+}).refine((preview) => preview.location.kind === 'new-worktree'
+  ? preview.path === undefined
+  : preview.location.kind === 'worktree' ? Boolean(preview.path && preview.branch)
+    : Boolean(preview.path), { message: 'Existing locations need an actual path; linked worktrees need a branch; prospective worktrees have no path.' });
+export type SquadLaunchPreview = z.infer<typeof squadLaunchPreviewSchema>;
+
 /**
  * A persisted proposal record, checked in full before the ledger is trusted. It checks types
  * and structure only: input caps live in `squad_propose`, so a release that changes a cap (or a
  * downgrade) never discards stored proposals. Unknown keys are allowed (a newer Zana may add some).
  */
 export const squadProposalRecordSchema = z.object({
+  launchPreview: squadLaunchPreviewSchema.optional(),
+  launchOptions: launchOptionsSchema.optional(),
+  location: squadLaunchLocationSchema.optional(),
   id: z.string().min(1),
   projectId: z.string().min(1),
   proposer: z.object({ kind: z.enum(['pty', 'thread']), id: z.string().min(1), title: z.string().optional() }),
@@ -209,6 +233,7 @@ export const squadProposalRecordSchema = z.object({
 });
 
 export interface SquadProposalResult {
+  launchPreview?: SquadLaunchPreview;
   proposalId: string;
   inboxEntryId: string;
   team: { id: string; name: string; workers: number; orchestrator: string };
@@ -222,6 +247,9 @@ export interface SquadProposalResult {
 
 /** What a Squad started straight away by an agent (no Inbox card) looks like to that agent. */
 export interface SquadLaunchNowResult {
+  location?: SquadLaunchLocation;
+  path?: string;
+  branch?: string;
   executionId: string;
   state: string;
   /** True when an identical recent launch from the same conversation was returned instead of starting another. */
@@ -258,6 +286,8 @@ export const SQUAD_ATTACHMENT_FROZEN_NOTE =
 
 /** Safe renderer projection that pre-fills the composer from a proposal. */
 export interface SquadLaunchPrefill {
+  launchOptions?: LaunchOptions;
+  launchPreview?: SquadLaunchPreview;
   proposalId: string;
   projectId: string;
   teamId: string;

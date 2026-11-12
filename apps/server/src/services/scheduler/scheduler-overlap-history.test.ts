@@ -19,6 +19,16 @@ import type { ScheduledTask, ScheduleRun } from '@zana-ai/zcc-domain/product';
 import { makeFixture, T, internals, autoFire, runs, liveRow, skipRows } from './overlap-fixture.test-support.js';
 
 describe('overlap skip history row', () => {
+  it('fake PTY remembered-session lookup returns its session or null', async () => {
+    const { ptys, tasks } = await makeFixture();
+    const session = ptys.create({
+      preallocatedSessionId: 'remembered', projectId: tasks[0].projectId, profile: 'claude', cwd: '/tmp/proj'
+    });
+
+    expect(ptys.getRememberedSession(session.id)).toBe(session);
+    expect(ptys.getRememberedSession('missing')).toBeNull();
+  });
+
   it('records the skip as its own row, counts it, and keeps the live row id, at and sessionId', async () => {
     const { manager, ptys, tasks } = await makeFixture([{ catchUp: null }]);
     const id = tasks[0].id;

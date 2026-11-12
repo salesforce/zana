@@ -17,6 +17,38 @@ import {
   squadStoredFieldTooLong,
   squadSummaryTooLongMessage
 } from './squad-proposal.js';
+import { squadProposalRecordSchema } from './squad-proposal.js';
+
+describe('proposal launch snapshots', () => {
+  const record = { id: 'p', projectId: 'project', proposer: { kind: 'thread', id: 't' }, teamId: 'team', goal: 'Work', planning: 'provided', sources: [], state: 'pending', createdAt: 1, updatedAt: 1, expiresAt: 2 };
+
+  it('preserves optional launch options and structured location snapshots', () => {
+    const launchOptions = { push: true, checks: ['lint'], target: { kind: 'project-root' } };
+    const location = { kind: 'project-root', projectId: 'project' };
+    expect(squadProposalRecordSchema.parse({ ...record, launchOptions, location })).toMatchObject({ launchOptions, location });
+    expect(squadProposalRecordSchema.parse(record)).not.toHaveProperty('launchOptions');
+    expect(squadProposalRecordSchema.parse(record)).not.toHaveProperty('location');
+  });
+
+  it('supports existing user worktrees and prospective managed worktrees', () => {
+    for (const location of [
+      { kind: 'worktree', projectId: 'project', branch: 'feat/x', ownership: 'user' },
+      { kind: 'new-worktree', projectId: 'project', baseBranch: 'main', isolationSource: 'default' }
+    ]) {
+      expect(squadProposalRecordSchema.parse({ ...record, location })).toMatchObject({ location });
+    }
+  });
+
+  it('rejects invalid launch options and location shapes', () => {
+    for (const fields of [
+      { launchOptions: { checks: ['arbitrary command'] } },
+      { launchOptions: { resolvedLaunch: {} } },
+      { location: { kind: 'project-root', projectId: 'project', path: '/tmp' } },
+      { location: { kind: 'worktree', projectId: 'project', branch: '../escape', ownership: 'user' } },
+      { location: { kind: 'new-worktree', projectId: 'project', baseBranch: 'main', isolationSource: 'project' } }
+    ]) expect(squadProposalRecordSchema.safeParse({ ...record, ...fields }).success).toBe(false);
+  });
+});
 
 describe('personaCanWriteFiles', () => {
   it.each([

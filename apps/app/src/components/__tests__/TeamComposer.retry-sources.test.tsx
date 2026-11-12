@@ -3,6 +3,7 @@
  */
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveAllLaunch } from '@zana-ai/zcc-domain/launch-options';
 
 // Real ExecutionSourceCapabilityView-shaped fixture the mocked pick() resolves.
 const sources = [{ id: 'old1', name: 'one.md', byteSize: 1, expiresAt: 0 }, { id: 'old2', name: 'two.md', byteSize: 1, expiresAt: 0 }];
@@ -18,7 +19,7 @@ vi.mock('../../lib/product-client.js', () => ({
   product: {
     executionSources: { pick: (...args: unknown[]) => pick(...args) },
     projects: { ensureQuickAgent: (...args: unknown[]) => ensureQuickAgent(...args) },
-    teams: { startJob: (...args: unknown[]) => startJob(...args) },
+    teams: { startJob: (...args: unknown[]) => startJob(...args), preview: async () => ({ ok: true, value: { resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p1' }, path: '/repo', branch: 'main' } }) },
     fs: {
       uploadToRemote: (...args: unknown[]) => uploadToRemote(...args),
       uploadProjectAttachmentToRemote: vi.fn()
@@ -127,6 +128,10 @@ const attach = async () => {
   await waitFor(() => expect(screen.getByText('two.md')).toBeTruthy());
 };
 const idsOfCall = (n: number) => startJob.mock.calls[n][0].sourceCapabilityIds;
+const launchReady = async () => {
+  await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByTestId('team-command-send'));
+};
 
 describe('TeamComposer renewed sources after a failed launch', () => {
   afterEach(() => { cleanup(); startJob.mockReset(); pushToast.mockClear(); pick.mockClear(); });
@@ -134,12 +139,12 @@ describe('TeamComposer renewed sources after a failed launch', () => {
   it('swaps in renewed chips, explains the dropped one and relaunches with the new id', async () => {
     startJob.mockResolvedValueOnce({ ok: false, code: 'BOOM', message: 'nope', sources: renewal }).mockResolvedValueOnce(ok);
     await attach();
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     await waitFor(() => expect(screen.getByText(/Attach two\.md again; it moved/)).toBeTruthy());
     expect(screen.queryByText('two.md')).toBeNull();
     expect(screen.getByText('one.md')).toBeTruthy();
     expect(pushToast).toHaveBeenCalledWith(expect.stringContaining('Attach two.md again'), 'error');
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     await waitFor(() => expect(startJob).toHaveBeenCalledTimes(2));
     expect(idsOfCall(0)).toEqual(['old1', 'old2']);
     expect(idsOfCall(1)).toEqual(['new1']);
@@ -148,8 +153,10 @@ describe('TeamComposer renewed sources after a failed launch', () => {
   it('renews before the availability-unknown panel so Retry sends the new id', async () => {
     startJob.mockResolvedValueOnce({ ok: false, code: 'CAPABILITY_AVAILABILITY_UNKNOWN', message: 'm', availabilityUnknown: { failedSources: ['skills'] }, sources: renewal }).mockResolvedValueOnce(ok);
     await attach();
-    fireEvent.click(screen.getByTestId('team-command-send'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    await launchReady();
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(retry);
     await waitFor(() => expect(startJob).toHaveBeenCalledTimes(2));
     expect(idsOfCall(1)).toEqual(['new1']);
   });
@@ -157,9 +164,9 @@ describe('TeamComposer renewed sources after a failed launch', () => {
   it('renews before the requirement panel so the next launch sends the new id', async () => {
     startJob.mockResolvedValueOnce({ ok: false, code: 'REQUIREMENT_UNAVAILABLE', message: 'm', requirementFailure: { workUnits: [] }, sources: renewal }).mockResolvedValueOnce(ok);
     await attach();
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit plan' }));
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     await waitFor(() => expect(startJob).toHaveBeenCalledTimes(2));
     expect(idsOfCall(1)).toEqual(['new1']);
   });
@@ -167,7 +174,7 @@ describe('TeamComposer renewed sources after a failed launch', () => {
   it('keeps the chips when the failure carries no sources', async () => {
     startJob.mockResolvedValueOnce({ ok: false, code: 'BOOM', message: 'nope' });
     await attach();
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     await waitFor(() => expect(screen.getByText(/Squad launch failed: nope/)).toBeTruthy());
     expect(screen.getByText('one.md')).toBeTruthy();
     expect(screen.getByText('two.md')).toBeTruthy();
@@ -176,7 +183,7 @@ describe('TeamComposer renewed sources after a failed launch', () => {
   it('keeps the chips when startJob rejects', async () => {
     startJob.mockRejectedValueOnce(new Error('offline'));
     await attach();
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     await waitFor(() => expect(screen.getByText(/Squad launch failed: offline/)).toBeTruthy());
     expect(screen.getByText('one.md')).toBeTruthy();
     expect(screen.getByText('two.md')).toBeTruthy();
@@ -186,7 +193,7 @@ describe('TeamComposer renewed sources after a failed launch', () => {
     let finish!: (value: unknown) => void;
     startJob.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
     await attach();
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     await waitFor(() => expect(startJob).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByLabelText('Remove one.md'));
     await act(async () => { finish({ ok: false, code: 'BOOM', message: 'nope', sources: renewal }); });
@@ -199,7 +206,7 @@ describe('TeamComposer renewed sources after a failed launch', () => {
     let finish!: (value: unknown) => void;
     startJob.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
     await attach();
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     await waitFor(() => expect(startJob).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByLabelText('Remove two.md'));
     await act(async () => { finish({ ok: false, code: 'BOOM', message: 'two.md moved or disappeared', sources: renewal }); });
@@ -211,7 +218,7 @@ describe('TeamComposer renewed sources after a failed launch', () => {
   it('puts a full stop between the failure message and the attach-again notice', async () => {
     startJob.mockResolvedValueOnce({ ok: false, code: 'BOOM', message: 'two.md moved or disappeared', sources: renewal });
     await attach();
-    fireEvent.click(screen.getByTestId('team-command-send'));
+    await launchReady();
     await waitFor(() => expect(screen.getByTestId('team-command-error').textContent)
       .toBe("Squad launch failed: two.md moved or disappeared. Attach two.md again; it moved or can't be read."));
   });

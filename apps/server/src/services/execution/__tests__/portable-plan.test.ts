@@ -21,8 +21,8 @@ const CANONICAL = `# Minimal Workflow Execution Probe
 - **Excludes:** \`about.txt\`, \`result.txt\`
 - **Work:** Create \`home.txt\` containing exactly \`HOME: ready\`.
 - **Verification:** Read \`home.txt\` and confirm exact content.
-- **Completion criteria:** File exists.
-- **Stop conditions:** Cannot write.
+- **Completion criteria:** check:home_exists
+- **On failure:** fail run
 - **Outputs / handoff:** Content.
 
 ### about: Write About Probe Output <!-- executable-step -->
@@ -217,7 +217,7 @@ describe('parsePortablePlan', () => {
       '  - keep the JSON shape stable',
       '  - GC on team dismissal',
       '- **Verification:** Unit tests pass.',
-      '- **Completion criteria:** Store migrated.',
+      '- **Completion criteria:** check:store_migrated',
       ''
     ].join('\n');
     const result = parsePortablePlan(text);
@@ -254,7 +254,7 @@ describe('parsePortablePlan', () => {
       '  # (do not manually create new packages).',
       '  ```',
       '- **Verification:** All tests pass.',
-      '- **Completion criteria:** Clean tests.',
+      '- **Completion criteria:** check:tests',
       ''
     ].join('\n');
     const result = parsePortablePlan(text);

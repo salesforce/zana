@@ -1,9 +1,12 @@
 import { basename, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { InboxEntry, Persona, Team, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
+import { launchOptionsSchema, type LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
 import {
   LAUNCH_REVIEW_REQUIRED_MESSAGE,
   SQUAD_PROPOSAL_LIMITS,
+  squadLaunchPreviewSchema,
+  type SquadLaunchPreview,
   canAuthorAndRegisterPlan,
   planAuthoringTransportOf,
   planningToCoordinationMode,
@@ -54,6 +57,14 @@ import type { StagingStore, StagedFile } from './staging.js';
 
 export const SQUAD_LAUNCH_PROPOSAL_ACTION = 'squad-launch-proposal';
 
+/** Only trusted validation sites construct this with public admission text, never filesystem errors. */
+export class SquadPreviewAdmissionError extends Error {
+  constructor(publicMessage: string) {
+    super(publicMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 400));
+    this.name = 'SquadPreviewAdmissionError';
+  }
+}
+
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
 
 const MAX_SLOTS = 32;
@@ -83,6 +94,8 @@ type ProjectRef = { id: string; name: string; path: string; remote?: unknown };
 
 /** A Squad an agent starts without review, after the same checks as a proposal. */
 export interface SquadLaunchNowRequest {
+  launchOptions?: LaunchOptions;
+  launchPreview?: SquadLaunchPreview;
   team: Team;
   project: ProjectRef;
   goal: string;
@@ -108,10 +121,23 @@ export interface SquadLaunchNowDeps {
    * When this callback is not provided, the cached launch is returned without a state check.
    */
   executionState?(executionId: string): Promise<ExecutionState | undefined>;
-  launch(request: SquadLaunchNowRequest, ctx: SquadLaunchContext): Promise<TeamJobLaunchResponse>;
+  launch(request: SquadLaunchNowRequest, ctx: SquadLaunchContext): Promise<TeamJobLaunchResponse & {
+    value?: { executionId: string; state: string; location?: SquadLaunchNowResult['location']; path?: string; branch?: string };
+  }>;
+}
+
+export interface SquadLaunchPreviewRequest {
+  teamId: string;
+  projectId: string;
+  planning: SquadPlanning;
+  goal: string;
+  sourcePaths: string[];
+  attachments: SquadLaunchAttachment[];
+  launchOptions: LaunchOptions;
 }
 
 export interface SquadProposalServiceDeps {
+  resolveLaunchPreview?(input: SquadLaunchPreviewRequest): Promise<SquadLaunchPreview>;
   store: SquadProposalStore;
   enabled(): boolean;
   lookupProposer(sessionId: string, projectId: string): Promise<SquadProposerLookup | null>;
@@ -171,6 +197,8 @@ function firstLine(text: string, max: number): string {
 function validateInput(input: SquadProposalInput): string | undefined {
   const L = SQUAD_PROPOSAL_LIMITS;
   if (!input || typeof input !== 'object') return 'Proposal input is required.';
+  if ('location' in input || 'launchPreview' in input || 'resolvedLaunch' in input || 'source' in input) return 'Launch location and sources are host-owned.';
+  if (!launchOptionsSchema.safeParse(input.launchOptions ?? {}).success) return 'Invalid launch options.';
   if (typeof input.teamId !== 'string' || !input.teamId.trim()) return 'teamId is required.';
   if (typeof input.goal !== 'string' || !input.goal.trim()) return 'goal is required.';
   if (input.goal.length > L.goalChars) return squadGoalTooLongMessage(input.goal.length);
@@ -198,6 +226,7 @@ function validateInput(input: SquadProposalInput): string | undefined {
 interface PreparedAttachment { name: string; text: string; bytes: number }
 
 interface Prepared {
+  launchPreview?: SquadLaunchPreview;
   project: ProjectRef;
   /** Undefined only when the project folder is unavailable and nothing needed it. */
   scope?: SquadSourceScope;
@@ -303,7 +332,7 @@ async function checkProvidedPlan(
 /** Checks 4-10 of §5, shared by propose and review (which re-runs them on current files). */
 async function prepare(
   deps: SquadProposalServiceDeps, projectId: string, teamId: string, goal: string, planningInput: SquadPlanning | undefined, rawSources: string[],
-  rawAttachments: readonly SquadAttachmentInput[] = []
+  rawAttachments: readonly SquadAttachmentInput[] = [], launchOptions?: LaunchOptions
 ): Promise<SquadProposalOutcome<Prepared>> {
   const squad = resolveSquad(deps, projectId, teamId);
   if (!squad.ok) return squad;
@@ -342,7 +371,20 @@ async function prepare(
     if (!plan.ok) return plan;
     planSteps = plan.value;
   }
+  if (!deps.resolveLaunchPreview && launchOptions && Object.keys(launchOptions).length) {
+    return fail('INVALID', 'Launch preview is unavailable; requested options and target cannot be verified.');
+  }
+  let launchPreview: SquadLaunchPreview | undefined;
+  try { launchPreview = deps.resolveLaunchPreview ? squadLaunchPreviewSchema.parse(await deps.resolveLaunchPreview({
+    teamId, projectId, planning, goal, sourcePaths: sources.value.map((s) => s.source.path),
+    attachments: attached.value.attachments.map(({ name, text }) => ({ name, text })), launchOptions: launchOptions ?? {}
+  })) : undefined; } catch (error) {
+    if (error instanceof SquadPreviewAdmissionError) return fail('INVALID', error.message);
+    throw error;
+  }
+  if (launchPreview && launchPreview.location.projectId !== projectId) return fail('INVALID', 'Launch preview belongs to another project.');
   return ok({
+    ...(launchPreview ? { launchPreview } : {}),
     project, ...(scope ? { scope } : {}), team, orchestrator, workers: Math.max(0, slots - 1), planning,
     sources: sources.value.map((s) => s.source), ...(planSteps ? { planSteps } : {}),
     attachments: attached.value.attachments, attachmentMapping: attached.value.mapping
@@ -361,6 +403,8 @@ function newRecord(
     teamId: prepared.team.id,
     goal: input.goal,
     planning: prepared.planning,
+    ...(input.launchOptions ? { launchOptions: input.launchOptions } : {}),
+    ...(prepared.launchPreview ? { launchPreview: prepared.launchPreview, location: prepared.launchPreview.location } : {}),
     sources: staged ? [...prepared.sources, ...staged.sources] : prepared.sources,
     title: input.title?.trim() || firstLine(input.goal, TITLE_FALLBACK_CHARS),
     ...(input.summary ? { summary: input.summary } : {}),
@@ -381,6 +425,7 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
   const comments = [
     `- Squad: ${team.name} (${orchestrator.name} + ${plural(workers, 'worker')})`,
     `- Planning: ${PLANNING_LABEL[planning]}${planSteps ? ` — plan checked: ${plural(planSteps.length, 'step')}` : ''}`,
+    ...launchPreviewLines(record.launchPreview),
     ...(sources.length ? [`- Files: ${sources.map((s) => (s.attachment ? `${s.relPath} (attached)` : s.outsideProject ? `${s.relPath} (outside the Project)` : s.relPath)).join(', ')}`] : []),
     ...(attached ? [`- ${SQUAD_ATTACHMENT_FROZEN_NOTE}`] : []),
     '- Nothing starts until you press Launch.'
@@ -402,6 +447,16 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
   };
 }
 
+function launchPreviewLines(preview?: SquadLaunchPreview): string[] {
+  if (!preview) return ['- Location: unavailable; host preview must be wired before target selection.'];
+  const location = preview.location;
+  const description = location.kind === 'new-worktree'
+    ? `New worktree from ${location.baseBranch} — isolation: ${location.isolationSource} (path assigned at launch)`
+    : `${preview.branch ?? 'HEAD'}${location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'} — ${preview.path}`;
+  return [`- Location: ${description}`, ...Object.entries(preview.resolvedLaunch).map(([name, setting]) =>
+    `- ${name}: ${Array.isArray(setting.value) ? setting.value.join(', ') || 'none' : setting.value} (${setting.source})`)];
+}
+
 /** What the agent is told about the Squad, its plan and its files, proposed or started. */
 function preparedSummary(prepared: Prepared): Pick<SquadProposalResult, 'team' | 'planning' | 'plan' | 'sources' | 'attachments'> {
   const { team, orchestrator, workers, planning, sources, planSteps, attachmentMapping } = prepared;
@@ -415,7 +470,7 @@ function preparedSummary(prepared: Prepared): Pick<SquadProposalResult, 'team' |
 }
 
 function proposalResult(record: SquadProposalRecord, prepared: Prepared, entry: InboxEntry): SquadProposalResult {
-  return { proposalId: record.id, inboxEntryId: entry.id, ...preparedSummary(prepared), expiresAt: record.expiresAt };
+  return { proposalId: record.id, inboxEntryId: entry.id, ...preparedSummary(prepared), ...(record.launchPreview ? { launchPreview: record.launchPreview } : {}), expiresAt: record.expiresAt };
 }
 
 /**
@@ -425,7 +480,8 @@ function proposalResult(record: SquadProposalRecord, prepared: Prepared, entry: 
 function nowDedupeKey(sessionId: string, projectId: string, input: SquadProposalInput, prepared: Prepared): string {
   return createHash('sha256').update(JSON.stringify([
     sessionId, projectId, prepared.team.id, input.goal.trim(), prepared.planning, prepared.sources.map((s) => s.path).sort(),
-    prepared.attachments.map((a) => [a.name, sha256Hex(Buffer.from(a.text, 'utf8'))]).sort()
+    prepared.attachments.map((a) => [a.name, sha256Hex(Buffer.from(a.text, 'utf8'))]).sort(),
+    launchOptionsSchema.parse(input.launchOptions ?? {}), prepared.launchPreview?.fingerprint
   ])).digest('hex');
 }
 
@@ -459,6 +515,8 @@ function launchPrefill(record: SquadProposalRecord, prepared: Prepared, issued: 
     proposalId: record.id,
     projectId: record.projectId,
     teamId: record.teamId,
+    ...(record.launchOptions ? { launchOptions: record.launchOptions } : {}),
+    ...(record.launchPreview ? { launchPreview: record.launchPreview } : {}),
     coordinationMode: planningToCoordinationMode(prepared.planning),
     goal: record.goal,
     ...(record.title ? { title: record.title } : {}),
@@ -705,7 +763,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         await sweepExpired();
         // Cheap pre-check before reading up to 16 MiB of sources; re-checked when creating.
         if (await pendingCapReached(route.projectId)) return tooManyProposals();
-        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? []);
+        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions);
         if (!prepared.ok) return prepared;
         const files: StagedFile[] = prepared.value.attachments.map(({ name, text }) => ({ name, text }));
         let staged: Parameters<typeof newRecord>[5];
@@ -746,7 +804,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (proposer.squadMember) return fail('PROPOSER_IN_SQUAD', 'Members of a running Squad cannot launch a Squad.');
         const invalid = validateInput(input);
         if (invalid) return fail('INVALID', invalid);
-        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? []);
+        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions);
         if (!prepared.ok) return prepared;
         let approval: LaunchApproval;
         try {
@@ -774,6 +832,8 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         const { project, team, planning } = prepared.value;
         const started = await launchNow.launch({
           team, project, goal: input.goal.trim(), coordinationMode: planningToCoordinationMode(planning),
+          ...(input.launchOptions ? { launchOptions: input.launchOptions } : {}),
+          ...(prepared.value.launchPreview ? { launchPreview: prepared.value.launchPreview } : {}),
           ...(input.title?.trim() ? { title: input.title.trim() } : {}),
           ...(input.summary?.trim() ? { summary: input.summary.trim() } : {}),
           completionInboxNotice: input.completionInboxNotice === true,
@@ -785,7 +845,12 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
           owner: { principalId: route.sessionId, reportTo: { kind: proposer.kind, id: route.sessionId, role: 'owner' } }
         });
         if (!started.ok) return { ok: false, code: started.code, message: started.message };
-        const result: SquadLaunchNowResult = { executionId: started.value.executionId, state: started.value.state, ...preparedSummary(prepared.value) };
+        const result: SquadLaunchNowResult = {
+          executionId: started.value.executionId, state: started.value.state, ...preparedSummary(prepared.value),
+          ...(started.value.location ? { location: started.value.location } : {}),
+          ...(started.value.path ? { path: started.value.path } : {}),
+          ...(started.value.branch ? { branch: started.value.branch } : {})
+        };
         nowDedupe.set(key, result);
         return ok(result);
       } catch (error) {
@@ -842,13 +907,25 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (!pending.ok) return pending;
         const record = pending.value;
         if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
-        const prepared = await prepare(deps, record.projectId, record.teamId, record.goal, record.planning, record.sources.map((s) => s.path));
+        const stagedAttachments: SquadLaunchAttachment[] = [];
+        for (const source of record.sources.filter((entry) => entry.attachment)) {
+          const project = deps.projects.get(record.projectId);
+          if (!project) return fail('NOT_FOUND', 'Project not found.');
+          const scope = await sourceScope(deps.fs, project.path, deps.sourceBases(), { remote: Boolean(project.remote) });
+          if (!scope) return fail('NOT_FOUND', 'The project folder is not available.');
+          const confined = await confineSource(deps.fs, scope, source.path);
+          if (!confined.ok) return confined;
+          stagedAttachments.push({ name: basename(source.relPath), text: await readConfinedSource(deps.fs, scope, confined) });
+        }
+        const prepared = await prepare(deps, record.projectId, record.teamId, record.goal, record.planning,
+          record.sources.filter((source) => !source.attachment).map((source) => source.path), stagedAttachments, record.launchOptions);
         if (!prepared.ok) return prepared;
+        if (record.launchPreview && record.launchPreview.fingerprint !== prepared.value.launchPreview?.fingerprint) return fail('INVALID', 'Launch target changed since proposal. Prepare a new launch; no fallback was used.');
         // A staged copy is an ordinary file to the policy; here it is named and flagged as the attachment it is.
         const attachments = new Map(record.sources.filter((s) => s.attachment).map((s) => [s.path, s]));
         const reviewed: Prepared = {
           ...prepared.value,
-          sources: prepared.value.sources.map((s) => {
+          sources: [...prepared.value.sources, ...record.sources.filter((source) => source.attachment)].map((s) => {
             const kept = attachments.get(s.path);
             return kept ? { path: s.path, relPath: kept.relPath, bytes: s.bytes, attachment: true } : s;
           })
@@ -876,6 +953,8 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
       proposal: { id: string; proposerKind: 'pty' | 'thread'; proposerId: string; proposerTitle?: string };
       /** Realpaths of the sources the reviewed card listed: the only files outside the Project a goal may add at Launch. */
       sourcePaths: string[];
+      launchOptions?: LaunchOptions;
+      launchPreview?: SquadLaunchPreview;
     }>> {
       // Take the hold before any await, so two Launch presses (or two windows) can't both pass.
       if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
@@ -889,11 +968,30 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
           await recordLaunched(proposalId, existing);
           return fail('NOT_PENDING', 'A Squad was already started from this proposal.');
         }
+        const record = pending.value;
+        if (record.launchPreview || record.launchOptions) {
+          const project = deps.projects.get(projectId);
+          if (!project) return fail('NOT_FOUND', 'Project not found.');
+          const scope = await sourceScope(deps.fs, project.path, deps.sourceBases(), { remote: Boolean(project.remote) });
+          if (!scope) return fail('NOT_FOUND', 'The project folder is not available.');
+          const attachments: SquadLaunchAttachment[] = [];
+          for (const source of record.sources.filter(source => source.attachment)) {
+            const confined = await confineSource(deps.fs, scope, source.path);
+            if (!confined.ok) return confined;
+            const text = await readConfinedSource(deps.fs, scope, confined);
+            attachments.push({ name: basename(source.relPath), text });
+          }
+          const prepared = await prepare(deps, projectId, record.teamId, record.goal, record.planning, record.sources.filter(source => !source.attachment).map((s) => s.path), attachments, record.launchOptions);
+          if (!prepared.ok) return prepared;
+          if (!record.launchPreview || record.launchPreview.fingerprint !== prepared.value.launchPreview?.fingerprint) return fail('INVALID', 'Launch target changed since proposal. Prepare a new launch; no fallback was used.');
+        }
         held = true;
         const { proposer } = pending.value;
         return ok({
           proposal: { id: proposalId, proposerKind: proposer.kind, proposerId: proposer.id, ...(proposer.title ? { proposerTitle: proposer.title } : {}) },
-          sourcePaths: pending.value.sources.map((source) => source.path)
+          sourcePaths: pending.value.sources.map((source) => source.path),
+          ...(record.launchOptions ? { launchOptions: record.launchOptions } : {}),
+          ...(record.launchPreview ? { launchPreview: record.launchPreview } : {})
         });
       } catch (error) {
         return unexpected(`${proposalId} launch`, error, 'This Squad launch could not start. Try again.');

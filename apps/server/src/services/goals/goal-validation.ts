@@ -1,6 +1,7 @@
 import type { Goal, GoalAssignment, GoalDriver, GoalIteration, GoalStatus, GoalVerdict, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { isValidConversationId } from '@zana-ai/zcc-domain/schedule-health';
+import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
 const VALID_DRIVERS: GoalDriver[] = ['native', 'zana-autopilot'];
 const VALID_STATUS: GoalStatus[] = [
   'draft',
@@ -130,6 +131,13 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
         .filter((x): x is GoalIteration => x !== null))
     : [];
 
+  const assignment = sanitizeAssignment(r.assignment);
+  const launchOptions = assignment.kind === 'team'
+    ? launchOptionsSchema.safeParse(r.launchOptions)
+    : undefined;
+  const launchOptionsError = assignment.kind === 'team' && r.launchOptions !== undefined && !launchOptions?.success
+    ? 'Saved Squad launch settings are invalid. Replace them before resuming this goal.'
+    : undefined;
   const goal: Goal = {
     id: r.id,
     projectId: r.projectId,
@@ -138,7 +146,9 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
     successCriteria: toStringArray(r.successCriteria),
     ...(r.planSource === 'provided' || r.planSource === 'infer' ? { planSource: r.planSource } : {}),
     driver,
-    assignment: sanitizeAssignment(r.assignment),
+    assignment,
+    ...(launchOptions?.success ? { launchOptions: launchOptions.data } : {}),
+    ...(launchOptionsError ? { launchOptionsError } : {}),
     cadence: sanitizeCadence(r.cadence),
     maxIterations:
       typeof r.maxIterations === 'number' && r.maxIterations > 0
@@ -162,5 +172,6 @@ export function validateGoalFile(raw: unknown): Goal | { error: string } {
   // operator can edit them; an active one is demoted to paused because it
   // cannot launch. Create/update still require teamId (goal-manager).
   if (goal.assignment.kind === 'team' && !goal.assignment.teamId && goal.status === 'active') goal.status = 'paused';
+  if (launchOptionsError && !['achieved', 'exhausted', 'escalated', 'cancelled'].includes(goal.status)) goal.status = 'paused';
   return goal;
 }

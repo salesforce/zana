@@ -89,6 +89,42 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, what: string
   }
 }
 
+/** fs.watch has no ready event; prove native delivery before the one edit under test. */
+function readyWatch(recursive: boolean) {
+  const probeName = '.watch-ready';
+  let probePath = '';
+  let ready = false;
+  return {
+    watch: (path: string, cb: () => void) => {
+      probePath = join(path, probeName);
+      const listener = (_event: string, filename: string | null) => {
+        // Probe events must not trigger a reinstall or satisfy the renderer assertion.
+        if (filename === probeName) { ready = true; return; }
+        cb();
+      };
+      try {
+        return fsWatch(path, { persistent: false, recursive }, listener);
+      } catch (error) {
+        if (!recursive) throw error;
+        return fsWatch(path, { persistent: false }, listener);
+      }
+    },
+    waitUntilReady: async () => {
+      expect(probePath).not.toBe('');
+      let attempt = 0;
+      try {
+        await waitFor(async () => {
+          if (ready) return true;
+          await writeFile(probePath, String(++attempt), 'utf-8');
+          return ready;
+        }, 'native watch to deliver a readiness probe');
+      } finally {
+        await rm(probePath, { force: true });
+      }
+    }
+  };
+}
+
 describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)', () => {
   beforeEach(async () => {
     extDir = await mkdtemp(join(tmpdir(), 'cc-ext-install-root-'));
@@ -121,12 +157,14 @@ describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)',
       expect(await readFile(installedRenderer, 'utf-8')).not.toContain('// hot-reload marker');
 
       const onFailure = vi.fn();
+      const nativeWatch = readyWatch(true);
       const watcher = new LocalExtensionWatcher({
         isEnabled: () => true,
         findLocalRecordByCwd: discovery.findLocalRecordByCwd,
         readWorkingDirId: localExtension.readWorkingDirId,
         reinstall: (extId, dir) => packAndInstallLocal(extId, dir),
         onFailure,
+        watch: nativeWatch.watch,
         debounceMs: 50 // fast debounce so the test doesn't wait on the app's default 400ms unnecessarily
       });
 
@@ -135,6 +173,8 @@ describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)',
         // this is what wireBridgeListeners' sessionUpdated hook does on a real
         // pty session.
         await watcher.onSessionMaybeLocal('sess-dummy-1', workingDir);
+        await nativeWatch.waitUntilReady();
+        expect(await readFile(installedRenderer, 'utf-8')).not.toContain('// hot-reload marker');
 
         // The "developer" edits the built renderer — the observable trigger a
         // real edit-and-rebuild loop would produce.
@@ -180,6 +220,7 @@ describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)',
       const installedRenderer = join(extDir, id, 'dist', 'renderer.js');
 
       const onFailure = vi.fn();
+      const nativeWatch = readyWatch(false);
       const watcher = new LocalExtensionWatcher({
         isEnabled: () => true,
         findLocalRecordByCwd: discovery.findLocalRecordByCwd,
@@ -192,11 +233,13 @@ describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)',
         // { recursive: true } throws. If the watcher pointed at `workingDir`
         // instead of `workingDir/dist`, this test would time out: a flat
         // watch on Linux only reports DIRECT children of the watched path.
-        watch: (path, cb) => fsWatch(path, { persistent: false }, cb)
+        watch: nativeWatch.watch
       });
 
       try {
         await watcher.onSessionMaybeLocal('sess-flat-1', workingDir);
+        await nativeWatch.waitUntilReady();
+        expect(await readFile(installedRenderer, 'utf-8')).not.toContain('// flat-watch marker');
 
         const rendererPath = join(workingDir, 'dist', 'renderer.js');
         const original = await readFile(rendererPath, 'utf-8');

@@ -21,6 +21,7 @@ function fixture(config: Record<string, unknown> = {}) {
   const records = new Map<string, ScheduledTask>();
   const persistence = {
     load: vi.fn(async () => structuredClone([...records.values()])),
+    read: vi.fn(async (task: ScheduledTask) => structuredClone(records.get(task.id) ?? task)),
     save: vi.fn(async (value: ScheduledTask) => { records.set(value.id, structuredClone(value)); }),
     remove: vi.fn(async (value: ScheduledTask) => { records.delete(value.id); }),
     localProjects: vi.fn(() => [] as Project[])
@@ -51,6 +52,7 @@ function fixture(config: Record<string, unknown> = {}) {
 
 const runs = (manager: SchedulerManager, id: string): ScheduleRun[] => manager.get(id).status.runs;
 const observe = (manager: SchedulerManager) => (manager as any).serial(() => (manager as any).observeSquadExecutions());
+const runReviewed = (manager: SchedulerManager, id: string) => manager.runReviewedTeamNow(id, async () => {});
 
 beforeEach(() => {
   vi.clearAllMocks(); fs.existsSync.mockReturnValue(true);
@@ -59,17 +61,44 @@ beforeEach(() => {
 afterEach(() => { for (const manager of managers.splice(0)) { manager.stopWatching(); manager.stopAll(); } vi.useRealTimers(); });
 
 describe('scheduled Squads and self-healing', () => {
+  it('passes persisted canonical launch options to the trusted squad callback', async () => {
+    const { manager, deps, input } = fixture();
+    const task = await manager.create({ ...input, launchOptions: { push: false, checks: [] } });
+    await manager.update(task.id, { launchOptions: { worktree: false, push: false, checks: [] } });
+    await runReviewed(manager, task.id);
+    expect(deps.launchSquad).toHaveBeenCalledWith(expect.objectContaining({
+      schedule: expect.objectContaining({ launchOptions: { worktree: false, push: false, checks: [] } })
+    }));
+  });
+  it('reserves the refreshed definition for reviewed launch', async () => {
+    const { manager, deps, input } = fixture();
+    const task = await manager.create({ ...input, prompt: 'old', planSource: 'infer' });
+    const disk = (manager as any).live.get(task.id).task as ScheduledTask;
+    (manager as any).deps.persistence.save.mockImplementationOnce(async () => undefined);
+    // Simulate an external edit not yet adopted by the in-memory scheduler.
+    (manager as any).deps.persistence.read.mockResolvedValue({ ...disk, prompt: 'new', planSource: 'provided' });
+    await manager.runReviewedTeamNow(task.id, async (fresh) => {
+      expect(fresh).toMatchObject({ prompt: 'new', planSource: 'provided' });
+    });
+    expect(deps.launchSquad).toHaveBeenCalledWith(expect.objectContaining({ schedule: expect.objectContaining({ prompt: 'new', planSource: 'provided' }) }));
+  });
+  it('does not fire when reviewed admission rejects the fresh definition', async () => {
+    const { manager, deps, input } = fixture();
+    const task = await manager.create(input);
+    await expect(manager.runReviewedTeamNow(task.id, async () => { throw new Error('definition changed'); })).rejects.toThrow('definition changed');
+    expect(deps.launchSquad).not.toHaveBeenCalled();
+  });
   it('stamps run metadata on the Squad reservation and running record', async () => {
     const { manager, input } = fixture();
     const task = await manager.create(input);
-    await manager.runNow(task.id);
+    await runReviewed(manager, task.id).catch(() => undefined);
     expect(runs(manager, task.id)[0]).toMatchObject({ launchKind: 'team', launchState: 'running', trigger: 'manual', attempt: 1 });
   });
 
   it('records a failed Squad as an open "squad-failed" problem and notifies loudly', async () => {
     const { manager, deps, states, input } = fixture();
     const task = await manager.create({ ...input, inboxLevel: 'quiet' });
-    await manager.runNow(task.id);
+    await runReviewed(manager, task.id);
     states.set('execution-1', 'FAILED');
     await observe(manager);
     const final = runs(manager, task.id)[0];
@@ -81,7 +110,7 @@ describe('scheduled Squads and self-healing', () => {
   it('records a stopped Squad as "squad-stopped": not a problem, but notified loudly as #328 does', async () => {
     const { manager, deps, states, input } = fixture();
     const task = await manager.create({ ...input, inboxLevel: 'quiet' });
-    await manager.runNow(task.id);
+    await runReviewed(manager, task.id);
     states.set('execution-1', 'STOPPED');
     await observe(manager);
     const final = runs(manager, task.id)[0];
@@ -94,10 +123,10 @@ describe('scheduled Squads and self-healing', () => {
   it('closes earlier open problems when a later Squad run completes', async () => {
     const { manager, states, input } = fixture();
     const task = await manager.create(input);
-    await manager.runNow(task.id);
+    await runReviewed(manager, task.id);
     states.set('execution-1', 'FAILED');
     await observe(manager);
-    await manager.runNow(task.id);
+    await runReviewed(manager, task.id);
     states.set('execution-2', 'COMPLETED');
     await observe(manager);
     const [done, failed] = runs(manager, task.id);
@@ -109,7 +138,7 @@ describe('scheduled Squads and self-healing', () => {
   it('records an overlap reason when a timer fires while its Squad run is live', async () => {
     const { manager, input } = fixture();
     const task = await manager.create(input);
-    await manager.runNow(task.id);
+    await runReviewed(manager, task.id);
     const before = manager.get(task.id).status.lastRunSessionId;
     const due = Date.now() - 60_000;
     (manager as any).live.get(task.id).targetAt = due;
@@ -127,7 +156,7 @@ describe('scheduled Squads and self-healing', () => {
     const live = (manager as any).live.get(task.id);
     live.task.status.runs = [{ id: 'r1', at: new Date().toISOString(), result: 'skipped', launchKind: 'team', launchState: 'pending', launchRequestId: `schedule:${task.id}:r1` }];
     deps.findSquadExecution.mockResolvedValue({ executionId: 'execution-x', state: 'FAILED' });
-    await manager.runNow(task.id);
+    await (manager as any).runNowInternal(task.id);
     expect(runs(manager, task.id).find(run => run.id === 'r1')).toMatchObject({ result: 'error', reasonCode: 'squad-failed', executionId: 'execution-x' });
   });
 
@@ -137,7 +166,7 @@ describe('scheduled Squads and self-healing', () => {
     const first = await manager.create({ ...input, name: 'First' });
     // Enabled: a timer fire (and so a queued entry) only exists for an enabled schedule.
     const second = await manager.create({ ...input, name: 'Second', teamId: 'other', enabled: true });
-    await manager.runNow(first.id);
+    await runReviewed(manager, first.id);
     await (manager as any).serial(() => (manager as any).fire(second.id, { manual: false }));
     expect(deps.launchSquad).toHaveBeenCalledTimes(1);
     expect(manager.get(second.id).status.queuedAt).toEqual(expect.any(String));
@@ -151,7 +180,7 @@ describe('scheduled Squads and self-healing', () => {
   it('does not drain a queued entry for a schedule whose own Squad run is still live', async () => {
     const { manager, deps, input } = fixture({ scheduledRunConcurrency: 5 });
     const task = await manager.create(input);
-    await manager.runNow(task.id);
+    await runReviewed(manager, task.id);
     const live = (manager as any).live.get(task.id);
     expect((manager as any).isEligible({ taskId: task.id, trigger: 'retry', enqueuedAt: Date.now() })).toBe(false);
     live.task.status.runs[0].finishedAt = new Date().toISOString();

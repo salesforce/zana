@@ -11,8 +11,6 @@ import {
   gitCommonDir,
   createWorktree,
   setWorktreePushProtection,
-  authorizeInstructWorktreePush,
-  consumeInstructWorktreePushAuthorization,
   mergeWorktree,
   removeWorktree,
   deleteBranch,
@@ -305,8 +303,8 @@ describe('git worktree support', () => {
       const hooksPath = await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() });
       const guard = join(hooksPath.stdout.trim(), 'pre-push');
       const guardText = await readFile(guard, 'utf8');
-       expect(guardText).toContain('Zana blocked push from managed squad worktree');
-       expect(guardText).toContain(customPrePush);
+        expect(guardText).toContain('Zana blocked push from a managed squad worktree');
+        expect(guardText).not.toContain(customPrePush);
        const commitMsgProxy = await readFile(join(hooksPath.stdout.trim(), 'commit-msg'), 'utf8');
        expect(commitMsgProxy).toContain(customCommitMsgTarget);
 
@@ -316,12 +314,9 @@ describe('git worktree support', () => {
          .resolves.toMatchObject({ stderr: expect.stringContaining('commit-msg-hook') });
 
       await expect(execFileP(guard, [], { cwd: res.path, env: cleanGitEnv() })).rejects.toMatchObject({ stderr: expect.stringContaining('Zana blocked push') });
-      const token = authorizeInstructWorktreePush();
-      const authorization = consumeInstructWorktreePushAuthorization(token);
-      expect(authorization).toEqual({ ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: token });
-      expect(consumeInstructWorktreePushAuthorization(token)).toBeUndefined();
-      expect(guardText).not.toContain(token);
-       await expect(execFileP(guard, [], { cwd: res.path, env: { ...cleanGitEnv(), ...authorization } })).resolves.toMatchObject({ stderr: expect.stringContaining('custom-hook') });
+      const legacyEnv = { ...cleanGitEnv(), ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: 'not-issued' };
+      expect(guardText).not.toContain('ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION');
+        await expect(execFileP(guard, [], { cwd: res.path, env: legacyEnv })).rejects.toMatchObject({ stderr: expect.stringContaining('Zana blocked push') });
 
        await expect(setWorktreePushProtection(main, res.path, false)).resolves.toEqual({ ok: true });
        await expect(execFileP('git', ['config', '--worktree', '--get', 'push.default'], { cwd: res.path, env: cleanGitEnv() })).rejects.toBeDefined();
@@ -336,7 +331,7 @@ describe('git worktree support', () => {
 
        const reused = await createWorktree(main, target, 'zcc/protected', undefined, true);
       expect(reused).toMatchObject({ ok: true, reused: true });
-       await expect(execFileP(guard, [], { cwd: res.path, env: { ...cleanGitEnv(), ...authorization } })).resolves.toMatchObject({ stderr: expect.stringContaining('custom-hook') });
+        await expect(execFileP(guard, [], { cwd: res.path, env: legacyEnv })).rejects.toMatchObject({ stderr: expect.stringContaining('Zana blocked push') });
     });
 
     it('proxies executable hooks from a relative .husky/_ path in the squad worktree', async () => {
@@ -357,7 +352,7 @@ describe('git worktree support', () => {
       const hooksPath = await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() });
       const guard = join(hooksPath.stdout.trim(), 'pre-push');
       const guardText = await readFile(guard, 'utf8');
-      expect(guardText).toContain(join(res.path, '.husky', '_', 'pre-push'));
+      expect(guardText).not.toContain(join(res.path, '.husky', '_', 'pre-push'));
       const commitMsgProxy = await readFile(join(hooksPath.stdout.trim(), 'commit-msg'), 'utf8');
       expect(commitMsgProxy).toContain(join(res.path, '.husky', '_', 'commit-msg'));
 
@@ -366,10 +361,10 @@ describe('git worktree support', () => {
       await expect(execFileP('git', ['commit', '-m', 'verify relative hook proxy'], { cwd: res.path, env: cleanGitEnv() }))
         .resolves.toMatchObject({ stderr: expect.stringContaining('husky-commit-msg') });
 
-      const token = authorizeInstructWorktreePush();
-      const authorization = consumeInstructWorktreePushAuthorization(token);
-      expect(authorization).toEqual({ ZANA_INSTRUCT_WORKTREE_PUSH_AUTHORIZATION: token });
-      await expect(execFileP(guard, [], { cwd: res.path, env: { ...cleanGitEnv(), ...authorization } }))
+      await expect(execFileP(guard, [], { cwd: res.path, env: cleanGitEnv() }))
+        .rejects.toMatchObject({ stderr: expect.stringContaining('Zana blocked push') });
+      await expect(setWorktreePushProtection(main, res.path, false)).resolves.toEqual({ ok: true });
+      await expect(execFileP(join(res.path, '.husky', '_', 'pre-push'), [], { cwd: res.path, env: cleanGitEnv() }))
         .resolves.toMatchObject({ stderr: expect.stringContaining('husky-pre-push') });
     });
 
@@ -438,7 +433,7 @@ describe('git worktree support', () => {
       if (!res.ok) return;
       const hooksPath = await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() });
       const guardText = await readFile(join(hooksPath.stdout.trim(), 'pre-push'), 'utf8');
-      expect(guardText).toContain('Zana blocked push from managed squad worktree');
+      expect(guardText).toContain('Zana blocked push from a managed squad worktree');
       expect(guardText).not.toContain('exec ');
     });
 
@@ -614,12 +609,25 @@ describe('git worktree support', () => {
       }
     });
 
-    it('surfaces a non-ENOENT failure reading the hooks directory', async () => {
+    it('treats ENOTDIR as no effective hooks directory and still installs push denial', async () => {
       const hooks = join(base, 'file-hooks');
       await writeFile(hooks, 'a file, not a dir\n');
       await git(main, 'config', 'core.hooksPath', join(hooks, 'pre-push'));
       const res = await createWorktree(main, join(base, 'wt', 'enotdir'), 'zcc/enotdir', undefined, true);
-      expect(res.ok).toBe(false);
+      expect(res.ok).toBe(true);
+      if (!res.ok) throw new Error(res.reason);
+      const dir = (await execFileP('git', ['config', '--worktree', '--get', 'core.hooksPath'], { cwd: res.path, env: cleanGitEnv() })).stdout.trim();
+      await expect(readFile(join(dir, 'pre-push'), 'utf8')).resolves.toContain('Zana blocked push');
+    });
+
+    it('fails protected setup when resolving the existing hooks directory has an unexpected filesystem error', async () => {
+      const loop = join(base, 'loop-hooks');
+      await symlink(loop, loop);
+      await git(main, 'config', 'core.hooksPath', loop);
+
+      const result = await createWorktree(main, join(base, 'wt', 'loop-hooks'), 'zcc/loop-hooks', undefined, true);
+      expect(result).toMatchObject({ ok: false });
+      if (!result.ok) expect(result.reason).toMatch(/ELOOP|too many levels/i);
     });
 
     it('re-guards a reused worktree and rejects when its guard cannot be installed', async () => {

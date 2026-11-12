@@ -435,8 +435,16 @@ describe('inbox MCP server (end-to-end)', () => {
       expect(review.isError).toBeFalsy();
       expect(proposeSquad).toHaveBeenCalledTimes(1);
       expect(launchSquadNow).toHaveBeenCalledTimes(1);
-      const bad = await client.callTool({ name: 'squad_launch', arguments: { teamId: 't1', goal: 'go' } }) as { isError?: boolean };
+      const defaultReview = await client.callTool({ name: 'squad_launch', arguments: { teamId: 't1', goal: 'go' } });
+      expect(defaultReview.isError).toBeFalsy();
+      expect(defaultReview.content).toEqual([{ type: 'text', text: JSON.stringify(okResult.value) }]);
+      expect(proposeSquad).toHaveBeenCalledTimes(2);
+      expect(proposeSquad).toHaveBeenLastCalledWith({ projectId: 'proj-1', sessionId: 'caller-session' }, { teamId: 't1', goal: 'go' });
+      expect(launchSquadNow).toHaveBeenCalledTimes(1);
+      const bad = await client.callTool({ name: 'squad_launch', arguments: { mode: 'invalid', teamId: 't1', goal: 'go' } });
       expect(bad.isError).toBe(true);
+      expect(proposeSquad).toHaveBeenCalledTimes(2);
+      expect(launchSquadNow).toHaveBeenCalledTimes(1);
     });
 
     it('squad_launch now is denied on an uncredentialed route', async () => {

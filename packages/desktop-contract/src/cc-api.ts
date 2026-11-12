@@ -255,6 +255,11 @@ export interface CcApi {
     set(id: string, patch: Partial<ProjectSettings>): Promise<ProjectSettings>;
     onChanged(callback: (projectId: string) => void): () => void;
   };
+  namedChecks: {
+    get(scope: import('@zana-ai/zcc-contracts/project-settings').NamedCheckScope): Promise<import('@zana-ai/zcc-contracts/project-settings').NamedCheck[]>;
+    set(scope: import('@zana-ai/zcc-contracts/project-settings').NamedCheckScope, checks: import('@zana-ai/zcc-contracts/project-settings').NamedCheck[]): Promise<import('@zana-ai/zcc-contracts/project-settings').NamedCheck[]>;
+    onChanged(callback: () => void): () => void;
+  };
   executionConsent: {
     listProject(projectId: string): Promise<ProjectExecutionConsentGrant[]>;
     revokeProject(projectId: string, grantId: string): Promise<ProjectExecutionConsentGrant[]>;
@@ -1945,6 +1950,10 @@ export interface CcApi {
     delete(id: string): Promise<Result<true>>;
     setEnabled(id: string, enabled: boolean): Promise<Result<ScheduledTask>>;
     runNow(id: string): Promise<Result<ScheduledTask>>;
+    /** Main-owned review binding for a manual Team schedule launch. */
+    previewTeamLaunch(id: string): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
+    /** Consumes the review binding; Team schedules cannot use unbound runNow. */
+    runReviewedTeamNow(id: string, previewToken: string): Promise<Result<ScheduledTask>>;
     /** Cross-schedule run history (open problems by default). */
     queryRuns(query: ScheduleRunQuery): Promise<Result<ScheduleRunQueryResult>>;
     /** Re-run failed or missed runs now (max 50). */
@@ -2086,7 +2095,8 @@ export interface CcApi {
     /** Cancel sessions from a renderer-owned interactive Team launch. */
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
     /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
-    startJob(input: TeamJobLaunchInput): Promise<TeamJobLaunchResponse>;
+    startJob(input: TeamJobLaunchInput & { /** Opaque main-held preview binding; never a caller fingerprint. */ previewToken?: string }): Promise<TeamJobLaunchResponse>;
+    preview(input: Pick<TeamJobLaunchInput, 'teamId' | 'projectId' | 'goal' | 'coordinationMode' | 'sourceCapabilityIds'> & import('@zana-ai/zcc-domain/launch-options').LaunchOptions): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
     /** Resolve a pending Squad proposal into a composer pre-fill. Desktop window only. */
     reviewProposal(
       proposalId: string

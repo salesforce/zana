@@ -128,7 +128,8 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
     fetchImpl: deps?.fetchImpl,
     serverUrl: deps?.serverUrl,
     nowMs: deps?.nowMs,
-    sleep: deps?.sleep
+    sleep: deps?.sleep,
+    onStderr: deps?.onStderr
   };
 
   try {

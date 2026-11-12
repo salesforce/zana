@@ -38,6 +38,50 @@ function deps(filePath: string, over: Partial<ConstructorParameters<typeof Squad
 }
 
 describe('execution assignment transports', () => {
+  it('applies retry before same-call finalisation and finalises after retry budget', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true }));
+    const service = new ExecutionService(deps(filePath, { store, cancelTeamLaunch }));
+    const start = await service.start('owner', 'project-1', { ...request, workUnits: [{ id: 'a', title: 'A', task: 'Work', dependencies: [], readOnly: true, onFailure: { kind: 'retry', stepId: 'a', maxRetries: 1 }, output: { version: 1, schema: { type: 'string' } } }] });
+    expect(start.ok).toBe(true);
+    const binding = { executionId: 'execution-1', projectId: 'project-1', role: 'worker' as const, slotId: 'slot-1' };
+    await service.claimWork(binding, 'a');
+    let unit = (await store.get('execution-1'))!.workUnits![0];
+    const first = await service.failWork(binding, 'a', 'fail', 'UNKNOWN', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true, 'feedback');
+    expect(first).toMatchObject({ ok: true, value: { state: 'RUNNING', workUnits: [{ state: 'READY', failureRetry: { retries: 1 } }] } });
+    expect(cancelTeamLaunch).not.toHaveBeenCalled();
+    await service.claimWork(binding, 'a');
+    unit = (await store.get('execution-1'))!.workUnits![0];
+    await service.failWork(binding, 'a', 'fail', 'UNKNOWN', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true, 'new feedback');
+    expect((await store.get('execution-1'))!.state).toBe('FAILED');
+    expect(cancelTeamLaunch).toHaveBeenCalledOnce();
+    service.dispose();
+  }));
+  it('captures trusted launch snapshot once and preserves it on replay', async () => fixture(async (filePath) => {
+    let disposition = 'merge';
+    const resolveLaunchOptions = vi.fn(() => ({
+      worktree: { value: true, source: 'squad' }, onComplete: { value: disposition, source: 'squad' },
+      push: { value: true, source: 'plan' }, checks: { value: ['verify'], source: 'plan' }, failurePolicyDefault: { value: 'fail-run', source: 'default' }
+    }));
+    const service = new ExecutionService(deps(filePath, { resolveLaunchOptions,
+      resolveNamedChecks: (_project, refs) => refs.map(reference => ({ reference, name: reference.slice(6), command: 'true' })),
+      runNamedCheck: async (_record, reference) => ({ name: reference.slice(6), status: 'passed', exitCode: 0, output: '', untrusted: true }) }));
+    const first = await service.start('owner', 'project-1', request);
+    expect(first).toMatchObject({ ok: true, value: { resolvedLaunch: { onComplete: { value: 'merge', source: 'squad' }, push: { value: true, source: 'plan' } } } });
+    disposition = 'delete';
+    const replay = await service.start('owner', 'project-1', request);
+    expect(replay).toMatchObject({ ok: true, value: { resolvedLaunch: { onComplete: { value: 'merge', source: 'squad' } } } });
+    expect(resolveLaunchOptions).toHaveBeenCalledTimes(1);
+    expect(resolveLaunchOptions).toHaveBeenCalledWith('project-1', expect.objectContaining({ teamId: 'team-1' }));
+    service.dispose();
+  }));
+
+  it('rejects caller-forged launch snapshot before persistence', async () => fixture(async (filePath) => {
+    const service = new ExecutionService(deps(filePath));
+    await expect(service.start('owner', 'project-1', { ...request, resolvedLaunch: { push: { value: true, source: 'squad' } } } as never)).resolves.toMatchObject({ ok: false, code: 'INVALID' });
+    expect(await service.status('owner', 'project-1', 'execution-1')).toBeUndefined();
+    service.dispose();
+  }));
   const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
   const worker = { ...coordinator, slotId: 'slot-1', role: 'worker' as const, principalId: 'worker-1' };
   const work = { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] };
@@ -572,6 +616,24 @@ describe('execution admission', () => {
     expect(prepareSquadWorktree).toHaveBeenCalledOnce();
     expect(prepareSquadWorktree.mock.invocationCallOrder[0]).toBeLessThan(authorizeTeamLaunch.mock.invocationCallOrder[0]!);
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ worktree: true }));
+  }));
+
+  it('persists a main-reviewed generated-worktree base before checkout preparation', async () => fixture(async (filePath) => {
+    const reviewedSquadWorktreeBase = { path: '/repo', branch: 'main', head: 'reviewed-a' };
+    const prepareSquadWorktree = vi.fn(async (record: ExecutionRecord) => {
+      expect(record.reviewedSquadWorktreeBase).toEqual(reviewedSquadWorktreeBase);
+      return record;
+    });
+    const serviceDeps = deps(filePath, {
+      prepareSquadWorktree,
+      resolveReviewedSquadWorktreeBase: () => reviewedSquadWorktreeBase
+    });
+    const service = new ExecutionService(serviceDeps);
+
+    const started = await service.start('owner', 'project-1', { ...request, worktree: true });
+
+    expect(started).toMatchObject({ ok: true, value: { reviewedSquadWorktreeBase } });
+    expect((await serviceDeps.store.get(started.ok ? started.value.id : '')).reviewedSquadWorktreeBase).toEqual(reviewedSquadWorktreeBase);
   }));
 
   it('persists and forwards requested squad worktree completion policy', async () => fixture(async (filePath) => {
@@ -1544,7 +1606,6 @@ describe('deterministicTerminalSummary', () => {
         { id: 'done', title: 'Build', task: 'build', dependencies: [], state: 'COMPLETED', attempt: 1, result: 'built', history: [] },
         { id: 'failed', title: 'Verify', task: 'verify', dependencies: ['done'], state: 'FAILED', attempt: 1, failureCode: 'VALIDATION_FAILED', failure: 'Bearer secret-value', history: [] }
       ],
-      policyResult: { version: 1, executionId: 'execution-1', attempt: 1, outputDigest: 'out', extensionDigest: 'ext', status: 'FAILED', summary: 'policy rejected' }
     } as ExecutionRecord, [{ name: 'report.json', mediaType: 'application/json', contentDigest: 'sha256:report' } as never], [
       { eventType: 'outcome', summary: 'Verification report stored' } as never
     ]);
@@ -1553,7 +1614,6 @@ describe('deterministicTerminalSummary', () => {
     expect(summary).not.toContain('built');
     expect(summary).toContain('- Verify [FAILED]: VALIDATION_FAILED');
     expect(summary).not.toContain('secret-value');
-    expect(summary).toContain('Policy: FAILED - policy rejected');
     expect(summary).toContain('- outcome: Verification report stored');
     expect(summary).toContain('- report.json (application/json, sha256:report)');
     expect(summary.length).toBeLessThanOrEqual(64 * 1024);
@@ -2784,27 +2844,6 @@ describe('SquadExecutionService', () => {
     await expect(service.answerBlockerByCoordinator(worker, 'blocker', 'answer')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
   }));
 
-  it('wakes parked coordinator for blocked policy evaluation', async () => fixture(async (filePath) => {
-    const replyToSession = vi.fn(() => false);
-    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
-    const service = new SquadExecutionService(deps(filePath, {
-      store, replyToSession, deliverToWorker: () => true,
-      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
-        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
-          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
-          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
-        ] } } }),
-      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
-    }));
-    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
-    await service.dispatchReady({ executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' });
-    replyToSession.mockClear();
-    await service.recordPolicyResult('project-1', 'execution-1', {
-      version: 1, executionId: 'execution-1', attempt: 1, outputDigest: 'output', extensionDigest: 'extension', status: 'BLOCKED', summary: 'Approval required'
-    });
-    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain('POLICY_ESCALATION');
-    expect(await store.get('execution-1')).toMatchObject({ coordinatorState: 'ACTIVE' });
-  }));
 
   it('dispatch_ready surfaces a clear error when no plan is registered (defensive plan-readiness gate)', async () => fixture(async (filePath) => {
     const replyToSession = vi.fn(() => true);
@@ -5356,15 +5395,6 @@ describe('SquadExecutionService', () => {
     expect(resolveTeamModelSnapshots).toHaveBeenCalledTimes(1);
   }));
 
-  it('records optional policy result without rewriting generic execution completion', async () => fixture(async (filePath) => {
-    const service = new SquadExecutionService(deps(filePath));
-    await service.start('session-1', 'project-1', request);
-    const result = await service.recordPolicyResult('project-1', 'execution-1', {
-      version: 1, executionId: 'execution-1', attempt: 1, outputDigest: 'sha256:output', extensionDigest: 'sha256:extension', status: 'ELIGIBLE_FOR_DELIVERY', summary: 'Policy approved'
-    });
-    expect(result).toMatchObject({ ok: true, value: { state: 'RUNNING', policyResult: { status: 'ELIGIBLE_FOR_DELIVERY' } } });
-    expect(await service.recordPolicyResult('other-project', 'execution-1', {})).toMatchObject({ ok: false, code: 'NOT_FOUND' });
-  }));
 
   it.each([
     [{ ...request, version: 2 }, 'invalid version'],
@@ -5439,8 +5469,6 @@ describe('SquadExecutionService', () => {
     await service.start('session-1', 'project-1', request);
     await expect(service.putArtifact('other', 'project-1', 'execution-1', 'x', 'text/plain', 'x')).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
     await expect(service.putArtifact('session-1', 'project-1', 'execution-1', '', 'text/plain', 'x')).resolves.toMatchObject({ ok: false, code: 'INVALID' });
-    await expect(service.recordPolicyResult('project-1', 'missing', {})).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
-    await expect(service.recordPolicyResult('project-1', 'execution-1', { version: 1, executionId: 'other', attempt: 1 })).resolves.toMatchObject({ ok: false, code: 'INVALID' });
     await expect(service.retry('other', 'project-1', 'execution-1', 0)).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
     await expect(service.retry('session-1', 'project-1', 'execution-1', 4)).resolves.toMatchObject({ ok: false, code: 'RETRY_NOT_ALLOWED' });
     await expect(service.mintResumeGrant('other', 'project-1', 'execution-1')).resolves.toMatchObject({ ok: false, code: 'DENIED' });

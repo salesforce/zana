@@ -1,7 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { resolveAllLaunch } from '@zana-ai/zcc-domain/launch-options';
 
 const h = vi.hoisted(() => ({
   root: (require('node:fs') as typeof import('node:fs')).mkdtempSync(
@@ -16,8 +18,25 @@ const h = vi.hoisted(() => ({
   replyThrows: false,
   projectSettings: {} as Record<string, unknown>,
   reviewIds: new Set<string>(),
-  executionStores: [] as any[]
+  executionStores: [] as any[],
+  executionDeps: null as any,
+  remoteLocalIo: [] as string[]
 }));
+
+vi.mock('node:fs/promises', async original => {
+  const actual = await original<typeof import('node:fs/promises')>();
+  const guard = (path: unknown) => {
+    if (String(path).startsWith('/registered/remote/')) {
+      h.remoteLocalIo.push(String(path));
+      throw new Error('Remote checkout must never be accessed locally');
+    }
+  };
+  return { ...actual,
+    realpath: async (...args: Parameters<typeof actual.realpath>) => { guard(args[0]); return actual.realpath(...args); },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => { guard(args[0]); return actual.lstat(...args); },
+    open: async (...args: Parameters<typeof actual.open>) => { guard(args[0]); return actual.open(...args); }
+  };
+});
 
 vi.stubEnv('ZCC_DATA_DIR', h.root);
 vi.stubEnv('ZCC_EXECUTION_STORE', 'json');
@@ -73,6 +92,12 @@ vi.mock('@zana-ai/zcc-server/services/execution/store', async (importOriginal) =
     return created;
   } };
 });
+vi.mock('@zana-ai/zcc-server/services/execution/service', async original => {
+  const actual = await original<typeof import('@zana-ai/zcc-server/services/execution/service')>();
+  return { ...actual, SquadExecutionService: class extends actual.SquadExecutionService {
+    constructor(deps: ConstructorParameters<typeof actual.SquadExecutionService>[0]) { super(deps); h.executionDeps = deps; }
+  } };
+});
 vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false },
   app: { on: () => {}, whenReady: () => new Promise(() => {}), getPath: () => h.root, setName: () => {}, requestSingleInstanceLock: () => true, quit: () => {} },
@@ -87,12 +112,14 @@ vi.mock('../test-tap.js', () => ({ record: () => {}, recordLog: () => {}, isEnab
 const host = await import('../host.js');
 const { SquadExecutionService } = await import('@zana-ai/zcc-server/services/execution/service');
 
-afterAll(() => {
+afterAll(async () => {
+  await host.disposeSquadNamedChecks();
   vi.unstubAllEnvs();
   rmSync(h.root, { recursive: true, force: true });
 });
 
 beforeEach(() => {
+  h.remoteLocalIo = [];
   h.config = {};
   h.sessions.clear();
   h.projects = [];
@@ -106,6 +133,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 const pty = (extra: Record<string, unknown> = {}) => ({ id: 's1', projectId: 'p1', status: 'running', profile: 'claude', title: 'Design chat', cwd: '/work', ...extra });
+function initializeRepo(dir: string) {
+  execFileSync('git', ['init', '-b', 'main', dir]);
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
+  execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'initial']);
+}
 
 describe('lookupProposer', () => {
   it('identifies a live PTY that is a Squad member', async () => {
@@ -144,6 +177,278 @@ describe('lookupProposer', () => {
 });
 
 describe('squadProposalMcpDeps', () => {
+  const remotePlan = '## Launch\n- worktree: false\n- push: false\n## Execution Plan\n### read: Read <!-- executable-step -->\n- Mode: Read-only\n- Work: Read\n- Verification: Read';
+  it('previews remote attached bytes and launches with exact project/window binding', async () => {
+    h.projects = [{ id: 'p1', path: '/registered/remote/checkout', name: 'Remote', remote: { host: 'registered-ssh' } }];
+    const dir = mkdtempSync(join(tmpdir(), 'remote-attached-'));
+    const path = join(dir, 'plan.md');
+    writeFileSync(path, remotePlan);
+    const { resolveSourcePolicy } = await import('@zana-ai/zcc-server/services/execution/source-policy');
+    const policy = await resolveSourcePolicy(async value => realpathSync(value), { home: dir });
+    const attached = await h.executionDeps.sources.issue({ windowId: 7, projectId: 'p1', paths: [path], policy });
+    const input = { teamId: 'team1', projectId: 'p1', goal: 'Follow attached plan', coordinationMode: 'structured' as const, sourceCapabilityIds: attached.map((view: any) => view.id) };
+    const preview = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+    expect(preview).toMatchObject({ location: { kind: 'project-root' }, path: h.projects[0].path, resolvedLaunch: { worktree: { value: false, source: 'plan' } } });
+    expect(await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 })).toEqual(preview);
+    await expect(host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 8 })).rejects.toThrow('another');
+    h.projects.push({ ...h.projects[0], id: 'p2' });
+    await expect(host.resolveSquadComposerPreview({ ...input, projectId: 'p2' }, { kind: 'window', windowId: 7 })).rejects.toThrow('project');
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'remote-attached', state: 'RUNNING' } } as never);
+    expect(await host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 7 })).toMatchObject({ ok: true });
+    expect(start.mock.calls[0]?.[2]).toMatchObject({ planLaunch: { worktree: false, push: false }, workUnits: [expect.objectContaining({ id: 'read' })] });
+    for (const declaration of ['worktree: true', 'push: true', 'checks: check:test']) {
+      const unsupportedPath = join(dir, `${declaration.split(':')[0]}.md`);
+      writeFileSync(unsupportedPath, `## Launch\n- ${declaration}\n## Execution Plan\n${remotePlan.split('## Execution Plan\n')[1]}`);
+      const unsupported = await h.executionDeps.sources.issue({ windowId: 7, projectId: 'p1', paths: [unsupportedPath], policy });
+      await expect(host.resolveSquadComposerPreview({ ...input, sourceCapabilityIds: unsupported.map((view: any) => view.id) }, { kind: 'window', windowId: 7 })).rejects.toThrow('Remote target');
+    }
+    const digestPath = join(dir, 'digest.md');
+    writeFileSync(digestPath, remotePlan);
+    const digest = await h.executionDeps.sources.issue({ windowId: 7, projectId: 'p1', paths: [digestPath], policy });
+    writeFileSync(digestPath, `${remotePlan}\nchanged`);
+    await expect(host.resolveSquadComposerPreview({ ...input, sourceCapabilityIds: digest.map((view: any) => view.id) }, { kind: 'window', windowId: 7 })).rejects.toThrow('changed');
+    rmSync(dir, { recursive: true, force: true });
+    expect(h.remoteLocalIo).toEqual([]);
+  });
+  it('consumes token before concurrent revalidation and invalidates fingerprint mismatch', async () => {
+    h.projects = [{ id: 'p1', path: '/registered/remote/checkout', name: 'Remote', remote: { host: 'registered-ssh' } }];
+    const input = { teamId: 'team1', projectId: 'p1', goal: 'Concurrent launch', coordinationMode: 'freeform' as const };
+    const preview = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'single-start', state: 'RUNNING' } } as never);
+    const results = await Promise.all([host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 7 }), host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 7 })]);
+    expect(results.filter(result => result.ok)).toHaveLength(1);
+    expect(results.filter(result => !result.ok)).toMatchObject([{ code: 'LAUNCH_CHANGED' }]);
+    expect(start).toHaveBeenCalledOnce();
+    const drift = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+    h.projects[0].remote.host = 'changed-registered-host';
+    expect(await host.startTeamJobFromUi({ ...input, previewToken: drift.previewToken }, { windowId: 7 })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+    h.projects[0].remote.host = 'registered-ssh';
+    expect(await host.startTeamJobFromUi({ ...input, previewToken: drift.previewToken }, { windowId: 7 })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+  });
+  it('rejects Windows named checks at preview/admission before spawn', async () => {
+    h.projects = [{ id: 'p1', path: h.root, name: 'Repo' }];
+    await host.namedChecksSettings.set({ kind: 'project', projectId: 'p1' }, [{ name: 'test', command: 'printf test' }]);
+    await expect(host.resolveSquadNamedChecks('p1', ['check:test'], 'win32')).rejects.toThrow('Named checks are unsupported on Windows');
+    expect(await host.resolveSquadNamedChecks('p1', [], 'win32')).toEqual([]);
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+    try {
+      await expect(host.resolveSquadNamedChecks('p1', ['check:test'])).rejects.toThrow('Named checks are unsupported on Windows');
+      await expect(host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'go', checks: ['test'] }, { kind: 'window', windowId: 7 })).rejects.toThrow('Named checks are unsupported on Windows');
+      expect(await host.resolveSquadNamedChecks('p1', [])).toEqual([]);
+    } finally { Object.defineProperty(process, 'platform', platform); }
+  });
+  it('previews registered remote default without local path IO; exact token launches', async () => {
+    h.projects = [{ id: 'p1', path: '/registered/remote/checkout', name: 'Remote', remote: { host: 'registered-ssh' } }];
+    const input = { teamId: 'team1', projectId: 'p1', goal: 'remote default', coordinationMode: 'freeform' as const };
+    const preview = await host.resolveSquadComposerPreview(input, { kind: 'shared-owner' });
+    expect(preview).toMatchObject({ path: '/registered/remote/checkout', location: { kind: 'project-root', projectId: 'p1' }, previewToken: expect.any(String) });
+    expect(preview.branch).toBeUndefined();
+    expect(preview.head).toBeUndefined();
+    const provided = { ...input, coordinationMode: 'structured' as const, goal: '### read: Read <!-- executable-step -->\n- Mode: Read-only\n- Work: Read\n- Verification: Read' };
+    expect(await host.resolveSquadComposerPreview(provided, { kind: 'window', windowId: 7 })).toMatchObject({ path: '/registered/remote/checkout', location: { kind: 'project-root' }, previewToken: expect.any(String) });
+    vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'remote-start', state: 'RUNNING' } } as never);
+    expect(await host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken })).toMatchObject({ ok: true });
+    for (const options of [{ worktree: true }, { push: true }, { checks: ['remote_check'] }, { target: { kind: 'project-root' as const } }, { sourceCapabilityIds: ['foreign'] }]) {
+      await expect(host.resolveSquadComposerPreview({ ...input, ...options }, { kind: 'window', windowId: 7 })).rejects.toThrow();
+    }
+  });
+  it('host model snapshots and admission use exact configured slot label, not caller label', async () => {
+    h.projects = [{ id: 'p1', path: h.root, name: 'Repo' }];
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'shell' }, { id: 'w', name: 'Worker', baseProfile: 'shell' }];
+    h.teams = [{ id: 'team1', name: 'T', orchestratorPersonaId: 'orch', slots: [{ personaId: 'w', quantity: 1, label: 'Exact QA' }] }];
+    const models = await h.executionDeps.resolveTeamModelSnapshots('p1', { teamId: 'team1', slots: [{ initialTask: '' }, { initialTask: '' }] });
+    expect(models[0]).toMatchObject({ slotId: '0:w:0', label: 'Exact QA' });
+    const admission = await h.executionDeps.admissionInput('p1', { teamId: 'team1', slots: [{ initialTask: '' }, { initialTask: '' }], resolvedModels: models.map((model: any) => ({ ...model, label: 'caller-forged' })) });
+    expect(admission.slotRoutes[0]).toMatchObject({ slotId: '0:w:0', label: 'Exact QA' });
+  });
+
+  it('expires preview tokens, denies settings drift and replay', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'token-retention-'));
+    try {
+      initializeRepo(dir);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      const input = { teamId: 'team1', projectId: 'p1', goal: 'retention', coordinationMode: 'freeform' as const };
+      const preview = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 5 * 60_000 + 1);
+      expect(await host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 7 })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+      clock.mockRestore();
+      const settingsPreview = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+      h.teams[0].push = true;
+      expect(await host.startTeamJobFromUi({ ...input, previewToken: settingsPreview.previewToken }, { windowId: 7 })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+      h.teams[0].push = false;
+      const fresh = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+      vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'token-ok', state: 'RUNNING' } } as never);
+      expect(await host.startTeamJobFromUi({ ...input, previewToken: fresh.previewToken }, { windowId: 7 })).toMatchObject({ ok: true });
+      expect(await host.startTeamJobFromUi({ ...input, previewToken: fresh.previewToken }, { windowId: 7 })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it.each(['nonGit', 'quick', 'detached'])('previews no-declaration %s launches without inventing a branch', async kind => {
+    const dir = mkdtempSync(join(tmpdir(), 'legacy-preview-'));
+    try {
+      if (kind !== 'nonGit') initializeRepo(dir);
+      if (kind === 'detached') execFileSync('git', ['-C', dir, 'checkout', '--detach']);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo', ...(kind === 'quick' ? { quickAgent: true } : {}) }];
+      const preview = await host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'Needs attended plan correction', coordinationMode: 'structured' }, { kind: 'window', windowId: 7 });
+      expect(preview).toMatchObject({ location: { kind: 'project-root' }, path: realpathSync(dir), previewToken: expect.any(String) });
+      if (kind !== 'quick') expect(preview.branch).toBeUndefined();
+      const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'correction', state: 'RUNNING' } } as never);
+      expect(await host.startTeamJobFromUi({ teamId: 'team1', projectId: 'p1', goal: 'Needs attended plan correction', coordinationMode: 'structured', previewToken: preview.previewToken }, { windowId: 7 })).toMatchObject({ ok: true });
+      expect(start.mock.calls[0]?.[2]).toMatchObject({ coordinationMode: 'structured', slots: [expect.objectContaining({ initialTask: expect.stringContaining('no executable steps found') })] });
+      expect(start.mock.calls[0]?.[2]).not.toHaveProperty('workUnits');
+      await expect(host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'go', worktree: true }, { kind: 'window', windowId: 7 })).rejects.toThrow();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('projects implicit isolation on a non-Git checkout as the project root', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nongit-isolation-preview-'));
+    try {
+      h.config = { worktreeIsolationDefault: true };
+      h.projects = [{ id: 'p1', path: dir, name: 'NonGit' }];
+      await expect(host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'go', coordinationMode: 'freeform' }, { kind: 'window', windowId: 7 }))
+        .resolves.toMatchObject({ location: { kind: 'project-root' }, path: realpathSync(dir) });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('binds preview token to trusted window and input, denies root HEAD drift before start', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bound-preview-'));
+    try {
+      initializeRepo(dir);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      const input = { teamId: 'team1', projectId: 'p1', goal: 'go', coordinationMode: 'freeform' as const };
+      const preview = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+      expect(preview.previewToken).toEqual(expect.any(String));
+      const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'token-launch', state: 'RUNNING' } } as never);
+      await expect(host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 8 })).resolves.toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+      await expect(host.startTeamJobFromUi({ ...input, goal: 'other', previewToken: preview.previewToken }, { windowId: 7 })).resolves.toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+      execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'head changed']);
+      await expect(host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 7 })).resolves.toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+      expect(start).not.toHaveBeenCalled();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('sanitizes unexpected preview revalidation errors before returning them to the renderer', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'preview-error-'));
+    try {
+      initializeRepo(dir);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      const input = { teamId: 'team1', projectId: 'p1', goal: 'go', coordinationMode: 'freeform' as const };
+      const preview = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+      rmSync(dir, { recursive: true, force: true });
+      await expect(host.startTeamJobFromUi({ ...input, previewToken: preview.previewToken }, { windowId: 7 }))
+        .resolves.toEqual({ ok: false, code: 'LAUNCH_CHANGED', message: 'Launch preview changed. Prepare the launch again.' });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('evicts old opaque tokens at bounded retention cap', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'token-cap-'));
+    try {
+      h.projects = [{ id: 'p1', path: dir, name: 'NonGit' }];
+      const input = { teamId: 'team1', projectId: 'p1', goal: 'first', coordinationMode: 'freeform' as const };
+      const first = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+      for (let index = 0; index < 200; index++) await host.resolveSquadComposerPreview({ ...input, goal: `later ${index}` }, { kind: 'window', windowId: 7 });
+      expect(await host.startTeamJobFromUi({ ...input, previewToken: first.previewToken }, { windowId: 7 })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
+  it('repeated composer previews preserve attached capability IDs for subsequent launch', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'preview-capability-host-'));
+    try {
+      initializeRepo(dir);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      const path = join(dir, 'plan.md');
+      writeFileSync(path, '## Launch\n- push: true\n## Execution Plan\n### read: Read <!-- executable-step -->\n- Mode: Read-only\n- Work: Read\n- Verification: Read');
+      const selected = await h.executionDeps.sources.issue({ windowId: 7, projectId: 'p1', paths: [path] });
+      const input = { teamId: 'team1', projectId: 'p1', goal: 'Follow attached plan', coordinationMode: 'structured' as const, sourceCapabilityIds: selected.map((view: any) => view.id) };
+      const first = await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 });
+      expect(await host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 7 })).toEqual(first);
+      expect(first.resolvedLaunch.push).toEqual({ value: true, source: 'plan' });
+      const named = { ...input, goal: 'Follow @plan.md', sourceCapabilityIds: [] };
+      expect((await host.resolveSquadComposerPreview(named, { kind: 'window', windowId: 7 })).fingerprint).toBe(first.fingerprint);
+      expect((await host.resolveSquadComposerPreview(named, { kind: 'window', windowId: 7 })).fingerprint).toBe(first.fingerprint);
+      await expect(host.resolveSquadComposerPreview(named, { kind: 'shared-owner' })).rejects.toThrow('trusted window');
+      await expect(host.resolveSquadComposerPreview(input, { kind: 'window', windowId: 8 })).rejects.toThrow('another');
+      await expect(host.resolveSquadComposerPreview({ ...input, sourceCapabilityIds: ['missing'] }, { kind: 'window', windowId: 7 })).rejects.toThrow('invalid');
+      const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'preview-launch', state: 'RUNNING' } } as never);
+      expect(await host.startTeamJobFromUi({ ...input, previewToken: first.previewToken }, { windowId: 7 })).toMatchObject({ ok: true });
+      expect(start.mock.calls[0]?.[2]).toMatchObject({ planLaunch: { push: true } });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('previews composer options through trusted host resolver and refuses shared source capabilities', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'composer-host-preview-'));
+    try {
+      initializeRepo(dir);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      const input = { teamId: 'team1', projectId: 'p1', goal: 'go', coordinationMode: 'freeform' as const, worktree: true, push: false };
+      expect(await host.resolveSquadComposerPreview(input, { kind: 'shared-owner' })).toMatchObject({ resolvedLaunch: { worktree: { value: true, source: 'launch' } }, location: { kind: 'new-worktree' } });
+      await expect(host.resolveSquadComposerPreview({ ...input, sourceCapabilityIds: ['caller'] }, { kind: 'shared-owner' })).rejects.toThrow('trusted window');
+      await expect(host.resolveSquadComposerPreview({ ...input, coordinationMode: 'structured' }, { kind: 'shared-owner' })).rejects.toThrow('no executable');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('runs the frozen command after Settings mutation and refuses unbound cwd', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'frozen-host-check-'));
+    try {
+      initializeRepo(dir);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      await host.namedChecksSettings.set({ kind: 'global' }, [{ name: 'test', command: 'printf global' }]);
+      await host.namedChecksSettings.set({ kind: 'project', projectId: 'p1' }, [{ name: 'test', command: 'printf frozen' }]);
+      const resolvedChecks = await host.resolveSquadNamedChecks('p1', ['check:test']);
+      expect(resolvedChecks).toEqual([{ reference: 'check:test', name: 'test', command: 'printf frozen' }]);
+      await host.namedChecksSettings.set({ kind: 'project', projectId: 'p1' }, [{ name: 'test', command: 'printf edited' }]);
+      const record = { projectId: 'p1', resolvedChecks } as never;
+      expect(await host.runSquadNamedCheck(record, 'check:test')).toMatchObject({ status: 'passed', output: 'frozen', untrusted: true });
+      const worktree = join(realpathSync(dir), '.worktrees', 'check');
+      execFileSync('git', ['-C', dir, 'worktree', 'add', '-b', 'check', worktree]);
+      expect(await host.runSquadNamedCheck({ ...record as any, squadWorktree: { path: worktree, branch: 'check' } }, 'check:test')).toMatchObject({ status: 'passed', output: 'frozen' });
+      await expect(host.runSquadNamedCheck({ ...record as any, squadWorktree: { path: worktree, branch: 'wrong' } }, 'check:test')).rejects.toThrow('branch changed');
+      await expect(host.runSquadNamedCheck({ ...record as any, squadWorktree: { path: `${worktree}/../check`, branch: 'check' } }, 'check:test')).rejects.toThrow('changed');
+      expect(await host.runSquadNamedCheck({ ...record as any, request: { target: { kind: 'worktree', branch: 'check' } }, squadWorktree: { path: worktree, branch: 'check', ownership: 'user', targetKind: 'worktree' } }, 'check:test')).toMatchObject({ status: 'passed' });
+      await host.namedChecksSettings.set({ kind: 'project', projectId: 'p1' }, []);
+      expect(await host.resolveSquadNamedChecks('p1', ['check:test'])).toMatchObject([{ command: 'printf global' }]);
+      expect(await h.executionDeps.listNamedCheckNames('p1')).toEqual(['test']);
+      expect(h.executionDeps.resolveNamedChecks).toBe(host.resolveSquadNamedChecks);
+      expect(h.executionDeps.runNamedCheck).toBe(host.runSquadNamedCheck);
+      expect(h.executionDeps.resolveLaunchOptions).toBe(host.resolveSquadLaunchOptions);
+      await expect(host.runSquadNamedCheck(record, 'check:missing')).rejects.toThrow('not frozen');
+      await expect(host.resolveSquadNamedChecks('p1', ['check:missing'])).rejects.toThrow('Unknown check');
+      await expect(host.resolveSquadNamedChecks('p1', ['caller command'])).rejects.toThrow('Invalid check');
+      await expect(host.namedChecksSettings.get({ kind: 'project', projectId: 'missing' })).rejects.toThrow('not registered');
+      await expect(host.runSquadNamedCheck({ ...record as any, squadWorktree: { path: realpathSync(h.root), branch: 'main' } }, 'check:test')).rejects.toThrow('not authorized');
+      h.projects[0].remote = { host: 'remote' };
+      await expect(host.runSquadNamedCheck(record, 'check:test')).rejects.toThrow('unavailable');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('projects trusted root/generated/user-target previews and detects bad sources', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'preview-host-'));
+    try {
+      initializeRepo(dir);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      const input = { teamId: 'team1', projectId: 'p1', planning: 'infer' as const, goal: 'go', sourcePaths: [], attachments: [], launchOptions: {} };
+      expect(await host.resolveSquadLaunchPreview(input)).toMatchObject({ location: { kind: 'project-root' }, branch: 'main' });
+      expect(await host.resolveSquadLaunchPreview({ ...input, launchOptions: { worktree: true } })).toMatchObject({ location: { kind: 'new-worktree', baseBranch: 'main', isolationSource: 'launch' } });
+      execFileSync('git', ['-C', dir, 'worktree', 'add', '-b', 'feature', join(dir, 'checkout')]);
+      expect(await host.resolveSquadLaunchPreview({ ...input, launchOptions: { target: { kind: 'worktree', branch: 'feature' } } })).toMatchObject({ location: { kind: 'worktree', ownership: 'user', branch: 'feature' }, branch: 'feature' });
+      expect(await host.resolveSquadLaunchPreview({ ...input, launchOptions: { target: { kind: 'project-root' } } })).toMatchObject({ location: { kind: 'project-root' }, branch: 'main' });
+      await expect(host.resolveSquadLaunchPreview({ ...input, sourcePaths: [join(dir, 'missing')] })).rejects.toThrow('does not exist');
+      await expect(host.resolveSquadLaunchPreview({ ...input, planning: 'provided' })).rejects.toThrow('no executable');
+      writeFileSync(join(dir, 'plan.md'), '### read: Read <!-- executable-step -->\n- Mode: Read-only\n- Work: Read\n- Verification: Read');
+      expect(await host.resolveSquadLaunchPreview({ ...input, planning: 'provided', sourcePaths: [join(dir, 'plan.md')] })).toMatchObject({ location: { kind: 'project-root' } });
+      expect(await host.resolveSquadLaunchPreview({ ...input, planning: 'provided', attachments: [{ name: 'plan.md', text: '## Launch\n- push: true\n## Execution Plan\n### read: Read <!-- executable-step -->\n- Mode: Read-only\n- Work: Read\n- Verification: Read' }] })).toMatchObject({ resolvedLaunch: { push: { value: true, source: 'plan' } } });
+      h.projects[0].remote = { host: 'remote' };
+      expect(await host.resolveSquadLaunchPreview(input)).toMatchObject({ location: { kind: 'project-root' }, path: dir });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('exports trusted claim resolver and preserves launch vs plan precedence', async () => {
+    h.projects = [{ id: 'p1', path: h.root, name: 'Repo' }];
+    h.teams = [{ id: 'team1', worktreeIsolation: true, worktreeOnComplete: 'delete', push: true }];
+    const resolve = (host as any).resolveSquadLaunchOptions;
+    expect(resolve).toBeTypeOf('function');
+    await expect(resolve('missing', { teamId: 'team1' })).rejects.toThrow('not registered');
+    await expect(resolve('p1', { teamId: 'missing' })).rejects.toThrow('not found');
+    expect(await resolve('p1', { teamId: 'team1', push: false, planLaunch: { onComplete: 'merge' } })).toMatchObject({
+      worktree: { value: true, source: 'squad' },
+      push: { value: false, source: 'launch' },
+      onComplete: { value: 'merge', source: 'plan' }
+    });
+  });
   it('provides the squad deps while Team jobs are on', () => {
     expect(Object.keys(host.squadProposalMcpDeps()).sort()).toEqual(['checkSquadPlan', 'launchSquadNow', 'proposeSquad']);
   });
@@ -174,8 +479,6 @@ describe('squad_plan_check tier fit (host planTierFit)', () => {
 - **Excludes:** None
 - **Work:** Write a.txt.
 - **Verification:** Read a.txt.
-- **Completion criteria:** File exists.
-- **Stop conditions:** Cannot write.
 - **Outputs / handoff:** Content.
 `;
   const dirs: string[] = [];
@@ -183,6 +486,7 @@ describe('squad_plan_check tier fit (host planTierFit)', () => {
   const knownTeam = (workerModel: string) => {
     const dir = mkdtempSync(join(tmpdir(), 'squad-host-tier-'));
     dirs.push(dir);
+    initializeRepo(dir);
     h.projects = [{ id: 'p1', name: 'Proj', path: dir }];
     h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'worker', quantity: 1 }] }];
     h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude' }, { id: 'worker', name: 'Worker', baseProfile: 'claude', model: workerModel }];
@@ -262,6 +566,7 @@ describe('service wiring against the host singletons', () => {
   const projectDir = () => {
     const dir = mkdtempSync(join(tmpdir(), 'squad-host-project-'));
     dirs.push(dir);
+    initializeRepo(dir);
     h.projects = [{ id: 'p1', name: 'Proj', path: dir }];
     return dir;
   };
@@ -272,6 +577,7 @@ describe('service wiring against the host singletons', () => {
     h.sessions.set('s1', pty());
     h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'worker', quantity: 1 }] }];
     h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude' }, { id: 'worker', name: 'Worker', baseProfile: 'claude' }];
+    for (const store of h.executionStores) vi.spyOn(store, 'getInProject').mockImplementation(async (_projectId: string, id: string) => ({ id, projectId: 'p1', resolvedLaunch: resolveAllLaunch({}) }) as never);
     const proposed = await host.squadProposalService.propose({ projectId: 'p1', sessionId: 's1' }, { teamId: 'team1', goal: 'Do the thing', planning: 'infer' });
     expect(proposed).toMatchObject({ ok: true, value: { planning: 'infer', team: { workers: 1 } } });
     if (!proposed.ok) return;
@@ -504,6 +810,107 @@ describe('resolveTeamLaunchApproval', () => {
 });
 
 describe('squad_launch wiring (launchNow deps)', () => {
+  it.each(['nonGit', 'detached'])('returns successful %s root receipt without branch', async kind => {
+    const start = setup();
+    const dir = h.projects[0].path;
+    if (kind === 'nonGit') rmSync(join(dir, '.git'), { recursive: true, force: true });
+    else execFileSync('git', ['-C', dir, 'checkout', '--detach']);
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: `root ${kind}` })).toMatchObject({ ok: true, value: { location: { kind: 'project-root' }, path: realpathSync(dir) } });
+    expect(start).toHaveBeenCalledOnce();
+  });
+  it('sends reviewed non-Git isolation fallback through worktree preparation', async () => {
+    setup();
+    h.config = { worktreeIsolationDefault: true };
+    rmSync(join(h.projects[0].path, '.git'), { recursive: true, force: true });
+    const prepare = vi.spyOn(host.squadWorktreeRuntime, 'prepareSquadWorktree').mockImplementation(async record => record as never);
+    vi.spyOn(SquadExecutionService.prototype, 'start').mockImplementation(async (_owner, projectId, request: any) => {
+      const resolvedLaunch = await host.resolveSquadLaunchOptions(projectId as string, request);
+      const record = { id: 'non-git-isolation', projectId, teamId: 'team1', teamLaunchRequestId: request.launchRequestId, request, stateVersion: 1, resolvedLaunch };
+      await h.executionDeps.prepareSquadWorktree(record, request);
+      return { ok: true, value: { id: record.id, state: 'RUNNING' } } as never;
+    });
+
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'non-Git isolation fallback' })).toMatchObject({
+      ok: true,
+      value: { location: { kind: 'project-root' }, path: realpathSync(h.projects[0].path) }
+    });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'non-git-isolation',
+      resolvedLaunch: expect.objectContaining({ worktree: expect.objectContaining({ value: true }) })
+    }), expect.anything(), undefined);
+  });
+  it('preserves remote proposal now/review with locally staged plan sources', async () => {
+    const start = setup();
+    const sourceDir = mkdtempSync(join(tmpdir(), 'remote-proposal-source-'));
+    dirs.push(sourceDir);
+    const path = join(sourceDir, 'remote-proposal-plan.md');
+    writeFileSync(path, '## Launch\n- worktree: false\n- push: false\n## Execution Plan\n### read: Read <!-- executable-step -->\n- Mode: Read-only\n- Work: Read\n- Verification: Read');
+    h.projects[0] = { id: 'p1', name: 'Remote', path: '/registered/remote/checkout', remote: { host: 'registered-ssh' } };
+    h.config.cloneRoot = sourceDir;
+    const supplied = { ...input, goal: 'Read staged plan', planning: 'provided' as const, sources: [path] };
+    expect(await host.squadProposalService.launchSquadNow(route, supplied)).toMatchObject({ ok: true, value: { path: h.projects[0].path, location: { kind: 'project-root' } } });
+    expect(start.mock.calls[0]?.[2]).toMatchObject({ planLaunch: { worktree: false, push: false } });
+    const proposed = await host.squadProposalService.propose(route, { ...supplied, title: 'Remote review', summary: 'Review staged plan' });
+    expect(proposed).toMatchObject({ ok: true });
+    if (!proposed.ok) return;
+    const reviewed = await host.squadProposalService.review(7, proposed.value.proposalId, () => true);
+    expect(reviewed).toMatchObject({ ok: true });
+    if (!reviewed.ok) return;
+    const launched = await host.startTeamJobFromUi({ ...reviewed.value, sourceCapabilityIds: reviewed.value.sources.map(source => source.id), projectId: 'p1', teamId: 'team1', coordinationMode: 'structured', proposalId: proposed.value.proposalId }, { windowId: 7 });
+    expect(launched).toEqual(expect.objectContaining({ ok: true }));
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(h.remoteLocalIo).toEqual([]);
+  });
+  it('rejects generated preview fallback after claim before cohort spawn', async () => {
+    const start = setup();
+    start.mockImplementation(async (_owner, projectId, request: any) => {
+      const resolvedLaunch = await host.resolveSquadLaunchOptions(projectId as string, request);
+      const record = { id: 'generated-binding', projectId, teamId: 'team1', teamLaunchRequestId: request.launchRequestId, request, stateVersion: 1, resolvedLaunch };
+      vi.spyOn(host.squadWorktreeRuntime, 'prepareSquadWorktree').mockResolvedValue(record as never);
+      await expect(h.executionDeps.prepareSquadWorktree(record, request)).rejects.toThrow('not created');
+      return { ok: false, code: 'INVALID', message: 'binding tested' } as never;
+    });
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'generated test', launchOptions: { worktree: true } })).toMatchObject({ ok: false });
+  });
+  it('rejects target drift between preview validation and claim resolver', async () => {
+    const start = setup();
+    start.mockImplementation(async (_owner, projectId, request) => {
+      execFileSync('git', ['-C', h.projects[0].path, 'checkout', '-b', 'drifted']);
+      await expect(host.resolveSquadLaunchOptions(projectId as string, request as never)).rejects.toThrow('changed before claim');
+      return { ok: false, code: 'INVALID', message: 'target drift' } as never;
+    });
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'drift test' })).toMatchObject({ ok: false });
+    expect(start).toHaveBeenCalledOnce();
+  });
+  it('checks prepared target binding before cohort spawn', async () => {
+    const start = setup();
+    start.mockImplementation(async (_owner, projectId, request: any) => {
+      const resolvedLaunch = await host.resolveSquadLaunchOptions(projectId as string, request);
+      const record = { id: 'binding-test', projectId, teamId: 'team1', teamLaunchRequestId: request.launchRequestId, request, stateVersion: 1, resolvedLaunch };
+      const prepare = vi.spyOn(host.squadWorktreeRuntime, 'prepareSquadWorktree').mockResolvedValue({ ...record, squadWorktree: { path: '/other', branch: 'main', ownership: 'user', targetKind: 'project-root' } } as never);
+      await expect(h.executionDeps.prepareSquadWorktree(record, request)).rejects.toThrow('after claim');
+      prepare.mockResolvedValue(record as never);
+      expect(await h.executionDeps.prepareSquadWorktree(record, request)).toBe(record);
+      return { ok: false, code: 'INVALID', message: 'binding tested' } as never;
+    });
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'binding test' })).toMatchObject({ ok: false });
+  });
+
+  it('returns prepared managed/user worktree location from actual record', async () => {
+    setup();
+    const dir = h.projects[0].path;
+    for (const store of h.executionStores) vi.spyOn(store, 'getInProject').mockResolvedValue({
+      id: 'actual', projectId: 'p1', resolvedLaunch: resolveAllLaunch({ launch: { worktree: true } }),
+      squadWorktree: { path: dir, branch: 'main', baseBranch: 'main' }
+    } as never);
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'managed receipt', launchOptions: { worktree: true } })).toMatchObject({ ok: true, value: { location: { kind: 'new-worktree' }, branch: 'main' } });
+    for (const store of h.executionStores) vi.spyOn(store, 'getInProject').mockResolvedValue({
+      id: 'actual', projectId: 'p1', resolvedLaunch: resolveAllLaunch({}),
+      squadWorktree: { path: dir, branch: 'main', ownership: 'user', targetKind: 'project-root' }
+    } as never);
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'user receipt', launchOptions: { target: { kind: 'project-root' } } })).toMatchObject({ ok: true, value: { location: { kind: 'project-root' }, branch: 'main' } });
+  });
   const dirs: string[] = [];
   afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
   const route = { projectId: 'p1', sessionId: 's1' };
@@ -511,10 +918,12 @@ describe('squad_launch wiring (launchNow deps)', () => {
   const setup = () => {
     const dir = mkdtempSync(join(tmpdir(), 'squad-now-project-'));
     dirs.push(dir);
+    initializeRepo(dir);
     h.projects = [{ id: 'p1', name: 'Proj', path: dir }];
     h.sessions.set('s1', pty());
     h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'worker', quantity: 1 }] }];
     h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude' }, { id: 'worker', name: 'Worker', baseProfile: 'claude' }];
+    for (const store of h.executionStores) vi.spyOn(store, 'getInProject').mockImplementation(async (_projectId: string, id: string) => ({ id, projectId: 'p1', resolvedLaunch: resolveAllLaunch({}) }) as never);
     return vi.spyOn(SquadExecutionService.prototype, 'start')
       .mockImplementation(async () => ({ ok: true, value: { id: `exec-${Math.random()}`, state: 'RUNNING' } }) as never);
   };
@@ -586,5 +995,20 @@ describe('squad_launch wiring (launchNow deps)', () => {
     const start = setup();
     start.mockResolvedValue({ ok: false, code: 'TEAM_NOT_FOUND', message: 'nope' } as never);
     expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'Refused' })).toMatchObject({ ok: false });
+  });
+});
+
+describe('named-check host shutdown', () => {
+  it('awaits cancellation/capture cleanup and rejects future checks', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'check-shutdown-host-'));
+    try {
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo' }];
+      const record = { projectId: 'p1', resolvedChecks: [{ reference: 'check:slow', name: 'slow', command: 'sleep 30' }] } as never;
+      const pending = host.runSquadNamedCheck(record, 'check:slow');
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await host.disposeSquadNamedChecks();
+      expect(await pending).toMatchObject({ status: 'cancelled' });
+      await expect(host.runSquadNamedCheck(record, 'check:slow')).rejects.toThrow('closed');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

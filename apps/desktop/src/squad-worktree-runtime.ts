@@ -200,7 +200,8 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
 
   async function prepareSquadWorktree(
     initial: ExecutionRecord,
-    request: { worktree?: boolean; onComplete?: 'leave' | 'merge' | 'delete'; target?: SquadExecutionTargetSelector }
+    request: { worktree?: boolean; onComplete?: 'leave' | 'merge' | 'delete'; target?: SquadExecutionTargetSelector },
+    reviewedBase?: NonNullable<ExecutionRecord['reviewedSquadWorktreeBase']>
   ): Promise<ExecutionRecord> {
     return withSquadWorktreeLifecycleLock(initial.id, async () => {
       // Lifecycle lock precedes Git's existing worktree locks, avoiding inversion.
@@ -209,30 +210,27 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       const record = current;
       const project = findProject(record.projectId);
       const retainedWorktree = record.squadWorktree;
-      const selector = request.target ?? record.request.target;
+      const selector = record.request.target;
+      if (request.target && !sameTargetSelector(selector, request.target)) throw new Error(TARGET_UNAVAILABLE);
       if (selector !== undefined || isUserOwnedSquadWorktree(retainedWorktree)) {
         // Admission already applied this rule; repeat it so no caller can skip it.
         const checked = validateSquadExecutionTarget({
           target: selector,
-          worktree: request.worktree ?? record.request.worktree,
-          onComplete: request.onComplete ?? record.request.onComplete
+          worktree: record.resolvedLaunch.worktree.value,
+          onComplete: record.resolvedLaunch.onComplete.value
         });
         if (!checked.ok || !checked.target) throw new Error(TARGET_UNAVAILABLE);
         return bindUserTarget(record, project, checked.target);
       }
       const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
-      const projectSettings = project ? await deps.getProjectSettings(project.id) : undefined;
       const preparation = resolveSquadWorktreePreparation({
         retained: retainedWorktree !== undefined,
-        launch: request.worktree,
-        project: projectSettings?.worktreeIsolation,
-        global: deps.config.getConfig().worktreeIsolationDefault,
-        squad: team?.worktreeIsolation
+        launch: record.resolvedLaunch.worktree.value
       });
       if (preparation === 'reattach') return reattach(record, project, retainedWorktree);
       if (!project || !team) return record;
       if (preparation === 'project-root') return record;
-      return create(record, project, team, retainedWorktree);
+       return create(record, project, team, retainedWorktree, reviewedBase ?? record.reviewedSquadWorktreeBase);
     });
   }
 
@@ -248,7 +246,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
         || latest.squadWorktree.path !== retainedWorktree.path || latest.squadWorktree.branch !== retainedWorktree.branch) {
         throw new Error('WORKTREE_UNAVAILABLE');
       }
-      const protection = await git.setWorktreePushProtection(project.path, path, true);
+      const protection = await git.setWorktreePushProtection(project.path, path, !record.resolvedLaunch.push.value);
       if (!protection.ok) throw new Error('WORKTREE_UNAVAILABLE');
       return latest;
     } catch {
@@ -257,9 +255,10 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     }
   }
 
-  async function create(record: ExecutionRecord, project: Project, team: Team, retainedWorktree: SquadWorktreeRecord | undefined): Promise<ExecutionRecord> {
+  async function create(record: ExecutionRecord, project: Project, team: Team, retainedWorktree: SquadWorktreeRecord | undefined, reviewedBase?: { path: string; branch: string; head: string }): Promise<ExecutionRecord> {
     const fallback = await ineligibleSquadWorktreeFallback(project, git.isGitRepo);
     if (fallback) {
+      if (reviewedBase) throw new Error('Reviewed worktree is unavailable');
       await inboxStore.appendOnce({
         projectId: project.id,
         projectLabel: project.name,
@@ -283,9 +282,24 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     const beforeCreate = await executionStore.get(record.id);
     if (!beforeCreate || beforeCreate.stateVersion !== record.stateVersion) return beforeCreate ?? record;
     if (beforeCreate.squadWorktree && beforeCreate.squadWorktree.branch !== branch) return beforeCreate;
-    const created = await git.createWorktree(project.path, target, branch, join(project.path, '.worktrees'), true);
+    const resolvesTo = (candidate: string, expected: string) => {
+      try {
+        return fs.realpathSync(candidate) === expected;
+      } catch {
+        return false;
+      }
+    };
+    const assertReviewedBase = async () => {
+      if (!reviewedBase) return;
+      const root = fs.realpathSync(project.path);
+      const entries = await git.listWorktrees?.(root);
+      const base = entries?.find(entry => resolvesTo(entry.path, root));
+      if (root !== reviewedBase.path || !base || base.detached || base.branch !== reviewedBase.branch || base.head !== reviewedBase.head) throw new Error('Reviewed worktree base changed');
+    };
+    await assertReviewedBase();
+    const created = await git.createWorktree(project.path, target, branch, join(project.path, '.worktrees'), !record.resolvedLaunch.push.value);
     if (!created.ok) {
-      if (retainedWorktree) throw new Error('WORKTREE_UNAVAILABLE');
+      if (retainedWorktree || reviewedBase) throw new Error('WORKTREE_UNAVAILABLE');
       await inboxStore.appendOnce(squadWorktreeUnavailableNotice(project, record.id, created.reason));
       return record;
     }
@@ -293,10 +307,16 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     if (!withinBase(path, project.path)) {
       throw new Error('squad worktree escaped registered project worktree base');
     }
+    if (reviewedBase) {
+      await assertReviewedBase();
+      const generated = (await git.listWorktrees?.(project.path))?.find(entry => resolvesTo(entry.path, path));
+      if (path !== fs.realpathSync(target) || created.branch !== branch || !generated || generated.detached || generated.branch !== branch || generated.head !== reviewedBase.head) throw new Error('Reviewed generated worktree changed');
+    }
     const baseBranch = retainedWorktree?.baseBranch ?? (await git.getGitStatus(project.path))?.branch;
     if (!baseBranch) throw new Error('squad worktree base branch is unavailable');
     const latest = await executionStore.get(record.id);
     if (!latest || latest.stateVersion !== record.stateVersion || latest.squadWorktree) return latest ?? record;
+    await assertReviewedBase();
     return executionStore.setSquadWorktree(record.id, record.stateVersion, {
       path,
       branch: created.branch,
@@ -380,9 +400,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
         const protection = await git.setWorktreePushProtection(project.path, worktree.path, false);
         if (!protection.ok) throw new Error(`could not disable squad worktree push guard: ${protection.reason}`);
       }
-      const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
-      // A launch request's own choice wins over the Squad's default; both default to keeping.
-      const requested = record.request.onComplete ?? team?.worktreeOnComplete ?? 'leave';
+      const requested = record.resolvedLaunch.onComplete.value;
       if (record.state === 'COMPLETED' && requested === 'merge') {
         const base = worktree.baseBranch;
         const beforeMerge = await currentTerminal();
@@ -699,6 +717,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
   }
 
   return {
+    resolveUserTarget,
     prepareSquadWorktree,
     revalidateUserTarget,
     handleSquadWorktreeTerminal,

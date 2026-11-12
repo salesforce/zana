@@ -75,13 +75,26 @@ test('CLI Agent starts a durable Job Team, surfaces its question, and completes'
     await window.getByRole('button', { name: `New agent in ${projectName}` }).click();
     const modal = window.getByTestId('launch-modal');
     await modal.getByRole('button', { name: 'CLI Agent' }).click();
+    // The CLI Agent picker shares the asynchronously hydrated execution-options
+    // catalog. Wait for this fixture's discovered entry, not a transient row.
+    await expect(async () => {
+      const catalog = await window.evaluate(async (id) => {
+        const response = await fetch(`/api/v1/system/execution-options?providerId=claude-code&projectId=${encodeURIComponent(id)}`);
+        if (!response.ok) throw new Error(`Execution options: ${response.status}`);
+        return response.json();
+      }, projectId!);
+      expect(catalog.modelLoadError, JSON.stringify(catalog)).toBeNull();
+      expect(catalog.models).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'claude-sonnet-5', displayName: 'Sonnet 5' })
+      ]));
+    }).toPass({ timeout: 30_000 });
     // Modern startup can remember Codex before this modal mounts. The shared
     // picker deliberately honors that explicit choice over defaultHarness.
     // Select this fixture's provider through the UI instead of relying on timing.
     await modal.getByTestId('model-reasoning-picker-trigger').click();
     const picker = window.getByTestId('model-reasoning-picker-menu');
     await picker.getByRole('tab', { name: 'Claude Code', exact: true }).click();
-    await picker.locator('[data-testid^="model-reasoning-model-"]').first().click();
+    await picker.getByTestId('model-reasoning-model-claude-sonnet-5').click();
     const instruction = modal.getByTestId('legacy-agent-command-input');
     await instruction.click();
     await instruction.fill('E2E start Job Team');

@@ -345,6 +345,7 @@ export function createAgentRuntimeAdapter(options: {
   const skillDataDir = options.dataDir ?? storageRoot;
   const skillSnapshots = createSkillSnapshotStore(skillDataDir);
   const daemonDataDir = options.dataDir ?? '/tmp/zcc-thread-runtime';
+  let disposeTask: Promise<void> | undefined;
 
   function syncProviderBridgeRecording(): void {
     if (!options.loadConfig) return;
@@ -809,14 +810,17 @@ export function createAgentRuntimeAdapter(options: {
       return [...runtimes.keys()].filter(id => environmentRuntimes.has(id));
     },
     dispose() {
+      if (disposeTask) return disposeTask;
       modelDiscovery.dispose();
-      void Promise.allSettled([...runtimes.values(), ...discoveryRuntimes].map(runtime => runtime.shutdown()))
-        .then(() => skillSnapshots.dispose()).catch(() => undefined);
+      const shuttingDown = [...runtimes.values(), ...discoveryRuntimes];
       runtimes.clear();
       runtimeMeta.clear();
       environmentRuntimes.clear();
       threadLocation.clear();
       remoteProxyByThread.clear();
+      disposeTask = Promise.allSettled(shuttingDown.map(runtime => runtime.shutdown()))
+        .then(() => skillSnapshots.dispose()).catch(() => undefined);
+      return disposeTask;
     }
   };
 }

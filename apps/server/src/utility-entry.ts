@@ -26,6 +26,7 @@ import { createTeamOpsViaControl } from './http/team-ops-via-control.js';
 import { createCliAgentOpsViaControl, retainProductServerCredential } from './http/cli-agent-ops.js';
 import { createProjectStore, type ProjectStore } from './project-store.js';
 import { createProjectSettingsStore, type ProjectSettingsStore } from './project-settings-store.js';
+import { NamedCheckScopeSchema, NamedChecksSchema } from '@zana-ai/zcc-contracts/project-settings';
 import { createTerminalExecutionService, type TerminalExecutionService } from './terminal-execution-service.js';
 import { TerminalSessionService } from './terminal-session-service.js';
 import { createRuntimeDatabase, type TerminalSessionRepository } from './runtime-database.js';
@@ -453,6 +454,17 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     }
     if (message.operation === 'project-settings-get') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: projectSettings?.get(message.projectId) ?? {} });
+    }
+    if (message.operation === 'named-checks-get' || message.operation === 'named-checks-set') {
+      if (!projectSettings) throw new Error('named checks storage is unavailable');
+      const scope = NamedCheckScopeSchema.parse(message.scope);
+      if (scope.kind === 'project' && !projects?.list().some(project => project.id === scope.projectId)) {
+        throw new Error('named checks project is not registered');
+      }
+      const value = message.operation === 'named-checks-set'
+        ? await projectSettings.setNamedChecks(scope, NamedChecksSchema.parse(message.checks))
+        : projectSettings.getNamedChecks(scope);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
     }
     if (message.operation === 'project-settings-set') {
       if (!projectSettings) {

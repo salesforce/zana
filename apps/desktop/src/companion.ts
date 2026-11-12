@@ -821,6 +821,8 @@ export class CompanionController {
     if (typeof taskId !== 'string') return false;
     const previous = this.deps.scheduler.list().find((t) => t.id === taskId);
     if (!previous) return false;
+    // Companion has no review surface or window-bound token capability.
+    if (previous.kind === 'team') return false;
     const knownRuns = new Set(previous.status?.runs.map((run) => run.id));
     const pendingRuns = new Set(previous.status?.runs.filter((run) => run.launchState === 'pending').map((run) => run.id));
     try {

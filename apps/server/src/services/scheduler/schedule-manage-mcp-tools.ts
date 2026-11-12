@@ -18,6 +18,7 @@
  */
 
 import { z } from 'zod';
+import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type {
   ScheduledTask,
@@ -37,6 +38,7 @@ export const scheduleDefinitionPatchSchema = z.object({
   kind: z.enum(['agent', 'team']).optional(),
   teamId: z.string().min(1).max(256).nullable().optional(),
   planSource: z.enum(['provided', 'infer']).nullable().optional(),
+  launchOptions: launchOptionsSchema.nullable().optional().describe('Operator-owned team launch overrides. Readable here; changes require the Scheduler UI.'),
   every: z.string().min(1).optional(),
   cron: z.string().min(1).optional(),
   tz: z.string().min(1).nullable().optional()
@@ -193,7 +195,7 @@ export const scheduleDismissInputSchema = { refs: refsField(MAX_DISMISS_REFS), a
 export const scheduleUpdateInputSchema = { ...scheduleRunNowInputSchema, patch: scheduleDefinitionPatchSchema };
 
 export function projectScheduleDefinition(task: ScheduledTask) {
-  return { ...projectSchedule(task), profile: task.profile, prompt: task.prompt ?? '', extraArgs: task.extraArgs ?? [], updatedAt: task.updatedAt };
+  return { ...projectSchedule(task), profile: task.profile, kind: task.kind, teamId: task.teamId, planSource: task.planSource, ...(task.kind === 'team' && task.launchOptions !== undefined ? { launchOptions: task.launchOptions } : {}), prompt: task.prompt ?? '', extraArgs: task.extraArgs ?? [], updatedAt: task.updatedAt };
 }
 
 export interface RegisterScheduleManageToolsOpts {
@@ -339,7 +341,9 @@ export function registerScheduleManageTools(
           return okJson({ ok: true, ...result, schedule: projectScheduleDefinition(result.schedule) });
         }
         if (!scheduleAgentApi.update) throw new Error('Schedule update is unavailable');
-        const task = await scheduleAgentApi.update(found.task.id, scheduleDefinitionPatchSchema.parse(input.patch));
+        const patch = scheduleDefinitionPatchSchema.parse(input.patch);
+        if (patch.launchOptions !== undefined) throw new Error('launchOptions changes are operator-only; use the Scheduler UI');
+        const task = await scheduleAgentApi.update(found.task.id, patch);
         return okJson({ ok: true, schedule: projectScheduleDefinition(task) });
       } catch (error) { return fail(name, error instanceof Error ? error.message : String(error)); }
     });

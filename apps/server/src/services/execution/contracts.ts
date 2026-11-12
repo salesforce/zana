@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { ExecutionArtifactRecord } from './artifact-store.js';
 import type { ExecutionEvent, ExecutionRecord, ExecutionWorkUnit } from './store.js';
+import type { ExecutionResolvedLaunchV1, ResolvedLaunchSetting } from '@zana-ai/zcc-domain/launch-options';
+export type { ExecutionResolvedLaunchV1, ResolvedLaunchSetting, LaunchSettingSource } from '@zana-ai/zcc-domain/launch-options';
 
 export type UsageCompleteness = 'complete' | 'partial' | 'unavailable';
 export type UsageSampleKind = 'delivery' | 'heartbeat' | 'outcome' | 'reclaim' | 'terminal';
@@ -89,6 +91,65 @@ export interface WorkOutputDeclarationV1 {
   schema: StructuredOutputSchemaV1;
 }
 
+export interface ExecutionResolvedCheckV1 {
+  reference: string;
+  name: string;
+  command: string;
+}
+export interface ExecutionCheckResultV1 {
+  name: string;
+  status: 'passed' | 'failed' | 'timeout' | 'output-limit' | 'cancelled' | 'spawn-error';
+  exitCode: number | null;
+  output: string;
+  untrusted: true;
+}
+// Runner permits at most 4 MiB raw UTF-8; JSON escaping can expand each byte sixfold.
+export const MAX_ENGINE_CHECK_JSON_BYTES = 32 * 1024 * 1024;
+export function validEngineCheckFailure(value: unknown): value is { reference: string; result: ExecutionCheckResultV1 } {
+  if (!value || typeof value !== 'object' || !hasOnlyKeys(value as Record<string, unknown>, ['reference', 'result'])) return false;
+  const failure = value as { reference?: unknown; result?: ExecutionCheckResultV1 };
+  const result = failure.result;
+  return typeof failure.reference === 'string' && /^check:[A-Za-z_][A-Za-z0-9_-]{0,99}$/.test(failure.reference)
+    && !!result && hasOnlyKeys(result as unknown as Record<string, unknown>, ['name', 'status', 'exitCode', 'output', 'untrusted'])
+    && result.name === failure.reference.slice(6) && result.untrusted === true
+    && ['failed', 'timeout', 'output-limit', 'cancelled', 'spawn-error'].includes(result.status)
+    && (result.exitCode === null || Number.isInteger(result.exitCode))
+    && typeof result.output === 'string' && Buffer.byteLength(result.output) <= 4 * 1024 * 1024;
+}
+export function validResolvedChecks(value: unknown): value is ExecutionResolvedCheckV1[] {
+  return Array.isArray(value) && value.length <= 100 && new Set(value.map(check => check?.reference)).size === value.length
+    && value.every(check => !!check && typeof check === 'object' && hasOnlyKeys(check, ['reference', 'name', 'command'])
+      && typeof check.name === 'string' && /^[A-Za-z_][A-Za-z0-9_-]{0,99}$/.test(check.name)
+      && check.reference === `check:${check.name}` && typeof check.command === 'string' && check.command.trim().length > 0 && Buffer.byteLength(check.command) <= 16 * 1024);
+}
+export function workCheckReferences(record: Pick<ExecutionRecord, 'resolvedLaunch'>, unit: Pick<ExecutionWorkUnit, 'checks'>): string[] {
+  return [...new Set([...(unit.checks ?? []), ...record.resolvedLaunch.checks.value].map(name => `check:${name}`))].sort();
+}
+
+export function validResolvedLaunch(value: unknown): value is ExecutionResolvedLaunchV1 {
+  if (!value || typeof value !== 'object' || !hasOnlyKeys(value as Record<string, unknown>, ['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault'])) return false;
+  const snapshot = value as ExecutionResolvedLaunchV1;
+  const setting = (entry: unknown, validValue: (value: unknown) => boolean) => {
+    if (!entry || typeof entry !== 'object' || !hasOnlyKeys(entry as Record<string, unknown>, ['value', 'source'])) return false;
+    const { value, source } = entry as ResolvedLaunchSetting<unknown>;
+    return ['launch', 'plan', 'squad', 'default'].includes(source) && validValue(value);
+  };
+  return setting(snapshot.worktree, (value) => typeof value === 'boolean')
+    && setting(snapshot.onComplete, (value) => ['leave', 'merge', 'delete'].includes(value as string))
+    && setting(snapshot.push, (value) => typeof value === 'boolean')
+    && setting(snapshot.checks, (value) => Array.isArray(value) && value.length <= 100 && value.every((name) => typeof name === 'string' && name.length <= 100 && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)))
+    && setting(snapshot.failurePolicyDefault, (value) => value === 'fail-run');
+}
+
+/** Older records cannot recover historical Squad settings; never consult current settings to migrate them. */
+export function legacyResolvedLaunch(request: { worktree?: boolean; onComplete?: 'leave' | 'merge' | 'delete'; checks?: readonly string[] }): ExecutionResolvedLaunchV1 {
+  return {
+    worktree: { value: request.worktree ?? false, source: request.worktree === undefined ? 'default' : 'launch' },
+    onComplete: { value: request.onComplete ?? 'leave', source: request.onComplete === undefined ? 'default' : 'launch' },
+    push: { value: false, source: 'default' }, checks: { value: request.checks ?? [], source: request.checks === undefined ? 'default' : 'launch' }, failurePolicyDefault: { value: 'fail-run', source: 'default' }
+  };
+}
+
 export interface ExecutionAssembledResultV1 {
   version: 1;
   outcome: 'success' | 'partial' | 'failure';
@@ -102,7 +163,6 @@ export interface ExecutionAssembledResultV1 {
   }>;
   failures: Array<{ workUnitId: string; code: string }>;
   artifacts: Array<{ name: string; mediaType: string; contentDigest: string }>;
-  policy?: { status: string; summary: string };
   verification: Array<{ workUnitId: string; checks: string[] }>;
   usage: ExecutionUsageRollupV1;
   digest: string;
@@ -187,12 +247,12 @@ function jsonBytes(value: unknown): number {
   try { return Buffer.byteLength(JSON.stringify(value), 'utf8'); } catch { return Number.POSITIVE_INFINITY; }
 }
 
-export function validateStructuredJson(value: unknown): { ok: true; value: unknown; canonical: string } | { ok: false; reason: string } {
+export function validateStructuredJson(value: unknown, maxBytes = MAX_STRUCTURED_BYTES): { ok: true; value: unknown; canonical: string } | { ok: false; reason: string } {
   let serialized: string | undefined;
   try { serialized = JSON.stringify(value); } catch { return { ok: false, reason: 'structuredResult must be JSON serializable' }; }
   if (serialized === undefined) return { ok: false, reason: 'structuredResult must be JSON serializable' };
   const bytes = Buffer.byteLength(serialized, 'utf8');
-  if (bytes > MAX_STRUCTURED_BYTES) return { ok: false, reason: `structuredResult exceeds ${MAX_STRUCTURED_BYTES} bytes` };
+  if (bytes > maxBytes) return { ok: false, reason: `structuredResult exceeds ${maxBytes} bytes` };
   const parsed = JSON.parse(serialized);
   try { return { ok: true, value: parsed, canonical: canonicalJson(parsed) }; }
   catch { return { ok: false, reason: 'structuredResult must be safely canonicalizable' }; }
@@ -310,7 +370,6 @@ export function assembleExecutionResult(record: ExecutionRecord, artifacts: read
     version: 1 as const, outcome, summary: summary.slice(0, 64 * 1024), units,
     failures: units.flatMap((unit) => unit.failureCode ? [{ workUnitId: unit.id, code: unit.failureCode }] : []),
     artifacts: currentArtifacts.slice(0, 100).map(({ name, mediaType, contentDigest }) => ({ name, mediaType, contentDigest })),
-    ...(record.policyResult ? { policy: { status: record.policyResult.status, summary: record.policyResult.summary.slice(0, 2_048) } } : {}),
     verification: (record.workUnits ?? []).flatMap((unit) => unit.verification?.length ? [{ workUnitId: unit.id, checks: unit.verification.slice(0, 100) }] : []),
     usage: usageRollup(record.usageObservations ?? [], record.usageBaseline)
   };

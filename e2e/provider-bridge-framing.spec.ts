@@ -1,7 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './fixtures/app.js';
+import { fixtureProcessState } from './fixtures/process-state.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
 const INPUT = `framing-start ${'é🙂'.repeat(48_000)} framing-end`;
@@ -20,8 +21,8 @@ function recordingLane(root: string, direction: string): RecordingEntry[] {
     .flatMap(file => readFileSync(join(root, file), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)));
 }
 
-function processAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+function processRunning(pid: number): boolean {
+  return fixtureProcessState(pid).running;
 }
 
 test.use({
@@ -129,11 +130,10 @@ test('recording preserves large UTF-8 provider output, resumed turns, and app sh
   expect(ownedPids.length).toBeGreaterThan(0);
   expect(ownedPids.every(pid => Number.isSafeInteger(pid) && pid > 0)).toBe(true);
   await app.electron.close();
-  await expect.poll(() => ownedPids.filter(processAlive), { timeout: 10_000 }).toEqual([]);
+  await expect.poll(() => ownedPids.filter(processRunning), { timeout: 10_000 }).toEqual([]);
   const files = readdirSync(recordDir, { recursive: true }).filter(file => String(file).endsWith('.ndjson')).map(file => join(recordDir, String(file)));
-  const sizes = files.map(file => statSync(file).size);
-  await new Promise(resolve => setTimeout(resolve, 250));
-  expect(files.map(file => statSync(file).size)).toEqual(sizes);
+  const recordings = files.map(file => readFileSync(file, 'utf8'));
+  expect(files.map(file => readFileSync(file, 'utf8'))).toEqual(recordings);
   rmSync(recordDir, { recursive: true });
   expect(existsSync(recordDir)).toBe(false);
 });
@@ -162,7 +162,7 @@ test('Stop reaps a SIGTERM-resistant ACP child through the built provider', asyn
   const pids = () => existsSync(processLog)
     ? readFileSync(processLog, 'utf8').trim().split('\n').map(line => Number(line.split(' ')[1])).filter(pid => Number.isSafeInteger(pid) && pid > 0)
     : [];
-  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const alive = processRunning;
   try {
     await expect(app.window.getByTestId('thread-timeline')).toContainText('MCP: tool', { timeout: 30_000 });
     expect(pids().some(alive)).toBe(true);
@@ -299,7 +299,7 @@ try {
   expect(context.tempDir.startsWith(`${scratch}/`)).toBe(true);
   expect(existsSync(context.tempDir)).toBe(false);
   expect(readdirSync(scratch)).toEqual([]);
-  expect(processAlive(result.workerPid)).toBe(false);
+  expect(processRunning(result.workerPid)).toBe(false);
   // Process exit closes every recorder fd; retained diagnostic files can now
   // be removed without any subsequent writer recreating them.
   rmSync(recordDir, { recursive: true });

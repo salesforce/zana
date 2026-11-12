@@ -1,9 +1,12 @@
 import { expect, type Page } from '@playwright/test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { type AppHandle } from '../fixtures/app.js';
 import { makeJobTeamCoordinatorBinary, type FakeAgentBinary, type JobTeamScenario } from './harness.js';
+import type { SquadLaunchNowResult, SquadProposalResult } from '@zana-ai/zcc-domain/squad-proposal';
+import type { ExecutionRecord } from '../../apps/server/src/services/execution/store.js';
 
 /**
  * Shared setup/launch/teardown for the deterministic Job Team CLI-owner E2E specs
@@ -32,13 +35,13 @@ export interface JobTeamContext {
  * project dir, and wire renderer/main diagnostics capture. Call {@link launchJobTeamCliOwner}
  * next, and {@link teardownJobTeam} in the spec's `finally`.
  */
-export function createJobTeamContext(app: AppHandle, opts: { tmpPrefix: string; scenario?: JobTeamScenario }): JobTeamContext {
+export function createJobTeamContext(app: AppHandle, opts: { tmpPrefix: string; scenario?: JobTeamScenario; root?: string }): JobTeamContext {
   const { window } = app;
   const diagnostics: string[] = [];
   window.on('console', (message) => diagnostics.push(`[renderer:${message.type()}] ${message.text()}`));
   app.electron.process()?.stderr?.on('data', (chunk) => diagnostics.push(`[main] ${String(chunk)}`));
   const agent = makeJobTeamCoordinatorBinary(opts.scenario ? { scenario: opts.scenario } : {});
-  const projectDir = mkdtempSync(join(tmpdir(), opts.tmpPrefix));
+  const projectDir = mkdtempSync(join(opts.root ?? tmpdir(), opts.tmpPrefix));
   const projectName = basename(projectDir);
   return {
     app,
@@ -153,6 +156,82 @@ export async function findJobExecutionId(window: Page, projectId: string, jobTit
 /** Read the fake coordinator's log (or a placeholder if it never wrote). */
 export function readCoordinatorLog(ctx: JobTeamContext): string {
   return existsSync(ctx.logPath) ? readFileSync(ctx.logPath, 'utf8') : 'no fake coordinator log';
+}
+
+export function coordinatorResult<T>(ctx: JobTeamContext, label: string): { ok: boolean; value?: T; error?: string } | null {
+  const line = readCoordinatorLog(ctx).split('\n').find((row) => row.includes(` ${label} {`));
+  return line ? JSON.parse(line.slice(line.indexOf(`${label} `) + label.length + 1)) : null;
+}
+
+export async function waitForCoordinatorResult<T>(ctx: JobTeamContext, label: string, timeout = 60_000): Promise<T> {
+  await expect.poll(() => coordinatorResult(ctx, label), { timeout, intervals: [500] }).not.toBeNull();
+  const result = coordinatorResult<T>(ctx, label)!;
+  expect(result.ok, `${result.error ?? ''}\n${readCoordinatorLog(ctx)}`).toBe(true);
+  expect(result.value).toBeDefined();
+  return result.value!;
+}
+
+export const squadInitial = (ctx: JobTeamContext, label: string) => waitForCoordinatorResult<ExecutionRecord>(ctx, `initial[${label}]`);
+export const squadTerminal = (ctx: JobTeamContext, label: string) => waitForCoordinatorResult<ExecutionRecord>(ctx, `terminal[${label}]`, 180_000);
+
+export function initSquadRepo(ctx: JobTeamContext): (...args: string[]) => string {
+  const git = (...args: string[]) => execFileSync('git', args, {
+    cwd: ctx.projectDir, encoding: 'utf8', env: { ...process.env, HOME: ctx.app.home, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+  }).trim();
+  git('init', '-b', 'main');
+  git('config', 'user.name', 'Squad Launch E2E');
+  git('config', 'user.email', 'squad-launch@example.test');
+  git('config', 'commit.gpgsign', 'false');
+  git('config', 'core.hooksPath', '.git/hooks');
+  writeFileSync(join(ctx.projectDir, 'README.md'), 'Squad launch fixture\n');
+  writeFileSync(join(ctx.projectDir, '.gitignore'), '.fake-coordinator.log\n.e2e-*\n.zcc/\n.zana/\n.worktrees/\n');
+  git('add', 'README.md', '.gitignore');
+  git('commit', '-m', 'Fixture setup');
+  return git;
+}
+
+export const SQUAD_WRITE_PLAN = [
+  '# E2E provided plan', '',
+  '### write: Write output <!-- executable-step -->',
+  '- Work: Create output.txt.',
+  '- Write scope: `output.txt`',
+  '- Verification: Read output.txt.', ''
+].join('\n');
+
+export interface SquadFixtureProposal { label: string; input: Record<string, unknown>; waitFor?: string }
+
+export async function launchSquadFixture(ctx: JobTeamContext, entries: SquadFixtureProposal[], options: {
+  plan?: string; teamExtra?: Record<string, unknown>; workerQuantity?: number;
+} = {}): Promise<string> {
+  writeFileSync(join(ctx.projectDir, '.e2e-plan.md'), options.plan ?? SQUAD_WRITE_PLAN);
+  writeFileSync(join(ctx.projectDir, '.e2e-proposal.json'), JSON.stringify({
+    planPath: '.e2e-plan.md', observeExecutions: true,
+    proposals: entries.map((entry) => {
+      const { launchOptions, ...input } = entry.input;
+      return { tool: 'squad_launch', ...entry,
+        input: { teamId: 'e2e-job-team', goal: 'Execute provided fixture plan.', planning: 'provided', sources: ['.e2e-plan.md'],
+          ...(launchOptions as Record<string, unknown> | undefined), ...input } };
+    })
+  }));
+  return launchJobTeamCliOwner(ctx, {
+    workerQuantity: options.workerQuantity ?? 1, prompt: 'E2E launch Squad',
+    orchestratorExtra: { deniedTools: ['Write', 'Edit'] },
+    teamExtra: { defaultPlanning: 'provided', ...options.teamExtra }
+  });
+}
+
+export const squadNowReceipt = (ctx: JobTeamContext, label: string) => waitForCoordinatorResult<SquadLaunchNowResult>(ctx, `propose[${label}]`);
+export const squadReviewReceipt = (ctx: JobTeamContext, label: string) => waitForCoordinatorResult<SquadProposalResult>(ctx, `propose[${label}]`);
+
+export async function openSquadReview(ctx: JobTeamContext, title: string) {
+  const { window } = ctx;
+  const ownerModal = window.getByRole('dialog', { name: /^Agent / }).first();
+  if (await ownerModal.count()) await ownerModal.getByRole('button', { name: 'Close' }).click();
+  await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  const row = window.locator('.inbox-row').filter({ hasText: `Squad launch ready: ${title}` }).first();
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row.click();
+  return window.locator('.inbox-detail');
 }
 
 /** Wrap a spec failure with the coordinator log + captured diagnostics (the common outer catch). */

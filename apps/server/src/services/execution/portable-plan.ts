@@ -1,5 +1,6 @@
 import type { ExecutionWorkUnitInput, WorkUnitLoopV1 } from './store.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, LOOP_RANGE_TEXT } from './loop-constants.js';
+import { RETRY_CEILING } from './retry-feedback.js';
 
 /**
  * Deterministic parser for the portable-executable Markdown plan format so a
@@ -31,17 +32,36 @@ export interface PortablePlanIdRename {
   to: string;
 }
 
+export interface LaunchDeclarations {
+  worktree?: boolean;
+  onComplete?: 'leave' | 'merge' | 'delete';
+  push?: boolean;
+  failurePolicyDefault?: 'fail-run';
+  checks?: readonly string[];
+}
+
+export type PortablePlanFailurePolicy =
+  | { kind: 'fail-run' }
+  | { kind: 'retry'; stepId: string; maxRetries: number; maxIterations?: number; noProgressLimit?: number };
+
+export interface PortablePlanWorkUnitInput extends ExecutionWorkUnitInput {
+  onFailure?: PortablePlanFailurePolicy;
+  checks?: readonly string[];
+}
+
+export type LaunchSectionParse = { ok: true; launch: LaunchDeclarations } | { ok: false; reason: string };
+
 /**
  * `normalizations` describes every repair (for logs and correction prose);
  * `idRenames` is the structured subset agents need to address units by their
  * registered ids. Both are omitted when empty.
  */
 export type PortablePlanParse =
-  | { ok: true; units: ExecutionWorkUnitInput[]; normalizations?: string[]; idRenames?: PortablePlanIdRename[] }
+  | { ok: true; units: PortablePlanWorkUnitInput[]; launch?: LaunchDeclarations; normalizations?: string[]; idRenames?: PortablePlanIdRename[] }
   | { ok: false; reason: string };
 
 type StepParse =
-  | { ok: true; unit: ExecutionWorkUnitInput; rawId: string; normalizations: string[] }
+  | { ok: true; unit: PortablePlanWorkUnitInput; rawId: string; normalizations: string[] }
   | { ok: false; reason: string };
 
 const STEP_MARKER = /<!--\s*executable-step\s*-->/i;
@@ -195,7 +215,8 @@ function parseRequires(
 
 const KNOWN_LABELS = [
   'depends on', 'execution class', 'required role', 'mode', 'read scope', 'write scope', 'excludes', 'work',
-  'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires', 'loop'
+  'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires',
+  'on failure', 'maxiterations', 'noprogresslimit', 'loop'
 ] as const;
 
 /** `<unit-id> until PASS, max <N>` (N in LOOP_MIN_ROUNDS..LOOP_MAX_ROUNDS); a trailing sentence period is tolerated like other label values. */
@@ -266,15 +287,15 @@ interface StepLabel {
  * as "missing Work", collapsing the whole plan to the coordinator-derive path).
  * Label detection is frozen inside fenced code (mixed-delimiter safe).
  */
-function parseStepLabels(body: string[]): Map<string, StepLabel> {
-  const labels = new Map<string, StepLabel>();
+function parseStepLabels(body: string[]): Array<[string, StepLabel]> {
+  const labels: Array<[string, StepLabel]> = [];
   const fence = new FenceTracker();
   let current: string | null = null;
   let currentAtLabelIndent = true;
   let buffer: string[] = [];
   let labelIndent = Number.POSITIVE_INFINITY;
   const flush = (): void => {
-    if (current !== null) labels.set(current, { value: buffer.join('\n').trim(), atLabelIndent: currentAtLabelIndent });
+    if (current !== null) labels.push([current, { value: buffer.join('\n').trim(), atLabelIndent: currentAtLabelIndent }]);
     current = null;
     buffer = [];
   };
@@ -304,7 +325,7 @@ function parseStepLabels(body: string[]): Map<string, StepLabel> {
  * enclosing label's value, so folding it would silently truncate that value.
  */
 function canonicalizeLabels(
-  rawLabels: Map<string, StepLabel>,
+  rawLabels: Array<[string, StepLabel]>,
   id: string,
   normalizations: string[]
 ): { ok: true; labels: Map<string, string> } | { ok: false; reason: string } {
@@ -331,6 +352,99 @@ function canonicalizeLabels(
 }
 
 type Failure = { ok: false; reason: string };
+
+function parseCheckReferences(value: string, subject: string): { ok: true; checks: string[] } | Failure {
+  const items = value.split(',').map((item) => item.trim());
+  if (!items.every((item) => /^check:[A-Za-z_][A-Za-z0-9_-]*$/.test(item))) {
+    return { ok: false, reason: `${subject} requires comma-separated check:<name> references, not free text or commands` };
+  }
+  const checks = items.map((item) => item.slice('check:'.length));
+  if (new Set(checks).size !== checks.length) return { ok: false, reason: `${subject} has duplicate check:<name> references` };
+  return { ok: true, checks };
+}
+
+export function parseLaunchSection(text: string): LaunchSectionParse {
+  const launch: LaunchDeclarations = {};
+  const fence = new FenceTracker();
+  const seen = new Set<string>();
+  let active = false;
+  let found = false;
+  for (const raw of text.split(/\r?\n/)) {
+    if (active && FENCE.test(raw)) return { ok: false, reason: 'Launch declarations must be fields, not fenced code' };
+    if (fence.step(raw)) continue;
+    const heading = /^\s*(#{1,3})\s+(.*?)\s*$/.exec(raw);
+    if (heading) {
+      active = heading[1] === '##' && stripInlineComment(heading[2]).toLowerCase() === 'launch';
+      if (active && found) return { ok: false, reason: 'duplicate Launch section' };
+      if (active) found = true;
+      continue;
+    }
+    if (!active || !raw.trim()) continue;
+    const label = BULLET_LABEL.exec(raw) ?? PLAIN_BULLET_LABEL.exec(raw) ?? BARE_LABEL.exec(raw);
+    if (!label) return { ok: false, reason: `malformed Launch declaration: ${raw.trim()}` };
+    const key = label[1].trim().toLowerCase();
+    const value = label[2].trim();
+    const field = key === 'capabilities' ? 'push' : key === 'check' ? 'checks' : key;
+    if (seen.has(field)) return { ok: false, reason: `duplicate Launch declaration "${field}"` };
+    seen.add(field);
+    switch (key) {
+      case 'worktree':
+      case 'push':
+        if (value !== 'true' && value !== 'false') return { ok: false, reason: `Launch ${key} must be true or false` };
+        launch[key] = value === 'true';
+        break;
+      case 'oncomplete':
+        if (value !== 'leave' && value !== 'merge' && value !== 'delete') return { ok: false, reason: 'Launch onComplete must be leave, merge, or delete' };
+        launch.onComplete = value;
+        break;
+      case 'failurepolicydefault':
+        if (value !== 'fail-run') return { ok: false, reason: 'Launch failurePolicyDefault must be fail-run' };
+        launch.failurePolicyDefault = value;
+        break;
+      case 'capabilities':
+        if (value !== 'push') return { ok: false, reason: 'Launch Capabilities admits only push' };
+        launch.push = true;
+        break;
+      case 'check':
+      case 'checks': {
+        const parsed = parseCheckReferences(value, 'Launch checks');
+        if (!parsed.ok) return parsed;
+        launch.checks = parsed.checks;
+        break;
+      }
+      default: return { ok: false, reason: `unknown Launch declaration "${key}"` };
+    }
+  }
+  return { ok: true, launch };
+}
+
+function positiveInteger(value: string): number | undefined {
+  const number = Number(value);
+  return /^\d+$/.test(value) && Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+function parseFailurePolicy(labels: Map<string, string>, id: string): { ok: true; onFailure?: PortablePlanFailurePolicy } | Failure {
+  const value = labels.get('on failure');
+  const limits: { maxIterations?: number; noProgressLimit?: number } = {};
+  for (const key of ['maxIterations', 'noProgressLimit'] as const) {
+    const raw = labels.get(key.toLowerCase());
+    if (raw === undefined) continue;
+    const number = positiveInteger(raw);
+    if (number === undefined) return { ok: false, reason: `step ${id} ${key} must be a positive safe integer` };
+    limits[key] = number;
+  }
+  if (value === undefined || value === 'fail run') {
+    if (Object.keys(limits).length) return { ok: false, reason: `step ${id} retry limits require On failure: retry <step> up to N with feedback` };
+    return { ok: true, ...(value === undefined ? {} : { onFailure: { kind: 'fail-run' } }) };
+  }
+  const match = /^retry (.+?) up to (\d+) with feedback$/.exec(value);
+  const stepId = match ? normalizeStepId(stripBackticks(match[1])) : '';
+  const maxRetries = match ? positiveInteger(match[2]) : undefined;
+  if (!STEP_ID.test(stepId) || maxRetries === undefined || maxRetries > RETRY_CEILING) {
+    return { ok: false, reason: `step ${id} On failure must be "fail run" or "retry <step> up to N with feedback" with a positive safe integer cap of at most ${RETRY_CEILING}` };
+  }
+  return { ok: true, onFailure: { kind: 'retry', stepId, maxRetries, ...limits } };
+}
 
 /** `id: title` from a step heading, with the id normalized (a rename is noted). */
 function parseStepHeading(
@@ -392,10 +506,22 @@ function parseStep(block: PlanStepBlock): StepParse {
   if (!executionClass.ok) return executionClass;
   const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
   if (!parsedRequires.ok) return parsedRequires;
+  const failure = parseFailurePolicy(labels, id);
+  if (!failure.ok) return failure;
+  if (labels.has('stop conditions')) {
+    return { ok: false, reason: `step ${id} Stop conditions is not executable; use On failure: fail run or retry <step> up to N with feedback, with maxIterations/noProgressLimit caps` };
+  }
+  const completion = labels.get('completion criteria');
+  const parsedChecks = completion === undefined ? undefined : parseCheckReferences(completion, `step ${id} Completion criteria`);
+  if (parsedChecks && !parsedChecks.ok) return parsedChecks;
   const parsedLoop = parseLoopLabel(labels.get('loop'), id);
   if (!parsedLoop.ok) return parsedLoop;
-  const unit = buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires);
-  return { ok: true, rawId, normalizations, unit: parsedLoop.loop ? { ...unit, loop: parsedLoop.loop } : unit };
+  return { ok: true, rawId, normalizations, unit: {
+    ...buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires),
+    ...(failure.onFailure ? { onFailure: failure.onFailure } : {}),
+    ...(parsedChecks?.ok ? { checks: parsedChecks.checks } : {}),
+    ...(parsedLoop.loop ? { loop: parsedLoop.loop } : {})
+  } };
 }
 
 /** Parse a `Loop:` label value (`<unit-id> until PASS, max <N>`); an absent label gives no loop (#583). */
@@ -436,6 +562,8 @@ function buildWorkUnit(
 
 export function parsePortablePlan(text: string): PortablePlanParse {
   if (typeof text !== 'string' || !text.trim()) return { ok: false, reason: 'empty plan text' };
+  const parsedLaunch = parseLaunchSection(text);
+  if (!parsedLaunch.ok) return parsedLaunch;
   const lines = text.split(/\r?\n/);
 
   // Collect (headingLine, bodyLines) blocks for every executable-step H3.
@@ -464,7 +592,7 @@ export function parsePortablePlan(text: string): PortablePlanParse {
   }
   if (!blocks.length) return { ok: false, reason: 'no executable steps found' };
 
-  const units: ExecutionWorkUnitInput[] = [];
+  const units: PortablePlanWorkUnitInput[] = [];
   const normalizations: string[] = [];
   const idRenames: PortablePlanIdRename[] = [];
   const rawIdById = new Map<string, string>();
@@ -484,9 +612,16 @@ export function parsePortablePlan(text: string): PortablePlanParse {
     if (parsed.rawId !== id) idRenames.push({ from: parsed.rawId, to: id });
   }
 
+  for (const unit of units) {
+    if (unit.onFailure?.kind === 'retry' && !rawIdById.has(unit.onFailure.stepId)) {
+      return { ok: false, reason: `step ${unit.id} On failure references unknown step "${unit.onFailure.stepId}"` };
+    }
+  }
+
   return {
     ok: true,
     units,
+    ...(Object.keys(parsedLaunch.launch).length ? { launch: parsedLaunch.launch } : {}),
     ...(normalizations.length ? { normalizations } : {}),
     ...(idRenames.length ? { idRenames } : {})
   };

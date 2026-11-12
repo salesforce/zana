@@ -26,6 +26,8 @@ import type { TranscriptRef } from '../followups/idle-triage.js';
 import type { IInboxStore } from '../inbox/inbox-store.js';
 import { deleteGoal, globalDir, listAllGoals, projectDir, saveGoal } from './goal-store.js';
 import type { store as Store } from '../projects/store.js';
+import { buildFeedbackPrompt, capIterations } from '../execution/retry-feedback.js';
+import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
 
 /**
  * Global ceiling on concurrently-running goal-worker sessions across ALL goals.
@@ -127,7 +129,7 @@ export function buildIterationPrompt(goal: Goal, lastFeedback?: GoalIteration): 
   if (lastFeedback?.rationale) {
     const prog = lastFeedback.verdict ? `verdict: ${lastFeedback.verdict}. ` : '';
     lines.push(
-      `A previous attempt fell short — ${prog}${lastFeedback.rationale}\n` +
+      buildFeedbackPrompt({ kind: 'prose', body: `${prog}${lastFeedback.rationale}` }, 'A previous attempt fell short —').replace('—\n', '— ') + '\n' +
         'Build on what exists; focus on the unmet criteria.'
     );
   }
@@ -298,7 +300,10 @@ export class GoalManager extends EventEmitter {
     this.live.clear(); this.startMsBySession.clear(); this.launchedSessions.clear();
     for (const timer of this.squadPollTimers.values()) clearTimeout(timer);
     this.squadPollTimers.clear();
-    for (const goal of goals) this.live.set(goal.id, this.makeLive(goal));
+    for (const goal of goals) {
+      if (goal.launchOptionsError) this.log(`load ${goal.id}`, goal.launchOptionsError);
+      this.live.set(goal.id, this.makeLive(goal));
+    }
     for (const goal of goals) {
       const live = this.live.get(goal.id)!;
       if (live.goal.terminalStatus || (live.goal.terminalMessage && !live.goal.terminalNotificationDelivered)) {
@@ -330,6 +335,8 @@ export class GoalManager extends EventEmitter {
     if (!input.projectId) throw new Error('projectId is required');
     if (!input.statement?.trim()) throw new Error('statement is required');
     if (input.assignment?.kind === 'team' && !input.assignment.teamId?.trim()) throw new Error('teamId is required for team goals');
+    if (input.launchOptions !== undefined && input.assignment?.kind !== 'team') throw new Error('launchOptions are only supported for team goals');
+    const launchOptions = input.launchOptions === undefined ? undefined : launchOptionsSchema.parse(input.launchOptions);
     const now = new Date().toISOString();
     const goal: Goal = {
       id: randomUUID(),
@@ -340,13 +347,11 @@ export class GoalManager extends EventEmitter {
         .map((s) => s.trim())
         .filter(Boolean),
       ...(input.planSource ? { planSource: input.planSource } : {}),
+      ...(launchOptions ? { launchOptions } : {}),
       driver: input.driver ?? 'native',
       assignment: input.assignment ?? { kind: 'profile', profile: 'claude-yolo' },
       cadence: input.cadence ?? { mode: 'continuous' },
-      maxIterations:
-        typeof input.maxIterations === 'number' && input.maxIterations > 0
-          ? Math.min(100, Math.round(input.maxIterations))
-          : 10,
+      maxIterations: capIterations(input.maxIterations),
       iteration: 0,
       noProgressLimit:
         typeof input.noProgressLimit === 'number' && input.noProgressLimit > 0
@@ -396,9 +401,20 @@ export class GoalManager extends EventEmitter {
       }
       next.assignment = patch.assignment;
     }
+    const assignment = patch.assignment ?? next.assignment;
+    if (patch.launchOptions !== undefined) {
+      if (assignment.kind !== 'team') throw new Error('launchOptions are only supported for team goals');
+      next.launchOptions = launchOptionsSchema.parse(patch.launchOptions);
+      delete next.launchOptionsError;
+    } else if (next.launchOptionsError) {
+      throw new Error('Replace invalid saved Squad launch settings before editing this goal');
+    } else if (assignment.kind !== 'team') {
+      // Agent goals must never retain Squad launch policy after reassignment.
+      delete next.launchOptions;
+    }
     if (patch.cadence !== undefined) next.cadence = patch.cadence;
     if (patch.maxIterations !== undefined && patch.maxIterations > 0) {
-      next.maxIterations = Math.min(100, Math.round(patch.maxIterations));
+      next.maxIterations = capIterations(patch.maxIterations);
     }
     if (patch.noProgressLimit !== undefined && patch.noProgressLimit > 0) {
       next.noProgressLimit = Math.round(patch.noProgressLimit);
@@ -420,6 +436,7 @@ export class GoalManager extends EventEmitter {
   private async setStatusNow(id: string, status: GoalStatus): Promise<Goal | null> {
     const live = this.live.get(id);
     if (!live) return null;
+    if (status === 'active' && live.goal.launchOptionsError) throw new Error(live.goal.launchOptionsError);
     if (status === 'cancelled') {
       // Cancellation fences every terminal path. Evaluators may still finish and
       // record iteration evidence, but cannot resurrect a terminal intent.
@@ -481,6 +498,7 @@ export class GoalManager extends EventEmitter {
   private async runNowInternal(id: string): Promise<Goal> {
     const live = this.live.get(id);
     if (!live) throw new Error(`goal not found: ${id}`);
+    if (live.goal.launchOptionsError) throw new Error(live.goal.launchOptionsError);
     if (live.goal.terminalStatus) {
       if (live.goal.status !== 'active') await this.commit(live, { ...live.goal, status: 'active', updatedAt: new Date().toISOString() });
       await this.completeTerminalization(live);
@@ -833,7 +851,7 @@ export class GoalManager extends EventEmitter {
   /** Try to spawn the next iteration; if the cap is hit, retry shortly. */
   private async arm(id: string): Promise<void> {
     const live = this.live.get(id);
-    if (!live || live.goal.status !== 'active' || live.goal.terminalStatus || this.hasLiveSessionFor(id) || this.evaluating.has(id)) return;
+    if (!live || live.goal.status !== 'active' || live.goal.terminalStatus || live.goal.launchOptionsError || this.hasLiveSessionFor(id) || this.evaluating.has(id)) return;
     if (live.goal.history.iterations.some(it => it.launchState === 'pending') || this.missingSquad(live)) return;
     this.clearRetry(live);
     if (live.goal.iteration >= live.goal.maxIterations) {

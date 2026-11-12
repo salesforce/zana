@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { ProjectSettingsPatchSchema, type ProjectSettingsPatch } from '@zana-ai/zcc-contracts/project-settings';
+import { NamedCheckScopeSchema, NamedChecksSchema, ProjectSettingsPatchSchema, type NamedCheck, type NamedCheckScope, type ProjectSettingsPatch } from '@zana-ai/zcc-contracts/project-settings';
 import type { PluginHarnessOverrideV1 } from '@zana-ai/zcc-domain/product';
 import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-store.js';
 // Per-project, plugin-keyed AI-harness overrides are nested in the project's own
@@ -11,6 +11,11 @@ import { PLUGIN_HARNESS_ROUTING_KEY, pluginHarnessRoutingOf } from './services/c
 
 type StoredProjectSettings = Record<string, unknown>;
 type SettingsByProject = Record<string, StoredProjectSettings>;
+const GLOBAL_CHECKS_ID = '$globalNamedChecks';
+
+function assertProjectId(id: string): void {
+  NamedCheckScopeSchema.parse({ kind: 'project', projectId: id });
+}
 
 const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode', 'afcode'] as const;
 const RETIRED_PROJECT_SETTINGS_KEYS = [
@@ -23,6 +28,9 @@ export interface ProjectSettingsStoreOptions {
 }
 
 export interface ProjectSettingsStore {
+  getNamedChecks(scope: NamedCheckScope): NamedCheck[];
+  /** Privileged internal persistence. Never expose through a generic settings patch or agent RPC. */
+  setNamedChecks(scope: NamedCheckScope, checks: NamedCheck[]): Promise<NamedCheck[]>;
   get(id: string): StoredProjectSettings;
   set(id: string, patch: ProjectSettingsPatch): Promise<StoredProjectSettings>;
   remove(id: string): Promise<void>;
@@ -165,16 +173,40 @@ export function createProjectSettingsStore({ projectSettingsFile }: ProjectSetti
   };
 
   return {
+    getNamedChecks(scope) {
+      const parsed = NamedCheckScopeSchema.parse(scope);
+      const id = parsed.kind === 'global' ? GLOBAL_CHECKS_ID : parsed.projectId;
+      return NamedChecksSchema.parse(readSnapshot(projectSettingsFile).all[id]?.namedChecks ?? []);
+    },
+    setNamedChecks(scope, checks) {
+      return queue.run(async () => {
+        const parsed = NamedCheckScopeSchema.parse(scope);
+        const value = NamedChecksSchema.parse(checks);
+        const id = parsed.kind === 'global' ? GLOBAL_CHECKS_ID : parsed.projectId;
+        const { all, hash } = readSnapshot(projectSettingsFile);
+        const entry = isRecord(all[id]) ? { ...all[id] } : {};
+        if (value.length) entry.namedChecks = value;
+        else delete entry.namedChecks;
+        if (Object.keys(entry).length) all[id] = entry;
+        else delete all[id];
+        write(all, hash);
+        return value;
+      });
+    },
     get(id) {
+      assertProjectId(id);
       const settings = { ...readSnapshot(projectSettingsFile).all[id] };
       delete settings[PLUGIN_HARNESS_ROUTING_KEY];
+      delete settings.namedChecks;
       return compatibility(settings);
     },
     getPluginHarnessRouting(id, pluginId) {
+      assertProjectId(id);
       return pluginHarnessRoutingOf(readSnapshot(projectSettingsFile).all[id])[pluginId] ?? null;
     },
     setPluginHarnessRouting(id, pluginId, value) {
       return queue.run(async () => {
+        assertProjectId(id);
         const { all, hash } = readSnapshot(projectSettingsFile);
         const entry = isRecord(all[id]) ? { ...all[id] } : {};
         const map = pluginHarnessRoutingOf(entry);
@@ -189,17 +221,22 @@ export function createProjectSettingsStore({ projectSettingsFile }: ProjectSetti
     },
     set(id, patch) {
       return queue.run(async () => {
+        assertProjectId(id);
         const parsed = ProjectSettingsPatchSchema.parse(patch);
         const { all, hash } = readSnapshot(projectSettingsFile);
         const current = compatibility(all[id] ?? {});
         const next = normalize({ ...current, ...parsed });
         all[id] = canonicalForWrite(next);
         write(all, hash);
-        return next;
+        const presented = { ...next };
+        delete presented.namedChecks;
+        delete presented[PLUGIN_HARNESS_ROUTING_KEY];
+        return presented;
       });
     },
     remove(id) {
       return queue.run(async () => {
+        assertProjectId(id);
         const { all, hash } = readSnapshot(projectSettingsFile);
         if (!(id in all)) return;
         delete all[id];

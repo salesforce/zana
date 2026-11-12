@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { launchOptionsSchema, type LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
 import { validateSquadExecutionTarget, type Project, type SquadExecutionTargetSelector, type TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
 import { AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import type { ExpandedTeamSlot } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
@@ -7,6 +8,7 @@ import { ExecutionSourceError, type createExecutionSourceRegistry, type Executio
 import { resolveSourcePolicy, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { ExecutionRecord, ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
 import { squadGoalTooLongMessage, squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
+import type { SquadLaunchPreview } from '@zana-ai/zcc-domain/squad-proposal';
 import type { LaunchItemMapping } from './squad-proposals/sources.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { gateInvalidProvidedPlan, splitProposedGoalSources, teamJobFailureResponse, type ProvidedPlanGateDeps } from './team-launch-support.js';
@@ -52,6 +54,7 @@ export type SnapshotSquadSources = (
 ) => Promise<SquadSourceSnapshotResult>;
 
 export interface SquadLaunchDeps {
+  validateLaunchPreview?(projectId: string, request: ExecutionRequestV1, preview: SquadLaunchPreview): Promise<void>;
   snapshotSources: SnapshotSquadSources;
   removeSnapshot(contentRef: string): Promise<void>;
   realpath(path: string): Promise<string>;
@@ -68,8 +71,10 @@ export interface SquadLaunchDeps {
 
 /** A launch whose team, Project, and slots main has already looked up and authorized. */
 export interface SquadLaunchInput {
+  launchOptions?: LaunchOptions;
+  launchPreview?: SquadLaunchPreview;
   teamId: string;
-  project: Pick<Project, 'id' | 'name' | 'path'>;
+  project: Pick<Project, 'id' | 'name' | 'path'> & { remote?: unknown };
   slots: readonly Pick<ExpandedTeamSlot, 'role'>[];
   goal: string;
   coordinationMode: 'structured' | 'freeform';
@@ -189,7 +194,9 @@ export async function launchSquad(
   const { project } = input;
   const { owner } = ctx;
   // Never fall back to a generated worktree when a selector is present but unusable.
-  const targetCheck = validateSquadExecutionTarget({ target: input.target });
+  const options = launchOptionsSchema.safeParse({ ...input.launchOptions, ...(input.target ? { target: input.target } : {}) });
+  if (!options.success) return { ok: false, code: 'INVALID', message: 'Invalid launch options' };
+  const targetCheck = validateSquadExecutionTarget(options.data);
   if (!targetCheck.ok) return { ok: false, code: 'INVALID', message: targetCheck.message };
   // A proposed or agent-started launch attaches goal-named files outside the Project only when
   // they were listed: on the reviewed card, or in the agent's own sources.
@@ -198,7 +205,7 @@ export async function launchSquad(
   let goalSourceDescriptors = input.goalSources;
   let redactedGoalSources = input.goalSources;
   if (owner.proposal || sessionLaunch) {
-    const projectReal = await deps.realpath(project.path).catch(() => undefined);
+    const projectReal = project.remote ? undefined : await deps.realpath(project.path).catch(() => undefined);
     const split = splitProposedGoalSources(input.goalSources, projectReal, owner.proposal ? input.reviewedSourcePaths ?? [] : sourcePaths);
     if (split.refused) {
       return {
@@ -218,7 +225,7 @@ export async function launchSquad(
   const snapshot = await deps.snapshotSources(ctx.sources, {
     projectId: project.id, launchRequestId, sourceCapabilityIds: input.sourceCapabilityIds, sourcePaths, goalSourceDescriptors,
     // Re-checked against the realpath issue() takes, so a symlink swapped in after discovery can't escape.
-    policy: await resolveSourcePolicy(deps.realpath, { projectRoot: project.path, ...deps.sourceBases() }),
+    policy: await resolveSourcePolicy(deps.realpath, { ...(project.remote ? {} : { projectRoot: project.path }), ...deps.sourceBases() }),
     ...(input.attachments?.length ? { attachments: input.attachments } : {})
   });
   if (!snapshot.ok) return snapshot;
@@ -231,9 +238,15 @@ export async function launchSquad(
       coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
       goal: input.goal, title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
       sourceBundle, goalSourceDescriptors: redactedGoalSources,
+      launchOptions: options.data,
       ...(targetCheck.target ? { target: targetCheck.target } : {})
     });
     if (!built.ok) return built.response;
+    if (input.launchPreview) {
+      if (!deps.validateLaunchPreview) return { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview validation unavailable' };
+      try { await deps.validateLaunchPreview(project.id, built.request, input.launchPreview); }
+      catch (error) { return { ok: false, code: 'LAUNCH_CHANGED', message: error instanceof Error ? error.message : 'Launch changed' }; }
+    }
     const result = owner.proposal || owner.reportTo
       ? await deps.squadExecutionService.start(owner.principalId, project.id, built.request, {
         ...(owner.proposal ? { proposal: owner.proposal } : {}),
@@ -290,6 +303,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
   sourceBundle?: SquadSourceBundle;
   goalSourceDescriptors: ExecutionSourcePathDescriptor[];
   target?: SquadExecutionTargetSelector;
+  launchOptions?: LaunchOptions;
 }): Promise<{ ok: true; request: ExecutionRequestV1 } | { ok: false; response: TeamJobLaunchResponse }> {
   const { sourceBundle, launchRequestId } = args;
   const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...args.goalSourceDescriptors];
@@ -350,6 +364,8 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
       summary: sanitizedSummary,
       completionInboxNotice: args.completionInboxNotice,
       slots: initialTask,
+      ...Object.fromEntries(Object.entries(args.launchOptions ?? {}).filter(([, value]) => value !== undefined)),
+      ...(resolvedPlan.launch ? { planLaunch: resolvedPlan.launch } : {}),
       ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
       ...(args.target ? { target: args.target } : {}),
       ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),

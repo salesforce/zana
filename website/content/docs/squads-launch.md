@@ -55,11 +55,11 @@ Launching from the composer never waits for approval. The Launch approval settin
 
 An agent in a conversation can prepare a Squad launch for you. It uses `squad_propose`, or `squad_launch` with a mode.
 
-**Review (the default).** An Inbox card titled "Squad launch ready:" followed by the Squad title appears. It says: "Review opens the Squad composer filled in. Nothing starts until you press Launch." The buttons are **Review Squad launch** and **Dismiss**.
+**Review (the default).** An Inbox card titled "Squad launch ready:" followed by the Squad title appears. It includes the effective launch settings and execution location. Existing worktrees show effective branch and path as user-owned; a new worktree shows its base branch and effective isolation source, not a path that does not exist yet. The buttons are **Review Squad launch** and **Dismiss**.
 
 **Review Squad launch** opens the Squad composer already filled in. A note reads "Prepared by" followed by the conversation title. It shows "Plan checked: N steps" when the plan was checked. It also says: "Files are captured when you press Launch, so later edits are not included. When the Squad finishes or needs you, it reports back to that conversation." You press **Launch squad** to start it.
 
-**Run now.** `squad_launch` with mode `now` starts the Squad at once, with no Inbox card. The calling conversation becomes the owner, answers the Squad's questions and gets its reports. An agent should use it only when you ask to run now.
+**Run now.** `squad_launch` with mode `now` starts the Squad at once, with no extra Inbox card. Its receipt shows effective settings and actual execution location. The calling conversation becomes the owner, answers the Squad's questions and gets its reports. An agent should use it only when you ask to run now.
 
 Limits for agent launches:
 
@@ -74,7 +74,7 @@ Launch approval decides whether an agent may start a Squad without you.
 - **Project setting.** Settings, Project, **Squad launch approval**, field **Launch approval**. Choices: **Agents can launch directly** or **Review before launch**.
 - **Squad setting.** In the Squad editor, **Launch approval**. Choices: **Use the Project setting**, **Agents can launch directly if the Project allows**, or **Review before launch**.
 
-Review wins. If the Squad or its Project says **Review before launch**, an agent cannot use mode `now`. It gets `LAUNCH_REVIEW_REQUIRED` and must propose the launch for you to approve.
+Review wins. If the Squad or its Project says **Review before launch**, an agent cannot use mode `now`, even with an explicit target. It gets `LAUNCH_REVIEW_REQUIRED` and must propose the launch for you to approve.
 
 Launching from the composer, schedules and triggers is not affected.
 
@@ -86,11 +86,15 @@ Goals are off by default. Turn them on in **Settings → Experimental → Goals*
 
 1. Open the Goals tab in a Project, then press **New goal**.
 2. Set **Run as** to **Squad**.
-3. Choose the **Squad**, the **Project**, and **Squad planning**.
+3. Choose the **Squad**, the **Project**, and **Squad planning**. The full **Launch preview** opens automatically, showing the location and every effective launch setting with its source.
 4. Write the **Plan or prompt**. With **Plan provided in goal**, this is where the plan goes.
 5. Set **Max iterations** and the no-progress limit.
 
-Each iteration runs as a durable squad job.
+Each iteration runs as a durable squad job. Launch overrides are saved with the Goal and apply to every iteration. Changing **Run as** back to **Agent** clears Squad launch overrides.
+
+If a saved Squad launch configuration becomes invalid, its Goal remains visible
+and paused with a repair message. **Resume** and **Run now** stay unavailable
+until you edit the Goal and replace its launch settings.
 
 ## Schedules
 
@@ -98,11 +102,15 @@ A schedule can also run a Squad.
 
 1. Open the schedule form.
 2. Set **Run as** to **Squad**.
-3. Choose the **Squad**, the **Project**, and **Squad planning**.
+3. Choose the **Squad**, the **Project**, and **Squad planning**. The full **Launch preview** opens automatically, showing the location and every effective launch setting with its source.
 4. Write the prompt text.
 5. Set the cadence, **Missed runs**, **Auto-retry** and Inbox notifications.
 
-The form says: "Runs this schedule as a durable squad job." Schedules skip Launch approval. The plan comes from the prompt text only.
+The form says: "Runs this schedule as a durable squad job." Schedules skip Launch approval. The plan comes from the prompt text only. **Run now** first opens **Review scheduled squad launch**, which shows the location and every effective setting with its source before **Launch schedule** is enabled.
+
+For a Squad schedule, **Customize launch** saves schedule-specific overrides.
+Scheduler options do not bypass normal
+target validation or worktree ownership rules.
 
 ## From the CLI
 
@@ -110,7 +118,7 @@ The CLI command is `team`. Zana must be running.
 
 ```bash
 zcc team ls
-zcc team launch --team <id> --project <id> --goal "ship it" [--mode freeform|structured] [--wait]
+zcc team launch --team <id> --project <id|path> --goal "ship it" [--mode freeform|structured] [--worktree true|false] [--on-complete leave|merge|delete] [--push] [--check <name>]... [--target project-root|worktree:<branch>] [--title <text>] [--summary <text>] [--wait] [--timeout 5m]
 zcc team status <executionId>
 zcc team wait <id> [--timeout 5m]
 zcc team answer <id> --text "yes" [--blocker <blockerId>]
@@ -120,10 +128,16 @@ zcc team stop <id>
 Notes:
 
 - `--goal` takes text, or `@file` to read the goal from a file.
+- A path passed to `--project` is registered only after trusted main-process
+  confinement: realpath under your home or configured clone root. Existing
+  registration is idempotent. Invalid or unconfined paths fail.
 - `--mode structured` is **Plan provided in goal**. `--mode freeform` is **Infer plan from goal** and is the default.
 - A prose goal with `--mode structured` is refused with `INVALID_PLAN`.
-- You can also pass `--title` and `--summary`.
-- With `--wait`, the command waits for the run. `--timeout` defaults to `5m`.
+- Before launch, the CLI emits trusted effective settings and location to stderr.
+  Normal launch output and the exact streamed `--wait` result payload remain on
+  stdout.
+- `--wait` prints the terminal result payload, not only status. `--timeout`
+  defaults to `5m`.
 - The CLI has no flags for sources.
 - Launch, answer and stop are for the person at the machine, not for agents.
 
@@ -177,7 +191,19 @@ When a launch is reviewed, Zana keeps attachments as private copies (owner-only,
 
 ## Remote and SSH Projects
 
-A Project bound to an SSH remote can launch Squads, and attachments work there too. Relative path sources are not readable for remote Projects; only absolute paths under allowed locations are. The coordinator reads attached content through the `execution.source` tools, so no handoff file is written to the remote host.
+A registered Project bound to SSH can launch a Squad on its configured remote
+default path. This supports Infer plan from goal, Plan provided in goal, inline
+provided plans, and locally attached source capabilities. Remote launch preview
+does not read, realpath, or otherwise inspect a local checkout placeholder.
+
+Remote Projects do not support explicit execution targets, generated worktree
+isolation, named checks, or the push capability. Each is rejected during preview
+and admission; Zana does not fall back to a local checkout or another target.
+
+For locally attached source capabilities, relative paths are unavailable because
+the remote Project has no local project-root authority. Attach an allowed local
+file by absolute path. The coordinator reads approved attachment content through
+`execution.source`; no plan handoff file is written to the remote host.
 
 A Project on a secondary machine without a remote cannot. The launch is refused with this message.
 

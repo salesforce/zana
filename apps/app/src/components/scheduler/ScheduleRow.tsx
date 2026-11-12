@@ -1,5 +1,6 @@
 import { failedRunMessage } from '../../lib/schedule-run-outcome';
 import { product } from '../../lib/product-client.js';
+import { ScheduleLaunchReview } from './ScheduleLaunchReview.js';
 import React, { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Play,
@@ -56,13 +57,18 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   const terminals = useData((s) => s.terminals);
   const pushToast = useUi((s) => s.pushToast);
   const navigate = useNavigate();
+  const [reviewLaunch, setReviewLaunch] = useState(false);
 
   const toggle = async () => {
     const result = await product.scheduler.setEnabled(task.id, !task.enabled);
     if (!result.ok) pushToast(result.message, 'error');
   };
-  const runNow = async () => {
-    const result = await product.scheduler.runNow(task.id);
+  const runNow = async (previewToken?: string) => {
+    if (task.kind === 'team' && !previewToken) { setReviewLaunch(true); return; }
+    setReviewLaunch(false);
+    const result = task.kind === 'team'
+      ? await product.scheduler.runReviewedTeamNow(task.id, previewToken!)
+      : await product.scheduler.runNow(task.id);
     if (!result.ok) {
       pushToast(`Run failed: ${result.message}`, 'error');
       return;
@@ -132,6 +138,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
 
   return (
     <li className={`scheduler-card ${task.enabled ? '' : 'is-disabled'} ${isWorking ? 'is-running' : ''} ${isFinishedOpen ? 'is-done' : ''}`}>
+      {reviewLaunch && <ScheduleLaunchReview task={task} onCancel={() => setReviewLaunch(false)} onConfirm={(previewToken) => { void runNow(previewToken); }} />}
       <div
         className="scheduler-card-main scheduler-card-main--compact"
         role="button"
@@ -253,7 +260,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
             </button>
           )}
           {!isExternal && !liveSessionId && (
-            <button className="scheduler-icon-btn" disabled={task.status.runs.some(run => run.launchState === 'pending')} onClick={runNow} title="Run now" aria-label="Run now">
+            <button className="scheduler-icon-btn" disabled={task.status.runs.some(run => run.launchState === 'pending')} onClick={() => { void runNow(); }} title="Run now" aria-label="Run now">
               <Play size={14} />
             </button>
           )}

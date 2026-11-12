@@ -18,6 +18,7 @@ export interface WorkUnitRoutingV1 {
 export interface SlotRouteSnapshotV1 {
   slotId: string;
   personaId: string;
+  label?: string;
   provider?: string;
   model?: string;
   level?: ModelLevel;
@@ -52,7 +53,7 @@ export function evaluateSlotEligibility(routing: WorkUnitRoutingV1 | undefined, 
     if (fact === undefined) unknown.push(reason);
   };
   if (routing?.hardSlotId) require(slot.slotId === routing.hardSlotId, 'hard slot mismatch');
-  if (routing?.requiredRole) require(slot.personaId === routing.requiredRole, 'required role mismatch');
+  if (routing?.requiredRole) require(slot.personaId === routing.requiredRole || slot.label === routing.requiredRole, 'required role mismatch');
   const containsAll = (available: string[] | undefined, required: string[] | undefined, label: string) => {
     if (!required?.length) return;
     if (!available) return unknown.push(`${label} unknown`);

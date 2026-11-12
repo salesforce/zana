@@ -8,6 +8,36 @@ const slot = {
 };
 
 describe('evaluateSlotEligibility', () => {
+  const deliveryReviewer = { ...slot, personaId: 'builtin:squad-worker-high', label: 'Reviewer', level: 'high' as const };
+
+  it('admits a required role matching the slot label', () => {
+    expect(evaluateSlotEligibility({ version: 1, requiredRole: 'Reviewer' }, deliveryReviewer, 200))
+      .toMatchObject({ status: 'PASS', reasons: [] });
+  });
+
+  it('preserves existing persona-id roles with or without a slot label', () => {
+    for (const candidate of [deliveryReviewer, { ...deliveryReviewer, label: undefined }]) {
+      expect(evaluateSlotEligibility({ version: 1, requiredRole: 'builtin:squad-worker-high' }, candidate, 200))
+        .toMatchObject({ status: 'PASS', reasons: [] });
+    }
+  });
+
+  it('rejects roles matching neither the exact persona id nor the exact label', () => {
+    for (const requiredRole of ['builtin:reviewer', 'Writer', 'reviewer', ' Reviewer ']) {
+      expect(evaluateSlotEligibility({ version: 1, requiredRole }, deliveryReviewer, 200))
+        .toMatchObject({ status: 'FAIL', reasons: ['required role mismatch'] });
+    }
+    expect(evaluateSlotEligibility({ version: 1, requiredRole: 'Reviewer' }, { ...deliveryReviewer, label: undefined }, 200))
+      .toMatchObject({ status: 'FAIL', reasons: ['required role mismatch'] });
+  });
+
+  it('does not let a matching label bypass other hard requirements', () => {
+    expect(evaluateSlotEligibility({ version: 1, requiredRole: 'Reviewer', hardSlotId: 'other' }, deliveryReviewer, 200))
+      .toMatchObject({ status: 'FAIL', reasons: ['hard slot mismatch'] });
+    expect(evaluateSlotEligibility({ version: 1, requiredRole: 'Reviewer', minimumLevel: 'extra-high' }, deliveryReviewer, 200))
+      .toMatchObject({ status: 'FAIL', reasons: [LEVEL_UNMET_REASON] });
+  });
+
   it('requires every hard candidate fact', () => {
     expect(evaluateSlotEligibility({
       version: 1, hardSlotId: 'slot-1', requiredRole: 'reviewer', requiredCapabilities: ['review'],

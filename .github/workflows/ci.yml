@@ -66,7 +66,7 @@ jobs:
           # below stays on GitHub's synthetic merge to validate integration.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -118,7 +118,7 @@ jobs:
           # below stays on GitHub's synthetic merge to validate integration.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -196,7 +196,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -227,7 +227,7 @@ jobs:
           # below stays on GitHub's synthetic merge to validate integration.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -259,7 +259,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -321,7 +321,10 @@ jobs:
       - name: Trust checked-out repository in container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - uses: pnpm/action-setup@v4
+      - name: Install tmux for native PTY coverage
+        run: apt-get update && apt-get install -y --no-install-recommends tmux
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -384,7 +387,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -426,11 +429,47 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # Native Windows admission must reject unsupported named checks before spawn.
+  # Build on Windows: Linux Electron artifacts/native addons cannot be reused.
+  squad-windows-admission:
+    name: Squad Windows admission
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install Windows dependencies
+        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/electron-cache
+      - name: Verify runner rejection before process allocation
+        run: pnpm exec vitest run apps/server/src/services/execution/__tests__/named-check-runner.test.ts
+      - name: Verify native Windows Squad admission
+        run: pnpm test:e2e -- e2e/windows-squad-named-check-admission.spec.ts
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+      - name: Upload Windows admission failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: squad-windows-admission
+          path: |
+            playwright-report
+            e2e/.artifacts
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Preserve the existing required check name while making every job load-bearing.
   verify:
     name: Typecheck and test
     runs-on: ubuntu-latest
-    needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres]
+    needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres, squad-windows-admission]
     if: always()
     steps:
       - name: Require unit and production-boundary verification
@@ -445,6 +484,7 @@ jobs:
           BOUNDARY_RESULT: ${{ needs.e2e.result }}
           PREVIEW_MATRIX_RESULT: ${{ needs.preview-cross-platform.result }}
           POSTGRES_RESULT: ${{ needs.connect-postgres.result }}
+          WINDOWS_ADMISSION_RESULT: ${{ needs.squad-windows-admission.result }}
         run: |
           test "$PLAN_RESULT" = success
           test "$UNIT_RESULT" = success
@@ -465,3 +505,4 @@ jobs:
             test "$PREVIEW_MATRIX_RESULT" = skipped
           fi
           test "$POSTGRES_RESULT" = success
+          test "$WINDOWS_ADMISSION_RESULT" = success

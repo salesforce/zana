@@ -49,8 +49,9 @@ describe('createTeamOpsViaControl', () => {
     await ops.status('ex-1');
     await ops.answer({ id: 'ex-1', message: 'yes', expectedStateVersion: 2 });
     await ops.stop('ex-1', 3);
+    await ops.preview!({ teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'freeform', push: false });
     expect(seen.map((request) => request.op)).toEqual([
-      'team.launch', 'team.status', 'team.answer', 'team.stop'
+      'team.launch', 'team.status', 'team.answer', 'team.stop', 'team.preview'
     ]);
     expect(seen[0]).toMatchObject({
       token: 'secret',

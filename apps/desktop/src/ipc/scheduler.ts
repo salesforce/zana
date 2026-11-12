@@ -88,12 +88,28 @@ export function registerSchedulerIpc(): void {
     async (id: string): Promise<Result<ScheduledTask>> => {
       if (isExternalId(id)) return externalReject();
       try {
+        if (ctx.scheduler.get(id).kind === 'team') return { ok: false, code: 'REVIEW_REQUIRED', message: 'Review launch settings before running this Team schedule.' };
         return { ok: true, value: await ctx.scheduler.runNow(id) };
       } catch (err) {
         return { ok: false, code: 'RUN_FAILED', message: String(err) };
       }
     }
   );
+  const scheduleReviewId = z.string().min(1).max(256);
+  ctx.safeHandleFromWindow(IPC.scheduler.previewTeamLaunch, async (window, id: unknown): Promise<Result<unknown>> => {
+    const parsed = scheduleReviewId.safeParse(id);
+    if (!parsed.success) return { ok: false, code: 'BAD_INPUT', message: 'A valid schedule id is required' };
+    if (isExternalId(parsed.data)) return externalReject();
+    try { return { ok: true, value: await ctx.previewScheduledTeamLaunch(parsed.data, window.id) }; }
+    catch (err) { return { ok: false, code: 'PREVIEW_FAILED', message: err instanceof Error ? err.message : String(err) }; }
+  }, () => ({ ok: false, code: 'PREVIEW_FAILED', message: 'Launch preview unavailable' }));
+  ctx.safeHandleFromWindow(IPC.scheduler.runReviewedTeamNow, async (window, id: unknown, previewToken: unknown): Promise<Result<ScheduledTask>> => {
+    const parsed = scheduleReviewId.safeParse(id);
+    if (!parsed.success || typeof previewToken !== 'string' || !previewToken || previewToken.length > 256) return { ok: false, code: 'BAD_INPUT', message: 'A valid schedule id and review token are required' };
+    if (isExternalId(parsed.data)) return externalReject();
+    try { return { ok: true, value: await ctx.runReviewedScheduledTeamNow(parsed.data, previewToken, window.id) }; }
+    catch (err) { return { ok: false, code: 'RUN_FAILED', message: err instanceof Error ? err.message : String(err) }; }
+  }, () => ({ ok: false, code: 'RUN_FAILED', message: 'Reviewed launch unavailable' }));
   // Run history / recovery. The renderer is untrusted: query and refs are
   // schema-validated here and any externally owned schedule is refused (Rule 1).
   productHandle(IPC.scheduler.queryRuns, async (query: unknown): Promise<Result<ScheduleRunQueryResult>> => {

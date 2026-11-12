@@ -2,7 +2,7 @@ import { bindIpcCtx, type IpcCtx } from './ctx.js';
 import { registerProjectsIpc } from './projects.js';
 import { registerWindowsIpc } from './windows.js';
 import { registerTerminalsIpc } from './terminals.js';
-import { registerConfigIpc } from './config.js';
+import { registerConfigIpc, type NamedChecksSettingsService } from './config.js';
 import { registerExecutionIpc } from './execution.js';
 import { registerExecutionBoardIpc } from './execution-board.js';
 import { registerSessionsIpc } from './sessions.js';
@@ -23,12 +23,12 @@ import { registerMobileIpc } from './mobile.js';
 import { registerApiErrorResumeIpc } from './api-error-resume.js';
 import { registerCompanionIpc } from './companion.js';
 
-export function registerIpcFamilies(host: IpcCtx): void {
+export function registerIpcFamilies(host: IpcCtx, namedChecks?: NamedChecksSettingsService): void {
   bindIpcCtx(host);
   registerProjectsIpc();
   registerWindowsIpc();
   registerTerminalsIpc();
-  registerConfigIpc();
+  registerConfigIpc(namedChecks);
   registerExecutionIpc();
   registerExecutionBoardIpc();
   registerSessionsIpc();
@@ -49,4 +49,3 @@ export function registerIpcFamilies(host: IpcCtx): void {
   registerApiErrorResumeIpc();
   registerCompanionIpc();
 }
-

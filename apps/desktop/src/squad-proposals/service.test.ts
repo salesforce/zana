@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Persona, Team } from '@zana-ai/zcc-domain/product';
+import { resolveAllLaunch } from '@zana-ai/zcc-domain/launch-options';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { SQUAD_ATTACHMENT_FROZEN_NOTE, squadGoalTooLongMessage, squadSummaryTooLongMessage } from '@zana-ai/zcc-domain/squad-proposal';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
@@ -14,6 +15,7 @@ import {
   MAX_ACTIVE_NOW_RUNS_PER_SESSION,
   SQUAD_LAUNCH_PROPOSAL_ACTION,
   createSquadProposalService,
+  SquadPreviewAdmissionError,
   type SquadLaunchNowDeps,
   type SquadProposalServiceDeps
 } from './service.js';
@@ -49,6 +51,7 @@ const executionState = vi.fn<NonNullable<SquadLaunchNowDeps['executionState']>>(
 const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
 let planTierFitDep: SquadProposalServiceDeps['planTierFit'];
+let previewDep: SquadProposalServiceDeps['resolveLaunchPreview'];
 
 function build(over: { staging?: StagingStore | null; maxRecords?: number } = {}) {
   const store = createSquadProposalStore({ filePath: join(root, 'state', 'squad-proposals.json'), now: () => clock, ...(over.maxRecords ? { maxRecords: over.maxRecords } : {}) });
@@ -77,6 +80,7 @@ function build(over: { staging?: StagingStore | null; maxRecords?: number } = {}
     newId: () => `prop-${++ids}`,
     sourceBases: () => ({ home: homeDir, cloneRoot: cloneDir, dataDirs: [join(homeDir, '.zcc')] }),
     logError,
+    resolveLaunchPreview: (...a) => previewDep!(...a),
     launchNow: {
       launchApproval: (...a) => launchApproval(...a),
       activeOwnedRuns: (...a) => activeOwnedRuns(...a),
@@ -124,10 +128,125 @@ beforeEach(() => {
   fsImpl = realFs;
   logError.mockReset();
   planTierFitDep = undefined;
+  previewDep = async ({ projectId }) => ({
+    launchOptions: {},
+    resolvedLaunch: resolveAllLaunch({}),
+    location: { kind: 'project-root', projectId },
+    path: join(root, 'proj'), branch: 'main', fingerprint: 'root-v1'
+  });
   svc = build();
 });
 
 const code = (r: { ok: boolean } & Record<string, unknown>) => (r.ok ? 'ok' : r.code);
+
+describe('trusted launch preview', () => {
+  it('returns exact bounded public target admission reason; unexpected source errors stay generic', async () => {
+    previewDep = async () => { throw new SquadPreviewAdmissionError('TARGET_UNAVAILABLE: selected checkout is unavailable; prepare a new launch.'); };
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: false, code: 'INVALID', message: 'TARGET_UNAVAILABLE: selected checkout is unavailable; prepare a new launch.' });
+    expect(await svc.service.launchSquadNow(route, input)).toMatchObject({ ok: false, code: 'INVALID', message: 'TARGET_UNAVAILABLE: selected checkout is unavailable; prepare a new launch.' });
+    previewDep = async () => { throw new Error('source read failed /private/secret-token'); };
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: false, code: 'INVALID', message: 'The Squad launch proposal failed unexpectedly. Try again.' });
+  });
+  it('revalidates staged attachment plan with the same content at beginLaunch', async () => {
+    previewDep = vi.fn(async ({ projectId, attachments }) => ({
+      launchOptions: {}, resolvedLaunch: resolveAllLaunch({}),
+      location: { kind: 'project-root' as const, projectId }, path: join(root, 'proj'), branch: 'main',
+      fingerprint: JSON.stringify(attachments)
+    }));
+    const result = await svc.service.propose(route, { teamId: 'team1', goal: 'Use attachment', planning: 'provided', attachments: [{ name: 'plan.md', text: 'attachment plan' }] });
+    expect(result.ok).toBe(true);
+    expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({ ok: true });
+    expect(previewDep).toHaveBeenLastCalledWith(expect.objectContaining({ sourcePaths: [], attachments: [{ name: 'plan.md', text: 'attachment plan' }] }));
+  });
+  it('refuses a preview resolved for another project', async () => {
+    previewDep = async () => ({ launchOptions: {}, resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p2' }, path: '/other', branch: 'main', fingerprint: 'other' });
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(appendOnce).not.toHaveBeenCalled();
+  });
+
+  it('shows prospective base and isolation source without inventing a path', async () => {
+    previewDep = async () => ({ launchOptions: {}, resolvedLaunch: resolveAllLaunch({ plan: { worktree: true } }), location: { kind: 'new-worktree', projectId: 'p1', baseBranch: 'main', isolationSource: 'plan' }, fingerprint: 'new-v1' });
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: true });
+    expect(appendOnce.mock.calls[0]![0].comments).toContain('New worktree from main — isolation: plan (path assigned at launch)');
+    expect(appendOnce.mock.calls[0]![0].comments).not.toContain(join(root, 'proj'));
+  });
+
+  it('labels a detached project-root preview as HEAD, not undefined', async () => {
+    previewDep = async ({ projectId }) => ({
+      launchOptions: {}, resolvedLaunch: resolveAllLaunch({}),
+      location: { kind: 'project-root', projectId }, path: join(root, 'proj'), fingerprint: 'detached-v1'
+    });
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: true });
+    expect(appendOnce.mock.calls[0]![0].comments).toContain(`- Location: HEAD (Project) — ${join(root, 'proj')}`);
+    expect(appendOnce.mock.calls[0]![0].comments).not.toContain('undefined');
+  });
+
+  it('fails closed when requested options have no resolver', async () => {
+    previewDep = undefined;
+    const store = createSquadProposalStore({ filePath: join(root, 'unwired.json'), now: () => clock });
+    const service = createSquadProposalService({
+      store, enabled: () => true, lookupProposer: lookup,
+      projects: { get: () => ({ id: 'p1', name: 'P', path: join(root, 'proj') }) }, teams: { get: () => teamRecord },
+      personas: { get: () => writer }, teamHostProblem: () => undefined, expandTeamSlots: () => [1], resolveSquadPlan,
+      fs: realFs, sourceBases: () => ({ home: homeDir }), inbox: { appendOnce }, actions: { bind, markUnavailable },
+      issueSources, now: () => clock, newId: () => 'unwired', logError
+    });
+    expect(await service.propose(route, { ...input, launchOptions: { target: { kind: 'project-root' } } })).toMatchObject({ ok: false, code: 'INVALID', message: expect.stringContaining('unavailable') });
+    expect(await service.propose(route, input)).toMatchObject({ ok: true });
+    expect(appendOnce.mock.calls[0]![0].comments).toContain('Location: unavailable');
+  });
+
+  it('logs resolver failure and refuses invalid prospective location', async () => {
+    previewDep = async () => { throw new Error('host offline'); };
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(logError).toHaveBeenCalled();
+    previewDep = async () => ({ launchOptions: {}, resolvedLaunch: resolveAllLaunch({}), location: { kind: 'new-worktree', projectId: 'p1', baseBranch: 'main', isolationSource: 'default' }, path: '/fictional', fingerprint: 'bad' });
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: false, code: 'INVALID' });
+  });
+
+  it('persists host-resolved options and location, and shows exact policies on every card', async () => {
+    const launchOptions = { worktree: false, push: true, checks: ['unit'], target: { kind: 'worktree' as const, branch: 'feature/x' } };
+    const preview = {
+      launchOptions, resolvedLaunch: resolveAllLaunch({ launch: launchOptions }),
+      location: { kind: 'worktree' as const, projectId: 'p1', branch: 'feature/x', ownership: 'user' as const },
+      path: '/trusted/worktree', branch: 'feature/x', fingerprint: 'worktree-v1'
+    };
+    previewDep = vi.fn(async () => preview);
+    const proposed = await svc.service.propose(route, { ...input, launchOptions });
+    expect(proposed.ok).toBe(true);
+    expect(await svc.store.get('prop-1')).toMatchObject({ launchOptions, location: preview.location, launchPreview: preview });
+    expect(previewDep).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1', teamId: 'team1', planning: 'provided', launchOptions, sourcePaths: [join(root, 'proj', 'plan.md')] }));
+    expect(appendOnce.mock.calls[0]![0].comments).toContain('/trusted/worktree');
+    expect(appendOnce.mock.calls[0]![0].comments).toContain('feature/x (user-owned)');
+    expect(appendOnce.mock.calls[0]![0].comments).toContain('push: true (launch)');
+    expect(appendOnce.mock.calls[0]![0].comments).toContain('checks: unit (launch)');
+    expect(await svc.service.review(7, 'prop-1', () => true)).toMatchObject({ ok: true, value: { launchOptions, launchPreview: preview } });
+    expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({ ok: true, value: { launchOptions, launchPreview: preview } });
+  });
+
+  it('refuses changed persisted target at launch, without fallback', async () => {
+    await svc.service.propose(route, input);
+    previewDep = async () => ({ launchOptions: {}, resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p1' }, path: '/moved', branch: 'main', fingerprint: 'root-v2' });
+    expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({ ok: false, code: 'INVALID', message: expect.stringContaining('changed') });
+    expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(await svc.service.review(7, 'prop-1', () => true)).toMatchObject({ ok: false, code: 'INVALID' });
+  });
+
+  it('dedupes by options and returns actual launch location, not prospective preview', async () => {
+    launchNow.mockResolvedValue({ ok: true, value: { executionId: 'exec', state: 'RUNNING', location: { kind: 'worktree', projectId: 'p1', branch: 'actual', ownership: 'user' }, path: '/actual', branch: 'actual' } } as never);
+    const started = await svc.service.launchSquadNow(route, { ...input, launchOptions: { push: true } });
+    expect(started).toMatchObject({ ok: true, value: { path: '/actual', branch: 'actual', location: { kind: 'worktree' } } });
+    expect(launchNow.mock.calls[0]![0]).toMatchObject({ launchOptions: { push: true } });
+    await svc.service.launchSquadNow(route, { ...input, launchOptions: { push: false } });
+    expect(launchNow).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects untrusted launch metadata and invalid options before resolving', async () => {
+    for (const fields of [{ location: { kind: 'project-root' } }, { launchPreview: {} }, { launchOptions: { push: 'yes' } }, { launchOptions: { source: 'plan' } }]) {
+      expect(await svc.service.propose(route, { ...input, ...fields } as never)).toMatchObject({ ok: false, code: 'INVALID' });
+    }
+  });
+});
 
 describe('confineSource', () => {
   const fs = realFs;
@@ -480,6 +599,12 @@ describe('propose', () => {
     expect(card.comments).toBe([
       '- Squad: Crew (Lead + 3 workers)',
       '- Planning: Plan provided in goal — plan checked: 2 steps',
+      `- Location: main (Project) — ${join(root, 'proj')}`,
+      '- worktree: false (default)',
+      '- onComplete: leave (default)',
+      '- push: false (default)',
+      '- checks: none (default)',
+      '- failurePolicyDefault: fail-run (default)',
       '- Files: plan.md',
       '- Nothing starts until you press Launch.'
     ].join('\n'));
@@ -589,7 +714,7 @@ describe('launchSquadNow', () => {
     } });
     expect(launchNow).toHaveBeenCalledTimes(1);
     const [request, ctx] = launchNow.mock.calls[0]!;
-    expect(request).toEqual({
+    expect(request).toMatchObject({
        team: teamRecord, project: { id: 'p1', name: 'Proj', path: join(root, 'proj') }, goal: 'Build the thing\nwith details',
        coordinationMode: 'structured', title: 'Mine', summary: 'S', completionInboxNotice: false,
        sourcePaths: [join(root, 'proj', 'plan.md')]
@@ -932,7 +1057,7 @@ describe('review', () => {
 
   it('returns a prefill with realpaths issued to the window', async () => {
     const r = await svc.service.review(7, 'prop-1', allow);
-    expect(r).toEqual({ ok: true, value: {
+    expect(r).toMatchObject({ ok: true, value: {
       proposalId: 'prop-1', projectId: 'p1', teamId: 'team1', coordinationMode: 'structured', goal: input.goal,
       title: 'Build the thing', sources: [{ id: 'src1', name: 'plan.md', byteSize: 6, expiresAt: 9 }],
       proposerTitle: 'Design chat', planStepCount: 2
@@ -1015,7 +1140,7 @@ describe('beginLaunch and markLaunched', () => {
   beforeEach(async () => { await svc.service.propose(route, input); });
 
   it('returns the proposer without changing state', async () => {
-    expect(await svc.service.beginLaunch('prop-1', 'p1')).toEqual({
+    expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({
       ok: true, value: { proposal: { id: 'prop-1', proposerKind: 'pty', proposerId: 's1', proposerTitle: 'Design chat' }, sourcePaths: [join(root, 'proj', 'plan.md')] }
     });
     expect((await svc.store.get('prop-1'))?.state).toBe('pending');
@@ -1319,6 +1444,17 @@ describe('attachments kept for review', () => {
     ] } });
     expect(r.ok && r.value.sources[1]).not.toHaveProperty('outsideProject');
     expect(r.ok && r.value.sources[0]).not.toHaveProperty('attachment');
+  });
+
+  it('revalidates a staged attachment with its frozen content before review', async () => {
+    previewDep = vi.fn(async ({ projectId, attachments }) => ({
+      launchOptions: {}, resolvedLaunch: resolveAllLaunch({}),
+      location: { kind: 'project-root' as const, projectId }, path: join(root, 'proj'), branch: 'main',
+      fingerprint: JSON.stringify(attachments)
+    }));
+    await svc.service.propose(route, { teamId: 'team1', goal: 'Use notes', planning: 'infer', attachments: [{ name: 'notes.md', text: '# frozen' }] });
+    expect(await svc.service.review(1, 'prop-1', allow)).toMatchObject({ ok: true });
+    expect(previewDep).toHaveBeenLastCalledWith(expect.objectContaining({ sourcePaths: [], attachments: [{ name: 'notes.md', text: '# frozen' }] }));
   });
 
   it('refuses review once the staged copy is gone, with a message', async () => {

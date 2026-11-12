@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
 vi.mock('./shared-product-registration.js', () => ({ productHandle: () => {}, safeProductHandle: () => {} }));
 vi.mock('./ctx.js', () => ({ ctx: {
   scheduler: { on: (event: string, listener: () => void) => h.listeners.set(event, listener) },
+  safeHandleFromWindow: vi.fn(),
   goals: { on: vi.fn() }, followups: { on: vi.fn() }, feedStore: { on: vi.fn() },
   templates: { on: vi.fn() }, scheduleGroups: { on: vi.fn() },
   safeSend: h.safeSend

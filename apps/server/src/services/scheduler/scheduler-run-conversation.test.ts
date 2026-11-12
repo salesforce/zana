@@ -26,6 +26,7 @@ interface FakeSession {
 class FakePtyManager extends EventEmitter {
   sessions: FakeSession[] = [];
   list(projectId: string) { return this.sessions.filter((s) => s.projectId === projectId); }
+  getRememberedSession(id: string) { return this.sessions.find(s => s.id === id) ?? null; }
   reapDeadSessions(): string[] { return []; }
   create(opts: Record<string, unknown>) {
     const session: FakeSession = {

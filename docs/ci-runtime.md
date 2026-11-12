@@ -1,6 +1,10 @@
 # CI runtime and test selection
 
-CI keeps typecheck, every root unit test, package tests, Postgres and the changed-code coverage floor mandatory. A Node-only planning job selects production-boundary work before installing Electron dependencies.
+CI keeps typecheck, every root unit test, package tests, Postgres and at least
+80% changed-production-code coverage for statements and branches mandatory. A
+Node-only planning job selects production-boundary work before installing
+Electron dependencies. Coverage implementation lives in
+`scripts/ci-verification.mjs`.
 
 The file-preview matrix runs on Linux, Windows, ARM Mac and Intel Mac when shared startup, native, filesystem, preview/rendering, dependency or distribution code changes. Manual workflow runs force the matrix. The conservative ownership rules are in `scripts/ci-plan.mjs`; update their tests when adding a new preview dependency. Unrelated documentation, website and plugin feature changes do not need four desktop builds. The final required check accepts a skipped job only when successful planning explicitly said it was unnecessary.
 

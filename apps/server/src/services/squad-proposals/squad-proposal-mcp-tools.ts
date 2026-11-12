@@ -10,6 +10,7 @@
  */
 
 import { z } from 'zod';
+import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   SQUAD_PROPOSAL_LIMITS,
@@ -99,6 +100,11 @@ const FIELD_HELP = {
 } as const;
 
 export const squadProposeInputSchema = {
+  ...launchOptionsSchema.shape,
+  target: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('project-root') }),
+    z.strictObject({ kind: z.literal('worktree'), branch: z.string() })
+  ]).optional(),
   teamId: z.string().min(1).max(TRANSPORT.teamIdChars).describe(FIELD_HELP.teamId),
   goal: z.string().min(1).max(TRANSPORT.goalChars).describe(FIELD_HELP.goal),
   planning: z.enum(['infer', 'provided']).optional().describe(FIELD_HELP.planning),
@@ -114,7 +120,7 @@ export const squadProposeInputSchema = {
 
 export const squadLaunchInputSchema = {
   ...squadProposeInputSchema,
-  mode: z.enum(['review', 'now']).describe(FIELD_HELP.mode)
+  mode: z.enum(['review', 'now']).optional().describe(FIELD_HELP.mode)
 };
 
 export const squadPlanCheckInputSchema = {
@@ -127,6 +133,13 @@ export const squadPlanCheckInputSchema = {
 export const SQUAD_PROPOSE_JSON_SCHEMA = {
   type: 'object',
   properties: {
+    ...((z.toJSONSchema(launchOptionsSchema, { unrepresentable: 'any' }) as { properties: Record<string, unknown> }).properties),
+    target: {
+      oneOf: [
+        { type: 'object', properties: { kind: { type: 'string', const: 'project-root' } }, required: ['kind'], additionalProperties: false },
+        { type: 'object', properties: { kind: { type: 'string', const: 'worktree' }, branch: { type: 'string' } }, required: ['kind', 'branch'], additionalProperties: false }
+      ]
+    },
     teamId: { type: 'string', minLength: 1, maxLength: TRANSPORT.teamIdChars, description: FIELD_HELP.teamId },
     goal: { type: 'string', minLength: 1, maxLength: TRANSPORT.goalChars, description: FIELD_HELP.goal },
     planning: { type: 'string', enum: ['infer', 'provided'], description: FIELD_HELP.planning },
@@ -156,7 +169,7 @@ export const SQUAD_LAUNCH_JSON_SCHEMA = {
     ...SQUAD_PROPOSE_JSON_SCHEMA.properties,
     mode: { type: 'string', enum: ['review', 'now'], description: FIELD_HELP.mode }
   },
-  required: ['teamId', 'goal', 'mode']
+  required: ['teamId', 'goal']
 };
 
 export const SQUAD_PLAN_CHECK_JSON_SCHEMA = {
@@ -175,6 +188,14 @@ const NOT_LIVE_MESSAGE = 'NOT_LIVE: originating session is not live in this proj
 
 function errorResult(text: string) {
   return { isError: true, content: [{ type: 'text' as const, text }] };
+}
+
+function proposalInput(input: Record<string, unknown>): SquadProposalInput {
+  const { worktree, onComplete, push, checks, failurePolicyDefault, target, ...rest } = input;
+  if ('launchOptions' in rest || 'location' in rest || 'launchPreview' in rest || 'resolvedLaunch' in rest || 'source' in rest) throw new Error('Host-owned launch metadata is not accepted.');
+  const options = Object.fromEntries(Object.entries({ worktree, onComplete, push, checks, failurePolicyDefault, target }).filter(([, value]) => value !== undefined));
+  const launchOptions = launchOptionsSchema.parse(options);
+  return { ...rest, ...(Object.keys(launchOptions).length ? { launchOptions } : {}) } as unknown as SquadProposalInput;
 }
 
 async function isLive(opts: RegisterSquadProposalToolsOpts, sessionId: string): Promise<boolean> {
@@ -213,7 +234,7 @@ export function registerSquadProposalTools(server: McpServer, opts: RegisterSqua
     async (input) => {
       if (!(await isLive(opts, sessionId))) return errorResult(`squad_propose failed: ${NOT_LIVE_MESSAGE}`);
       try {
-        const res = await propose({ projectId: opts.projectId, sessionId }, input as SquadProposalInput);
+        const res = await propose({ projectId: opts.projectId, sessionId }, proposalInput(input));
         return res.ok
           ? { content: [{ type: 'text' as const, text: JSON.stringify(res.value) }] }
           : errorResult(`squad_propose failed: ${res.code}: ${res.message}`);
@@ -226,19 +247,19 @@ export function registerSquadProposalTools(server: McpServer, opts: RegisterSqua
   server.registerTool(
     'squad_launch',
     { description: SQUAD_LAUNCH_DESCRIPTION, inputSchema: squadLaunchInputSchema },
-    async ({ mode, ...input }) => {
+    async ({ mode = 'review', ...input }) => {
       if (!(await isLive(opts, sessionId))) return errorResult(`squad_launch failed: ${NOT_LIVE_MESSAGE}`);
       const route = { projectId: opts.projectId, sessionId };
       try {
         if (mode === 'review') {
-          const res = await propose(route, input as SquadProposalInput);
+          const res = await propose(route, proposalInput(input));
           return res.ok
             ? { content: [{ type: 'text' as const, text: JSON.stringify(res.value) }] }
             : errorResult(`squad_launch failed: ${res.code}: ${res.message}`);
         }
         if (!launchSquadNow) return errorResult(`squad_launch failed: ${NO_LAUNCH_NOW_MESSAGE}`);
         if (!(await isOwner(opts, sessionId))) return errorResult(`squad_launch failed: ${NOT_OWNER_MESSAGE}`);
-        const res = await launchSquadNow(route, input as SquadProposalInput);
+        const res = await launchSquadNow(route, proposalInput(input));
         return res.ok
           ? { content: [{ type: 'text' as const, text: JSON.stringify(res.value) }] }
           : errorResult(`squad_launch failed: ${res.code}: ${res.message}`);

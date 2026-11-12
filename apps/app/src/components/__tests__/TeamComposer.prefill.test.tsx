@@ -4,6 +4,7 @@
 import { SQUAD_ATTACHMENT_FROZEN_NOTE } from '@zana-ai/zcc-domain/squad-proposal';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveAllLaunch } from '@zana-ai/zcc-domain/launch-options';
 
 // Real ExecutionSourceCapabilityView-shaped fixture the mocked pick() resolves.
 const pickedSource = { id: 'src1', name: 'notes.txt', byteSize: 12, expiresAt: 0 };
@@ -21,7 +22,7 @@ vi.mock('../../lib/product-client.js', () => ({
   product: {
     executionSources: { pick: (...args: unknown[]) => pick(...args) },
     projects: { ensureQuickAgent: (...args: unknown[]) => ensureQuickAgent(...args) },
-    teams: { startJob: (...args: unknown[]) => startJob(...args) },
+    teams: { startJob: (...args: unknown[]) => startJob(...args), preview: async () => ({ ok: true, value: { resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p1' }, path: '/repo', branch: 'main' } }) },
     fs: {
       uploadToRemote: (...args: unknown[]) => uploadToRemote(...args),
       uploadProjectAttachmentToRemote: vi.fn()
@@ -167,6 +168,7 @@ describe('TeamComposer prefill', () => {
     expect(fieldOpts).toHaveBeenCalledWith(expect.objectContaining({ initialText: 'Build the thing', projectId: 'p2' }));
     expect(screen.getByTestId('team-picker').getAttribute('data-value')).toBe('t2');
     expect(screen.getByTestId('team-coordination-mode').getAttribute('data-value')).toBe('structured');
+    fireEvent.click(screen.getByRole('button', { name: /^Customize launch/ }));
     expect((screen.getByLabelText(/Title/) as HTMLInputElement).value).toBe('Big job');
     expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('Why it matters');
     expect(screen.getByText('design.md')).toBeTruthy();
@@ -212,6 +214,7 @@ describe('TeamComposer prefill', () => {
   it('launches with proposalId, source ids and the coordination mode', async () => {
     startJob.mockResolvedValue({ ok: true, value: { executionId: 'e', state: 'RUNNING' } });
     render(<TeamComposer prefill={prefill} />);
+    await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('team-command-send'));
     await waitFor(() => expect(startJob).toHaveBeenCalledOnce());
     expect(startJob).toHaveBeenCalledWith({
@@ -256,6 +259,7 @@ describe('TeamComposer prefill', () => {
     startJob.mockResolvedValue({ ok: true, value: { executionId: 'e', state: 'RUNNING' } });
     render(<TeamComposer prefill={prefill} />);
     fireEvent.click(screen.getByLabelText('Remove design.md'));
+    await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('team-command-send'));
     await waitFor(() => expect(startJob).toHaveBeenCalledOnce());
     expect(startJob.mock.calls[0][0].sourceCapabilityIds).toEqual(['c2']);
@@ -266,6 +270,7 @@ describe('TeamComposer prefill', () => {
     render(<TeamComposer />);
     expect(screen.queryByRole('note')).toBeNull();
     fireEvent.click(screen.getByTestId('pick-project-p1'));
+    await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('team-command-send'));
     await waitFor(() => expect(startJob).toHaveBeenCalledOnce());
     expect(startJob).toHaveBeenCalledWith({

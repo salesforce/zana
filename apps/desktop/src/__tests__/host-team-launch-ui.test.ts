@@ -128,7 +128,7 @@ vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
 }));
 
 
-const { startTeamJobFromUi, squadProposalService, squadProposalStore } = await import('../host.js');
+const { resolveSquadComposerPreview, startTeamJobFromUi, squadProposalService, squadProposalStore } = await import('../host.js');
 const { SquadExecutionService } = await import('@zana-ai/zcc-server/services/execution/service');
 
 // Outside h.root, which is this test's ZCC_DATA_DIR: the source policy protects Zana's data folder.
@@ -202,6 +202,25 @@ describe('startTeamJobFromUi validation', () => {
     expect(result).toMatchObject({ ok: false, sources: { renewed: [], dropped: [{ previousId: 'cap-1', reason: 'unknown' }] } });
   });
 
+  it('rejects explicit named checks on Windows before provider or launch work', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const start = vi.spyOn(SquadExecutionService.prototype, 'start');
+    h.verified = [];
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+    try {
+      await expect(startTeamJobFromUi(input({ checks: ['test'] }))).resolves.toEqual({
+        ok: false,
+        code: 'ADMISSION_FAILED',
+        message: 'Named checks are unsupported on Windows. Remove checks before launching.'
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(h.creates).toEqual([]);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      start.mockRestore();
+    }
+  });
+
   it('requires a trusted window for goal-referenced source files', async () => {
     writeFileSync(join(projectDir, 'plan.md'), PLAN);
     const goal = `Execute ${join(projectDir, 'plan.md')}`;
@@ -212,6 +231,25 @@ describe('startTeamJobFromUi validation', () => {
 });
 
 describe('startTeamJobFromUi launches', () => {
+  it('accepts a window-bound preview token once and rejects replay or changed launch input', async () => {
+    const previewInput = input({ coordinationMode: 'freeform' });
+    const preview = await resolveSquadComposerPreview(previewInput, { kind: 'window', windowId: 41 });
+
+    expect(await startTeamJobFromUi({ ...previewInput, previewToken: preview.previewToken }, { windowId: 41 })).toMatchObject({ ok: true });
+    expect(await startTeamJobFromUi({ ...previewInput, previewToken: preview.previewToken }, { windowId: 41 }))
+      .toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+
+    const second = await resolveSquadComposerPreview(previewInput, { kind: 'window', windowId: 41 });
+    expect(await startTeamJobFromUi({ ...previewInput, goal: 'Changed goal', previewToken: second.previewToken }, { windowId: 41 }))
+      .toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+  });
+
+  it('rejects remote preview options that cannot be reviewed on this host', async () => {
+    h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
+    await expect(resolveSquadComposerPreview(input({ coordinationMode: 'freeform', worktree: true }), { kind: 'window', windowId: 7 }))
+      .rejects.toThrow('Remote target, generated worktree, checks, or push preview is unavailable on this host.');
+  });
+
   it('starts an inferred-plan (freeform) job and opens the squad terminals', async () => {
     const result = await startTeamJobFromUi(input({ coordinationMode: 'freeform', title: ' My job ', summary: ' ctx ' }));
     expect(result).toMatchObject({ ok: true, value: { executionId: expect.any(String) } });

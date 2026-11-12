@@ -7,7 +7,6 @@ import {
   hashBytes,
   readRawFile
 } from '../harness-routing/storage.js';
-import type { WorkflowPolicyResultV1 } from './policy-result.js';
 import { EXECUTION_FAILURE_CODES, isDurableCoordination, isOrchestratorSlotId, isSquadExecutionTargetSelector, enforcedSkillAllowlist, skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import type { SquadExecutionTargetSelector, SquadWorktreeOwnership } from '@zana-ai/zcc-domain/product';
 import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
@@ -18,10 +17,13 @@ import { normalizeExecutionPlan } from '../launch/preflight.js';
 import type { ExecutionDatabase } from '@zana-ai/zcc-db';
 import { readExecutionStoreSqliteState, writeExecutionStoreSqliteState } from './storage/sqlite-state.js';
 import { isResumableExecutionState } from './storage/backend-policy.js';
+import type { PortablePlanFailurePolicy } from './portable-plan.js';
+import { capIterations, DEFAULT_NO_PROGRESS_LIMIT, isStall, toEnvelope, type StructuredEnvelope } from './retry-feedback.js';
 import { compareCheapestFit, evaluateSlotEligibility, slotRankingPriceUsd, type SlotRouteSnapshotV1, type WorkUnitRoutingV1 } from './routing-policy.js';
 import { MODEL_PRICING_CATALOG_ID, MODEL_PRICING_CATALOG_VERSION } from './model-pricing-catalog.js';
 import {
   assembleExecutionResult,
+  canonicalJson,
   hasOnlyKeys,
   MAX_EXECUTION_PLAN_BYTES,
   evaluateRouteFit,
@@ -31,6 +33,17 @@ import {
   usageIdentityDigest,
   usageObservationFingerprint,
   validOutputDeclaration,
+  validateStructuredResult,
+  validateStructuredJson,
+  validEngineCheckFailure,
+  MAX_ENGINE_CHECK_JSON_BYTES,
+  validResolvedChecks,
+  workCheckReferences,
+  type ExecutionResolvedCheckV1,
+  type ExecutionCheckResultV1,
+  validResolvedLaunch,
+  legacyResolvedLaunch,
+  type ExecutionResolvedLaunchV1,
   type CoordinatorWakeCause,
   type CoordinatorWakeV1,
   type ExecutionAssembledResultV1,
@@ -188,6 +201,8 @@ export interface ExecutionWorkUnitInput {
   routing?: WorkUnitRoutingV1;
   output?: WorkOutputDeclarationV1;
   requires?: WorkUnitRequirementsV1;
+  onFailure?: PortablePlanFailurePolicy;
+  checks?: readonly string[];
   loop?: WorkUnitLoopV1;
 }
 
@@ -266,6 +281,10 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   failure?: string;
   result?: string;
   structuredResult?: unknown;
+  /** Trusted engine receipts for this successful work attempt, never worker-supplied. */
+  passedChecks?: readonly string[];
+  retryFeedback?: StructuredEnvelope;
+  failureRetry?: { retries: number; iterations: number; identicalFailures: number; fingerprint: string; stopped?: 'max-retries' | 'max-iterations' | 'no-progress' | 'active-descendant' | 'exhausted-descendant' };
   repairDigests?: string[];
   /** Runtime only (excluded from plan identity): current review round of a loop unit, starting at 1. */
   loopRound?: number;
@@ -371,8 +390,13 @@ export interface ExecutionRecord {
   launchRequestId: string;
   teamLaunchRequestId: string;
   request: ExecutionRequestSnapshotV1;
+  resolvedLaunch: ExecutionResolvedLaunchV1;
+  /** Owner-authored commands frozen by trusted admission; never projected to agents. */
+  resolvedChecks?: ExecutionResolvedCheckV1[];
   /** Main-created shared checkout for this squad execution, if isolation applied. */
   squadWorktree?: SquadWorktreeRecord;
+  /** Main-reviewed generated-worktree base frozen at claim until its checkout binds. */
+  reviewedSquadWorktreeBase?: { path: string; branch: string; head: string };
   /** User completed retained-worktree handling without deleting its checkout. */
   squadWorktreeDisposition?: 'left';
   /** Terminal worktree effects completed for this exact terminal generation. */
@@ -389,7 +413,6 @@ export interface ExecutionRecord {
   authorizationContext?: TeamLaunchAuthorizationContextV1;
   authorizationContextDigest?: string;
   launchIntent?: ExecutionLaunchIntentV1;
-  policyResult?: WorkflowPolicyResultV1;
   effectiveOwnerPrincipalIds?: string[];
   recoveryGeneration?: number;
   recoveryDeadlineAt?: number;
@@ -518,8 +541,8 @@ export interface ExecutionSlotMcpCatalogueProvenanceV1 {
 }
 
 export type ExecutionClaimInput = Omit<ExecutionRecord,
-  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'reportNoticeVersion' | 'proposalNoticeVersion' | 'reportedBlockerIds' | 'localReport' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers' | 'automatedMcpCatalogueProvenance'
-> & { workUnits?: ExecutionWorkUnitInput[] };
+  'id' | 'resolvedLaunch' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'reportNoticeVersion' | 'proposalNoticeVersion' | 'reportedBlockerIds' | 'localReport' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers' | 'automatedMcpCatalogueProvenance'
+> & { workUnits?: ExecutionWorkUnitInput[]; resolveLaunchOptions?: () => ExecutionResolvedLaunchV1 | Promise<ExecutionResolvedLaunchV1>; resolveNamedChecks?: (launch: ExecutionResolvedLaunchV1) => Promise<ExecutionResolvedCheckV1[]> };
 
 export interface ExecutionRequestSnapshotV1 {
   version: 1;
@@ -537,6 +560,7 @@ export interface ExecutionRequestSnapshotV1 {
   /** Explicit execution API override. Undefined defers to project then Team defaults. */
   worktree?: boolean;
   onComplete?: 'leave' | 'merge' | 'delete';
+  checks?: readonly string[];
     /** Opt-in terminal inbox notice for runs without an owner report target. */
     completionInboxNotice?: boolean;
     /** Trusted selector for an existing user-owned target; absent keeps the legacy generated-worktree flag. */
@@ -585,6 +609,7 @@ export interface ExecutionLaunchIntentV1 {
 export interface ResolvedModelSnapshotV1 {
   slotId: string;
   personaId?: string;
+  label?: string;
   provider: string;
   /** Undefined only when a native role owns its model and no model is exposed. */
   model?: string;
@@ -777,6 +802,13 @@ function validSquadWorktree(value: unknown): value is SquadWorktreeRecord {
       : worktree.targetKind === undefined);
 }
 
+function validReviewedSquadWorktreeBase(value: unknown): value is NonNullable<ExecutionRecord['reviewedSquadWorktreeBase']> {
+  if (!value || typeof value !== 'object') return false;
+  const base = value as Partial<NonNullable<ExecutionRecord['reviewedSquadWorktreeBase']>>;
+  return hasOnlyKeys(value as Record<string, unknown>, ['path', 'branch', 'head'])
+    && validString(base.path) && validString(base.branch) && validString(base.head);
+}
+
 function validRecord(value: unknown): value is ExecutionRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Partial<ExecutionRecord>;
@@ -786,6 +818,8 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.launchKind === undefined || record.launchKind === 'team')
     && (record.launchDisplay === undefined || validLaunchDisplay(record.launchDisplay))
     && validString(record.launchRequestId) && validString(record.teamLaunchRequestId) && validRequestSnapshot(record.request)
+    && validResolvedLaunch(record.resolvedLaunch)
+    && (record.resolvedChecks === undefined || validResolvedChecks(record.resolvedChecks))
     && (record.summary === undefined || validString(record.summary)) && Number.isInteger(record.attempt)
     && typeof record.attemptStartedAt === 'number' && Number.isFinite(record.attemptStartedAt)
     && isState(record.state) && Number.isInteger(record.stateVersion)
@@ -796,7 +830,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.authorizationContextDigest === undefined || validString(record.authorizationContextDigest))
     && (record.launchIntent === undefined || validLaunchIntent(record.launchIntent))
     && (record.squadWorktree === undefined || validSquadWorktree(record.squadWorktree))
-    && (record.policyResult === undefined || validPolicyResult(record.policyResult))
+    && (record.reviewedSquadWorktreeBase === undefined || validReviewedSquadWorktreeBase(record.reviewedSquadWorktreeBase))
     && (record.effectiveOwnerPrincipalIds === undefined || Array.isArray(record.effectiveOwnerPrincipalIds) && record.effectiveOwnerPrincipalIds.every(validString))
     && (record.recoveryGeneration === undefined || Number.isInteger(record.recoveryGeneration) && record.recoveryGeneration >= 0)
     && (record.recoveryDeadlineAt === undefined || typeof record.recoveryDeadlineAt === 'number' && Number.isFinite(record.recoveryDeadlineAt))
@@ -935,7 +969,15 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.apiErrorRecovery === undefined || validWorkerApiErrorRecovery(unit.apiErrorRecovery))
     && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
     && (unit.failure === undefined || validString(unit.failure)) && (unit.result === undefined || validString(unit.result))
-    && (unit.structuredResult === undefined || validStructuredJson(unit.structuredResult))
+    && (unit.structuredResult === undefined || validStructuredJson(unit.structuredResult) || validEngineCheckFailure(unit.structuredResult))
+    && (unit.passedChecks === undefined || Array.isArray(unit.passedChecks) && unit.passedChecks.length <= 100 && unit.passedChecks.every(reference => typeof reference === 'string' && /^check:[A-Za-z_][A-Za-z0-9_-]{0,99}$/.test(reference)))
+    && (unit.onFailure === undefined || validFailurePolicy(unit.onFailure))
+    && (unit.checks === undefined || validCheckNames(unit.checks))
+    && (unit.retryFeedback === undefined || validRetryFeedback(unit.retryFeedback))
+    && (unit.failureRetry === undefined || !!unit.failureRetry && validNonNegativeInteger(unit.failureRetry.retries) && unit.failureRetry.retries <= 100
+      && validNonNegativeInteger(unit.failureRetry.iterations) && unit.failureRetry.iterations <= 100 && validNonNegativeInteger(unit.failureRetry.identicalFailures)
+      && typeof unit.failureRetry.fingerprint === 'string' && Buffer.byteLength(unit.failureRetry.fingerprint) <= MAX_ENGINE_CHECK_JSON_BYTES
+      && (unit.failureRetry.stopped === undefined || ['max-retries', 'max-iterations', 'no-progress', 'active-descendant', 'exhausted-descendant'].includes(unit.failureRetry.stopped)))
     && (unit.repairDigests === undefined || Array.isArray(unit.repairDigests) && unit.repairDigests.length <= 2 && unit.repairDigests.every(validDigest))
     && Array.isArray(unit.history) && unit.history.length <= MAX_UNIT_LIST * 10;
 }
@@ -993,6 +1035,7 @@ function reopenUnit(unit: ExecutionWorkUnit, timestamp: number, detail: string):
   unit.repairDigests = undefined;
   unit.failureCode = undefined;
   unit.failure = undefined;
+  unit.passedChecks = undefined;
   unit.history.push({ action: 'reopened', attempt: unit.attempt, at: timestamp, detail });
 }
 
@@ -1106,6 +1149,9 @@ function resetRetainedWork(record: ExecutionRecord, opts?: { keepSlotIds?: Reado
     unit.failure = undefined;
     unit.result = undefined;
     unit.structuredResult = undefined;
+    unit.passedChecks = undefined;
+    unit.retryFeedback = undefined;
+    unit.failureRetry = undefined;
     unit.reclaimedClaim = undefined;
     unit.noProgressSlots = undefined;
     unit.apiErrorRecovery = undefined;
@@ -1127,7 +1173,6 @@ function beginRetryAttempt(record: ExecutionRecord, timestamp: number): void {
   record.authorizationContext = undefined;
   record.authorizationContextDigest = undefined;
   record.launchIntent = undefined;
-  record.policyResult = undefined;
   record.coordinatorState = 'ACTIVE';
   record.updatedAt = timestamp;
 }
@@ -1161,19 +1206,12 @@ function validExecutionDelivery(value: unknown): value is ExecutionDeliveryRecor
     && (delivery.deliveredAt === undefined || typeof delivery.deliveredAt === 'number');
 }
 
-function validPolicyResult(value: unknown): value is WorkflowPolicyResultV1 {
-  if (!value || typeof value !== 'object') return false;
-  const result = value as Partial<WorkflowPolicyResultV1>;
-  return result.version === 1 && validString(result.executionId) && typeof result.attempt === 'number'
-    && validString(result.outputDigest) && validString(result.extensionDigest) && validString(result.summary)
-    && (result.status === 'PENDING' || result.status === 'PASSED' || result.status === 'BLOCKED' || result.status === 'FAILED' || result.status === 'ELIGIBLE_FOR_DELIVERY');
-}
-
 function validModelSnapshot(value: unknown): value is ResolvedModelSnapshotV1 {
   if (!value || typeof value !== 'object') return false;
   const snapshot = value as Partial<ResolvedModelSnapshotV1>;
   return validString(snapshot.slotId) && validString(snapshot.provider) && (snapshot.model === undefined || validString(snapshot.model))
     && (snapshot.personaId === undefined || validString(snapshot.personaId))
+    && (snapshot.label === undefined || validString(snapshot.label))
     && (snapshot.reasoning === undefined || validString(snapshot.reasoning))
     && (snapshot.level === undefined || ['low', 'medium', 'high', 'extra-high'].includes(snapshot.level))
     && (snapshot.roleOwnedModel === undefined || typeof snapshot.roleOwnedModel === 'boolean')
@@ -1298,6 +1336,13 @@ function validStructuredJson(value: unknown): boolean {
   try { return Buffer.byteLength(JSON.stringify(value), 'utf8') <= 64 * 1024; } catch { return false; }
 }
 
+function validRetryFeedback(value: StructuredEnvelope): boolean {
+  if (!value || !['structured', 'prose'].includes(value.kind) || typeof value.body !== 'string') return false;
+  if (Buffer.byteLength(value.body) <= 64 * 1024) return true;
+  if (value.kind !== 'structured' || Buffer.byteLength(value.body) > MAX_ENGINE_CHECK_JSON_BYTES) return false;
+  try { return validEngineCheckFailure(JSON.parse(value.body)); } catch { return false; }
+}
+
 function validAssembledResult(value: unknown): value is ExecutionAssembledResultV1 {
   if (!value || typeof value !== 'object') return false;
   const result = value as Partial<ExecutionAssembledResultV1>;
@@ -1310,7 +1355,6 @@ function validAssembledResult(value: unknown): value is ExecutionAssembledResult
       && (unit.failureCode === undefined || validString(unit.failureCode)))
     && Array.isArray(result.failures) && result.failures.length <= MAX_WORK_UNITS && result.failures.every((failure) => !!failure && hasOnlyKeys(failure as Record<string, unknown>, ['workUnitId', 'code']) && validString(failure.workUnitId) && validString(failure.code))
     && Array.isArray(result.artifacts) && result.artifacts.length <= 100 && result.artifacts.every((artifact) => !!artifact && hasOnlyKeys(artifact as Record<string, unknown>, ['name', 'mediaType', 'contentDigest']) && validString(artifact.name) && validString(artifact.mediaType) && validDigest(artifact.contentDigest))
-    && (result.policy === undefined || !!result.policy && hasOnlyKeys(result.policy as Record<string, unknown>, ['status', 'summary']) && validString(result.policy.status) && validString(result.policy.summary))
     && Array.isArray(result.verification) && result.verification.length <= MAX_WORK_UNITS && result.verification.every((item) => !!item && hasOnlyKeys(item as Record<string, unknown>, ['workUnitId', 'checks']) && validString(item.workUnitId) && validStringList(item.checks))
     && validUsageRollup(result.usage);
 }
@@ -1347,6 +1391,7 @@ function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot
     && (request.objective === undefined || validString(request.objective))
     && (request.worktree === undefined || typeof request.worktree === 'boolean')
     && (request.onComplete === undefined || ['leave', 'merge', 'delete'].includes(request.onComplete))
+    && (request.checks === undefined || validCheckNames(request.checks))
     && (request.completionInboxNotice === undefined || typeof request.completionInboxNotice === 'boolean')
     && (request.target === undefined || isSquadExecutionTargetSelector(request.target))
     && (request.sourceBundle === undefined || validSourceBundle(request.sourceBundle))
@@ -1473,10 +1518,11 @@ export function resolvedModelsBySlot(record: Pick<ExecutionRecord, 'resolvedMode
  * context, model facts from the record's resolved models. One builder for
  * dispatch, kickoff reassignment and the delivery re-check, so they cannot drift.
  */
-export function slotRouteSnapshot(slot: { slotId: string; personaId: string }, model: ResolvedModelSnapshotV1 | undefined, skillAllowlist?: readonly string[]): SlotRouteSnapshotV1 & { skillAllowlist?: string[] } {
+export function slotRouteSnapshot(slot: { slotId: string; personaId: string; label?: string }, model: ResolvedModelSnapshotV1 | undefined, skillAllowlist?: readonly string[]): SlotRouteSnapshotV1 & { skillAllowlist?: string[] } {
   return {
     ...(skillAllowlist !== undefined ? { skillAllowlist: [...skillAllowlist] } : {}),
     slotId: slot.slotId, personaId: slot.personaId, provider: model?.provider, model: model?.model,
+    label: model?.label ?? slot.label,
     level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
     modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
     observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
@@ -1587,6 +1633,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
            record.recoveryGeneration ??= 0;
            record.nativeRecoverySnapshots ??= [];
            record.usageObservations ??= [];
+           record.resolvedLaunch ??= legacyResolvedLaunch(record.request ?? {});
+           delete (record as ExecutionRecord & { policyResult?: unknown }).policyResult;
+           if (record.assembledResult) delete (record.assembledResult as ExecutionAssembledResultV1 & { policy?: unknown }).policy;
           const legacyRequest = record.request as ExecutionRequestSnapshotV1 & { goal?: string };
           if (legacyRequest.objective === undefined && legacyRequest.goal !== undefined) legacyRequest.objective = legacyRequest.goal;
           delete legacyRequest.goal;
@@ -1710,6 +1759,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       throw new Error(squadStoredFieldTooLong('summary', input.summary.length));
     }
     const workUnits = input.workUnits === undefined ? undefined : normalizePlan(input.workUnits, isDurableCoordination(input.coordinationMode));
+    assertUnambiguousRoles(workUnits ?? [], input.resolvedModels);
     if (input.launchKind !== undefined && input.launchKind !== request.launchKind) {
       throw new Error('execution launch kind disagrees with request snapshot');
     }
@@ -1758,8 +1808,19 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         throw new Error('execution active record limit reached');
       }
       const timestamp = now();
+      const resolvedLaunch = input.resolveLaunchOptions ? await input.resolveLaunchOptions() : legacyResolvedLaunch(request);
+      if (!validResolvedLaunch(resolvedLaunch)) throw new Error('invalid resolved launch snapshot');
+      const resolvedChecks = input.resolveNamedChecks ? await input.resolveNamedChecks(resolvedLaunch) : [];
+      if (!validResolvedChecks(resolvedChecks)) throw new Error('invalid resolved named checks');
+      const target = request.target;
+      if (target && (resolvedLaunch.worktree.value || resolvedLaunch.onComplete.value !== 'leave')) throw new Error('user-owned target requires worktree false and onComplete leave');
+      const reviewedSquadWorktreeBase = input.reviewedSquadWorktreeBase;
+      if (reviewedSquadWorktreeBase && !validReviewedSquadWorktreeBase(reviewedSquadWorktreeBase)) {
+        throw new Error('invalid reviewed squad worktree base');
+      }
       const record: ExecutionRecord = {
-        ...bounded, ...(localReport ? { localReport: true as const } : {}), id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, attemptStartedAt: timestamp, state: 'READY', stateVersion: 0, lastEventSequence: 0,
+        ...bounded, resolvedChecks: clone(resolvedChecks), resolvedLaunch: clone(resolvedLaunch), ...(localReport ? { localReport: true as const } : {}), id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, attemptStartedAt: timestamp, state: 'READY', stateVersion: 0, lastEventSequence: 0,
+        ...(reviewedSquadWorktreeBase ? { reviewedSquadWorktreeBase: clone(reviewedSquadWorktreeBase) } : {}),
         deliveries: [], noticeIntents: [], recoveryGeneration: 0, recoveryDeadlineAt: timestamp + EXECUTION_RECOVERY_TTL_MS, createdAt: timestamp, updatedAt: timestamp
       };
       snapshot.state.records.push(record);
@@ -1783,6 +1844,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
       assertActive(record);
       if (!canTransition(record.state, state)) throw new Error(`invalid execution transition ${record.state} -> ${state}`);
+      if (state === 'COMPLETED') assertCompletionChecks(record);
       if ((state === 'COMPLETED' || state === 'FAILED') && record.blockers?.some((blocker) => !blocker.resolved)) {
         throw new Error(`cannot transition to ${state} while blockers are unresolved`);
       }
@@ -2129,23 +2191,6 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function setPolicyResult(executionId: string, expectedStateVersion: number, policyResult: WorkflowPolicyResultV1): Promise<ExecutionRecord> {
-    return storeQueue.run(async () => {
-      const snapshot = read();
-      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
-      if (!record) throw new Error('execution not found');
-      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
-      assertActive(record);
-      if (!validPolicyResult(policyResult) || policyResult.executionId !== record.id || policyResult.attempt !== record.attempt) throw new Error('invalid execution policy result');
-      record.policyResult = clone(policyResult);
-      record.stateVersion += 1;
-      record.updatedAt = now();
-      append(snapshot.state, record, record.state, policyResult.status === 'FAILED' ? 'error' : policyResult.status === 'BLOCKED' ? 'warning' : 'info', `Optional policy: ${policyResult.status}` , record.updatedAt);
-      persist(snapshot.state, snapshot.hash);
-      return clone(record);
-    });
-  }
-
   async function setAuthorizationContext(
     executionId: string,
     expectedStateVersion: number,
@@ -2401,7 +2446,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function registerPlan(executionId: string, expectedStateVersion: number, units: ExecutionWorkUnitInput[]): Promise<ExecutionRecord> {
+  async function registerPlan(executionId: string, expectedStateVersion: number, units: ExecutionWorkUnitInput[], resolvedChecks?: ExecutionResolvedCheckV1[]): Promise<ExecutionRecord> {
     if (Buffer.byteLength(JSON.stringify(units), 'utf8') > MAX_EXECUTION_PLAN_BYTES) throw new Error(`execution plan exceeds ${MAX_EXECUTION_PLAN_BYTES} bytes`);
     return storeQueue.run(async () => {
       const snapshot = read();
@@ -2415,6 +2460,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       // scope-less mutating unit passes registration but `scopesOverlap` treats it
       // as overlapping every other mutation, falsely serializing the whole plan.
       const normalized = normalizePlan(units, isDurableCoordination(record.coordinationMode));
+      assertUnambiguousRoles(normalized, record.resolvedModels);
       if (record.workUnits?.length) {
         if (JSON.stringify(record.workUnits.map(stripWorkUnitState)) === JSON.stringify(normalized.map(stripWorkUnitState))) {
           return clone(record);
@@ -2423,6 +2469,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       const timestamp = now();
       record.workUnits = normalized;
+      if (resolvedChecks !== undefined) {
+        if (!validResolvedChecks(resolvedChecks)) throw new Error('invalid resolved named checks');
+        record.resolvedChecks = clone(resolvedChecks);
+      }
       record.blockers = [];
       record.stateVersion += 1;
       record.updatedAt = timestamp;
@@ -2672,15 +2722,21 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, 'Work routing facts unavailable');
   }
 
-  async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown): Promise<ExecutionRecord> {
+  async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown, passedChecks?: readonly string[]): Promise<ExecutionRecord> {
     let loopNote: string | undefined;
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (structuredResult !== undefined && !unit.output) throw new Error('structuredResult requires a work output declaration');
+      // Report the loop-specific contract before validating its generated output schema.
+      const verdict = unit.loop ? loopVerdictOf({ structuredResult } as ExecutionWorkUnit) : undefined;
+      if (unit.loop && !verdict) throw new Error('a loop review must report a verdict of PASS or CHANGES');
+      authorizeWorkOutput(unit, structuredResult);
       if (record.blockers?.some((blocker) => !blocker.resolved && blocker.workUnitId === workUnitId)) {
         throw new Error('work unit has unresolved blockers');
       }
       if (unit.state === 'COMPLETED') return;
+      if (workCheckReferences(record, unit).some(reference => !passedChecks?.includes(reference) || !record.resolvedChecks?.some(check => check.reference === reference))) throw new Error('required named checks have not passed');
+      if (workCheckReferences(record, unit).length && unit.state !== 'CLAIMED') throw new Error('stale work claim');
 
       // Non-destructive completion for the sanctioned reclaim→finish race, WITHOUT
       // letting a stale worker resurrect or clobber a unit. A doc worker is routinely
@@ -2723,21 +2779,20 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
         assertClaimFence(unit, claim, requireClaim);
       }
-      const verdict = unit.loop ? loopVerdictOf({ structuredResult } as ExecutionWorkUnit) : undefined;
-      if (unit.loop && !verdict) throw new Error('a loop review must report a verdict of PASS or CHANGES');
       unit.state = 'COMPLETED';
       const slotId = unit.assignedSlotId ?? unit.reclaimedClaim?.slotId ?? authority.slotId;
       unit.reclaimedClaim = undefined;
       clearClaim(unit);
       unit.result = string(result, 'work unit result');
-      if (structuredResult !== undefined) unit.structuredResult = clone(structuredResult);
+      unit.structuredResult = structuredResult === undefined ? undefined : clone(structuredResult);
+      unit.passedChecks = passedChecks ? [...passedChecks] : undefined;
       unit.history.push({ action: 'completed', slotId, attempt: unit.attempt, at: timestamp, detail: unit.result });
       loopNote = (verdict ? applyLoopVerdict(record, unit, verdict, timestamp) : undefined) ?? reopenLoopReview(record, unit, timestamp);
       deriveReadiness(record);
     }, () => loopNote ?? `Work unit completed: ${workUnitId}`);
   }
 
-  async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
+  async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown, checkFailure?: { reference: string; result: ExecutionCheckResultV1 }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
@@ -2747,12 +2802,23 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
       assertClaimFence(unit, claim, requireClaim);
       if (!failureCodes.has(failureCode)) throw new Error('invalid execution work unit failure code');
+      if (checkFailure) {
+        if (!validEngineCheckFailure(checkFailure)) throw new Error('invalid engine check failure');
+        if (!workCheckReferences(record, unit).includes(checkFailure.reference) || !record.resolvedChecks?.some(check => check.reference === checkFailure.reference)) throw new Error('check failure does not bind work unit');
+        const bounded = validateStructuredJson(checkFailure, MAX_ENGINE_CHECK_JSON_BYTES);
+        if (!bounded.ok) throw new Error(bounded.reason);
+        structuredResult = bounded.value;
+      } else {
+        structuredResult = authorizeFailureEvidence(unit, structuredResult);
+      }
       unit.state = 'FAILED';
       const slotId = unit.assignedSlotId;
       clearClaim(unit);
       unit.failureCode = failureCode;
       unit.failure = string(failure, 'work unit failure');
+      if (structuredResult !== undefined) unit.structuredResult = clone(structuredResult);
       unit.history.push({ action: 'failed', slotId, attempt: unit.attempt, at: timestamp, detail: unit.failure });
+      applyFailureRetry(record, unit, timestamp);
       deriveReadiness(record);
     }, `Work unit failed: ${workUnitId}`);
   }
@@ -3102,6 +3168,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (record.resourceBlock) throw new Error(record.resourceBlock.reason);
       const unit = findUnit(record, workUnitId);
       if (unit.state !== 'FAILED' && unit.state !== 'BLOCKED') throw new Error('work unit retry is not allowed');
+      const ownerOverride = authority.slotId === 'board:owner';
+      if (!ownerOverride && unit.failureRetry?.stopped && unit.failureRetry.stopped !== 'active-descendant') throw new Error('failure retry budget exhausted');
       // Never pre-empt an in-flight human answer. A PENDING/LEASED delivery for
       // this unit's unresolved blocker is still recoverable by the at-least-once
       // outbox + drain re-announce (and lease rebind on recovery); resolving the
@@ -3122,6 +3190,11 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       unit.failureCode = undefined;
       unit.failure = undefined;
       unit.reclaimedClaim = undefined; // a retry is a fresh assignment — drop any reclaimed-idle completion window
+      unit.result = undefined;
+      unit.structuredResult = undefined;
+      unit.retryFeedback = undefined;
+      if (ownerOverride) unit.failureRetry = undefined;
+      unit.repairDigests = undefined;
       // A human retry gives a fresh kickoff budget: they have (or will) fix the
       // worker, so a prior kickoff-churn block must not immediately re-block.
       unit.kickoffFailures = undefined;
@@ -3427,8 +3500,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Execution blocker response delivery retried: ${blockerId}`);
   }
 
-  async function completeExecution(executionId: string, expectedStateVersion: number, finalSummary: string, artifacts: readonly import('./artifact-store.js').ExecutionArtifactRecord[] = [], includeRouteFit = false): Promise<ExecutionRecord> {
+  async function completeExecution(executionId: string, expectedStateVersion: number, finalSummary: string, artifacts: readonly import('./artifact-store.js').ExecutionArtifactRecord[] = [], includeRouteFit = false, passedChecks?: readonly string[]): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record) => {
+      assertCompletionChecks(record, passedChecks);
       if (isDurableCoordination(record.coordinationMode) && !record.workUnits?.length) throw new Error('execution plan is required');
       if (record.workUnits?.some((unit) => unit.state !== 'COMPLETED')) throw new Error('required work units are incomplete');
       if (record.blockers?.some((blocker) => !blocker.resolved)) throw new Error('execution has unresolved blockers');
@@ -3817,13 +3891,14 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {
   const normalized: ResolvedModelSnapshotV1 = {
     slotId: string(snapshot.slotId, 'model slot id'), provider: string(snapshot.provider, 'model provider'),
     ...(snapshot.personaId === undefined ? {} : { personaId: string(snapshot.personaId, 'model persona id') }),
+    ...(snapshot.label === undefined ? {} : { label: string(snapshot.label, 'model label') }),
     ...(snapshot.model === undefined ? {} : { model: string(snapshot.model, 'model') }),
     ...(snapshot.reasoning === undefined ? {} : { reasoning: string(snapshot.reasoning, 'model reasoning') }),
     ...(snapshot.level === undefined ? {} : { level: snapshot.level }),
@@ -3889,17 +3964,18 @@ function sameLaunchDisplay(left: ExecutionLaunchDisplayV1, right: ExecutionLaunc
 }
 
 function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false): ExecutionWorkUnit[] {
-  return normalizeExecutionPlan(inputs, requireComplete).map((unit) => ({
-    ...unit,
-    state: unit.dependencies.length ? 'PENDING' as const : 'READY' as const,
-    attempt: 0,
-    ...(unit.loop ? { loopRound: 1 } : {}),
-    history: []
-  }));
+  return normalizeExecutionPlan(inputs, requireComplete).map((unit) => {
+    const input = inputs.find((candidate) => candidate.id.trim() === unit.id)!;
+    if (input.onFailure !== undefined && !validFailurePolicy(input.onFailure)) throw new Error('invalid work failure policy');
+    const edge = input.onFailure;
+    if (edge?.kind === 'retry' && !inputs.some((candidate) => candidate.id.trim() === edge.stepId)) throw new Error('retry target not found');
+    if (input.checks !== undefined && !validCheckNames(input.checks)) throw new Error('invalid work checks');
+    return { ...unit, ...(input.onFailure ? { onFailure: clone(input.onFailure) } : {}), ...(input.checks ? { checks: [...input.checks] } : {}), state: unit.dependencies.length ? 'PENDING' as const : 'READY' as const, attempt: 0, ...(unit.loop ? { loopRound: 1 } : {}), history: [] };
+  });
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, reclaimedClaim: _reclaimedClaim, apiErrorRecovery: _apiErrorRecovery, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, loopRound: _loopRound, loopExtraRounds: _loopExtraRounds, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, noProgressSlots: _noProgressSlots, reclaimedClaim: _reclaimedClaim, apiErrorRecovery: _apiErrorRecovery, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, passedChecks: _passedChecks, retryFeedback: _retryFeedback, failureRetry: _failureRetry, repairDigests: _repairDigests, loopRound: _loopRound, loopExtraRounds: _loopExtraRounds, history: _history, ...input } = unit;
   return input;
 }
 
@@ -3920,6 +3996,100 @@ function findUnit(record: ExecutionRecord, workUnitId: string): ExecutionWorkUni
   const unit = record.workUnits?.find((candidate) => candidate.id === string(workUnitId, 'work unit id'));
   if (!unit) throw new Error('work unit not found');
   return unit;
+}
+
+function validCheckNames(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length <= 100 && value.every((name) => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(name) && name.length <= 100);
+}
+
+function assertUnambiguousRoles(units: readonly ExecutionWorkUnitInput[], models: readonly ResolvedModelSnapshotV1[]): void {
+  for (const unit of units) {
+    const role = unit.routing?.requiredRole;
+    if (!role || unit.routing?.hardSlotId) continue;
+    const personas = models.filter(model => model.personaId === role);
+    const labels = models.filter(model => model.label === role);
+    if (new Set(labels.map(model => model.slotId)).size > 1 || labels.some(label => personas.some(persona => persona.slotId !== label.slotId))) throw new Error(`ambiguous routing role: ${role}`);
+  }
+}
+
+function validFailurePolicy(value: unknown): value is PortablePlanFailurePolicy {
+  if (!value || typeof value !== 'object') return false;
+  const edge = value as Record<string, unknown>;
+  if (edge.kind === 'fail-run') return hasOnlyKeys(edge, ['kind']);
+  return edge.kind === 'retry' && hasOnlyKeys(edge, ['kind', 'stepId', 'maxRetries', 'maxIterations', 'noProgressLimit'])
+    && validString(edge.stepId) && Number.isSafeInteger(edge.maxRetries) && (edge.maxRetries as number) >= 1 && (edge.maxRetries as number) <= 100
+    && [edge.maxIterations, edge.noProgressLimit].every((limit) => limit === undefined || Number.isSafeInteger(limit) && (limit as number) > 0);
+}
+
+function authorizeWorkOutput(unit: ExecutionWorkUnit, structuredResult: unknown): void {
+  if (!unit.output) {
+    if (structuredResult !== undefined) throw new Error('structuredResult requires a work output declaration');
+    return;
+  }
+  if (structuredResult === undefined) throw new Error('structuredResult is required by work output declaration');
+  const validation = validateStructuredResult(unit.output, structuredResult);
+  if (!validation.ok) throw new Error(validation.reason);
+}
+
+/** Failure evidence is optional and must not be constrained by a success-output schema. */
+function authorizeFailureEvidence(unit: ExecutionWorkUnit, structuredResult: unknown): unknown {
+  if (structuredResult === undefined) return undefined;
+  if (!unit.output) throw new Error('structuredResult requires a work output declaration');
+  const validation = validateStructuredJson(structuredResult);
+  if (!validation.ok) throw new Error(validation.reason);
+  return validation.value;
+}
+
+function applyFailureRetry(record: ExecutionRecord, unit: ExecutionWorkUnit, timestamp: number): void {
+  const edge = unit.onFailure;
+  if (edge?.kind !== 'retry') return;
+  const previous = unit.failureRetry;
+  const fingerprint = canonicalJson(unit.structuredResult === undefined ? toEnvelope(unit) : unit.structuredResult);
+  const iterations = (previous?.iterations ?? 0) + 1;
+  const identicalFailures = previous && isStall(previous.fingerprint, fingerprint) ? previous.identicalFailures + 1 : 0;
+  const retries = previous?.retries ?? 0;
+  const affected = new Set([edge.stepId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of record.workUnits ?? []) {
+      if (!affected.has(candidate.id) && candidate.dependencies.some((dependency) => affected.has(dependency))) {
+        affected.add(candidate.id);
+        changed = true;
+      }
+    }
+  }
+  // Never reset an unrelated live branch, nor leave a self-retry's failed prerequisites behind.
+  const stopped = retries >= edge.maxRetries ? 'max-retries' as const
+    : iterations >= capIterations(edge.maxIterations) ? 'max-iterations' as const
+    : identicalFailures >= (edge.noProgressLimit ?? DEFAULT_NO_PROGRESS_LIMIT) ? 'no-progress' as const
+    : (record.workUnits ?? []).some(candidate => affected.has(candidate.id) && candidate.failureRetry?.stopped !== undefined && candidate.failureRetry.stopped !== 'active-descendant') ? 'exhausted-descendant' as const
+    : !affected.has(unit.id) || (record.workUnits ?? []).some((candidate) => affected.has(candidate.id) && (candidate.state === 'CLAIMED' || candidate.state === 'BLOCKED')) ? 'active-descendant' as const
+    : undefined;
+  unit.failureRetry = { retries, iterations, identicalFailures, fingerprint, ...(stopped ? { stopped } : {}) };
+  if (stopped) return;
+  const feedback = toEnvelope(unit);
+  unit.failureRetry.retries += 1;
+  for (const candidate of record.workUnits ?? []) {
+    if (!affected.has(candidate.id)) continue;
+    candidate.state = 'PENDING';
+    clearClaim(candidate);
+    candidate.claimGeneration = (candidate.claimGeneration ?? 0) + 1;
+    candidate.assignedSlotId = undefined;
+    candidate.reclaimedClaim = undefined;
+    candidate.apiErrorRecovery = undefined;
+    candidate.noProgressSlots = undefined;
+    candidate.kickoffFailures = undefined;
+    candidate.repairDigests = undefined;
+    candidate.result = undefined;
+    candidate.passedChecks = undefined;
+    candidate.failure = undefined;
+    candidate.failureCode = undefined;
+    if (candidate.id !== unit.id) candidate.structuredResult = undefined;
+    candidate.retryFeedback = undefined;
+    candidate.history.push({ action: 'retried', attempt: candidate.attempt, at: timestamp, detail: `Failure edge from ${unit.id}` });
+  }
+  findUnit(record, edge.stepId).retryFeedback = feedback;
 }
 
 function findBlocker(record: ExecutionRecord, blockerId: string): ExecutionBlocker {
@@ -3977,6 +4147,17 @@ function assertScopeAvailable(record: ExecutionRecord, candidate: ExecutionWorkU
 
 function assertActive(record: ExecutionRecord): void {
   if (terminalStates.has(record.state)) throw new Error(`execution is ${record.state.toLowerCase()}`);
+}
+
+function assertCompletionChecks(record: ExecutionRecord, passedChecks?: readonly string[]): void {
+  const units = record.workUnits ?? [];
+  if (units.length) {
+    for (const unit of units) {
+      if (workCheckReferences(record, unit).some(reference => unit.state !== 'COMPLETED' || !unit.passedChecks?.includes(reference) || !record.resolvedChecks?.some(check => check.reference === reference))) throw new Error('required named checks have not passed');
+    }
+  } else if (record.resolvedLaunch.checks.value.some(name => !passedChecks?.includes(`check:${name}`) || !record.resolvedChecks?.some(check => check.reference === `check:${name}`))) {
+    throw new Error('required named checks have not passed');
+  }
 }
 
 function compactEvents(events: ExecutionEvent[], perExecution: number, global: number): ExecutionEvent[] {

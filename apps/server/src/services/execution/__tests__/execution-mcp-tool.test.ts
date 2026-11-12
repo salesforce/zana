@@ -99,6 +99,58 @@ async function tools_failure(tools: Map<string, ToolHandler>, name: string, extr
 const contractFixturePath = fileURLToPath(new URL('../../../../test/fixtures/execution-contract-v1.json', import.meta.url));
 
 describe('execution MCP tools', () => {
+  it('accepts and forwards shared launch options inline and from request files', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 's', projectId: 'p', service: execution as never, validateRouteIdentity: () => true });
+    const input = { version: 1, teamId: 't', launchRequestId: 'l', slots: [{ initialTask: 'work' }], worktree: false, onComplete: 'leave', push: true, checks: ['verify'], failurePolicyDefault: 'fail-run' };
+    const descriptor = getExecutionToolDescriptors().find(tool => tool.name === 'execution.start')!;
+    expect(descriptor.schema.safeParse(input).success).toBe(true);
+    expect(descriptor.schema.safeParse({ ...input, push: 'yes' }).success).toBe(false);
+    await tools.get('execution.start')!(input);
+    expect(execution.start).toHaveBeenLastCalledWith('s', 'p', expect.objectContaining({ onComplete: 'leave', push: true, checks: ['verify'], failurePolicyDefault: 'fail-run' }), undefined);
+    const dir = await mkdtemp(join(tmpdir(), 'execution-start-options-'));
+    const previous = process.env.ZCC_DATA_DIR;
+    process.env.ZCC_DATA_DIR = dir;
+    try {
+      await mkdir(join(dir, 'execution-requests'));
+      const file = join(dir, 'execution-requests', 'request.json');
+      await writeFile(file, JSON.stringify(input));
+      expect(await tools.get('execution.start')!({ requestPath: file })).not.toMatchObject({ isError: true });
+      expect(execution.start).toHaveBeenCalledTimes(2);
+      expect(execution.start).toHaveBeenLastCalledWith('s', 'p', expect.objectContaining({ onComplete: 'leave', push: true, checks: ['verify'], failurePolicyDefault: 'fail-run' }), undefined);
+    } finally {
+      if (previous === undefined) delete process.env.ZCC_DATA_DIR; else process.env.ZCC_DATA_DIR = previous;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it('lists authorized project check names and never projects frozen commands', async () => {
+    const execution = { ...service(), listNamedChecks: vi.fn(async () => ['verify']) };
+    execution.status.mockResolvedValueOnce({ id: 'execution-1', state: 'RUNNING', resolvedChecks: [{ name: 'verify', reference: 'check:verify', command: 'secret-command' }] } as never);
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 's', projectId: 'p', service: execution as never, validateRouteIdentity: () => true });
+    expect(text(await tools.get('execution.checks.list')!({}))).toBe('{"names":["verify"]}');
+    expect(execution.listNamedChecks).toHaveBeenCalledWith('p');
+    expect(text(await tools.get('execution.status')!({ executionId: 'execution-1' }))).not.toContain('secret-command');
+  });
+  it('keeps whole retry payload out of MCP record projections', async () => {
+    const execution = service();
+    execution.status.mockResolvedValueOnce({ id: 'execution-1', state: 'RUNNING', workUnits: [{ id: 'a', retryFeedback: { kind: 'structured', body: 'nested-secret' }, failureRetry: { retries: 1, iterations: 1, identicalFailures: 0, fingerprint: 'fingerprint-secret' } }] } as never);
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 's', projectId: 'p', service: execution as never, validateRouteIdentity: () => true });
+    const result = await tools.get('execution.status')!({ executionId: 'execution-1' });
+    expect(text(result)).not.toContain('nested-secret');
+    expect(text(result)).not.toContain('fingerprint-secret');
+  });
+  it('accepts retry limits matching parser and store boundaries in registered work units', () => {
+    const execution = service();
+    const { server, definitions } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 's', projectId: 'p', service: execution as never, validateRouteIdentity: () => true });
+    const definition = definitions.get('execution.plan.register') as { inputSchema: Record<string, z.ZodType> };
+    const work = { id: 'a', title: 'A', task: 'Work', dependencies: [], onFailure: { kind: 'retry', stepId: 'a', maxRetries: 100, maxIterations: 150, noProgressLimit: 101 }, checks: ['verify'] };
+    expect(z.object(definition.inputSchema).safeParse({ executionId: 'e', workUnits: [work] }).success).toBe(true);
+    expect(z.object(definition.inputSchema).safeParse({ executionId: 'e', workUnits: [{ ...work, onFailure: { ...work.onFailure, maxRetries: 101 } }] }).success).toBe(false);
+  });
   it('awaits async false authorization across every execution and handoff verb', async () => {
     const execution = service();
     const { server, tools } = fakeServer();
@@ -1254,7 +1306,7 @@ describe('execution MCP tools', () => {
       expect(result, name).toMatchObject({ isError: true });
       expect(text(result), name).toContain('role is not authorized');
     }
-    expect(execution.failWork).toHaveBeenCalledWith(binding, 'unit-1', 'failed', 'TRANSIENT', undefined, true);
+    expect(execution.failWork).toHaveBeenCalledWith(binding, 'unit-1', 'failed', 'TRANSIENT', undefined, true, undefined);
   });
 
   it('maps unbound service failures and missing reads to explicit tool errors', async () => {

@@ -12,6 +12,7 @@ import type { WorkflowArgument } from './workflow-args.js';
 import type { MenubarAgent } from './menubar-agent.js';
 import type { NotificationLevel, OwnNotificationLevel } from './notification-levels.js';
 import type { LaunchApproval, SquadPlanning } from './squad-proposal.js';
+import type { LaunchOptions, PlanLaunch } from './launch-options.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
 export type { TerminalThemeId } from './terminal-themes.js';
@@ -4307,6 +4308,8 @@ export interface ScheduledTask {
   teamId?: string;
   /** Structured team kickoff policy. `provided` fails closed when prompt contains an invalid plan. */
   planSource?: 'provided' | 'infer';
+  /** Operator-owned launch overrides; valid only for team schedules. */
+  launchOptions?: LaunchOptions;
   /**
    * Optional persona to launch this scheduled run as. Resolved against the
    * persona store at fire time; its `baseProfile` (if any) overrides `profile`.
@@ -4417,6 +4420,7 @@ export interface ScheduleCreateInput {
   kind?: 'agent' | 'team';
   teamId?: string;
   planSource?: 'provided' | 'infer';
+  launchOptions?: LaunchOptions;
   personaId?: string;
   extraArgs?: string[];
   prompt?: string;
@@ -5035,7 +5039,7 @@ export interface TeamLaunchAuthorizationContextV1 {
   slots: Array<{ slotId: string; personaId: string; authorizationIdDigest: string }>;
 }
 
-export interface TeamLaunchRequestInput {
+export interface TeamLaunchRequestInput extends LaunchOptions {
   callerPrincipalId: string;
   launchRequestId: string;
   slots: TeamLaunchTaskSlot[];
@@ -5045,12 +5049,7 @@ export interface TeamLaunchRequestInput {
   requirePreauthorization?: boolean;
   /** Main-only correlation for execution-managed Team launches. */
   executionId?: string;
-  /** Main-authorized request to run this execution cohort in one shared worktree. */
-  worktree?: boolean;
-  /** Main-owned terminal disposition for an execution-owned shared worktree. */
-  onComplete?: 'leave' | 'merge' | 'delete';
-  /** Main-resolved existing user-owned target; see {@link validateSquadExecutionTarget}. */
-  target?: SquadExecutionTargetSelector;
+  planLaunch?: PlanLaunch;
   /** Main-only immutable execution display title for Team session cohorts. */
   executionJobTitle?: string;
   /** Main-derived admission digest; launch revalidates it before spawning. */
@@ -5140,6 +5139,9 @@ export interface Team {
    * request's own `onComplete` wins. Never applies to user-owned targets.
    */
   worktreeOnComplete?: 'leave' | 'merge' | 'delete';
+  push?: boolean;
+  checks?: string[];
+  failurePolicyDefault?: 'fail-run';
   /** Override global structured-work routing enforcement for this Team. */
   routingEnforced?: boolean;
   /**
@@ -5450,6 +5452,8 @@ export interface ScheduleUpdateInput {
   kind?: 'agent' | 'team';
   teamId?: string | null;
   planSource?: 'provided' | 'infer' | null;
+  /** Replace launch overrides; null clears them, omission keeps them. Team only. */
+  launchOptions?: LaunchOptions | null;
   /** Persona id, or null to clear (launch the bare profile). Omit to leave unchanged. */
   personaId?: string | null;
   extraArgs?: string[];
@@ -5628,6 +5632,10 @@ export interface Goal {
    * objective the coordinator infers a plan from. Defaults to `infer`.
    */
   planSource?: 'provided' | 'infer';
+  /** Squad goals only. Omit to leave the current launch policy unchanged. */
+  launchOptions?: LaunchOptions;
+  /** Loader-owned attention marker for malformed persisted Squad launch policy. */
+  launchOptionsError?: string;
   /** Execution engine. Defaults to `native`. */
   driver: GoalDriver;
   assignment: GoalAssignment;
@@ -5679,6 +5687,8 @@ export interface GoalCreateInput {
   successCriteria: string[];
   /** Squad goals only. Defaults to `infer`. */
   planSource?: 'provided' | 'infer';
+  /** Squad goals only. Per-run launch policy resolved by main at execution time. */
+  launchOptions?: LaunchOptions;
   /** Defaults to `native`. */
   driver?: GoalDriver;
   /** Defaults to `{ kind: 'profile', profile: 'claude-yolo' }`. */
@@ -5701,6 +5711,8 @@ export interface GoalUpdateInput {
   statement?: string;
   successCriteria?: string[];
   planSource?: 'provided' | 'infer';
+  /** Squad goals only. Omit to leave the current launch policy unchanged. */
+  launchOptions?: LaunchOptions;
   assignment?: GoalAssignment;
   cadence?: Goal['cadence'];
   maxIterations?: number;
@@ -7024,6 +7036,8 @@ export interface ExecutionBoardProjection {
 
 /** Renderer advisory input for a durable Team job. Main owns project and slot expansion. */
 export interface TeamJobLaunchInput {
+  /** Opaque main-held preview binding, scoped to trusted caller and launch input. */
+  previewToken?: string;
   teamId: string;
   projectId: string;
   goal: string;
@@ -7112,7 +7126,8 @@ export const TEAM_REPLY_MAX_CHARS = 16_000;
 
 export type TeamLaunchMode = 'structured' | 'freeform';
 
-export interface ProductTeamLaunchInput {
+export interface ProductTeamLaunchInput extends LaunchOptions {
+  previewToken?: string;
   teamId: string;
   projectId: string;
   goal: string;
@@ -7122,6 +7137,9 @@ export interface ProductTeamLaunchInput {
 }
 
 export interface ProductTeamLaunchResult {
+  location?: import('./launch-options.js').SquadLaunchLocation;
+  path?: string;
+  branch?: string;
   kind: 'job';
   id: string;
   state?: string;
@@ -7136,6 +7154,8 @@ export interface ProductTeamStatus {
   stateVersion?: number;
   goal?: string;
   summary?: string;
+  /** Persisted terminal output; legacy executions may have only finalSummary text. */
+  result?: NonNullable<ExecutionBoardProjection['assembledResult']> | string;
   blockers?: Array<{ id: string; question?: string; resolved?: boolean }>;
 }
 
@@ -7145,6 +7165,7 @@ export interface ProductTeamCaller {
 }
 
 export interface ProductTeamOps {
+  preview?(input: ProductTeamLaunchInput, caller?: ProductTeamCaller): Promise<Result<import('./squad-proposal.js').SquadLaunchPreview & { previewToken: string }>>;
   launch(input: ProductTeamLaunchInput, caller?: ProductTeamCaller): Promise<Result<ProductTeamLaunchResult>>;
   status(id: string, caller?: ProductTeamCaller): Promise<Result<ProductTeamStatus>>;
   answer(input: {

@@ -22,9 +22,13 @@ it('verifies Electron, Chromium and WebKit when Linux dependency preparation cha
   expect(trust).toBeGreaterThan(0);
   expect(workflow.jobs.e2e.steps[trust].run).toBe('git config --global --add safe.directory "$GITHUB_WORKSPACE"');
   expect(trust).toBeLessThan(workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install dependencies'));
+  const tmux = workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install tmux for native PTY coverage');
+  expect(workflow.jobs.e2e.steps[tmux].run).toBe('apt-get update && apt-get install -y --no-install-recommends tmux');
+  expect(tmux).toBeGreaterThan(trust);
+  expect(tmux).toBeLessThan(workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install dependencies'));
   const commands = workflow.jobs.e2e.steps.map((step: any) => step.run || '').join('\n');
   expect(commands).toContain('node scripts/check-electron-linux-deps.mjs');
-  expect(commands).not.toMatch(/apt-get|playwright install|sysctl/);
+  expect(commands).not.toMatch(/playwright install|sysctl/);
   expect(commands).toContain('xvfb-run -a node scripts/ci-verification.mjs');
   const preview = workflow.jobs['preview-cross-platform'].steps.find((step: any) => step.name === 'Check Linux Electron display dependencies');
   expect(preview.if).toBe("runner.os == 'Linux'");
@@ -135,13 +139,24 @@ it('accepts only planned skips and rejects failed, cancelled or missing required
   const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
   const script = workflow.jobs.verify.steps[0].run;
   const green = { PLAN_RESULT: 'success', UNIT_RESULT: 'success', PACKAGES_RESULT: 'success', COVERAGE_RESULT: 'success',
-    BUILD_RESULT: 'success', BOUNDARY_RESULT: 'success', PREVIEW_MATRIX_RESULT: 'success', POSTGRES_RESULT: 'success', E2E_REQUIRED: 'true', PREVIEW_REQUIRED: 'true' };
+    BUILD_RESULT: 'success', BOUNDARY_RESULT: 'success', PREVIEW_MATRIX_RESULT: 'success', POSTGRES_RESULT: 'success', WINDOWS_ADMISSION_RESULT: 'success', E2E_REQUIRED: 'true', PREVIEW_REQUIRED: 'true' };
   const run = (overrides = {}) => spawnSync('bash', ['-e', '-c', script], { env: { ...process.env, ...green, ...overrides } }).status;
   expect(run()).toBe(0);
   expect(run({ E2E_REQUIRED: 'false', PREVIEW_REQUIRED: 'false', BUILD_RESULT: 'skipped', BOUNDARY_RESULT: 'skipped', PREVIEW_MATRIX_RESULT: 'skipped' })).toBe(0);
-  for (const key of ['PLAN_RESULT', 'UNIT_RESULT', 'PACKAGES_RESULT', 'COVERAGE_RESULT', 'BUILD_RESULT', 'BOUNDARY_RESULT', 'PREVIEW_MATRIX_RESULT', 'POSTGRES_RESULT']) {
+  for (const key of ['PLAN_RESULT', 'UNIT_RESULT', 'PACKAGES_RESULT', 'COVERAGE_RESULT', 'BUILD_RESULT', 'BOUNDARY_RESULT', 'PREVIEW_MATRIX_RESULT', 'POSTGRES_RESULT', 'WINDOWS_ADMISSION_RESULT']) {
     for (const result of ['failure', 'cancelled', 'skipped', '']) expect(run({ [key]: result }), `${key}=${result}`).not.toBe(0);
   }
   expect(run({ PREVIEW_REQUIRED: '', PREVIEW_MATRIX_RESULT: 'skipped' })).not.toBe(0);
   expect(run({ E2E_REQUIRED: '', BOUNDARY_RESULT: 'skipped' })).not.toBe(0);
+});
+
+it('runs native Windows Squad admission on every PR and includes it in required verification', () => {
+  const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
+  const job = workflow.jobs['squad-windows-admission'];
+  expect(job['runs-on']).toBe('windows-2025');
+  expect(job.if).toBeUndefined();
+  expect(job.steps.some((step: any) => step.run === 'pnpm test:e2e -- e2e/windows-squad-named-check-admission.spec.ts')).toBe(true);
+  expect(job.steps.some((step: any) => step.run === 'pnpm exec vitest run apps/server/src/services/execution/__tests__/named-check-runner.test.ts')).toBe(true);
+  expect(workflow.jobs.verify.needs).toContain('squad-windows-admission');
+  expect(workflow.jobs.verify.steps[0].env.WINDOWS_ADMISSION_RESULT).toBe('${{ needs.squad-windows-admission.result }}');
 });

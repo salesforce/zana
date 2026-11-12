@@ -315,6 +315,15 @@ const api: CcApi = {
     diagnostics: () => ipcRenderer.invoke(IPC.startup.diagnostics),
     quit: () => ipcRenderer.invoke(IPC.startup.quit)
   },
+  namedChecks: {
+    get: (scope) => ipcRenderer.invoke(IPC.namedChecks.get, scope),
+    set: (scope, checks) => ipcRenderer.invoke(IPC.namedChecks.set, scope, checks),
+    onChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.namedChecks.onChanged, handler);
+      return () => ipcRenderer.off(IPC.namedChecks.onChanged, handler);
+    }
+  },
   projectSettings: {
     get: (id) => ipcRenderer.invoke(IPC.projectSettings.get, id),
     set: (id, patch) => ipcRenderer.invoke(IPC.projectSettings.set, id, patch),
@@ -966,6 +975,7 @@ const api: CcApi = {
     launch: (teamId, projectId) => ipcRenderer.invoke(IPC.teams.launch, teamId, projectId),
     cancel: (launchRequestId) => ipcRenderer.invoke(IPC.teams.cancel, launchRequestId),
     startJob: (input: TeamJobLaunchInput) => ipcRenderer.invoke(IPC.teams.startJob, input),
+    preview: (input) => ipcRenderer.invoke(IPC.teams.preview, input),
     reviewProposal: (proposalId: string) => ipcRenderer.invoke(IPC.teams.reviewProposal, proposalId),
     launchAutonomous: (teamId, projectId, goal) =>
       ipcRenderer.invoke(IPC.teams.launchAutonomous, teamId, projectId, goal),
@@ -1191,6 +1201,8 @@ const api: CcApi = {
     setEnabled: (id, enabled) =>
       ipcRenderer.invoke(IPC.scheduler.setEnabled, id, enabled),
     runNow: (id) => ipcRenderer.invoke(IPC.scheduler.runNow, id),
+    previewTeamLaunch: (id) => ipcRenderer.invoke(IPC.scheduler.previewTeamLaunch, id),
+    runReviewedTeamNow: (id, previewToken) => ipcRenderer.invoke(IPC.scheduler.runReviewedTeamNow, id, previewToken),
     queryRuns: (query) => ipcRenderer.invoke(IPC.scheduler.queryRuns, query),
     retryRuns: (refs) => ipcRenderer.invoke(IPC.scheduler.retryRuns, refs),
     resumeRun: (input) => ipcRenderer.invoke(IPC.scheduler.resumeRun, input),

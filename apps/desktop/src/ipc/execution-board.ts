@@ -1,4 +1,7 @@
 import { dialog, type BrowserWindow } from 'electron';
+import { z } from 'zod';
+import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
+import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { createSourcePickerFolders, sourcePickerDialogOptions } from './execution-source-picker.js';
@@ -80,6 +83,32 @@ export function registerExecutionBoardIpc(): void {
       ? { ok: false, code: 'NOT_FOUND', message: 'project not found' }
       : startTeamJobFromUi(input, win.kind === 'window' ? { windowId: win.window.id } : undefined),
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'Team job launch unavailable' })
+  );
+
+  const previewInput = launchOptionsSchema.extend({
+    teamId: z.string().min(1).max(256), projectId: z.string().min(1).max(256), goal: z.string().max(2048),
+    coordinationMode: z.enum(['structured', 'freeform']).optional(),
+    sourceCapabilityIds: z.array(z.string().min(1).max(256)).max(16).optional()
+  });
+  handleFromCaller<[Parameters<CcApi['teams']['preview']>[0]], Awaited<ReturnType<CcApi['teams']['preview']>>>(
+    IPC.teams.preview,
+    async (caller, input) => {
+      const parsed = previewInput.safeParse(input);
+      if (!parsed.success) return { ok: false, code: 'INVALID', message: 'Invalid launch preview input' };
+      if (!isExecutionProjectAllowed(caller, parsed.data.projectId)
+        || !store.listProjects().some(project => project.id === parsed.data.projectId)) {
+        return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
+      }
+      try {
+        const value = await ctx.resolveSquadComposerPreview(parsed.data, caller.kind === 'window'
+          ? { kind: 'window', windowId: caller.window.id } : { kind: 'shared-owner' });
+        return { ok: true, value };
+      } catch (error) {
+        ctx.logMainError(`teams preview (teamId=${parsed.data.teamId}, projectId=${parsed.data.projectId})`, error);
+        return { ok: false, code: 'UNAVAILABLE', message: 'Launch preview could not validate the plan, sources, or target. Retry after correcting them.' };
+      }
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'Launch preview unavailable' })
   );
 
   handleFromCaller<[string, number | undefined, number | undefined], { executions: ExecutionBoardProjection[]; hasMore: boolean }>(

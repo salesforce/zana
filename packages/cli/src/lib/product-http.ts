@@ -7,6 +7,8 @@ export interface ProductHttpDeps {
   serverUrl?: string;
   nowMs?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Emit prelaunch diagnostics without contaminating machine-readable stdout. */
+  onStderr?: (text: string) => void;
 }
 
 export function resolveServerUrl(deps?: ProductHttpDeps): string {

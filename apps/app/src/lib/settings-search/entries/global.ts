@@ -1,10 +1,12 @@
 import type { SettingsSearchEntry } from '../types';
+import { namedChecksEntries } from '../named-checks';
 
 const onOff = (value: boolean | undefined, fallback: boolean) => ((value ?? fallback) ? 'On' : 'Off');
 const THEMES: Record<string, string> = { system: 'System', dark: 'Dark', light: 'Light' };
 
 /** Settings > Preferences (section id `global`). */
 export const entries: readonly SettingsSearchEntry[] = [
+  ...namedChecksEntries('global'),
   {
     id: 'global.theme',
     section: 'global',

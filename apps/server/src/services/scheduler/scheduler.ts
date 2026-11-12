@@ -24,7 +24,7 @@ import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery as parseEveryShared } from
 import { nextCronRunAt } from '@zana-ai/zcc-domain/parse-cron';
 import { isCronCadence, previousCronSlots, slotsBetween, validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
 import { collectRunRows, isOpenProblem, isProblemRun, isRecoveryMode, runReason, SCHEDULE_REASONS } from '@zana-ai/zcc-domain/schedule-health';
-import { normalizeCatchUp, normalizeRequiredMcps, normalizeRetry } from './schedule-validation.js';
+import { normalizeCatchUp, normalizeRequiredMcps, normalizeRetry, validateScheduleLaunchOptions } from './schedule-validation.js';
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
 import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -199,6 +199,8 @@ export class ScheduleConflictError extends Error {
 /** Options of the private `fire`. */
 interface FireOptions {
   manual: boolean;
+  /** Reviewed manual launch's fresh definition; do not re-read stale disk state. */
+  definition?: ScheduledTask;
   /** Absent = the timer (`schedule`); `manual` is derived from `manual`. */
   trigger?: ScheduleRunTrigger;
   /** Epoch ms of the slot this fire covers. */
@@ -396,7 +398,24 @@ export class SchedulerManager extends EventEmitter {
   update(id: string, patch: ScheduleUpdatePatch): Promise<ScheduledTask> { return this.serial(() => this.updateNow(id, patch)); }
   setEnabled(id: string, enabled: boolean): Promise<ScheduledTask | null> { return this.serial(() => this.setEnabledNow(id, enabled)); }
   remove(id: string): Promise<void> { return this.serial(() => this.removeNow(id)); }
+  /** Internal lifecycle entry point. Renderer admission belongs to main IPC. */
   runNow(id: string): Promise<ScheduledTask> { return this.serial(() => this.runNowInternal(id)); }
+  /** Manual Team runs require main-owned admission; automatic timer fires bypass it. */
+  runReviewedTeamNow(id: string, admit: (schedule: ScheduledTask) => Promise<void>): Promise<ScheduledTask> {
+    return this.serial(async () => {
+      const live = this.live.get(id);
+      if (!live) throw new Error(`schedule not found: ${id}`);
+      // Reload before consuming the token. The caller binds to this immutable
+      // definition, then this same definition becomes the manual fire input.
+      const current = await this.readCurrent(live.task);
+      if (current.kind !== 'team') throw new Error('schedule is not a Team schedule');
+      await admit(structuredClone(current));
+      // `fire` owns the one refresh/adoption path. Passing this exact snapshot
+      // prevents an edit between admission and reservation from changing input.
+      await this.fire(id, { manual: true, definition: current });
+      return live.task;
+    });
+  }
   get(id: string): ScheduledTask {
     const live = this.live.get(id);
     if (!live) throw new Error(`schedule not found: ${id}`);
@@ -540,6 +559,7 @@ export class SchedulerManager extends EventEmitter {
       kind: input.kind ?? 'agent',
       teamId: input.kind === 'team' ? input.teamId?.trim() || undefined : undefined,
       planSource: input.kind === 'team' ? input.planSource ?? 'infer' : undefined,
+      ...(input.launchOptions !== undefined ? { launchOptions: validateScheduleLaunchOptions(input.kind, input.launchOptions) } : {}),
       extraArgs: input.extraArgs,
       prompt: input.prompt,
       schedule,
@@ -614,8 +634,10 @@ export class SchedulerManager extends EventEmitter {
     if (patch.kind !== undefined) next.kind = patch.kind;
     if (patch.teamId !== undefined) next.teamId = patch.teamId?.trim() || undefined;
     if (patch.planSource !== undefined) next.planSource = patch.planSource ?? undefined;
+    if (patch.launchOptions !== undefined) next.launchOptions = patch.launchOptions === null
+      ? undefined : validateScheduleLaunchOptions(next.kind, patch.launchOptions);
     if (next.kind === 'team' && !next.teamId) throw new Error('teamId is required for team schedules');
-    if (next.kind !== 'team') { next.teamId = undefined; next.planSource = undefined; }
+    if (next.kind !== 'team') { next.teamId = undefined; next.planSource = undefined; next.launchOptions = undefined; }
     if (patch.extraArgs !== undefined) next.extraArgs = patch.extraArgs;
     if (patch.prompt !== undefined) next.prompt = patch.prompt;
     // Cadence edits. `every` and `cron` are mutually exclusive: setting one
@@ -678,6 +700,9 @@ export class SchedulerManager extends EventEmitter {
     // moves the timing anchor so the paused slot isn't fired (design D10).
     if ((!wasEnabled && next.enabled) || !isDeepStrictEqual(priorSchedule, next.schedule)) this.markDiscontinuity(next);
     const definitionPatch: Partial<ScheduledTask> = { updatedAt: next.updatedAt };
+    if (patch.kind !== undefined && next.kind !== 'team') {
+      Object.assign(definitionPatch, { teamId: undefined, planSource: undefined, launchOptions: undefined });
+    }
     for (const key of Object.keys(patch) as (keyof ScheduleUpdateInput)[]) {
       const field = key === 'every' || key === 'cron' || key === 'tz' ? 'schedule' : key === 'retain' ? 'history' : key;
       Object.assign(definitionPatch, { [field]: next[field as keyof ScheduledTask] });
@@ -1311,7 +1336,7 @@ export class SchedulerManager extends EventEmitter {
     const originalTrigger = opts.trigger;
     const enabledBeforeRefresh = live.task.enabled;
     const priorCadence = live.task.schedule;
-    const current = await this.readCurrent(live.task);
+    const current = opts.definition ?? await this.readCurrent(live.task);
     if (this.hasUnresolvedRun(live) && current.kind !== live.task.kind) {
       this.deferredReloads.add(id);
     } else {
@@ -1850,7 +1875,10 @@ export class SchedulerManager extends EventEmitter {
       message: undefined,
       ...(conversation ? { conversation } : {})
     }, wasEnabled);
-    const actual = this.deps?.ptys.list(project.id).find(candidate => candidate.id === session.id);
+    // A short-lived command can exit after launch resolves but before this
+    // listener is registered. The PTY manager removes it from `list()` first,
+    // but retains its terminal state briefly so this check can finish the run.
+    const actual = this.deps?.ptys.getRememberedSession(session.id);
     if (actual?.status === 'exited') onExit(session.id, actual.exitCode ?? -1);
 
     if (live.task.enabled) this.arm(id);

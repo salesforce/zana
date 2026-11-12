@@ -50,6 +50,17 @@ describe('modernTeamLaunchRoute', () => {
 });
 
 describe('createModernTeamLaunchSource', () => {
+  it('exposes authorized named-check discovery on owner launch surface', async () => {
+    const calls: CallMcpToolArgs[] = [];
+    const src = source({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: false, teamJobLaunchEnabled: true }, async (args) => {
+      calls.push(args); return { ok: true, text: '{"names":["unit"]}' };
+    });
+    expect(src.tools.some((entry) => entry.name === 'execution_checks_list')).toBe(true);
+    const configured = await src.configurers[0](ctx());
+    expect(configured.tools).toContain('execution_checks_list');
+    expect(await tool(src, 'execution_checks_list').execute({}, ctx())).toBe('{"names":["unit"]}');
+    expect(calls[0]).toMatchObject({ name: 'execution.checks.list', input: {} });
+  });
   it('registers launch_team siblings plus raw owner execution verbs', () => {
     const src = source({ mcpBaseUrl: 'http://127.0.0.1:1', teamLaunchEnabled: true, teamJobLaunchEnabled: true }, async () => ({ ok: true, text: '{}' }));
     expect(src.tools.map((t) => t.name).sort()).toEqual(
@@ -418,6 +429,7 @@ describe('Modern owner execution catalog', () => {
     const session = await resolvePluginSessionTools([src], { threadId: 'thread-1', projectId: 'project-1' });
     expect(session.tools.map((row) => row.name)).toEqual([
       'execution_start',
+      'execution_checks_list',
       'execution_snapshot',
       'execution_status',
       'execution_respond',

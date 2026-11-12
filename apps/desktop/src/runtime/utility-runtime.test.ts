@@ -2,7 +2,7 @@ import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budg
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createUtilityRuntime } from './runtime-supervisor.js';
-import { SERVER_RUNTIME_PROTOCOL_VERSION as protocolVersion } from '@zana-ai/zcc-contracts/runtime';
+import { SERVER_RUNTIME_PROTOCOL_VERSION as protocolVersion, ServerRuntimeInboundSchema } from '@zana-ai/zcc-contracts/runtime';
 function fixture() {
   const child = Object.assign(new EventEmitter(), { postMessage: vi.fn(), kill: vi.fn(), pid: 42 });
   const gone = vi.fn();
@@ -11,6 +11,24 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 describe('utility process lifecycle', () => {
+  it('serializes dedicated privileged named-check operations with strict scopes', async () => {
+    const { child, runtime } = fixture();
+    const scope = { kind: 'project', projectId: 'p1' } as const;
+    const checks = [{ name: 'test', command: 'pnpm test' }];
+    const pending = runtime.request('named-checks-set' as never, scope as never, checks as never);
+    const message = child.postMessage.mock.calls[0]![0];
+    child.emit('message', { type: 'result', protocolVersion, id: message.id, value: checks });
+    await pending;
+    expect(message).toMatchObject({ operation: 'named-checks-set', scope, checks });
+    expect(ServerRuntimeInboundSchema.safeParse(message).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...message, command: 'caller command' }).success).toBe(false);
+    const read = runtime.request('named-checks-get' as never, { kind: 'global' } as never);
+    const request = child.postMessage.mock.calls[1]![0];
+    child.emit('message', { type: 'result', protocolVersion, id: request.id, value: checks });
+    await read;
+    expect(request).toMatchObject({ operation: 'named-checks-get', scope: { kind: 'global' } });
+    expect(ServerRuntimeInboundSchema.safeParse(request).success).toBe(true);
+  });
   it('allows bounded long plugin CLI work while ordinary requests retain their short deadline', async () => {
     vi.useFakeTimers(); const { child, runtime } = fixture();
     const pending = runtime.request('plugins-cli-run', 'plugin', ['open'], { threadId: 'thread' });

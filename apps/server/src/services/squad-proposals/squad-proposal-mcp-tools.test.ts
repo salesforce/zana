@@ -48,6 +48,25 @@ function setup(over: Partial<RegisterSquadProposalToolsOpts> = {}) {
 const NOT_LIVE = 'originating session is not live in this project.';
 
 describe('registerSquadProposalTools', () => {
+  it('accepts flat shared launch options and converts to canonical nested input', async () => {
+    const options = { worktree: false, onComplete: 'leave', push: true, checks: ['unit'], failurePolicyDefault: 'fail-run', target: { kind: 'worktree', branch: 'feature/x' } };
+    const parsed = z.object(squadLaunchInputSchema).parse({ teamId: 't', goal: 'g', mode: 'now', ...options });
+    expect(parsed).toMatchObject(options);
+    const { tools, launchSquadNow, propose } = setup();
+    await tools.get('squad_launch')!(parsed);
+    expect(launchSquadNow).toHaveBeenCalledWith({ projectId: 'p', sessionId: 's1' }, { teamId: 't', goal: 'g', launchOptions: options });
+    await tools.get('squad_propose')!({ teamId: 't', goal: 'g', ...options });
+    expect(propose).toHaveBeenCalledWith(expect.anything(), { teamId: 't', goal: 'g', launchOptions: options });
+  });
+
+  it('defaults omitted launch mode to review and rejects caller-owned preview metadata', async () => {
+    const { tools, propose } = setup();
+    await tools.get('squad_launch')!({ teamId: 't', goal: 'g' });
+    expect(propose).toHaveBeenCalled();
+    const res = await tools.get('squad_launch')!({ teamId: 't', goal: 'g', mode: 'review', location: { kind: 'project-root' } });
+    expect(res.isError).toBe(true);
+    expect(propose).toHaveBeenCalledTimes(1);
+  });
   it('registers nothing without a session or propose dep', () => {
     expect(setup({ sessionId: undefined }).tools.size).toBe(0);
     expect(setup({ propose: undefined }).tools.size).toBe(0);
@@ -116,13 +135,13 @@ describe('registerSquadProposalTools', () => {
     for (const [key, prop] of Object.entries(SQUAD_PLAN_CHECK_JSON_SCHEMA.properties)) expect(prop, key).toMatchObject(zodCheck.properties[key]!);
   });
 
-  it('squad_launch schema and JSON schema are the propose ones plus a required mode', () => {
+  it('squad_launch schema and JSON schema are the propose ones plus an optional mode', () => {
     const zodLaunch = z.toJSONSchema(z.object(squadLaunchInputSchema)) as { properties: Record<string, Record<string, unknown>>; required: string[] };
     for (const [key, prop] of Object.entries(SQUAD_LAUNCH_JSON_SCHEMA.properties)) {
       expect(prop, key).toMatchObject(zodLaunch.properties[key]!);
     }
-    expect(SQUAD_LAUNCH_JSON_SCHEMA.required).toEqual(['teamId', 'goal', 'mode']);
-    expect(zodLaunch.required).toEqual(expect.arrayContaining(['mode']));
+    expect(SQUAD_LAUNCH_JSON_SCHEMA.required).toEqual(['teamId', 'goal']);
+    expect(zodLaunch.required).not.toContain('mode');
     expect(Object.keys(SQUAD_LAUNCH_JSON_SCHEMA.properties)).toEqual([...Object.keys(SQUAD_PROPOSE_JSON_SCHEMA.properties), 'mode']);
     expect(SQUAD_LAUNCH_DESCRIPTION).toContain("mode 'now'");
     expect(SQUAD_LAUNCH_DESCRIPTION).toContain("mode 'review'");
@@ -329,8 +348,8 @@ describe('registerSquadProposalTools', () => {
 
 describe('squad_launch input schema', () => {
   const launch = z.object(squadLaunchInputSchema);
-  it('requires a known mode', () => {
-    expect(launch.safeParse({ teamId: 't', goal: 'g' }).success).toBe(false);
+  it('accepts omitted mode but rejects unknown mode', () => {
+    expect(launch.safeParse({ teamId: 't', goal: 'g' }).success).toBe(true);
     expect(launch.safeParse({ teamId: 't', goal: 'g', mode: 'later' }).success).toBe(false);
     expect(launch.safeParse({ teamId: 't', goal: 'g', mode: 'review' }).success).toBe(true);
     expect(launch.safeParse({ teamId: 't', goal: 'g', mode: 'now', sources: ['a.md'] }).success).toBe(true);

@@ -371,7 +371,7 @@ export function startEnrolledHostConnection(options: {
     runtime.peerSsh?.close?.();
     await peerControl.whenIdle();
     await pluginHosts.shutdown();
-    adapter?.dispose();
+    await adapter?.dispose();
     enrolledPty?.dispose();
     await projectCatalogue.close();
     await sink.dispose();

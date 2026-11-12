@@ -31,6 +31,7 @@ function fixture() {
   const sessions: any[] = [];
   const ptys = Object.assign(new EventEmitter(), {
     list: vi.fn((id: string) => sessions.filter(session => session.projectId === id)),
+    getRememberedSession: vi.fn((id: string) => sessions.find(session => session.id === id) ?? null),
     reapDeadSessions: vi.fn(), closeExpected: vi.fn()
   });
   const deps = {

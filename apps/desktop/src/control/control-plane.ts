@@ -389,6 +389,7 @@ const KNOWN_OPS = new Set<string>([
   'sched.retry',
   'sched.dismiss',
   'team.launch',
+  'team.preview',
   'team.status',
   'team.answer',
   'team.stop'
@@ -790,6 +791,7 @@ export async function dispatchOp(
       }
       return deps.setScheduleEnabled(id, args.enabled);
     }
+    case 'team.preview':
     case 'team.launch': {
       const teamId = str(args.teamId);
       const projectId = str(args.projectId);
@@ -804,7 +806,12 @@ export async function dispatchOp(
         return { ok: false, code: 'BAD_ARGS', message: 'Team launch input exceeds size limits' };
       }
       if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
-      return deps.teamOps.launch({ teamId, projectId, goal, mode, ...(title ? { title } : {}), ...(summary ? { summary } : {}) });
+      const { launchOptionsSchema } = await import('@zana-ai/zcc-domain/launch-options');
+      const options = launchOptionsSchema.safeParse(Object.fromEntries(['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault', 'target'].filter(key => key in args).map(key => [key, args[key]])));
+      if (!options.success || args.previewToken !== undefined && (typeof args.previewToken !== 'string' || args.previewToken.length > 256)) return { ok: false, code: 'BAD_ARGS', message: 'Invalid launch options or preview token' };
+      const input: import('@zana-ai/zcc-domain/product').ProductTeamLaunchInput = { teamId, projectId, goal, mode, ...options.data, ...(typeof args.previewToken === 'string' ? { previewToken: args.previewToken } : {}), ...(title ? { title } : {}), ...(summary ? { summary } : {}) };
+      if (op === 'team.preview') return deps.teamOps.preview ? deps.teamOps.preview(input) : { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview unavailable' };
+      return deps.teamOps.launch(input);
     }
     case 'team.status': {
       const id = str(args.id);

@@ -1,4 +1,5 @@
 import { ProjectSourcesSettings } from './ProjectSourcesSettings.js';
+import { NamedChecksSettings } from '@/components/settings/NamedChecksSettings';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -61,6 +62,7 @@ export function ProjectSettingsView({
       <ProjectWorktreeSettings project={project} onSaved={onSaved} />
 
       <ProjectLaunchApprovalSettings project={project} onSaved={onSaved} />
+      <NamedChecksSettings key={`checks-${project.id}`} projectId={project.id} />
 
       <ProjectProcessesSection project={project} />
 

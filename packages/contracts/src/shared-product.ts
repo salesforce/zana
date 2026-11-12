@@ -10,7 +10,7 @@ export const SHARED_PRODUCT_FAMILIES: Readonly<Record<string, readonly string[]>
   followups: ['list', 'create', 'update', 'delete', 'setStatus', 'markSpawned'],
   feed: ['list', 'refresh', 'digest'],
   personas: ['list', 'save', 'duplicate', 'delete', 'contribute'],
-  teams: ['list', 'save', 'duplicate', 'delete', 'startJob', 'contribute'],
+  teams: ['list', 'save', 'duplicate', 'delete', 'startJob', 'preview', 'contribute'],
   executionBoard: ['listProject', 'snapshot', 'readArtifact', 'dismiss', 'stop', 'retry', 'retryWork', 'releaseWork', 'reassignWork', 'respond', 'resume', 'retryDelivery', 'clearResumeToken'],
   quickPrompts: ['list', 'save', 'delete'],
   extensions: ['list']

@@ -170,8 +170,15 @@ composer.
 
 ## When a step fails or is blocked
 
-While the run is active, if a worker's step fails or is blocked, Squad details
-shows **Retry work** for that step. You can choose another slot first. A step that is claimed shows
+By default, a failed step fails the run. Its dependents are skipped, so a
+generated worktree is not merged or deleted. A plan can instead declare an
+**On failure** retry edge with feedback. Zana persists the failed step's
+structured output before deciding the retry, passes it as untrusted feedback,
+and stops the loop at declared limits (never more than 100 iterations) or on a
+structured-output stall.
+
+While the run is active, Squad details also shows **Retry work** for a failed or
+blocked step. You can choose another slot first. A step that is claimed shows
 **Release work**. A step that is ready shows **Reassign work**.
 
 ---

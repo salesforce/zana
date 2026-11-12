@@ -58,6 +58,14 @@ describe('resolveTriggeredSquadPlan', () => {
 });
 
 describe('resolveSquadPlan', () => {
+  it('preserves provided launch declarations and step check/failure contracts', () => {
+    const text = `## Launch\n- worktree: true\n- push: true\n- checks: check:lint\n## Execution Plan\n${validPlan}\n- Completion criteria: check:test\n- On failure: fail run`;
+    expect(resolveSquadPlan('provided', [text])).toMatchObject({
+      launch: { worktree: true, push: true, checks: ['lint'] },
+      workUnits: [{ checks: ['test'], onFailure: { kind: 'fail-run' } }]
+    });
+    expect(resolveSquadPlan('infer', [text])).not.toHaveProperty('launch');
+  });
   const stepWithoutScope = '### write: Write output <!-- executable-step -->\n\n- **Mode:** Mutating\n- **Work:** Create output.\n- **Verification:** Read output.';
 
   it('never parses an inferred plan, whatever the text', () => {
@@ -109,6 +117,13 @@ describe('plan normalization pass-through', () => {
     expect(resolved.normalizations).toEqual(['step "Write" id normalized to "write"']);
     expect(resolved.idRenames).toEqual([{ from: 'Write', to: 'write' }]);
     expect(resolved).not.toHaveProperty('planError');
+  });
+
+  it('preserves parsed checks and failures after a normalized id lookup', () => {
+    const plan = `${recoverable}\n- **Completion criteria:** check:lint\n- **On failure:** fail run`;
+    expect(resolveSquadPlan('provided', [plan])).toMatchObject({
+      coordinationMode: 'structured', workUnits: [{ id: 'write', checks: ['lint'], onFailure: { kind: 'fail-run' } }]
+    });
   });
 
   it('carries notes through the triggered-squad resolver', () => {

@@ -34462,6 +34462,47 @@ textarea.ui-command-composer-input {
   padding: 2px 6px;
 }
 
+.launch-disclosure-button,
+.thread-command-composer-meta-start .launch-disclosure-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.launch-disclosure-button:hover,
+.launch-disclosure-button[aria-expanded='true'] {
+  background: var(--bg-elevated);
+  border-color: var(--text-muted);
+}
+
+.launch-disclosure-button:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.squad-launch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 0;
+}
+
+.launch-job-details [aria-label='Resolved launch options'] p {
+  margin: 0 0 8px;
+}
+
 .provider-cli-banner {
   margin: 0 0 8px;
   border: 1px solid color-mix(in srgb, var(--warn, #d97706) 35%, var(--border, #d0d5dd));

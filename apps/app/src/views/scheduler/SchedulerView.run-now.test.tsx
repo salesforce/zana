@@ -7,11 +7,18 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 
 const runNow = vi.hoisted(() => vi.fn());
+const previewTeamLaunch = vi.hoisted(() => vi.fn());
+const runReviewedTeamNow = vi.hoisted(() => vi.fn());
 const pushToast = vi.hoisted(() => vi.fn());
 const tasks = vi.hoisted(() => ({ current: [] as unknown[] }));
 
 vi.mock('../../lib/product-client.js', () => ({
-  product: { scheduler: { runNow: (...a: unknown[]) => runNow(...a), setEnabled: vi.fn(), delete: vi.fn() }, terminals: { close: vi.fn() } }
+  product: { scheduler: {
+    runNow: (...a: unknown[]) => runNow(...a),
+    previewTeamLaunch: (...a: unknown[]) => previewTeamLaunch(...a),
+    runReviewedTeamNow: (...a: unknown[]) => runReviewedTeamNow(...a),
+    setEnabled: vi.fn(), delete: vi.fn()
+  }, terminals: { close: vi.fn() } }
 }));
 vi.mock('@/store', () => {
   const ui = { setNav: vi.fn(), revealScheduleId: null, pushToast, clearRevealSchedule: vi.fn(), enterProjectFocus: vi.fn(), setProjectView: vi.fn() };
@@ -51,9 +58,21 @@ const mount = () => {
   fireEvent.click(screen.getByRole('button', { name: 'overview-run' }));
 };
 
-afterEach(() => { cleanup(); runNow.mockReset(); pushToast.mockReset(); });
+afterEach(() => { cleanup(); runNow.mockReset(); previewTeamLaunch.mockReset(); runReviewedTeamNow.mockReset(); pushToast.mockReset(); });
 
 describe('SchedulerView run now outcome', () => {
+  it('opens review before running an overview squad and consumes its preview token', async () => {
+    previewTeamLaunch.mockResolvedValue({ ok: true, value: { resolvedLaunch: {}, previewToken: 'review-token' } });
+    runReviewedTeamNow.mockResolvedValue({ ok: true, value: task([{ at: 'x', result: 'success' }]) });
+    tasks.current = [{ ...task(), kind: 'team', teamId: 't' }];
+    render(<MemoryRouter><SchedulerView /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'overview-run' }));
+    expect(await screen.findByRole('dialog', { name: 'Review scheduled squad launch' })).toBeTruthy();
+    expect(runNow).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Launch schedule' }));
+    await vi.waitFor(() => expect(runReviewedTeamNow).toHaveBeenCalledWith('s1', 'review-token'));
+    expect(runNow).not.toHaveBeenCalled();
+  });
   it('toasts a transport failure', async () => {
     runNow.mockResolvedValue({ ok: false, message: 'denied' });
     mount();

@@ -147,6 +147,7 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
     await expect(projectPicker).toContainText(projectName);
 
     // 6. Leave Title empty so main resolves one canonical title from the goal.
+    await modal.getByRole('button', { name: 'Customize launch', exact: true }).click();
     await modal.getByLabel('Summary Optional').fill('Durable job launch from the Agents board');
 
     // 7. Launch — this calls the intact `teams.startJob` durable path.

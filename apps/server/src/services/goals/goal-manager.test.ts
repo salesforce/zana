@@ -352,6 +352,32 @@ describe('GoalManager — create / spawn', () => {
     expect(updated.planSource).toBe('provided');
   });
 
+  it('persists parsed Squad launch options including explicit false and empty checks', async () => {
+    const { manager } = makeManager();
+    const options = { worktree: false, push: false, checks: [], onComplete: 'leave' as const, failurePolicyDefault: 'fail-run' as const };
+    const goal = await manager.create({
+      projectId: 'proj-1', title: 'T', statement: 'x', successCriteria: [],
+      assignment: { kind: 'team', teamId: 'release-squad' }, launchOptions: options
+    });
+    expect(goal.launchOptions).toEqual(options);
+    const updated = await manager.update(goal.id, { launchOptions: { ...options, push: true } });
+    expect(updated.launchOptions).toEqual({ ...options, push: true });
+  });
+
+  it('rejects agent launch options and clears Squad options when reassigned to an agent', async () => {
+    const { manager } = makeManager();
+    await expect(manager.create({
+      projectId: 'proj-1', title: 'T', statement: 'x', successCriteria: [], launchOptions: { push: false }
+    })).rejects.toThrow('launchOptions are only supported for team goals');
+
+    const goal = await manager.create({
+      projectId: 'proj-1', title: 'T', statement: 'x', successCriteria: [],
+      assignment: { kind: 'team', teamId: 'release-squad' }, launchOptions: { push: false }
+    });
+    const updated = await manager.update(goal.id, { assignment: { kind: 'profile', profile: 'claude-yolo' } });
+    expect(updated.launchOptions).toBeUndefined();
+  });
+
   it('runNow forces one iteration on a draft goal', async () => {
     const { manager, ptys } = makeManager();
     const g = await manager.create({
@@ -1152,6 +1178,31 @@ function deferred<T>() {
 }
 
 describe('GoalManager original-owner durability', () => {
+  it('keeps a malformed saved Squad policy paused until a valid replacement is persisted', async () => {
+    const { manager, records, persistence, deps } = durableManager();
+    const loaded: Goal = {
+      ...goalFixture({ id: 'invalid-policy', status: 'active', assignment: { kind: 'team', teamId: 'release-squad' } }),
+      status: 'paused',
+      launchOptions: undefined,
+      launchOptionsError: 'Saved Squad launch settings are invalid. Replace them before resuming this goal.'
+    } as Goal;
+    records.set(loaded.id, loaded);
+    await manager.loadAll([project]);
+
+    expect(current(manager, loaded.id)).toMatchObject({ status: 'paused', launchOptionsError: expect.stringContaining('invalid') });
+    await expect(manager.setStatus(loaded.id, 'active')).rejects.toThrow('Saved Squad launch settings are invalid');
+    await expect(manager.runNow(loaded.id)).rejects.toThrow('Saved Squad launch settings are invalid');
+    expect(deps.launchTerminal).not.toHaveBeenCalled();
+    await expect(manager.update(loaded.id, { title: 'Cannot silently rewrite' })).rejects.toThrow('Replace invalid saved Squad launch settings');
+    expect(persistence.save).not.toHaveBeenCalled();
+
+    const repaired = await manager.update(loaded.id, { launchOptions: { worktree: false, push: false, checks: [] } });
+    expect(repaired).toMatchObject({ launchOptions: { worktree: false, push: false, checks: [] } });
+    expect(repaired).not.toHaveProperty('launchOptionsError');
+    await manager.setStatus(loaded.id, 'active');
+    expect(deps.launchTerminal).not.toHaveBeenCalled();
+    manager.stopAll();
+  });
   it.each(['not-started', 'exited'] as const)('resolves a missing worker with durable %s evidence without launching', async evidence => {
     const { manager, deps, input, persistence } = durableManager();
     const inspect = vi.fn(async () => evidence); deps.inspectWorkerLaunch = inspect;

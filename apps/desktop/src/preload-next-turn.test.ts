@@ -3,11 +3,13 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 
 const electron = vi.hoisted(() => ({
   invoke: vi.fn(),
-  exposeInMainWorld: vi.fn()
+  exposeInMainWorld: vi.fn(),
+  on: vi.fn(),
+  off: vi.fn()
 }));
 
 vi.mock('electron', () => ({
-  ipcRenderer: { invoke: electron.invoke, on: vi.fn(), setMaxListeners: vi.fn() },
+  ipcRenderer: { invoke: electron.invoke, on: electron.on, off: electron.off, setMaxListeners: vi.fn() },
   contextBridge: { exposeInMainWorld: electron.exposeInMainWorld },
   webFrame: { getZoomFactor: vi.fn(() => 1) },
   webUtils: { getPathForFile: vi.fn() }
@@ -83,6 +85,47 @@ it('exposes schedule get and reload through their distinct product IPC channels'
   await expect(api.scheduler.get('schedule-1')).resolves.toEqual({ ok: true, value: { id: 'schedule-1' } });
   await expect(api.scheduler.reload('schedule-1')).resolves.toEqual({ ok: true, value: { id: 'schedule-1', name: 'Reloaded' } });
   expect(electron.invoke.mock.calls).toEqual([[IPC.scheduler.get, 'schedule-1'], [IPC.scheduler.reload, 'schedule-1']]);
+});
+
+it('exposes named-check settings and releases the exact change listener', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.on.mockClear();
+  electron.off.mockClear();
+  const checks = [{ name: 'unit', command: 'pnpm test' }];
+  electron.invoke.mockResolvedValueOnce(checks).mockResolvedValueOnce(checks);
+
+  await expect(api.namedChecks.get({ kind: 'global' })).resolves.toEqual(checks);
+  await expect(api.namedChecks.set({ kind: 'global' }, checks)).resolves.toEqual(checks);
+  expect(electron.invoke.mock.calls).toEqual([
+    [IPC.namedChecks.get, { kind: 'global' }],
+    [IPC.namedChecks.set, { kind: 'global' }, checks]
+  ]);
+  const listener = vi.fn();
+  const off = api.namedChecks.onChanged(listener);
+  const handler = electron.on.mock.calls.find(([channel]) => channel === IPC.namedChecks.onChanged)![1];
+  handler();
+  expect(listener).toHaveBeenCalledExactlyOnceWith();
+  off();
+  expect(electron.off).toHaveBeenCalledExactlyOnceWith(IPC.namedChecks.onChanged, handler);
+});
+
+it('exposes Team previews and reviewed schedule runs through distinct IPC channels', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({ ok: true });
+  const request = { teamId: 'team-1', projectId: 'project-1' };
+
+  await api.teams.preview(request);
+  await api.scheduler.previewTeamLaunch('schedule-1');
+  await api.scheduler.runReviewedTeamNow('schedule-1', 'token-1');
+  expect(electron.invoke.mock.calls).toEqual([
+    [IPC.teams.preview, request],
+    [IPC.scheduler.previewTeamLaunch, 'schedule-1'],
+    [IPC.scheduler.runReviewedTeamNow, 'schedule-1', 'token-1']
+  ]);
 });
 
 it('exposes run query, retry, resume and dismiss through their own scheduler IPC channels', async () => {

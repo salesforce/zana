@@ -7,11 +7,14 @@ import type {
   TeamJobLaunchInput
 } from '@zana-ai/zcc-domain/product';
 import {
+  assembledResultProjection,
   executionBoardProjection
 } from '@zana-ai/zcc-server/services/execution/projection';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 
 export interface TeamProductOpDeps {
+  resolvePreview?(input: ProductTeamLaunchInput): Promise<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>;
+  resolveLocation?(projectId: string, executionId: string): Promise<Pick<import('@zana-ai/zcc-domain/product').ProductTeamLaunchResult, 'location' | 'path' | 'branch'>>;
   startTeamJobFromUi(input: TeamJobLaunchInput): Promise<Result<{ executionId: string; state: string }>>;
   getExecution(executionId: string): Promise<ExecutionRecord | undefined>;
   status(owner: string, projectId: string, executionId: string): Promise<ExecutionRecord | undefined>;
@@ -25,10 +28,22 @@ export interface TeamProductOpDeps {
     clientRequestId: string,
     message: string
   ): Promise<Result<ExecutionRecord>>;
+  /** Operational errors only; contexts contain ids, never goal text, commands, or credentials. */
+  logError?(context: string, error: unknown): void;
 }
 
 function jobStatus(record: ExecutionRecord): ProductTeamStatus {
   const projection = executionBoardProjection(record);
+  const terminal = record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED';
+  const result = !terminal ? undefined : record.assembledResult ? {
+    ...assembledResultProjection(record)!,
+    // Board previews truncate unit output; CLI consumers need the persisted result.
+    units: record.assembledResult.units.map(({ id, title, state, result, failureCode }) => ({
+      id, title, state,
+      ...(result === undefined ? {} : { result }),
+      ...(failureCode === undefined ? {} : { failureCode })
+    }))
+  } : record.finalSummary;
   return {
     kind: 'job',
     id: record.id,
@@ -38,6 +53,7 @@ function jobStatus(record: ExecutionRecord): ProductTeamStatus {
     stateVersion: record.stateVersion,
     ...(projection.objective ? { goal: projection.objective } : {}),
     ...(projection.summary ? { summary: projection.summary } : {}),
+    ...(result === undefined ? {} : { result }),
     blockers: (record.blockers ?? []).map((blocker) => ({
       id: blocker.id,
       question: blocker.question,
@@ -58,14 +74,28 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
         teamId: input.teamId,
         projectId: input.projectId,
         goal: input.goal,
+        ...(input.previewToken === undefined ? {} : { previewToken: input.previewToken }),
+        ...(input.worktree === undefined ? {} : { worktree: input.worktree }),
+        ...(input.onComplete === undefined ? {} : { onComplete: input.onComplete }),
+        ...(input.push === undefined ? {} : { push: input.push }),
+        ...(input.checks === undefined ? {} : { checks: input.checks }),
+        ...(input.failurePolicyDefault === undefined ? {} : { failurePolicyDefault: input.failurePolicyDefault }),
+        ...(input.target === undefined ? {} : { target: input.target }),
         // Headless callers have no correction window: default to coordinator inference.
         coordinationMode: input.mode ?? 'freeform',
         ...(input.title ? { title: input.title } : {}),
         ...(input.summary ? { summary: input.summary } : {})
       });
-      return started.ok
-        ? { ok: true, value: { kind: 'job', id: started.value.executionId, state: started.value.state } }
-        : started;
+      if (!started.ok) return started;
+      // Location enriches successful launch response only; failure must not make caller retry a live job.
+      let location: Pick<import('@zana-ai/zcc-domain/product').ProductTeamLaunchResult, 'location' | 'path' | 'branch'> = {};
+      try {
+        if (deps.resolveLocation) location = await deps.resolveLocation(input.projectId, started.value.executionId);
+      } catch (error) {
+        try { deps.logError?.(`team launch location project=${input.projectId} execution=${started.value.executionId}`, error); } catch { /* logging must not affect a live launch */ }
+        // Job start succeeded. Status exposes location when this best-effort read recovers.
+      }
+      return { ok: true, value: { kind: 'job', id: started.value.executionId, state: started.value.state, ...location } };
     },
 
     async status(id: string) {
@@ -74,6 +104,15 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
       const current = await deps.status(found.execution.callerPrincipalId, found.execution.projectId, found.execution.id);
       if (!current) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
       return { ok: true, value: jobStatus(current) };
+    },
+
+    async preview(input) {
+      if (!deps.resolvePreview) return { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview unavailable' };
+      try { return { ok: true, value: await deps.resolvePreview(input) }; }
+      catch (error) {
+        try { deps.logError?.(`team preview project=${input.projectId} team=${input.teamId}`, error); } catch { /* logging must not affect preview response */ }
+        return { ok: false, code: 'INVALID', message: 'Launch preview could not validate the plan or target.' };
+      }
     },
 
     async answer(input) {

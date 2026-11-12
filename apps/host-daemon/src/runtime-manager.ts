@@ -57,12 +57,12 @@ export function createRuntimeManager(options: {
   }
   return {
     ...adapter,
-    dispose() {
+    async dispose() {
       if (timer) {
         clearInterval(timer);
         timer = null;
       }
-      adapter.dispose();
+      await adapter.dispose();
     }
   };
 }

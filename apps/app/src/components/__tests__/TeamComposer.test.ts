@@ -18,6 +18,8 @@ describe('TeamComposer', () => {
     expect(source).toContain('goalReady');
     expect(source).toContain('field.text.trim().length > 0');
     expect(source).toContain('data-testid="team-command-send"');
+    expect(source).toContain('setTimeout(() => {');
+    expect(source).toContain('}, 250);');
     // Default plan mode is seeded from the persisted config (Infer/freeform out of
     // the box), lazily so the composer opens on the user's chosen default.
     expect(source).toContain("useComposerSetting<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(session, 'team.coordination',");

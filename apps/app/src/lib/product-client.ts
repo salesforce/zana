@@ -429,6 +429,8 @@ function httpProduct(): Pick<
       delete: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       setEnabled: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       runNow: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
+      previewTeamLaunch: async () => ({ ok: false, code: 'unavailable', message: 'scheduled Squad review requires the desktop app' }),
+      runReviewedTeamNow: async () => ({ ok: false, code: 'unavailable', message: 'scheduled Squad review requires the desktop app' }),
       queryRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       retryRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       resumeRun: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
@@ -459,12 +461,13 @@ function httpProduct(): Pick<
         subscribeProductEvent<Persona[]>('personas:changed', cb)
     } as CcApi['personas'],
     teams: {
+      preview: async (): ReturnType<CcApi['teams']['preview']> => ({ ok: false, code: 'UNAVAILABLE', message: 'Launch preview requires a connected host' }),
       list: async () => {
         const body = await apiJson<{ teams: Team[] }>('/teams');
         return body.teams;
       },
       onChanged: noopSubscribe
-    } as CcApi['teams'],
+    } as unknown as CcApi['teams'],
     agents: {
       list: async () => {
         const body = await apiJson<{ agents: AgentRecord[] }>('/agents');
@@ -1450,6 +1453,11 @@ export const peerConnections = {
 export const product: CcApi = new Proxy({} as CcApi, {
   get(_target, family: string | symbol) {
     const name = String(family);
+    if (name === 'namedChecks') {
+      if (hasDesktopBridge()) return window.cc.namedChecks;
+      const unavailable = async () => { throw new Error('Named checks require owner desktop window'); };
+      return { get: unavailable, set: unavailable, onChanged: noopSubscribe } satisfies CcApi['namedChecks'];
+    }
     if (name === 'extensions' && !hasDesktopBridge()) return withStubs('extensions', sharedExtensions(
       sharedProductFamily('extensions', httpProduct().extensions) as CcApi['extensions']
     ));
