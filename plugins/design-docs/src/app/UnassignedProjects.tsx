@@ -29,18 +29,24 @@ function useForeignTitles() {
   const api = useApi();
   const [state, setState] = useState<ReadonlyMap<string, TitlesState>>(new Map());
   const started = useRef(new Set<string>());
+  // Request generation per id: a response applies only while it is still the latest request for that id.
+  const generation = useRef(new Map<string, number>());
   const load = useCallback((id: string, retry = false) => {
     if (started.current.has(id) && !retry) return;
     started.current.add(id);
+    const mine = (generation.current.get(id) ?? 0) + 1;
+    generation.current.set(id, mine);
+    const current = () => generation.current.get(id) === mine;
     setState((prev) => new Map(prev).set(id, { status: 'loading' }));
     api.listForeignProjectTitles(id).then(
-      (titles) => setState((prev) => new Map(prev).set(id, { status: 'ready', titles })),
-      (error: unknown) => setState((prev) => new Map(prev).set(id, { status: 'error', message: errorMessage(error) }))
+      (titles) => { if (current()) setState((prev) => new Map(prev).set(id, { status: 'ready', titles })); },
+      (error: unknown) => { if (current()) setState((prev) => new Map(prev).set(id, { status: 'error', message: errorMessage(error) })); }
     );
   }, [api]);
   /** Drop a cached list (its doc count changed) so the next open, or the caller, fetches fresh titles. */
   const invalidate = useCallback((id: string) => {
     started.current.delete(id);
+    generation.current.set(id, (generation.current.get(id) ?? 0) + 1); // orphan any in-flight request
     setState((prev) => {
       const next = new Map(prev);
       next.delete(id);
@@ -91,7 +97,8 @@ export function UnassignedProjectsDialog({
   const [busy, setBusy] = useState<string | null>(null);
   const titles = useForeignTitles();
   const [openDocs, setOpenDocs] = useState<ReadonlyMap<string, boolean>>(new Map());
-  const [mappedOpen, setMappedOpen] = useState(false);
+  // null = no explicit choice yet: collapsed while docs need a Project, open once everything is mapped.
+  const [mappedOpen, setMappedOpen] = useState<boolean | null>(null);
   // Cards mapped in this session leave "Needs a Project" immediately, before the parent reloads.
   const [justMapped, setJustMapped] = useState<Set<string>>(new Set());
 
@@ -172,7 +179,7 @@ export function UnassignedProjectsDialog({
     .filter((item) => !justMapped.has(item.foreignProjectId))
     .sort((a, b) => headingLabel(a).localeCompare(headingLabel(b), undefined, { sensitivity: 'base' }));
   const mapped = mappings.data ?? [];
-  const mappedVisible = mappedOpen || rows.length === 0;
+  const mappedVisible = mappedOpen ?? rows.length === 0;
   const anyMapped = mapped.length > 0 || justMapped.size > 0; // a just-mapped card counts before the list reloads
   const nothingAtAll = rows.length === 0 && !anyMapped && mappings.data !== null;
   return (

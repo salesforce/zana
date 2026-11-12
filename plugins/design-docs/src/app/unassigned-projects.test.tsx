@@ -240,6 +240,20 @@ describe('stale lists, counts and caps', () => {
     expect((await screen.findByRole('list', { name: 'Doc titles' })).textContent).toBe('Alpha');
   });
 
+  it('ignores a stale title response that resolves after a newer request', async () => {
+    const pending: Array<(titles: string[]) => void> = [];
+    const { harness } = setup(async () => ({}), { listForeignProjectTitles: () => new Promise<string[]>((resolve) => pending.push(resolve)) });
+    const view = render([item], harness);
+    fireEvent.click(screen.getByRole('button', { name: 'Show docs' }));
+    rerender(view, [{ ...item, docCount: 3 }]);
+    await waitFor(() => expect(pending).toHaveLength(2));
+    pending[1]!(['Fresh']);
+    await waitFor(() => expect(screen.getByRole('list', { name: 'Doc titles' }).textContent).toContain('Fresh'));
+    pending[0]!(['Stale']);
+    await Promise.resolve();
+    expect(screen.getByRole('list', { name: 'Doc titles' }).textContent).not.toContain('Stale');
+  });
+
   it('subtracts the real preview length for "+N"', () => {
     const { harness } = setup(async () => ({}));
     render([{ ...item, docCount: 4, sampleTitles: ['Only'] }, { ...item, foreignProjectId: 'far-2', senderName: 'Zed', docCount: 1, sampleTitles: ['Solo'] }], harness);
@@ -337,6 +351,15 @@ describe('Already mapped', () => {
     expect(gone.textContent).toMatch(/2 docs →.*—.*Project removed from this computer/);
     expect(screen.getByRole('group', { name: 'Mapping Seven' }).textContent).toContain('Another Project');
     expect(screen.getByRole('dialog').textContent).not.toMatch(/far-|Workspace/);
+  });
+
+  it('can be collapsed again when everything is mapped', async () => {
+    open([], {});
+    const toggle = await screen.findByRole('button', { name: /Already mapped/ });
+    fireEvent.click(toggle);
+    expect(screen.queryByRole('group', { name: 'Mapping Nine' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Already mapped/ }));
+    expect(screen.getByRole('group', { name: 'Mapping Nine' })).toBeTruthy();
   });
 
   it('expands a mapped row to its titles through the lazy loader', async () => {

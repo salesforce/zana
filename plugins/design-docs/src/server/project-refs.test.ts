@@ -318,7 +318,7 @@ describe('RPC', () => {
 });
 
 describe('listForeignProjectTitles', () => {
-  it('returns titles only for unmapped and mapped ids, rejects bad ids, [] when unavailable or on DB error', async () => {
+  it('returns titles only for unmapped and mapped ids, rejects bad ids, and throws when the DB errors', async () => {
     const { received, refs, db } = setup();
     received('A', 'f1'); received('B', 'f1'); received('C', 'f2');
     expect(refs.listForeignProjectTitles('f1').sort()).toEqual(['A', 'B']);
@@ -367,6 +367,8 @@ describe('listForeignProjectTitles', () => {
     expect(refs.available).toBe(true);
     db.runScript('DROP TABLE sync_doc_references');
     expect(() => refs.listForeignProjectTitles('f1')).toThrow(/titles unavailable/);
+    db.runScript('CREATE TABLE sync_doc_references (doc_id TEXT PRIMARY KEY)');
+    expect(refs.available).toBe(true); // re-probed after recovery
   });
 
   it('throws when the lazy tables are unavailable', () => {
