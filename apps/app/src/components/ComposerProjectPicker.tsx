@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { FolderPlus, Home, Laptop, Server } from 'lucide-react';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import { useData } from '../store.js';
 import { useHosts } from '../hooks/useHosts.js';
 import { groupProjectsByMachine, locationValue, type ComposerLocation, type MachineProjectGroup } from '../lib/machine-projects.js';
-import { AddMachineProjectDialog } from './AddMachineProjectDialog.js';
+import { useSetupNavigation } from './setup/useSetupNavigation.js';
 import { composerProjectLabel, isScratchWorkspaceProject } from './composer-project-default.js';
 import './listpane/machine-projects.css';
 import { DesktopProjectPicker, type DesktopProjectOption } from './DesktopProjectPicker.js';
@@ -30,7 +30,8 @@ export function ComposerProjectPicker({
   const compact = useCompactLayout();
   const hosts = useHosts();
   const rememberLastProjectId = useData(s => s.rememberLastProjectId);
-  const [adding, setAdding] = useState<MachineProjectGroup | null>(null);
+  const openSetup = useSetupNavigation();
+  const setAdding = (group: MachineProjectGroup | null | undefined) => { if (group) openSetup({ kind: 'project', group, mode: 'open' }); };
   const groups = useMemo(() => groupProjectsByMachine(projects, hosts), [projects, hosts]);
   const project = projects.find(row => row.id === value);
   const group = groups.find(row => row.projects.some(p => p.id === value)
@@ -91,9 +92,6 @@ export function ComposerProjectPicker({
     {compact ? <MobileProjectPicker {...pickerProps} /> : <DesktopProjectPicker {...pickerProps}
       machines={groups} selectedMachineId={onStartNewThread ? groups.find(row => row.hostId === hostId)?.id ?? group?.id : group?.id}
       onAddProject={onStartNewThread ? undefined : setAdding} />}
-    {adding && <AddMachineProjectDialog group={adding} onClose={() => setAdding(null)} onAdded={added => {
-      choose({ projectId: added.id, hostId: adding.hostId });
-      setAdding(null);
-    }} />}
+
   </>;
 }

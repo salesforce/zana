@@ -35,7 +35,7 @@ test('thread tabs use project icons and colors in the strip and overflow, includ
     return rows;
   }, roots);
   for (const row of rows) await route(page, `/threads/${row.id}`);
-  const strip = page.getByTestId('titlebar-thread-tabs');
+  const strip = page.getByTestId('application-tabs');
   const design = strip.getByRole('tab', { name: /Fix App Shell Bug/ });
   const website = strip.getByRole('tab', { name: /Landing page/ });
   await expect(design.locator('[data-project-icon="Rocket"]')).toHaveCSS('color', 'rgb(248, 81, 73)');
@@ -43,7 +43,7 @@ test('thread tabs use project icons and colors in the strip and overflow, includ
   await expect(website.locator('.project-dot')).toHaveCSS('background-color', 'rgb(47, 129, 247)');
   await expect(website.locator('[data-project-icon]')).toHaveCount(0);
 
-  await strip.getByLabel('All open threads').click();
+  await strip.getByLabel('All open tabs').click();
   const result = strip.locator('.titlebar-threads-results').getByRole('button', { name: /Fix App Shell Bug/ });
   await expect(result.locator('[data-project-icon="Rocket"]')).toHaveCSS('color', 'rgb(248, 81, 73)');
   await page.evaluate(id => window.cc.projects.update(id, { icon: 'Cloud', color: '#3fb950' }), rows[0]!.projectId);
@@ -93,7 +93,7 @@ test('thread tabs: default, project context, drafts, close safety, settings, rel
     return result;
   }, paths);
   const [first, second] = threads;
-  const strip = page.getByTestId('titlebar-thread-tabs');
+  const strip = page.getByTestId('application-tabs');
   await expect(strip).toBeVisible();
   await expect(strip.getByRole('tab')).toHaveCount(0);
   await route(page, '/agents');
@@ -135,7 +135,7 @@ test('thread tabs: default, project context, drafts, close safety, settings, rel
   const stillRunning = await page.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread, first!.id);
   expect(stillRunning.archivedAt).toBeNull();
   expect(stillRunning.status).toBe('active');
-  await strip.getByLabel('All open threads').click();
+  await strip.getByLabel('All open tabs').click();
   await strip.getByRole('button', { name: 'Reopen closed tab' }).click();
   await expect(input).toHaveText('Keep my unsent navigation notes');
 
@@ -185,10 +185,10 @@ test('thread tabs: default, project context, drafts, close safety, settings, rel
   }).toBe(true);
   const scoped = projectWindow!;
   // Wait for the new window's boot-time route restoration before navigating.
-  await expect(scoped.getByTestId('titlebar-thread-tabs')).toBeVisible();
+  await expect(scoped.getByTestId('application-tabs')).toBeVisible();
   await expect(scoped.getByTestId('project-nav-agents')).toBeVisible();
   await route(scoped, `/projects/${first!.projectId}/threads/${first!.id}`);
-  const scopedStrip = scoped.getByTestId('titlebar-thread-tabs');
+  const scopedStrip = scoped.getByTestId('application-tabs');
   await expect(scopedStrip.getByRole('tab')).toHaveCount(1);
   await expect(scopedStrip).toContainText('Interface');
   await expect(scopedStrip).not.toContainText('Website');
@@ -213,9 +213,9 @@ test('thread tabs: default, project context, drafts, close safety, settings, rel
   for (const id of overflowIds) await route(page, `/threads/${id}`);
   await expect(strip.getByRole('tab', { name: /Overflow 3/ })).toBeInViewport();
   await expect(strip.getByRole('tab', { name: /Overflow 3/ }).locator('.titlebar-thread-status')).toHaveCount(0);
-  await strip.getByLabel('All open threads').click();
+  await strip.getByLabel('All open tabs').click();
   await expect(strip.locator('.titlebar-threads-popover')).toBeInViewport();
-  await strip.getByRole('textbox', { name: 'Find an open thread' }).fill('Landing');
+  await strip.getByRole('textbox', { name: 'Find an open tab' }).fill('Landing');
   await strip.locator('.titlebar-threads-results').getByRole('button', { name: /Landing page/ }).click();
   await expect(strip.getByRole('tab', { name: /Landing page/ })).toBeInViewport();
   await captureElectronScreenshot(electron, page, testInfo.outputPath('thread-tabs-narrow.png'));
@@ -238,13 +238,13 @@ test('thread tab context actions keep work running and support keyboard access',
     }
     return rows;
   }, roots);
-  const strip = page.getByTestId('titlebar-thread-tabs');
+  const strip = page.getByTestId('application-tabs');
   for (const [index, row] of rows.entries()) {
     await route(page, `/threads/${row.id}`);
     await expect(strip.getByRole('tab')).toHaveCount(index + 1);
   }
   const alpha = strip.getByRole('tab', { name: /Context Alpha/ });
-  const menu = page.getByRole('menu', { name: 'Thread tab actions' });
+  const menu = page.getByRole('menu', { name: 'Tab actions' });
   await alpha.click({ button: 'right' });
   await expect(menu).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/threads/${rows[2]!.id}$`));
@@ -299,7 +299,7 @@ test('thread tab context actions keep work running and support keyboard access',
   await alpha.click({ button: 'right' });
   await menu.getByRole('menuitem', { name: 'Close all tabs' }).click();
   await expect(strip.getByRole('tab')).toHaveCount(0);
-  await strip.getByLabel('All open threads').click();
+  await strip.getByLabel('All open tabs').click();
   await strip.getByRole('button', { name: 'Reopen closed tab' }).click();
   await expect(alpha).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/threads/${rows[0]!.id}$`));
@@ -309,7 +309,7 @@ test('thread tab context actions keep work running and support keyboard access',
   await expect(strip.getByRole('tab')).toHaveCount(0);
   await expect(page).toHaveURL(/\/agents$/);
   await expect.poll(() => page.evaluate(async id => Boolean((await (await fetch(`/api/v1/threads/${id}`)).json()).thread.archivedAt), rows[0]!.id)).toBe(true);
-  await strip.getByLabel('All open threads').click();
+  await strip.getByLabel('All open tabs').click();
   await strip.getByRole('button', { name: 'Reopen closed tab' }).click();
   await expect(alpha).toHaveCount(0);
   await expect(strip.getByRole('tab', { name: /Context Gamma/ })).toBeVisible();
@@ -351,14 +351,14 @@ test('the thread switcher appears above native browser content and restores the 
     }, url);
     await expect.poll(nativeState).toMatchObject({ visible: true });
     const before = await nativeState();
-    const strip = page.getByTestId('titlebar-thread-tabs');
-    await strip.getByLabel('All open threads').click();
-    await expect(strip.getByRole('textbox', { name: 'Find an open thread' })).toBeVisible();
+    const strip = page.getByTestId('application-tabs');
+    await strip.getByLabel('All open tabs').click();
+    await expect(strip.getByRole('textbox', { name: 'Find an open tab' })).toBeVisible();
     await expect.poll(nativeState).toMatchObject({ visible: false, marker: before!.marker });
     await page.keyboard.press('Escape');
     await expect.poll(nativeState).toMatchObject({ visible: true, marker: before!.marker });
     await strip.getByRole('tab', { name: /Browser tab/ }).click({ button: 'right' });
-    await expect(page.getByRole('menu', { name: 'Thread tab actions' })).toBeVisible();
+    await expect(page.getByRole('menu', { name: 'Tab actions' })).toBeVisible();
     await expect.poll(nativeState).toMatchObject({ visible: false, marker: before!.marker });
     await page.keyboard.press('Escape');
     await expect.poll(nativeState).toMatchObject({ visible: true, marker: before!.marker });

@@ -4,11 +4,11 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-const h = vi.hoisted(() => ({ remember: vi.fn(), hosts: [] as Host[], compact: false }));
+const h = vi.hoisted(() => ({ remember: vi.fn(), openSetup: vi.fn(), hosts: [] as Host[], compact: false }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => h.compact }));
 vi.mock('../hooks/useHosts.js', () => ({ useHosts: () => h.hosts }));
 vi.mock('../store.js', () => ({ useData: (select: (s: unknown) => unknown) => select({ rememberLastProjectId: h.remember }) }));
-vi.mock('./AddMachineProjectDialog.js', () => ({ AddMachineProjectDialog: ({ group, onAdded, onClose }: any) => <div role="dialog" aria-label={`Add on ${group.name}`}><button onClick={() => onAdded({ id: 'created' })}>Create</button><button onClick={onClose}>Cancel</button></div> }));
+vi.mock('./setup/useSetupNavigation.js', () => ({ useSetupNavigation: () => h.openSetup }));
 const scratch = { id: 'default', name: 'Default Project', quickAgent: true, path: '/scratch' } as Project;
 const repo = { id: 'repo', name: 'API', hostId: 'remote', path: '/api' } as Project;
 const hosts = [{ id: 'local', name: 'Laptop', isPrimary: true, status: 'connected' }, { id: 'remote', name: 'Devbox', status: 'connected' }, { id: 'offline', name: 'Offline box', status: 'disconnected' }] as Host[];
@@ -42,7 +42,7 @@ describe('composer machine and project picker', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'unmatched' } });
     expect(screen.getByRole('status').textContent).toBe('No matching machines or projects');
     fireEvent.click(screen.getByRole('button', { name: 'Add project on Devbox' }));
-    expect(screen.getByRole('dialog', { name: 'Add on Devbox' })).toBeTruthy();
+    expect(h.openSetup).toHaveBeenCalledWith(expect.objectContaining({ kind: 'project', mode: 'open', group: expect.objectContaining({ hostId: 'remote' }) }));
   });
   it('shows a combined location and searches project and machine names', () => {
     setup(); expect(screen.getByRole('button', { name: 'Machine and project' }).textContent).toContain('Default Project');
@@ -99,11 +99,11 @@ describe('composer machine and project picker', () => {
     fireEvent.click(screen.getByRole('option', { name: `${name} › Default Project New thread on ${name} · Offline` }));
     expect(start).toHaveBeenCalledWith({ projectId: 'default', hostId: 'remote' });
   });
-  it('adds a folder on the selected machine and chooses the new project', () => {
+  it('opens folder setup on the selected machine without changing the composer location', () => {
     const { change, hostChange } = setup({ value: 'repo', hostId: 'remote' }); open();
     fireEvent.click(screen.getByRole('button', { name: 'Add project on Devbox' }));
-    expect(screen.getByRole('dialog', { name: 'Add on Devbox' })).toBeTruthy(); fireEvent.click(screen.getByText('Create'));
-    expect(change).toHaveBeenCalledWith('created'); expect(hostChange).toHaveBeenCalledWith('remote');
+    expect(h.openSetup).toHaveBeenCalledWith(expect.objectContaining({ kind: 'project', mode: 'open', group: expect.objectContaining({ hostId: 'remote' }) }));
+    expect(change).not.toHaveBeenCalled(); expect(hostChange).not.toHaveBeenCalled();
   });
   it('supports a locked project and Escape without changing the location', () => {
     setup({ disabled: true }); fireEvent.click(screen.getByRole('button', { name: 'Machine and project' })); expect(screen.queryByRole('listbox')).toBeNull();

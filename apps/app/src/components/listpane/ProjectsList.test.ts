@@ -204,12 +204,12 @@ describe('sidebar workspace scrolling', () => {
 });
 
 describe('sidebar workspace header menus', () => {
-  it('dismisses the add and organize popovers on outside mousedown and Escape', () => {
+  it('dismisses the organize popover on outside mousedown and Escape', () => {
     const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
-    expect(source).toContain('if (!sidebarAddOpen && !sidebarOrganizeOpen) return;');
-    expect(source).toContain('sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)');
+    expect(source).toContain('if (!sidebarOrganizeOpen) return;');
+    expect(source).toContain('sidebarOrganizeRef.current?.contains(t)');
     expect(source).toContain("if (e.key === 'Escape')");
-    expect(source).toContain('setSidebarAddOpen(false);\n        setSidebarOrganizeOpen(false);');
+    expect(source).toContain('setSidebarOrganizeOpen(false);');
     expect(source).toContain('const openAbove = spaceBelow < menu.height + MENU_GAP && spaceAbove > spaceBelow');
     expect(source).toContain('placeFixedMenu(menuEl, button.getBoundingClientRect())');
   });
@@ -226,13 +226,13 @@ describe('sidebar workspace header menus', () => {
     const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('listCreateProjectActions');
     expect(source).toContain('launchCreateProjectAction(action)');
-    expect(source).toContain('PluginCreateProjectDialog');
-    const addMenu = source.slice(source.indexOf('className="sidebar-projects-add-menu"'));
-    expect(addMenu).toContain('createProjectActions.map');
+    expect(source).toContain("openSetup({ kind: 'plugin'");
+    const addMenu = source.slice(source.indexOf('<MachineProjectAddMenu'));
+    expect(addMenu).toContain('group.machine.primary ? createProjectActions.map');
     expect(addMenu).toContain('launchCreateProjectAction(action)');
     const organizeBlock = source.slice(
       source.indexOf('aria-label="Organize projects"'),
-      source.indexOf('aria-label="Add machine or project"')
+      source.indexOf('aria-label="Connect a machine"')
     );
     expect(organizeBlock).toContain('headerMenuActions');
     expect(organizeBlock).not.toContain('createProjectActions');

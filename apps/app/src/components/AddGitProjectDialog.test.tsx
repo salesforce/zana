@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SetupPageContext } from './setup/SetupFrame.js';
 import { AddGitProjectDialog } from './AddGitProjectDialog.js';
 
 const mocks = vi.hoisted(() => ({
@@ -75,4 +76,23 @@ describe('Git import dialog', () => {
     cleanup();
     expect(mocks.off).toHaveBeenCalledOnce();
   });
+});
+
+it('keeps page cloning alive across navigation without mixing global progress or closing on Escape', async () => {
+  let resolve!: (value: unknown) => void;
+  const onClone = vi.fn(() => new Promise(r => { resolve = r; }));
+  const onSuccess = vi.fn(), onClose = vi.fn(), setBusy = vi.fn();
+  const form = <AddGitProjectDialog onClone={onClone as any} onSuccess={onSuccess} onClose={onClose} />;
+  const view = render(<SetupPageContext.Provider value={{ active: true, setBusy }}>{form}</SetupPageContext.Provider>);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Repository URL' }), { target: { value: 'owner/repo' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Clone & add' }));
+  expect(setBusy).toHaveBeenLastCalledWith(true);
+  view.rerender(<SetupPageContext.Provider value={{ active: false, setBusy }}>{form}</SetupPageContext.Provider>);
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(mocks.onCloneProgress).not.toHaveBeenCalled();
+  expect(screen.getByText('Cloning repository…')).toBeTruthy();
+  await act(async () => resolve({ ok: true, project: { id: 'cloned' } }));
+  expect(onSuccess).toHaveBeenCalledWith('cloned');
+  expect(setBusy).toHaveBeenLastCalledWith(false);
 });

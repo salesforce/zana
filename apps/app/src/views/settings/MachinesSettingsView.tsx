@@ -1,3 +1,4 @@
+import { useSetupNavigation } from '../../components/setup/useSetupNavigation.js';
 import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, Plus } from 'lucide-react';
@@ -44,7 +45,7 @@ export function MachinesSettingsView({
 }: MachinesTabProps) {
   const hosts = useHosts();
   const projects = useData((s) => s.projects);
-  const [adding, setAdding] = useState(false);
+  const openSetup = useSetupNavigation();
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [cliByHost, setCliByHost] = useState<Record<string, ProviderCliStatusResponse>>({});
@@ -230,7 +231,7 @@ export function MachinesSettingsView({
           />
         </Field>
         <div className="machines-toolbar">
-          <button type="button" className="settings-btn" onClick={() => setAdding(true)} data-settings-target="machines.add-machine">
+          <button type="button" className="settings-btn" onClick={() => openSetup({ kind: 'machine' })} data-settings-target="machines.add-machine">
             <Plus size={13} aria-hidden="true" />
             Add a machine
           </button>
@@ -318,9 +319,9 @@ export function MachinesSettingsView({
         />
       ) : null}
       <AddMachineDialog
-        open={adding || !!repairPairing}
+        open={!!repairPairing}
         repairHost={repairPairing}
-        onClose={() => { setAdding(false); setRepairPairing(undefined); }}
+        onClose={() => { setRepairPairing(undefined); }}
         publicAppUrl={config.publicAppUrl}
         sshHosts={sshHostOptionsFromProjects(projects)}
         defaultSshHost={defaultSshHost(projects, config.lastProjectId)}

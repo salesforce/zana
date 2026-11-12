@@ -109,6 +109,7 @@ function param(match: ReturnType<typeof matchPath>, name: string): string | unde
  */
 export function decodeRoutePath(pathname: string, hash = '', search = ''): DecodedRoute {
   const anchor = hashAnchor(hash);
+  if (matchPath('/setup/:setupId', pathname)) return { ...DEFAULT_DECODED, nav: 'setup' };
 
   if (pathname === APP_ROOT_ROUTE_PATH) {
     return { ...DEFAULT_DECODED, settingsAnchor: anchor };

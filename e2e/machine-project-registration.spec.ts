@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 import { startGitDaemon, type GitDaemon } from './fixtures/git-daemon.js';
 
+test.use({ initialConfig: { sponsorPromptDismissed: true } });
+
 test('machine projects create, register aliases, clone, and retain registrations through missing folders and reconnect', async ({ app, home }, testInfo) => {
   test.setTimeout(240_000);
   const win = app.window, origin = new URL(win.url()).origin;
@@ -64,8 +66,8 @@ test('machine projects create, register aliases, clone, and retain registrations
     await expect(machine.getByRole('button', { name: 'Open Live remote web', exact: true })).toBeVisible({ timeout: 30_000 });
     await machine.getByRole('button', { name: `Add project on ${machineName}`, exact: true }).click();
     await win.screenshot({ path: testInfo.outputPath('machine-add-project.png') });
-    await win.getByRole('button', { name: /Create new folder/ }).click();
-    const create = win.getByRole('dialog', { name: 'Create project folder', exact: true });
+    await win.getByRole('menuitem', { name: 'New folder', exact: true }).click();
+    const create = win.getByRole('region', { name: 'Create project folder', exact: true });
     await expect(create.getByRole('textbox', { name: 'Parent folder', exact: true })).toHaveValue(remoteHome);
     await create.getByRole('textbox', { name: 'Folder name' }).fill('../escape');
     await create.getByRole('button', { name: 'Create & add' }).click();
@@ -82,10 +84,11 @@ test('machine projects create, register aliases, clone, and retain registrations
     const alias = join(remoteHome, 'api-alias'); symlinkSync(folder, alias);
     expect((await api('/projects', { hostId: grant.hostId, path: alias })).body.project.id).toBe(created.id);
     expect((await api('/projects', { hostId: grant.hostId, path: join(remoteHome, 'absent') })).status).not.toBe(200);
+    await win.getByRole('button', { name: 'Back to all projects', exact: true }).click();
     await machine.getByRole('button', { name: `Add project on ${machineName}`, exact: true }).click();
-    await win.getByRole('button', { name: /Clone repository/ }).click();
+    await win.getByRole('menuitem', { name: 'Clone from Git', exact: true }).click();
     git = await startGitDaemon(join(home, 'machine-project-git'), [{ repoName: 'remote-web', files: { 'README.md': 'Remote checkout\n' } }]);
-    const clone = win.getByRole('dialog', { name: 'Import from Git', exact: true });
+    const clone = win.getByRole('region', { name: 'Import from Git', exact: true });
     await clone.getByRole('textbox', { name: 'Repository URL' }).fill(git.urlFor('remote-web'));
     const cloneRoot = (await api(`/projects/clone-root?hostId=${grant.hostId}`)).body.path;
     expect(cloneRoot.startsWith(remoteHome)).toBe(true);
@@ -94,9 +97,11 @@ test('machine projects create, register aliases, clone, and retain registrations
     await expect(clone).toHaveCount(0, { timeout: 30_000 });
     expect(readFileSync(join(cloneRoot, 'remote-web', 'README.md'), 'utf8')).toBe('Remote checkout\n');
     expect(existsSync(join(home, 'zcc-workspace', 'remote-web'))).toBe(false);
+    await win.getByRole('button', { name: 'Back to all projects', exact: true }).click();
     await expect(machine.getByRole('button', { name: 'Open remote-web', exact: true })).toBeVisible();
     rmSync(folder, { recursive: true });
-    await machine.getByRole('button', { name: `Open ${machineName} projects`, exact: true }).click();
+    await machine.getByRole('button', { name: machineName, exact: true }).click({ button: 'right' });
+    await win.getByRole('menuitem', { name: 'View projects' }).click();
     const overview = win.getByRole('dialog', { name: machineName, exact: true });
     await expect(overview.getByText('Folder missing', { exact: true })).toBeVisible();
     await expect(overview.getByRole('status')).toContainText('Last synced');

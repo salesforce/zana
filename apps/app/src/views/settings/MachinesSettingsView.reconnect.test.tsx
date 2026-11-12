@@ -9,6 +9,7 @@ import { MachinesSettingsView } from './MachinesSettingsView.js';
 const h = vi.hoisted(() => ({ hosts: [] as unknown[], appendLogs: vi.fn() }));
 
 vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: async () => ({ connectMachines: false }) }));
+vi.mock('../../components/setup/useSetupNavigation.js', () => ({ useSetupNavigation: () => () => undefined }));
 vi.mock('../../lib/product-client.js', () => ({ product: {
   hosts: { repair: vi.fn(), updateSshIdentity: vi.fn(), providerCliStatus: vi.fn(async () => ({})) }
 } }));

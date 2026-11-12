@@ -9,6 +9,7 @@ import { MachinesTab } from './MachinesSettingsView.js';
 const hostsState: { current: Host[] } = { current: [] };
 const projectsState: { current: Array<{ hostId?: string }> } = { current: [] };
 
+vi.mock('../../components/setup/useSetupNavigation.js', () => ({ useSetupNavigation: () => () => undefined }));
 vi.mock('../../lib/product-client.js', () => ({
   product: {
     hosts: {

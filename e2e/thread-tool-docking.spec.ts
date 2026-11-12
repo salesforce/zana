@@ -58,7 +58,7 @@ test('thread tabs and tool docks preserve live terminals, browser documents, dra
     const right = page.getByTestId('thread-secondary-panel');
     const bottom = page.getByTestId('thread-bottom-panel');
     const draft = page.getByTestId('thread-command-input');
-    await expect(page.getByTestId('titlebar-thread-tabs')).toBeVisible();
+    await expect(page.getByTestId('application-tabs')).toBeVisible();
     await draft.fill('Keep my docking notes');
     const show = page.getByTestId('thread-secondary-show'); if (await show.isVisible()) await show.click();
     await expect(page.getByTestId('thread-bottom-drop-target')).toHaveCount(0);
@@ -212,7 +212,7 @@ test('thread tabs and tool docks preserve live terminals, browser documents, dra
     await expect(bottom.getByTestId('thread-terminal-tab')).toHaveAttribute('data-terminal-session', sessionId);
 
     await route(`/threads/${ids[1]}`); await expect(bottom).toHaveCount(0);
-    await page.getByTestId('titlebar-thread-tabs').getByRole('tab', { name: /Thread docking/ }).click();
+    await page.getByTestId('application-tabs').getByRole('tab', { name: /Thread docking/ }).click();
     await expect(bottom.locator('.xterm')).toBeVisible(); await expect(resize).toHaveAttribute('aria-valuenow', savedHeight!);
     await expect(draft).toHaveText('Keep my docking notes');
     expect(await bottom.locator('.xterm').evaluate(element => element === (window as any).dockingXterm)).toBe(true);
@@ -251,7 +251,7 @@ test('thread tabs and tool docks preserve live terminals, browser documents, dra
     const toggle = page.getByRole('switch', { name: 'Dockable thread tools', exact: true });
     await expect(toggle).toHaveAttribute('aria-checked', 'true'); await toggle.click();
     await route(`/threads/${ids[0]}`); await expect(bottom).toHaveCount(0);
-    await expect(page.getByTestId('titlebar-thread-tabs')).toBeVisible();
+    await expect(page.getByTestId('application-tabs')).toBeVisible();
     await right.getByRole('button', { name: 'Terminal', exact: true }).click(); await expect(right.locator('.xterm:visible')).toHaveCount(1);
     await route('/settings/experimental'); await toggle.click(); await route(`/threads/${ids[0]}`); await expect(bottom.locator('.xterm')).toBeVisible();
     await expect.poll(() => page.evaluate(async id => {

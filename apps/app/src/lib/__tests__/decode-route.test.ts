@@ -9,6 +9,7 @@ describe('decodeRoutePath', () => {
       '/projects/p1/inbox',
       { nav: 'inbox', focusedProjectId: 'p1', projectMode: null, isProjectFocused: false }
     ],
+    ['/setup/machine', { nav: 'setup', focusedProjectId: null, threadId: null }],
     ['/agents', { nav: 'agents' }],
     ['/threads/new', { nav: 'agents' }],
     ['/threads/abc', { nav: 'agents' }],
