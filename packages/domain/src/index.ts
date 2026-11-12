@@ -82,6 +82,13 @@ export {
   type MarketplaceEntry,
   type MarketplaceCatalogRow
 } from './plugin-marketplace.js';
+export {
+  MARKETPLACE_CATALOG_STALE_MS,
+  MARKETPLACE_CATALOG_RETRY_BACKOFF_MS,
+  marketplaceCatalogFreshness,
+  marketplaceCatalogNeedsAutoRefresh,
+  type MarketplaceCatalogFreshness
+} from './marketplace-freshness.js';
 export * from './plugin-pack.js';
 export {
   MARKETPLACE_OVERVIEW_MAX_CHARS,

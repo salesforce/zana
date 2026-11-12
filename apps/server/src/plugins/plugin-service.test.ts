@@ -1027,6 +1027,32 @@ describe('PluginService', () => {
     expect(hits.some((h) => h.id === 'kept')).toBe(true);
   });
 
+  it('refreshes out-of-date catalogs as part of an update check and leaves fresh ones alone', async () => {
+    const dataDir = root();
+    let clock = Date.now();
+    let fail = false;
+    const fetchJson = vi.fn(async () => {
+      if (fail) throw new Error('HTTP 429 rate limited');
+      return { schemaVersion: 1, name: 'community', displayName: 'Community', plugins: [] };
+    });
+    const service = createPluginService({ dataDir, bundledRoot: root(), fetchJson, now: () => clock });
+    await service.addMarketplace('https://example.test/community.json');
+    const added = fetchJson.mock.calls.length;
+
+    await service.checkUpdates();
+    expect(fetchJson.mock.calls.length).toBe(added);
+
+    clock += 48 * 60 * 60 * 1000;
+    await service.checkUpdates();
+    // One refresh re-materializes the catalog exactly as adding it did.
+    expect(fetchJson.mock.calls.length).toBe(2 * added);
+
+    clock += 48 * 60 * 60 * 1000;
+    fail = true;
+    await expect(service.checkUpdates()).resolves.toEqual([]);
+    expect(service.listMarketplaces()[0]?.lastError).toMatch(/429/);
+  });
+
   it('installs a catalog git plugin from subdir and refuses an escaping subdir', async () => {
     const dataDir = root();
     const service = createPluginService({

@@ -81,8 +81,9 @@ describe('MarketplaceView presentation', () => {
   });
 
   it('keeps the browse toolbar to search, install, and create', () => {
-    expect(source).toContain('ext-market-search-refresh');
-    expect(source).toContain('aria-label="Reload the catalog"');
+    // Source freshness lives in one compact pill; the search box no longer carries a reload icon.
+    expect(source).toContain('<CatalogFreshnessPill');
+    expect(source).not.toContain('aria-label="Reload the catalog"');
     expect(source).toContain('ext-market-toolbar-actions');
     expect(source).toContain('{toolbarExtra}');
     expect(source).not.toContain('Check for updates');
