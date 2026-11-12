@@ -19,9 +19,12 @@ const api = vi.hoisted(() => ({
     list: vi.fn(),
     onChanged: vi.fn(() => () => {}),
     bootstrapBySsh: vi.fn(),
+    repair: vi.fn(),
     updateSshIdentity: vi.fn()
-  }
+  },
+  apiJson: vi.fn()
 }));
+vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: api.apiJson }));
 vi.mock('../../lib/product-client.js', () => ({
   product: { ssh: api.ssh, hosts: api.hosts },
   requestPreferredJoinCode: async () => {
@@ -505,5 +508,75 @@ describe('AddMachineDialogView connect mode', () => {
     expect(busy).toContain('Refreshing…');
     const none = renderToStaticMarkup(view({ pairingMethod: 'ssh', connectMode: true, canConnect: false }));
     expect(none).toMatch(/disabled=""[^>]*data-testid="add-machine-connect"|data-testid="add-machine-connect"[^>]*disabled=""/);
+  });
+});
+
+describe('AddMachineDialog re-pair', () => {
+  const connectCode = { enrollmentId: 'enr-1', code: 'zcde_re', hostId: 'host-7', expiresAt: Date.now() + 10 * 60_000, installCommand: 'curl https://zana-ide.com/api/connect/host-installer | node - --code zcde_re' };
+
+  beforeEach(() => {
+    api.bridge = true;
+    api.liveHosts = [];
+    api.apiJson.mockImplementation(async (path: string) => {
+      if (path === '/hosts/connect-code') return connectCode;
+      return { status: 'pending' };
+    });
+    api.hosts.updateSshIdentity.mockResolvedValue({});
+    api.hosts.list.mockResolvedValue([{ id: 'host-7', name: 'Old box', status: 'connected' }]);
+    api.ssh.syncHosts.mockResolvedValue({ hosts: [{ alias: 'limited-pony', user: 'geoff' }] });
+  });
+  afterEach(() => { cleanup(); vi.clearAllMocks(); });
+
+  function openRepair() {
+    return render(
+      <AddMachineDialog open onClose={vi.fn()} publicAppUrl={null} defaultSshHost="limited-pony" repairHost={{ id: 'host-7', name: 'Old box' }} />
+    );
+  }
+
+  it('keeps the SSH tab reachable when the code comes with a Connect install command', async () => {
+    openRepair();
+    expect(await screen.findByTestId('machines-join-command')).toBeTruthy();
+    expect(screen.getByTestId('add-machine-method-command').getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByTestId('add-machine-method-ssh'));
+    await waitFor(() => expect((screen.getByTestId('add-machine-connect') as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByTestId('add-machine-method-ssh').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('does not snap back to the installer when the code lands after the user picked SSH', async () => {
+    let resolve!: (value: typeof connectCode) => void;
+    api.apiJson.mockImplementation((path: string) => path === '/hosts/connect-code'
+      ? new Promise((r) => { resolve = r; })
+      : Promise.resolve({ status: 'pending' }));
+    openRepair();
+    fireEvent.click(await screen.findByTestId('add-machine-method-ssh'));
+    await act(async () => { resolve(connectCode); });
+    expect(screen.getByTestId('add-machine-method-ssh').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('add-machine-connect')).toBeTruthy();
+  });
+
+  it('repairs the existing machine over SSH instead of installing a new one', async () => {
+    api.hosts.repair.mockImplementation(async (_id: string, onEvent: (event: HostBootstrapEvent) => void) => {
+      const events: HostBootstrapEvent[] = [{ type: 'stage', stage: 'connected', status: 'passed' }, { type: 'done', hostId: 'host-7' }];
+      for (const event of events) onEvent(event);
+      return events;
+    });
+    openRepair();
+    fireEvent.click(await screen.findByTestId('add-machine-method-ssh'));
+    await waitFor(() => expect((screen.getByTestId('add-machine-connect') as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId('add-machine-connect'));
+    expect(await screen.findByText('Old box connected')).toBeTruthy();
+    expect(api.hosts.updateSshIdentity).toHaveBeenCalledWith('host-7', { host: 'limited-pony', user: 'geoff' });
+    expect(api.hosts.repair).toHaveBeenCalledWith('host-7', expect.any(Function));
+    expect(api.hosts.bootstrapBySsh).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failed SSH identity update as a connect error', async () => {
+    api.hosts.updateSshIdentity.mockRejectedValue(new Error('identity rejected'));
+    openRepair();
+    fireEvent.click(await screen.findByTestId('add-machine-method-ssh'));
+    await waitFor(() => expect((screen.getByTestId('add-machine-connect') as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId('add-machine-connect'));
+    expect((await screen.findByTestId('add-machine-connect-error')).textContent).toContain('identity rejected');
+    expect(api.hosts.repair).not.toHaveBeenCalled();
   });
 });

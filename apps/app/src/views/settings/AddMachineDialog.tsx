@@ -515,7 +515,7 @@ function AddMachineDialogContent({
         return;
       }
       setJoin(issued.join);
-      if (issued.join.installCommand) setPairingMethod('command');
+      if (issued.join.installCommand && !methodTouched.current) setPairingMethod('command');
     }).catch((err: unknown) => {
       if (current()) setError(err instanceof Error ? err.message : 'Could not mint a join code');
     });
@@ -617,7 +617,9 @@ function AddMachineDialogContent({
     : null;
   const expired = remaining !== null && remaining <= 0;
 
-  const canConnectViaSsh = hasDesktopBridge() && !join?.installCommand;
+  // SSH stays available whatever the code issuer returned: the server installs or repairs over
+  // SSH through Zana Connect or the reverse tunnel, so a Connect install command must not hide it.
+  const canConnectViaSsh = hasDesktopBridge();
   const connectMode = pairingMethod === 'ssh' && canConnectViaSsh;
 
   const copy = async () => {
@@ -650,7 +652,12 @@ function AddMachineDialogContent({
       } else if (event.type === 'error') setConnectError(event.message);
     };
     try {
-      const events = await product.hosts.bootstrapBySsh(user ? { host, user } : { host }, onEvent);
+      const target = user ? { host, user } : { host };
+      // Re-pairing targets the existing machine: record the chosen SSH identity on it and repair
+      // that host, instead of installing a second machine for the same box.
+      const events = repairHost
+        ? (await product.hosts.updateSshIdentity(repairHost.id, target), await product.hosts.repair(repairHost.id, onEvent))
+        : await product.hosts.bootstrapBySsh(target, onEvent);
       if (seq !== connectSeq.current) return;
       const done = events.find((event): event is Extract<HostBootstrapEvent, { type: 'done' }> => event.type === 'done');
       if (!done) {
@@ -660,7 +667,7 @@ function AddMachineDialogContent({
       }
       const roster = await product.hosts.list().catch(() => [] as typeof hosts);
       if (seq !== connectSeq.current) return;
-      setConnectedName(roster.find((row) => row.id === done.hostId)?.name ?? host);
+      setConnectedName(roster.find((row) => row.id === done.hostId)?.name ?? repairHost?.name ?? host);
     } catch (err) {
       if (seq !== connectSeq.current) return;
       setConnectError(err instanceof Error ? err.message : 'Could not connect the machine');
