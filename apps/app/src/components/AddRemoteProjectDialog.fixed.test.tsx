@@ -2,11 +2,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AddRemoteProjectDialog } from './AddRemoteProjectDialog.js';
+import { SetupPageContext } from './setup/SetupFrame.js';
 const h = vi.hoisted(() => ({ list: vi.fn() }));
 vi.mock('../lib/product-client.js', () => ({ product: { ssh: { listHosts: h.list } } }));
 vi.mock('../lib/app-surface.js', () => ({ hasDesktopBridge: () => false }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('fixed SSH machine', () => {
+  it('keeps a page-hosted SSH draft open on Escape and reports its pending registration', async () => {
+    let resolve!: (project: { id: string }) => void;
+    const onSubmit = vi.fn(() => new Promise<{ id: string }>(done => { resolve = done; }));
+    const onClose = vi.fn(), onSuccess = vi.fn(), setBusy = vi.fn();
+    render(<SetupPageContext.Provider value={{ active: true, setBusy }}>
+      <AddRemoteProjectDialog fixedTarget={{ host: 'dev' }} onSubmit={onSubmit} onSuccess={onSuccess} onClose={onClose} />
+    </SetupPageContext.Provider>);
+    expect(screen.getByRole('region', { name: 'Add project on dev' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add', exact: true }));
+    await waitFor(() => expect(setBusy).toHaveBeenLastCalledWith(true));
+    expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
+    resolve({ id: 'remote-page-project' });
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith('remote-page-project'));
+    expect(setBusy).toHaveBeenLastCalledWith(false);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
   it('explains when SSH discovery is unavailable for an unbound machine', async () => {
     render(<AddRemoteProjectDialog onSubmit={vi.fn()} onSuccess={vi.fn()} onClose={vi.fn()} />);
     expect(await screen.findByText('SSH binding not loaded — quit (⌘Q) and relaunch the app.')).toBeTruthy();

@@ -31,7 +31,7 @@ export function ComposerProjectPicker({
   const hosts = useHosts();
   const rememberLastProjectId = useData(s => s.rememberLastProjectId);
   const openSetup = useSetupNavigation();
-  const setAdding = (group: MachineProjectGroup | null | undefined) => { if (group) openSetup({ kind: 'project', group, mode: 'open' }); };
+  const setAdding = (group: MachineProjectGroup) => openSetup({ kind: 'project', group, mode: 'open' });
   const groups = useMemo(() => groupProjectsByMachine(projects, hosts), [projects, hosts]);
   const project = projects.find(row => row.id === value);
   const group = groups.find(row => row.projects.some(p => p.id === value)
@@ -83,7 +83,7 @@ export function ComposerProjectPicker({
       }] : [])
     ] satisfies DesktopProjectOption[],
     onChange: (next: string) => {
-      if (next === ADD_PROJECT) { setAdding(group); return; }
+      if (next === ADD_PROJECT) { setAdding(group!); return; }
       const choice = choices.find(row => row.value === next);
       if (choice) choose({ projectId: choice.project.id, hostId: choice.group.hostId });
     }
