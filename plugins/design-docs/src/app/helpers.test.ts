@@ -185,6 +185,7 @@ describe('api client', () => {
     await api.removedProjects();
     await api.listUnassignedProjects();
     await api.listProjectMappings();
+    await api.listForeignProjectTitles('f');
     await api.mapForeignProject('f', 'l');
     await api.unmapForeignProject('f');
     expect(calls).toEqual([
@@ -196,6 +197,7 @@ describe('api client', () => {
       ['removedProjects', undefined],
       ['listUnassignedProjects', undefined],
       ['listProjectMappings', undefined],
+      ['listForeignProjectTitles', { foreignProjectId: 'f' }],
       ['mapForeignProject', { foreignProjectId: 'f', localProjectId: 'l' }],
       ['unmapForeignProject', { foreignProjectId: 'f' }]
     ]);

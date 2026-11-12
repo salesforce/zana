@@ -601,6 +601,7 @@ describe('doc list', () => {
     expect(screen.queryByRole('menuitem', { name: /Move to project/ })).toBeNull();
     fireEvent.click(menuItem(/Map to a Project/));
     expect(await screen.findByRole('dialog', { name: /Map projects from other computers/ })).toBeTruthy();
+    expect(await screen.findByText('No docs from other computers yet.')).toBeTruthy();
     fireEvent.click(within(screen.getByRole('dialog', { name: /Map projects from other computers/ })).getByText('Close', { selector: '.btn' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Map projects from other computers/ })).toBeNull());
     fireEvent.keyDown(document.body, { key: 'Escape' });

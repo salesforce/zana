@@ -143,6 +143,8 @@ export interface DesignDocsApi {
   removedProjects(): Promise<Array<{ id: string; label: string }>>;
   listUnassignedProjects(): Promise<UnassignedProject[]>;
   listProjectMappings(): Promise<ProjectMapping[]>;
+  /** Titles only (capped at 500 by the server) of the docs carrying a foreign project id, mapped or not. */
+  listForeignProjectTitles(foreignProjectId: string): Promise<string[]>;
   mapForeignProject(foreignProjectId: string, localProjectId: string): Promise<{ foreignProjectId: string; localProjectId: string }>;
   unmapForeignProject(foreignProjectId: string): Promise<{ removed: boolean }>;
   /** Harnesses on the project's host, or this computer's when no project is given. */
@@ -250,6 +252,7 @@ export function createApi(call: Call): DesignDocsApi {
     removedProjects: () => typed('removedProjects'),
     listUnassignedProjects: () => typed('listUnassignedProjects'),
     listProjectMappings: () => typed('listProjectMappings'),
+    listForeignProjectTitles: (foreignProjectId) => typed('listForeignProjectTitles', { foreignProjectId }),
     mapForeignProject: (foreignProjectId, localProjectId) => typed('mapForeignProject', { foreignProjectId, localProjectId }),
     unmapForeignProject: (foreignProjectId) => typed('unmapForeignProject', { foreignProjectId }),
     harnessDescriptors: (projectId) => typed('harnessDescriptors', projectId ? { projectId } : undefined),

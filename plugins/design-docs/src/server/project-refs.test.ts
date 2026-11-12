@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import { createProjectNames } from './project-names.js';
-import { cleanLabel, DesignDocProjectRefs } from './project-refs.js';
+import { cleanLabel, DesignDocProjectRefs, MAX_TITLES } from './project-refs.js';
 import { createRpcHandlers, UI_USER } from './rpc.js';
 import { DesignDocStore } from './store.js';
 import { DesignDocSyncStore } from './sync-store.js';
@@ -314,6 +314,79 @@ describe('RPC', () => {
     await rpc.projects!(undefined);
     const gone = createRpcHandlers({ store, changed, sdk: { projects: { list: async () => [] } } as never });
     expect(await gone.removedProjects!(undefined)).toEqual([{ id: 'p1', label: 'App (project removed)' }, { id: 'p2', label: 'Site (project removed)' }]);
+  });
+});
+
+describe('listForeignProjectTitles', () => {
+  it('returns titles only for unmapped and mapped ids, rejects bad ids, [] when unavailable or on DB error', async () => {
+    const { received, refs, db } = setup();
+    received('A', 'f1'); received('B', 'f1'); received('C', 'f2');
+    expect(refs.listForeignProjectTitles('f1').sort()).toEqual(['A', 'B']);
+    expect(refs.listForeignProjectTitles('nope')).toEqual([]);
+    await refs.mapForeignProject(list, 'f1', 'p1');
+    expect(refs.listForeignProjectTitles('f1').sort()).toEqual(['A', 'B']);
+    expect(refs.listForeignProjectTitles('f2')).toEqual(['C']);
+    for (const bad of [undefined, null, 5, '', '  ', 'x'.repeat(513)]) expect(() => refs.listForeignProjectTitles(bad)).toThrow(/foreignProjectId/);
+    db.runScript('DROP TABLE sync_doc_references');
+    expect(() => refs.listForeignProjectTitles('f1')).toThrow(/titles unavailable/);
+  });
+
+  it('caps at 500, newest first, and ignores own-project docs', () => {
+    const { store, received, refs, db } = setup();
+    for (let i = 0; i < MAX_TITLES + 5; i++) {
+      const doc = received(`T${i}`, 'big');
+      db.prepare('UPDATE docs SET updated_at = ? WHERE id = ?').run(1_000 + i, doc.id);
+    }
+    const tmpl = received('Template', 'big');
+    db.prepare(`UPDATE docs SET kind = 'template', updated_at = 99999999 WHERE id = ?`).run(tmpl.id);
+    store.create({ title: 'Own', projectId: 'p1', template: 'blank' }, UI_USER);
+    const titles = refs.listForeignProjectTitles('big');
+    expect(titles).toHaveLength(MAX_TITLES);
+    expect(titles).not.toContain('Own');
+    expect(titles).not.toContain('Template');
+    expect(titles[0]).toBe(`T${MAX_TITLES + 4}`);
+    expect(titles[1]).toBe(`T${MAX_TITLES + 3}`);
+  });
+
+  it('strips bidi and control characters from titles and sample titles, keeping blank ones as Untitled', async () => {
+    const { received, refs, db } = setup();
+    const a = received('Evil\u202Etxt.exe\u0007', 'f1');
+    const b = received('\u202E\u200B', 'f1');
+    db.prepare('UPDATE docs SET updated_at = 1 WHERE id = ?').run(b.id);
+    db.prepare('UPDATE docs SET updated_at = 2 WHERE id = ?').run(a.id);
+    expect(refs.listForeignProjectTitles('f1')).toEqual(['Eviltxt.exe', 'Untitled']);
+    const unassigned = await refs.listUnassignedForeignProjects(list);
+    expect(unassigned[0]!.sampleTitles).toEqual(['Eviltxt.exe', 'Untitled']);
+    await refs.mapForeignProject(list, 'f1', 'p1');
+    expect(refs.listProjectMappings(PROJECTS)[0]!.sampleTitles).toEqual(['Eviltxt.exe', 'Untitled']);
+  });
+
+  it('throws on a DB error after tables looked available and re-probes afterwards', () => {
+    const { received, refs, db } = setup();
+    received('A', 'f1');
+    expect(refs.available).toBe(true);
+    db.runScript('DROP TABLE sync_doc_references');
+    expect(() => refs.listForeignProjectTitles('f1')).toThrow(/titles unavailable/);
+  });
+
+  it('throws when the lazy tables are unavailable', () => {
+    const real = createTestDatabase();
+    const failing: PluginDatabase = { ...real, runScript: (sql) => { if (sql.includes('dd_project_refs')) throw new Error('readonly'); real.runScript(sql); } };
+    const { received, refs } = setup(failing);
+    received('A', 'f1');
+    expect(refs.available).toBe(false);
+    expect(() => refs.listForeignProjectTitles('f1')).toThrow(/titles unavailable/);
+  });
+
+  it('RPC handler returns plain title strings, rejects unknown keys and bad ids', () => {
+    const { store, received } = setup();
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: { projects: { list } } as never });
+    const doc = received('A', 'f1');
+    const out = rpc.listForeignProjectTitles!({ foreignProjectId: 'f1' });
+    expect(out).toEqual(['A']);
+    expect(JSON.stringify(out)).not.toContain(doc.id);
+    expect(() => rpc.listForeignProjectTitles!({ foreignProjectId: 'f1', extra: 1 })).toThrow(/accepts only/);
+    expect(() => rpc.listForeignProjectTitles!({})).toThrow(/foreignProjectId/);
   });
 });
 
