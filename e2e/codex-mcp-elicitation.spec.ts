@@ -51,6 +51,8 @@ const requests = [
   computerUse,
   form,
   tool,
+  tool,
+  tool,
   {
     ...form,
     message: "Unsupported nested form",
@@ -193,10 +195,13 @@ test("Codex MCP approval, form, URL, decline and stop complete through the built
     await expect(banner).toHaveCount(0);
     await expect.poll(status).toBe("idle");
   };
-  const ask = async (title: string) => {
+  const send = async () => {
     const composer = window.getByTestId("thread-command-input");
     await composer.fill("Next request");
     await composer.press("Enter");
+  };
+  const ask = async (title: string) => {
+    await send();
     await expect(banner).toContainText(title);
     await expect(window.locator(".thread-status-badge")).toContainText(
       "Needs you",
@@ -226,23 +231,23 @@ test("Codex MCP approval, form, URL, decline and stop complete through the built
     _meta: null,
   });
 
+  // Full mode includes MCP tool approvals, without storing a lasting grant.
+  await send();
+  await answered(3);
+  expect(responses()[2]).toEqual({
+    action: "accept",
+    content: {},
+    _meta: null,
+  });
+
+  const picker = window.getByLabel("Permission mode", { exact: true });
+  await picker.click();
+  await window.getByRole("option", { name: /^Accept Edits/ }).click();
   await ask("Allow calendar tool?");
   await expect(banner).toContainText("create_event");
   await expect(banner).toContainText("Review");
   await expect(
     banner.getByRole("button", { name: "Always allow" }),
-  ).toHaveCount(0);
-  await banner.getByRole("button", { name: "Decline", exact: true }).click();
-  await answered(3);
-  expect(responses()[2]).toEqual({
-    action: "decline",
-    content: null,
-    _meta: null,
-  });
-
-  await ask("Unsupported nested form");
-  await expect(
-    banner.getByRole("button", { name: "Submit response" }),
   ).toHaveCount(0);
   await banner.getByRole("button", { name: "Decline", exact: true }).click();
   await answered(4);
@@ -252,16 +257,38 @@ test("Codex MCP approval, form, URL, decline and stop complete through the built
     _meta: null,
   });
 
+  await picker.click();
+  await window.getByRole("option", { name: /^Full Access/ }).click();
+  await send();
+  await answered(5);
+  expect(responses()[4]).toEqual({
+    action: "accept",
+    content: {},
+    _meta: null,
+  });
+
+  await ask("Unsupported nested form");
+  await expect(
+    banner.getByRole("button", { name: "Submit response" }),
+  ).toHaveCount(0);
+  await banner.getByRole("button", { name: "Decline", exact: true }).click();
+  await answered(6);
+  expect(responses()[5]).toEqual({
+    action: "decline",
+    content: null,
+    _meta: null,
+  });
+
   await ask("Connect calendar account");
   await expect(banner).toContainText("Opening the link does not confirm");
   expect(await openedUrls()).toEqual([]);
-  expect(responses()).toHaveLength(4);
+  expect(responses()).toHaveLength(6);
   await banner
     .getByRole("button", { name: "Open example.com", exact: true })
     .click();
   await expect.poll(openedUrls).toEqual([urlRequest.url]);
-  await answered(5);
-  expect(responses()[4]).toEqual({
+  await answered(7);
+  expect(responses()[6]).toEqual({
     action: "accept",
     content: null,
     _meta: null,
