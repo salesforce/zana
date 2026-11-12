@@ -37,8 +37,20 @@ export function executionProgressAnchor(record: ExecutionRecord): number {
   return anchor;
 }
 
-/** Default maximum wait for an open human blocker before the run is stopped (policy `blockedWaitMs` overrides; 0 = no cap). */
+/** Default maximum wait for an open human blocker before the run is stopped (policy `blockedWaitMs` overrides). */
 export const DEFAULT_BLOCKED_WAIT_MS = 4 * 60 * 60_000;
+/** Hard ceiling on a blocked wait (24 h). A policy value of 0 means "use this ceiling". */
+export const MAX_BLOCKED_WAIT_MS = 24 * 60 * 60_000;
+
+/**
+ * The one definition of a run's blocked-wait bound, shared by the deadline plan and the
+ * parked-worker hold so a hold never ends before the run does. Absent or invalid -> default;
+ * 0 -> the 24 h ceiling; anything above the ceiling is capped to it.
+ */
+export function effectiveBlockedWaitMs(configured: unknown): number {
+  if (typeof configured !== 'number' || !Number.isFinite(configured) || configured < 0) return DEFAULT_BLOCKED_WAIT_MS;
+  return configured === 0 ? MAX_BLOCKED_WAIT_MS : Math.min(configured, MAX_BLOCKED_WAIT_MS);
+}
 /** The user is warned this long (at most a quarter of the bound) before a blocked wait expires. */
 export const BLOCKED_WAIT_WARN_LEAD_MS = 15 * 60_000;
 /** Floor between a "continue" decision and the next arm, so a past target can never spin the timer at delay 0. */
@@ -46,7 +58,7 @@ export const DEADLINE_RECHECK_FLOOR_MS = 1_000;
 
 export interface DeadlineTimings {
   deadlineMs: number;
-  /** Maximum continuous wait on an open human blocker; 0 = no cap. */
+  /** Maximum continuous wait on an open human blocker, already normalized by `effectiveBlockedWaitMs` (never 0). */
   blockedWaitMs: number;
 }
 
@@ -61,9 +73,7 @@ export function deadlineTimings(record: ExecutionRecord): DeadlineTimings | unde
   const policy = record.request.policy;
   const deadlineMs = policy?.deadlineMs;
   if (typeof deadlineMs !== 'number' || !Number.isFinite(deadlineMs) || deadlineMs <= 0) return undefined;
-  const blocked = policy?.blockedWaitMs;
-  const blockedWaitMs = typeof blocked === 'number' && Number.isFinite(blocked) && blocked >= 0 ? blocked : DEFAULT_BLOCKED_WAIT_MS;
-  return { deadlineMs, blockedWaitMs };
+  return { deadlineMs, blockedWaitMs: effectiveBlockedWaitMs(policy?.blockedWaitMs) };
 }
 
 /** Unresolved blockers a person must answer; coordinator self-heal blockers do not pause the deadline. */
@@ -76,12 +86,11 @@ export function openHumanBlockers(record: ExecutionRecord): NonNullable<Executio
  * caller (watchdog arm, polling, the serialized store decision) agrees. With an open
  * human blocker the idle deadline is paused and a bounded blocked wait applies instead
  * (anchored at the oldest open blocker), with a single warning before it expires.
- * Undefined means nothing is due (blocked with no cap).
+ * Undefined means nothing is due.
  */
 export function planDeadline(record: ExecutionRecord, timings: DeadlineTimings, now: number): DeadlinePlan | undefined {
   const open = openHumanBlockers(record);
   if (open.length === 0) return { phase: 'idle', at: executionProgressAnchor(record) + timings.deadlineMs };
-  if (timings.blockedWaitMs <= 0) return undefined;
   const stopAt = Math.min(...open.map((blocker) => blocker.createdAt)) + timings.blockedWaitMs;
   const warnAt = stopAt - Math.min(BLOCKED_WAIT_WARN_LEAD_MS, Math.floor(timings.blockedWaitMs / 4));
   if (record.blockedWarnedAt === undefined && now < stopAt && warnAt < stopAt) return { phase: 'blocked-warn', at: warnAt };

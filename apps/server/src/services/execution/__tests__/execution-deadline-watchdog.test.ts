@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_BLOCKED_WAIT_MS, ExecutionDeadlineWatchdog, deadlineTimings, executionProgressAnchor, nextDeadlineAt, planDeadline } from '../deadline-watchdog.js';
+import { DEFAULT_BLOCKED_WAIT_MS, MAX_BLOCKED_WAIT_MS, effectiveBlockedWaitMs, ExecutionDeadlineWatchdog, deadlineTimings, executionProgressAnchor, nextDeadlineAt, planDeadline } from '../deadline-watchdog.js';
 import type { ExecutionRecord } from '../store.js';
 
 const units = (progressAts: Array<number | undefined>): ExecutionRecord['workUnits'] =>
@@ -141,20 +141,24 @@ describe('planDeadline and nextDeadlineAt', () => {
     expect(planDeadline(r, timings, 3_000)).toEqual({ phase: 'blocked-stop', at: 3_000 }); // warning window missed
   });
 
-  it('has nothing due for a blocked run with no cap', () => {
-    expect(planDeadline(record({ blockers: [blocker()] }), { deadlineMs: 100, blockedWaitMs: 0 }, 5_000)).toBeUndefined();
+  it('effectiveBlockedWaitMs maps 0 and over-ceiling values to 24 h and invalid values to the default', () => {
+    expect(effectiveBlockedWaitMs(0)).toBe(MAX_BLOCKED_WAIT_MS);
+    expect(effectiveBlockedWaitMs(99 * 3_600_000)).toBe(MAX_BLOCKED_WAIT_MS);
+    expect(effectiveBlockedWaitMs(60_000)).toBe(60_000);
+    for (const bad of [undefined, null, -1, Number.NaN, Infinity, '5']) expect(effectiveBlockedWaitMs(bad)).toBe(DEFAULT_BLOCKED_WAIT_MS);
   });
 
   it('derives timings from policy with the 4 h default and tolerates invalid values', () => {
     expect(deadlineTimings(record())).toEqual({ deadlineMs: 100, blockedWaitMs: DEFAULT_BLOCKED_WAIT_MS });
     const withPolicy = (policy: object) => record({ request: { ...record().request, policy } as never });
-    expect(deadlineTimings(withPolicy({ deadlineMs: 100, blockedWaitMs: 0 }))).toEqual({ deadlineMs: 100, blockedWaitMs: 0 });
+    expect(deadlineTimings(withPolicy({ deadlineMs: 100, blockedWaitMs: 0 }))).toEqual({ deadlineMs: 100, blockedWaitMs: MAX_BLOCKED_WAIT_MS });
+    expect(deadlineTimings(withPolicy({ deadlineMs: 100, blockedWaitMs: 99 * 3_600_000 }))?.blockedWaitMs).toBe(MAX_BLOCKED_WAIT_MS);
     expect(deadlineTimings(withPolicy({ deadlineMs: 100, blockedWaitMs: -5 }))?.blockedWaitMs).toBe(DEFAULT_BLOCKED_WAIT_MS);
     expect(deadlineTimings(withPolicy({ deadlineMs: 0 }))).toBeUndefined();
     expect(deadlineTimings(withPolicy({}))).toBeUndefined();
   });
 
-  it('nextDeadlineAt is undefined for terminal runs, runs without a deadline and blocked runs with no cap', () => {
+  it('nextDeadlineAt is undefined for terminal runs, and runs without a deadline', () => {
     expect(nextDeadlineAt(record({ state: 'STOPPED' }), 0)).toBeUndefined();
     expect(nextDeadlineAt(record({ request: { ...record().request, policy: {} } as never }), 0)).toBeUndefined();
     expect(nextDeadlineAt(record(), 0)).toBe(1_100);
@@ -170,14 +174,15 @@ describe('ExecutionDeadlineWatchdog scheduling with blockers', () => {
     expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 50);
   });
 
-  it('restore re-derives the arm target from blockers and never arms a blocked no-cap run', () => {
+  it('restore re-derives the arm target from blockers and arms a blockedWaitMs 0 run at the 24 h ceiling warning', () => {
     const f = fixture(1_050);
     f.watchdog.restore([
       record({ id: 'a', blockerGraceUntil: 900 }),
       record({ id: 'b', request: { ...record().request, policy: { deadlineMs: 100, blockedWaitMs: 0 } } as never, blockers: [{ ...stale, resolved: false }] })
     ]);
-    expect(f.setTimer).toHaveBeenCalledTimes(1);
-    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 50);
+    expect(f.setTimer).toHaveBeenCalledTimes(2);
+    // blocker created at 1_100, bound 24 h, warning 15 min earlier, now 1_050.
+    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 1_100 + 24 * 3_600_000 - 15 * 60_000 - 1_050);
   });
 
   it('floors the arm target with notBefore so a past target cannot re-arm at delay 0', () => {

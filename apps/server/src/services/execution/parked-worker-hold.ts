@@ -1,37 +1,34 @@
-import { DEFAULT_BLOCKED_WAIT_MS } from './deadline-watchdog.js';
+import { effectiveBlockedWaitMs, MAX_BLOCKED_WAIT_MS, openHumanBlockers } from './deadline-watchdog.js';
 import { isTerminalExecutionState, type ExecutionRecord } from './store.js';
 
-/** Hard ceiling on any hold (24 h): a hold can never outlive this, whatever the wait setting says. */
-export const PARKED_HOLD_MAX_MS = 24 * 60 * 60_000;
+/** Hard ceiling on any hold: a hold can never outlive the blocked-wait ceiling (24 h). */
+export const PARKED_HOLD_MAX_MS = MAX_BLOCKED_WAIT_MS;
 
 /**
- * Longest an unresolved blocker may keep its worker's session resident, measured from the
- * blocker's creation: the run's blocked-wait bound (policy `blockedWaitMs`, default 4 h), so a
- * hold never outlives the point where the run itself would be stopped. 0 means "no cap", which
- * holds for the 24 h ceiling. This is the only place that knows the bound.
+ * Longest a human blocker may keep its worker's session resident, measured from the oldest open
+ * human blocker: the run's blocked-wait bound (`effectiveBlockedWaitMs`: policy `blockedWaitMs`,
+ * default 4 h, 0 = 24 h ceiling). This is the same bound the deadline plan stops the run at, so a
+ * hold never ends before the run does. A run with no idle timeout never stops on a blocker; its
+ * hold still lapses at this bound and the worker is re-established when the answer arrives.
  */
 export function parkedHoldWaitMs(record: ExecutionRecord): number {
-  const configured = record.request.policy?.blockedWaitMs;
-  const waitMs = typeof configured === 'number' && Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_BLOCKED_WAIT_MS;
-  return waitMs > 0 ? Math.min(waitMs, PARKED_HOLD_MAX_MS) : PARKED_HOLD_MAX_MS;
+  return effectiveBlockedWaitMs(record.request.policy?.blockedWaitMs);
 }
 
 /**
- * Slot -> epoch-ms the slot's session must stay resident until, for every slot with an
- * unresolved blocker. Pure; a terminal record, or a blocker already past its bound, holds nothing.
+ * Slot -> epoch-ms the slot's session must stay resident until, for every slot with an open
+ * human blocker (coordinator self-heal blockers never hold). All holds share the deadline's
+ * anchor, the oldest open human blocker. Pure; a terminal record, or a bound already passed,
+ * holds nothing.
  */
 export function deriveParkedHolds(record: ExecutionRecord, nowMs: number): Map<string, number> {
   const holds = new Map<string, number>();
   if (isTerminalExecutionState(record.state)) return holds;
-  const waitMs = parkedHoldWaitMs(record);
-  for (const blocker of record.blockers ?? []) {
-    if (blocker.resolved) continue;
-    const until = Math.min(blocker.createdAt + waitMs, nowMs + PARKED_HOLD_MAX_MS);
-    if (until <= nowMs) continue;
-    const current = holds.get(blocker.slotId);
-    // Hold for the longest-lived open blocker of the slot.
-    if (current === undefined || until > current) holds.set(blocker.slotId, until);
-  }
+  const open = openHumanBlockers(record);
+  if (open.length === 0) return holds;
+  const until = Math.min(Math.min(...open.map((blocker) => blocker.createdAt)) + parkedHoldWaitMs(record), nowMs + PARKED_HOLD_MAX_MS);
+  if (until <= nowMs) return holds;
+  for (const blocker of open) holds.set(blocker.slotId, until);
   return holds;
 }
 

@@ -285,7 +285,7 @@ describe('Agents settings search entries', () => {
     const onConfigDraft = vi.fn();
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     render(<AgentsTab config={config} onConfigDraft={onConfigDraft} onUpdate={onUpdate} />);
-    const input = screen.getByText('Squad max blocked wait (minutes, 0 = no cap)').closest('label, div')!.parentElement!.querySelector('input') as HTMLInputElement
+    const input = screen.getByText('Squad max blocked wait (minutes, 0 = 24 hours)').closest('label, div')!.parentElement!.querySelector('input') as HTMLInputElement
       ?? document.querySelector('[data-settings-target="agents.squad-blocked-wait"] input') as HTMLInputElement;
     expect(input.value).toBe('240');
     fireEvent.change(input, { target: { value: '30' } });

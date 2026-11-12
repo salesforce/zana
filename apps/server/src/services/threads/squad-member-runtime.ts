@@ -433,7 +433,9 @@ export async function retainSquadMemberConversation(ctx: ProductHttpContext, inp
       command: { type: 'thread.retain', threadId: thread.id, retainUntilMs: request.retainUntilMs }
     });
     return ack?.threadId === thread.id && ack.retainUntilMs === request.retainUntilMs;
-  } catch {
+  } catch (error) {
+    // Offline host or a malformed ack: the caller treats `false` as "hold not applied" and retries.
+    console.warn('[squad-member-runtime] thread.retain failed', { threadId: thread.id, hostId: thread.hostId, error: error instanceof Error ? error.message : String(error) });
     return false;
   }
 }

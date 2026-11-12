@@ -7,6 +7,7 @@ import {
 import {
   API_ERROR_RESUME_DEFAULTS,
   AUTO_CLOSE_IDLE_DEFAULTS,
+  DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS,
   HEARTBEAT_DEFAULTS,
   SESSION_MEMORY_DEFAULTS,
   THREAD_SESSION_RELEASE_DEFAULTS,
@@ -484,14 +485,14 @@ export const entries: readonly SettingsSearchEntry[] = [
     id: 'agents.squad-blocked-wait',
     section: 'agents',
     anchor: 'agent-heartbeat',
-    label: 'Squad max blocked wait (minutes, 0 = no cap)',
-    help: 'How long a Squad run may wait on a question that needs a person before it is stopped. The idle timeout is paused during this wait. A single warning is sent shortly before the stop. Set to 0 for no cap. Default is 240 minutes (4 hours). Range 0 (no cap) or 1–1440.',
+    label: 'Squad max blocked wait (minutes, 0 = 24 hours)',
+    help: 'How long a Squad run may wait on a question that needs a person before it is stopped. The idle timeout is paused during this wait. A single warning is sent shortly before the stop. Set to 0 for the 24-hour maximum. Default is 240 minutes (4 hours). Range 1–1440, or 0 for 1440.',
     keywords: ['timeout', 'blocked', 'question', 'waiting', 'human', 'squad run'],
     kind: 'setting',
     value: (s) => {
       const ms = s.config.autonomousBlockedWaitMs;
       if (ms === 0) return '0';
-      return String(Math.round((typeof ms === 'number' && Number.isFinite(ms) ? ms : 240 * 60 * 1000) / 60000));
+      return String(Math.round((typeof ms === 'number' && Number.isFinite(ms) ? ms : DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS) / 60000));
     },
   },
   {

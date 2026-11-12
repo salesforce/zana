@@ -117,12 +117,11 @@ describe('open human blocker pauses the idle deadline, bounded by the blocked wa
     expect(h.inbox.appendOnce).not.toHaveBeenCalled();
   }, { deadlineMs: 100, blockedWaitMs: 10_000 }));
 
-  it('blockedWaitMs 0 means no cap: never stopped while blocked and no timer is armed', () => harness(async (h) => {
-    h.clock.now = 1_000 + 48 * HOUR;
+  it('blockedWaitMs 0 means the 24 h ceiling: a timer is armed and the run stops with unresolved-blocker at 24 h', () => harness(async (h) => {
+    expect(h.pending.size).toBe(1);
+    h.clock.now = 1_000 + 24 * HOUR;
     await h.fire();
-    expect((await h.get()).state).toBe('BLOCKED');
-    expect(h.pending.size).toBe(0);
-    expect(h.cancelTeamLaunch).not.toHaveBeenCalled();
+    expect(h.summary(await h.get())).toMatchObject({ state: 'STOPPED', timeoutReason: 'unresolved-blocker' });
   }, { deadlineMs: 100, blockedWaitMs: 0 }));
 
   it('a coordinator-audience blocker does not pause the idle deadline', () => harness(async (h) => {
@@ -196,7 +195,7 @@ describe('blocker resolution is progress', () => {
     const ack = await h.service.ackDelivery(binding, pulled.value.id, pulled.value.leaseId!, { delivered: true });
     expect(ack).toMatchObject({ ok: true, value: { resolved: true } });
     expect(h.timerDelays.slice(delays)).toEqual([100]);
-    // a failed delivery does not resolve or re-arm
+    // the successful ack re-anchors progress at the ack time
     expect(executionProgressAnchor(await h.get())).toBe(5_000);
   }));
 

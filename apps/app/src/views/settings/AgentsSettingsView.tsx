@@ -1,6 +1,7 @@
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import {
   AUTO_CLOSE_IDLE_DEFAULTS,
+  DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS,
   HEARTBEAT_DEFAULTS,
   SESSION_MEMORY_DEFAULTS,
   THREAD_SESSION_RELEASE_CHOICES,
@@ -485,9 +486,9 @@ export function AgentsSettingsView({
           />
         </Field>
         <Field
-          label="Squad max blocked wait (minutes, 0 = no cap)"
+          label="Squad max blocked wait (minutes, 0 = 24 hours)"
           searchId="agents.squad-blocked-wait"
-          help="How long a Squad run may wait on a question that needs a person before it is stopped. The idle timeout is paused during this wait. A single warning is sent shortly before the stop. Set to 0 for no cap. Default is 240 minutes (4 hours). Range 0 (no cap) or 1–1440."
+          help="How long a Squad run may wait on a question that needs a person before it is stopped. The idle timeout is paused during this wait. A single warning is sent shortly before the stop. Set to 0 for the 24-hour maximum. Default is 240 minutes (4 hours). Range 1–1440, or 0 for 1440."
         >
           <input
             type="number"
@@ -496,7 +497,7 @@ export function AgentsSettingsView({
             value={
               config.autonomousBlockedWaitMs === 0
                 ? 0
-                : Math.round((config.autonomousBlockedWaitMs ?? 240 * 60 * 1000) / 60000)
+                : Math.round((config.autonomousBlockedWaitMs ?? DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS) / 60000)
             }
             onChange={(e) => {
               const minutes = parseInt(e.target.value, 10);
@@ -507,7 +508,7 @@ export function AgentsSettingsView({
             onBlur={(e) => {
               const minutes = parseInt(e.target.value, 10);
               const clamped = Number.isNaN(minutes)
-                ? 240 * 60 * 1000
+                ? DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS
                 : minutes <= 0
                   ? 0
                   : Math.max(1, Math.min(1440, minutes)) * 60000;

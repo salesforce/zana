@@ -5,7 +5,8 @@ import type { ExecutionRecord } from './store.js';
  * `recoverTimedOut` (authoritative) and the execution projection (advisory UI),
  * so renderer gating and backend rejection cannot diverge. Recovery is limited to
  * plans with no mutating work: mutating work needs durable provenance replay.
- * Runs with no work units are recoverable.
+ * Runs with no work units are recoverable. The gate applies to every timed-out run
+ * regardless of `timeoutReason`, including `unresolved-blocker`; it never inspects the reason.
  */
 export function timeoutRecoveryBlockReason(record: Pick<ExecutionRecord, 'workUnits'>): string | undefined {
   const units = record.workUnits ?? [];

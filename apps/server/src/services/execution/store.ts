@@ -598,7 +598,7 @@ export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['p
    *  wall-clock backstop. Reclaimed only from a lease already expired (a streaming
    *  worker keeps its lease fresh and never reaches this branch). */
   maxClaimStallMs?: number;
-  /** Maximum continuous wait on an open human blocker before the run is stopped; 0 = no cap, absent = default. */
+  /** Maximum continuous wait on an open human blocker before the run is stopped; 0 = the 24 h maximum, absent = default (see effectiveBlockedWaitMs). */
   blockedWaitMs?: number;
   usageBudget?: { maxTokens?: number; maxUsd?: number };
 }

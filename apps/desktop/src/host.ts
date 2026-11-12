@@ -7497,7 +7497,9 @@ const squadExecutionService = new SquadExecutionService({
      const member = await teamLifecycle.findModernWorkerBinding(sessionId, record.projectId);
      // CLI/PTY workers are not swept, so only a bound Modern member needs (or accepts) a hold.
      if (!member || member.worker.modernContext?.executionId !== record.id) return;
-     await squadRuntime().retainSquadMember({ bindingId: sessionId, generation: member.generation, projectId: record.projectId, retainUntilMs: retainUntilMs ?? 0 });
+     const applied = await squadRuntime().retainSquadMember({ bindingId: sessionId, generation: member.generation, projectId: record.projectId, retainUntilMs: retainUntilMs ?? 0 });
+     // A host that is offline or never acknowledged must surface, so ParkedWorkerHolds logs and retries the slot.
+     if (!applied) throw new Error(`host did not confirm the worker hold for ${sessionId}`);
    },
    queuedForSession: (sessionId) => workerInjector.pendingCount(sessionId),
    deliverAssignment: async (sessionId, text, correlation) => {

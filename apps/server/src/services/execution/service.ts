@@ -12,7 +12,7 @@ import type { createExecutionSourceRegistry } from './source-registry.js';
 import { blockerCardSubject, humanBlockerDenial } from './human-blocker-denial.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
-import { DEADLINE_RECHECK_FLOOR_MS, ExecutionDeadlineWatchdog, deadlineTimings, nextDeadlineAt } from './deadline-watchdog.js';
+import { BLOCKED_WAIT_WARN_LEAD_MS, DEADLINE_RECHECK_FLOOR_MS, ExecutionDeadlineWatchdog, deadlineTimings, nextDeadlineAt } from './deadline-watchdog.js';
 import { ParkedWorkerHolds } from './parked-worker-hold.js';
 import { PlanReadinessWatchdog, type PlanReadinessExpiryReason } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
@@ -1031,7 +1031,7 @@ export class ExecutionService {
     const active = await this.deps.store.listActive();
     this.deadlineWatchdog.restore(active);
     this.planReadinessWatchdog.restore(active);
-    for (const record of active) void this.parkedHolds.sync(record.id, { restore: true }).catch(() => undefined);
+    for (const record of active) this.syncParkedHolds(record.id, { restore: true });
   }
 
   private async retainParkedWorker(record: ExecutionRecord, slotId: string, retainUntilMs: number | null): Promise<void> {
@@ -1961,7 +1961,7 @@ export class ExecutionService {
     stateOrClaimGeneration: string, questionData: Record<string, unknown>
   ): Promise<void> {
     this.fireHumanBlocker(record, blocker);
-    void this.parkedHolds.sync(record.id).catch(() => undefined);
+    this.syncParkedHolds(record.id);
     this.deadlineWatchdog.schedule(record);
     // The Inbox entry goes first so a failing coordinator wake cannot keep the blocker from the person.
     try {
@@ -2093,7 +2093,7 @@ export class ExecutionService {
    */
   private async cascadeDispatch(executionId: string, deprioritizeSlotId?: string): Promise<void> {
     // Every blocker-resolving mutation cascades afterwards, so this re-derives the parked-worker hold.
-    void this.parkedHolds.sync(executionId).catch(() => undefined);
+    this.syncParkedHolds(executionId);
     try {
       const existing = await this.deps.store.get(executionId);
       if (!existing) return;
@@ -2490,7 +2490,7 @@ export class ExecutionService {
       : this.deps.store.blockWork(record.id, record.stateVersion, binding, workUnitId, blocker, undefined, requireClaim));
     if (result.ok) {
       const record = result.value;
-      void this.parkedHolds.sync(record.id).catch(() => undefined);
+      this.syncParkedHolds(record.id);
       if (blocker.audience === 'coordinator') {
         // Self-heal lane: a worker asking the coordinator for a plan/spec
         // decision it cannot make itself. Wake the coordinator to answer it via
@@ -3358,7 +3358,7 @@ export class ExecutionService {
     if (!current) return deniedBound('execution delivery route is not current');
     try {
       const ack = await this.deps.store.ackBlockerDelivery({ ...binding, ...current }, deliveryId, leaseId, result);
-      void this.parkedHolds.sync(record.id).catch(() => undefined);
+      this.syncParkedHolds(record.id);
       if (ack.outcome === 'accepted' && ack.delivery.state === 'DELIVERED') this.deadlineWatchdog.schedule(ack.record);
       return { ok: true as const, value: {
         deliveryId: ack.delivery.id, blockerId: ack.delivery.blockerId, state: ack.delivery.state,
@@ -4011,7 +4011,7 @@ export class ExecutionService {
     for (const check of this.checkCompletions.values()) if (check.executionId === record.id) check.controller.abort();
     this.deadlineWatchdog.remove(record.id);
     this.planReadinessWatchdog.remove(record.id);
-    void this.parkedHolds.sync(record.id, { restore: true }).catch(() => undefined);
+    this.syncParkedHolds(record.id, { restore: true });
     try {
       await this.deps.resumeGrants?.revoke(record.id, record.projectId);
     } catch {
@@ -4149,6 +4149,11 @@ export class ExecutionService {
     }
   }
 
+  /** Fire-and-forget hold sync; failures (load, lifecycle lookup) are logged, never thrown into the caller. */
+  private syncParkedHolds(executionId: string, opts?: { restore?: boolean }): void {
+    void this.parkedHolds.sync(executionId, opts).catch((error) => this.deps.logError?.(`execution parked-worker hold sync failed for ${executionId}`, error));
+  }
+
   /** One Inbox warning before an open human blocker's bounded wait expires; best effort, idempotent by dedupe key. */
   private async announceBlockedWaitWarning(record: ExecutionRecord, blockedWaitMs: number): Promise<void> {
     const inbox = this.deps.inbox;
@@ -4157,7 +4162,7 @@ export class ExecutionService {
     const input: InboxInput = {
       projectId: record.projectId,
       subject: blockerCardSubject(record),
-      comments: `This job has waited ${Math.round(blockedWaitMs / 60_000)} minutes on an unanswered question and will be stopped soon. Answer it to keep the job running.`,
+      comments: `This job has been waiting on an unanswered question and will be stopped in about ${Math.max(1, Math.round(Math.min(BLOCKED_WAIT_WARN_LEAD_MS, Math.floor(blockedWaitMs / 4)) / 60_000))} minutes. Answer it to keep the job running.`,
       executionId: record.id,
       dedupeKey: `execution-blocker-expiry:${record.id}:${blocker?.id ?? 'blocked'}`
     };

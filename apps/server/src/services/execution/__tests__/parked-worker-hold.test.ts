@@ -57,9 +57,17 @@ describe('deriveParkedHolds', () => {
   const base = (over: Partial<ExecutionRecord>) => ({ state: 'RUNNING', request: { policy: {} }, blockers: [], ...over }) as unknown as ExecutionRecord;
   const blocker = (id: string, slotId: string, createdAt: number, resolved = false) => ({ id, slotId, workUnitId: 'u', question: 'q', resolved, createdAt });
 
-  it('holds each slot with an unresolved blocker until the oldest-bound expiry and ignores resolved ones', () => {
-    const record = base({ blockers: [blocker('a', 's1', 100), blocker('b', 's1', 500), blocker('c', 's2', 100, true)] });
-    expect(deriveParkedHolds(record, 1_000)).toEqual(new Map([['s1', 500 + 4 * HOUR]]));
+  it('anchors every hold at the oldest open human blocker (the deadline anchor) and ignores resolved ones', () => {
+    const record = base({ blockers: [blocker('a', 's1', 100), blocker('b', 's1', 500), blocker('c', 's2', 100, true), blocker('d', 's3', 900)] });
+    expect(deriveParkedHolds(record, 1_000)).toEqual(new Map([['s1', 100 + 4 * HOUR], ['s3', 100 + 4 * HOUR]]));
+    // A later blocker never extends retention past the oldest blocker's bound.
+    expect(deriveParkedHolds(record, 100 + 4 * HOUR).size).toBe(0);
+  });
+
+  it('does not hold for coordinator self-heal blockers', () => {
+    const coordinator = { ...blocker('a', 's1', 100), audience: 'coordinator' };
+    expect(deriveParkedHolds(base({ blockers: [coordinator, blocker('b', 's2', 200)] }), 1_000)).toEqual(new Map([['s2', 200 + 4 * HOUR]]));
+    expect(deriveParkedHolds(base({ blockers: [coordinator] }), 1_000).size).toBe(0);
   });
 
   it('uses the policy bound, treats 0 as the 24 h ceiling and never exceeds it', () => {

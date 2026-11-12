@@ -1870,6 +1870,11 @@ export function resolveCloseWrapUpInstructions(
   return custom ? custom : DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS;
 }
 
+/** Squad blocked-wait setting (`autonomousBlockedWaitMs`): default 4 h, floor 1 min, ceiling 24 h; 0 means the ceiling. */
+export const DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS = 4 * 60 * 60 * 1000;
+export const MIN_AUTONOMOUS_WAIT_MS = 60_000;
+export const MAX_AUTONOMOUS_WAIT_MS = 24 * 60 * 60 * 1000;
+
 export interface AppConfig {
   version: 1;
   /**
@@ -2863,7 +2868,8 @@ export interface AppConfig {
   autonomousTimeoutMs?: number;
   /**
    * Longest a Squad run waits on an open human question before it is stopped; the idle
-   * timeout is paused meanwhile. 0 = no cap. Default 4 hours (AUTONOMOUS_DEFAULTS).
+   * timeout is paused meanwhile. 0 = the 24-hour maximum (there is no unbounded wait).
+   * Default 4 hours (DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS).
    */
   autonomousBlockedWaitMs?: number;
   /** Idle seconds before the supervisor nudges an agent in an autonomous run. */
