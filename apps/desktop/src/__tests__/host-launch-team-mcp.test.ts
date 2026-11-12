@@ -178,7 +178,8 @@ vi.mock('../runtime/runtime-supervisor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../runtime/runtime-supervisor.js')>();
   return { ...actual, createProductRouteSquadRuntime: vi.fn(() => h.runtime) };
 });
-vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
   ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json',
   alwaysOnPluginMcpAllowlist: () => []

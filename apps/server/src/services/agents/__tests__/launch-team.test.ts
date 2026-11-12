@@ -175,7 +175,8 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../../../../../desktop/src/updater.js', () => ({ createUpdater: () => ({}) }));
-vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
   ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json',
   alwaysOnPluginMcpAllowlist: () => []
