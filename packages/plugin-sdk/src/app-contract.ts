@@ -1194,6 +1194,11 @@ export interface PluginProjectsState {
   projects: PluginAppProject[];
 }
 
+/** Opens the host's own Icon + Color editor for a project. The plugin never writes project data. */
+export interface PluginProjectAppearanceMenu {
+  open(projectId: string, at: { x: number; y: number }): void;
+}
+
 export interface PluginSidebarThreadActions {
   open(threadId: string): void;
   openNewThread(options?: { projectId?: string }): void;
@@ -1222,6 +1227,7 @@ export interface PluginSdkApp {
   useComposerView(): ComposerView;
   experimental_useSidebarThreads(): { status: 'loading' | 'ready' | 'error'; threads: PluginSidebarThread[]; projects: { id: string; name: string }[] };
   experimental_useProjects(): PluginProjectsState;
+  experimental_useProjectAppearanceMenu(): PluginProjectAppearanceMenu;
   experimental_useSidebarThreadActions(): PluginSidebarThreadActions;
   experimental_useSidebarThreadPullRequest(threadId: string): {
     isLoading: boolean;

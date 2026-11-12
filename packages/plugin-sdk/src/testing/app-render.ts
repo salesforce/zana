@@ -52,6 +52,8 @@ export interface RenderSlotOptions {
   composer?: { text?: string; scope?: PluginComposerScope };
   /** What `experimental_useProjects()` reports. Defaults to a ready, empty list; pass `{ status: 'loading' }` for that branch. */
   projects?: Partial<PluginProjectsState>;
+  /** Receives `experimental_useProjectAppearanceMenu().open(...)` calls. */
+  onOpenProjectAppearanceMenu?: (projectId: string, at: { x: number; y: number }) => void;
   realtimeConnectionState?: 'connecting' | 'connected' | 'reconnecting';
   /** Whether the page has a side panel to show agents in (`navigate.openPanelAgent`). Defaults to false. */
   panelAgent?: boolean;
@@ -311,6 +313,9 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
       return composerApi;
     },
     useComposerView: composerView,
+    experimental_useProjectAppearanceMenu: () => ({
+      open: (projectId: string, at: { x: number; y: number }) => options.onOpenProjectAppearanceMenu?.(projectId, at)
+    }),
     experimental_useProjects: () => ({
       status: options.projects?.status ?? 'ready',
       projects: options.projects?.projects ?? []

@@ -25,6 +25,7 @@ export const RUNTIME_EXPORT_MANIFEST: Record<string, readonly string[]> = {
     "experimental_useAppPanel",
     "experimental_useCodeTheme",
     "experimental_useFixedTabTarget",
+    "experimental_useProjectAppearanceMenu",
     "experimental_useProjects",
     "experimental_useProviders",
     "experimental_useSidebarThreadActions",

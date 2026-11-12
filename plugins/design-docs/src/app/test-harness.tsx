@@ -39,6 +39,8 @@ export interface HarnessOptions {
   projects?: Array<{ id: string; name: string; quickAgent?: boolean }>;
   /** What the host's `experimental_useProjects()` reports (icon/color). Defaults to a ready list of `projects`. */
   hostProjects?: { status?: 'loading' | 'ready'; projects?: Array<{ id: string; name: string; icon?: string; color?: string; quickAgent?: boolean }> };
+  /** Receives the host appearance-menu requests the app makes (right-click on a project marker). */
+  onOpenProjectAppearanceMenu?: (projectId: string, at: { x: number; y: number }) => void;
   /** What `navigate.openThreadPanel` returns (false: no thread to attach to). */
   threadPanel?: boolean;
   /** Whether the page has a side panel for agents (`navigate.openPanelAgent`). */
@@ -141,7 +143,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 
   Object.assign(rpc, options.rpcOverrides);
   const hostProjects = options.hostProjects ?? { status: 'ready' as const, projects };
-  const installed = installTestPluginRuntime({ projects: hostProjects as never, rpc, deepLinkBase: options.deepLinkBase, context: options.context ?? {}, panelAgent: options.panelAgent });
+  const installed = installTestPluginRuntime({ projects: hostProjects as never, onOpenProjectAppearanceMenu: options.onOpenProjectAppearanceMenu, rpc, deepLinkBase: options.deepLinkBase, context: options.context ?? {}, panelAgent: options.panelAgent });
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: Record<string, unknown> }).__ZCC_PLUGIN_RUNTIME__!;
   if (options.contextReferences) {
     const navigate = (runtime.useZccNavigate as () => Record<string, unknown>)();

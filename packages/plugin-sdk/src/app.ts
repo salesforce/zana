@@ -3,6 +3,7 @@ export { EDITOR_SELECTION_MIME, MAX_EDITOR_SELECTION_TEXT, parseEditorSelection,
 import type {
   ComposerView,
   PluginProjectsState,
+  PluginProjectAppearanceMenu,
   HarnessRoutingEditorProps,
   MarkdownProps,
   NewThreadComposerProps,
@@ -115,6 +116,7 @@ export type {
   PluginThreadListProps,
   PluginAppProject,
   PluginProjectsState,
+  PluginProjectAppearanceMenu,
   PluginSidebarThread,
   PluginSidebarThreadActions,
   PluginThreadListRegistration,
@@ -292,6 +294,12 @@ export function useComposerView(): ComposerView {
 
 export function experimental_useProjects(): PluginProjectsState {
   return pluginRuntime().experimental_useProjects?.() ?? { status: 'loading', projects: [] };
+}
+
+const NOOP_APPEARANCE_MENU: PluginProjectAppearanceMenu = { open() { /* no host */ } };
+
+export function experimental_useProjectAppearanceMenu(): PluginProjectAppearanceMenu {
+  return pluginRuntime().experimental_useProjectAppearanceMenu?.() ?? NOOP_APPEARANCE_MENU;
 }
 
 export function experimental_useSidebarThreads() {

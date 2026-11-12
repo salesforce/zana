@@ -203,6 +203,7 @@ interface SlotEnv {
   composerLog: ComposerLog;
   sidebarThreads: PluginSidebarThreadsState;
   projectsState: PluginProjectsState;
+  onOpenProjectAppearanceMenu?: (projectId: string, at: { x: number; y: number }) => void;
   sidebarActions: PluginSidebarThreadActions;
   sidebarActionCalls: SidebarActionCall[];
   sidebarPullRequests: ReadonlyMap<string, PluginSidebarPullRequest>;
@@ -834,6 +835,10 @@ const testPluginSdkApp = {
   experimental_PermissionModePicker: TestPermissionModePicker,
   experimental_SourceCode: TestSourceCode,
   experimental_Diff: TestDiff,
+  experimental_useProjectAppearanceMenu() {
+    const env = useSlotEnv("experimental_useProjectAppearanceMenu");
+    return { open: (projectId: string, at: { x: number; y: number }) => env.onOpenProjectAppearanceMenu?.(projectId, at) };
+  },
   experimental_useProjects(): PluginProjectsState {
     return useSlotEnv("experimental_useProjects").projectsState;
   },
@@ -1156,6 +1161,8 @@ export interface RenderSlotOptions<
    * list. Pass `{ status: "loading" }` to test that branch.
    */
   projects?: Partial<PluginProjectsState>;
+  /** Receives `experimental_useProjectAppearanceMenu().open(...)` calls. */
+  onOpenProjectAppearanceMenu?: (projectId: string, at: { x: number; y: number }) => void;
   /**
    * The provider directory `experimental_useProviders()` reports. Omitted →
    * a ready, empty list. Pass `{ status: "loading" }` to test that branch.
@@ -1635,6 +1642,7 @@ export function renderSlot<
     composerLog,
     sidebarThreads,
     projectsState,
+    onOpenProjectAppearanceMenu: options.onOpenProjectAppearanceMenu,
     sidebarActions,
     sidebarActionCalls,
     sidebarPullRequests,

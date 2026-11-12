@@ -178,8 +178,9 @@ function DocRow({
         <span className="dd-doc-row-meta">
           {projectName !== null ? (
             <span className="dd-doc-row-project" title={projectName}>
-              <ProjectMark projectId={doc.projectId} />
-              <span className="dd-doc-row-project-name">{projectName}</span>
+              <ProjectMark projectId={doc.projectId}>
+                <span className="dd-doc-row-project-name">{projectName}</span>
+              </ProjectMark>
             </span>
           ) : null}
           {comments ? (
@@ -206,10 +207,17 @@ function SectionHead({ section, open, onToggle }: { section: ListSection; open: 
     <button type="button" className={`dd-list-section dd-list-section-${section.kind}`} aria-expanded={open} onClick={onToggle}>
       <ChevronDown size={12} aria-hidden className="dd-list-section-caret" />
       {Glyph ? <Glyph size={11} aria-hidden /> : null}
-      {section.kind === 'project' ? <ProjectMark projectId={section.projectId ?? null} /> : null}
-      <span className="dd-list-section-label" title={section.label}>
-        {section.label}
-      </span>
+      {section.kind === 'project' ? (
+        <ProjectMark projectId={section.projectId ?? null}>
+          <span className="dd-list-section-label" title={section.label}>
+            {section.label}
+          </span>
+        </ProjectMark>
+      ) : (
+        <span className="dd-list-section-label" title={section.label}>
+          {section.label}
+        </span>
+      )}
       {section.current ? (
         <span className="dd-list-section-here" title="The project you are in">
           Here

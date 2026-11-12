@@ -36,4 +36,18 @@ test('Design Docs project marker matches the project icon and color and follows 
   await win.evaluate((id) => window.cc.projects.update(id, { color: '#bc8cff' }), projectId);
   await expect(win.locator('.project-marker--icon[data-project-icon="Rocket"]').last())
     .toHaveCSS('color', 'rgb(188, 140, 255)');
+
+  // Right-click the Design Docs marker: the host's Icon + Color menu recolors the project.
+  const designMarker = win.locator('.dd-project-target .project-marker--icon[data-project-icon="Rocket"]').last();
+  await designMarker.click({ button: 'right' });
+  const menu = win.locator('.project-menu', { has: win.locator('.project-menu-swatches') });
+  await expect(menu).toBeVisible();
+  await menu.getByRole('button', { name: 'Set color #f85149' }).click();
+  await expect(menu).toBeHidden();
+  await expect(win.locator('.project-marker--icon[data-project-icon="Rocket"]').last())
+    .toHaveCSS('color', 'rgb(248, 81, 73)');
+  await expect.poll(() => win.evaluate(async (id) =>
+    (await window.cc.projects.list()).find((p: { id: string }) => p.id === id)?.color, projectId)).toBe('#f85149');
+  const sidebarDot = win.locator('.project-dot.project-marker--icon[data-project-icon="Rocket"]').first();
+  await expect(sidebarDot).toHaveCSS('color', 'rgb(248, 81, 73)');
 });

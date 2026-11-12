@@ -286,8 +286,14 @@ export function DocHeader({
       <div className="dd-doc-meta">
         {template ? null : <StatusMenu status={doc.status} onChange={(status) => void update({ status }).catch(() => undefined)} />}
         {template ? null : <span className="dd-doc-project" title={project ? `Project · ${project.name}` : 'Visible to agents in every project'}>
-          {project || doc.projectId ? <ProjectMark projectId={doc.projectId} /> : <Globe size={12} aria-hidden />}
-          {project ? project.name : doc.projectId ? 'Unknown project' : 'Global'}
+          {project || doc.projectId ? (
+            <ProjectMark projectId={doc.projectId}>{project ? project.name : 'Unknown project'}</ProjectMark>
+          ) : (
+            <>
+              <Globe size={12} aria-hidden />
+              Global
+            </>
+          )}
         </span>}
         {template || collapsed ? null : <TagEditor tags={doc.tags} onChange={(tags) => void update({ tags }).catch(() => undefined)} />}
         <span className="dd-spacer" />

@@ -89,3 +89,72 @@ describe('project marker in Design Docs', () => {
     expect(document.querySelector('.dd-doc-project .project-marker--neutral')).toBeTruthy();
   });
 });
+
+describe('project marker context menu', () => {
+  const rightClick = (el: Element) => fireEvent.contextMenu(el, { clientX: 41, clientY: 52 });
+
+  it('opens the host appearance menu from the marker and the adjacent project name, without the doc menu', async () => {
+    const calls: unknown[] = [];
+    const harness = createHarness({
+      hostProjects: { status: 'ready', projects: [{ id: 'p1', name: 'App', color: '#ff0000' }] },
+      projects: [{ id: 'p1', name: 'App' }],
+      onOpenProjectAppearanceMenu: (id, at) => calls.push([id, at])
+    });
+    seed(harness.store, 'Payments API', 'p1');
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    await screen.findByText('Payments API');
+    rightClick(headerMarker());
+    rightClick(document.querySelector('.dd-list-section-project .dd-list-section-label')!);
+    ungroup();
+    rightClick(markerFor('Payments API'));
+    rightClick(document.querySelector('.dd-doc-row-project-name')!);
+    expect(calls).toEqual(Array(4).fill(['p1', { x: 41, y: 52 }]));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('leaves the doc row context menu alone when right-clicking elsewhere on the row', async () => {
+    const calls: unknown[] = [];
+    const harness = createHarness({
+      hostProjects: { status: 'ready', projects: [{ id: 'p1', name: 'App' }] },
+      projects: [{ id: 'p1', name: 'App' }],
+      onOpenProjectAppearanceMenu: (id) => calls.push(id)
+    });
+    seed(harness.store, 'Payments API', 'p1');
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    await screen.findByText('Payments API');
+    ungroup();
+    rightClick(screen.getByText('Payments API'));
+    expect(calls).toEqual([]);
+  });
+
+  it('does nothing for an unknown project and lets the row handler run', async () => {
+    const calls: unknown[] = [];
+    const harness = createHarness({ hostProjects: { status: 'ready', projects: [] }, onOpenProjectAppearanceMenu: (id) => calls.push(id) });
+    seed(harness.store, 'Orphan', 'gone');
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    await screen.findByText('Orphan');
+    ungroup();
+    const notPrevented = rightClick(markerFor('Orphan'));
+    expect(calls).toEqual([]);
+    expect(notPrevented).toBe(false); // row handler (doc menu) prevented default
+  });
+
+  it('opens from the doc header project chip', async () => {
+    const calls: unknown[] = [];
+    const harness = createHarness({
+      hostProjects: { status: 'ready', projects: [{ id: 'p1', name: 'App' }] },
+      projects: [{ id: 'p1', name: 'App' }],
+      onOpenProjectAppearanceMenu: (id, at) => calls.push([id, at])
+    });
+    const doc = seed(harness.store, 'Payments API', 'p1');
+    localStorage.setItem('zcc.design-docs.project-location:p1', JSON.stringify(doc.id));
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    const chip = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('.dd-doc-project .project-marker');
+      if (!el) throw new Error('no chip');
+      return el;
+    });
+    rightClick(chip);
+    expect(calls).toEqual([['p1', { x: 41, y: 52 }]]);
+  });
+});
