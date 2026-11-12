@@ -19,11 +19,13 @@ import {
   requiredMcpUnavailableMessage,
   removeAutomatedConfigDir,
   sanitizeMcpServers,
+  isReservedMcpName,
   sweepStaleAutomatedConfigDirs
 } from '../automated-isolation.js';
 import {
   createAutomatedConfigDir,
-  sanitizeMcpServers as bridgeSanitizeMcpServers
+  sanitizeMcpServers as bridgeSanitizeMcpServers,
+  isReservedMcpName as bridgeIsReservedMcpName
 } from '../../../../../../plugins/provider-claude-code/src/bridge/automated-config-dir.js';
 
 describe('automated claude isolation', () => {
@@ -306,6 +308,48 @@ describe('automated claude isolation', () => {
       expect(sanitizeMcpServers([])).toBeNull();
       expect(Object.keys(sanitizeMcpServers(Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`s${i}`, { command: 'c' }])))!)).toHaveLength(64);
       expect(sanitizeMcpServers({ a: { command: 'c', args: Array.from({ length: 200 }, () => 'a') } })).toBeNull();
+    });
+
+    describe('reserved plugin:/ext: names (AC-14)', () => {
+      const raw = {
+        'plugin:x:y': { command: 'spoof' },
+        'ext:x:y': { command: 'spoof' },
+        'plugin:': { command: 'spoof' },
+        plugin: { command: 'ok1' },
+        'my-plugin:x': { command: 'ok2' },
+        'Plugin:x:y': { command: 'ok3' },
+        extension: { command: 'ok4' }
+      };
+
+      it('drops them in both seed copies with identical results (parity)', () => {
+        const host = sanitizeMcpServers(raw);
+        expect(host).toEqual(bridgeSanitizeMcpServers(raw));
+        expect(Object.keys(host!).sort()).toEqual(['Plugin:x:y', 'extension', 'my-plugin:x', 'plugin']);
+        for (const name of ['plugin:x:y', 'ext:x:y', 'plugin:', 'ext:a', 'plugin', 'a', '', 'Ext:a']) {
+          expect(isReservedMcpName(name)).toBe(bridgeIsReservedMcpName(name));
+        }
+        expect(isReservedMcpName('plugin:x:y')).toBe(true);
+        expect(isReservedMcpName('plugin')).toBe(false);
+      });
+
+      it('returns null when only reserved names are present', () => {
+        expect(sanitizeMcpServers({ 'plugin:a:b': { command: 'c' } })).toBeNull();
+        expect(bridgeSanitizeMcpServers({ 'ext:a:b': { command: 'c' } })).toBeNull();
+      });
+
+      it('collision precedence: a spoofed user key never reaches the leaf, so registry keys win', () => {
+        writeFileSync(
+          join(sourceDir, '.claude.json'),
+          JSON.stringify({ mcpServers: { 'plugin:p:srv': { command: 'spoof' }, 'ext:e:srv': { command: 'spoof' }, mine: { command: 'c' } } })
+        );
+        const p = planAutomatedClaudeLaunch({ ownerId: 'collide', env: authEnv, dataDir, sourceConfigDir: sourceDir });
+        const seeded = JSON.parse(readFileSync(join(p.configDir, '.claude.json'), 'utf8'));
+        expect(seeded.mcpServers).toEqual({ mine: { command: 'c' } });
+        // A required reserved name is unavailable: it cannot be satisfied by a user-scope spoof.
+        expect(() =>
+          planAutomatedClaudeLaunch({ ownerId: 'collide2', env: authEnv, dataDir, sourceConfigDir: sourceDir, requiredMcps: ['plugin:p:srv'] })
+        ).toThrow(/Required MCP server not available.*plugin:p:srv/);
+      });
     });
 
     it('seeds MCP servers and trust together even without settings, never authenticating', () => {

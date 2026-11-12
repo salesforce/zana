@@ -125,7 +125,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** The real global config (`.claude.json`) is read only up to this size. */
-const MAX_GLOBAL_CONFIG_BYTES = 16 * 1024 * 1024;
+export const MAX_GLOBAL_CONFIG_BYTES = 16 * 1024 * 1024;
 const MAX_MCP_SERVERS = 64;
 const MAX_MCP_NAME_LENGTH = 128;
 const MAX_MCP_STRING_LENGTH = 4096;
@@ -204,13 +204,26 @@ function sanitizeMcpServer(raw: unknown): Record<string, unknown> | null {
   return server;
 }
 
-/** Non-secret launch config for user-scope MCP servers; malformed or credential-looking entries are skipped. */
+/**
+ * Names beginning `plugin:` / `ext:` are the registry's own key namespace
+ * (`plugin:<id>:<name>`, `ext:<id>:<name>`). A user-scope server with such a
+ * name is dropped so it can never collide with or spoof a contributed key.
+ * Kept identical to the provider bridge copy (parity test).
+ */
+const RESERVED_MCP_NAME_PREFIX = /^(plugin|ext):/;
+
+export function isReservedMcpName(name: string): boolean {
+  return RESERVED_MCP_NAME_PREFIX.test(name);
+}
+
+/** Non-secret launch config for user-scope MCP servers; malformed, credential-looking or reserved-prefix entries are skipped. */
 export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, unknown>> | null {
   if (!isPlainObject(raw)) return null;
   const picked: Array<[string, Record<string, unknown>]> = [];
   for (const [name, entry] of Object.entries(raw)) {
     if (picked.length >= MAX_MCP_SERVERS) break;
     if (name.length === 0 || name.length > MAX_MCP_NAME_LENGTH) continue;
+    if (isReservedMcpName(name)) continue;
     const server = sanitizeMcpServer(entry);
     if (server) picked.push([name, server]);
   }
@@ -221,7 +234,7 @@ export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, 
 const CREDENTIAL_FIELDS = ['env', 'headers', 'headersHelper', 'oauth', 'auth', 'authorization'] as const;
 
 /** Whether the raw entry held credential-bearing fields that the sanitizer strips. */
-function hasStrippedCredentialFields(entry: unknown): boolean {
+export function hasStrippedCredentialFields(entry: unknown): boolean {
   if (!isPlainObject(entry)) return false;
   return CREDENTIAL_FIELDS.some((key) => {
     const value = entry[key];
@@ -262,7 +275,7 @@ function trustedProjects(globalConfig: Record<string, unknown> | null, cwd: stri
  * The real global config: inside the config dir when one is set (env or an
  * explicit source dir), otherwise `~/.claude.json` next to `~/.claude`.
  */
-function sourceGlobalConfig(sourceDir: string, env: NodeJS.ProcessEnv, explicitSourceDir: boolean): string {
+export function sourceGlobalConfig(sourceDir: string, env: NodeJS.ProcessEnv, explicitSourceDir: boolean): string {
   return explicitSourceDir || env.CLAUDE_CONFIG_DIR ? join(sourceDir, '.claude.json') : join(homedir(), '.claude.json');
 }
 

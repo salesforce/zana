@@ -194,6 +194,15 @@ export function rebuildPluginServers(contributors: readonly PluginMcpContributor
   alwaysOnServerNamesByPlugin = alwaysOn;
 }
 
+/**
+ * Every currently-registered server key (seed + extension + plugin), names
+ * only. Registry membership already encodes enabled/consented state. Feeds the
+ * host MCP catalogue; never exposes command, args, env or url.
+ */
+export function registeredMcpServerKeys(): string[] {
+  return Object.keys(mcpServerRegistry());
+}
+
 /** Every currently-registered `ext:<id>:<name>` key with `alwaysOn: true`, across all enabled+consented extensions. */
 function allAlwaysOnServerNames(): string[] {
   return [

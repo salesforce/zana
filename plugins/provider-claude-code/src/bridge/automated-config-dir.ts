@@ -190,8 +190,20 @@ function sanitizeMcpServer(raw: unknown): Record<string, unknown> | null {
 }
 
 /**
- * Non-secret launch config for the user's user-scope MCP servers. Malformed
- * or credential-looking entries are skipped; this never throws.
+ * Names beginning `plugin:` / `ext:` are the registry's own key namespace
+ * (`plugin:<id>:<name>`, `ext:<id>:<name>`). A user-scope server with such a
+ * name is dropped so it can never collide with or spoof a contributed key.
+ * Kept identical to the host copy (parity test).
+ */
+const RESERVED_MCP_NAME_PREFIX = /^(plugin|ext):/;
+
+export function isReservedMcpName(name: string): boolean {
+  return RESERVED_MCP_NAME_PREFIX.test(name);
+}
+
+/**
+ * Non-secret launch config for the user's user-scope MCP servers. Malformed,
+ * credential-looking or reserved-prefix entries are skipped; this never throws.
  */
 export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, unknown>> | null {
   if (!isPlainObject(raw)) return null;
@@ -199,6 +211,7 @@ export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, 
   for (const [name, entry] of Object.entries(raw)) {
     if (picked.length >= MAX_MCP_SERVERS) break;
     if (name.length === 0 || name.length > MAX_MCP_NAME_LENGTH) continue;
+    if (isReservedMcpName(name)) continue;
     const server = sanitizeMcpServer(entry);
     if (server) picked.push([name, server]);
   }
