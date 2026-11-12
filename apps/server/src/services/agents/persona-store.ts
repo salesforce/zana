@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { PERSONA_REASONING_LEVELS, BUILTIN_PERSONA_SKILLS, sanitizePersonaSkills, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
+import { sanitizeLegacyMcpServers } from './persona-mcp-sanitize.js';
 import { atomicDurableWrite } from '../harness-routing/storage.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
@@ -135,6 +136,8 @@ export function sanitizeHarnessRouting(routing: unknown): PersonaHarnessRoutingV
   };
 }
 
+export { sanitizeLegacyMcpServers };
+
 export function sanitizePersona(raw: unknown): Persona | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<Persona>;
@@ -197,7 +200,7 @@ export function sanitizePersona(raw: unknown): Persona | null {
     allowedTools: strArray(r.allowedTools),
     deniedTools: strArray(r.deniedTools),
     addDirs: strArray(r.addDirs),
-    mcpServers: strArray(r.mcpServers),
+    mcpServers: sanitizeLegacyMcpServers(r.mcpServers, r.id),
     initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
     // Advisory microVM image hint; re-authorized against the closed allowlist in
     // the microVM builder at spawn (Rule 1). Persisted verbatim if a string.
@@ -401,7 +404,7 @@ function ensureDir(dir: string) {
 }
 
 /** README dropped into the user dir on first run so people know what goes there. */
-function ensureReadme(dir: string) {
+export function ensureReadme(dir: string) {
   const readme = join(dir, 'README.md');
   if (existsSync(readme)) return;
   const sample = join(dir, 'example.json.disabled');
@@ -443,6 +446,7 @@ function ensureReadme(dir: string) {
         '`permissionMode` can be `default`, `acceptEdits`, `plan`, or `bypassPermissions`.',
         '`reasoningLevel` (optional) can be `low`, `medium`, `high`, `xhigh`, or `max`. Claude, Codex, PI and Grok map it to their own effort setting; agents without one ignore it. Any other value skips the persona.',
         '`skills` (optional) is a list of skill names (`name`, `plugin:skill`, or `:name`; no globs) that limits which skills the agent can see. `zcc-inbox` is always kept. Omit it for no limit; `[]` keeps only `zcc-inbox`. It trims context and is not a security boundary. Anything else skips the persona.',
+        '`mcpServers` (optional) is a list of MCP server names (`name`, `plugin:<id>:<name>` or `ext:<id>:<name>`; no globs; at most 63 entries of 128 characters) that limits which MCP servers the agent can use. `zcc-inbox` is always kept. Omit it for no limit; `[]` keeps only `zcc-inbox`; a list keeps exactly those servers plus `zcc-inbox` (not additive). Invalid entries are dropped with a warning; the persona is kept.',
         'Files with invalid JSON or missing required fields are silently skipped.',
         'A built-in persona is shadowed when you drop a file with the same `id` here.',
         ''

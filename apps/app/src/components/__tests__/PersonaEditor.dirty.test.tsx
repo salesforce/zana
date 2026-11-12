@@ -112,6 +112,18 @@ describe('PersonaEditor dirty draft protection', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('Escape from an expanded typeahead is left to the typeahead and does not prompt to discard', () => {
+    vi.mocked(window.confirm).mockReturnValue(false);
+    const { container, onClose } = open();
+    makeDirty();
+    const combo = document.createElement('input');
+    combo.setAttribute('aria-expanded', 'true');
+    container.querySelector('[role="dialog"]')!.appendChild(combo);
+    fireEvent.keyDown(combo, { key: 'Escape' });
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('allows discard close', () => {
     const { onClose } = open();
     makeDirty();

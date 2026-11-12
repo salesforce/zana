@@ -2,6 +2,7 @@ import { ProjectCatalogue } from './project-catalogue.js';
 import { listHostCommands } from "./native-root-scan.js";
 import { inspectDirectories } from './inspect-directories.js';
 import { discoverCliOnHost } from './cli-discovery.js';
+import { buildMcpCatalogueWithNotes } from './mcp-catalogue.js';
 import type { CliTerminalStartCommand } from '@zana-ai/zcc-contracts/cli-terminal';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { realpath, stat as asyncStat, opendir, open } from 'node:fs/promises';
@@ -1012,6 +1013,8 @@ export async function dispatchHostCommand(
     }
     case 'host.list_commands':
       return listHostCommands(command);
+    case 'host.mcp_catalogue':
+      return buildMcpCatalogueWithNotes();
     case 'host.list_files':
       return { files: (await Promise.all(command.roots.map(listRoot))).flat() };
     case 'host.list_dir': {

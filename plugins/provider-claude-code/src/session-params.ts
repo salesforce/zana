@@ -97,6 +97,8 @@ export type ClaudeSessionExecutionOptions = RuntimePermissionPolicy & {
   providerSubagentsEnabled?: boolean | undefined;
   skillRoots?: readonly ClaudeCodeSkillRoot[] | undefined;
   skillAllowlist?: readonly string[] | undefined;
+  mcpAllowlist?: readonly string[] | undefined;
+  mcpExternallyProvided?: readonly string[] | undefined;
 };
 
 function resolveClaudeSessionPermissionMode(
@@ -151,6 +153,12 @@ function buildInternalSessionParams(
       : {}),
     ...(skillConfig ? skillConfig : {}),
     ...(skillAllowlistParams ? skillAllowlistParams : {}),
+    ...(args.options.mcpAllowlist
+      ? {
+          mcpAllowlist: [...args.options.mcpAllowlist],
+          mcpExternallyProvided: [...(args.options.mcpExternallyProvided ?? [])],
+        }
+      : {}),
     ...(config ? { config } : {}),
     ...(args.options.model ? { model: args.options.model } : {}),
     ...(args.options.reasoningLevel
@@ -181,6 +189,8 @@ const claudeProviderOptionsSchema = z
     providerSubagentsEnabled: z.boolean().optional(),
     additionalWorkspaceWriteRoots: z.array(z.string()).optional(),
     skillAllowlist: z.array(z.string()).optional(),
+    mcpAllowlist: z.array(z.string()).optional(),
+    mcpExternallyProvided: z.array(z.string()).optional(),
   })
   .passthrough();
 
@@ -230,6 +240,8 @@ export function buildClaudeSessionParams(
       memoryEnabled: providerOptions.memoryEnabled,
       providerSubagentsEnabled: providerOptions.providerSubagentsEnabled,
       skillAllowlist: providerOptions.skillAllowlist,
+      mcpAllowlist: providerOptions.mcpAllowlist,
+      mcpExternallyProvided: providerOptions.mcpExternallyProvided,
     },
   });
   return args.sessionKind === undefined

@@ -90,18 +90,20 @@ export function createDesktopNativeRecovery(deps: DesktopNativeRecoveryDeps) {
 interface UnitRequires { requires?: { skills?: string[]; mcpServers?: string[] } }
 
 /**
- * Capability requirements a Squad admission check must verify. Persona MCP servers
- * stay the budgeted requirement; work-unit MCP servers widen the inventory probe only.
+ * Capability requirements a Squad admission check must verify. Persona MCP allowlist
+ * entries are advisory (plan D10): they widen the inventory probe so warnings can be
+ * computed but never become required capabilities, so an allowlisted-but-missing server
+ * cannot fail admission. Work-unit MCP servers likewise widen the probe only.
  */
 export function teamAdmissionRequirements(
   slotPersonas: ReadonlyArray<Pick<Persona, 'mcpServers'>>,
   workUnits: ReadonlyArray<UnitRequires> | undefined
-): { requiredSkills: string[]; personaMcpServers: string[]; inventoryMcpServers: string[] } {
+): { requiredSkills: string[]; requiredMcpServers: string[]; inventoryMcpServers: string[] } {
   const units = workUnits ?? [];
   const personaServers = slotPersonas.flatMap((persona) => persona.mcpServers ?? []);
   return {
     requiredSkills: [...new Set(units.flatMap((unit) => unit.requires?.skills ?? []))].sort(),
-    personaMcpServers: [...new Set(personaServers)].sort(),
+    requiredMcpServers: [],
     inventoryMcpServers: [...new Set([...personaServers, ...units.flatMap((unit) => unit.requires?.mcpServers ?? [])])].sort()
   };
 }

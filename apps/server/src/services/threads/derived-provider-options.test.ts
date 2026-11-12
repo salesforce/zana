@@ -110,6 +110,16 @@ describe('derivedProviderOptionsForCommand', () => {
     expect(await derivedProviderOptionsForCommand({ ...base, skillSelection: {} })).toBeUndefined();
   });
 
+  it('merges the main-authorized persona MCP allowlist, alone and with skills; an empty restriction is kept', async () => {
+    handles.push(registerThreadProvider('provider-test', { id: 'plain-mcp', displayName: 'Plain', capabilities: CAPABILITIES }));
+    const base = { providerId: 'plain-mcp', threadId: 't1', projectId: 'p1', permissionMode: 'full' };
+    expect(await derivedProviderOptionsForCommand({ ...base, skillSelection: { mcpAllowlist: ['zcc-inbox', 'github'] } }))
+      .toEqual({ mcpAllowlist: ['zcc-inbox', 'github'] });
+    expect(await derivedProviderOptionsForCommand({ ...base, skillSelection: { mcpAllowlist: [] } })).toEqual({ mcpAllowlist: [] });
+    expect(await derivedProviderOptionsForCommand({ ...base, skillSelection: { allowedSkillNames: [], mcpAllowlist: ['zcc-inbox'] } }))
+      .toEqual({ skillAllowlist: ['zcc-inbox'], mcpAllowlist: ['zcc-inbox'] });
+  });
+
   it('adds skillAllowlist on top of derived options, and for a non-object derive result', async () => {
     handles.push(registerThreadProvider('provider-claude-code', {
       id: 'claude-skills', displayName: 'C', capabilities: CAPABILITIES,

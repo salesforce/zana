@@ -41,15 +41,24 @@ export function createAutomatedConfigDir(
   ownerId: string,
   seed: AutomatedSeedOptions = {},
 ): string {
+  return createAutomatedConfigDirWithWarnings(dataDir, ownerId, seed).configDir;
+}
+
+/** Like {@link createAutomatedConfigDir}, also returning the persona MCP allowlist launch warnings. */
+export function createAutomatedConfigDirWithWarnings(
+  dataDir: string,
+  ownerId: string,
+  seed: AutomatedSeedOptions = {},
+): { configDir: string; warnings: McpLaunchWarning[] } {
   let leaf: string | undefined;
   try {
     leaf = createConfinedConfigLeaf({ dataDir, ownerId, parentName: AUTOMATED_CONFIG_PARENT });
-    seedAutomatedConfigDir(leaf, seed);
+    const { warnings } = seedAutomatedConfigDirWithWarnings(leaf, seed);
     if (!automatedConfigCanAuthenticate(leaf, seed.env)) {
       removeAutomatedConfigDir(dataDir, leaf);
       throw new AutomatedConfigAdmissionError("authentication-unavailable");
     }
-    return leaf;
+    return { configDir: leaf, warnings };
   } catch (error) {
     if (error instanceof AutomatedConfigAdmissionError) throw error;
     if (leaf) {
@@ -63,7 +72,27 @@ export function createAutomatedConfigDir(
   }
 }
 
+/**
+ * Non-fatal launch warning about a persona MCP allowlist entry (AC-15); same shape
+ * as the host copy (parity test). `not-found`: not in the user config;
+ * `unsafe-config`: sanitizer rejected the launch config; `credentials-stripped`:
+ * carried without env/headers/oauth/auth.
+ */
+export interface McpLaunchWarning {
+  code: "allowlisted-mcp-not-carried" | "allowlisted-mcp-credentials-stripped";
+  server: string;
+  reason: "not-found" | "unsafe-config" | "credentials-stripped";
+  message: string;
+}
+
 export interface AutomatedSeedOptions {
+  /**
+   * Effective persona MCP allowlist. Absent = unrestricted (byte-identical seed).
+   * Present = only covered user servers plus `zcc-inbox` are carried.
+   */
+  mcpAllowlist?: readonly string[];
+  /** Allowlist entries delivered by another path (plugin servers); never warned as missing here. */
+  externallyProvidedMcps?: readonly string[];
   /** Directory holding the user's real `settings.json`. Defaults to `$CLAUDE_CONFIG_DIR` or `~/.claude`. */
   sourceConfigDir?: string;
   env?: NodeJS.ProcessEnv;
@@ -190,8 +219,20 @@ function sanitizeMcpServer(raw: unknown): Record<string, unknown> | null {
 }
 
 /**
- * Non-secret launch config for the user's user-scope MCP servers. Malformed
- * or credential-looking entries are skipped; this never throws.
+ * Names beginning `plugin:` / `ext:` are the registry's own key namespace
+ * (`plugin:<id>:<name>`, `ext:<id>:<name>`). A user-scope server with such a
+ * name is dropped so it can never collide with or spoof a contributed key.
+ * Kept identical to the host copy (parity test).
+ */
+const RESERVED_MCP_NAME_PREFIX = /^(plugin|ext):/;
+
+export function isReservedMcpName(name: string): boolean {
+  return RESERVED_MCP_NAME_PREFIX.test(name);
+}
+
+/**
+ * Non-secret launch config for the user's user-scope MCP servers. Malformed,
+ * credential-looking or reserved-prefix entries are skipped; this never throws.
  */
 export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, unknown>> | null {
   if (!isPlainObject(raw)) return null;
@@ -199,12 +240,95 @@ export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, 
   for (const [name, entry] of Object.entries(raw)) {
     if (picked.length >= MAX_MCP_SERVERS) break;
     if (name.length === 0 || name.length > MAX_MCP_NAME_LENGTH) continue;
+    if (isReservedMcpName(name)) continue;
     const server = sanitizeMcpServer(entry);
     if (server) picked.push([name, server]);
   }
   // `fromEntries` defines own properties, so a `__proto__` name cannot
   // reach the prototype.
   return picked.length > 0 ? Object.fromEntries(picked) : null;
+}
+
+/** Always-allowed server key; mirrors `ALWAYS_ALLOWED_MCP_SERVERS` (this bundle stays self-contained). */
+const ALWAYS_ALLOWED_MCP_NAME = "zcc-inbox";
+
+/**
+ * Allowlist match for a user-scope server; mirrors `mcpAllowlistCovers` in
+ * `@zana-ai/zcc-domain/product` for source "user" (parity test).
+ */
+export function userMcpAllowlistCovers(entry: string, name: string): boolean {
+  if (isReservedMcpName(entry)) return false;
+  return entry === name;
+}
+
+/** Keeps the sanitized servers an allowlist covers, plus `zcc-inbox`. */
+export function filterMcpServersByAllowlist(
+  servers: Record<string, Record<string, unknown>> | null,
+  allowlist: readonly string[],
+): Record<string, Record<string, unknown>> | null {
+  if (!servers) return null;
+  const kept = Object.entries(servers).filter(
+    ([name]) =>
+      name === ALWAYS_ALLOWED_MCP_NAME ||
+      allowlist.some((entry) => userMcpAllowlistCovers(entry, name)),
+  );
+  return kept.length > 0 ? Object.fromEntries(kept) : null;
+}
+
+const CREDENTIAL_FIELDS = ["env", "headers", "headersHelper", "oauth", "auth", "authorization"] as const;
+
+/** Whether the raw entry held credential-bearing fields that the sanitizer strips. */
+export function hasStrippedCredentialFields(entry: unknown): boolean {
+  if (!isPlainObject(entry)) return false;
+  return CREDENTIAL_FIELDS.some((key) => {
+    const value = entry[key];
+    if (value === undefined || value === null) return false;
+    if (isPlainObject(value)) return Object.keys(value).length > 0;
+    return value !== "" && value !== false;
+  });
+}
+
+/** Warnings for allowlisted names that were not carried or lost credential fields. Never includes a credential value. */
+export function mcpAllowlistWarnings(
+  allowlist: readonly string[],
+  rawServers: Record<string, unknown>,
+  sanitized: Record<string, Record<string, unknown>> | null,
+  externallyProvided: readonly string[] = [],
+): McpLaunchWarning[] {
+  const warnings: McpLaunchWarning[] = [];
+  for (const entry of new Set(allowlist)) {
+    // Registry-keyed entries and zcc-inbox are delivered elsewhere, not from user config.
+    if (
+      entry === ALWAYS_ALLOWED_MCP_NAME ||
+      isReservedMcpName(entry) ||
+      externallyProvided.includes(entry)
+    ) {
+      continue;
+    }
+    if (!Object.hasOwn(rawServers, entry)) {
+      warnings.push({
+        code: "allowlisted-mcp-not-carried",
+        server: entry,
+        reason: "not-found",
+        message: `Allowlisted MCP server "${entry}" was not found in the Claude user config and is not available in this run.`,
+      });
+    } else if (!sanitized || !Object.hasOwn(sanitized, entry)) {
+      warnings.push({
+        code: "allowlisted-mcp-not-carried",
+        server: entry,
+        reason: "unsafe-config",
+        message: `Allowlisted MCP server "${entry}" was not carried: its launch config is malformed or embeds a credential.`,
+      });
+    } else if (hasStrippedCredentialFields(rawServers[entry])) {
+      warnings.push({
+        code: "allowlisted-mcp-credentials-stripped",
+        server: entry,
+        reason: "credentials-stripped",
+        message: `Allowlisted MCP server "${entry}" launches without its env, headers or auth (stripped for the isolated run); it may fail to authenticate.`,
+      });
+    }
+  }
+  return warnings;
 }
 
 function readJsonObject(file: string, maxBytes?: number): Record<string, unknown> | null {
@@ -261,6 +385,14 @@ export function seedAutomatedConfigDir(
   leaf: string,
   options: AutomatedSeedOptions = {},
 ): "seeded" | "none" {
+  return seedAutomatedConfigDirWithWarnings(leaf, options).result;
+}
+
+/** Like {@link seedAutomatedConfigDir}, also returning the persona MCP allowlist launch warnings. */
+export function seedAutomatedConfigDirWithWarnings(
+  leaf: string,
+  options: AutomatedSeedOptions = {},
+): { result: "seeded" | "none"; warnings: McpLaunchWarning[] } {
   const env = options.env ?? process.env;
   const sourceDir =
     options.sourceConfigDir ??
@@ -275,14 +407,25 @@ export function seedAutomatedConfigDir(
     automatedSourceGlobalConfig(sourceDir, env, options.sourceConfigDir !== undefined),
     MAX_GLOBAL_CONFIG_BYTES,
   );
-  const mcpServers = sanitizeMcpServers(globalConfig?.mcpServers);
-  if (!generated && !mcpServers) return "none";
+  const sanitizedServers = sanitizeMcpServers(globalConfig?.mcpServers);
+  const mcpServers = options.mcpAllowlist
+    ? filterMcpServersByAllowlist(sanitizedServers, options.mcpAllowlist)
+    : sanitizedServers;
+  const warnings = options.mcpAllowlist
+    ? mcpAllowlistWarnings(
+        options.mcpAllowlist,
+        isPlainObject(globalConfig?.mcpServers) ? globalConfig.mcpServers : {},
+        sanitizedServers,
+        options.externallyProvidedMcps,
+      )
+    : [];
+  if (!generated && !mcpServers) return { result: "none", warnings };
   writeAtomic0600(join(leaf, "settings.json"), JSON.stringify(generated ?? {}));
   writeAtomic0600(
     join(leaf, ".claude.json"),
     JSON.stringify({ hasCompletedOnboarding: true, ...(mcpServers ? { mcpServers } : {}) }),
   );
-  return "seeded";
+  return { result: "seeded", warnings };
 }
 
 /**
@@ -358,4 +501,19 @@ export function sweepAutomatedConfigDirs(args: {
     ttlMs: args.ttlMs,
     now: args.now,
   });
+}
+
+/**
+ * Persona MCP allowlist launch warnings (an allowlisted server missing or stripped of credentials)
+ * as visible `provider.warning` deltas. Server names and reasons only; never definitions or
+ * credential values.
+ */
+export function mcpLaunchWarningDeltas(
+  warnings: readonly McpLaunchWarning[],
+): Array<{ kind: "provider.warning"; summary: string; details: string }> {
+  return warnings.map((warning) => ({
+    kind: "provider.warning" as const,
+    summary: `Persona MCP allowlist: ${warning.server}`,
+    details: warning.message,
+  }));
 }

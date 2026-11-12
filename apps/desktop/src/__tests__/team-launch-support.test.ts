@@ -194,10 +194,18 @@ describe('teamAdmissionRequirements', () => {
       [{ mcpServers: ['b', 'a'] }, { mcpServers: ['a'] }, {}],
       [{ requires: { skills: ['z', 'y', 'z'], mcpServers: ['c', 'a'] } }, {}, { requires: {} }]
     );
-    expect(r).toEqual({ requiredSkills: ['y', 'z'], personaMcpServers: ['a', 'b'], inventoryMcpServers: ['a', 'b', 'c'] });
+    expect(r).toEqual({ requiredSkills: ['y', 'z'], requiredMcpServers: [], inventoryMcpServers: ['a', 'b', 'c'] });
+  });
+  it('never makes persona or work-unit MCP servers required (D10 advisory)', () => {
+    const r = teamAdmissionRequirements([{ mcpServers: ['missing'] }], [{ requires: { mcpServers: ['wu'] } }]);
+    expect(r.requiredMcpServers).toEqual([]);
+    expect(r.inventoryMcpServers).toEqual(['missing', 'wu']);
+  });
+  it('treats empty persona allowlists as no servers', () => {
+    expect(teamAdmissionRequirements([{ mcpServers: [] }], []).inventoryMcpServers).toEqual([]);
   });
   it('handles undefined units', () => {
-    expect(teamAdmissionRequirements([], undefined)).toEqual({ requiredSkills: [], personaMcpServers: [], inventoryMcpServers: [] });
+    expect(teamAdmissionRequirements([], undefined)).toEqual({ requiredSkills: [], requiredMcpServers: [], inventoryMcpServers: [] });
   });
 });
 

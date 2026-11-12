@@ -42737,3 +42737,97 @@ body.split-frame-guard webview {
   justify-content: center;
   margin-top: 12px;
 }
+
+/* Shared allowlist control (Restrict skills / Restrict MCP servers). */
+.allowlist-body {
+  position: relative;
+}
+.allowlist-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.allowlist-chip--warn {
+  border-color: var(--accent-gold);
+}
+.allowlist-chip--fixed {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+.allowlist-chip-mark,
+.allowlist-warn {
+  color: var(--accent-gold);
+}
+.allowlist-body > input[role='combobox'] {
+  padding-right: 30px;
+}
+.allowlist-chip--info {
+  border-color: var(--border);
+}
+.allowlist-chip-mark--info,
+.allowlist-info {
+  color: var(--text-muted);
+}
+.allowlist-chip-mark--info {
+  font-style: italic;
+  font-weight: 600;
+}
+.allowlist-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.allowlist-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+.allowlist-suggest {
+  margin-top: 4px;
+  max-height: 190px;
+  overflow: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.allowlist-suggest[hidden] {
+  display: none;
+}
+.allowlist-option {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 9px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+.allowlist-option small {
+  color: var(--text-muted);
+}
+.allowlist-option:hover,
+.allowlist-option.is-active {
+  background: var(--bg-hover);
+}
+.allowlist-option-empty {
+  padding: 5px 9px;
+}
+.allowlist-text-twin {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  opacity: 0;
+}

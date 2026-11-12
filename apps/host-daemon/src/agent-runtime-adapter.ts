@@ -183,6 +183,36 @@ export function threadExecutionOptions(input: {
   } as RuntimeThreadExecutionOptions;
 }
 
+/** Persona MCP allowlist (main-resolved, includes `zcc-inbox`) carried in provider options, if any. */
+export function personaMcpAllowlist(providerOptions: Record<string, unknown> | undefined): string[] | undefined {
+  const raw = providerOptions?.mcpAllowlist;
+  if (!Array.isArray(raw)) return undefined;
+  return raw.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
+}
+
+/**
+ * Persona-scoped plugin MCP injection. No allowlist = every enabled always-on server (unchanged).
+ * An allowlist narrows to exactly the covered registry servers. Automated starts inject none
+ * (the isolated session never exceeds the list). `externallyProvided` lists the allowlist
+ * entries Zana really injects, so the Claude bridge can tell "provided" from "missing".
+ */
+export function personaScopedMcp(
+  providerOptions: Record<string, unknown> | undefined,
+  automated: boolean
+): { mcpServers: SessionMcpServer[]; providerOptions: Record<string, unknown> | undefined } {
+  const allowlist = personaMcpAllowlist(providerOptions);
+  if (allowlist === undefined) {
+    return { mcpServers: automated ? [] : sessionPluginMcpServers(), providerOptions };
+  }
+  const externallyProvided = automated
+    ? []
+    : allowlist.filter((entry) => sessionPluginMcpServers([entry]).length > 0);
+  return {
+    mcpServers: automated ? [] : sessionPluginMcpServers(allowlist),
+    providerOptions: { ...providerOptions, mcpExternallyProvided: externallyProvided }
+  };
+}
+
 function isProviderOptionsBag(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -572,6 +602,7 @@ export function createAgentRuntimeAdapter(options: {
       } else {
         remoteProxyByThread.delete(input.threadId);
       }
+      const startMcp = personaScopedMcp(input.providerOptions, isIsolatedAutomatedStart(input));
       try {
         const result = await runtime.startThread({
           skillRoots: await skillSnapshots.capture(runtime, skillSelectionForStart(input)),
@@ -588,7 +619,7 @@ export function createAgentRuntimeAdapter(options: {
             serviceTier: input.serviceTier,
             acpMode: input.acpMode,
             claudeCodePermissionMode: input.claudeCodePermissionMode,
-            providerOptions: input.providerOptions
+            providerOptions: startMcp.providerOptions
           }),
           ...(acpLaunchSpec !== undefined
             ? { acpLaunchSpec }
@@ -607,7 +638,7 @@ export function createAgentRuntimeAdapter(options: {
             remoteProxy,
             dynamicTools: input.dynamicTools,
             instructions: input.instructions,
-            mcpServers: isIsolatedAutomatedStart(input) ? [] : sessionPluginMcpServers()
+            mcpServers: startMcp.mcpServers
           })
         });
         const location = threadLocation.get(input.threadId);
@@ -660,6 +691,7 @@ export function createAgentRuntimeAdapter(options: {
       const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch, input.providerOptions);
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, projectId: input.projectId, cwd: input.cwd, status: 'active' });
+      const resumeMcp = personaScopedMcp(input.providerOptions, input.sessionKind === 'automated');
       try {
         const result = await runtime.resumeThread({
           skillRoots: await skillSnapshots.capture(runtime, automatedSkillSelection(input)),
@@ -675,7 +707,7 @@ export function createAgentRuntimeAdapter(options: {
             serviceTier: input.serviceTier,
             acpMode: input.acpMode,
             claudeCodePermissionMode: input.claudeCodePermissionMode,
-            providerOptions: input.providerOptions
+            providerOptions: resumeMcp.providerOptions
           }),
           ...(acpLaunchSpec !== undefined
             ? { acpLaunchSpec }
@@ -686,7 +718,7 @@ export function createAgentRuntimeAdapter(options: {
             remoteProxy: false,
             dynamicTools: input.dynamicTools,
             instructions: input.instructions,
-            mcpServers: input.sessionKind === 'automated' ? [] : sessionPluginMcpServers()
+            mcpServers: resumeMcp.mcpServers
           }),
           ...(input.requireNativeLoad === true ? { requireNativeLoad: true as const } : {})
         });

@@ -15,6 +15,13 @@ export interface HarnessMcpConnection {
   readonly url: string;
   /** Plugin-contributed servers selected for this session by the host. */
   readonly servers?: readonly HarnessMcpServer[];
+  /**
+   * Names of user/project-config servers the harness loads on its own that this
+   * session must NOT carry (a persona MCP allowlist excludes them). A harness
+   * with no clear-all switch disables each by name; names are bare config keys
+   * enumerated at launch, so a server added afterwards is not covered.
+   */
+  readonly disabledServers?: readonly string[];
 }
 
 export interface HarnessLifecycleEndpoints {

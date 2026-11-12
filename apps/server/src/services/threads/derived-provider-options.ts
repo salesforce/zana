@@ -21,7 +21,12 @@ export interface DerivedProviderOptionsArgs {
   promptMode?: 'plan';
   plugins?: PluginSettingsReader;
   /** Main-authorized selection (squad metadata); both absent = unrestricted. */
-  skillSelection?: { automatedSkillIds?: readonly string[]; allowedSkillNames?: readonly string[] };
+  skillSelection?: {
+    automatedSkillIds?: readonly string[];
+    allowedSkillNames?: readonly string[];
+    /** Persona MCP allowlist (includes `zcc-inbox`); absent = unrestricted. */
+    mcpAllowlist?: readonly string[];
+  };
 }
 
 function settingsWithoutSecrets(
@@ -44,8 +49,15 @@ export async function derivedProviderOptionsForCommand(
   const skillAllowlist = providerSkillAllowlist(
     args.skillSelection?.automatedSkillIds, args.skillSelection?.allowedSkillNames
   );
+  const mcpAllowlist = args.skillSelection?.mcpAllowlist;
   const withSkills = (options: Record<string, unknown> | undefined): Record<string, unknown> | undefined =>
-    skillAllowlist === undefined ? options : { ...options, skillAllowlist };
+    skillAllowlist === undefined && mcpAllowlist === undefined
+      ? options
+      : {
+          ...options,
+          ...(skillAllowlist === undefined ? {} : { skillAllowlist }),
+          ...(mcpAllowlist === undefined ? {} : { mcpAllowlist: [...mcpAllowlist] })
+        };
   if (!provider?.deriveProviderOptions) return withSkills(undefined);
   const context: PluginProviderOptionsContext = {
     threadId: args.threadId,

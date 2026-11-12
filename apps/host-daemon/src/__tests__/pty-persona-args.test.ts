@@ -37,7 +37,12 @@ vi.mock('node-pty', () => ({
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string, extra?: string[]) =>
     `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`,
-  alwaysOnPluginMcpAllowlist: () => ['mcp__plugin_example_browser'], sessionPluginMcpServers: () => []
+  alwaysOnPluginMcpAllowlist: () => ['mcp__plugin_example_browser'], sessionPluginMcpServers: () => [],
+  externallyProvidedAllowlistEntries: () => [],
+  prepareSessionMcpConfig: (o: { dir: string; sessionId: string; allowlist: string[] }) => ({
+    path: `${o.dir}/${o.sessionId}.json?allow=${o.allowlist.join(',')}`,
+    warnings: []
+  })
 }));
 
 import { PtyManager, personaArgs_build } from '../pty.js';
@@ -382,7 +387,7 @@ describe('PtyManager.create — persona layer integration', () => {
     expect(session.personaId).toBe('persona-abc');
   });
 
-  it('passes persona mcpServers to mcp-config via the file path', () => {
+  it('passes a persona MCP allowlist to the per-session strict mcp-config file', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     const persona: Persona = {
@@ -403,9 +408,10 @@ describe('PtyManager.create — persona layer integration', () => {
     const argv = spawned[0].args;
     const mcpIdx = argv.indexOf('--mcp-config');
     expect(mcpIdx).toBeGreaterThanOrEqual(0);
-    // The mock ensureMcpConfigForProjectSync bakes extra names into the path
+    // The mock prepareSessionMcpConfig bakes the allowlist into the path
     const path = argv[mcpIdx + 1];
-    expect(path).toContain('?extra=filesystem,git');
+    expect(path).toContain('?allow=filesystem,git');
+    expect(argv).toContain('--strict-mcp-config');
   });
 
   it('does nothing when persona is absent', () => {

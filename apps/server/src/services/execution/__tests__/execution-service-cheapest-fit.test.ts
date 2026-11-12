@@ -16,9 +16,9 @@ async function fixture(run: (filePath: string) => Promise<void>): Promise<void> 
 
 const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
 const unit = { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] };
-interface Seat { slotId: string; model: string; deferred?: boolean; skillAllowlist?: string[] }
+interface Seat { slotId: string; model: string; deferred?: boolean; skillAllowlist?: string[]; mcpServers?: string[] }
 
-function build(filePath: string, seats: Seat[], opts: { teamId?: string; lifecycleFails?: boolean; installedSkills?: string[] } = {}) {
+function build(filePath: string, seats: Seat[], opts: { teamId?: string; lifecycleFails?: boolean; installedSkills?: string[]; installedMcp?: string[] } = {}) {
   const now = () => 1_000;
   const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
   const logError = vi.fn();
@@ -31,7 +31,7 @@ function build(filePath: string, seats: Seat[], opts: { teamId?: string; lifecyc
         ...seats.map((seat) => ({ slotId: seat.slotId, personaId: 'engineer', authorizationIdDigest: `${seat.slotId}-d` }))
       ] } } }),
     launchTeam: async () => ({ ok: true }),
-    ...(opts.installedSkills ? { admissionInput: (_p: string, request: { workUnits?: unknown; slots: { initialTask: string }[] }) => ({ workUnits: request.workUnits, slotCount: request.slots.length, maxSlots: 32, initialTasks: request.slots.map((slot) => slot.initialTask), inventory: { version: 1 as const, observedAt: Date.now(), maxAgeMs: 3_600_000, skills: opts.installedSkills!.map((name) => ({ name, available: true })), mcpServers: [], models: [], providers: [] } }) } : {}),
+    ...(opts.installedSkills || opts.installedMcp ? { admissionInput: (_p: string, request: { workUnits?: unknown; slots: { initialTask: string }[] }) => ({ workUnits: request.workUnits, slotCount: request.slots.length, maxSlots: 32, initialTasks: request.slots.map((slot) => slot.initialTask), inventory: { version: 1 as const, observedAt: Date.now(), maxAgeMs: 3_600_000, skills: (opts.installedSkills ?? []).map((name) => ({ name, available: true })), mcpServers: (opts.installedMcp ?? []).map((name) => ({ name, available: true })), models: [], providers: [] } }) } : {}),
     getTeamLaunch: async () => {
       if (opts.lifecycleFails) throw new Error('lifecycle down');
       return { id: 'lifecycle-1', orchestratorSessionId: 'coordinator', workers: seats.map((seat) => seat.deferred
@@ -39,7 +39,7 @@ function build(filePath: string, seats: Seat[], opts: { teamId?: string; lifecyc
         : { slotId: seat.slotId, sessionId: `session-${seat.slotId}`, projectId: 'project-1', process: 'running' }) };
     },
     cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
-    resolveTeamModelSnapshots: () => seats.map((seat) => ({ slotId: seat.slotId, personaId: 'engineer', provider: 'claude', model: seat.model, ...(seat.skillAllowlist ? { skillAllowlist: seat.skillAllowlist } : {}) })),
+    resolveTeamModelSnapshots: () => seats.map((seat) => ({ slotId: seat.slotId, personaId: 'engineer', provider: 'claude', model: seat.model, ...(seat.skillAllowlist ? { skillAllowlist: seat.skillAllowlist } : {}), ...(seat.mcpServers ? { mcpServers: seat.mcpServers } : {}) })),
     replyToSession: vi.fn(() => true), now, inbox: { append: vi.fn(async () => undefined) }, logError,
     spawnDeferredWorker: vi.fn(async (_id: string, slotId: string) => ({ ok: true as const, sessionId: `s-${slotId}` }))
   } as never);
@@ -136,5 +136,32 @@ describe('service passes deferred seats into cheapest-fit dispatch', () => {
     expect(record.workUnits![0].assignedSlotId).toBe('engineer:1');
     expect(record.resolvedModels.find((m) => m.slotId === 'engineer:0')?.skillAllowlist).toEqual(['zcc-inbox']);
     expect(record.resolvedModels.find((m) => m.slotId === 'engineer:1')).not.toHaveProperty('skillAllowlist');
+  }));
+
+  it('carries a slot mcpServers list through the default admission input and persists it', async () => fixture(async (filePath) => {
+    const { service, store } = build(filePath, [
+      { slotId: 'engineer:0', model: 'claude-haiku-4', mcpServers: ['zcc-inbox'], skillAllowlist: ['review'] },
+      { slotId: 'engineer:1', model: 'claude-opus-4' }
+    ]);
+    const started = await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-default', summary: 'Build', slots: [{ initialTask: 'Run tests' }], coordinationMode: 'job-team', workUnits: [unit] } as never);
+    if (!started.ok) throw new Error(started.message);
+    const record = (await store.get('execution-1'))!;
+    expect(record.resolvedModels.find((m) => m.slotId === 'engineer:0')).toMatchObject({ mcpServers: ['zcc-inbox'], skillAllowlist: ['review'] });
+    expect(record.resolvedModels.find((m) => m.slotId === 'engineer:1')).not.toHaveProperty('mcpServers');
+  }));
+
+  it('never dispatches a unit to a slot whose mcpServers do not cover requires.mcpServers, and persists the list', async () => fixture(async (filePath) => {
+    const needy = { ...unit, requires: { mcpServers: ['github'] } };
+    const { service, store } = build(filePath, [
+      { slotId: 'engineer:0', model: 'claude-haiku-4', mcpServers: ['zcc-inbox'] },
+      { slotId: 'engineer:1', model: 'claude-opus-4' }
+    ], { installedMcp: ['github', 'zcc-inbox'] });
+    const started = await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Build', slots: [{ initialTask: 'Run tests' }], coordinationMode: 'job-team', workUnits: [needy] } as never);
+    if (!started.ok) throw new Error(started.message);
+    await service.dispatchReady(coordinator);
+    const record = (await store.get('execution-1'))!;
+    expect(record.workUnits![0].assignedSlotId).toBe('engineer:1');
+    expect(record.resolvedModels.find((m) => m.slotId === 'engineer:0')?.mcpServers).toEqual(['zcc-inbox']);
+    expect(record.resolvedModels.find((m) => m.slotId === 'engineer:1')).not.toHaveProperty('mcpServers');
   }));
 });

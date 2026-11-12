@@ -16,7 +16,14 @@ import { classifyTerminalInput } from './pty-input-activity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
-import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync, sessionPluginMcpServers } from './mcp-config.js';
+import {
+  alwaysOnPluginMcpAllowlist,
+  ensureMcpConfigForProjectSync,
+  externallyProvidedAllowlistEntries,
+  prepareSessionMcpConfig,
+  sessionPluginMcpServers
+} from './mcp-config.js';
+import { allowlistIgnoredWarning, planUserMcpDisable } from './mcp-allowlist-disable.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { assertWindowsCommandLineFits, windowsDirectLaunch } from './harness/windows-command.js';
@@ -46,6 +53,7 @@ import {
 import { personaArgs_build } from './harness/claude/provider.js';
 import {
   planAutomatedClaudeLaunch,
+  type McpLaunchWarning,
   removeAutomatedConfigDir,
   sweepStaleAutomatedConfigDirs
 } from './harness/claude/automated-isolation.js';
@@ -489,12 +497,34 @@ export const PTY_RECENT_EXITED_CAP = 32;
  */
 export class SpawnRefusedError extends Error {
   constructor(
-    readonly code: 'native-tool-policy-unreachable',
+    readonly code: 'native-tool-policy-unreachable' | 'mcp-allowlist-unavailable',
     message: string
   ) {
     super(message);
     this.name = 'SpawnRefusedError';
   }
+}
+
+/**
+ * A non-fatal launch notice. {@link PtyManager.surfaceLaunchWarnings} is the ONE
+ * consumer: every launch path (Claude isolated seed, the interactive session
+ * file, Codex/OpenCode, `supportsMcp: false`) pushes into the `launchWarnings`
+ * list that `create()` builds and never surfaces its own. `McpLaunchWarning`
+ * from the isolated-seed plan is structurally a `LaunchWarning`.
+ */
+export interface LaunchWarning {
+  code: string;
+  message: string;
+  /** MCP server the notice names, when it is about one. */
+  server?: string;
+}
+
+/** Payload of the `'launchWarning'` event: durable routing (inbox) is the host's job. */
+export interface LaunchWarningEvent {
+  sessionId: string;
+  projectId: string;
+  personaId?: string;
+  warnings: LaunchWarning[];
 }
 
 /** Supplied by the process that owns execution. The standalone daemon must
@@ -569,8 +599,18 @@ export class PtyManager extends EventEmitter {
   private automatedConfigSwept = false;
 
   /** Prepare an unattended Claude run's isolated config dir. Also sweeps stale leaves once per process. */
-  private planAutomatedClaude(sessionId: string, cwd: string, requiredMcps?: readonly string[]): ReturnType<typeof planAutomatedClaudeLaunch> {
-    const plan = planAutomatedClaudeLaunch({ ownerId: sessionId, cwd, ...(requiredMcps?.length ? { requiredMcps } : {}) });
+  private planAutomatedClaude(
+    sessionId: string,
+    cwd: string,
+    requiredMcps?: readonly string[],
+    mcpAllowlist?: readonly string[]
+  ): ReturnType<typeof planAutomatedClaudeLaunch> {
+    const plan = planAutomatedClaudeLaunch({
+      ownerId: sessionId,
+      cwd,
+      ...(requiredMcps?.length ? { requiredMcps } : {}),
+      ...(mcpAllowlist ? { mcpAllowlist, externallyProvidedMcps: externallyProvidedAllowlistEntries(mcpAllowlist) } : {})
+    });
     this.automatedConfigDirs.set(sessionId, plan.configDir);
     if (!this.automatedConfigSwept) {
       this.automatedConfigSwept = true;
@@ -913,6 +953,68 @@ export class PtyManager extends EventEmitter {
       console.error(`[pty] writeSessionMcpConfigFile(${sessionId}) failed:`, err);
       return null;
     }
+  }
+
+  /**
+   * Write the allowlisted persona's private strict-mode MCP file to
+   * `<tmpdir>/zcc-session-mcp/<sessionId>.json` (0600, atomic) and track it with
+   * the other per-session launch files so exit, a refused spawn and the stale
+   * sweeper (which must never delete a live session's file) all see it. Null on
+   * failure; the caller refuses the launch.
+   */
+  private prepareSessionMcpFile(
+    sessionId: string,
+    allowlist: readonly string[],
+    cwd: string
+  ): { path: string; warnings: McpLaunchWarning[] } | null {
+    try {
+      sweepStaleSessionMcpConfigs(SESSION_MCP_CONFIG_DIR, (id) => this.ownsSessionArtifacts(id));
+      const prepared = prepareSessionMcpConfig({ dir: SESSION_MCP_CONFIG_DIR, sessionId, allowlist, cwd });
+      this.sessionMcpConfigFiles.set(sessionId, prepared.path);
+      return prepared;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] prepareSessionMcpFile(${sessionId}) failed:`, err);
+      return null;
+    }
+  }
+
+  /**
+   * THE single launch-warning consumption hook. Every launch path pushes its
+   * notices into the `launchWarnings` list `create()` builds; this surfaces them
+   * once, deduplicated: logged, announced to the terminal, and emitted as a
+   * `'launchWarning'` event ({@link LaunchWarningEvent}) for the host to route
+   * into the durable inbox channel (the `resolveCliSkillSettings` pattern). A
+   * warning never carries a credential value, only the server name and reason.
+   */
+  private surfaceLaunchWarnings(
+    session: TerminalSession,
+    personaId: string | undefined,
+    warnings: readonly LaunchWarning[]
+  ): void {
+    if (warnings.length === 0) return;
+    const seen = new Set<string>();
+    const unique = warnings.filter((warning) => {
+      const key = `${warning.code}\0${warning.server ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    for (const warning of unique) {
+      // eslint-disable-next-line no-console
+      console.warn(`[pty] launch warning (${session.id}): ${warning.message}`);
+    }
+    // eslint-disable-next-line no-control-regex
+    const banner = unique.map((w) => `\r\n\x1b[33m${w.message.replace(/[\u0000-\u001f\u007f]/g, '?')}\x1b[0m`).join('') + '\r\n';
+    this.appendBacklog(session.id, banner);
+    this.emit('data', session.id, banner);
+    const event: LaunchWarningEvent = {
+      sessionId: session.id,
+      projectId: session.projectId,
+      ...(personaId ? { personaId } : {}),
+      warnings: unique
+    };
+    this.emit('launchWarning', event);
   }
 
   /** Remove a session's Squad seat files (#675) and forget the entry. */
@@ -1393,13 +1495,18 @@ export class PtyManager extends EventEmitter {
     // Zana-generated auth+gateway settings file from a per-run CLAUDE_CONFIG_DIR
     // instead of the user's full hooks/plugins/project settings. A failed
     // automated admission throws before any interactive launch state is built.
+    // Persona MCP allowlist: undefined = unset (every path unchanged), array = allowlist.
+    const personaMcpAllowlist = opts.persona?.mcpServers;
     const automatedClaude =
       caps.injectsClaudeMcpConfig &&
       (opts.headless || opts.scheduled || opts.autonomous) &&
       !opts.useUserConfig &&
       (!opts.environment || opts.environment === 'local' || opts.environment === 'runtime-host')
-        ? this.planAutomatedClaude(sessionId, opts.cwd, opts.requiredMcps)
+        ? this.planAutomatedClaude(sessionId, opts.cwd, opts.requiredMcps, personaMcpAllowlist)
         : null;
+    // Non-fatal launch notices from every path; surfaced once, after the spawn,
+    // by surfaceLaunchWarnings (the single consumption hook).
+    const launchWarnings: LaunchWarning[] = [...(automatedClaude?.warnings ?? [])];
     // The per-session zcc-inbox MCP server URL, with the project + session
     // identity baked into the path so callbacks (inbox_push, hooks) can stamp the
     // exact originating terminal. Null until the local MCP server has a base URL.
@@ -1420,13 +1527,36 @@ export class PtyManager extends EventEmitter {
     // earlier async write to have landed. The async writers race app boot;
     // pointing `--mcp-config` at a not-yet-written file would silently drop
     // the inbox server. If even the sync write fails, fall back to no MCP
-    // injection so the terminal still opens. When a persona requests extra MCP
-    // servers, merge them into the config (resolved against the registry;
-    // unknown names are silently ignored).
-    const mcpConfigPath =
-      caps.injectsClaudeMcpConfig && this.mcpBaseUrl
-        ? this.safeEnsureMcpConfig(opts.projectId, opts.persona?.mcpServers)
-        : null;
+    // injection so the terminal still opens.
+    //
+    // An allowlisted persona (array, including `[]`) gets a private per-session
+    // strict-mode file holding exactly zcc-inbox plus the allowlisted servers
+    // (D12 sanitized view); an unset allowlist keeps the shared per-project file
+    // and argv byte-identical. A write failure refuses the launch: falling back
+    // to the shared file would silently load servers the persona excluded.
+    let sessionMcpStrict = false;
+    let mcpConfigPath: string | null = null;
+    if (caps.injectsClaudeMcpConfig && this.mcpBaseUrl) {
+      if (personaMcpAllowlist) {
+        const prepared = this.prepareSessionMcpFile(sessionId, personaMcpAllowlist, opts.cwd);
+        if (!prepared) {
+          this.releaseSessionLaunchFiles(sessionId);
+          this.releaseAutomatedConfigDir(sessionId);
+          throw new SpawnRefusedError(
+            'mcp-allowlist-unavailable',
+            'persona MCP allowlist could not be applied: the per-session MCP config could not be written'
+          );
+        }
+        mcpConfigPath = prepared.path;
+        sessionMcpStrict = true;
+        launchWarnings.push(...prepared.warnings);
+      } else {
+        mcpConfigPath = this.safeEnsureMcpConfig(opts.projectId, undefined);
+      }
+    } else if (caps.injectsClaudeMcpConfig && personaMcpAllowlist) {
+      // D7: no MCP server to deliver through, so the allowlist cannot apply; say so instead of silently loading everything.
+      launchWarnings.push(allowlistIgnoredWarning('the MCP server was not available at launch'));
+    }
     // The inbox/mesh/report GUIDANCE text — one assembled string, delivered two
     // ways below. Teaches the agent when to use inbox_push (and, for scheduled
     // runs, to file a run report), how to discover peers (the mesh tools are
@@ -1590,9 +1720,42 @@ export class PtyManager extends EventEmitter {
     const seatGuidanceText = seat?.foldIntoGuidance
       ? [composedGuidanceText, seat.instructionsText].filter((part) => part.length > 0).join('\n\n')
       : composedGuidanceText;
+    // Persona MCP allowlist on a harness that is not the Claude CLI. Zana's own servers
+    // (zcc-inbox + the persona-selected plugin servers) follow the allowlist through
+    // sessionPluginMcpServers; the harness's own user/project servers are disabled by
+    // name (no clear-all exists, and nothing is materialised: names only). A harness
+    // that cannot do that ignores the list with a notice, never a block (D7).
+    const sessionServers = sessionPluginMcpServers(opts.persona?.mcpServers);
+    let disabledUserServers: string[] = [];
+    if (personaMcpAllowlist && !caps.injectsClaudeMcpConfig) {
+      const enumeration = provider.enumerateUserMcpServers({ cwd: opts.cwd, env: process.env });
+      if (!enumeration) {
+        launchWarnings.push(allowlistIgnoredWarning('this harness cannot apply an MCP server allowlist'));
+      } else if (!mcpServerUrl) {
+        launchWarnings.push(allowlistIgnoredWarning('the MCP server was not available at launch'));
+      } else {
+        const plan = planUserMcpDisable({
+          allowlist: personaMcpAllowlist,
+          enumeration,
+          injectedNames: new Set(sessionServers.map((server) => server.name)),
+          externallyProvided: externallyProvidedAllowlistEntries(personaMcpAllowlist)
+        });
+        disabledUserServers = plan.disabled;
+        launchWarnings.push(...plan.warnings);
+      }
+    }
     const providerIntegration = provider.integration.configure({
       profile: effectiveProfile,
-      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl, servers: sessionPluginMcpServers(opts.persona?.mcpServers) }, guidance: seatGuidanceText } : {}),
+      ...(mcpServerUrl
+        ? {
+            mcp: {
+              url: mcpServerUrl,
+              servers: sessionServers,
+              ...(disabledUserServers.length > 0 ? { disabledServers: disabledUserServers } : {})
+            },
+            guidance: seatGuidanceText
+          }
+        : {}),
       ...(seat?.instructionsFile ? { instructionsFile: seat.instructionsFile } : {}),
       ...(providerHookBase || providerHookUrls.nativeTool ? {
         lifecycle: {
@@ -1664,6 +1827,15 @@ export class PtyManager extends EventEmitter {
             : providerIntegration.mcpConfigFile.contents)
         )
       : null;
+    // A file-channel harness delivers the disables through that file; losing it would
+    // silently load every excluded server, so refuse (the Claude interactive rule).
+    if (disabledUserServers.length > 0 && providerIntegration.mcpConfigFile && !mcpConfigFilePath) {
+      this.releaseSessionLaunchFiles(sessionId);
+      throw new SpawnRefusedError(
+        'mcp-allowlist-unavailable',
+        'persona MCP allowlist could not be applied: the per-session MCP config could not be written'
+      );
+    }
     // The gate only governs the session if the config naming it landed.
     const nativeToolGateWired = Boolean(nativeToolGatePath && mcpConfigFilePath);
     if (provider.nativeToolGateViaConfigFile && !nativeToolGateWired && nativeToolPolicyRequired) {
@@ -1728,7 +1900,12 @@ export class PtyManager extends EventEmitter {
         nativeTool: `${lifecycleBase}/nativetool/${opts.projectId}/${sessionId}`
       } : {},
       scope: 'local',
-      ...(opts.skillSettings ? { skillSettings: opts.skillSettings } : {})
+      // D9: a set MCP allowlist decides the server set, so the strict flag rides the
+      // existing strict-mcp emission (orthogonal to the skills restriction, which
+      // keeps its own keys). Unset leaves the skills settings exactly as given.
+      ...(sessionMcpStrict
+        ? { skillSettings: { ...(opts.skillSettings ?? {}), strictMcp: true as const } }
+        : opts.skillSettings ? { skillSettings: opts.skillSettings } : {})
     }) ?? { args: [], env: {} };
     // Pre-approve the inbox push tool so the agent can use it without
     // prompting. We merge into the allowedTools list (rather than emit a
@@ -1844,7 +2021,7 @@ export class PtyManager extends EventEmitter {
     const inboxAllow = !mcpConfigPath
       ? []
       : trustAllZcc
-        ? ['mcp__zcc-inbox', ...alwaysOnPluginMcpAllowlist()]
+        ? ['mcp__zcc-inbox', ...alwaysOnPluginMcpAllowlist(personaMcpAllowlist)]
         : narrowInboxAllow;
     // Per-tab Claude session id. Forcing `--session-id <uuid>` at first launch
     // gives each claude tab a *stable, distinct* transcript id, so restore can
@@ -2429,6 +2606,7 @@ export class PtyManager extends EventEmitter {
     // bypass the renderer's create() return path) still light up the tab strip.
     this.emit('sessionUpdated', session);
     this.wireSessionIo(session, proc, opts, caps);
+    this.surfaceLaunchWarnings(session, opts.persona?.id, launchWarnings);
 
     return session;
   }
@@ -3252,6 +3430,14 @@ export class PtyManager extends EventEmitter {
         }
       : undefined;
     this.bindRemoteProc(session, proc, reattach, remoteReap);
+    // A remote box resolves its MCP servers on its own machine and the remote path carries
+    // at most an inline zcc-inbox (never a strict or per-session file), so a persona MCP
+    // allowlist cannot be delivered: ignore it with a visible notice, never block (D7).
+    if (opts.persona?.mcpServers !== undefined) {
+      this.surfaceLaunchWarnings(session, opts.persona.id, [
+        allowlistIgnoredWarning('remote (SSH) sessions cannot apply an MCP server allowlist')
+      ]);
+    }
     if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
       this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc, providerFor(session.profile).stdinReadyMarker);
     }

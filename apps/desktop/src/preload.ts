@@ -1058,6 +1058,7 @@ const api: CcApi = {
     setEnabled: (projectPath, name, enabled) =>
       ipcRenderer.invoke(IPC.mcp.setEnabled, projectPath, name, enabled),
     listAll: () => ipcRenderer.invoke(IPC.mcp.listAll),
+    catalogue: () => ipcRenderer.invoke(IPC.mcp.catalogue),
     setEnabledById: (id, enabled) =>
       ipcRenderer.invoke(IPC.mcp.setEnabledById, id, enabled),
     reveal: (id) => ipcRenderer.invoke(IPC.mcp.reveal, id),

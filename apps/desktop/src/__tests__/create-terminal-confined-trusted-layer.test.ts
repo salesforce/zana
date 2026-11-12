@@ -85,7 +85,8 @@ vi.mock('@zana-ai/zcc-server/services/agents/persona-store', async (importOrigin
 
 vi.mock('../updater.js', () => ({ createUpdater: () => ({}) }));
 
-vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
   ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json',
   alwaysOnPluginMcpAllowlist: () => []

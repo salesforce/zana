@@ -303,7 +303,11 @@ function personaFacets(persona: Persona | undefined): HarnessPersonaFacet[] {
     persona.initialPrompt ? 'opening-prompt' : undefined,
     persona.allowedTools?.length ? 'tool-allowlist' : undefined,
     persona.deniedTools?.length ? 'tool-denylist' : undefined,
-    persona.addDirs?.length ? 'context-directories' : undefined,
-    persona.mcpServers?.length ? 'mcp-references' : undefined
+    persona.addDirs?.length ? 'context-directories' : undefined
+    // `mcpServers` (the persona MCP allowlist) is deliberately NOT a blocking facet (plan D7): on a
+    // harness or scope that cannot apply it (Cursor, Grok, Pi, remote Codex/OpenCode) the list is
+    // ignored with a launch notice from the host daemon and must never block launch. The shared
+    // `mcp-references` facet stays blocking for any other caller. An unset, `[]` or listed value
+    // therefore yields the same preflight decision as a persona without the field.
   ].filter((facet): facet is HarnessPersonaFacet => !!facet);
 }

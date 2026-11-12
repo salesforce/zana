@@ -386,6 +386,7 @@ export const IPC = {
     list: 'mcp:list',
     setEnabled: 'mcp:setEnabled',
     listAll: 'mcp:listAll',
+    catalogue: 'mcp:catalogue',
     setEnabledById: 'mcp:setEnabledById',
     reveal: 'mcp:reveal',
     onChanged: 'mcp:onChanged'

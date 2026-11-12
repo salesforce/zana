@@ -9,9 +9,11 @@ vi.mock('node-pty', () => ({
     return { pid: 4000, write() {}, onData() {}, onExit() {}, resize() {}, kill() {} };
   }
 }));
-vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   ensureMcpConfigForProjectSync: () => '/tmp/proj1/.mcp.json',
-  alwaysOnPluginMcpAllowlist: () => []
+  alwaysOnPluginMcpAllowlist: () => [],
+  sessionPluginMcpServers: () => []
 }));
 vi.mock('@zana-ai/zcc-host-daemon/tmux', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

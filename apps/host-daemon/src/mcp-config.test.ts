@@ -314,9 +314,10 @@ describe('sessionPluginMcpServers (one enablement rule across surfaces)', () => 
     mod.rebuildPluginServers([contributor('a-b', true)]);
     const names = (extra?: string[]) => mod.sessionPluginMcpServers(extra).map((s) => s.name);
     expect(names()).toEqual(['plugin_a-b_auto']);
-    expect(names(['plugin:a-b:manual'])).toEqual(['plugin_a-b_manual', 'plugin_a-b_auto']);
+    // Allowlist mode: alwaysOn is not exempt, only the named server is selected.
+    expect(names(['plugin:a-b:manual'])).toEqual(['plugin_a-b_manual']);
     const body = JSON.parse(readFileSync(mod.ensureMcpConfigForProjectSync('proj-rule', ['plugin:a-b:manual']), 'utf8'));
-    expect(Object.keys(body.mcpServers).filter((k) => k !== 'zcc-inbox').sort()).toEqual(['plugin:a-b:auto', 'plugin:a-b:manual']);
+    expect(Object.keys(body.mcpServers).filter((k) => k !== 'zcc-inbox').sort()).toEqual(['plugin:a-b:manual']);
   });
 
   it('drops a disabled plugin and ignores unknown names', () => {

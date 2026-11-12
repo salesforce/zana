@@ -12,6 +12,7 @@ import {
   experimental_sweepConfinedConfigLeaves as sweepConfinedConfigLeaves,
   experimental_writeAtomic0600 as writeAtomic0600,
 } from '@zana-ai/zcc-plugin-sdk/provider-bridge';
+import { ALWAYS_ALLOWED_MCP_SERVERS, mcpAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import { resolveZccDataDir } from '../../host-config.js';
 
 /**
@@ -43,8 +44,25 @@ const SEED_ENV_EXACT = new Set([
 ]);
 const SEED_ENV_PREFIX = /^(ANTHROPIC_|CLAUDE_CODE_USE_|CLAUDE_CODE_SKIP_)/;
 
+/**
+ * Non-fatal launch warning about a persona MCP allowlist entry (AC-15). Distinct
+ * from the hard `required-mcp-unavailable` admission error. Shared shape for every
+ * harness path; `p2-claude-interactive` owns the single `pty.ts` consumer.
+ * - `not-found`: allowlisted name is not in the user's config.
+ * - `unsafe-config`: present, but the sanitizer rejected its launch config.
+ * - `credentials-stripped`: carried, but env/headers/oauth/auth were stripped.
+ */
+export interface McpLaunchWarning {
+  code: 'allowlisted-mcp-not-carried' | 'allowlisted-mcp-credentials-stripped';
+  server: string;
+  reason: 'not-found' | 'unsafe-config' | 'credentials-stripped';
+  message: string;
+}
+
 export interface AutomatedClaudeLaunchPlan {
   configDir: string;
+  /** Allowlist warnings; always empty when no `mcpAllowlist` was given. */
+  warnings: McpLaunchWarning[];
   /** argv to append (before per-tab extraArgs). */
   args: string[];
   /** env to overlay after every other source so nothing can redirect it. */
@@ -92,6 +110,13 @@ export interface AutomatedClaudeLaunchInput {
   sourceConfigDir?: string;
   /** MCP server names the run needs; admission fails when any is not carried into the isolated config. */
   requiredMcps?: readonly string[];
+  /**
+   * Effective persona MCP allowlist. Absent = unrestricted (all sanitized user servers carried,
+   * byte-identical to before). Present = only covered servers plus `zcc-inbox` are carried.
+   */
+  mcpAllowlist?: readonly string[];
+  /** Allowlist entries delivered by another path (e.g. registered plugin servers); never warned as missing here. */
+  externallyProvidedMcps?: readonly string[];
   /** Launch cwd. Its workspace-trust acceptance is carried over so the TUI does not stop on the trust dialog. */
   cwd?: string;
   now?: number;
@@ -125,7 +150,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** The real global config (`.claude.json`) is read only up to this size. */
-const MAX_GLOBAL_CONFIG_BYTES = 16 * 1024 * 1024;
+export const MAX_GLOBAL_CONFIG_BYTES = 16 * 1024 * 1024;
 const MAX_MCP_SERVERS = 64;
 const MAX_MCP_NAME_LENGTH = 128;
 const MAX_MCP_STRING_LENGTH = 4096;
@@ -204,13 +229,26 @@ function sanitizeMcpServer(raw: unknown): Record<string, unknown> | null {
   return server;
 }
 
-/** Non-secret launch config for user-scope MCP servers; malformed or credential-looking entries are skipped. */
+/**
+ * Names beginning `plugin:` / `ext:` are the registry's own key namespace
+ * (`plugin:<id>:<name>`, `ext:<id>:<name>`). A user-scope server with such a
+ * name is dropped so it can never collide with or spoof a contributed key.
+ * Kept identical to the provider bridge copy (parity test).
+ */
+const RESERVED_MCP_NAME_PREFIX = /^(plugin|ext):/;
+
+export function isReservedMcpName(name: string): boolean {
+  return RESERVED_MCP_NAME_PREFIX.test(name);
+}
+
+/** Non-secret launch config for user-scope MCP servers; malformed, credential-looking or reserved-prefix entries are skipped. */
 export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, unknown>> | null {
   if (!isPlainObject(raw)) return null;
   const picked: Array<[string, Record<string, unknown>]> = [];
   for (const [name, entry] of Object.entries(raw)) {
     if (picked.length >= MAX_MCP_SERVERS) break;
     if (name.length === 0 || name.length > MAX_MCP_NAME_LENGTH) continue;
+    if (isReservedMcpName(name)) continue;
     const server = sanitizeMcpServer(entry);
     if (server) picked.push([name, server]);
   }
@@ -221,7 +259,7 @@ export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, 
 const CREDENTIAL_FIELDS = ['env', 'headers', 'headersHelper', 'oauth', 'auth', 'authorization'] as const;
 
 /** Whether the raw entry held credential-bearing fields that the sanitizer strips. */
-function hasStrippedCredentialFields(entry: unknown): boolean {
+export function hasStrippedCredentialFields(entry: unknown): boolean {
   if (!isPlainObject(entry)) return false;
   return CREDENTIAL_FIELDS.some((key) => {
     const value = entry[key];
@@ -262,8 +300,64 @@ function trustedProjects(globalConfig: Record<string, unknown> | null, cwd: stri
  * The real global config: inside the config dir when one is set (env or an
  * explicit source dir), otherwise `~/.claude.json` next to `~/.claude`.
  */
-function sourceGlobalConfig(sourceDir: string, env: NodeJS.ProcessEnv, explicitSourceDir: boolean): string {
+export function sourceGlobalConfig(sourceDir: string, env: NodeJS.ProcessEnv, explicitSourceDir: boolean): string {
   return explicitSourceDir || env.CLAUDE_CONFIG_DIR ? join(sourceDir, '.claude.json') : join(homedir(), '.claude.json');
+}
+
+
+const ALWAYS_ALLOWED = new Set<string>(ALWAYS_ALLOWED_MCP_SERVERS);
+
+function userServerRef(name: string) {
+  return { key: name, source: 'user' as const, name };
+}
+
+/** Keeps the sanitized servers an allowlist covers, plus `zcc-inbox`. */
+export function filterMcpServersByAllowlist(
+  servers: Record<string, Record<string, unknown>> | null,
+  allowlist: readonly string[]
+): Record<string, Record<string, unknown>> | null {
+  if (!servers) return null;
+  const kept = Object.entries(servers).filter(
+    ([name]) => ALWAYS_ALLOWED.has(name) || allowlist.some((entry) => mcpAllowlistCovers(entry, userServerRef(name)))
+  );
+  return kept.length > 0 ? Object.fromEntries(kept) : null;
+}
+
+/** Warnings for allowlisted names that were not carried or lost credential fields. Never includes a credential value. */
+export function mcpAllowlistWarnings(
+  allowlist: readonly string[],
+  rawServers: Record<string, unknown>,
+  sanitized: Record<string, Record<string, unknown>> | null,
+  externallyProvided: readonly string[] = []
+): McpLaunchWarning[] {
+  const warnings: McpLaunchWarning[] = [];
+  for (const entry of new Set(allowlist)) {
+    // Registry-keyed entries and zcc-inbox are delivered elsewhere, not from user config.
+    if (ALWAYS_ALLOWED.has(entry) || isReservedMcpName(entry) || externallyProvided.includes(entry)) continue;
+    if (!Object.hasOwn(rawServers, entry)) {
+      warnings.push({
+        code: 'allowlisted-mcp-not-carried',
+        server: entry,
+        reason: 'not-found',
+        message: `Allowlisted MCP server "${entry}" was not found in the Claude user config and is not available in this run.`
+      });
+    } else if (!sanitized || !Object.hasOwn(sanitized, entry)) {
+      warnings.push({
+        code: 'allowlisted-mcp-not-carried',
+        server: entry,
+        reason: 'unsafe-config',
+        message: `Allowlisted MCP server "${entry}" was not carried: its launch config is malformed or embeds a credential.`
+      });
+    } else if (hasStrippedCredentialFields(rawServers[entry])) {
+      warnings.push({
+        code: 'allowlisted-mcp-credentials-stripped',
+        server: entry,
+        reason: 'credentials-stripped',
+        message: `Allowlisted MCP server "${entry}" launches without its env, headers or auth (stripped for the isolated run); it may fail to authenticate.`
+      });
+    }
+  }
+  return warnings;
 }
 
 /**
@@ -278,8 +372,9 @@ function seedLeaf(
   sourceDir: string,
   env: NodeJS.ProcessEnv,
   explicitSourceDir: boolean,
-  cwd?: string
-): { carriedMcps: ReadonlySet<string> } {
+  cwd?: string,
+  mcp?: { allowlist?: readonly string[]; externallyProvided?: readonly string[] }
+): { carriedMcps: ReadonlySet<string>; warnings: McpLaunchWarning[] } {
   // Transcripts keep landing in the real projects dir, so transcript-derived
   // features and `--resume` are unaffected by the relocated config dir.
   const realProjects = join(sourceDir, 'projects');
@@ -287,14 +382,18 @@ function seedLeaf(
   if (existsSync(sourceDir)) linkProjects(realProjects, linkPath);
   const generated = buildSeedSettings(readJsonObject(join(sourceDir, 'settings.json')));
   const globalConfig = readJsonObject(sourceGlobalConfig(sourceDir, env, explicitSourceDir), MAX_GLOBAL_CONFIG_BYTES);
-  const mcpServers = sanitizeMcpServers(globalConfig?.mcpServers);
+  const sanitizedServers = sanitizeMcpServers(globalConfig?.mcpServers);
+  const mcpServers = mcp?.allowlist ? filterMcpServersByAllowlist(sanitizedServers, mcp.allowlist) : sanitizedServers;
   // A server whose env/headers/auth were stripped launches without them, so it
   // is not "available" for required-MCP admission even though it is carried.
   const rawServers = isPlainObject(globalConfig?.mcpServers) ? globalConfig.mcpServers : {};
   const carriedMcps = new Set(
     Object.keys(mcpServers ?? {}).filter((name) => !hasStrippedCredentialFields(rawServers[name]))
   );
-  if (!generated && !mcpServers) return { carriedMcps };
+  const warnings = mcp?.allowlist
+    ? mcpAllowlistWarnings(mcp.allowlist, rawServers, sanitizedServers, mcp.externallyProvided)
+    : [];
+  if (!generated && !mcpServers) return { carriedMcps, warnings };
   writeAtomic0600(join(leaf, 'settings.json'), JSON.stringify(generated ?? {}));
   const projects = trustedProjects(globalConfig, cwd);
   writeAtomic0600(
@@ -305,7 +404,7 @@ function seedLeaf(
       ...(projects ? { projects } : {})
     })
   );
-  return { carriedMcps };
+  return { carriedMcps, warnings };
 }
 
 const AUTH_ENV_KEY = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/;
@@ -368,7 +467,10 @@ export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): Au
     const sourceDir =
       input.sourceConfigDir ??
       (env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude'));
-    const { carriedMcps } = seedLeaf(leaf, sourceDir, env, input.sourceConfigDir !== undefined, input.cwd);
+    const { carriedMcps, warnings } = seedLeaf(leaf, sourceDir, env, input.sourceConfigDir !== undefined, input.cwd, {
+      ...(input.mcpAllowlist ? { allowlist: input.mcpAllowlist } : {}),
+      ...(input.externallyProvidedMcps ? { externallyProvided: input.externallyProvidedMcps } : {})
+    });
     if (!automatedConfigCanAuthenticate(leaf, env)) {
       removeAutomatedConfigDir(dataDir, leaf);
       throw new AutomatedClaudeAdmissionError('authentication-unavailable');
@@ -381,6 +483,7 @@ export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): Au
     }
     return {
       configDir: leaf,
+      warnings,
       args: ['--setting-sources', 'user'],
       env: { CLAUDE_CONFIG_DIR: leaf },
     };

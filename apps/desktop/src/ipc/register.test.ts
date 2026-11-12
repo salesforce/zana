@@ -31,6 +31,7 @@ vi.mock('./modules.js', () => ({ registerModulesIpc: family('modules') }));
 vi.mock('./mobile.js', () => ({ registerMobileIpc: family('mobile') }));
 vi.mock('./api-error-resume.js', () => ({ registerApiErrorResumeIpc: family('api-error-resume') }));
 vi.mock('./companion.js', () => ({ registerCompanionIpc: family('companion') }));
+vi.mock('./mcp-catalogue.js', () => ({ registerMcpCatalogueIpc: family('mcp-catalogue') }));
 
 it('binds the host ctx before registering every IPC family once', async () => {
   const { registerIpcFamilies } = await import('./register.js');
@@ -38,7 +39,8 @@ it('binds the host ctx before registering every IPC family once', async () => {
   expect(calls[0]).toBe('bind:host');
   expect(calls).toContain('api-error-resume');
   expect(calls).toContain('companion');
-  expect(calls).toHaveLength(24);
+  expect(calls).toContain('mcp-catalogue');
+  expect(calls).toHaveLength(25);
   expect(new Set(calls).size).toBe(calls.length);
 });
 

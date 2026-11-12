@@ -56,8 +56,11 @@ import type {
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch,
-  SquadSeatCapability
+  SquadSeatCapability,
+  UserMcpEnumeration
 } from '../launch-provider.js';
+import { enumerateOpenCodeUserMcpServers } from './user-mcp-servers.js';
+
 import { BaseLaunchProvider } from '../base-provider.js';
 import { mergeOpenCodeGatePlugin, openCodeNativeToolGateSource } from './native-tool-gate.js';
 import type {
@@ -119,7 +122,7 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
           local: openCodeEvidence('opencode.facet.opening-prompt', 'CLI accepts task bytes through --prompt.'),
           remote: openCodeEvidence('opencode.facet.opening-prompt-remote', 'Remote login-shell command binds task bytes through --prompt.', 'remote')
         },
-        'mcp-references': openCodeEvidence('opencode.facet.mcp-references', 'CLI accepts merged MCP configuration through OPENCODE_CONFIG_CONTENT.')
+        'mcp-references': openCodeEvidence('opencode.facet.mcp-references', 'CLI accepts merged MCP configuration through OPENCODE_CONFIG_CONTENT; persona MCP allowlist disables unlisted servers by name through the OPENCODE_CONFIG file.')
       }
     ),
     settingsContributionIds: [],
@@ -770,9 +773,25 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     _profile: LaunchProfileId,
     mcpUrl: string,
     servers?: readonly HarnessMcpServer[],
-    instructionsFile?: string
+    instructionsFile?: string,
+    disabledServers?: readonly string[]
   ): { envVar: string; contents: string } {
-    return { envVar: 'OPENCODE_CONFIG', contents: JSON.stringify(this.zccInboxConfig(mcpUrl, servers, instructionsFile)) };
+    const config = this.zccInboxConfig(mcpUrl, servers, instructionsFile);
+    // A persona MCP allowlist: OpenCode has no clear-all (`mcp: null` is rejected), so each
+    // unlisted user server is disabled by name. File channel only: a telemetry shim on PATH
+    // overwrites OPENCODE_CONFIG_CONTENT. Names only, never a definition or credential, and
+    // never over a server Zana injects (those keys are set last).
+    const disabled = Object.fromEntries(
+      (disabledServers ?? []).filter((name) => !Object.hasOwn(config.mcp, name)).map((name) => [name, { enabled: false }])
+    );
+    return {
+      envVar: 'OPENCODE_CONFIG',
+      contents: JSON.stringify(disabledServers?.length ? { ...config, mcp: { ...disabled, ...config.mcp } } : config)
+    };
+  }
+
+  enumerateUserMcpServers(input: { cwd: string; env: NodeJS.ProcessEnv }): UserMcpEnumeration {
+    return enumerateOpenCodeUserMcpServers(input);
   }
 
   nativeToolGatePluginSource(_profile: LaunchProfileId, nativeToolUrl: string): string {

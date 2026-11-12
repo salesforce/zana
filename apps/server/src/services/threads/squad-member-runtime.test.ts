@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  appendConversationThreadEvent, createConversationThread, createEnvironment, getConversationThread,
+  appendConversationThreadEvent, listConversationThreadEvents, createConversationThread, createEnvironment, getConversationThread,
   deleteConversationThreadEventsAfter, getEnvironment, getThreadPluginMetadata, listDeferredThreadMessages,
   openDatabase, patchThreadPluginMetadata, upsertHost, type ZccDatabase
 } from '@zana-ai/zcc-db';
@@ -229,6 +229,19 @@ describe('trusted Modern member runtime', () => {
   it('keeps an empty allowedSkillNames list as restricted metadata', async () => {
     await createSquadMemberConversation(ctx, { ...member, allowedSkillNames: [] });
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ allowedSkillNames: [] });
+  });
+
+  it('persists mcpAllowlist (including the zcc-inbox-only restriction) and records the launch notice', async () => {
+    await createSquadMemberConversation(ctx, { ...member, mcpAllowlist: ['zcc-inbox', 'github'] });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ mcpAllowlist: ['zcc-inbox', 'github'] });
+    const notice = listConversationThreadEvents(db, bindingId).find(event => (event.payload as { operation?: string }).operation === 'persona_mcp_allowlist');
+    expect(notice?.payload).toMatchObject({ status: 'warning', message: expect.stringContaining('github') });
+  });
+
+  it('does not persist mcpAllowlist or emit a notice when unrestricted', async () => {
+    await createSquadMemberConversation(ctx, member);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).not.toHaveProperty('mcpAllowlist');
+    expect(listConversationThreadEvents(db, bindingId).some(event => (event.payload as { operation?: string }).operation === 'persona_mcp_allowlist')).toBe(false);
   });
 
   it('does not persist allowedSkillNames when unrestricted', async () => {

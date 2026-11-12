@@ -1,6 +1,6 @@
 import { machineProjectPageSchema, machineProjectRegisterSchema, machineProjectSchema } from './machine-projects.js';
 import { CliDiscoveryCommandSchema, CliDiscoveryResultSchema } from './cli-discovery.js';
-import { CliTerminalStartCommandSchema } from './cli-terminal.js';
+import { CliTerminalStartCommandSchema, PersonaMcpServersWireSchema } from './cli-terminal.js';
 import { z } from 'zod';
 import { ProjectHistoryResultSchema } from './project-history.js';
 import {
@@ -148,6 +148,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'terminal.resize',
   'terminal.stop',
   'host.list_commands',
+  'host.mcp_catalogue',
   'host.list_files',
   'host.list_dir',
   'host.read_file',
@@ -293,7 +294,7 @@ const threadLaunchPersonaSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
   deniedTools: z.array(z.string()).optional(),
   addDirs: z.array(z.string()).optional(),
-  mcpServers: z.array(z.string()).optional(),
+  mcpServers: PersonaMcpServersWireSchema.optional(),
   initialPrompt: z.string().optional()
 }).strict();
 
@@ -1075,8 +1076,28 @@ export type PeerControlPacket = z.infer<typeof PeerControlPacketSchema>;
 
 export const PreviewReplaceCommandSchema = z.object({ type: z.literal('preview.replace'), epoch: z.string().uuid(), generation: z.number().int().nonnegative(), targets: z.array(z.object({ port: z.number().int().min(1024).max(65535), expiresAt: z.number().int() }).strict()).max(32) }).strict();
 
+/**
+ * Host MCP catalogue: names, source and availability only. Commands, args, env,
+ * headers, oauth/auth and urls never cross this boundary. The command carries
+ * no path or project id; project-scope servers are resolved by main (p2-ipc).
+ */
+export const HostMcpCatalogueCommandSchema = z.object({ type: z.literal('host.mcp_catalogue') }).strict();
+export const HostMcpCatalogueEntrySchema = z.object({
+  key: z.string().min(1).max(512),
+  source: z.enum(['user', 'project', 'plugin', 'extension']),
+  available: z.boolean(),
+  reason: z.enum(['credentials-stripped', 'not-carried']).optional()
+}).strict();
+export const HostMcpCatalogueResultSchema = z.object({
+  entries: z.array(HostMcpCatalogueEntrySchema).max(256),
+  notes: z.array(z.string().max(300)).max(64)
+}).strict();
+export type HostMcpCatalogueEntry = z.infer<typeof HostMcpCatalogueEntrySchema>;
+export type HostMcpCatalogueResult = z.infer<typeof HostMcpCatalogueResultSchema>;
+
 export const HostRpcCommandSchema = z.union([
   hostListCommandsCommandSchema,
+  HostMcpCatalogueCommandSchema,
   PreviewReplaceCommandSchema,
   z.object({ type: z.literal('host.git_history'), root: PathSchema, limit: z.number().int().min(1).max(100) }).strict(),
   PluginHostCallCommandSchema, PluginHostCancelCommandSchema, PluginHostDisposeCommandSchema,
@@ -1689,6 +1710,7 @@ export const HostRpcResultSchemaByType = {
   'terminal.resize': TerminalResizeResultSchema,
   'terminal.stop': TerminalStopResultSchema,
   'host.list_commands': commandListResultSchema,
+  'host.mcp_catalogue': HostMcpCatalogueResultSchema,
   'host.list_files': HostListFilesResultSchema,
   'host.list_dir': HostListDirResultSchema,
   'host.git_file': HostGitFileResultSchema,
