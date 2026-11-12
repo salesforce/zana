@@ -5,11 +5,14 @@ import {
   ArrowLeft,
   Bot,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   CircleDot,
   DraftingCompass,
   FolderOpen,
   House,
-  ListTree,
+  Layers,
+  List,
   MoreHorizontal,
   MessageSquare,
   PanelLeftClose,
@@ -32,7 +35,7 @@ import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, ty
 import { needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
-import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
+import { anyOpen, buildSections, collapseAll, expandAll, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useRemovedProjects, useTemplates, useUnassignedDocs, useUnassignedProjects } from './hooks.js';
 import { UNASSIGNED_LABEL, UnassignedProjectsDialog } from './UnassignedProjects.js';
@@ -295,6 +298,21 @@ function DocList({
   const headed = !(sections.length === 1 && sections[0]?.kind === 'recent');
   // Searching shows every match, even inside collapsed sections.
   const collapsed = useMemo(() => (debounced ? new Set<string>() : parseCollapsed(collapsedRaw)), [debounced, collapsedRaw]);
+  const searching = debounced.length > 0;
+  const sectionKeys = useMemo(
+    () => [...sections.map((section) => section.key), ...(unassignedList.length ? ['unassigned'] : [])],
+    [sections, unassignedList.length]
+  );
+  const someOpen = anyOpen(sectionKeys, collapsedRaw);
+  const collapseHint = projectFilter
+    ? 'Show All projects to use'
+    : !grouped
+      ? 'Group by project to collapse sections'
+      : searching
+        ? 'Clear search to collapse or expand sections'
+        : someOpen
+          ? 'Collapse all sections'
+          : 'Expand all sections';
   const projectLabel = (doc: DesignDocSummary, section: ListSection) => {
     if (section.kind === 'project') return null;
     if (showProjects) return doc.projectId ? names.get(doc.projectId) ?? 'Unknown project' : 'Global';
@@ -374,10 +392,27 @@ function DocList({
             triggerIcon={<FolderOpen size={12} aria-hidden />}
           />
         ) : null}
-        {showProjects && !projectFilter ? (
+        {showProjects ? (
           <>
             <span className="dd-spacer" />
-            <IconButton icon={ListTree} label="Group by project" active={grouped} size={13} onClick={() => setGrouped(!grouped)} />
+            <IconButton
+              icon={grouped ? Layers : List}
+              label="Group by project"
+              hint={projectFilter ? 'Show All projects to group' : grouped ? 'Grouped by project: click for a flat list' : 'Flat list: click to group by project'}
+              active={byProject}
+              pressed={grouped}
+              disabled={!!projectFilter}
+              size={13}
+              onClick={() => setGrouped(!grouped)}
+            />
+            <IconButton
+              icon={someOpen ? ChevronsDownUp : ChevronsUpDown}
+              label={someOpen ? 'Collapse all sections' : 'Expand all sections'}
+              hint={collapseHint}
+              disabled={!byProject || searching}
+              size={13}
+              onClick={() => setCollapsedRaw(someOpen ? collapseAll(sectionKeys) : expandAll())}
+            />
           </>
         ) : null}
       </div>

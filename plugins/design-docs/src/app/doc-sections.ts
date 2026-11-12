@@ -104,6 +104,22 @@ export function toggleCollapsed(raw: string, key: string): string {
   return JSON.stringify([...keys]);
 }
 
+/** Every section collapsed: stores each key once. */
+export function collapseAll(keys: readonly string[]): string {
+  return JSON.stringify([...new Set(keys)]);
+}
+
+/** Every section open. */
+export function expandAll(): string {
+  return '[]';
+}
+
+/** True when at least one of the sections is currently open. */
+export function anyOpen(keys: readonly string[], collapsedRaw: string): boolean {
+  const collapsed = parseCollapsed(collapsedRaw);
+  return keys.some((key) => !collapsed.has(key));
+}
+
 const SWATCH_HUES = [217, 262, 173, 24, 330, 142, 45, 195];
 
 /** A stable color for a project, so its docs read as one group across sections. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DesignDocSummary } from '../shared/contract.js';
-import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed } from './doc-sections.js';
+import { anyOpen, buildSections, collapseAll, expandAll, parseCollapsed, projectSwatch, toggleCollapsed } from './doc-sections.js';
 
 const actor = { kind: 'user' as const, label: 'You', threadId: null };
 
@@ -107,5 +107,17 @@ describe('collapsed sections', () => {
     expect([...parseCollapsed('not json')]).toEqual([]);
     expect([...parseCollapsed('{"a":1}')]).toEqual([]);
     expect([...parseCollapsed('["a", 2]')]).toEqual(['a']);
+  });
+
+  it('collapses, expands and detects open sections', () => {
+    const keys = ['pinned', 'project:p1', 'unassigned'];
+    expect(JSON.parse(collapseAll([...keys, 'pinned']))).toEqual(keys);
+    expect(JSON.parse(collapseAll([]))).toEqual([]);
+    expect(expandAll()).toBe('[]');
+    expect(anyOpen([], '[]')).toBe(false);
+    expect(anyOpen(keys, '[]')).toBe(true);
+    expect(anyOpen(keys, collapseAll(keys))).toBe(false);
+    expect(anyOpen(keys, '["pinned"]')).toBe(true);
+    expect(anyOpen(keys, 'not json')).toBe(true);
   });
 });

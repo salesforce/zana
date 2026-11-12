@@ -104,12 +104,15 @@ export function IconButton({
   danger = false,
   disabled = false,
   size = 14,
-  hint
+  hint,
+  pressed
 }: {
   icon: Icon;
   label: string;
   /** Visible hover/focus tooltip text; the native title tooltip is skipped when set. */
   hint?: string;
+  /** Set for true toggle buttons so assistive tech announces on and off; omit for action buttons. */
+  pressed?: boolean;
   onClick(): void;
   active?: boolean;
   danger?: boolean;
@@ -123,7 +126,7 @@ export function IconButton({
       title={hint ? undefined : label}
       data-tip={hint}
       aria-label={label}
-      aria-pressed={active || undefined}
+      aria-pressed={pressed}
       disabled={disabled}
       onClick={onClick}
     >
