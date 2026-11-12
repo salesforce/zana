@@ -14,9 +14,10 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import { PERSONA_REASONING_LEVELS, BUILTIN_PERSONA_SKILLS, sanitizePersonaSkills, sanitizePersonaMcpServers, PERSONA_MCP_SERVERS_MAX, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
+import { PERSONA_REASONING_LEVELS, BUILTIN_PERSONA_SKILLS, sanitizePersonaSkills, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
+import { sanitizeLegacyMcpServers } from './persona-mcp-sanitize.js';
 import { atomicDurableWrite } from '../harness-routing/storage.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
@@ -135,32 +136,7 @@ export function sanitizeHarnessRouting(routing: unknown): PersonaHarnessRoutingV
   };
 }
 
-/**
- * Lossless `mcpServers` handling (D1): the field is an allowlist, so absent
- * stays `undefined` (unrestricted) and `[]` stays `[]` (zcc-inbox only). A
- * malformed value never drops the persona: invalid entries are filtered and
- * the list is capped, each with a visible warning; a non-array value is
- * treated as absent. Valid lists go through `sanitizePersonaMcpServers`.
- */
-export function sanitizeLegacyMcpServers(value: unknown, personaId?: unknown): string[] | undefined {
-  if (value === undefined) return undefined;
-  const label = typeof personaId === 'string' ? personaId : '?';
-  if (!Array.isArray(value)) {
-    console.warn(`[persona-store] persona "${label}": ignoring non-array mcpServers`);
-    return undefined;
-  }
-  const strict = sanitizePersonaMcpServers(value);
-  if (strict) return strict;
-  const valid = value.filter((e) => sanitizePersonaMcpServers([e]) !== null);
-  const dropped = value.length - valid.length;
-  if (dropped > 0) console.warn(`[persona-store] persona "${label}": dropped ${dropped} invalid mcpServers entr${dropped === 1 ? 'y' : 'ies'}`);
-  const list = [...new Set(valid.map((e) => (e as string).trim()))];
-  if (list.length > PERSONA_MCP_SERVERS_MAX) {
-    console.warn(`[persona-store] persona "${label}": truncated mcpServers to ${PERSONA_MCP_SERVERS_MAX} entries`);
-    return list.slice(0, PERSONA_MCP_SERVERS_MAX);
-  }
-  return list;
-}
+export { sanitizeLegacyMcpServers };
 
 export function sanitizePersona(raw: unknown): Persona | null {
   if (!raw || typeof raw !== 'object') return null;

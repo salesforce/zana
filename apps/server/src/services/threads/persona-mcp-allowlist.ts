@@ -1,5 +1,5 @@
 import { ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, type Persona } from '@zana-ai/zcc-domain/product';
-import { sanitizeLegacyMcpServers } from '../agents/persona-store.js';
+import { sanitizeLegacyMcpServers } from '../agents/persona-mcp-sanitize.js';
 
 /** `system/operation` name of the persona MCP allowlist launch notice (Modern threads and Squads). */
 export const PERSONA_MCP_ALLOWLIST_OPERATION = 'persona_mcp_allowlist';
