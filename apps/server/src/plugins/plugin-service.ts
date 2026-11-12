@@ -147,7 +147,7 @@ import {
   type PluginSessionTools
 } from './plugin-agent-tools.js';
 import semver from 'semver';
-import { runPluginSourceCommand } from './plugin-source-command.js';
+import { pluginGitFailure, runPluginGitCommand } from './plugin-git-command.js';
 import { createPluginUpdateStore } from './plugin-update-store.js';
 import { installedSourceIntent, pluginUpdateFingerprint, pluginEngineProblems, resolvePluginUpdate, type PluginSourceIntent, type PluginUpdateCheck, type PluginUpdateResolver, type PluginUpdateCandidate } from './plugin-update-resolver.js';
 import { PLUGIN_UPDATE_CHECK_INTERVAL_MS, startPluginUpdateSweep } from './plugin-updates.js';
@@ -1976,8 +1976,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       try { return JSON.parse(result.stdout); } catch { throw new Error('npm returned malformed package metadata'); }
     },
     async gitRefs(url) {
-      const result = await runPluginSourceCommand('git', ['ls-remote', '--', url, 'HEAD', 'refs/heads/*', 'refs/tags/*'], opts.dataDir, { signal: sourceCommands.signal });
-      if (result.code !== 0) throw new Error('Git source is unavailable');
+      const result = await runPluginGitCommand(['ls-remote', '--', url, 'HEAD', 'refs/heads/*', 'refs/tags/*'], opts.dataDir, url, { signal: sourceCommands.signal });
+      if (result.code !== 0) throw new Error(pluginGitFailure(result.stderr, 'Git source is unavailable'));
       return result.stdout;
     },
     async gitManifest(intent, commit) {

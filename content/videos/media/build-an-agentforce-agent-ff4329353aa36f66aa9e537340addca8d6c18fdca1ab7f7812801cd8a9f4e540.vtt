@@ -1,0 +1,63 @@
+WEBVTT
+
+00:00:00.400 --> 00:00:03.400
+Zana · How to build an Agentforce Agent
+
+00:00:04.000 --> 00:00:06.825
+How to build an Agentforce agent in Zana.
+
+00:00:07.100 --> 00:00:13.538
+Use Pi with the SF-Pi plugin. It builds,
+previews, and tests the agent for you.
+
+00:00:14.801 --> 00:00:20.833
+Start a thread on the Pi harness, in your Salesforce
+project, and describe the agent you want.
+
+00:00:22.790 --> 00:00:27.640
+Pi plans it, writes the Agent Script,
+and compiles it, right in the thread.
+
+00:00:27.823 --> 00:00:30.085
+It hands back a card for the new agent.
+
+00:00:30.265 --> 00:00:36.360
+Click it, and the agent opens beside the
+thread: the script, and its conversation graph.
+
+00:00:36.541 --> 00:00:41.846
+Ask what the return window is. Pi
+previews the agent and links the run.
+
+00:00:42.512 --> 00:00:48.300
+The run opens in the same panel.
+Fourteen days. Our policy is thirty.
+
+00:00:48.481 --> 00:00:55.611
+Ask for thirty days, and five test scenarios. Pi
+edits the file, then writes the scenarios itself.
+
+00:00:55.792 --> 00:00:58.329
+Open it again, and the script reads thirty.
+
+00:00:58.509 --> 00:01:05.112
+Pi runs the five scenarios as simulated
+customers, four at a time. Five of five pass.
+
+00:01:05.294 --> 00:01:08.254
+Check it yourself, right in the panel: thirty days.
+
+00:01:11.713 --> 00:01:18.648
+When you want the full workbench, open it in Agentforce
+Studio: the same script, thirty days and all.
+
+00:01:18.830 --> 00:01:24.778
+Every action is one click away, like the
+return Flow, drawn as its real canvas.
+
+00:01:24.960 --> 00:01:29.668
+And the Lightning Type the order lookup
+returns, with the card that renders it.
+
+00:01:29.850 --> 00:01:33.686
+Built, previewed, and tested, from one conversation.

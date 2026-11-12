@@ -7,6 +7,7 @@ import { withoutSecretValues } from '../plugins/plugin-settings-redaction.js';
 import { handlePreviewsApi } from './previews-api.js';
 import { handlePluginPacksApi } from './product-plugin-packs.js';
 import { handleOnboardingApi } from './product-onboarding.js';
+import { PLUGIN_GIT_FAILURE_MESSAGES } from '../plugins/plugin-git-command.js';
 import { libraryDocumentOperation } from '../services/library/library-documents.js';
 import { classifyExpectedRpcError } from '@zana-ai/zcc-contracts/rpc-error';
 import { LibraryDocumentRequestSchema, LIBRARY_DOCUMENT_BODY_LIMIT } from '@zana-ai/zcc-contracts/library-documents';
@@ -245,6 +246,9 @@ function pluginAppErrorStatus(message: string): number {
 
 function marketplaceError(error: unknown): { status: number; error: string } {
   const message = error instanceof Error ? error.message : '';
+  if (Object.values(PLUGIN_GIT_FAILURE_MESSAGES).some(safe => message === safe)) {
+    return { status: 400, error: message };
+  }
   if (/^invalid marketplace (URL|source|git source)/i.test(message)) {
     return { status: 400, error: 'invalid marketplace source' };
   }
@@ -260,7 +264,7 @@ function marketplaceError(error: unknown): { status: number; error: string } {
   if (/^marketplace manifest exceeds \d+ bytes$/i.test(message)) {
     return { status: 400, error: 'marketplace manifest exceeds size limit' };
   }
-  if (/^git clone timed out after \d+ms$/i.test(message)) {
+  if (/^git clone timed out after \d+ms$/i.test(message) || message === 'Plugin source command timed out') {
     return { status: 400, error: 'git clone timed out' };
   }
   if (/^git clone (failed|could not start|output exceeded)/i.test(message)) {

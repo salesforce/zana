@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -62,21 +62,12 @@ afterEach(() => {
 });
 
 describe('SidebarRail Command Center button', () => {
-  it('enters the companion rail on click', () => {
+  it('omits the companion shortcut even when Command Center is enabled on macOS', () => {
     mount();
-    fireEvent.click(screen.getByLabelText('Minimize to Command Center'));
-    expect(h.enter).toHaveBeenCalledTimes(1);
-  });
-  it('owns an enter rejection and allows a retry', async () => {
-    const error = new Error('companion unavailable');
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    h.enter.mockRejectedValueOnce(error);
-    mount();
-    fireEvent.click(screen.getByLabelText('Minimize to Command Center'));
-    await waitFor(() => expect(logged).toHaveBeenCalledWith('[companion] enter:', error));
-    fireEvent.click(screen.getByLabelText('Minimize to Command Center'));
-    expect(h.enter).toHaveBeenCalledTimes(2);
-    expect(logged).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText('Minimize to Command Center')).toBeNull();
+    expect(screen.getByLabelText('Remote access')).toBeTruthy();
+    expect(screen.getByLabelText('Settings')).toBeTruthy();
+    expect(h.enter).not.toHaveBeenCalled();
   });
   it.each([
     ['flag off', () => (h.data.companionEnabled = false)],

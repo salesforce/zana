@@ -7,7 +7,9 @@ Published Help videos are copied from here into `content/videos/` (see
 
 | Folder | Video | Recording spec |
 |---|---|---|
+| `zana-intro/` | The shared Zana intro (light + dark), the opener of every video ([rules](AGENTS.md)) | `zana-intro.js`, captured by `render.mjs`, prepended by `prepend.py` |
 | `guided-start/` | Your first project in 30 seconds | rendered from `guided-start.html` by `render.mjs` |
+| `plugin-power/` | Zana is built from plugins. Including yours. | rendered from `plugin-power.html` by `render.mjs` |
 | `zana-everywhere/` | Use Zana everywhere | rendered by `render.py` (Pillow, shares `mobile-connect/` helpers) |
 | `squads/` | How to use a Squad | `e2e/demo-squads.spec.ts` |
 | `squad-guide-tools/`, `squad-guide-<n>/` | Squad guide videos, 1920x1080 with section title bars ([guide](squad-guide-README.md)) | `e2e/demo-squad-guide-<n>.spec.ts`, helper `e2e/sdk/demo-video.ts` |

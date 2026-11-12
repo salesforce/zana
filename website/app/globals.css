@@ -770,7 +770,7 @@ section .section-lede { color: var(--muted); margin: 0; font-size: 15px; }
 .command-block, .clean-command-block {
   margin: 0; padding: 16px 18px; overflow-x: auto;
   border: 1px solid var(--border); border-radius: 8px;
-  background: var(--bg-input); color: var(--code-text);
+  background: var(--bg-input); color: var(--text);
   font-family: var(--font-mono); font-size: 13px; line-height: 1.65;
 }
 .source-split { display: grid; grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr); gap: 28px; align-items: center; margin-top: 16px; }

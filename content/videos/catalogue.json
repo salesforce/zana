@@ -6,25 +6,25 @@
       "group": "Getting started",
       "title": "Your first project in 30 seconds",
       "description": "A project is just a folder. Add one, pick an agent, get a design doc, preview the build and read the Inbox report.",
-      "duration": "0:30",
+      "duration": "0:34",
       "details": "Captions · no audio",
       "alsoIn": "Walkthrough",
       "fileName": "zana-first-project.mp4",
       "silent": true,
       "src": {
-        "path": "content/videos/media/guided-start-7cb096ee00a3eff93abdfac5d0fe3bb194d2fa92aa25b376526b9ebe08e1c905.mp4",
-        "sha256": "7cb096ee00a3eff93abdfac5d0fe3bb194d2fa92aa25b376526b9ebe08e1c905",
-        "bytes": 2490817
+        "path": "content/videos/media/guided-start-ec6c607aab0ef696ccfadffe4748e2636999df73592ab70035a5bd724b506156.mp4",
+        "sha256": "ec6c607aab0ef696ccfadffe4748e2636999df73592ab70035a5bd724b506156",
+        "bytes": 3848079
       },
       "poster": {
-        "path": "content/videos/media/guided-start-beb931bc9fcbd2da50e8d827bfd7afb85e77fffd8540cf48f63cb3837b0565de.jpg",
-        "sha256": "beb931bc9fcbd2da50e8d827bfd7afb85e77fffd8540cf48f63cb3837b0565de",
-        "bytes": 146852
+        "path": "content/videos/media/guided-start-b9363038e7d3511e75f30fc420ce302373f8f7de5b67b0a095139723d7bc4bcb.jpg",
+        "sha256": "b9363038e7d3511e75f30fc420ce302373f8f7de5b67b0a095139723d7bc4bcb",
+        "bytes": 94489
       },
       "captions": {
-        "path": "content/videos/media/guided-start-4ae9496aedb135c39953b67c4b9e22a00cedc402a8d12be610f78afaf98b7a67.vtt",
-        "sha256": "4ae9496aedb135c39953b67c4b9e22a00cedc402a8d12be610f78afaf98b7a67",
-        "bytes": 644
+        "path": "content/videos/media/guided-start-63e5d3fa682dde2c26e884864c295377fc809190877303f347dc6c870df2f107.vtt",
+        "sha256": "63e5d3fa682dde2c26e884864c295377fc809190877303f347dc6c870df2f107",
+        "bytes": 716
       }
     },
     {
@@ -32,24 +32,49 @@
       "group": "Getting started",
       "title": "How to use a Squad",
       "description": "Ask an agent to set up a Squad or build one yourself, then launch it for a goal and answer its questions in the Inbox.",
-      "duration": "1:30",
+      "duration": "1:34",
       "details": "English voiceover and captions",
       "fileName": "zana-how-to-use-a-squad.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/how-to-use-a-squad-0bd40c618abdf6ec14fe3b03f11ff966d7733995ea22282a549434f1590e125e.mp4",
-        "sha256": "0bd40c618abdf6ec14fe3b03f11ff966d7733995ea22282a549434f1590e125e",
-        "bytes": 5924481
+        "path": "content/videos/media/how-to-use-a-squad-06050a56d992131c5a2da057ee6917b7adc9cec5813cd1b90091cc596495bd96.mp4",
+        "sha256": "06050a56d992131c5a2da057ee6917b7adc9cec5813cd1b90091cc596495bd96",
+        "bytes": 6815718
       },
       "poster": {
-        "path": "content/videos/media/how-to-use-a-squad-0dffd0e660acacbe3a861610325474b222c3ca8b447ceba19c4671a5fdbea6b9.jpg",
-        "sha256": "0dffd0e660acacbe3a861610325474b222c3ca8b447ceba19c4671a5fdbea6b9",
-        "bytes": 58143
+        "path": "content/videos/media/how-to-use-a-squad-ffd22e602c8bfb7f00f3f3eb8cd8828e686dfba773677ab055181a31d294e5a6.jpg",
+        "sha256": "ffd22e602c8bfb7f00f3f3eb8cd8828e686dfba773677ab055181a31d294e5a6",
+        "bytes": 59023
       },
       "captions": {
-        "path": "content/videos/media/how-to-use-a-squad-783174fd31225da9f4c471388e64756f33a878b791a2795828188a986d7cb4ad.vtt",
-        "sha256": "783174fd31225da9f4c471388e64756f33a878b791a2795828188a986d7cb4ad",
-        "bytes": 1734
+        "path": "content/videos/media/how-to-use-a-squad-f5ef5ed94f26da0991b9df82d860c4abdc2bef17992454907b87a36f70def369.vtt",
+        "sha256": "f5ef5ed94f26da0991b9df82d860c4abdc2bef17992454907b87a36f70def369",
+        "bytes": 1792
+      }
+    },
+    {
+      "id": "plugin-power",
+      "group": "Plugins",
+      "title": "Zana is built from plugins. Including yours.",
+      "description": "Describe a plugin, let the agent build it, change it live and share it with your team.",
+      "duration": "0:34",
+      "details": "English voiceover and captions",
+      "fileName": "zana-plugin-power.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/plugin-power-1115b657dedc9b6503506719b53eb1aae35b0bd1ce3d47e76e65b0ef0e40b990.mp4",
+        "sha256": "1115b657dedc9b6503506719b53eb1aae35b0bd1ce3d47e76e65b0ef0e40b990",
+        "bytes": 3809600
+      },
+      "poster": {
+        "path": "content/videos/media/plugin-power-449f4c6ec033a25580930c580fef7da816ed589957db81223a6e6ff2649534d6.jpg",
+        "sha256": "449f4c6ec033a25580930c580fef7da816ed589957db81223a6e6ff2649534d6",
+        "bytes": 65718
+      },
+      "captions": {
+        "path": "content/videos/media/plugin-power-4151d1aa2a2afdb2ee9eacda0225b64f89c62f207d5d2d37e0f2f9a34c3b16d3.vtt",
+        "sha256": "4151d1aa2a2afdb2ee9eacda0225b64f89c62f207d5d2d37e0f2f9a34c3b16d3",
+        "bytes": 574
       }
     },
     {
@@ -57,25 +82,25 @@
       "group": "What’s new · 2.3.0",
       "title": "Use Zana everywhere",
       "description": "Connect your desktop, then open your Zana address in Safari on your iPhone.",
-      "duration": "1:04",
+      "duration": "1:08",
       "details": "English voiceover and captions",
       "alsoIn": "Release notes 2.3.0",
       "fileName": "zana-everywhere.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/zana-everywhere-a46f513dfeaf853eef9b9e4c9eae14aaf304dd22d0e488dae489ad885b216cc1.mp4",
-        "sha256": "a46f513dfeaf853eef9b9e4c9eae14aaf304dd22d0e488dae489ad885b216cc1",
-        "bytes": 3013544
+        "path": "content/videos/media/zana-everywhere-68984ec80817728af760dfd09f91beb5998f93203db489816aba8788a52b206c.mp4",
+        "sha256": "68984ec80817728af760dfd09f91beb5998f93203db489816aba8788a52b206c",
+        "bytes": 4378215
       },
       "poster": {
-        "path": "content/videos/media/zana-everywhere-f98f38c5c8e58cadcb83a2bf55f38e2e3f77376d1c0cf8c9b08551564c8a9b63.jpg",
-        "sha256": "f98f38c5c8e58cadcb83a2bf55f38e2e3f77376d1c0cf8c9b08551564c8a9b63",
-        "bytes": 217333
+        "path": "content/videos/media/zana-everywhere-dc8b68427d418c1fd9cdf085729336fa38447d027af5b5aebaf586e32496b6ce.jpg",
+        "sha256": "dc8b68427d418c1fd9cdf085729336fa38447d027af5b5aebaf586e32496b6ce",
+        "bytes": 90629
       },
       "captions": {
-        "path": "content/videos/media/zana-everywhere-55d86127134c8796c9229807959114af260c771e42e036ff11031d5e61fdde7f.vtt",
-        "sha256": "55d86127134c8796c9229807959114af260c771e42e036ff11031d5e61fdde7f",
-        "bytes": 771
+        "path": "content/videos/media/zana-everywhere-af7b9eab70fa5757189b42b461ddf04f033dd37772e16c8920f8f715e832a635.vtt",
+        "sha256": "af7b9eab70fa5757189b42b461ddf04f033dd37772e16c8920f8f715e832a635",
+        "bytes": 830
       }
     },
     {
@@ -83,24 +108,24 @@
       "group": "Agentforce",
       "title": "How to build an Agentforce Agent in Zana",
       "description": "Use Pi with the SF-Pi plugin in a thread: it writes and compiles the agent, previews it, fixes the policy, writes five test scenarios and runs them, then opens it all in Agentforce Studio.",
-      "duration": "1:31",
+      "duration": "1:35",
       "details": "English voiceover and captions",
       "fileName": "zana-build-an-agentforce-agent.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/build-an-agentforce-agent-997bd29b743123061de0a88fe86aa907e40ef71471095f190a84eab2089a5a06.mp4",
-        "sha256": "997bd29b743123061de0a88fe86aa907e40ef71471095f190a84eab2089a5a06",
-        "bytes": 7373989
+        "path": "content/videos/media/build-an-agentforce-agent-8216f9a8e0c45f12c9f327e5872a229fca66b3ea3ed0d47192b95ad4569ceb40.mp4",
+        "sha256": "8216f9a8e0c45f12c9f327e5872a229fca66b3ea3ed0d47192b95ad4569ceb40",
+        "bytes": 8122254
       },
       "poster": {
-        "path": "content/videos/media/build-an-agentforce-agent-c6235a4afc7202d3f3da3ab05ccb310b0b4fa9bc0dbeedc6fc4b8e6ea321c056.jpg",
-        "sha256": "c6235a4afc7202d3f3da3ab05ccb310b0b4fa9bc0dbeedc6fc4b8e6ea321c056",
-        "bytes": 92682
+        "path": "content/videos/media/build-an-agentforce-agent-b81b7b082595c5e345773cf2192c321a1055a2c1ba0058c09afdaee5eeaa8658.jpg",
+        "sha256": "b81b7b082595c5e345773cf2192c321a1055a2c1ba0058c09afdaee5eeaa8658",
+        "bytes": 66487
       },
       "captions": {
-        "path": "content/videos/media/build-an-agentforce-agent-4eda97915219239f514f3c21b819c12e773ac167376d90c94d9d8d5f6e648408.vtt",
-        "sha256": "4eda97915219239f514f3c21b819c12e773ac167376d90c94d9d8d5f6e648408",
-        "bytes": 1663
+        "path": "content/videos/media/build-an-agentforce-agent-ff4329353aa36f66aa9e537340addca8d6c18fdca1ab7f7812801cd8a9f4e540.vtt",
+        "sha256": "ff4329353aa36f66aa9e537340addca8d6c18fdca1ab7f7812801cd8a9f4e540",
+        "bytes": 1735
       }
     },
     {
@@ -108,24 +133,24 @@
       "group": "Agentforce",
       "title": "Agentforce Studio in Zana",
       "description": "Open an agent in Agentforce Studio: Agent Script with its graph, Apex, Flow and Lightning Type, a preview, AI-written test scenarios run as a batch, and a self-healing fix reviewed as a diff.",
-      "duration": "1:45",
+      "duration": "1:49",
       "details": "English voiceover and captions",
       "fileName": "zana-agentforce-studio.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/agentforce-studio-tour-d70083cd80cb5bf76f6910b9212059283eb0c3037c59bdc99a4cc36e05306026.mp4",
-        "sha256": "d70083cd80cb5bf76f6910b9212059283eb0c3037c59bdc99a4cc36e05306026",
-        "bytes": 10341101
+        "path": "content/videos/media/agentforce-studio-tour-457d4d24f653a7de0b9c5e5ee215c8ed64f37c29f8ba10d59b78593f666ce21a.mp4",
+        "sha256": "457d4d24f653a7de0b9c5e5ee215c8ed64f37c29f8ba10d59b78593f666ce21a",
+        "bytes": 10861099
       },
       "poster": {
-        "path": "content/videos/media/agentforce-studio-tour-8b647b453c1ad52349250201cb8befe87d294941f1b9e079d533cabf822d0d28.jpg",
-        "sha256": "8b647b453c1ad52349250201cb8befe87d294941f1b9e079d533cabf822d0d28",
-        "bytes": 91392
+        "path": "content/videos/media/agentforce-studio-tour-33993dc1541f4d06a6ce447e769db6a16b08c4c2366fb3856eb9e2e52bf36c99.jpg",
+        "sha256": "33993dc1541f4d06a6ce447e769db6a16b08c4c2366fb3856eb9e2e52bf36c99",
+        "bytes": 64663
       },
       "captions": {
-        "path": "content/videos/media/agentforce-studio-tour-0a9bbd3ad946e2f8d8694a8ad4bfaa089e0ab723151d2a5fb07ce95e25eeb8ea.vtt",
-        "sha256": "0a9bbd3ad946e2f8d8694a8ad4bfaa089e0ab723151d2a5fb07ce95e25eeb8ea",
-        "bytes": 1797
+        "path": "content/videos/media/agentforce-studio-tour-64161669202a9038f720080b670fbec3edb4459a4b226f3cddf29f29ce96e965.vtt",
+        "sha256": "64161669202a9038f720080b670fbec3edb4459a4b226f3cddf29f29ce96e965",
+        "bytes": 1862
       }
     },
     {
@@ -133,24 +158,24 @@
       "group": "Squads",
       "title": "What is a Squad?",
       "description": "A Squad is a small team of AI agents working on one goal. The words you need and how a run fits together.",
-      "duration": "1:30",
+      "duration": "1:33",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-1.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-1-8d55149f6e2e9a10a48a8065d171404038b7f93802ddc19d5d91ee88c2e7d74c.mp4",
-        "sha256": "8d55149f6e2e9a10a48a8065d171404038b7f93802ddc19d5d91ee88c2e7d74c",
-        "bytes": 8517390
+        "path": "content/videos/media/squad-guide-1-ffffa0b9e26ae8f517c629dda93320f17490c20bbd1405a00ec0b9f59d777b37.mp4",
+        "sha256": "ffffa0b9e26ae8f517c629dda93320f17490c20bbd1405a00ec0b9f59d777b37",
+        "bytes": 9686466
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-1-eb8710088a55aa8f2d5899fbd0844e6896233e3d4fcba05d6bee9e61488e73b8.jpg",
-        "sha256": "eb8710088a55aa8f2d5899fbd0844e6896233e3d4fcba05d6bee9e61488e73b8",
-        "bytes": 137546
+        "path": "content/videos/media/squad-guide-1-afe01da72ea82ad7ac614cbac402380802ac6a267d1aebbbcc749dbac747a3b8.jpg",
+        "sha256": "afe01da72ea82ad7ac614cbac402380802ac6a267d1aebbbcc749dbac747a3b8",
+        "bytes": 105407
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-1-88f7410711c8cae10b20b04ed72bbd058616ec638ab1f3005bdcecaf5900fdd1.vtt",
-        "sha256": "88f7410711c8cae10b20b04ed72bbd058616ec638ab1f3005bdcecaf5900fdd1",
-        "bytes": 1539
+        "path": "content/videos/media/squad-guide-1-7835dbccec52f137389ef9be9d2cee4d0db1d625239cc5594a552ad7460ee665.vtt",
+        "sha256": "7835dbccec52f137389ef9be9d2cee4d0db1d625239cc5594a552ad7460ee665",
+        "bytes": 1595
       },
       "minAppVersion": "2.5.1"
     },
@@ -159,24 +184,24 @@
       "group": "Squads",
       "title": "Your first Squad run",
       "description": "Launch the built-in Research Squad with a plan in the goal and see it start.",
-      "duration": "1:13",
+      "duration": "1:16",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-2.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-2-0ada356319c26d06e7e9f703b2c3302a50ebbf3acc7aebf3f84d0b017301cf72.mp4",
-        "sha256": "0ada356319c26d06e7e9f703b2c3302a50ebbf3acc7aebf3f84d0b017301cf72",
-        "bytes": 6441134
+        "path": "content/videos/media/squad-guide-2-10a7d7e7534a0edd3b28d906ef64171ae60f47bc04f2d8271b2eadd72cd09448.mp4",
+        "sha256": "10a7d7e7534a0edd3b28d906ef64171ae60f47bc04f2d8271b2eadd72cd09448",
+        "bytes": 7685401
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-2-489ccf2747fc81004e6649bd9ffb65427ae4a8db9eed32526b8934ef981785e9.jpg",
-        "sha256": "489ccf2747fc81004e6649bd9ffb65427ae4a8db9eed32526b8934ef981785e9",
-        "bytes": 94849
+        "path": "content/videos/media/squad-guide-2-4e2770f2dc7827395e29c5ce4df10e70bb2682ebf3c9a21b01ddea3a584be699.jpg",
+        "sha256": "4e2770f2dc7827395e29c5ce4df10e70bb2682ebf3c9a21b01ddea3a584be699",
+        "bytes": 106190
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-2-52aa6e31fb1b6503a84ff9ca11dd78c5cc8391c004684830b0ee1078b48abff7.vtt",
-        "sha256": "52aa6e31fb1b6503a84ff9ca11dd78c5cc8391c004684830b0ee1078b48abff7",
-        "bytes": 1328
+        "path": "content/videos/media/squad-guide-2-089d6db2c861e8fe7d312c5f26af96d0fe376b42271119e5b708c28ac9c23a5e.vtt",
+        "sha256": "089d6db2c861e8fe7d312c5f26af96d0fe376b42271119e5b708c28ac9c23a5e",
+        "bytes": 1388
       },
       "minAppVersion": "2.5.1"
     },
@@ -185,24 +210,24 @@
       "group": "Squads",
       "title": "Watch a Squad run",
       "description": "Find a running Squad on the Agents board, answer its question in the Inbox and read the result.",
-      "duration": "1:04",
+      "duration": "1:07",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-3.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-3-6db64052188cf17b00104acab790d02763f08b9ae29961037f98f958436bb6d3.mp4",
-        "sha256": "6db64052188cf17b00104acab790d02763f08b9ae29961037f98f958436bb6d3",
-        "bytes": 6086509
+        "path": "content/videos/media/squad-guide-3-e7b90479210fcf48d6ffc9813162051efe97c13e31f29275476e0205dd9e50cb.mp4",
+        "sha256": "e7b90479210fcf48d6ffc9813162051efe97c13e31f29275476e0205dd9e50cb",
+        "bytes": 7409522
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-3-0105ce73dabbf92472044c216a3ddb8e4ab9019f65524295c82f4f46194584d2.jpg",
-        "sha256": "0105ce73dabbf92472044c216a3ddb8e4ab9019f65524295c82f4f46194584d2",
-        "bytes": 94372
+        "path": "content/videos/media/squad-guide-3-0523da6494f4a0366b181f74c2ad84c6165e4625710eae4b2f6debfd672a8f5c.jpg",
+        "sha256": "0523da6494f4a0366b181f74c2ad84c6165e4625710eae4b2f6debfd672a8f5c",
+        "bytes": 105707
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-3-76defa94bc81fb3e0b494cd3c283a401d9afc6d9a13a078b81a6001da3abe31b.vtt",
-        "sha256": "76defa94bc81fb3e0b494cd3c283a401d9afc6d9a13a078b81a6001da3abe31b",
-        "bytes": 1140
+        "path": "content/videos/media/squad-guide-3-2738558fe62b4c9edaff6a9ff1548874d528d59b1c1adf5fd6a9fb982e8b85e1.vtt",
+        "sha256": "2738558fe62b4c9edaff6a9ff1548874d528d59b1c1adf5fd6a9fb982e8b85e1",
+        "bytes": 1197
       },
       "minAppVersion": "2.5.1"
     },
@@ -211,24 +236,24 @@
       "group": "Squads",
       "title": "Pick the right Squad",
       "description": "Tour the built-in Squads and pick the right one for the job.",
-      "duration": "0:54",
+      "duration": "0:58",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-4.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-4-19616949661bf5dd49f775a9710f85d25a90123b83c6eb2b4b285c062911a6fe.mp4",
-        "sha256": "19616949661bf5dd49f775a9710f85d25a90123b83c6eb2b4b285c062911a6fe",
-        "bytes": 9819452
+        "path": "content/videos/media/squad-guide-4-804e6f89dc94d6d214a1af723308f9db21db5ed38079ff0ee5f4f8ca2e1dfc77.mp4",
+        "sha256": "804e6f89dc94d6d214a1af723308f9db21db5ed38079ff0ee5f4f8ca2e1dfc77",
+        "bytes": 10939341
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-4-562ba1000a3b06f8bd4d2c49ca174570565148b90f6619804a11d19f28e46d9a.jpg",
-        "sha256": "562ba1000a3b06f8bd4d2c49ca174570565148b90f6619804a11d19f28e46d9a",
-        "bytes": 153752
+        "path": "content/videos/media/squad-guide-4-35d5ffce44fc8feeb9d7914798e262e79380631ea525f5da4904243d233a09a3.jpg",
+        "sha256": "35d5ffce44fc8feeb9d7914798e262e79380631ea525f5da4904243d233a09a3",
+        "bytes": 106804
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-4-363e8de3dd2cce472ecd41df5ac43ffa5d340044ef68fcced14b1e430cd33fe2.vtt",
-        "sha256": "363e8de3dd2cce472ecd41df5ac43ffa5d340044ef68fcced14b1e430cd33fe2",
-        "bytes": 928
+        "path": "content/videos/media/squad-guide-4-2e8c4b40a17c3c5274ca1f301c8a80fcb5091fb75e3008813b2b561b214ebcf1.vtt",
+        "sha256": "2e8c4b40a17c3c5274ca1f301c8a80fcb5091fb75e3008813b2b561b214ebcf1",
+        "bytes": 988
       },
       "minAppVersion": "2.5.1"
     },
@@ -237,24 +262,24 @@
       "group": "Squads",
       "title": "Start a Squad from a conversation",
       "description": "Ask an agent to start a Squad, then review the launch or run it now.",
-      "duration": "1:11",
+      "duration": "1:14",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-5.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-5-ccecea0424d4eeca7c12296991fe31e409be4806ca19c25accbcd3efca5a02f9.mp4",
-        "sha256": "ccecea0424d4eeca7c12296991fe31e409be4806ca19c25accbcd3efca5a02f9",
-        "bytes": 6510195
+        "path": "content/videos/media/squad-guide-5-ab95b63fb71b78d7e346d9423b5a596242900bcc6f8fec2b4b02e1dce60cfc96.mp4",
+        "sha256": "ab95b63fb71b78d7e346d9423b5a596242900bcc6f8fec2b4b02e1dce60cfc96",
+        "bytes": 7871684
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-5-2f83f9d4c00f67b449a6ff40ea1a3d70c24601168fe3d80ab20d366ffc27cbd1.jpg",
-        "sha256": "2f83f9d4c00f67b449a6ff40ea1a3d70c24601168fe3d80ab20d366ffc27cbd1",
-        "bytes": 72416
+        "path": "content/videos/media/squad-guide-5-d4c4f28f2db1a213b36a118d27ba4094d36d663f2040c63c3ac66dd71b8e3793.jpg",
+        "sha256": "d4c4f28f2db1a213b36a118d27ba4094d36d663f2040c63c3ac66dd71b8e3793",
+        "bytes": 110889
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-5-441db1d32d1c38cd12c0fc3c416ecbd1cdb71ec89607845be026420c508f67f4.vtt",
-        "sha256": "441db1d32d1c38cd12c0fc3c416ecbd1cdb71ec89607845be026420c508f67f4",
-        "bytes": 1243
+        "path": "content/videos/media/squad-guide-5-0bfb16834922721ce0948e990f0e71de79ff7b1f39af16183bf4cb50d65df7bd.vtt",
+        "sha256": "0bfb16834922721ce0948e990f0e71de79ff7b1f39af16183bf4cb50d65df7bd",
+        "bytes": 1316
       },
       "minAppVersion": "2.5.1"
     },
@@ -263,24 +288,24 @@
       "group": "Squads",
       "title": "Attach files and run in the right place",
       "description": "Attach files as sources and choose where the Squad works.",
-      "duration": "1:28",
+      "duration": "1:32",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-6.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-6-5366302680dd2ff63dc3fd38681793022089b52d9605825d1d6b133031cba336.mp4",
-        "sha256": "5366302680dd2ff63dc3fd38681793022089b52d9605825d1d6b133031cba336",
-        "bytes": 8306988
+        "path": "content/videos/media/squad-guide-6-c7c9eab8d19bf761240b7ef9412fba1c2f2a6a3015faaf78e1e1f40682481852.mp4",
+        "sha256": "c7c9eab8d19bf761240b7ef9412fba1c2f2a6a3015faaf78e1e1f40682481852",
+        "bytes": 9498308
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-6-d501499110e284856632b774729a4db297f857a09db53f6a6248b151ed9ec1c8.jpg",
-        "sha256": "d501499110e284856632b774729a4db297f857a09db53f6a6248b151ed9ec1c8",
-        "bytes": 82173
+        "path": "content/videos/media/squad-guide-6-35b7dc57423753fe9ae04a8f0565125a3ce2d3e53d7e944ed5a9333e0feb7531.jpg",
+        "sha256": "35b7dc57423753fe9ae04a8f0565125a3ce2d3e53d7e944ed5a9333e0feb7531",
+        "bytes": 111671
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-6-6be4a4d9f98511720268f05ee25f50f769aa5281c09042aa428bc42438d42c88.vtt",
-        "sha256": "6be4a4d9f98511720268f05ee25f50f769aa5281c09042aa428bc42438d42c88",
-        "bytes": 1406
+        "path": "content/videos/media/squad-guide-6-3739e6344b5b2cb92fe6ebcb04ff953666d224bedb07ecdb2b0cd111fdd016aa.vtt",
+        "sha256": "3739e6344b5b2cb92fe6ebcb04ff953666d224bedb07ecdb2b0cd111fdd016aa",
+        "bytes": 1485
       },
       "minAppVersion": "2.5.1"
     },
@@ -289,24 +314,24 @@
       "group": "Squads",
       "title": "Schedule a Squad",
       "description": "Run a Squad on a clock from the Scheduler, with no one at the keyboard.",
-      "duration": "0:58",
+      "duration": "1:02",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-7.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-7-bc7179fadad4f0d09c6996d66552db453212ec93dd5406e47b8b5fe02c2ed715.mp4",
-        "sha256": "bc7179fadad4f0d09c6996d66552db453212ec93dd5406e47b8b5fe02c2ed715",
-        "bytes": 6009000
+        "path": "content/videos/media/squad-guide-7-5f62f2aa77badbe17492afe67e7061cf4ba819812808dffc514dacc3cf5a3f92.mp4",
+        "sha256": "5f62f2aa77badbe17492afe67e7061cf4ba819812808dffc514dacc3cf5a3f92",
+        "bytes": 7246402
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-7-212f1272b8ccaf4da0797afa03f88f89d6aed488d2dbfa4cf945d7f770adf34a.jpg",
-        "sha256": "212f1272b8ccaf4da0797afa03f88f89d6aed488d2dbfa4cf945d7f770adf34a",
-        "bytes": 89903
+        "path": "content/videos/media/squad-guide-7-2c2889425528f1e03455e92e6fed893d472fd497a1033850366deec73ee93dc0.jpg",
+        "sha256": "2c2889425528f1e03455e92e6fed893d472fd497a1033850366deec73ee93dc0",
+        "bytes": 105888
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-7-b69f804e7ba9f60ca306e0cc9bf58e8edb503b56044ac850f553817234be58d3.vtt",
-        "sha256": "b69f804e7ba9f60ca306e0cc9bf58e8edb503b56044ac850f553817234be58d3",
-        "bytes": 1047
+        "path": "content/videos/media/squad-guide-7-41778dbb84d5bba27b3d6d524bedd22026d1abd2c40ed242cb67c943ebbcd65a.vtt",
+        "sha256": "41778dbb84d5bba27b3d6d524bedd22026d1abd2c40ed242cb67c943ebbcd65a",
+        "bytes": 1103
       },
       "minAppVersion": "2.5.1"
     },
@@ -315,24 +340,24 @@
       "group": "Squads",
       "title": "Use a Squad to accomplish a Goal",
       "description": "Turn on Goals, then give a Squad an aim it works toward until it is met.",
-      "duration": "1:08",
+      "duration": "1:12",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-8.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-8-aa81c2a04c353e0d1a774011d172fdb2d64c9b71f905e0c4995ebf5a6cfeeccc.mp4",
-        "sha256": "aa81c2a04c353e0d1a774011d172fdb2d64c9b71f905e0c4995ebf5a6cfeeccc",
-        "bytes": 7313409
+        "path": "content/videos/media/squad-guide-8-675e0804feda3b5f50eb248b4b2d0769cf5e1f90188292b29008024ce784a8ff.mp4",
+        "sha256": "675e0804feda3b5f50eb248b4b2d0769cf5e1f90188292b29008024ce784a8ff",
+        "bytes": 8584039
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-8-7863160b6e8bbdf449d89d4d2afc192184883494571bfa0dfb0f57c23279b534.jpg",
-        "sha256": "7863160b6e8bbdf449d89d4d2afc192184883494571bfa0dfb0f57c23279b534",
-        "bytes": 98424
+        "path": "content/videos/media/squad-guide-8-d3d726e6102e5cea38ce5c282f22acd685b91ad6550fe8d6a91c2e6f73357905.jpg",
+        "sha256": "d3d726e6102e5cea38ce5c282f22acd685b91ad6550fe8d6a91c2e6f73357905",
+        "bytes": 110632
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-8-1e4643804817742e2e72935abf103b92046413d6eb7652ba8431bc67b3a10959.vtt",
-        "sha256": "1e4643804817742e2e72935abf103b92046413d6eb7652ba8431bc67b3a10959",
-        "bytes": 1180
+        "path": "content/videos/media/squad-guide-8-6d9f939ff8feb02a525fa8ec36a0662db607ac99f9bd94062c06f4589136e64c.vtt",
+        "sha256": "6d9f939ff8feb02a525fa8ec36a0662db607ac99f9bd94062c06f4589136e64c",
+        "bytes": 1252
       },
       "minAppVersion": "2.5.1"
     },
@@ -341,24 +366,24 @@
       "group": "Squads",
       "title": "Build your own Persona and Squad",
       "description": "Create a Persona and a Squad of your own, grouped your way.",
-      "duration": "1:34",
+      "duration": "1:38",
       "details": "English voiceover and captions",
       "fileName": "zana-squad-guide-9.mp4",
       "silent": false,
       "src": {
-        "path": "content/videos/media/squad-guide-9-84a737645fd711c95517d5246854c727bab30fed30c030e1a44abe050ef413a6.mp4",
-        "sha256": "84a737645fd711c95517d5246854c727bab30fed30c030e1a44abe050ef413a6",
-        "bytes": 11080491
+        "path": "content/videos/media/squad-guide-9-a0596b03935cde5f09a216afbb25277c4542cae1d9f263786e3271607fc50f43.mp4",
+        "sha256": "a0596b03935cde5f09a216afbb25277c4542cae1d9f263786e3271607fc50f43",
+        "bytes": 12170271
       },
       "poster": {
-        "path": "content/videos/media/squad-guide-9-795ec993281e0892dd4231d4a3d40fa1d8fab41f4cd93422b12d7f2480fe8012.jpg",
-        "sha256": "795ec993281e0892dd4231d4a3d40fa1d8fab41f4cd93422b12d7f2480fe8012",
-        "bytes": 147032
+        "path": "content/videos/media/squad-guide-9-8cf94e914ef1c5903f7f7d390e490077b8de73291dd725ffa4e979bc634fd48d.jpg",
+        "sha256": "8cf94e914ef1c5903f7f7d390e490077b8de73291dd725ffa4e979bc634fd48d",
+        "bytes": 110745
       },
       "captions": {
-        "path": "content/videos/media/squad-guide-9-d8994912cda942c2e69be1659d87fd0c5076168d7a892eb3b67d5e39cbbd1861.vtt",
-        "sha256": "d8994912cda942c2e69be1659d87fd0c5076168d7a892eb3b67d5e39cbbd1861",
-        "bytes": 1552
+        "path": "content/videos/media/squad-guide-9-cff2e383e2bbd83732c1c54a4a23b5e488fb84f88e416785cbedc2324a877b99.vtt",
+        "sha256": "cff2e383e2bbd83732c1c54a4a23b5e488fb84f88e416785cbedc2324a877b99",
+        "bytes": 1624
       },
       "minAppVersion": "2.5.1"
     }

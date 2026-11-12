@@ -2,6 +2,8 @@
 
 Read [README.md](README.md) before adding/revising Help videos.
 
+- Every published video starts with the Zana intro (`docs/media/zana-intro/`,
+  see `docs/media/AGENTS.md`); frame 0 shows the logo, not an empty background.
 - Publish catalogue metadata in `catalogue.json` and immutable, hash-named MP4,
   JPG and VTT files in `media/`. Preserve video IDs across revisions.
 - Future video additions are content-only commits merged into `main`; do not

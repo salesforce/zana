@@ -55,6 +55,7 @@ Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enable
 ## Cross-cutting invariants
 
 - **Help videos publish independently of app releases.** Add/revise the public catalogue and immutable media under `content/videos/`; read `content/videos/AGENTS.md` and `content/videos/README.md`. Merge content into `main` and run `pnpm exec tsx scripts/check-help-videos.ts`. Preserve stable IDs and compatibility bounds; do not add future videos only to the bundled renderer list or tag an app release just to publish a video.
+- **Every Zana video opens with the Zana intro.** Use `docs/media/zana-intro/` (light or dark to match the video). Frame 0 must show the Zana logo in the middle, never an empty background. Read `docs/media/AGENTS.md` before making or revising a video.
 
 - **Core is portable; integrations are extensions.** No environment- or vendor-specific behavior in core. Integration points are the generic SSH parser (`apps/server/src/services/projects/ssh-config.ts`) and the extension SSH-host-provider seam; environment-specific integrations ship as separately distributed extensions, never in this tree.
 - **Plugins are full-trust in-process after install and never receive host-daemon tokens.**

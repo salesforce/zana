@@ -7,6 +7,7 @@ import {
 } from '@zana-ai/zcc-domain/onboarding';
 import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { copyText } from '../../lib/copy-text.js';
+import { explainGitCloneError } from '../../lib/git-clone-error.js';
 
 type Row = 'idle' | 'run' | 'ok' | 'bad';
 type Auth = 'idle' | 'run' | 'need' | 'code' | 'finishing' | 'ok' | 'nogh' | 'expired' | 'failed';
@@ -62,6 +63,9 @@ export function GitAccessChecklist({ profile, connect, footerTarget, onBusyChang
   }; }, []);
   const busy = [network, auth, access].some(s => s === 'run' || s === 'finishing');
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
+  // A successful connect advances the wizard and unmounts this step before
+  // setAccess('ok') can run. Release the parent's navigation lock on exit.
+  useEffect(() => () => { onBusyChange?.(false); }, [onBusyChange]);
 
   const tryMarketplace = async (current: GitAccessStatus) => {
     setAccess('run'); setDetail(null);
@@ -74,7 +78,8 @@ export function GitAccessChecklist({ profile, connect, footerTarget, onBusyChang
       if (!alive.current) return;
       const message = reason instanceof Error ? reason.message : String(reason);
       setDetail(message);
-      // Signed in through gh yet still refused → the account lacks access. Otherwise offer sign-in.
+      // A gh login does not prove Git authenticated, and download failures can
+      // also be network, certificate or repository errors. Never infer a grant.
       if (current.signedIn === 'yes') setAccess('bad');
       else { setAccess('idle'); setAuth(current.cli === 'missing' ? 'nogh' : 'need'); }
     }
@@ -129,6 +134,7 @@ export function GitAccessChecklist({ profile, connect, footerTarget, onBusyChang
 
   const minutes = device ? Math.max(1, Math.round((device.expiresAt - Date.now()) / 60_000)) : 0;
   const login = status?.login;
+  const accessError = detail ? explainGitCloneError(detail) : null;
   const authTitle = auth === 'ok' ? 'Signed in to Git' : 'Sign in to Git';
   const authDetail: Record<Auth, ReactNode> = {
     idle: `Zana uses your ${host} account to download the marketplace.`,
@@ -172,10 +178,13 @@ export function GitAccessChecklist({ profile, connect, footerTarget, onBusyChang
         </CheckRow>
         <CheckRow state={access} title={access === 'ok' ? 'Marketplace access confirmed' : 'Marketplace access'}
           detail={access === 'run' ? 'Downloading the marketplace catalogue…' : access === 'ok' ? 'Marketplace connected.'
-            : access === 'bad' && login ? `Signed in as ${login}, but this account can’t read the marketplace repository.`
+            : access === 'bad' && login ? `Signed in as ${login}, but the marketplace download failed.`
               : access === 'bad' ? detail : 'Your account needs read access to the marketplace repository.'}
           action={access === 'bad' && login ? <button type="button" className="settings-btn" onClick={startSignIn}>Use a different account</button> : null}>
-          {access === 'bad' && login ? <div className="onboarding-callout err">Ask your marketplace administrator for read access, or sign in with an account that has it.</div> : null}
+          {access === 'bad' && login && accessError ? <div className="onboarding-callout err">
+            <strong>{accessError.title}</strong>
+            {accessError.guidance.map(text => <p key={text}>{text}</p>)}
+          </div> : null}
         </CheckRow>
       </ul>
       <details className="onboarding-details"><summary>Details</summary>

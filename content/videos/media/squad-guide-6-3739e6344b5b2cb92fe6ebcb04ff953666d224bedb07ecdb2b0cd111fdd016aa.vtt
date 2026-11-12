@@ -1,0 +1,37 @@
+WEBVTT
+
+00:00:00.400 --> 00:00:03.400
+Zana · Attach files and run in the right place
+
+00:00:04.100 --> 00:00:06.574
+Attach files and run in the right place.
+
+00:00:06.900 --> 00:00:08.700
+Decide what a Squad sees.
+
+00:00:09.300 --> 00:00:10.507
+And where it works.
+
+00:00:17.934 --> 00:00:28.115
+Sources are the files a Squad works from. In the composer, press Attach sources, or drop files in. They appear as chips under Attached sources.
+
+00:00:28.725 --> 00:00:37.628
+A source can also come from your home folder or the clone root. Each file can be up to four megabytes, and together they can total sixteen.
+
+00:00:37.929 --> 00:00:45.592
+Files are captured when you press Launch, so later edits are not included. Credential stores and app data are refused.
+
+00:00:48.201 --> 00:00:58.636
+Worktree isolation gives a Squad its own branch and checkout, so it works apart from your folder. You set it on the Squad: On, Off, or Use default.
+
+00:01:00.199 --> 00:01:15.273
+When a run finishes, the Squad decides what happens to the worktree. Keep it, which is the default, merge it into the base branch, or delete it. Only a completed run is merged or deleted. A failed or stopped run is always kept.
+
+00:01:17.077 --> 00:01:23.796
+A kept worktree shows in Squad details, with its path and branch, so you can review the work before you decide.
+
+00:01:24.097 --> 00:01:27.755
+Attach what the Squad needs, and choose where it works.
+
+00:01:28.755 --> 00:01:30.797
+Next: schedule a Squad.

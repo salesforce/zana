@@ -1,0 +1,37 @@
+WEBVTT
+
+00:00:00.400 --> 00:00:03.400
+Zana · Build your own Persona and Squad
+
+00:00:04.100 --> 00:00:05.338
+Build your own Squad.
+
+00:00:06.500 --> 00:00:07.749
+Start from a built-in.
+
+00:00:09.300 --> 00:00:10.623
+Change what you need.
+
+00:00:14.302 --> 00:00:28.771
+A Persona is one reusable agent profile. Open Settings, Agents and Automation, Personas. Start from a built-in: right-click it and choose Duplicate. Or press New persona to start from scratch.
+
+00:00:29.079 --> 00:00:43.166
+Open your copy. Give it a name and a one-line description. Leave the harness neutral, so it follows whichever tool you launch with. Set a model level, then add standing instructions in the system prompt. Save it.
+
+00:00:44.044 --> 00:00:53.173
+A Squad is a group of Personas. The easiest start is a copy of a built-in. Right-click a Squad in Settings, Squads, and choose Duplicate.
+
+00:00:53.761 --> 00:01:04.778
+Open your copy. Each slot is one Persona and a tab count. Add a slot and choose your new Persona. The crown marks the Orchestrator, which every run needs.
+
+00:01:05.086 --> 00:01:22.005
+Below the slots are the launch options. Default planning sets the planning mode. Launch approval can require your review before an agent starts the Squad. Worktree isolation and When a run finishes decide what happens to the checkout. Then save.
+
+00:01:22.857 --> 00:01:27.690
+To have the composer preselect your Squad, right-click it and choose Set as default.
+
+00:01:27.993 --> 00:01:32.420
+Personas are the parts. A Squad is the group you launch.
+
+00:01:33.421 --> 00:01:36.771
+That is the Squad guide. Pick a Squad and run it.

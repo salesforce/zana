@@ -115,20 +115,28 @@ export function onPluginPanelToolRequest(
 export interface PluginPanelScope {
   id: string;
   view?: string;
+  /**
+   * Project the resource belongs to, for pages with no project of their own
+   * (a global nav page with its own project picker). Only a preselection:
+   * main still authorizes the project when a thread is created.
+   */
+  projectId?: string;
 }
 
 export const PLUGIN_PANEL_SCOPE_EVENT = 'zcc:plugin-panel-scope';
 export const PANEL_SCOPE_ID_MAX_LENGTH = 4096;
 const PANEL_SCOPE_VIEW_MAX_LENGTH = 500;
+const PANEL_SCOPE_PROJECT_MAX_LENGTH = 200;
 const pageScopes = new WeakMap<PluginThreadPanelPage, PluginPanelScope | null>();
 
 export function parsePluginPanelScope(value: unknown): PluginPanelScope | null | undefined {
   if (value === null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const raw = value as { id?: unknown; view?: unknown };
+  const raw = value as { id?: unknown; view?: unknown; projectId?: unknown };
   if (typeof raw.id !== 'string' || !raw.id.trim() || raw.id.length > PANEL_SCOPE_ID_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(raw.id)) return undefined;
   if (raw.view !== undefined && (typeof raw.view !== 'string' || !raw.view.trim() || raw.view.length > PANEL_SCOPE_VIEW_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(raw.view))) return undefined;
-  return { id: raw.id, ...(typeof raw.view === 'string' ? { view: raw.view } : {}) };
+  if (raw.projectId !== undefined && (typeof raw.projectId !== 'string' || !raw.projectId.trim() || raw.projectId.length > PANEL_SCOPE_PROJECT_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(raw.projectId))) return undefined;
+  return { id: raw.id, ...(typeof raw.view === 'string' ? { view: raw.view } : {}), ...(typeof raw.projectId === 'string' ? { projectId: raw.projectId } : {}) };
 }
 
 /** Current selection, including changes dispatched before React commits the host. */

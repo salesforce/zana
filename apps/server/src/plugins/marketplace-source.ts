@@ -1,12 +1,12 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { parseMarketplaceIndex, type MarketplaceIndex } from './marketplace.js';
 import { defaultFetchJson } from './plugin-process.js';
 import { pluginPackIndexSchema, type PluginPackIndex } from '@zana-ai/zcc-domain';
+import { pluginGitFailure, runPluginGitCommand } from './plugin-git-command.js';
 
 export const MARKETPLACE_MANIFEST_FILENAME = 'marketplace.json';
 export const MARKETPLACE_PACKS_FILENAME = 'packs.json';
@@ -172,76 +172,14 @@ function isNotManifestError(error: unknown): boolean {
 }
 
 async function runGit(args: string[], options: MarketplaceMaterializeOptions = {}): Promise<string> {
-  return await new Promise((settle, reject) => {
-    const env = { ...process.env };
-    // Background marketplace discovery must never surface Keychain/askpass UI.
-    env.GIT_TERMINAL_PROMPT = '0';
-    if (options.nonInteractive) {
-      env.GIT_ASKPASS = '/usr/bin/false';
-      env.SSH_ASKPASS = '/usr/bin/false';
-      env.GCM_INTERACTIVE = 'Never';
-    }
-    const timeoutMs = options.timeoutMs != null && options.timeoutMs > 0
-      ? options.timeoutMs
-      : DEFAULT_GIT_TIMEOUT_MS;
-    const child = spawn('git', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env,
-      // The process group lets killChild reap git's helpers on Unix. On Windows,
-      // DETACHED_PROCESS leaves git with no console, so a console helper it starts
-      // would open a visible window; killChild falls back to child.kill there.
-      detached: process.platform !== 'win32',
-      windowsHide: true
-    });
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const killChild = () => {
-      if (child.pid) {
-        try {
-          process.kill(-child.pid, 'SIGKILL');
-          return;
-        } catch {
-          /* process-group kill is Unix-only */
-        }
-      }
-      child.kill('SIGKILL');
-    };
-    const finish = (error: Error | null, value?: string) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (error) reject(error);
-      else settle(value ?? '');
-    };
-    const timer = setTimeout(() => {
-      killChild();
-      finish(new Error(`git clone timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    const appendOutput = (current: string, chunk: string): string | null => {
-      if (Buffer.byteLength(current) + Buffer.byteLength(chunk) > MAX_GIT_OUTPUT_BYTES) {
-        killChild();
-        finish(new Error(`git clone output exceeded ${MAX_GIT_OUTPUT_BYTES} bytes`));
-        return null;
-      }
-      return current + chunk;
-    };
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      const next = appendOutput(stdout, chunk);
-      if (next != null) stdout = next;
-    });
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
-      const next = appendOutput(stderr, chunk);
-      if (next != null) stderr = next;
-    });
-    child.on('error', () => finish(new Error('git clone could not start')));
-    child.on('close', (code) => {
-      if (code === 0) finish(null, stdout.trim());
-      else finish(new Error('git clone failed'));
-    });
+  const result = await runPluginGitCommand(args, tmpdir(), args.at(-2)!, {
+    timeoutMs: options.timeoutMs != null && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_GIT_TIMEOUT_MS,
+    maxBytes: MAX_GIT_OUTPUT_BYTES,
+    nonInteractive: options.nonInteractive,
+    ...(options.nonInteractive ? { env: { GIT_ASKPASS: '/usr/bin/false', SSH_ASKPASS: '/usr/bin/false', GCM_INTERACTIVE: 'Never' } } : {})
   });
+  if (result.code !== 0) throw new Error(pluginGitFailure(result.stderr, 'git clone failed'));
+  return result.stdout.trim();
 }
 
 async function readMarketplaceJson(directory: string): Promise<MarketplaceIndex> {

@@ -78,6 +78,10 @@ function PluginPageSidePanelHost({
   // route. Keep that layout identity without sending an invalid agent binding.
   const assistantView = resourceView && resourceView.length <= 500 ? resourceView : undefined;
   const ownerId = pageOwnerId(pluginId, panelPath, scopeId, selectedResourceId, separateWindow);
+  // A page's own project (a project tab) always wins; a global page may name
+  // the project its selected resource belongs to. Owner ids keep using the
+  // page scope so saved panels survive; plugins already key resource ids.
+  const panelProjectId = scopeId ?? (resourceId ? undefined : resource?.projectId);
   const viewRef = useRef<HTMLDivElement>(null);
   const compact = useCompactLayout();
   const controller = useRef<PanelController | null>(null);
@@ -120,7 +124,7 @@ function PluginPageSidePanelHost({
         ownerId={ownerId}
         pluginId={pluginId}
         panelPath={panelPath}
-        scopeId={scopeId}
+        scopeId={panelProjectId}
         resourceLabel={selectedResourceId?.split(/[\\/]/).at(-1)}
         subPath={assistantView ?? (selectedResourceId ? undefined : subPath)}
         page={page}
