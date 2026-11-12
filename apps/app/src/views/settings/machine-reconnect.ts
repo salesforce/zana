@@ -5,6 +5,18 @@ export function machineCanReconnect(host: Host): boolean {
   return !host.isPrimary && host.status !== 'connected';
 }
 
+/**
+ * A connected remote machine can still run a stale or broken daemon. Offline
+ * machines use Reconnect, which runs the same reinstall.
+ */
+export function machineCanReinstall(host: Host): boolean {
+  return !host.isPrimary && host.status === 'connected';
+}
+
+export function reinstallConfirmMessage(name: string): string {
+  return `Reinstall the host daemon on ${name}?\n\nZana uploads the current daemon over SSH and restarts it. Threads running on this machine are interrupted.`;
+}
+
 export function machineCanRelaunchLocal(host: Host): boolean {
   return host.isPrimary;
 }

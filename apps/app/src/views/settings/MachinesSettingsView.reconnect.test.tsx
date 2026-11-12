@@ -40,7 +40,7 @@ function setup() {
   render(<MachinesSettingsView config={config} onConfigDraft={() => undefined} onUpdate={async () => undefined} />);
 }
 const reconnect = () => fireEvent.click(screen.getByTestId('machine-reconnect-h1'));
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Machines reconnect onSettled handling', () => {
   it('shows the repair error, then clears it when a retry succeeds', async () => {
@@ -59,5 +59,41 @@ describe('Machines reconnect onSettled handling', () => {
     vi.mocked(product.hosts.repair).mockResolvedValue([{ type: 'error', code: 'ssh_identity_required', message: 'bind ssh' }]);
     reconnect();
     await waitFor(() => expect(screen.getByTestId('ssh-dialog').textContent).toBe('devbox'));
+  });
+});
+
+describe('Machines reinstall daemon', () => {
+  const online = { ...offline, status: 'connected' } as Host;
+  function setupOnline() {
+    h.hosts = [online];
+    render(<MachinesSettingsView config={config} onConfigDraft={() => undefined} onUpdate={async () => undefined} />);
+  }
+  const reinstall = () => fireEvent.click(screen.getByTestId('machine-reinstall-h1'));
+
+  it('does nothing when the confirmation is declined', () => {
+    const confirm = vi.fn(() => false); vi.stubGlobal('confirm', confirm);
+    setupOnline();
+    reinstall();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('devbox'));
+    expect(product.hosts.repair).not.toHaveBeenCalled();
+  });
+
+  it('reinstalls a connected machine through repair and shows a failure on the card', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    setupOnline();
+    expect(screen.queryByTestId('machine-reconnect-h1')).toBeNull();
+    vi.mocked(product.hosts.repair).mockResolvedValueOnce([{ type: 'error', code: 'install_failed', message: 'upload failed' }]);
+    reinstall();
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('upload failed'));
+    expect(product.hosts.repair).toHaveBeenCalledWith('h1', expect.any(Function));
+  });
+
+  it('asks for an SSH host first when the machine has none', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    h.hosts = [{ ...online, canRepairViaSsh: false }];
+    render(<MachinesSettingsView config={config} onConfigDraft={() => undefined} onUpdate={async () => undefined} />);
+    reinstall();
+    await waitFor(() => expect(screen.getByTestId('ssh-dialog').textContent).toBe('devbox'));
+    expect(product.hosts.repair).not.toHaveBeenCalled();
   });
 });

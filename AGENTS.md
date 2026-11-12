@@ -72,6 +72,7 @@ Before comparing Squads with Claude Unleashed or proposing external-workflow par
 
 Detail lives next to the code and loads when you work there. Read the file before changing that area.
 
+- Host callback routes (`/internal/hosts/*`), SSH pairing forwarder + relay allowlists, host protocol bumps → `apps/server/src/http/AGENTS.md`
 - Spawn argv/env assembly (`PtyManager.create`, `@zana-ai/zcc-spawn-plan`, golden-argv), launch identity registry, OpenCode role/model + discovery → `apps/host-daemon/AGENTS.md`
 - Permission broker `"*"` wildcard, `PersonaTeamRegistry`, lifecycle hooks `onInstall`/`onUninstall`, uninstall storage purge, `projectTab.global` → `apps/desktop/src/extensions/AGENTS.md`
 - Local plugins, plugin starter templates, packaged plugins, plugin authoring outside the checkout → `apps/server/src/services/extensions/AGENTS.md`

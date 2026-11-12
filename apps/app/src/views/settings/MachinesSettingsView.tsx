@@ -19,7 +19,7 @@ import {
   sshHostOptionsFromProjects,
   REMOTE_MACHINE_CONNECTION_HINT
 } from './machine-pairing.js';
-import { reconnectMachine } from './machine-reconnect.js';
+import { reconnectMachine, reinstallConfirmMessage } from './machine-reconnect.js';
 import { runHostInstallWithDrawer } from '../../lib/host-install-run.js';
 import { bootstrapOutcome } from '../../components/composer-host-status.js';
 import {
@@ -96,7 +96,13 @@ export function MachinesSettingsView({
 
   const actionable = useMemo(() => actionableProviderCliRows(cliByHost), [cliByHost]);
 
-  async function runReconnect(hostId: string, afterSshPick = false): Promise<void> {
+  function runReinstall(hostId: string): void {
+    const host = hosts.find((row) => row.id === hostId);
+    if (!host || !window.confirm(reinstallConfirmMessage(host.name))) return;
+    void runReconnect(hostId, false, 'reinstall');
+  }
+
+  async function runReconnect(hostId: string, afterSshPick = false, mode: 'reconnect' | 'reinstall' = 'reconnect'): Promise<void> {
     const host = hosts.find((row) => row.id === hostId);
     if (!host) return;
     setRepairError(null);
@@ -114,7 +120,7 @@ export function MachinesSettingsView({
           kind: 'fix',
           target: host.name,
           repairTarget: { hostId: id },
-          startLogs: ['Reconnecting…'],
+          startLogs: [mode === 'reinstall' ? 'Reinstalling the host daemon…' : 'Reconnecting…'],
           run: (onEvent) => product.hosts.repair(id, onEvent),
           // Replayed by the drawer's Retry, which bypasses this function's result handling.
           onSettled: (events) => {
@@ -282,6 +288,7 @@ export function MachinesSettingsView({
               onReconnect={() => void runReconnect(host.id)}
               onRepairPairing={connectMachines ? () => setRepairPairing({ id: host.id, name: host.name }) : undefined}
               onRelaunch={() => void runRelaunch(host.id)}
+              onReinstall={() => runReinstall(host.id)}
               onRemove={() => {
                 if (window.confirm(`Remove ${host.name}?`)) {
                   void product.hosts.remove(host.id);

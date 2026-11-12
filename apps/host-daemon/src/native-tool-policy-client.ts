@@ -12,6 +12,8 @@ export function createNativeToolPolicyHttpClient(options: {
   fetchFn?: typeof fetch;
 }): NonNullable<AgentRuntimeOptions['onNativeToolDecision']> {
   return async (request, signal): Promise<NativeToolDecision> => {
+    // Diagnostic detail only (status, timeout, shape); never the body, which can echo tool input.
+    let detail = 'no reply';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), RELAY_BACKSTOP_MS);
     const abort = () => controller.abort();
@@ -25,7 +27,11 @@ export function createNativeToolPolicyHttpClient(options: {
           providerId: request.providerId, providerThreadId: request.providerThreadId,
           callId: request.callId, toolName: request.toolName, input: request.input })
       });
-      if (!response.ok || !response.body) throw new Error('native policy unavailable');
+      if (!response.ok || !response.body) {
+        detail = response.ok ? 'empty reply' : `server refused (HTTP ${response.status})`;
+        throw new Error('native policy unavailable');
+      }
+      detail = 'invalid reply';
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
       let bytes = 0;
@@ -34,7 +40,7 @@ export function createNativeToolPolicyHttpClient(options: {
           const chunk = await reader.read();
           if (chunk.done) break;
           bytes += chunk.value.byteLength;
-          if (bytes > 16_384) throw new Error('native policy response exceeds limit');
+          if (bytes > 16_384) { detail = 'reply too large'; throw new Error('native policy response exceeds limit'); }
           chunks.push(chunk.value);
         }
       } finally {
@@ -44,12 +50,13 @@ export function createNativeToolPolicyHttpClient(options: {
       if (parsed.success && !controller.signal.aborted) return parsed.data;
     } catch {
       // Transport and validation failures cannot inherit a permissive default.
+      if (controller.signal.aborted) detail = signal.aborted ? 'cancelled' : 'timed out';
     } finally {
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);
       controller.abort();
     }
-    return { action: 'deny', reason: 'native policy unavailable or invalid' };
+    return { action: 'deny', reason: `native policy unavailable or invalid: ${detail}` };
   };
 }
 

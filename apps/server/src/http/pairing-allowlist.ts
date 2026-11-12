@@ -9,6 +9,8 @@ export const PAIRING_ALLOWLIST = {
     { methods: ['GET', 'HEAD'], path: '/install/zcc-host.tgz' },
     { methods: ['POST'], path: '/internal/hosts/enroll' },
     { methods: ['POST'], path: '/internal/hosts/tool-call' },
+    { methods: ['POST'], path: '/internal/hosts/native-tool-policy' },
+    { methods: ['POST'], path: '/internal/hosts/tool-settled' },
     { methods: ['POST'], path: '/internal/hosts/cli-callback' },
     { methods: ['POST'], path: '/internal/hosts/interactive-request' },
     { methods: ['POST'], path: '/internal/hosts/interactive-request/interrupt' },
