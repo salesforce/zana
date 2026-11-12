@@ -636,6 +636,52 @@ describe('PluginPanelHostLayout', () => {
     expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('560px');
   });
 
+  it('runs a global page panel in the project its selected resource names', () => {
+    pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph', scopes: ['plugin-page'] });
+    let select!: (scope: { id: string; view?: string; projectId?: string } | null) => void;
+    function Editor() {
+      const page = usePluginPagePanel()!;
+      select = scope => { requestPluginPanelScope('salesforce', scope, page); };
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="orgs"><Editor /></PluginPanelHostLayout>);
+    act(() => select({ id: '["dx","agents/a.agent"]', view: 'agents/a.agent', projectId: 'dx' }));
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset).toMatchObject({ binding: 'salesforce/orgs/agents/a.agent', project: 'dx' });
+    act(() => requestPluginPanelTool('salesforce', { actionId: 'studio-graph' }));
+    expect(screen.getByTestId('plugin-tool').dataset.project).toBe('dx');
+    // Another project's resource gets its own panel in that project.
+    act(() => select({ id: '["other","agents/a.agent"]', view: 'agents/a.agent', projectId: 'other' }));
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.project).toBe('other');
+    // Without a named project the composer falls back to the user's own pick.
+    act(() => select({ id: 'plain' }));
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.project).toBe('');
+  });
+
+  it('keeps a project tab in its own project whatever the selection names', () => {
+    function Editor() {
+      const page = usePluginPagePanel()!;
+      useLayoutEffect(() => { requestPluginPanelScope('salesforce', { id: 'a', view: 'a', projectId: 'elsewhere' }, page); }, [page]);
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="tab-project"><Editor /></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.project).toBe('tab-project');
+  });
+
+  it('keeps a dedicated resource window off a project named by another selection', () => {
+    function Editor() {
+      const page = usePluginPagePanel()!;
+      useLayoutEffect(() => { requestPluginPanelScope('salesforce', { id: 'other', projectId: 'elsewhere' }, page); }, [page]);
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="orgs" resourceId="locked" separateWindow><Editor /></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.project).toBe('');
+  });
+
   it('keeps a long generic resource identity without sending an oversized assistant view', () => {
     render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p" resourceId={'x'.repeat(501)} separateWindow><div /></PluginPanelHostLayout>);
     fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
