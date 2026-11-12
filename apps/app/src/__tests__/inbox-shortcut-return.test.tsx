@@ -5,9 +5,18 @@
  * press returns to the exact route open before the Inbox, and falls back to
  * Home only when there is nothing (or nothing live) to return to.
  */
+import { Suspense } from 'react';
 import { act, cleanup, render } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/** The project a "per-project window" is locked to; null is the main window. */
+const scope = vi.hoisted(() => ({ id: null as string | null }));
+vi.mock('../lib/windowScope.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/windowScope.js')>()),
+  getScopedProjectId: () => scope.id,
+  isScopedWindow: () => scope.id !== null
+}));
 
 vi.mock('../lib/product-client.js', () => ({
   product: {
@@ -19,7 +28,8 @@ vi.mock('../lib/product-client.js', () => ({
 import { useData, useUi } from '../store.js';
 import { installShortcuts } from '../shortcuts.js';
 import { useRouteSync } from '../hooks/useRouteSync.js';
-import { resetAppSettingsRouteMemory } from '../lib/route-memory.js';
+import { getRouteBeforeInbox, resetAppSettingsRouteMemory } from '../lib/route-memory.js';
+import { appNavigate } from '../lib/app-navigate.js';
 
 const PROJECT_ID = 'proj-1';
 let currentPath = '';
@@ -48,6 +58,7 @@ function pressCtrlI() {
 let offShortcuts: () => void = () => {};
 
 beforeEach(() => {
+  scope.id = null;
   vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32');
   resetAppSettingsRouteMemory();
   useData.setState({ projects: [{ id: PROJECT_ID, name: 'one', path: '/p/one' }] as never });
@@ -147,5 +158,80 @@ describe('Ctrl+I returns from the Inbox to where the user was', () => {
     expect(currentPath).toBe('/inbox');
     pressCtrlI();
     expect(currentPath).toBe('/');
+  });
+
+  it('ignores a render React discards: only committed routes become the return target', () => {
+    // A tree that renders at a route and suspends before committing, as a
+    // discarded concurrent render or transition would.
+    const never = new Promise<never>(() => {});
+    function SuspendsAfterSync(): null {
+      useRouteSync();
+      throw never;
+    }
+    render(
+      <MemoryRouter initialEntries={['/threads/discarded']} useTransitions={false}>
+        <Suspense fallback={null}>
+          <SuspendsAfterSync />
+        </Suspense>
+      </MemoryRouter>
+    );
+    cleanup();
+    expect(getRouteBeforeInbox()).toBeNull();
+
+    mountAt('/inbox');
+    pressCtrlI();
+    expect(currentPath).toBe('/');
+  });
+});
+
+describe('Ctrl+I in a window locked to one project', () => {
+  const LOCK = `?projectId=${PROJECT_ID}`;
+
+  beforeEach(() => {
+    scope.id = PROJECT_ID;
+  });
+
+  it("toggles that project's Inbox and returns inside the project", () => {
+    mountAt(`/projects/${PROJECT_ID}/explorer${LOCK}`);
+
+    pressCtrlI();
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}/inbox${LOCK}`);
+
+    pressCtrlI();
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}/explorer${LOCK}`);
+  });
+
+  it('never records a route the lock rewrites, so the return stays in scope', () => {
+    mountAt(`/projects/${PROJECT_ID}/explorer${LOCK}`);
+    // A global thread link: the lock rewrites it onto this project's thread route.
+    act(() => appNavigate('/threads/thread-1'));
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}/threads/thread-1${LOCK}`);
+    expect(getRouteBeforeInbox()).toBe(`/projects/${PROJECT_ID}/threads/thread-1${LOCK}`);
+
+    pressCtrlI();
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}/inbox${LOCK}`);
+    pressCtrlI();
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}/threads/thread-1${LOCK}`);
+  });
+
+  it('skips an out-of-scope route even before the lock has rewritten it', () => {
+    mountAt(`/projects/${PROJECT_ID}/explorer${LOCK}`);
+    const seen: Array<string | null> = [];
+    const unsubscribe = useUi.subscribe(() => seen.push(getRouteBeforeInbox()));
+    // An app-level Settings page is outside the window's project; the lock sends it home.
+    act(() => appNavigate('/settings/terminal'));
+    unsubscribe();
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}${LOCK}`);
+    expect(seen.some((p) => p?.startsWith('/settings'))).toBe(false);
+
+    pressCtrlI();
+    pressCtrlI();
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}${LOCK}`);
+  });
+
+  it('with nothing to return to, falls back to the project home rather than leaving it', () => {
+    mountAt(`/projects/${PROJECT_ID}/inbox${LOCK}`);
+    pressCtrlI();
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}${LOCK}`);
   });
 });

@@ -138,8 +138,22 @@ export function rememberLocation(location: {
   if (shellRouteKind(location.pathname) === 'app' && !matchPath(PROJECT_SETTINGS_ROUTE_PATH, location.pathname)) {
     lastRouteBeforeProjectSettings = current;
   }
-  if (!isInboxRoutePath(location.pathname)) lastRouteBeforeInbox = current;
   return storedMemory;
+}
+
+/**
+ * Records a committed route as Ctrl/Cmd+I's return target. Called only from a
+ * commit-phase effect, never during render: a render React discards must not
+ * become the place Ctrl+I goes back to. Inbox routes are skipped, so moving
+ * between Inboxes keeps the last non-Inbox view.
+ */
+export function rememberInboxReturnRoute(location: {
+  pathname: string;
+  search: string;
+  hash: string;
+}): void {
+  if (isInboxRoutePath(location.pathname)) return;
+  lastRouteBeforeInbox = getLocationRoutePath(location);
 }
 
 /** Test-only: drop remembered paths so files don't leak across workers. */

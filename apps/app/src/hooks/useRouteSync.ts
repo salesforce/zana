@@ -5,7 +5,7 @@ import { useUi, type ExtensionsTab, type NavId, type ProjectView, type SettingsT
 import { registerAppNavigate } from '../lib/app-navigate.js';
 import { decodeRoutePath, scopedProjectIdFromSearch, scopedWindowLockReplace } from '../lib/decode-route.js';
 import { getScopedProjectId, isScopedWindow } from '../lib/windowScope.js';
-import { rememberLocation } from '../lib/route-memory.js';
+import { rememberInboxReturnRoute } from '../lib/route-memory.js';
 
 const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
 
@@ -22,10 +22,17 @@ function splitDestination(to: string): { pathname: string; search: string; hash:
 export function useRouteSync(): void {
   const location = useLocation();
   const navigate = useNavigate();
-  // Record every rendered route, not only while a rail is mounted: with the
-  // sidebar collapsed no rail reads route memory, and Ctrl/Cmd+I's return
-  // trip would miss the views visited meanwhile. Deduped per URL.
-  rememberLocation(location);
+  // Ctrl/Cmd+I's return target: every committed route, whether or not a rail
+  // is mounted (with the sidebar collapsed none is). In a commit-phase effect,
+  // so a render React discards is never recorded. A project-locked window
+  // skips a route its lock is about to rewrite, so the target always stays
+  // inside the window's project.
+  useLayoutEffect(() => {
+    const committed = { pathname: location.pathname, search: location.search, hash: location.hash };
+    const lockId = getScopedProjectId() ?? scopedProjectIdFromSearch(committed.search);
+    if (lockId && scopedWindowLockReplace(committed, lockId)) return;
+    rememberInboxReturnRoute(committed);
+  }, [location.hash, location.pathname, location.search]);
 
   useEffect(() => {
     registerAppNavigate((to, options) => {
