@@ -253,7 +253,7 @@ describe('panel agent grounding', () => {
       + 'Tasks: Track work items. '
       + 'The user is looking at that page while talking to you, so read their questions in its context. '
       + 'Prefer Tasks\'s own tools over guessing: task_list. '
-      + 'You cannot see the page itself; ask the user when you need something that is only on screen.'
+      + 'Use the current page identity attached to each message. When it includes a read reference, use `page_context_read` or the plugin\'s read tools for content you need; reuse content already read. Ask the user only for information unavailable through these tools.'
     );
     expect(parts.slice(1)).toEqual(['Notes rule.', 'Tasks rule.']);
   });

@@ -67,6 +67,7 @@ import {
 import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
 import { pluginPanelThreads, resolvePluginPanelBinding, revealPluginPanelThread } from './plugin-panel-binding.js';
+import { withPluginPageContext } from './plugin-page-context.js';
 import { terminalOutputSlice } from './terminal-output-buffer.js';
 import {
   conversationThreadView,
@@ -2430,13 +2431,19 @@ export async function handleProductHttp(
         serviceTier?: unknown;
         acpMode?: unknown;
         permissionMode?: unknown;
+        pageContext?: unknown;
       };
       const mode = body.mode === 'start' || body.mode === 'auto' || body.mode === 'steer'
         || body.mode === 'queue-if-active' || body.mode === 'steer-if-active'
         ? body.mode as ThreadSendMode
         : 'auto';
       try {
-        const thread = await sendConversationTurn(ctx, id!, body.input ?? body.text, mode, {
+        const target = getConversationThread(ctx.db, id!);
+        if (!target) throw new ThreadCreateError(404, 'thread-not-found', 'Conversation is not registered');
+        // An existing conversation can be opened beside another plugin's page;
+        // its immutable creation origin does not own the current surrounding view.
+        const input = await withPluginPageContext(ctx.plugins, body.input ?? body.text, body.pageContext, { projectId: target.projectId });
+        const thread = await sendConversationTurn(ctx, id!, input, mode, {
           permissionMode: body.permissionMode === 'accept-edits' || body.permissionMode === 'auto' || body.permissionMode === 'full'
             ? body.permissionMode : undefined,
           model: typeof body.model === 'string' ? body.model : undefined,
@@ -2471,11 +2478,15 @@ export async function handleProductHttp(
       }
       try {
         const pluginPanel = resolvePluginPanelBinding(body, ctx.plugins);
+        const promptInput = await withPluginPageContext(ctx.plugins, body.input ?? body.prompt, body.pageContext, {
+          projectId: typeof body.projectId === 'string' ? body.projectId : '',
+          expectedPluginId: pluginPanel?.originPluginId ?? (typeof body.originPluginId === 'string' ? body.originPluginId : undefined)
+        });
         const thread = await createConversationFromRequest(ctx, {
           projectId: typeof body.projectId === 'string' ? body.projectId : '',
           providerId: typeof body.providerId === 'string' ? body.providerId : 'claude-code',
           input: flattenThreadInput(body.input ?? body.prompt),
-          promptInput: body.input ?? body.prompt,
+          promptInput,
           hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
           id: typeof body.id === 'string' ? body.id : undefined,
           environment: environmentChoice?.data,

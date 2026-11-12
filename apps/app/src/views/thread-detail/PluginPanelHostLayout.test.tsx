@@ -28,15 +28,18 @@ vi.mock('../../plugins/plugin-slots.js', () => ({
   listNewThreadPanelActions: () => emptyActions
 }));
 vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
-  PanelAgentTab: ({ threadId, draft, draftProjectId, projectId, pluginPanel, onCreated, onOpenConversation }: {
+  PanelAgentTab: ({ threadId, draft, draftProjectId, projectId, pluginPanel, capturePageContext, onCreated, onOpenConversation }: {
     threadId?: string;
     draft?: string;
     draftProjectId?: string;
     projectId?: string;
     pluginPanel?: { pluginId: string; panel: string; view?: string };
+    capturePageContext?: () => unknown;
     onCreated: (threadId: string) => void;
     onOpenConversation?: (conversation: { id: string; title: string | null; updatedAt: number }) => void;
-  }) => (
+  }) => (<>
+    <button data-testid="capture-page" onClick={event => { event.currentTarget.dataset.context = JSON.stringify(capturePageContext?.()); }}>Capture page</button>
+    {
     threadId
       ? <div data-testid="agent-chat">{threadId}</div>
       : (
@@ -53,8 +56,8 @@ vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
           <button type="button" data-testid="agent-reopen-old" onClick={() => onOpenConversation?.({ id: 'old', title: 'Old chat', updatedAt: 1 })}>old</button>
           <button type="button" data-testid="agent-reopen-new" onClick={() => onOpenConversation?.({ id: 't-new', title: null, updatedAt: 1 })}>new</button>
         </>
-      )
-  )
+      )}
+  </>)
 }));
 vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
   ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId, page }: {
@@ -86,7 +89,7 @@ vi.mock('../../lib/app-surface.js', () => ({
 
 import { pluginPanelOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
 import { parsePanelAgentTarget, requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
-import { requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from '../../plugins/plugin-page-panel.js';
+import { requestPluginPageContext, requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen, usePluginPagePublicationScope } from '../../plugins/plugin-page-panel.js';
 import { addClosableTab, loadSecondaryPanelState, persistSecondaryPanelState } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 
 beforeEach(() => {
@@ -547,6 +550,133 @@ describe('PluginPanelHostLayout', () => {
     expect(screen.getByTestId('agent-chat').textContent).toBe('project-two');
   });
 
+
+  it('captures an internally selected page on every message without retargeting an explicit task draft', () => {
+    let publish!: (title: string) => void;
+    function Page() {
+      const page = usePluginPagePanel()!;
+      const publicationScope = usePluginPagePublicationScope();
+      publish = title => { requestPluginPageContext('notes', { title, resourceId: title }, page, publicationScope); };
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="notes" panelPath="main" scopeId="p" subPath="old-route"><Page /></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    act(() => requestPluginPanelAgent({ pluginId: 'notes', draft: { prompt: 'Finish A', view: 'task-a' } }));
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('notes/main/task-a');
+    const capture = () => {
+      fireEvent.click(screen.getByTestId('capture-page'));
+      return JSON.parse(screen.getByTestId('capture-page').dataset.context!);
+    };
+    publish('A');
+    expect(capture()).toEqual({ pluginId: 'notes', panel: 'main', projectId: 'p', page: { title: 'A', resourceId: 'A' } });
+    publish('B');
+    expect(capture().page.title).toBe('B');
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('notes/main/task-a');
+  });
+
+  it('keeps older plugins and long resource windows grounded without a page publication', () => {
+    const id = 'resource/'.repeat(100);
+    render(<PluginPanelHostLayout pluginId="future-plugin" panelPath="editor" scopeId="p" resourceId={id} separateWindow><div /></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    fireEvent.click(screen.getByTestId('capture-page'));
+    expect(JSON.parse(screen.getByTestId('capture-page').dataset.context!)).toEqual({ pluginId: 'future-plugin', panel: 'editor', projectId: 'p', view: id });
+  });
+
+  it.each([
+    { name: 'a page without a selected resource', scope: undefined, expectedView: undefined },
+    { name: 'a selected resource view', scope: { id: 'resource-a', view: 'details' }, expectedView: 'details' },
+    { name: 'an id-only selected resource', scope: { id: 'resource-a' }, expectedView: 'resource-a' }
+  ])('captures global context for $name without inventing a project', ({ scope, expectedView }) => {
+    function Page() {
+      const page = usePluginPagePanel()!;
+      useLayoutEffect(() => { if (scope) requestPluginPanelScope('notes', scope, page); }, [page]);
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="notes" panelPath="main"><Page /></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    fireEvent.click(screen.getByTestId('capture-page'));
+    expect(JSON.parse(screen.getByTestId('capture-page').dataset.context!)).toEqual({
+      pluginId: 'notes', panel: 'main', ...(expectedView ? { view: expectedView } : {})
+    });
+  });
+
+  it('invalidates a publication without cleanup on host route changes while preserving the task and resource scope', () => {
+    const pages: object[] = [];
+    function Page() {
+      const page = usePluginPagePanel()!;
+      const publicationScope = usePluginPagePublicationScope();
+      pages.push(page);
+      useLayoutEffect(() => {
+        requestPluginPanelScope('notes', { id: 'scope-a', view: 'task-a' }, page);
+        requestPluginPageContext('notes', { title: 'Document A', resourceId: 'a' }, page, publicationScope);
+      }, []);
+      return null;
+    }
+    const ui = (subPath: string) => <PluginPanelHostLayout pluginId="notes" panelPath="main" scopeId="p" subPath={subPath}><Page /></PluginPanelHostLayout>;
+    const view = render(ui('route-a'));
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    act(() => requestPluginPanelAgent({ pluginId: 'notes', draft: { prompt: 'Finish A', view: 'task-a' } }, pages[0]));
+    const capture = () => {
+      fireEvent.click(screen.getByTestId('capture-page'));
+      return JSON.parse(screen.getByTestId('capture-page').dataset.context!);
+    };
+    expect(capture().page.resourceId).toBe('a');
+    view.rerender(ui('route-b'));
+    expect(capture()).toEqual({ pluginId: 'notes', panel: 'main', projectId: 'p', view: 'route-b' });
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('notes/main/task-a');
+    expect(screen.getByTestId('plugin-panel-host-layout').dataset.panelResource).toBe('scope-a');
+    expect(new Set(pages).size).toBe(1);
+    view.rerender(ui(''));
+    expect(capture()).toEqual({ pluginId: 'notes', panel: 'main', projectId: 'p' });
+    act(() => requestPluginPanelAgent({ pluginId: 'notes', threadId: 'same-panel' }, pages[0]));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('same-panel');
+  });
+
+  it('invalidates an uncleaned publication when a dedicated window changes its host resource', () => {
+    function Page() {
+      const page = usePluginPagePanel()!;
+      const publicationScope = usePluginPagePublicationScope();
+      useLayoutEffect(() => { requestPluginPageContext('notes', { title: 'Document A', resourceId: 'a' }, page, publicationScope); }, []);
+      return null;
+    }
+    const ui = (resourceId: string) => <PluginPanelHostLayout pluginId="notes" panelPath="main" scopeId="p" resourceId={resourceId} separateWindow><Page /></PluginPanelHostLayout>;
+    const view = render(ui('a'));
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    fireEvent.click(screen.getByTestId('capture-page'));
+    expect(JSON.parse(screen.getByTestId('capture-page').dataset.context!).page.resourceId).toBe('a');
+    view.rerender(ui('b'));
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    fireEvent.click(screen.getByTestId('capture-page'));
+    expect(JSON.parse(screen.getByTestId('capture-page').dataset.context!)).toEqual({ pluginId: 'notes', panel: 'main', projectId: 'p', view: 'b' });
+  });
+
+  it('preserves new publications and split-pane scopes when an older route publishes or clears late', () => {
+    const publishers: Record<string, (title: string | null) => void> = {};
+    function Page({ name, title }: { name: string; title: string }) {
+      const page = usePluginPagePanel()!;
+      const publicationScope = usePluginPagePublicationScope();
+      publishers[name] = value => { requestPluginPageContext('notes', value === null ? null : { title: value }, page, publicationScope); };
+      useLayoutEffect(() => { requestPluginPanelScope('notes', { id: `scope-${name}` }, page); }, [page, name]);
+      useLayoutEffect(() => { requestPluginPageContext('notes', { title }, page, publicationScope); }, [page, publicationScope, title]);
+      return null;
+    }
+    const ui = (route: string, title: string) => <>
+      <div data-testid="pane-a"><PluginPanelHostLayout pluginId="notes" panelPath="main" scopeId="pa" subPath={route}><Page name="a" title={title} /></PluginPanelHostLayout></div>
+      <div data-testid="pane-b"><PluginPanelHostLayout pluginId="notes" panelPath="main" scopeId="pb" subPath="route-b"><Page name="b" title="Pane B" /></PluginPanelHostLayout></div>
+    </>;
+    const view = render(ui('route-a', 'Pane A'));
+    const oldPublisher = publishers.a!;
+    for (const name of ['a', 'b']) fireEvent.click(within(screen.getByTestId(`pane-${name}`)).getByTestId('plugin-panel-agent-show'));
+    view.rerender(ui('route-a-next', 'Pane A next'));
+    oldPublisher('Late old page');
+    oldPublisher(null);
+    for (const [name, title] of [['a', 'Pane A next'], ['b', 'Pane B']]) {
+      const pane = within(screen.getByTestId(`pane-${name}`));
+      fireEvent.click(pane.getByTestId('capture-page'));
+      expect(JSON.parse(pane.getByTestId('capture-page').dataset.context!).page).toEqual({ title });
+      expect(pane.getByTestId('plugin-panel-host-layout').dataset.panelResource).toBe(`scope-${name}`);
+    }
+  });
 
   it('switches resource panels without remounting the editor or copying tools and assistant selection', () => {
     pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph', scopes: ['plugin-page'] });

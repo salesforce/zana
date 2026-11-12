@@ -725,7 +725,8 @@ function httpProduct(): Pick<
             reasoningLevel: input.reasoningLevel,
             serviceTier: input.serviceTier,
             acpMode: input.acpMode,
-            pluginPanel: input.pluginPanel
+            pluginPanel: input.pluginPanel,
+            ...(input.pageContext ? { pageContext: input.pageContext } : {})
           })
         });
         const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['create']>> & {
@@ -753,6 +754,7 @@ function httpProduct(): Pick<
           body: JSON.stringify({
             input,
             mode,
+            ...(extras?.pageContext ? { pageContext: extras.pageContext } : {}),
             ...(extras?.permissionMode ? { permissionMode: extras.permissionMode } : {}),
             ...(extras?.model ? { model: extras.model } : {}),
             ...(extras?.reasoningLevel ? { reasoningLevel: extras.reasoningLevel } : {}),

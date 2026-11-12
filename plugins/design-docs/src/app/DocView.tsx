@@ -1,6 +1,6 @@
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { passageContext } from '../shared/passage-context.js';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, FileWarning, History, MessageSquare, Bot, PanelLeftOpen, X } from 'lucide-react';
 import type { DesignDocComment, DesignDocDetail, DesignDocRevision } from '../shared/contract.js';
 import { AgentsPane, AskAgentButton, type AskRequest } from './Agents.js';
@@ -237,6 +237,16 @@ export function DocView({
   const activePath = keepDraft ? shownPath.current : resolvedPath;
   shownPath.current = activePath;
   const deletedElsewhere = !!data && !!doc.error && isMissingDoc(doc.error);
+  const publishPageContext = contextNavigate.setPageContext;
+  useLayoutEffect(() => {
+    publishPageContext?.({
+      title: deletedElsewhere || doc.error ? 'Design document unavailable' : (data?.title ?? 'Loading design document').slice(0, 160),
+      resourceId: data?.id ?? docId,
+      ...(activePath ? { path: activePath } : {}),
+      ...(kind === 'doc' && data && !doc.error ? { mention: { providerId: 'design-doc', itemId: data.id } } : {})
+    });
+    return () => publishPageContext?.(null);
+  }, [publishPageContext, docId, data?.id, data?.title, activePath, kind, deletedElsewhere, doc.error]);
   const latest = useRef({ onDeleted, title: data?.title ?? '' });
   latest.current = { onDeleted, title: data?.title ?? latest.current.title };
 

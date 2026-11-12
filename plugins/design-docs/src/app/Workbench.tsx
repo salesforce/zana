@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
@@ -775,6 +775,12 @@ export function Workbench({
   const [templateId, setTemplateId] = useState<string | null>(null);
   const peerSync = usePeerSync();
   const projectList = projects.data ?? [];
+  const publishPageContext = useZccNavigate().setPageContext;
+  useLayoutEffect(() => {
+    if (view !== 'settings' && (location.docId || templateId)) return;
+    publishPageContext?.({ title: view === 'settings' ? 'Design Docs settings' : 'Design Docs catalogue' });
+    return () => publishPageContext?.(null);
+  }, [publishPageContext, view, location.docId, templateId]);
 
   if (view === 'settings') {
     return (

@@ -952,6 +952,8 @@ export interface ZccPanelScope {
   projectId?: string;
 }
 
+export type ZccPageContext = import('@zana-ai/zcc-domain/thread-runtime').PluginPageResource;
+
 export interface ZccNavigate {
   toThread(threadId: string): void;
   toProject(projectId: string, options?: ZccNavigateToProjectOptions): void;
@@ -992,6 +994,16 @@ export interface ZccNavigate {
   openPanelTool?(options: ZccPanelToolOptions): boolean;
   /** Select the resource whose independent host side panel this page displays. Null restores the page default. */
   setPanelScope?(scope: ZccPanelScope | null): void;
+  /**
+   * Publish the page/resource beside the assistant, independently of panel ownership.
+   * Update on navigation (including list/settings states); clear on unmount.
+   * Every message captures lightweight identity and its optional mention reference,
+   * retaining the target through queueing and retries. The agent reads live content
+   * on demand with page_context_read through this plugin's server provider;
+   * resource ids/paths never grant file access.
+   * Absent on older hosts, which still supply basic plugin/page identity.
+   */
+  setPageContext?(context: ZccPageContext | null): void;
   /**
    * Open one of this plugin's `detachable` project tabs in its own window, or
    * focus that window when it is already open. Resolves `false` outside the

@@ -89,6 +89,7 @@ export type {
   ZccPanelAgentOptions,
   ZccPanelToolOptions,
   ZccPanelScope,
+  ZccPageContext,
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSdkApp,

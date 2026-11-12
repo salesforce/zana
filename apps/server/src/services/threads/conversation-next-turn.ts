@@ -23,6 +23,7 @@ function textFromDeferredPayload(payload: string): string {
     return input
       .flatMap((part) => {
         if (!part || typeof part !== 'object') return [];
+        if ((part as { visibility?: unknown }).visibility === 'agent-only') return [];
         if ((part as { type?: unknown }).type === 'text' && typeof (part as { text?: unknown }).text === 'string') {
           return [(part as { text: string }).text];
         }

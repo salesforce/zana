@@ -2,7 +2,8 @@ import type { ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ExternalLink, MessageSquare } from 'lucide-react';
-import { PluginAssistantContext } from '../../../plugins/plugin-assistant-context.js';
+import { PluginAssistantContext, PluginAssistantPageContext } from '../../../plugins/plugin-assistant-context.js';
+import type { PluginPageContext } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCommandComposer } from '../../ThreadCommandComposer.js';
 import { ComposerDraftProvider } from '../../composer/ComposerDraft.js';
 import { product } from '../../../lib/product-client.js';
@@ -53,6 +54,7 @@ export function PanelAgentTab({
   projectId,
   resourceLabel,
   pluginPanel,
+  capturePageContext,
   onCreated,
   onOpenConversation
 }: {
@@ -68,6 +70,7 @@ export function PanelAgentTab({
   /** Human-readable identity of the page resource this assistant belongs to. */
   resourceLabel?: string;
   pluginPanel?: { pluginId: string; panel: string; view?: string };
+  capturePageContext?: () => PluginPageContext;
   onCreated: (threadId: string) => void;
   onOpenConversation?: (conversation: PanelConversation) => void;
 }) {
@@ -77,9 +80,11 @@ export function PanelAgentTab({
       <div className="panel-agent-tab is-chat" data-testid="panel-agent-tab-chat">
         {pluginPanel ? <OpenAsThreadBar threadId={threadId} /> : null}
         <Suspense fallback={null}>
+          <PluginAssistantPageContext.Provider value={capturePageContext ?? null}>
           <PluginAssistantContext.Provider value={pluginPanel?.pluginId ?? null}>
             <ThreadDetailLazy threadId={threadId} embedded />
           </PluginAssistantContext.Provider>
+          </PluginAssistantPageContext.Provider>
         </Suspense>
       </div>
     );
@@ -94,6 +99,7 @@ export function PanelAgentTab({
           ? 'Ask about this page. The agent knows which plugin it is next to.'
           : 'Ask an agent without leaving this page.'}
       </p>
+      <PluginAssistantPageContext.Provider value={capturePageContext ?? null}>
       <ComposerDraftProvider sessionKey={pluginPanel ? JSON.stringify(['panel', pluginPanel.pluginId, pluginPanel.panel, projectId ?? draftProjectId ?? null, pluginPanel.view ?? null]) : undefined}>
       <ThreadCommandComposer
         autoFocus
@@ -107,6 +113,7 @@ export function PanelAgentTab({
         onCreated={onCreated}
       />
       </ComposerDraftProvider>
+      </PluginAssistantPageContext.Provider>
     </div>
   );
 }

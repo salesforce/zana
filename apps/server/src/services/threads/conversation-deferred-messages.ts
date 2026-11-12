@@ -174,21 +174,25 @@ export function releaseDeferredConversationMessageEditHold(
   return releaseDeferredThreadMessageEditHold(ctx.db, { id: itemId, threadId });
 }
 
-function isTextPart(part: unknown): part is { type: 'text'; text: string; mentions?: unknown } {
-  return !!part && typeof part === 'object' && (part as { type?: unknown }).type === 'text';
+function isAgentOnlyPart(part: unknown): boolean {
+  return !!part && typeof part === 'object' && (part as { visibility?: unknown }).visibility === 'agent-only';
 }
 
-/** Swap the message text for the edit, keeping attachments and every other payload field. */
+function isEditableTextPart(part: unknown): part is { type: 'text'; text: string; mentions?: unknown } {
+  return !!part && typeof part === 'object' && (part as { type?: unknown }).type === 'text' && !isAgentOnlyPart(part);
+}
+
+/** Swap visible message text, keeping the submitted page snapshot, attachments and other fields. */
 function withEditedText(payload: DeferredSendPayload, text: string): DeferredSendPayload {
   if (!Array.isArray(payload.input)) return { ...payload, input: text };
   const parts: unknown[] = payload.input;
-  const firstText = parts.find(isTextPart);
-  const rest = parts.filter((part) => !isTextPart(part));
+  const firstText = parts.find(isEditableTextPart);
+  const rest = parts.filter((part) => !isEditableTextPart(part));
   if (text.trim().length === 0) return { ...payload, input: rest };
   // Mention offsets belong to the old text, so they cannot survive an edit.
   const replacement = { ...(firstText ?? {}), type: 'text', text, mentions: [] };
   if (!firstText) return { ...payload, input: [replacement, ...rest] };
-  return { ...payload, input: parts.flatMap((part) => (part === firstText ? [replacement] : isTextPart(part) ? [] : [part])) };
+  return { ...payload, input: parts.flatMap((part) => (part === firstText ? [replacement] : isEditableTextPart(part) ? [] : [part])) };
 }
 
 /**
@@ -214,7 +218,7 @@ export function saveDeferredConversationMessageEdit(
     throw new ThreadCreateError(422, 'malformed-queued-send', 'Queued message cannot be edited');
   }
   const edited = withEditedText(payload, args.text);
-  if (typeof edited.input === 'string' ? edited.input.trim().length === 0 : Array.isArray(edited.input) && edited.input.length === 0) {
+  if (typeof edited.input === 'string' ? edited.input.trim().length === 0 : Array.isArray(edited.input) && edited.input.every(isAgentOnlyPart)) {
     throw new ThreadCreateError(400, 'empty_queued_message', 'Queued message cannot be empty');
   }
   const result = updateDeferredThreadMessagePayload(ctx.db, {

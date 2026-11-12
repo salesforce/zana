@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-const composerProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown>, session: null as unknown }));
+const composerProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown>, session: null as unknown, capture: null as null | (() => unknown) }));
 const threads = vi.hoisted(() => ({
   panelConversations: vi.fn(async (_pluginId: string, _panel?: string): Promise<Array<{ id: string; title: string | null; updatedAt: number }>> => []),
   openAsThread: vi.fn(async (_threadId: string) => ({ thread: {} }))
@@ -15,12 +15,13 @@ vi.mock('../../ThreadCommandComposer.js', () => ({
   ThreadCommandComposer: (props: { onCreated?: (threadId: string) => void }) => {
     composerProps.last = props;
     composerProps.session = useComposerDraft();
+    composerProps.capture = usePluginAssistantPageContext();
     return <button type="button" onClick={() => props.onCreated?.('t-new')}>Send</button>;
   }
 }));
 vi.mock('../../../views/threads/ThreadDetailView.js', () => ({
   ThreadDetail: ({ threadId, embedded }: { threadId: string; embedded?: boolean }) => (
-    <div data-testid="thread-detail" data-assistant-owner={usePluginAssistantOwner() ?? 'none'}>{`${threadId}:${embedded ? 'embedded' : 'full'}`}</div>
+    <div data-testid="thread-detail" data-page-context={JSON.stringify(usePluginAssistantPageContext()?.())} data-assistant-owner={usePluginAssistantOwner() ?? 'none'}>{`${threadId}:${embedded ? 'embedded' : 'full'}`}</div>
   )
 }));
 vi.mock('../../../lib/product-client.js', () => ({ product: { threads } }));
@@ -31,7 +32,7 @@ const viewWindow = vi.hoisted(() => ({ target: null as null | { pluginId: string
 vi.mock('../../../lib/pluginViewSurface.js', () => ({ getPluginViewTarget: () => viewWindow.target }));
 vi.mock('../../../plugins/plugin-view-windows.js', () => ({ showInMainWindow: viewWindow.show }));
 
-import { usePluginAssistantOwner } from '../../../plugins/plugin-assistant-context.js';
+import { usePluginAssistantOwner, usePluginAssistantPageContext } from '../../../plugins/plugin-assistant-context.js';
 import { useComposerDraft } from '../../composer/ComposerDraft.js';
 import { resetComposerSessions } from '../../composer/composer-session.js';
 import { PANEL_AGENT_RECENT_LIMIT, PanelAgentTab } from './PanelAgentTab.js';
@@ -49,6 +50,18 @@ afterEach(() => {
 });
 
 describe('PanelAgentTab', () => {
+  it('provides current page capture to both the initial composer and an existing chat', async () => {
+    let current = { pluginId: 'p1', panel: 'main', page: { title: 'Page A' } };
+    const capture = () => structuredClone(current);
+    const ui = (threadId?: string) => <PanelAgentTab threadId={threadId} pluginPanel={binding} capturePageContext={capture} onCreated={vi.fn()} />;
+    const view = render(ui());
+    expect(composerProps.capture?.()).toEqual(current);
+    current = { ...current, page: { title: 'Page B' } };
+    expect(composerProps.capture?.()).toEqual(current);
+    view.rerender(ui('t1'));
+    expect((await screen.findByTestId('thread-detail')).dataset.pageContext).toBe(JSON.stringify(current));
+  });
+
   it.each([binding, undefined])('provides the assistant owner only for plugin-bound chats (%j)', async (pluginPanel) => {
     render(<PanelAgentTab threadId="t1" pluginPanel={pluginPanel} onCreated={vi.fn()} />);
     expect((await screen.findByTestId('thread-detail')).getAttribute('data-assistant-owner')).toBe(pluginPanel?.pluginId ?? 'none');

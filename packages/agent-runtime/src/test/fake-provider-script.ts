@@ -12,6 +12,7 @@ interface ActiveTurn {
 }
 
 interface PendingToolCall {
+  reportResult?: boolean;
   delayMs: number;
   responseText: string;
   threadId: string;
@@ -510,6 +511,7 @@ function beginTurn(threadId: string, input: unknown, clientRequestId?: string, o
     };
     params.turnId = plan.toolTurnIdMode === "active" ? turnId : null;
     pendingToolCalls.set(toolCallId, {
+      reportResult: /(?:^|\s)report_tool_result(?:\s|$)/.test(inputText),
       delayMs: plan.delayMs,
       responseText: `Tool called: ${plan.toolName}`,
       threadId,
@@ -616,7 +618,9 @@ function handleToolResult(message: JsonRecord): boolean {
   pendingToolCalls.delete(messageId);
   scheduleTurnCompletion(
     pendingToolCall.threadId,
-    pendingToolCall.responseText,
+    pendingToolCall.reportResult
+      ? `${pendingToolCall.responseText}\n${JSON.stringify(message.result ?? message.error ?? null)}`
+      : pendingToolCall.responseText,
     pendingToolCall.delayMs,
   );
   return true;

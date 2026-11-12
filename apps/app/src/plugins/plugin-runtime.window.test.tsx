@@ -33,7 +33,7 @@ import { installPluginRuntime } from './plugin-runtime.js';
 import { PluginRuntimeContext } from './PluginSlotBoundary.js';
 import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
 import { getPluginViewTitle } from './plugin-view-title.js';
-import { onPluginPanelScopeRequest, PluginPagePanelProvider } from './plugin-page-panel.js';
+import { getPluginPageContext, onPluginPanelScopeRequest, PluginPagePanelProvider } from './plugin-page-panel.js';
 import { hrefForPluginProjectTab } from './plugin-nav-href.js';
 
 const studio = { pluginId: 'sales', tabId: 'studio', projectId: 'p-1' };
@@ -299,6 +299,32 @@ it('delegates panel scope selection to the enclosing page only', () => {
     navigate.setPanelScope?.(null);
     expect(show).toHaveBeenLastCalledWith(null);
   } finally { off(); }
+});
+
+it('binds page publication setters to the host route without changing the panel page', () => {
+  installPluginRuntime();
+  const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: PluginSdkApp }).__ZCC_PLUGIN_RUNTIME__!;
+  const page = { pluginId: 'sales', page: 'studio' };
+  const routeA = {};
+  const routeB = {};
+  let navigate!: ZccNavigate;
+  function Probe() { navigate = runtime.useZccNavigate(); return null; }
+  const tree = (publicationScope: object) => <MemoryRouter>
+    <PluginPagePanelProvider page={page} publicationScope={publicationScope}>
+      <PluginRuntimeContext.Provider value={{ pluginId: 'sales', generation: 0 }}><Probe /></PluginRuntimeContext.Provider>
+    </PluginPagePanelProvider>
+  </MemoryRouter>;
+  const view = render(tree(routeA));
+  const oldPublisher = navigate.setPageContext!;
+  oldPublisher({ title: 'A' });
+  view.rerender(tree(routeB));
+  expect(getPluginPageContext(page, routeB)).toBeNull();
+  navigate.setPageContext!({ title: 'B' });
+  oldPublisher({ title: 'Late A' });
+  oldPublisher(null);
+  expect(getPluginPageContext(page, routeB)).toEqual({ title: 'B' });
+  navigate.setPageContext!(null);
+  expect(getPluginPageContext(page, routeB)).toBeNull();
 });
 
 it('registers a close handler only for its own detached plugin and disposes it', async () => {

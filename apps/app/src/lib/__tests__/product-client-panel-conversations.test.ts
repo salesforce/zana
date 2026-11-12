@@ -4,6 +4,21 @@ import { product } from '../product-client.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
+it('carries page snapshots independently on initial and follow-up requests', async () => {
+  const fetch = vi.fn().mockImplementation(async () => Response.json({ ok: true, thread: { id: 't1' } }));
+  vi.stubGlobal('fetch', fetch);
+  const pageContext = { pluginId: 'notes', panel: 'main', page: { title: 'Document A', resourceId: 'a' } };
+  await product.threads.create({ projectId: 'p1', providerId: 'codex', input: [{ type: 'text', text: 'Explain' }], pageContext });
+  expect(JSON.parse(fetch.mock.calls[0][1].body).pageContext).toEqual(pageContext);
+  const next = { ...pageContext, page: { title: 'Settings' } };
+  await product.threads.send('t1', [{ type: 'text', text: 'Help' }], 'queue-if-active', { pageContext: next });
+  expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ mode: 'queue-if-active', pageContext: next });
+  await product.threads.send('t1', 'Ordinary follow-up');
+  expect(JSON.parse(fetch.mock.calls[2][1].body)).not.toHaveProperty('pageContext');
+  await product.threads.create({ projectId: 'p2', providerId: 'codex', input: [{ type: 'text', text: 'Ordinary conversation' }] });
+  expect(JSON.parse(fetch.mock.calls[3][1].body)).toEqual({ projectId: 'p2', providerId: 'codex', input: [{ type: 'text', text: 'Ordinary conversation' }] });
+});
+
 it('lists a plugin panel\'s conversations, scoped to the panel when given', async () => {
   const rows = [{ id: 't1', title: 'Chat', updatedAt: 2 }];
   const fetch = vi.fn().mockImplementation(async () => Response.json({ threads: rows }));

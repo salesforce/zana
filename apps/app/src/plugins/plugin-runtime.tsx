@@ -39,7 +39,7 @@ import { openPluginThreadPanel } from './plugin-thread-panel.js';
 import { registerPluginWindowCloseHandler } from './plugin-window-close.js';
 import { claimPluginViewTitle, sanitizePluginViewTitle, type PluginViewTitleSlot } from './plugin-view-title.js';
 import { requestPluginPanelAgent } from './plugin-panel-agent.js';
-import { requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from './plugin-page-panel.js';
+import { requestPluginPageContext, requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen, usePluginPagePublicationScope } from './plugin-page-panel.js';
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
 import { deepLinksFor } from './plugin-deep-links.js';
@@ -192,6 +192,7 @@ function useZccNavigateImpl(): ZccNavigate {
   // The side panel beside this page: requests go to it, not to another pane's.
   const enclosing = usePluginPagePanel();
   const sidePanel = enclosing?.pluginId === pluginId ? enclosing : undefined;
+  const publicationScope = usePluginPagePublicationScope();
   return useMemo(() => {
     const view = getPluginViewTarget();
     // A plugin view window has no routes: send in-app navigation to the main window.
@@ -258,11 +259,14 @@ function useZccNavigateImpl(): ZccNavigate {
       setPanelScope(scope) {
         requestPluginPanelScope(pluginId, scope, sidePanel);
       },
+      setPageContext(context) {
+        requestPluginPageContext(pluginId, context, sidePanel, publicationScope);
+      },
       openPanelTool(options) {
         return requestPluginPanelTool(pluginId, options, sidePanel);
       }
     };
-  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId, sidePanel, enclosing]);
+  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId, sidePanel, enclosing, publicationScope]);
 }
 
 function useZccDeepLinksImpl(): ZccDeepLinks {

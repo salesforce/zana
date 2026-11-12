@@ -196,6 +196,7 @@ describe('metadata consent', () => {
 describe('previewing files', () => {
   it('keeps Ask agent available when a doc has no files to select', async () => {
     const harness = createHarness({ panelAgent: true });
+    const navigationCalls = () => harness.navigateCalls.filter(call => call.method !== 'setPageContext');
     const doc = simpleDoc(harness);
     vi.spyOn(harness.store, 'get').mockReturnValue({ ...doc, files: [] });
     renderDoc(harness, doc.id);
@@ -204,8 +205,8 @@ describe('previewing files', () => {
     fireEvent.click(screen.getByRole('button', { name: /Ask agent/ }));
     expect(screen.queryByRole('checkbox', { name: /Focus on/ })).toBeNull();
     fireEvent.click(screen.getByRole('menuitem', { name: /^Fill the gaps/ }));
-    await waitFor(() => expect(harness.navigateCalls).toHaveLength(1));
-    expect(harness.navigateCalls[0]).toMatchObject({ method: 'openPanelAgent', options: { draft: {
+    await waitFor(() => expect(navigationCalls()).toHaveLength(1));
+    expect(navigationCalls()[0]).toMatchObject({ method: 'openPanelAgent', options: { draft: {
       view: doc.id, prompt: expect.stringContaining(doc.id)
     } } });
     expect(harness.spawn).not.toHaveBeenCalled();
@@ -389,6 +390,7 @@ describe('previewing files', () => {
 
   it.each([[true, false], [true, true], [false, false], [false, true]])('hands the captured passage to the agent without quoting it into the request (panel=%s, preset=%s)', async (panelAgent, preset) => {
     const harness = createHarness({ panelAgent, contextReferences: true });
+    const navigationCalls = () => harness.navigateCalls.filter(call => call.method !== 'setPageContext');
     const doc = simpleDoc(harness, 'Tokens expire hourly.');
     renderDoc(harness, doc.id);
     const readme = await findPane('README.md');
@@ -405,12 +407,12 @@ describe('previewing files', () => {
     else fireEvent.click(screen.getByRole('button', { name: 'Start', exact: true }));
     const instruction = preset ? 'Review this design doc critically' : 'Explain this policy';
     if (panelAgent) {
-      await waitFor(() => expect(harness.navigateCalls).toHaveLength(1));
-      expect(harness.navigateCalls[0]).toMatchObject({ method: 'openPanelAgent', options: { draft: {
+      await waitFor(() => expect(navigationCalls()).toHaveLength(1));
+      expect(navigationCalls()[0]).toMatchObject({ method: 'openPanelAgent', options: { draft: {
         references: [{ version: 1, label: 'README.md (selection)', text: 'Tokens expire hourly.', source: { kind: 'plugin', pluginId: 'design-docs', resourceId: doc.id, path: 'README.md' } }],
         prompt: expect.stringContaining(instruction)
       } } });
-      const draft = (harness.navigateCalls[0] as { options: { draft: { prompt: string } } }).options.draft;
+      const draft = (navigationCalls()[0] as { options: { draft: { prompt: string } } }).options.draft;
       expect(draft.prompt).not.toContain('Tokens expire hourly.');
       expect(harness.spawn).not.toHaveBeenCalled();
     } else {
@@ -1189,6 +1191,7 @@ describe('agents', () => {
 
   it('prefills the side panel composer so the user picks the harness', async () => {
     const harness = createHarness({ panelAgent: true });
+    const navigationCalls = () => harness.navigateCalls.filter(call => call.method !== 'setPageContext');
     const doc = simpleDoc(harness);
     renderDoc(harness, doc.id, { path: 'api.md' });
     await findPane('api.md');
@@ -1200,7 +1203,7 @@ describe('agents', () => {
     expect((screen.getByRole('checkbox', { name: /Focus on/ }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole('menuitem', { name: /^Review/ }));
     await waitFor(() => expect(screen.queryByText('Ask an agent')).toBeNull());
-    const [review] = harness.navigateCalls as Array<{ method: string; options: { draft: { prompt: string; projectId?: string }; title: string } }>;
+    const [review] = navigationCalls() as Array<{ method: string; options: { draft: { prompt: string; projectId?: string }; title: string } }>;
     // The doc id names the view, so the conversation joins this doc's Agents list.
     expect(review).toMatchObject({ method: 'openPanelAgent', options: { draft: { projectId: 'p1', view: doc.id }, title: 'Simple' } });
     expect(review!.options.draft.prompt).toContain(`id ${doc.id}`);
@@ -1213,8 +1216,8 @@ describe('agents', () => {
     const prompt = screen.getByPlaceholderText(/^Or describe what you want/);
     fireEvent.change(prompt, { target: { value: 'Compare caching strategies' } });
     fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true });
-    await waitFor(() => expect(harness.navigateCalls).toHaveLength(2));
-    const custom = (harness.navigateCalls[1] as { options: { draft: { prompt: string } } }).options.draft.prompt;
+    await waitFor(() => expect(navigationCalls()).toHaveLength(2));
+    const custom = (navigationCalls()[1] as { options: { draft: { prompt: string } } }).options.draft.prompt;
     expect(custom).toContain('Compare caching strategies');
     expect(custom).not.toContain('Focus on');
     expect(harness.spawn).not.toHaveBeenCalled();
