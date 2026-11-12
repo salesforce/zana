@@ -140,13 +140,13 @@ describe('service passes deferred seats into cheapest-fit dispatch', () => {
 
   it('carries a slot mcpServers list through the default admission input and persists it', async () => fixture(async (filePath) => {
     const { service, store } = build(filePath, [
-      { slotId: 'engineer:0', model: 'claude-haiku-4', mcpServers: ['zcc-inbox'] },
+      { slotId: 'engineer:0', model: 'claude-haiku-4', mcpServers: ['zcc-inbox'], skillAllowlist: ['review'] },
       { slotId: 'engineer:1', model: 'claude-opus-4' }
     ]);
     const started = await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-default', summary: 'Build', slots: [{ initialTask: 'Run tests' }], coordinationMode: 'job-team', workUnits: [unit] } as never);
     if (!started.ok) throw new Error(started.message);
     const record = (await store.get('execution-1'))!;
-    expect(record.resolvedModels.find((m) => m.slotId === 'engineer:0')?.mcpServers).toEqual(['zcc-inbox']);
+    expect(record.resolvedModels.find((m) => m.slotId === 'engineer:0')).toMatchObject({ mcpServers: ['zcc-inbox'], skillAllowlist: ['review'] });
     expect(record.resolvedModels.find((m) => m.slotId === 'engineer:1')).not.toHaveProperty('mcpServers');
   }));
 
