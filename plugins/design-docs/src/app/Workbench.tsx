@@ -35,7 +35,7 @@ import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, ty
 import { needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
-import { anyOpen, buildSections, collapseAll, expandAll, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
+import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useRemovedProjects, useTemplates, useUnassignedDocs, useUnassignedProjects } from './hooks.js';
 import { UNASSIGNED_LABEL, UnassignedProjectsDialog } from './UnassignedProjects.js';
@@ -304,15 +304,7 @@ function DocList({
     [sections, unassignedList.length]
   );
   const someOpen = anyOpen(sectionKeys, collapsedRaw);
-  const collapseHint = projectFilter
-    ? 'Show All projects to use'
-    : !grouped
-      ? 'Group by project to collapse sections'
-      : searching
-        ? 'Clear search to collapse or expand sections'
-        : someOpen
-          ? 'Collapse all sections'
-          : 'Expand all sections';
+  const collapseHint = collapseAllHint({ projectFilter: !!projectFilter, grouped, searching, someOpen });
   const projectLabel = (doc: DesignDocSummary, section: ListSection) => {
     if (section.kind === 'project') return null;
     if (showProjects) return doc.projectId ? names.get(doc.projectId) ?? 'Unknown project' : 'Global';
@@ -398,7 +390,7 @@ function DocList({
             <IconButton
               icon={grouped ? Layers : List}
               label="Group by project"
-              hint={projectFilter ? 'Show All projects to group' : grouped ? 'Grouped by project: click for a flat list' : 'Flat list: click to group by project'}
+              hint={groupHint({ projectFilter: !!projectFilter, grouped })}
               active={byProject}
               pressed={grouped}
               disabled={!!projectFilter}

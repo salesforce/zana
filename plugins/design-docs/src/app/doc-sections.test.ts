@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DesignDocSummary } from '../shared/contract.js';
-import { anyOpen, buildSections, collapseAll, expandAll, parseCollapsed, projectSwatch, toggleCollapsed } from './doc-sections.js';
+import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, projectSwatch, toggleCollapsed } from './doc-sections.js';
 
 const actor = { kind: 'user' as const, label: 'You', threadId: null };
 
@@ -119,5 +119,22 @@ describe('collapsed sections', () => {
     expect(anyOpen(keys, collapseAll(keys))).toBe(false);
     expect(anyOpen(keys, '["pinned"]')).toBe(true);
     expect(anyOpen(keys, 'not json')).toBe(true);
+  });
+});
+
+describe('control hints', () => {
+  it('explains the group toggle state', () => {
+    expect(groupHint({ projectFilter: true, grouped: true })).toBe('Show All projects to group');
+    expect(groupHint({ projectFilter: false, grouped: true })).toBe('Grouped by project: click for a flat list');
+    expect(groupHint({ projectFilter: false, grouped: false })).toBe('Flat list: click to group by project');
+  });
+
+  it('explains why collapse-all is disabled, in priority order, else the action', () => {
+    const base = { projectFilter: false, grouped: true, searching: false, someOpen: true };
+    expect(collapseAllHint({ ...base, projectFilter: true, grouped: false, searching: true })).toBe('Show All projects to use');
+    expect(collapseAllHint({ ...base, grouped: false, searching: true })).toBe('Group by project to collapse sections');
+    expect(collapseAllHint({ ...base, searching: true })).toBe('Clear search to collapse or expand sections');
+    expect(collapseAllHint(base)).toBe('Collapse all sections');
+    expect(collapseAllHint({ ...base, someOpen: false })).toBe('Expand all sections');
   });
 });

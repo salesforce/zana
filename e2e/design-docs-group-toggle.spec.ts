@@ -1,20 +1,18 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 
-test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
-
-test('Design Docs list: group toggle flips, collapse-all works, and controls disable instead of vanishing', async ({ app, home }, testInfo) => {
-  test.setTimeout(150_000);
-  const win = app.window;
-  await win.setViewportSize({ width: 1100, height: 800 }).catch(() => undefined);
+async function installDesignDocs(win: Page): Promise<void> {
   const install = await win.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'design-docs' }));
   expect(install).toMatchObject({ ok: true });
   await expect.poll(() => win.evaluate(async () =>
     (await window.cc.pluginApps.list()).find((p) => p.id === 'design-docs')?.status
   ), { timeout: 30_000 }).toBe('running');
+}
 
-  for (const name of ['alpha', 'beta']) {
+async function seedProjectDocs(win: Page, home: string, names: string[]): Promise<void> {
+  for (const name of names) {
     const projectPath = join(home, `design-docs-group-${name}`);
     mkdirSync(projectPath, { recursive: true });
     await win.evaluate(async ({ path, title }) => {
@@ -23,6 +21,38 @@ test('Design Docs list: group toggle flips, collapse-all works, and controls dis
       await window.cc.pluginApps.callRpc('design-docs', 'create', { title, template: 'technical', projectId: result.value.id });
     }, { path: projectPath, title: `${name} spec` });
   }
+}
+
+/** Rendered rectangle of the button's ::after tooltip (anchored to the button's right edge, below it). */
+async function tooltipRect(button: Locator) {
+  return button.evaluate((el) => {
+    const tip = getComputedStyle(el, '::after');
+    const px = (value: string) => parseFloat(value) || 0;
+    const extra = tip.boxSizing === 'border-box' ? 0
+      : px(tip.paddingLeft) + px(tip.paddingRight) + px(tip.borderLeftWidth) + px(tip.borderRightWidth);
+    const rect = el.getBoundingClientRect();
+    const width = px(tip.width) + extra;
+    return { content: tip.content, left: rect.right - width, right: rect.right, width, viewport: window.innerWidth };
+  });
+}
+
+async function expectTooltipInWindow(button: Locator, text: string): Promise<void> {
+  await button.hover();
+  await expect.poll(async () => (await tooltipRect(button)).content).toContain(text);
+  const tip = await tooltipRect(button);
+  expect(tip.width).toBeGreaterThan(0);
+  expect(tip.left).toBeGreaterThanOrEqual(0);
+  expect(tip.right).toBeLessThanOrEqual(tip.viewport);
+}
+
+test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+
+test('Design Docs list: group toggle flips, collapse-all works, and controls disable instead of vanishing', async ({ app, home }, testInfo) => {
+  test.setTimeout(150_000);
+  const win = app.window;
+  await win.setViewportSize({ width: 1100, height: 800 }).catch(() => undefined);
+  await installDesignDocs(win);
+  await seedProjectDocs(win, home, ['alpha', 'beta']);
 
   await win.getByRole('button', { name: /^Design Docs/ }).click();
   const group = win.getByRole('button', { name: 'Group by project' });
@@ -31,14 +61,8 @@ test('Design Docs list: group toggle flips, collapse-all works, and controls dis
   await expect(group).toHaveAttribute('aria-pressed', 'true');
   await expect(win.getByText('alpha spec')).toBeVisible();
 
-  // Tooltip is visible, not clipped by the window, and instant (data-tip, not native title).
-  await group.hover();
-  const tip = await group.evaluate((el) => {
-    const style = getComputedStyle(el, '::after');
-    return { content: style.content, left: el.getBoundingClientRect().right, win: window.innerWidth };
-  });
-  expect(tip.content).toContain('Grouped by project');
-  expect(tip.left).toBeLessThanOrEqual(tip.win);
+  // Tooltip is instant (data-tip, not native title) and its full rectangle stays inside the window.
+  await expectTooltipInWindow(group, 'Grouped by project');
   await testInfo.attach('grouped', { body: await win.screenshot(), contentType: 'image/png' });
 
   // Collapse all hides every row; the same button then expands them.
@@ -55,8 +79,7 @@ test('Design Docs list: group toggle flips, collapse-all works, and controls dis
   await expect(collapse).toBeDisabled();
   await expect(win.getByText('alpha spec')).toBeVisible();
   await testInfo.attach('flat', { body: await win.screenshot(), contentType: 'image/png' });
-  await group.hover();
-  await expect.poll(() => group.evaluate((el) => getComputedStyle(el, '::after').content)).toContain('Flat list');
+  await expectTooltipInWindow(group, 'Flat list');
 
   // Search disables collapse-all even when grouped.
   await group.click();
