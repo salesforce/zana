@@ -1,7 +1,8 @@
 import { product } from '../lib/product-client.js';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
+import { stableDraftJson } from '../lib/stable-draft-json.js';
 import type { Persona, SquadTransport, Team, TeamInput, TeamSlot } from '@zana-ai/zcc-domain/product';
 import { usePersonas, useData, useUi } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
@@ -56,7 +57,20 @@ export function SquadEditor({
   onClose: () => void;
 }) {
   const [mode, setMode] = useState(initialMode);
+  const [isDirty, setIsDirty] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
+  const requestCloseCurrent = useRef<() => void>(() => {});
+  const requestClose = useRef(() => requestCloseCurrent.current()).current;
+
+  useEffect(() => {
+    setMode(initialMode);
+    setIsDirty(false);
+  }, [initialMode, team?.id]);
+
+  requestCloseCurrent.current = () => {
+    if (isDirty && !window.confirm('Discard unsaved squad edits?')) return;
+    onClose();
+  };
 
   useEffect(() => {
     const node = ref.current;
@@ -64,16 +78,16 @@ export function SquadEditor({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        requestClose();
       }
     };
     node.addEventListener('keydown', onKey);
     node.focus();
     return () => node.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && requestClose()}>
       <div
         ref={ref}
         className="modal persona-editor-modal team-editor-modal"
@@ -83,9 +97,15 @@ export function SquadEditor({
         tabIndex={-1}
       >
         {mode === 'view' && team ? (
-          <TeamDetail team={team} onClose={onClose} onEdit={() => setMode('edit')} />
+          <TeamDetail team={team} onClose={requestClose} onEdit={() => setMode('edit')} />
         ) : (
-          <TeamForm team={team} onClose={onClose} />
+          <TeamForm
+            key={team?.id ?? 'new'}
+            team={team}
+            onClose={requestClose}
+            onCloseWithoutDiscard={onClose}
+            onDirtyChange={setIsDirty}
+          />
         )}
       </div>
     </div>
@@ -230,8 +250,68 @@ interface SlotDraft {
   freshContextPerUnit: boolean;
 }
 
+interface TeamDraft {
+  name: string;
+  icon: string;
+  description: string;
+  initialPrompt: string;
+  orchestratorPersonaId: string;
+  defaultProjectId: string;
+  worktreeIsolation: boolean | undefined;
+  worktreeOnComplete: 'merge' | 'delete' | undefined;
+  routingEnforced: boolean | undefined;
+  retainOrchestrator: boolean;
+  leanWorkers: boolean;
+  transport: SquadTransport;
+  defaultPlanning: '' | 'infer' | 'provided';
+  launchApproval: '' | LaunchApproval;
+  slots: SlotDraft[];
+}
+
+function draftForTeam(team: Team | null): TeamDraft {
+  const orchestratorPersonaId = team?.orchestratorPersonaId ?? '';
+  const slots = (team?.slots ?? []).map((slot) => ({
+    personaId: slot.personaId,
+    quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, slot.quantity ?? 1)),
+    label: slot.label ?? '',
+    startOnDemand: slot.startOnDemand === true,
+    freshContextPerUnit: slot.freshContextPerUnit === true
+  }));
+  // Keep a standalone orchestrator in the draft, matching what the form renders and saves.
+  if (orchestratorPersonaId && !slots.some((slot) => slot.personaId === orchestratorPersonaId)) {
+    slots.unshift({ personaId: orchestratorPersonaId, quantity: 1, label: '', startOnDemand: false, freshContextPerUnit: false });
+  }
+  return {
+    name: team?.name ?? '',
+    icon: team?.icon ?? '',
+    description: team?.description ?? '',
+    initialPrompt: team?.initialPrompt ?? '',
+    orchestratorPersonaId,
+    defaultProjectId: team?.defaultProjectId ?? '',
+    worktreeIsolation: team?.worktreeIsolation,
+    worktreeOnComplete: team?.worktreeOnComplete === 'merge' || team?.worktreeOnComplete === 'delete' ? team.worktreeOnComplete : undefined,
+    routingEnforced: team?.routingEnforced,
+    retainOrchestrator: team?.retainOrchestrator === true,
+    leanWorkers: team?.leanWorkers === true,
+    transport: team?.transport ?? 'CLI',
+    defaultPlanning: team?.defaultPlanning ?? '',
+    launchApproval: team?.launchApproval ?? '',
+    slots
+  };
+}
+
 /** The create/edit form. */
-function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void }) {
+function TeamForm({
+  team,
+  onClose,
+  onCloseWithoutDiscard,
+  onDirtyChange
+}: {
+  team: Team | null;
+  onClose: () => void;
+  onCloseWithoutDiscard: () => void;
+  onDirtyChange: (isDirty: boolean) => void;
+}) {
   const pushToast = useUi((s) => s.pushToast);
   const allPersonas = usePersonas((s) => s.personas);
   const projects = useData((s) => s.projects);
@@ -258,48 +338,39 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   const editingExisting = !!team && !isForeignSource;
   const keepsId = editingExisting; // user OR builtin shadow keeps the id
 
-  const [name, setName] = useState(team?.name ?? '');
-  const [icon, setIcon] = useState(team?.icon ?? '');
-  const [description, setDescription] = useState(team?.description ?? '');
-  const [initialPrompt, setInitialPrompt] = useState(team?.initialPrompt ?? '');
-  const [orchestratorPersonaId, setOrchestratorPersonaId] = useState(
-    team?.orchestratorPersonaId ?? ''
-  );
-  const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
-  const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(team?.worktreeIsolation);
-  const [worktreeOnComplete, setWorktreeOnComplete] = useState<'merge' | 'delete' | undefined>(
-    team?.worktreeOnComplete === 'merge' || team?.worktreeOnComplete === 'delete' ? team.worktreeOnComplete : undefined
-  );
-  const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
-  const [retainOrchestrator, setRetainOrchestrator] = useState(team?.retainOrchestrator === true);
-  const [leanWorkers, setLeanWorkers] = useState(team?.leanWorkers === true);
-  const [transport, setTransport] = useState<SquadTransport>(team?.transport ?? 'CLI');
-  const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(team?.defaultPlanning ?? '');
-  const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(team?.launchApproval ?? '');
-  const [slots, setSlots] = useState<SlotDraft[]>(() => {
-    const base = (team?.slots ?? []).map((s) => ({
-      personaId: s.personaId,
-      quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)),
-      label: s.label ?? '',
-      startOnDemand: s.startOnDemand === true,
-      freshContextPerUnit: s.freshContextPerUnit === true
-    }));
-    // A squad may name its orchestrator as a persona that is NOT among the
-    // worker slots (launch gives the orchestrator its own tab regardless — see
-    // expandTeamSlots). Surface that standalone orchestrator as a crowned row so
-    // it is visible and editable here instead of silently vanishing from the
-    // form. Saving folds it into `slots`; expansion dedupes it back out.
-    const orchId = team?.orchestratorPersonaId;
-    if (orchId && !base.some((s) => s.personaId === orchId)) {
-      base.unshift({ personaId: orchId, quantity: 1, label: '', startOnDemand: false, freshContextPerUnit: false });
-    }
-    return base;
-  });
+  const initialDraft = useRef(draftForTeam(team));
+  const [name, setName] = useState(initialDraft.current.name);
+  const [icon, setIcon] = useState(initialDraft.current.icon);
+  const [description, setDescription] = useState(initialDraft.current.description);
+  const [initialPrompt, setInitialPrompt] = useState(initialDraft.current.initialPrompt);
+  const [orchestratorPersonaId, setOrchestratorPersonaId] = useState(initialDraft.current.orchestratorPersonaId);
+  const [defaultProjectId, setDefaultProjectId] = useState(initialDraft.current.defaultProjectId);
+  const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(initialDraft.current.worktreeIsolation);
+  const [worktreeOnComplete, setWorktreeOnComplete] = useState<'merge' | 'delete' | undefined>(initialDraft.current.worktreeOnComplete);
+  const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(initialDraft.current.routingEnforced);
+  const [retainOrchestrator, setRetainOrchestrator] = useState(initialDraft.current.retainOrchestrator);
+  const [leanWorkers, setLeanWorkers] = useState(initialDraft.current.leanWorkers);
+  const [transport, setTransport] = useState<SquadTransport>(initialDraft.current.transport);
+  const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(initialDraft.current.defaultPlanning);
+  const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(initialDraft.current.launchApproval);
+  const [slots, setSlots] = useState<SlotDraft[]>(initialDraft.current.slots);
   const [saving, setSaving] = useState(false);
+
+  const draft = {
+    name, icon, description, initialPrompt, orchestratorPersonaId, defaultProjectId,
+    worktreeIsolation, worktreeOnComplete, routingEnforced, retainOrchestrator,
+    leanWorkers, transport, defaultPlanning, launchApproval, slots
+  } satisfies TeamDraft;
+  const isDirty = stableDraftJson(draft) !== stableDraftJson(initialDraft.current);
+
+  useLayoutEffect(() => {
+    onDirtyChange(isDirty);
+  }, [isDirty, onDirtyChange]);
 
   const tabs = totalTabs(slots.map((s) => ({ personaId: s.personaId, quantity: s.quantity })));
   const hasValidSlot = slots.some((s) => s.personaId.trim().length > 0);
   const canSave = name.trim().length > 0 && hasValidSlot && !saving;
+  const isBuiltinTeam = team?.id.startsWith('builtin:') ?? false;
 
   const addSlot = () => {
     const firstUnused =
@@ -404,23 +475,25 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       return;
     }
     pushToast(`Saved squad “${result.value.name}”`, 'info');
-    onClose();
+    onCloseWithoutDiscard();
   };
 
   const remove = async () => {
     if (!team) return;
+    const action = isBuiltinTeam ? 'reset this squad to its built-in default' : 'delete this squad';
+    if (isDirty && !window.confirm(`Discard unsaved squad edits and ${action}?`)) return;
     const result = await product.teams.delete(team.id);
     if (!result.ok) {
       pushToast(`Delete failed: ${result.message}`, 'error');
       return;
     }
     pushToast(
-      team.id.startsWith('builtin:')
+      isBuiltinTeam
         ? `Reset “${team.name}” to the built-in default`
         : `Deleted squad “${team.name}”`,
       'info'
     );
-    onClose();
+    onCloseWithoutDiscard();
   };
 
   const isUserTeam = team?.source === 'user';
@@ -819,13 +892,13 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
         </p>
       </div>
       <footer className="modal-footer persona-form-footer">
-        {(isUserTeam || team?.source === 'builtin') && team ? (
+        {(isUserTeam || isBuiltinTeam) && team ? (
           <button
             className="btn danger persona-form-delete"
             onClick={remove}
-            title={team.source === 'builtin' ? 'Reset to the built-in default' : 'Delete this squad'}
+            title={isBuiltinTeam ? 'Reset to the built-in default' : 'Delete this squad'}
           >
-            <Trash2 size={14} /> {team.source === 'builtin' ? 'Reset' : 'Delete'}
+            <Trash2 size={14} /> {isBuiltinTeam ? 'Reset' : 'Delete'}
           </button>
         ) : null}
         <button className="btn" onClick={onClose}>
