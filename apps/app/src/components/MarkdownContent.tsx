@@ -173,7 +173,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   storage = false,
   filePathHints,
   lightboxItems: providedLightboxItems,
-  copyableCode = true
+  copyableCode = true,
+  fileLinksAsAnchors = false
 }: {
   text: string;
   mermaidTheme?: 'dark' | 'default';
@@ -187,6 +188,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   filePathHints?: readonly string[];
   lightboxItems?: readonly { src: string; alt: string }[];
   copyableCode?: boolean;
+  /** Leave file-like hrefs as plain anchors for a host (e.g. a plugin) that resolves them in its own click handler. */
+  fileLinksAsAnchors?: boolean;
 }) {
   const preview = boundedText(text);
   const body = unwrapBareFence(preview);
@@ -280,7 +283,7 @@ export const MarkdownContent = memo(function MarkdownContent({
             const localTarget = classifyMarkdownFileTarget(
               typeof props.href === 'string' ? props.href : undefined
             );
-            if (localTarget) {
+            if (localTarget && !(fileLinksAsAnchors && localTarget.kind === 'file' && !threadId)) {
               if (localTarget.kind === 'file' && threadId) {
                 return (
                   <MarkdownFileLink token={localTarget.path} lineNumber={localTarget.lineNumber} href={props.href} title={props.title ?? localTarget.path} threadId={threadId} projectId={projectId} hints={filePathHints} link>

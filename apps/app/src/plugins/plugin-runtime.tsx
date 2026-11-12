@@ -309,7 +309,7 @@ function ThreadChatImpl(props: ThreadChatProps) {
 function MarkdownImpl({ content, className }: { content: string; className?: string }) {
   return (
     <div className={className}>
-      <MarkdownContent text={content} />
+      <MarkdownContent text={content} fileLinksAsAnchors />
     </div>
   );
 }
