@@ -1,8 +1,17 @@
 import { product } from '../lib/product-client.js';
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult, HarnessRoleTarget } from '@zana-ai/zcc-domain/harness-adapter';
-import { PERSONA_REASONING_LEVELS, type HarnessFamily, type LaunchProfileId, type Persona, type PersonaInput, type PersonaReasoningLevel } from '@zana-ai/zcc-domain/product';
+import {
+  ALWAYS_ALLOWED_MCP_SERVERS,
+  ALWAYS_ALLOWED_SKILLS,
+  PERSONA_MCP_NAME_MAX,
+  PERSONA_MCP_SERVERS_MAX,
+  PERSONA_REASONING_LEVELS,
+  mcpAllowlistCovers,
+  sanitizePersonaMcpServers,
+  uninstalledAllowlistSkills,
+  type HarnessFamily, type LaunchProfileId, type Persona, type PersonaInput, type PersonaReasoningLevel } from '@zana-ai/zcc-domain/product';
 import {
   harnessFamilyOf,
   profileLabel,
@@ -15,7 +24,9 @@ import { ImprovePromptButton } from './ImprovePromptButton.js';
 import { StencilForm } from './ui/Skeleton.js';
 import { HarnessOptionSelect } from './HarnessOptionSelect.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
-import { useUninstalledSkills } from '../lib/use-uninstalled-skills.js';
+import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
+import { useMcpCatalogue } from '../lib/use-mcp-catalogue.js';
+import { AllowlistField, type AllowlistEntryState, type AllowlistSuggestion } from './AllowlistField.js';
 import { effectivePersonaRouting } from '../lib/personaRouting.js';
 import { fileManagerName } from '../lib/file-manager.js';
 import { stableDraftJson } from '../lib/stable-draft-json.js';
@@ -58,6 +69,8 @@ function parseList(raw: string): string[] {
 /** Notice shown with the skills field: it is a context filter, never a sandbox. */
 export const SKILLS_FILTER_NOTICE =
   'A context filter, not a security boundary. zcc-inbox is always allowed. On Claude CLI sessions, a plugin none of whose skills are listed is switched off whole, including any hooks, tool servers, or agents it ships; a plugin with only some of its skills listed stays on. A persona that lists no skills also drops user-level tool servers on Claude CLI sessions. Enforced for Claude only (CLI and Modern); other agents launch with all skills available and show an inbox notice.';
+export const MCP_FILTER_NOTICE =
+  'A context filter, not a security boundary: it limits which MCP servers load, to cut startup context and cost. zcc-inbox is always allowed. Tool-level control stays in the Claude tool policy. Remote (SSH) sessions that cannot deliver MCP servers ignore this list.';
 export const SKILLS_LEAN_NOTICE =
   "This persona's skills apply even when a Team's lean workers option is on.";
 
@@ -385,6 +398,8 @@ export function PersonaEditor({
   };
   const onEscape = useEffectEvent((event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
+    // An open typeahead list consumes Escape (closes itself) instead of the dialog.
+    if ((event.target as HTMLElement | null)?.getAttribute?.('aria-expanded') === 'true') return;
     event.stopPropagation();
     requestClose();
   });
@@ -495,6 +510,15 @@ function PersonaDetail({
             <p className="settings-help persona-form-hint">{SKILLS_FILTER_NOTICE}</p>
           </div>
         )}
+        {persona.mcpServers !== undefined && (
+          <div className="persona-detail-block" data-testid="persona-mcp-detail">
+            <span className="persona-detail-label">MCP servers</span>
+            <p className="persona-detail-desc">
+              {persona.mcpServers.length ? persona.mcpServers.join(', ') : 'No MCP servers beyond zcc-inbox'}
+            </p>
+            <p className="settings-help persona-form-hint">{MCP_FILTER_NOTICE}</p>
+          </div>
+        )}
         {(persona.allowedTools?.length || persona.deniedTools?.length || persona.addDirs?.length) ? (
           <ClaudePersonaOptions
             allowedTools={persona.allowedTools?.join(', ') ?? ''}
@@ -551,6 +575,66 @@ const REASONING_LEVEL_LABELS: Record<PersonaReasoningLevel, string> = {
   max: 'Max'
 };
 
+/** MCP-specific inline warnings and the one-line effective result. All advisory: none blocks a save. */
+function McpFieldWarnings({
+  restricted,
+  entries,
+  entryState,
+  catalogue,
+  harnessLabel,
+  legacy
+}: {
+  restricted: boolean;
+  entries: string[];
+  entryState: (entry: string) => AllowlistEntryState;
+  catalogue: ReturnType<typeof useMcpCatalogue>;
+  harnessLabel?: string;
+  legacy: boolean;
+}) {
+  const states = entries.map((entry) => ({ entry, state: entryState(entry) }));
+  const missing = states.filter((s) => s.state.kind === 'missing').map((s) => s.entry);
+  const unavailable = states.filter((s) => s.state.kind === 'unavailable');
+  const ambiguous = states.filter((s) => s.state.kind === 'ambiguous');
+  let effective: string;
+  if (!restricted) effective = 'Unrestricted: every user, project and plugin server loads.';
+  else if (harnessLabel) effective = `No effect on ${harnessLabel}.`;
+  else if (catalogue.status === 'ready') {
+    const loaded = new Set<string>();
+    for (const entry of entries) for (const s of catalogue.servers) if (mcpAllowlistCovers(entry, s)) loaded.add(s.key);
+    effective = `Restricted: ${loaded.size} of ${catalogue.servers.length} known servers, plus zcc-inbox.`;
+  } else effective = `Restricted to ${entries.length} named ${entries.length === 1 ? 'server' : 'servers'}, plus zcc-inbox.`;
+  return (
+    <>
+      <p className="settings-help persona-form-hint" data-testid="persona-mcp-effective">{effective}</p>
+      {restricted && harnessLabel && (
+        <p className="settings-help persona-form-hint allowlist-warn" role="status" data-testid="persona-mcp-harness-note">
+          {harnessLabel} cannot take MCP servers from Zana, so this list is ignored there. It still applies on harnesses that support MCP.
+        </p>
+      )}
+      {restricted && legacy && (
+        <p className="settings-help persona-form-hint allowlist-warn" role="status" data-testid="persona-mcp-legacy-warning">
+          This persona has a saved MCP list. It now means <em>only</em> these servers (plus zcc-inbox); older versions added them to the defaults. Review the list, then save.
+        </p>
+      )}
+      {restricted && missing.length > 0 && (
+        <p className="settings-help persona-form-hint allowlist-warn" role="status" data-testid="persona-mcp-missing-warning">
+          Not installed: {missing.join(', ')}. You can still save; launches will warn until they are installed.
+        </p>
+      )}
+      {restricted && unavailable.map(({ entry, state }) => (
+        <p key={entry} className="settings-help persona-form-hint allowlist-warn" role="status" data-testid="persona-mcp-unavailable-warning">
+          {entry} is installed but unavailable{state.kind === 'unavailable' && state.reason ? ` (${state.reason})` : ''}. It may start without sign-in.
+        </p>
+      ))}
+      {restricted && ambiguous.map(({ entry, state }) => (
+        <p key={entry} className="settings-help persona-form-hint allowlist-warn" role="status" data-testid="persona-mcp-ambiguous-warning">
+          &quot;{entry}&quot; matches {state.kind === 'ambiguous' ? state.matches.length : 0} sources ({state.kind === 'ambiguous' ? state.matches.join(', ') : ''}). All of them load. Use a pinned name (plugin:id:name) to pick one.
+        </p>
+      ))}
+    </>
+  );
+}
+
 /** The create/edit form. */
 function PersonaForm({
   persona,
@@ -591,7 +675,10 @@ function PersonaForm({
   const [microVmImage, setMicroVmImage] = useState(persona?.microVmImage ?? '');
   // Unset (unrestricted) and an empty list (no skills beyond zcc-inbox) are different states.
   const [restrictSkills, setRestrictSkills] = useState(persona?.skills !== undefined);
-  const [skills, setSkills] = useState((persona?.skills ?? []).join(', '));
+  const [skills, setSkills] = useState<string[]>(persona?.skills ?? []);
+  // Same tri-state for MCP servers: absent = unrestricted, [] = zcc-inbox only, list = exactly those.
+  const [restrictMcp, setRestrictMcp] = useState(persona?.mcpServers !== undefined);
+  const [mcpServers, setMcpServers] = useState<string[]>(persona?.mcpServers ?? []);
   const [saving, setSaving] = useState(false);
 
   // The microVM image field is only meaningful when the (experimental) microVM
@@ -601,7 +688,31 @@ function PersonaForm({
   // harness profile. Main re-authorizes it against the closed image allowlist at
   // spawn (Rule 1), so a stale value is rejected, not honored.
   const microVmEnabled = useData((s) => s.microVmEnabled);
-  const missingSkills = useUninstalledSkills(restrictSkills ? parseList(skills) : undefined, restrictSkills, projectId);
+  const installedSkills = useInstalledSkillNames(restrictSkills, projectId);
+  const missingSkills = useMemo(
+    () => (restrictSkills ? uninstalledAllowlistSkills(skills, installedSkills) : []),
+    [restrictSkills, skills, installedSkills]
+  );
+  const skillSuggestions = useMemo<AllowlistSuggestion[]>(
+    () => (installedSkills ?? []).map((value) => ({ value })),
+    [installedSkills]
+  );
+  const mcpCatalogue = useMcpCatalogue(restrictMcp);
+  const mcpSuggestions = useMemo<AllowlistSuggestion[]>(() => {
+    if (mcpCatalogue.status !== 'ready') return [];
+    return mcpCatalogue.servers.map((s) => ({
+      value: s.key,
+      hint: s.available ? s.source : `${s.source}, unavailable`
+    }));
+  }, [mcpCatalogue]);
+  const mcpEntryState = (entry: string): AllowlistEntryState => {
+    if (mcpCatalogue.status !== 'ready' || (ALWAYS_ALLOWED_MCP_SERVERS as readonly string[]).includes(entry)) return { kind: 'ok' };
+    const matches = mcpCatalogue.servers.filter((s) => mcpAllowlistCovers(entry, s));
+    if (matches.length === 0) return { kind: 'missing' };
+    if (matches.every((s) => !s.available)) return { kind: 'unavailable', reason: matches[0]?.reason };
+    if (matches.length > 1 && !/^(plugin|ext):/.test(entry)) return { kind: 'ambiguous', matches: matches.map((s) => s.key) };
+    return { kind: 'ok' };
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -640,6 +751,12 @@ function PersonaForm({
     });
   };
 
+  // D7: a non-agent harness (shell) takes no MCP servers from Zana, so the list is ignored there.
+  const mcpIgnoredBy = baseProfile && !providerCapabilities(baseProfile).isAgent ? profileLabel(baseProfile) : undefined;
+  // D1: a stored explicit value predates the allowlist meaning; flag it until the user changes it.
+  const legacyMcp = persona?.mcpServers !== undefined && restrictMcp
+    && mcpServers.length === persona.mcpServers.length && mcpServers.every((m, i) => m === persona.mcpServers![i]);
+
   const draftInput = (): PersonaInput => ({
     name: name.trim(),
     icon: icon || undefined,
@@ -670,8 +787,8 @@ function PersonaForm({
     // Portable persona capabilities remain stored even when a selected harness
     // cannot express them. Existing MCP references are legacy Claude-local data:
     // preserve them on edit, but do not advertise an inert free-text control.
-    mcpServers: persona?.mcpServers,
-    skills: restrictSkills ? parseList(skills) : undefined,
+    mcpServers: restrictMcp ? mcpServers : undefined,
+    skills: restrictSkills ? skills : undefined,
     // Persist the microVM image only while the feature is enabled AND a value
     // is set; base-profile-agnostic (applies in the microVM env for any CLI).
     microVmImage: microVmEnabled && microVmImage.trim() ? microVmImage.trim() : undefined
@@ -694,7 +811,9 @@ function PersonaForm({
     addDirs,
     microVmImage,
     restrictSkills,
-    skills
+    skills,
+    restrictMcp,
+    mcpServers
   });
   if (baselineRef.current === null) baselineRef.current = draftJson;
   const dirty = baselineRef.current !== draftJson;
@@ -919,26 +1038,23 @@ function PersonaForm({
               />
               <ImprovePromptButton value={initialPrompt} onChange={setInitialPrompt} />
             </div>
-            <div className="scheduler-form-field" data-testid="persona-skills-field">
-              <label htmlFor="persona-restrict-skills">
-                <input
-                  id="persona-restrict-skills"
-                  type="checkbox"
-                  checked={restrictSkills}
-                  onChange={(e) => setRestrictSkills(e.target.checked)}
-                />{' '}
-                Restrict skills
-              </label>
-              {restrictSkills && (
-                <input
-                  id="persona-skills"
-                  type="text"
-                  aria-label="Allowed skills"
-                  value={skills}
-                  onChange={(e) => setSkills(e.target.value)}
-                  placeholder="Leave empty for none, or: review, plugin:skill, :name"
-                />
-              )}
+            <AllowlistField
+              testId="persona-skills-field"
+              checkboxId="persona-restrict-skills"
+              title="Restrict skills"
+              restricted={restrictSkills}
+              onRestrictedChange={setRestrictSkills}
+              entries={skills}
+              onEntriesChange={setSkills}
+              inputLabel="Add allowed skill"
+              commaTextLabel="Allowed skills"
+              placeholder="Type a skill name, plugin:skill or :name"
+              suggestions={skillSuggestions}
+              alwaysAllowed={ALWAYS_ALLOWED_SKILLS}
+              entryState={(entry) => (missingSkills.includes(entry) ? { kind: 'missing' } : { kind: 'ok' })}
+              exactHint="Exactly these skills load, plus always-allowed ones."
+              emptyHint="Empty list: no skills load except always-allowed ones."
+            >
               {missingSkills.length > 0 && (
                 <p className="settings-help persona-form-hint" role="status" data-testid="persona-skills-uninstalled-warning">
                   Not installed: {missingSkills.join(', ')}. You can still save; launches will warn until they are installed.
@@ -951,7 +1067,43 @@ function PersonaForm({
                   This built-in is restricted by default. Duplicate it and edit the copy to change that; a copy always wins.
                 </p>
               )}
-            </div>
+            </AllowlistField>
+            <AllowlistField
+              testId="persona-mcp-field"
+              checkboxId="persona-restrict-mcp"
+              title="Restrict MCP servers"
+              restricted={restrictMcp}
+              onRestrictedChange={setRestrictMcp}
+              entries={mcpServers}
+              onEntriesChange={setMcpServers}
+              inputLabel="Allowed MCP servers"
+              placeholder="Type a server name, or plugin:id:name to pin a source"
+              suggestions={mcpSuggestions}
+              suggestionsStatus={mcpCatalogue.status === 'ready' ? 'ready' : mcpCatalogue.status === 'unavailable' ? 'unavailable' : 'loading'}
+              alwaysAllowed={ALWAYS_ALLOWED_MCP_SERVERS}
+              entryState={mcpEntryState}
+              maxEntries={PERSONA_MCP_SERVERS_MAX}
+              validateEntry={(entry) => (sanitizePersonaMcpServers([entry]) === null
+                ? `"${entry}" is not a valid server name: no wildcards or control characters, at most ${PERSONA_MCP_NAME_MAX} characters.`
+                : undefined)}
+              exactHint="Exactly these servers load, plus zcc-inbox."
+              emptyHint="Empty list: no servers load except zcc-inbox."
+            >
+              <McpFieldWarnings
+                restricted={restrictMcp}
+                entries={mcpServers}
+                entryState={mcpEntryState}
+                catalogue={mcpCatalogue}
+                harnessLabel={mcpIgnoredBy}
+                legacy={legacyMcp}
+              />
+              <p className="settings-help persona-form-hint">{MCP_FILTER_NOTICE}</p>
+              {persona?.source === 'builtin' && persona.mcpServers !== undefined && (
+                <p className="settings-help persona-form-hint">
+                  This built-in is restricted by default. Duplicate it and edit the copy to change that; a copy always wins.
+                </p>
+              )}
+            </AllowlistField>
             {/* Claude owns these facets today. Promote a facet to the portable
                 section only after another adapter implements it. */}
             <ClaudePersonaOptions
