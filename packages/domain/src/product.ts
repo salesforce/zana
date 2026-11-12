@@ -4728,10 +4728,14 @@ export interface Persona {
   /** Portable additional-context directories, applied where supported. */
   addDirs?: string[];
   /**
-   * Legacy Claude-local MCP references. Existing values remain readable and are
-   * resolved against the launcher's internal registry; unknown names are ignored.
-   * New personas do not expose this until MCP references have a real catalogue
-   * and harness-neutral delivery contract.
+   * MCP server allowlist (a context filter, NOT a security boundary). Entries
+   * are server names: a bare `name` covers user, project and plugin servers
+   * with that name; `plugin:<id>:<name>` and `ext:<id>:<name>` pin a source.
+   * No globs and no `server:tool` selectors (tools stay with
+   * `allowedTools`/`deniedTools`). Absent = unrestricted; an explicit empty
+   * array = no servers beyond the always-allowed ones; a list = exactly those
+   * servers. Resolve with {@link effectiveMcpServers}, which always adds
+   * {@link ALWAYS_ALLOWED_MCP_SERVERS}.
    */
   mcpServers?: string[];
   /**
@@ -4893,6 +4897,70 @@ export function skillAllowlistEntryMatches(entry: string, skill: string): boolea
 /** True when any allowlist entry covers `skill`; an undefined allowlist covers everything. */
 export function skillAllowlistCovers(allowlist: readonly string[] | undefined, skill: string): boolean {
   return allowlist === undefined || allowlist.some((entry) => skillAllowlistEntryMatches(entry, skill));
+}
+
+/** MCP servers every restricted session keeps: delivers inbox and Squad `execution.*` tools. */
+export const ALWAYS_ALLOWED_MCP_SERVERS = ['zcc-inbox'] as const;
+/** Persona MCP allowlist bounds. 63 + the always-allowed server stays within the 64-server seed cap. */
+export const PERSONA_MCP_SERVERS_MAX = 63;
+export const PERSONA_MCP_NAME_MAX = 128;
+// eslint-disable-next-line no-control-regex
+const MCP_ENTRY_FORBIDDEN_RE = /[\u0000-\u001f\u007f*?[\]{}]/;
+
+/**
+ * Validate a persisted/renderer `Persona.mcpServers` value. Returns `undefined`
+ * for absent input, a trimmed + deduped list (empty list preserved) when valid,
+ * and `null` when malformed (not an array, too many entries, a non-string,
+ * empty or oversized entry, or one with control or glob characters). Colons are
+ * allowed: contributed servers are keyed `plugin:<id>:<name>` / `ext:<id>:<name>`.
+ */
+export function sanitizePersonaMcpServers(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > PERSONA_MCP_SERVERS_MAX) return null;
+  const out = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') return null;
+    const name = entry.trim();
+    if (!name || name.length > PERSONA_MCP_NAME_MAX || MCP_ENTRY_FORBIDDEN_RE.test(name)) return null;
+    out.add(name);
+  }
+  return [...out];
+}
+
+/**
+ * Main-side resolution of the MCP allowlist for one slot. An explicit persona
+ * list wins and always contains {@link ALWAYS_ALLOWED_MCP_SERVERS}; otherwise
+ * `undefined` = unrestricted. Lean workers do not preset a list: MCP leanness
+ * stays owned by the skills path. Renderer input is never an argument.
+ */
+export function effectiveMcpServers(
+  _team: Pick<Team, 'leanWorkers'> | undefined,
+  persona: Pick<Persona, 'mcpServers'> | undefined,
+  _slotRole?: 'worker' | 'orchestrator'
+): string[] | undefined {
+  if (persona?.mcpServers === undefined) return undefined;
+  return [...new Set([...ALWAYS_ALLOWED_MCP_SERVERS, ...persona.mcpServers])];
+}
+
+/** A catalogue MCP server as seen by the matcher: `key` is the launch key, `name` the bare name. */
+export interface McpServerRef {
+  key: string;
+  source: 'user' | 'project' | 'plugin' | 'extension' | (string & {});
+  name: string;
+}
+
+/**
+ * True when allowlist `entry` covers `server`. A bare name covers user, project
+ * and plugin servers with that name. `plugin:<id>:<name>` and `ext:<id>:<name>`
+ * cover only the server of that source with exactly that key, so a user server
+ * literally named with such a prefix is never matched. No globs; entries are
+ * server-level, so a `name:tool` shaped entry is just a key that matches nothing.
+ */
+export function mcpAllowlistCovers(entry: string, server: McpServerRef): boolean {
+  if (entry.startsWith('plugin:')) return server.source === 'plugin' && server.key === entry;
+  if (entry.startsWith('ext:')) return server.source === 'extension' && server.key === entry;
+  if (server.source !== 'user' && server.source !== 'project' && server.source !== 'plugin') return false;
+  return server.name === entry;
 }
 
 /** Slot-id prefix of the squad orchestrator seat (`orchestrator:<personaId>`). */
