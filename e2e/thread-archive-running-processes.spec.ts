@@ -52,7 +52,7 @@ test(`archiving from ${entry} with a running background process warns, then sett
     void dialog.accept();
   });
   if (entry === 'overflow') await window.getByTestId('thread-overflow-trigger').click();
-  else await window.getByTestId('titlebar-thread-tabs').getByRole('tab').click({ button: 'right' });
+  else await window.getByTestId('application-tabs').getByRole('tab').click({ button: 'right' });
   await window.getByRole('menuitem', { name: 'Archive' }).click();
   await expect.poll(() => prompts.length).toBe(1);
   expect(prompts[0]).toContain('This agent still has a background process running, like a dev server. Ending its session stops it.');
@@ -61,9 +61,9 @@ test(`archiving from ${entry} with a running background process warns, then sett
   await expect.poll(async () => Boolean((await thread()).archivedAt)).toBe(true);
   await expect.poll(async () => (await thread()).activity?.activeBackgroundCommandCount).toBe(0);
   if (entry === 'tab menu') {
-    await expect(window.getByTestId('titlebar-thread-tabs').getByRole('tab')).toHaveCount(0);
+    await expect(window.getByTestId('application-tabs').getByRole('tab')).toHaveCount(0);
     await expect(window).toHaveURL(/\/agents$/);
-    await window.getByTestId('titlebar-thread-tabs').getByLabel('All open threads').click();
+    await window.getByTestId('application-tabs').getByLabel('All open tabs').click();
     await expect(window.getByRole('button', { name: 'Reopen closed tab', exact: true })).toHaveCount(0);
   }
 });

@@ -1,8 +1,9 @@
+import { MachineProjectAddMenu } from '../setup/MachineProjectAddMenu.js';
+import { useSetupNavigation } from '../setup/useSetupNavigation.js';
 import { useHosts } from '../../hooks/useHosts.js';
 import { useProjectAvailability } from '../../hooks/useProjectAvailability.js';
 import { projectAvailabilityLabel } from '../../lib/machine-project-client.js';
 import { groupProjectsByMachine, machineProjectMatches, newThreadLocationPath, type MachineProjectGroup } from '../../lib/machine-projects.js';
-import { AddMachineProjectDialog } from '../AddMachineProjectDialog.js';
 import { MachineProjectsDialog } from '../MachineProjectsDialog.js';
 import './machine-projects.css';
 import { ProjectIconPicker } from './ProjectIconPicker.js';
@@ -26,7 +27,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Search, Trash2, X, Check, Pencil, FolderOpen, LayoutDashboard, Settings2, Network, GitBranch, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus, Laptop, Server } from 'lucide-react';
+import { Plus, Search, Trash2, X, Check, Pencil, FolderOpen, FolderPlus, LayoutDashboard, Settings2, Network, GitBranch, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus, Laptop, Server } from 'lucide-react';
 import { ProjectOpenActions } from './ProjectOpenActions.js';
 import {
   useData,
@@ -42,9 +43,6 @@ import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../../lib/windowScope.js';
 import { PROJECT_COLORS } from '@zana-ai/zcc-domain/project-colors';
 import { ListPaneResizer } from '../ListPaneResizer.js';
-import { AddRemoteProjectDialog } from '../AddRemoteProjectDialog.js';
-import { AddGitProjectDialog } from '../AddGitProjectDialog.js';
-import { AddLocalProjectDialog } from '../AddLocalProjectDialog.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
 import { pinDefaultProjectFirst, pinFavoriteProjectsFirst } from './project-rail.js';
@@ -70,9 +68,7 @@ import { resolveIcon } from '../../lib/resolveIcon.js';
 import { listCreateProjectActions, listProjectMenuActions, subscribePluginSlots } from '../../plugins/plugin-slots.js';
 import { createProjectActionContext, projectMenuNavigateContext } from '../../plugins/plugin-nav-href.js';
 import {
-  PluginCreateProjectDialog,
-  runCreateProjectAction,
-  type PluginCreateProjectDialogState
+  runCreateProjectAction
 } from '../../plugins/PluginCreateProjectDialog.js';
 
 interface MenuState {
@@ -195,15 +191,14 @@ export function ProjectsList({
   const projects = useData((s) => s.projects);
   const hosts = useHosts();
   const folderAvailability = useProjectAvailability(inSidebar ? projects : [], hosts);
-  const [addingMachine, setAddingMachine] = useState<MachineProjectGroup | null>(null);
+  const openSetup = useSetupNavigation();
+  const setAddingMachine = (group: MachineProjectGroup) => openSetup({ kind: 'project', group, mode: 'open' });
   const [overviewMachineId, setOverviewMachineId] = useState<string | null>(null);
   const collapsedSections = useUi(s => s.collapsedSections);
   const terminals = useData((s) => s.terminals);
   const projectNavigationOrganization = useData((s) => s.projectNavigationOrganization);
   const loadProjects = useData((s) => s.loadProjects);
   const addProjectByPath = useData((s) => s.addProjectByPath);
-  const addRemoteProject = useData((s) => s.addRemoteProject);
-  const cloneProject = useData((s) => s.cloneProject);
   const removeProject = useData((s) => s.removeProject);
   const updateProject = useData((s) => s.updateProject);
   const reorderProjects = useData((s) => s.reorderProjects);
@@ -303,19 +298,12 @@ export function ProjectsList({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [showRemoteDialog, setShowRemoteDialog] = useState(false);
-  const [showGitDialog, setShowGitDialog] = useState(false);
-  const [showLocalDialog, setShowLocalDialog] = useState(false);
-  const [createProjectDialog, setCreateProjectDialog] = useState<PluginCreateProjectDialogState | null>(null);
-  const [sidebarAddOpen, setSidebarAddOpen] = useState(false);
   const [sidebarOrganizeOpen, setSidebarOrganizeOpen] = useState(false);
-  const sidebarAddRef = useRef<HTMLDivElement | null>(null);
   const sidebarOrganizeRef = useRef<HTMLDivElement | null>(null);
   const [sidebarProjectSort, setSidebarProjectSort] = useState<SidebarProjectSort>(readSidebarProjectSort);
   const [sidebarProjectView, setSidebarProjectViewState] = useState<SidebarProjectView>(readSidebarProjectView);
   const [refreshing, setRefreshing] = useState(false);
   const launchCreateProjectAction = (action: (typeof createProjectActions)[number]) => {
-    setSidebarAddOpen(false);
     runCreateProjectAction(
       action,
       createProjectActionContext(action.pluginId, {
@@ -333,11 +321,9 @@ export function ProjectsList({
         },
         openDialog: (options) => {
           if (!action.component) return false;
-          setCreateProjectDialog({
-            action,
-            title: options?.title?.trim() || action.title,
-            params: options?.params ?? null
-          });
+          const group = machineGroups.find(row => row.primary);
+          if (!group) return false;
+          openSetup({ kind: 'plugin', group, state: { action, title: options?.title?.trim() || action.title, params: options?.params ?? null } });
           return true;
         }
       })
@@ -387,7 +373,6 @@ export function ProjectsList({
   const handleRefresh = async () => {
     if (refreshing) return;
     setMenu(null);
-    setSidebarAddOpen(false);
     setSidebarOrganizeOpen(false);
     setRefreshing(true);
     try {
@@ -424,7 +409,6 @@ export function ProjectsList({
   const openMachineMenu = (machineId: string, heading: HTMLElement, x: number, y: number) => {
     setAgentMenu(null);
     setThreadMenu(null);
-    setSidebarAddOpen(false);
     setSidebarOrganizeOpen(false);
     setMenu({ projectId: '', machineId, x, y, returnFocus: heading.querySelector<HTMLButtonElement>('.machine-project-name') ?? undefined });
   };
@@ -614,17 +598,15 @@ export function ProjectsList({
   // project-focus "+" menu. The trigger lives inside the ref so toggling the
   // open button does not immediately re-close.
   useEffect(() => {
-    if (!sidebarAddOpen && !sidebarOrganizeOpen) return;
+    if (!sidebarOrganizeOpen) return;
     const onDown = (e: globalThis.MouseEvent) => {
       const t = e.target as Node;
-      if (sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)) return;
-      setSidebarAddOpen(false);
-      setSidebarOrganizeOpen(false);
+      if (sidebarOrganizeRef.current?.contains(t)) return;
+        setSidebarOrganizeOpen(false);
     };
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setSidebarAddOpen(false);
-        setSidebarOrganizeOpen(false);
+            setSidebarOrganizeOpen(false);
       }
     };
     window.addEventListener('mousedown', onDown);
@@ -633,18 +615,18 @@ export function ProjectsList({
       window.removeEventListener('mousedown', onDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [sidebarAddOpen, sidebarOrganizeOpen]);
+  }, [sidebarOrganizeOpen]);
 
   useLayoutEffect(() => {
-    if (!sidebarAddOpen && !sidebarOrganizeOpen) return;
-    const wrap = sidebarAddOpen ? sidebarAddRef.current : sidebarOrganizeRef.current;
+    if (!sidebarOrganizeOpen) return;
+    const wrap = sidebarOrganizeRef.current;
     const menuEl = wrap?.querySelector(
-      sidebarAddOpen ? '.sidebar-projects-add-menu' : '.sidebar-projects-organize-menu'
+      '.sidebar-projects-organize-menu'
     );
     const button = wrap?.querySelector('.icon-btn');
     if (!(menuEl instanceof HTMLElement) || !(button instanceof HTMLElement)) return;
     placeFixedMenu(menuEl, button.getBoundingClientRect());
-  }, [sidebarAddOpen, sidebarOrganizeOpen]);
+  }, [sidebarOrganizeOpen]);
 
   // Clamp the context menu into the viewport. Header controls place below first
   // and flip above only when there is more room there; row clicks stay at the
@@ -1007,8 +989,7 @@ export function ProjectsList({
                   title="Organize projects"
                   onClick={() => {
                     setMenu(null);
-                    setSidebarAddOpen(false);
-                    setSidebarOrganizeOpen((open) => !open);
+                                    setSidebarOrganizeOpen((open) => !open);
                   }}
                 >
                   <ListFilter size={14} />
@@ -1086,52 +1067,7 @@ export function ProjectsList({
               >
                 <RefreshCw size={14} className={refreshing ? 'spin' : undefined} aria-hidden="true" />
               </button>
-              <div className="sidebar-projects-menu-wrap" ref={sidebarAddRef}>
-                <button
-                  className="icon-btn"
-                  aria-label="Add machine or project"
-                  aria-haspopup="menu"
-                  aria-expanded={sidebarAddOpen}
-                  title="Add machine or project"
-                  onClick={() => {
-                    setMenu(null);
-                    setSidebarOrganizeOpen(false);
-                    setSidebarAddOpen((open) => !open);
-                  }}
-                >
-                  <Plus size={14} />
-                </button>
-                {sidebarAddOpen && (
-                  <div className="sidebar-projects-add-menu" role="group" aria-label="Add a machine or project">
-                    <button type="button" onClick={() => { navigate('/settings/machines'); setSidebarAddOpen(false); }}><Server size={14} /><span>Connect a machine</span></button>
-                    <button type="button" onClick={() => { setShowLocalDialog(true); setSidebarAddOpen(false); }}>
-                      <FolderOpen size={14} />
-                      <span>Add local folder</span>
-                    </button>
-                    <button type="button" onClick={() => { setShowGitDialog(true); setSidebarAddOpen(false); }}>
-                      <GitBranch size={14} />
-                      <span>Clone from Git</span>
-                    </button>
-                    <button type="button" onClick={() => { setShowRemoteDialog(true); setSidebarAddOpen(false); }}>
-                      <Network size={14} />
-                      <span>Add remote project</span>
-                    </button>
-                    {createProjectActions.map((action) => {
-                      const Icon = resolveIcon(action.icon ?? 'Puzzle');
-                      return (
-                        <button
-                          key={`${action.pluginId}:${action.id}:${action.generation}`}
-                          type="button"
-                          onClick={() => launchCreateProjectAction(action)}
-                        >
-                          <Icon size={14} />
-                          <span>{action.title}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              <button type="button" className="icon-btn" aria-label="Connect a machine" title="Connect a machine" onClick={() => openSetup({ kind: 'machine' })}><Plus size={14} /></button>
             </>
           ) : (
             <>
@@ -1157,12 +1093,12 @@ export function ProjectsList({
           )}
         </div>
       </header>
-      <div className={inSidebar ? 'sidebar-projects-add-row' : 'list-add-row'} role="group" aria-label="Add a project">
+      {!inSidebar && <div className="list-add-row" role="group" aria-label="Add a project">
         <button
           className="list-add-btn"
           aria-label="Add a local folder as a project"
           title="Pick a local folder, or type a path, to add as a project"
-          onClick={() => setShowLocalDialog(true)}
+          onClick={() => { const group = machineGroups.find(row => row.primary); if (group) openSetup({ kind: 'project', group, mode: 'open' }); }}
         >
           <FolderOpen size={14} />
           <span>Folder</span>
@@ -1171,19 +1107,19 @@ export function ProjectsList({
           className="list-add-btn"
           aria-label="Import a project from a git URL"
           title="Clone a repository from a git URL and add it"
-          onClick={() => setShowGitDialog(true)}
+          onClick={() => { const group = machineGroups.find(row => row.primary); if (group) openSetup({ kind: 'project', group, mode: 'clone' }); }}
         >
           <GitBranch size={14} />
           <span>Git</span>
         </button>
         <button
           className="list-add-btn"
-          aria-label="Add a remote (SSH) project"
-          title="Add a remote (SSH) dev box as a project"
-          onClick={() => setShowRemoteDialog(true)}
+          aria-label="Connect a machine"
+          title="Connect a machine"
+          onClick={() => openSetup({ kind: 'machine' })}
         >
           <Network size={14} />
-          <span>Remote</span>
+          <span>Machine</span>
         </button>
         {createProjectActions.map((action) => {
           const Icon = resolveIcon(action.icon ?? 'Puzzle');
@@ -1201,7 +1137,7 @@ export function ProjectsList({
             </button>
           );
         })}
-      </div>
+      </div>}
       {projects.length > 0 && !scopedProjectId && !projectsCollapsed && (
         <div className="mobile-sticky-search">
           <div className={inSidebar ? 'sidebar-projects-filter list-filter' : 'list-filter'}>
@@ -1355,13 +1291,21 @@ export function ProjectsList({
                     <span className={`machine-project-status${group.machine.host?.status === 'connected' ? ' online' : ''}`} title={group.machine.host?.status === 'connected' ? 'Online' : group.machine.host ? 'Offline' : group.machine.hostId ? 'Unavailable' : group.machine.remote ? 'Setup needed' : 'Local'} />
                     <small>{group.machine.projects.length}</small>
                   </button>
-                  <button type="button" className="machine-project-add" aria-label={`Add project on ${group.machine.name}`} onClick={() => setAddingMachine(group.machine!)}><Plus size={13} /></button>
+                  <MachineProjectAddMenu name={group.machine.name}
+                    note={group.machine.host && group.machine.host.status !== 'connected' ? 'This machine is offline. Reconnect it to add a project.' : undefined}
+                    actions={[
+                      { id: 'folder', label: 'Add folder', icon: <FolderOpen size={14} />, disabled: Boolean(group.machine.hostId && group.machine.host?.status !== 'connected'), run: () => openSetup({ kind: 'project', group: group.machine!, mode: 'open' }) },
+                      { id: 'create', label: 'New folder', icon: <FolderPlus size={14} />, disabled: !group.machine.hostId || group.machine.host?.status !== 'connected', run: () => openSetup({ kind: 'project', group: group.machine!, mode: 'create' }) },
+                      { id: 'clone', label: 'Clone from Git', icon: <GitBranch size={14} />, disabled: !group.machine.hostId || group.machine.host?.status !== 'connected', run: () => openSetup({ kind: 'project', group: group.machine!, mode: 'clone' }) },
+                      ...(group.machine.primary ? createProjectActions.map(action => { const Icon = resolveIcon(action.icon ?? 'Puzzle'); return { id: `${action.pluginId}:${action.id}`, label: action.title, icon: <Icon size={14} />, run: () => launchCreateProjectAction(action) }; }) : []),
+                      ...(group.machine.host && group.machine.host.status !== 'connected' ? [{ id: 'reconnect', label: 'Manage connection', icon: <Server size={14} />, run: () => { void navigate('/settings/machines'); } }] : [])
+                    ]} />
                 </div>}
                 {(!group.machine || !collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)) && <div className={group.machine ? 'machine-project-children' : undefined}>
                   <SortableContext items={group.projects.map(project => isScratchWorkspaceProject(project) && group.machine && !group.machine.primary && project.hostId !== group.machine.hostId ? `${group.machine.id}:${project.id}` : project.id)} strategy={verticalListSortingStrategy}>
                     {group.projects.map(project => renderProject(group, project))}
                   </SortableContext>
-                  {group.machine && <button type="button" className="machine-project-add-child" onClick={() => setAddingMachine(group.machine!)}><Plus size={12} />Add project</button>}
+                  {group.machine && group.projects.length === 0 && <button type="button" className="machine-project-add-child" onClick={() => setAddingMachine(group.machine!)}><Plus size={12} />Add project</button>}
                 </div>}
               </div>
             ))}
@@ -1592,50 +1536,7 @@ export function ProjectsList({
         onNewThread={(group, project) => { setOverviewMachineId(null); openMachineThread(group, project); }}
         onOpenProject={project => { setOverviewMachineId(null); enterProjectFocus(project.id); }}
       />}
-      {addingMachine && <AddMachineProjectDialog group={addingMachine} onClose={() => setAddingMachine(null)} onAdded={project => { setAddingMachine(null); selectProject(project.id); }} />}
-      {showRemoteDialog && (
-        <AddRemoteProjectDialog
-          onClose={() => setShowRemoteDialog(false)}
-          onSubmit={addRemoteProject}
-          onSuccess={(id) => selectProject(id)}
-        />
-      )}
-      {showGitDialog && (
-        <AddGitProjectDialog
-          onClose={() => setShowGitDialog(false)}
-          onClone={(input) => cloneProject(input)}
-          onSuccess={(projectId) => selectProject(projectId)}
-        />
-      )}
-      {showLocalDialog && (
-        <AddLocalProjectDialog
-          onClose={() => setShowLocalDialog(false)}
-          onBrowse={() => product.projects.pickDirectory()}
-          onSubmit={async (path, hostId) => {
-            const p = await addProjectByPath(path, hostId ? { hostId } : undefined);
-            if (p) selectProject(p.id);
-            return p;
-          }}
-        />
-      )}
-      {createProjectDialog && (
-        <PluginCreateProjectDialog
-          state={createProjectDialog}
-          onClose={() => setCreateProjectDialog(null)}
-          pickDirectory={() => product.projects.pickDirectory()}
-          addProject={async (path) => {
-            const project = await addProjectByPath(path);
-            return project ? { id: project.id } : null;
-          }}
-          cloneRoot={async () => {
-            const root = await product.projects.cloneRoot().catch(() => '');
-            return root.trim() || null;
-          }}
-          navigate={(to) => {
-            void navigate(to);
-          }}
-        />
-      )}
+
     </section>
   );
 }

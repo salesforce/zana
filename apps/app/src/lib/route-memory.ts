@@ -75,7 +75,7 @@ export function nextStoredRouteMemory(
   // A project's Inbox counts as the cross-project Inbox for project Back.
   const nonProjectPath = isProjectInboxRoutePath(location.pathname)
     ? resolveProjectBackPath(current)
-    : onProject
+    : onProject || location.pathname.startsWith('/setup/')
       ? prev.lastNonProjectAppRoutePath
       : current;
   return {

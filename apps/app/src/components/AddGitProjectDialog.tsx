@@ -1,6 +1,7 @@
+import { SetupFrame, useSetupBusy, useSetupPage } from './setup/SetupFrame.js';
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { GitBranch, X } from 'lucide-react';
+import { GitBranch } from 'lucide-react';
 import type { CloneProjectResult } from '@zana-ai/zcc-domain/product';
 import { explainGitCloneError, type GitCloneError } from '../lib/git-clone-error.js';
 
@@ -55,6 +56,8 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess, fixedHostId, 
   const [nameTouched, setNameTouched] = useState(false);
   const [cloneRoot, setCloneRoot] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
+  const page = useSetupPage();
+  useSetupBusy(submitting);
   const [error, setError] = useState<GitCloneError | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
 
@@ -64,19 +67,22 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess, fixedHostId, 
     return () => { cancelled = true; };
   }, [fixedHostId]);
 
-  // Stream clone progress into the footer line.
+  // Legacy progress events have no operation id. Setup tabs use their own busy state
+  // so concurrent clones cannot show each other's output.
   useEffect(() => {
+    if (!submitting || page) return;
     const off = product.projects.onCloneProgress((line) => setProgress(line));
     return off;
-  }, []);
+  }, [submitting, page]);
 
   useEffect(() => {
+    if (page) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && !submitting) onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, submitting]);
+  }, [onClose, submitting, page]);
 
   const derived = useMemo(() => deriveName(url), [url]);
   const effectiveName = nameTouched ? name : derived;
@@ -93,7 +99,7 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess, fixedHostId, 
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
-    setProgress('Starting clone…');
+    setProgress(page ? 'Cloning repository…' : 'Starting clone…');
     try {
       const result = await onClone({
         url: url.trim(),
@@ -114,27 +120,16 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess, fixedHostId, 
     }
   };
 
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !submitting) onClose();
-      }}
-    >
-      <div
-        className="modal git-project-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Import from Git"
-      >
-        <div className="modal-header">
-          <h3>Import from Git</h3>
-          <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={submitting}>
-            <X size={14} />
+  return <SetupFrame title="Import from Git" onClose={onClose} closeOnBackdrop={!submitting} className="git-project-modal"
+    footer={<>
+          <button className="btn" onClick={onClose} disabled={submitting}>
+            Cancel
           </button>
-        </div>
+          <button className="btn primary" disabled={!canSubmit} onClick={submit}>
+            {submitting ? 'Cloning…' : error ? 'Try again' : 'Clone & add'}
+          </button>
+    </>}>
 
-        <div className="modal-body">
           <div className="modal-hint">
             Paste a repository URL to clone and add it as a project. Uses your Git
             credentials (SSH keys or credential helper). Private repositories need an account with access.
@@ -198,17 +193,5 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess, fixedHostId, 
               <span className="git-clone-progress-text">{progress}</span>
             </div>
           )}
-        </div>
-
-        <div className="modal-footer">
-          <button className="btn" onClick={onClose} disabled={submitting}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={!canSubmit} onClick={submit}>
-            {submitting ? 'Cloning…' : error ? 'Try again' : 'Clone & add'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  </SetupFrame>;
 }

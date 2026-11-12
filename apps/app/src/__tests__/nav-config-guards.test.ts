@@ -15,6 +15,7 @@ describe('CORE_NAV_IDS', () => {
         'extensions',
         'followups',
         'goals',
+        'setup',
         'home',
         'inbox',
         'projects',

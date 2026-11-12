@@ -1,3 +1,5 @@
+import { SetupPagesHost } from './components/setup/SetupPagesHost.js';
+import { SETUP_ROUTE_PATH, useSetupPages } from './components/setup/setup-pages.js';
 import {
   recoverModelCatalogsAfterWake,
   recoverStaleModelCatalogs,
@@ -97,7 +99,7 @@ import { focusInboxEntry } from './lib/inboxNavigation.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { ShellTitlebarTitle } from './components/TitlebarProjectButton.js';
-import { TitlebarThreadTabs } from './components/TitlebarThreadTabs.js';
+import { ApplicationTabs } from './components/ApplicationTabs.js';
 import { keepsProjectFocusRail, resolveShellLayout, shellTitlebarLabel } from './lib/shellLayout.js';
 import { installShortcuts } from './shortcuts.js';
 import { isLibraryPluginModule } from './lib/libraryPlugin.js';
@@ -180,6 +182,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
     <>
       <Routes>
         <Route path={APP_ROOT_ROUTE_PATH} element={null} />
+        <Route path={SETUP_ROUTE_PATH} element={null} />
         <Route path={INBOX_ROUTE_PATH} element={null} />
         <Route path={AGENTS_ROUTE_PATH} element={null} />
         <Route path={NEW_THREAD_ROUTE_PATH} element={null} />
@@ -223,6 +226,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <ProjectView />
       </div>
       <TerminalSurface />
+      <SetupPagesHost />
     </>
   );
 }
@@ -233,6 +237,7 @@ export function App() {
 }
 
 function AppShell() {
+  const hasSetupPages = useSetupPages(s => s.pages.length > 0);
   const onboardingActive = useOnboarding(s => !s.loaded || s.open);
   const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
   useRouteSync();
@@ -776,7 +781,7 @@ function AppShell() {
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
-        {threadTabsEnabled && !mobileNavigation.isCompact ? <TitlebarThreadTabs /> : (
+        {(threadTabsEnabled || hasSetupPages) && !mobileNavigation.isCompact ? <ApplicationTabs includeThreads={threadTabsEnabled} /> : (
           <ShellTitlebarTitle
             project={titlebarProject}
             label={titlebarLabel}

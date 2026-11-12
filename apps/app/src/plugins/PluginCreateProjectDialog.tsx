@@ -1,6 +1,6 @@
 import type { PluginCreateProjectActionContext, PluginCreateProjectActionRegistration } from '@zana-ai/zcc-plugin-sdk';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
-import { Modal } from '../components/Modal.js';
+import { SetupFrame as Modal } from '../components/setup/SetupFrame.js';
 import { hrefForPluginProjectTab } from './plugin-nav-href.js';
 
 export interface PluginCreateProjectDialogState {

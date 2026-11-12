@@ -34,7 +34,7 @@ import {
   ArrowDownAZ
 } from 'lucide-react';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
-import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
+import { marketplaceCatalogNeedsAutoRefresh, type MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
 import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/ExtensionConsent';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { Modal } from '@/components/Modal';
@@ -47,8 +47,9 @@ import { nextComposerRequestNonce } from '@/components/plugin/browse-hero/browse
 import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
 import { getPluginBrowseRoutePath, getPluginDetailRoutePath } from '@/lib/route-paths';
 import { filterMarketplaceEntries, type MarketplaceTag } from './marketplace-filter.js';
-import { catalogCountLabel, catalogErrorText, catalogKindLabel } from './marketplace-catalogs.js';
+import { catalogCountLabel, catalogErrorText, catalogFreshnessDetail, catalogKindLabel } from './marketplace-catalogs.js';
 import { reportHubInstallFailure } from './hub-install.js';
+import { CatalogFreshnessPill } from './CatalogFreshnessPill.js';
 import { useUi } from '@/store';
 import { PluginAuthorPage } from './PluginAuthorPage.js';
 import { PluginCatalogGrid } from './PluginCatalogCard.js';
@@ -82,7 +83,6 @@ export function MarketplaceView({
     creating ? { nonce: nextComposerRequestNonce(), seed: CREATE_PLUGIN_PROMPT } : null
   );
   const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, string>>({});
   const [rowError, setRowError] = useState<Record<string, string>>({});
@@ -102,6 +102,10 @@ export function MarketplaceView({
   const [catalogSource, setCatalogSource] = useState('');
   const [catalogBusy, setCatalogBusy] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [refreshingSources, setRefreshingSources] = useState<ReadonlySet<string>>(() => new Set());
+  const [clock, setClock] = useState(() => Date.now());
+  const refreshingRef = useRef(new Set<string>());
+  const autoRefreshed = useRef(false);
   const [installMenuOpen, setInstallMenuOpen] = useState(false);
   const installMenuRef = useRef<HTMLDivElement>(null);
 
@@ -122,8 +126,7 @@ export function MarketplaceView({
   }, [installMenuOpen]);
 
   const refresh = useCallback(() => {
-    if (!hasDesktopBridge()) { setLoading(false); setEntries([]); return; }
-    setLoading(true);
+    if (!hasDesktopBridge()) { setEntries([]); return; }
     setError(null);
     product.extensions
       .marketplaceList()
@@ -137,8 +140,7 @@ export function MarketplaceView({
       .catch((err) => {
         setError(err instanceof Error ? err.message : String(err));
         setEntries([]);
-      })
-      .finally(() => setLoading(false));
+      });
   }, []);
 
   const refreshCatalogs = useCallback(() => {
@@ -146,6 +148,41 @@ export function MarketplaceView({
       .list()
       .then((rows) => { setCatalogs(Array.isArray(rows) ? rows : []); setCatalogRevision((revision) => revision + 1); })
       .catch(() => setCatalogs([]));
+  }, []);
+
+  /** Refresh catalog sources a few at a time; failures land on each row's lastError. */
+  const refreshSources = useCallback(async (sources: string[]) => {
+    const todo = sources.filter((source) => !refreshingRef.current.has(source));
+    if (todo.length === 0) return;
+    for (const source of todo) refreshingRef.current.add(source);
+    setRefreshingSources(new Set(refreshingRef.current));
+    let index = 0;
+    await Promise.all(Array.from({ length: Math.min(3, todo.length) }, async () => {
+      while (index < todo.length) {
+        const source = todo[index++]!;
+        await Promise.resolve().then(() => product.marketplaces.refresh(source)).catch(() => undefined);
+        refreshingRef.current.delete(source);
+        setRefreshingSources(new Set(refreshingRef.current));
+      }
+    }));
+    setClock(Date.now());
+    refreshCatalogs();
+    refresh();
+  }, [refresh, refreshCatalogs]);
+
+  // Stale-while-revalidate: once per visit, quietly refresh sources that are out of date.
+  // Failed sources respect a backoff so a rate-limited catalog is not hammered on every open.
+  useEffect(() => {
+    if (autoRefreshed.current || !catalogs || catalogs.length === 0) return;
+    autoRefreshed.current = true;
+    const at = Date.now();
+    const due = catalogs.filter((row) => marketplaceCatalogNeedsAutoRefresh(row, at)).map((row) => row.source);
+    if (due.length) void refreshSources(due);
+  }, [catalogs, refreshSources]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -462,18 +499,16 @@ export function MarketplaceView({
                             <span className="ext-market-catalog-count">{catalogCountLabel(row)}</span>
                           </div>
                           <p className="ext-market-catalog-source">{row.source}</p>
-                          {catalogErr && <p className="modal-error">{catalogErr}</p>}
+                          {catalogErr ? <p className="modal-error">{catalogErr}</p> : <p className="ext-market-catalog-fresh">{catalogFreshnessDetail(row, clock)}</p>}
                         </div>
                         <div className="ext-market-catalog-actions">
                           <button
                             type="button"
                             className="settings-btn"
-                            disabled={catalogBusy !== null}
-                            onClick={() =>
-                              void runCatalogAction('Refreshing…', () => product.marketplaces.refresh(row.source))
-                            }
+                            disabled={catalogBusy !== null || refreshingSources.has(row.source)}
+                            onClick={() => void refreshSources([row.source])}
                           >
-                            <RefreshCw size={14} />
+                            <RefreshCw size={14} className={refreshingSources.has(row.source) ? 'ext-spin' : undefined} />
                             Refresh
                           </button>
                           <button
@@ -572,16 +607,6 @@ export function MarketplaceView({
                   <span className="ext-market-search-count">
                     {visibleEntries.length} of {entries?.length ?? 0}
                   </span>
-                  <button
-                    type="button"
-                    className="ext-market-search-refresh"
-                    disabled={loading}
-                    onClick={refresh}
-                    title="Reload the catalog"
-                    aria-label="Reload the catalog"
-                  >
-                    <RefreshCw size={14} className={loading ? 'ext-spin' : undefined} />
-                  </button>
                 </div>
                 <div className="settings-btn-row">
                   <select className="ext-installed-publisher-filter" aria-label="Filter by marketplace" value={tag} onChange={(e) => setTag(e.target.value as MarketplaceTag | 'all')}>
@@ -605,6 +630,13 @@ export function MarketplaceView({
                     {sortDir === 'asc' ? <ArrowUpAZ size={14} /> : <ArrowDownAZ size={14} />}
                     Name
                   </button>
+                  <CatalogFreshnessPill
+                    catalogs={catalogs ?? []}
+                    refreshing={refreshingSources}
+                    now={clock}
+                    onRefresh={(sources) => void refreshSources(sources)}
+                    onManage={() => setCatalogsOpen(true)}
+                  />
                 </div>
               </div>
             )}

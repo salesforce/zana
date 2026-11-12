@@ -140,6 +140,19 @@ describe('marketplace store', () => {
     await expect(store.remove('https://example.test/official.json')).rejects.toThrow(/cannot be removed/);
   });
 
+  it('keeps catalog order when a source is refreshed or records an error', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-order-'));
+    dirs.push(dataDir);
+    const store = createMarketplaceStore({ file: marketplaceStorePath(dataDir) });
+    const sources = ['https://example.test/a.json', 'https://example.test/b.json', 'https://example.test/c.json'];
+    for (const source of sources) await store.add(source, INDEX);
+    await store.refresh(sources[0]!, INDEX);
+    await store.recordRefreshError(sources[1]!, 'HTTP 429');
+    expect(store.list().map((row) => row.source)).toEqual(sources);
+    await store.add('https://example.test/d.json', INDEX);
+    expect(store.list().map((row) => row.source)).toEqual([...sources, 'https://example.test/d.json']);
+  });
+
   it('removes a user catalog', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-rm-'));
     dirs.push(dataDir);

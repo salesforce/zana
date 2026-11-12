@@ -60,7 +60,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'experimental',
     anchor: 'experimental-features',
     label: 'Thread tabs',
-    help: 'Enabled by default on desktop. Open threads in the main view and keep shortcuts across the title bar, with project names and live status. Closing a tab keeps the thread running. Turn off to restore inspector navigation (unless Classic session view is enabled).',
+    help: 'Enabled by default on desktop. Keep threads alongside setup pages in the tab bar, with project names and live status. Closing a thread tab keeps it running. Turn off to restore inspector navigation for threads (unless Classic session view is enabled); setup tabs remain available.',
     keywords: ['navigation', 'title bar', 'open threads', 'switch threads', 'project tabs'],
     kind: 'setting',
     value: onOff((c) => c.threadTabsEnabled, true)

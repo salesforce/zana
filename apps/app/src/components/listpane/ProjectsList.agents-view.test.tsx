@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import type { ThreadListItem } from '../../thread-store.js';
 
 const h = vi.hoisted(() => ({
+  openSetup: vi.fn(),
   hosts: [] as import('@zana-ai/zcc-domain/thread-runtime').Host[],
   projects: [] as Project[],
   terminals: {} as Record<string, TerminalSession[]>,
@@ -13,9 +14,11 @@ const h = vi.hoisted(() => ({
   hideIdleProjects: false,
   enterProjectFocus: vi.fn(), selectProject: vi.fn(), toggleSection: vi.fn(),
   addProjectByPath: vi.fn(async () => ({ id: 'added' })),
-  noActions: [] as never[]
+  noActions: [] as never[],
+  creators: [] as import('@zana-ai/zcc-plugin-sdk').PluginCreateProjectActionRegistration[]
 }));
 
+vi.mock('../setup/useSetupNavigation.js', () => ({ useSetupNavigation: () => h.openSetup }));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => h.hosts }));
 
 vi.mock('../../store.js', () => ({
@@ -42,7 +45,7 @@ vi.mock('../../plugins/plugin-slots.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   subscribePluginSlots: () => () => undefined,
   listProjectMenuActions: () => h.noActions,
-  listCreateProjectActions: () => h.noActions
+  listCreateProjectActions: () => h.creators
 }));
 vi.mock('../agentCardActions.js', () => ({
   useAgentCardActions: () => ({ menu: null, setMenu: vi.fn(), actions: {}, rename: null, closeRename: vi.fn(), submitRename: vi.fn() }),
@@ -97,6 +100,8 @@ function chooseView(label: 'Projects' | 'Agents only') {
 
 beforeEach(() => {
   localStorage.clear();
+  h.openSetup.mockClear();
+  h.creators = [];
   h.hosts = [];
   h.hideIdleProjects = false;
   h.projects = [project('p1', 'local-core'), project('p2', 'zana-builder'), project('p3', 'empty-one')];
@@ -198,7 +203,7 @@ describe('ProjectsList agents-only view', () => {
 
 
 describe('machine project hierarchy', () => {
-  it('opens projects and new threads from the overview, and completes machine-scoped folder registration', async () => {
+  it('opens projects and new threads from the overview, and opens machine-scoped setup pages', async () => {
     h.hosts = [{ id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
     h.projects = [{ ...project('api', 'API'), hostId: 'remote' }]; h.threads = []; h.terminals = {};
     renderList();
@@ -225,19 +230,17 @@ describe('machine project hierarchy', () => {
     expect(screen.getByTestId('location').textContent).toBe('/threads/new');
     openOverview();
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'Add project', exact: true }));
-    expect(screen.getByRole('dialog', { name: 'Add project on Devbox' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add project on Devbox', exact: true }));
-    fireEvent.click(screen.getByRole('button', { name: /Open existing folder/ }));
-    fireEvent.change(within(screen.getByRole('dialog', { name: 'Add project on Devbox' })).getByRole('textbox'), { target: { value: '/srv/another' } });
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Add project on Devbox' })).getByRole('button', { name: 'Add project', exact: true }));
-    await waitFor(() => expect(h.addProjectByPath).toHaveBeenCalledWith('/srv/another', { hostId: 'remote' }));
-    expect(h.selectProject).toHaveBeenCalledWith('added');
+    expect(h.openSetup).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'project', mode: 'open', group: expect.objectContaining({ hostId: 'remote' }) }));
     expect(screen.queryByRole('dialog')).toBeNull();
     const remote = document.querySelector('[data-machine-id="remote"]') as HTMLElement;
-    fireEvent.click(within(remote).getByRole('button', { name: 'Add project', exact: true }));
-    expect(screen.getByRole('dialog', { name: 'Add project on Devbox' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    expect(within(remote).queryByRole('button', { name: 'Add project', exact: true })).toBeNull();
+    for (const [label, mode] of [['Add folder', 'open'], ['New folder', 'create'], ['Clone from Git', 'clone']]) {
+      fireEvent.click(within(remote).getByRole('button', { name: 'Add project on Devbox', exact: true }));
+      fireEvent.click(screen.getByRole('menuitem', { name: label }));
+      expect(h.openSetup).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'project', mode, group: expect.objectContaining({ hostId: 'remote' }) }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Connect a machine', exact: true }));
+    expect(h.openSetup).toHaveBeenLastCalledWith({ kind: 'machine' });
     fireEvent.click(within(remote).getByRole('button', { name: 'Collapse Devbox' }));
     expect(h.toggleSection).toHaveBeenCalledWith('sidebar:machine:remote');
   });
@@ -287,4 +290,19 @@ describe('machine project hierarchy', () => {
     expect(within(dialog).getByText('Ready to start')).toBeTruthy();
     expect(within(dialog).getByText('No threads')).toBeTruthy();
   });
+});
+
+it('offers plugin project creators only on the primary machine and gives offline machines connection recovery', () => {
+  h.hosts = [{ id: 'local', name: 'Laptop', isPrimary: true, status: 'connected' }, { id: 'remote', name: 'Offline', status: 'disconnected' }] as typeof h.hosts;
+  h.creators = [{ id: 'new', pluginId: 'crm', generation: 1, title: 'CRM project', icon: 'Cloud', component: () => null, run: ctx => { ctx.openDialog({ title: 'Create CRM project' }); } }];
+  renderList();
+  fireEvent.click(within(document.querySelector('[data-machine-id="local"]') as HTMLElement).getByRole('button', { name: /^Add project on / }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'CRM project' }));
+  expect(h.openSetup).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'plugin', group: expect.objectContaining({ primary: true, hostId: 'local' }), state: expect.objectContaining({ title: 'Create CRM project' }) }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add project on Offline' }));
+  expect(screen.queryByRole('menuitem', { name: 'CRM project' })).toBeNull();
+  for (const label of ['Add folder', 'New folder', 'Clone from Git']) expect((screen.getByRole('menuitem', { name: label }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText('This machine is offline. Reconnect it to add a project.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Manage connection' }));
+  expect(screen.getByTestId('location').textContent).toBe('/settings/machines');
 });

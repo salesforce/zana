@@ -5,7 +5,7 @@ import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import { product, requestPreferredJoinCode } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { copyText } from '../../lib/copy-text.js';
-import { Modal } from '../../components/Modal.js';
+import { SetupFrame as Modal, useSetupBusy, useSetupPage } from '../../components/setup/SetupFrame.js';
 import { useHosts } from '../../hooks/useHosts.js';
 import { HostInstallStages } from '../../components/HostInstallStages.js';
 import { HostRepairAgentAction } from '../../components/HostRepairAgentAction.js';
@@ -188,6 +188,7 @@ export function AddMachineDialogView({
   onRetryMint: () => void;
   onClose: () => void;
 }) {
+  const setupPage = useSetupPage();
   const commandPanel = (
     <>
       {pairingUnavailable ? (
@@ -261,11 +262,11 @@ export function AddMachineDialogView({
   );
   return (
     <Modal
-      title="Add a machine"
+      title={setupPage ? 'Connect a machine' : 'Add a machine'}
       onClose={onClose}
       className="add-machine-modal"
       footer={(
-        <button type="button" className="settings-btn" onClick={onClose}>
+        <button type="button" className="settings-btn" onClick={onClose} disabled={connectBusy}>
           Done
         </button>
       )}
@@ -463,6 +464,7 @@ function AddMachineDialogContent({
   const [hostsWarning, setHostsWarning] = useState<string | null>(null);
   const hostsSeq = useRef(0);
   const [connectBusy, setConnectBusy] = useState(false);
+  useSetupBusy(connectBusy);
   const [connectStages, setConnectStages] = useState<HostInstallStageEntry[]>([]);
   const [connectLogs, setConnectLogs] = useState<string[]>([]);
   const [connectError, setConnectError] = useState<string | null>(null);

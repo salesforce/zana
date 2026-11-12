@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 
+const openSetup = vi.hoisted(() => vi.fn());
+vi.mock('../../components/setup/useSetupNavigation.js', () => ({ useSetupNavigation: () => openSetup }));
+
 const hostsState: { current: Host[] } = { current: [] };
 
 vi.mock('../../lib/product-client.js', () => ({
@@ -59,7 +62,7 @@ describe('MachinesTab settings-search targets', () => {
     const add = container.querySelector('button[data-settings-target="machines.add-machine"]');
     expect(add).not.toBeNull();
     fireEvent.click(add!);
-    expect(container.querySelector('[data-testid="add-machine-dialog"]')).not.toBeNull();
+    expect(openSetup).toHaveBeenCalledWith({ kind: 'machine' });
     expect(container.querySelector(`[data-settings-target="${machineSearchId('h1')}"]`)).not.toBeNull();
   });
 });

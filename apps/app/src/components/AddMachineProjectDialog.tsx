@@ -1,7 +1,7 @@
 import { product } from '../lib/product-client.js';
 import { useState } from 'react';
 import { FolderOpen, FolderPlus, GitBranch } from 'lucide-react';
-import { Modal } from './Modal.js';
+import { SetupFrame as Modal } from './setup/SetupFrame.js';
 import { AddGitProjectDialog } from './AddGitProjectDialog.js';
 import { CreateProjectFolderDialog } from './CreateProjectFolderDialog.js';
 import { useData } from '../store.js';
@@ -10,15 +10,16 @@ import { AddLocalProjectDialog } from './AddLocalProjectDialog.js';
 import { AddRemoteProjectDialog } from './AddRemoteProjectDialog.js';
 
 /** The target comes from the group. Neither this dialog nor a roster refresh may change it. */
-export function AddMachineProjectDialog({ group, onClose, onAdded }: {
+export function AddMachineProjectDialog({ group, onClose, onAdded, initialMode = 'choose' }: {
   group: MachineProjectGroup;
+  initialMode?: 'choose' | 'open' | 'create' | 'clone';
   onClose: () => void;
   onAdded: (project: { id: string }) => void;
 }) {
   const addProjectByPath = useData(s => s.addProjectByPath);
   const addRemoteProject = useData(s => s.addRemoteProject);
   const cloneProject = useData(s => s.cloneProject);
-  const [mode, setMode] = useState<'choose' | 'open' | 'create' | 'clone'>('choose');
+  const [mode, setMode] = useState<'choose' | 'open' | 'create' | 'clone'>(initialMode);
   if (group.remote && !group.hostId) return <AddRemoteProjectDialog
     fixedTarget={group.remote}
     onClose={onClose}

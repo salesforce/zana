@@ -303,6 +303,10 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-resolute@sha256:b022639ae9197f864040f92eef7b57c6d4b47db2190f77c909d8a5d902dd4b7e
       options: --ipc=host
+    # Hosted runners export SHELL; the container does not. Without it the app's
+    # default terminal shell falls back to /bin/zsh, which the image lacks.
+    env:
+      SHELL: /bin/bash
     needs: [plan, e2e-build]
     if: needs.plan.outputs.e2e == 'true'
     # Pack whole spec files by measured duration; empty shards never provision.
@@ -320,6 +324,14 @@ jobs:
       # Trust only this checkout so Git can select the affected boundaries.
       - name: Trust checked-out repository in container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # Terminal specs spawn $SHELL. Fail in seconds with a clear message, not
+      # as a "Missing shell" e2e timeout, if the image ever lacks it.
+      - name: Check the terminal shell runs in the container
+        run: |
+          if test -x "$SHELL" && "$SHELL" -c 'echo "terminal shell ok: $0"'; then exit 0; fi
+          echo "::error::SHELL=$SHELL is missing or cannot run in the e2e container; terminal specs need a working shell."
+          exit 1
 
       - name: Install tmux for native PTY coverage
         run: apt-get update && apt-get install -y --no-install-recommends tmux

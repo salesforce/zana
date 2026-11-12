@@ -98,7 +98,7 @@ beforeAll(async () => {
   for (const [path, names] of Object.entries(emptyComponents)) {
     vi.doMock(path, () => Object.fromEntries(names.map(name => [name, ({ children }: any) => <>{children}</>])));
   }
-  vi.doMock('./components/TitlebarThreadTabs.js', () => ({ TitlebarThreadTabs: () => <div data-testid="thread-tabs-shell" /> }));
+  vi.doMock('./components/ApplicationTabs.js', () => ({ ApplicationTabs: () => <div data-testid="thread-tabs-shell" /> }));
   vi.doMock('./components/ShortcutsHelp.js', () => ({
     ShortcutsHelp: ({ ctrlVPasteEnabled }: { ctrlVPasteEnabled?: boolean }) => <div data-testid="shortcuts-help">{String(ctrlVPasteEnabled)}</div>
   }));
