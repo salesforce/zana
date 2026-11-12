@@ -1,12 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const h = vi.hoisted(() => ({ append: vi.fn() }));
-vi.mock('@zana-ai/zcc-db', () => ({ appendConversationThreadEvent: h.append }));
+const h = vi.hoisted(() => ({ append: vi.fn(), thrown: undefined as unknown, throws: false }));
+vi.mock('@zana-ai/zcc-db', () => ({
+  appendConversationThreadEvent: (...args: unknown[]) => { if (h.throws) throw h.thrown; return h.append(...args); }
+}));
 
 import { emitPersonaMcpNotice, emitPersonaNotice } from './persona-notice.js';
 import { PERSONA_MCP_ALLOWLIST_OPERATION } from './persona-mcp-allowlist.js';
 
-beforeEach(() => h.append.mockReset());
+beforeEach(() => { h.append.mockReset(); h.throws = false; });
 
 describe('persona-notice', () => {
   it('records nothing for an empty message', () => {
@@ -33,8 +35,9 @@ describe('persona-notice', () => {
     expect(h.append.mock.calls[0]![1].payload.operation).toBe(PERSONA_MCP_ALLOWLIST_OPERATION);
   });
 
-  it.each([[new Error('boom'), 'boom'], ['plain string', 'plain string']])('swallows a failure (%s) and logs a trace', (thrown, text) => {
-    h.append.mockImplementation(() => { throw thrown; });
+  it.each([['Error', 'boom'], ['string', 'plain string']])('swallows a thrown %s and logs a trace', (kind, text) => {
+    h.throws = true;
+    h.thrown = kind === 'Error' ? new Error(text) : text;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(() => emitPersonaNotice({ db: {}, hub: { emit: vi.fn() } } as never, 't3', 'op', 'x')).not.toThrow();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining(text));
