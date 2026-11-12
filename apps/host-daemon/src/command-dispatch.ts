@@ -204,6 +204,7 @@ export interface CommandRuntime {
   stopWork?: (input: { threadId: string }) => Promise<void>;
   cancelPlan?: (input: { threadId: string; expectedTurnId: string }) => Promise<boolean>;
   stopBackgroundTask?: (input: { threadId: string; itemId: string }) => Promise<boolean>;
+  retainThread?: (input: { threadId: string; retainUntilMs: number }) => Promise<void>;
   deliverInteractiveResolve?: (input: {
     threadId: string;
     interactionId: string;
@@ -269,6 +270,7 @@ export function createCommandRuntime(options: {
   stopWork?: (input: { threadId: string }) => Promise<void>;
   cancelPlan?: (input: { threadId: string; expectedTurnId: string }) => Promise<boolean>;
   stopBackgroundTask?: (input: { threadId: string; itemId: string }) => Promise<boolean>;
+  retainThread?: (input: { threadId: string; retainUntilMs: number }) => Promise<void>;
   deliverInteractiveResolve?: (input: {
     threadId: string;
     interactionId: string;
@@ -328,6 +330,7 @@ export function createCommandRuntime(options: {
     stopWork: options.stopWork,
     cancelPlan: options.cancelPlan,
     stopBackgroundTask: options.stopBackgroundTask,
+    retainThread: options.retainThread,
     deliverInteractiveResolve: options.deliverInteractiveResolve,
     prepareRewind: options.prepareRewind,
     discardRewind: options.discardRewind,
@@ -820,6 +823,12 @@ export async function dispatchHostCommand(
       if (!runtime.threads.has(command.threadId)) return { threadId: command.threadId, stopped: false };
       const stopped = await runtime.stopBackgroundTask?.({ threadId: command.threadId, itemId: command.itemId }) ?? false;
       return { threadId: command.threadId, stopped };
+    }
+    case 'thread.retain': {
+      // Advisory and self-expiring: unknown threads are accepted so a hold set
+      // before a lazy resume still applies once the session is hosted again.
+      await runtime.retainThread?.({ threadId: command.threadId, retainUntilMs: command.retainUntilMs });
+      return { threadId: command.threadId, retainUntilMs: command.retainUntilMs };
     }
     case 'thread.resume':
       return applyThreadResume(runtime, command);

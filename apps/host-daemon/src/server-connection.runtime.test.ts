@@ -22,11 +22,11 @@ vi.mock('./server-socket.js', () => ({
 
 import { startEnrolledHostConnection } from './server-connection.js';
 
-afterEach(() => { mocks.adapter.stopBackgroundTask = vi.fn(); });
+afterEach(() => { mocks.adapter.stopBackgroundTask = vi.fn(); mocks.adapter.retainThread = vi.fn(); });
 
 function start() {
   startEnrolledHostConnection({ serverUrl: 'http://127.0.0.1:1/t/zcrs_abcdefghijklmnop', hostId: 'host', hostKey: 'key' });
-  return mocks.commandOptions as { stopBackgroundTask: (input: unknown) => Promise<boolean> };
+  return mocks.commandOptions as { stopBackgroundTask: (input: unknown) => Promise<boolean>; retainThread: (input: unknown) => Promise<void> };
 }
 
 it('forwards background task stops to the thread runtime', async () => {
@@ -41,4 +41,18 @@ it('reports a background stop as unsupported when the runtime has no stop', asyn
   delete mocks.adapter.stopBackgroundTask;
   const runtime = start();
   await expect(runtime.stopBackgroundTask({ threadId: 't', providerThreadId: 'p', itemId: 'i' })).resolves.toBe(false);
+});
+
+it('forwards thread retain holds to the thread runtime', async () => {
+  const runtime = start();
+  const input = { threadId: 't', retainUntilMs: 5 };
+  mocks.adapter.retainThread = vi.fn().mockResolvedValueOnce(undefined);
+  await expect(runtime.retainThread(input)).resolves.toBeUndefined();
+  expect(mocks.adapter.retainThread).toHaveBeenCalledWith(input);
+});
+
+it('accepts a thread retain as a no-op when the runtime has no retain', async () => {
+  delete mocks.adapter.retainThread;
+  const runtime = start();
+  await expect(runtime.retainThread({ threadId: 't', retainUntilMs: 0 })).resolves.toBeUndefined();
 });

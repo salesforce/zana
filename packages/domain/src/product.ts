@@ -2861,6 +2861,11 @@ export interface AppConfig {
    */
   autonomousMaxRounds?: number;
   autonomousTimeoutMs?: number;
+  /**
+   * Longest a Squad run waits on an open human question before it is stopped; the idle
+   * timeout is paused meanwhile. 0 = no cap. Default 4 hours (AUTONOMOUS_DEFAULTS).
+   */
+  autonomousBlockedWaitMs?: number;
   /** Idle seconds before the supervisor nudges an agent in an autonomous run. */
   autonomousNudgeDelaySeconds?: number;
   /**
@@ -7017,6 +7022,8 @@ export interface ExecutionBoardProjection {
   /** Present when a durable execution stop has a specific non-resumable reason. */
   timeoutReason?: 'idle' | 'unresolved-blocker' | 'plan-correction-cancelled';
   successorExecutionId?: string;
+  /** Timed-out (unresolved-blocker) recovery eligibility; same predicate as the backend rejection. */
+  timeoutRecovery?: { available: boolean; reason?: string };
   recovery?: {
     status: 'available' | 'expired' | 'terminal';
     deadlineAt?: number;

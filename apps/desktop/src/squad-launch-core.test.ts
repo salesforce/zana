@@ -47,6 +47,7 @@ function makeDeps(overrides: Partial<SquadLaunchDeps> = {}) {
     planCorrectionLaunchBinding: { beginLaunch: vi.fn(), forgetLaunch: vi.fn() },
     nameTeamExecution: vi.fn(async (_id: string, objective: string, explicitTitle?: string) => explicitTitle ?? `Named: ${objective}`),
     autonomousTimeoutMs: () => undefined,
+    autonomousBlockedWaitMs: () => undefined,
     squadExecutionService: { start } as unknown as SquadLaunchDeps['squadExecutionService'],
     ...overrides
   } satisfies SquadLaunchDeps;
@@ -115,7 +116,7 @@ describe('launchSquad', () => {
         { initialTask: `${sharedTask}\n\nCoordinate workers, delegate role-specific work, and explicitly report execution completion with a summary when goal is met.` },
         { initialTask: `${sharedTask}\n\nCheck orchestrator instructions and report progress or blockers to it.` }
       ],
-      policy: { deadlineMs: AUTONOMOUS_DEFAULTS.timeoutMs }
+      policy: { deadlineMs: AUTONOMOUS_DEFAULTS.timeoutMs, blockedWaitMs: AUTONOMOUS_DEFAULTS.blockedWaitMs }
     }]);
     expect(deps.snapshotSources).toHaveBeenCalledWith({ kind: 'window', windowId: 7 }, expect.objectContaining({
       projectId: 'p1', launchRequestId: 'ui:launch-1', sourceCapabilityIds: [], sourcePaths: [], goalSourceDescriptors: []
@@ -217,7 +218,21 @@ describe('launchSquad', () => {
   it('caps the deadline at the configured timeout', async () => {
     const { deps, start } = makeDeps({ autonomousTimeoutMs: () => 60_000 });
     await launchSquad(deps, makeInput(), { owner: { principalId: 'interactive:local' } });
-    expect((start.mock.calls[0]?.[2] as Record<string, any>).policy).toEqual({ deadlineMs: 60_000 });
+    expect((start.mock.calls[0]?.[2] as Record<string, any>).policy).toEqual({ deadlineMs: 60_000, blockedWaitMs: AUTONOMOUS_DEFAULTS.blockedWaitMs });
+  });
+
+  it('carries the configured blocked wait, including 0 (no cap), into the policy', async () => {
+    for (const configured of [90 * 60_000, 0]) {
+      const { deps, start } = makeDeps({ autonomousBlockedWaitMs: () => configured });
+      await launchSquad(deps, makeInput(), { owner: { principalId: 'interactive:local' } });
+      expect((start.mock.calls[0]?.[2] as Record<string, any>).policy).toEqual({ deadlineMs: AUTONOMOUS_DEFAULTS.timeoutMs, blockedWaitMs: configured });
+    }
+  });
+
+  it('omits the blocked wait when the idle timeout is disabled', async () => {
+    const { deps, start } = makeDeps({ autonomousTimeoutMs: () => 0, autonomousBlockedWaitMs: () => 60_000 });
+    await launchSquad(deps, makeInput(), { owner: { principalId: 'interactive:local' } });
+    expect((start.mock.calls[0]?.[2] as Record<string, any>).policy).toEqual({});
   });
 
   it('parks an invalid provided plan for correction when a window launched it', async () => {

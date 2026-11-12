@@ -105,7 +105,7 @@ describe('execution store', () => {
       .rejects.toThrow('automated MCP catalogue provenance slot limit reached');
   }));
 
-  it('grants one fixed blocker deadline grace then stops with a durable reason', async () => fixture(async (filePath) => {
+  it('pauses the idle deadline for an open human blocker, warns once, then stops with a durable reason', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
     let record = (await store.claim(request())).record;
@@ -114,14 +114,25 @@ describe('execution store', () => {
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
     record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { id: 'blocker', question: 'Need input' });
-    now = 1_100;
-    const grace = await store.decideDeadline(record.id, 1_050, 30);
-    expect(grace).toMatchObject({ kind: 'grace', record: { blockerGraceUntil: 1_130, state: 'BLOCKED' } });
-    now = 1_110;
-    expect(await store.decideDeadline(record.id, 1_050, 30)).toMatchObject({ kind: 'grace', record: { blockerGraceUntil: 1_130 } });
-    now = 1_130;
-    expect(await store.decideDeadline(record.id, 1_050, 30)).toMatchObject({ kind: 'stopped', record: { state: 'STOPPED', timeoutReason: 'unresolved-blocker' } });
+    const timings = { deadlineMs: 50, blockedWaitMs: 400 };
+    now = 1_100; // idle window long past, blocked wait (stop 1_400, warn 1_300) not
+    expect(await store.decideDeadline(record.id, timings)).toMatchObject({ kind: 'continue', record: { state: 'BLOCKED' } });
+    now = 1_300;
+    expect(await store.decideDeadline(record.id, timings)).toMatchObject({ kind: 'warned', record: { blockedWarnedAt: 1_300, state: 'BLOCKED' } });
+    now = 1_350;
+    expect(await store.decideDeadline(record.id, timings)).toMatchObject({ kind: 'continue' }); // warned once only
+    now = 1_400;
+    expect(await store.decideDeadline(record.id, timings)).toMatchObject({ kind: 'stopped', record: { state: 'STOPPED', timeoutReason: 'unresolved-blocker' } });
+    expect(await store.decideDeadline(record.id, timings)).toMatchObject({ kind: 'continue', record: { state: 'STOPPED' } }); // terminal: no-op
   }));
+
+  it('rejects invalid deadline timings, an unknown execution and an unbounded blockedWaitMs policy', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    await expect(store.decideDeadline('execution-1', { deadlineMs: 0, blockedWaitMs: 0 })).rejects.toThrow('invalid deadline decision');
+    await expect(store.decideDeadline('execution-1', { deadlineMs: 1, blockedWaitMs: -1 })).rejects.toThrow('invalid deadline decision');
+    await expect(store.decideDeadline('missing', { deadlineMs: 1, blockedWaitMs: 0 })).rejects.toThrow('execution not found');
+  }));
+
   it('persists plan-correction cancellation as a non-resumable terminal stop across restart', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const record = (await store.claim(request())).record;
@@ -1201,6 +1212,50 @@ describe('execution store', () => {
     const ack = await store.ackBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' }, leased!.id, leased!.leaseId!, { delivered: true });
     expect(ack.outcome).toBe('accepted');
     expect(ack.record.blockers?.find((blocker) => blocker.id === 'blocker-retry')).toMatchObject({ resolved: true, response: 'Retry answer' });
+  }));
+
+  it('keeps the worker claim fence across a blocker answer so the resumed worker can still complete', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    let id = 0;
+    const store = createExecutionStore({ filePath, now: () => now, workClaimLeaseMs: 60_000, id: () => id++ === 0 ? 'execution-1' : `id-${id}` });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'ask', title: 'Ask', task: 'Ask', dependencies: [] }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'ask', 'slot-1');
+    const held = { claimId: record.workUnits![0]!.claimId!, claimGeneration: record.workUnits![0]!.claimGeneration! };
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'ask', { id: 'blk-ask', question: 'Q?' }, held, true);
+    record = (await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'ask-client', blockerId: 'blk-ask', text: 'A' })).record;
+    const leased = await store.pullBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' });
+    now = 5_000;
+    const ack = await store.ackBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' }, leased!.id, leased!.leaseId!, { delivered: true });
+    const unit = ack.record.workUnits![0]!;
+    // Same fence the worker already holds; lease and progress measured from the ack; no double-claim.
+    expect(unit).toMatchObject({ state: 'CLAIMED', claimId: held.claimId, claimGeneration: held.claimGeneration, claimedAt: 5_000, progressAt: 5_000, leaseExpiresAt: 65_000 });
+    // Not reclaimable before the lease expires; reclaimable after if the worker never resumes.
+    const early = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'ask', ...held, reason: 'silent' }]);
+    expect(early.workUnits![0]!.state).toBe('CLAIMED');
+    const done = await store.completeWork(record.id, ack.record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'ask', 'ok', held, true);
+    expect(done.workUnits![0]!.state).toBe('COMPLETED');
+  }));
+
+  it('reclaims a resumed claim after the lease from the ack expires', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    let id = 0;
+    const store = createExecutionStore({ filePath, now: () => now, workClaimLeaseMs: 60_000, id: () => id++ === 0 ? 'execution-1' : `id-${id}` });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'ask', title: 'Ask', task: 'Ask', dependencies: [] }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'ask', 'slot-1');
+    const held = { claimId: record.workUnits![0]!.claimId!, claimGeneration: record.workUnits![0]!.claimGeneration! };
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'ask', { id: 'blk-ask', question: 'Q?' }, held, true);
+    record = (await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'ask-client', blockerId: 'blk-ask', text: 'A' })).record;
+    const leased = await store.pullBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' });
+    await store.ackBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' }, leased!.id, leased!.leaseId!, { delivered: true });
+    now = 1_000 + 60_001;
+    const reclaimed = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'ask', ...held, reason: 'silent' }]);
+    expect(reclaimed.workUnits![0]!.state).toBe('READY');
   }));
 
   it('allows a work retry once an in-flight answer exhausts its delivery attempts', async () => fixture(async (filePath) => {

@@ -1467,6 +1467,11 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     const v = Math.round(input.autonomousTimeoutMs);
     normalized.autonomousTimeoutMs = v <= 0 ? 0 : Math.max(60_000, Math.min(86_400_000, v));
   }
+  if (typeof input.autonomousBlockedWaitMs === 'number' && Number.isFinite(input.autonomousBlockedWaitMs)) {
+    // 0 = no cap. Otherwise the same 1 min floor / 24h ceiling as the idle timeout.
+    const v = Math.round(input.autonomousBlockedWaitMs);
+    normalized.autonomousBlockedWaitMs = v <= 0 ? 0 : Math.max(60_000, Math.min(86_400_000, v));
+  }
   if (typeof input.autonomousMaxRounds === 'number' && Number.isFinite(input.autonomousMaxRounds)) {
     const v = Math.round(input.autonomousMaxRounds);
     normalized.autonomousMaxRounds = v <= 0 ? 0 : Math.max(1, Math.min(1000, v));

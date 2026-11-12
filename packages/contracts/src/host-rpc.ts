@@ -96,7 +96,8 @@ import {
 // 47: bounded directory inspection for remote project registration and availability.
 // 48: durable machine project catalogue publication and bounded registration.
 // 50: exact-name file listing and host-owned listing deadlines.
-export const HOST_RPC_PROTOCOL_VERSION = 50;
+// 51: thread.retain holds a thread's live provider session out of the idle sweep until a timestamp.
+export const HOST_RPC_PROTOCOL_VERSION = 51;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -123,6 +124,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'thread.stop',
   'thread.plan.cancel',
   'thread.background.stop',
+  'thread.retain',
   'thread.resume',
   'thread.rewind.prepare',
   'thread.rewind.discard',
@@ -438,6 +440,13 @@ export const ThreadBackgroundStopCommandSchema = z.object({
   type: z.literal('thread.background.stop'),
   threadId: UuidSchema,
   itemId: z.string().min(1).max(200)
+}).strict();
+
+/** `retainUntilMs` is an epoch-ms hold that self-expires; 0 clears the hold. */
+export const ThreadRetainCommandSchema = z.object({
+  type: z.literal('thread.retain'),
+  threadId: UuidSchema,
+  retainUntilMs: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
 }).strict();
 
 export const ThreadResumeFieldsSchema = z.object({
@@ -1085,6 +1094,7 @@ export const HostRpcCommandSchema = z.union([
   ThreadStopCommandSchema,
   ThreadPlanCancelCommandSchema,
   ThreadBackgroundStopCommandSchema,
+  ThreadRetainCommandSchema,
   ThreadResumeCommandSchema,
   ThreadRewindPrepareCommandSchema,
   ThreadRewindDiscardCommandSchema,
@@ -1287,6 +1297,12 @@ export const ThreadBackgroundStopResultSchema = z.object({
   stopped: z.boolean()
 }).strict();
 export type ThreadBackgroundStopResult = z.infer<typeof ThreadBackgroundStopResultSchema>;
+
+export const ThreadRetainResultSchema = z.object({
+  threadId: UuidSchema,
+  retainUntilMs: z.number().int().min(0)
+}).strict();
+export type ThreadRetainResult = z.infer<typeof ThreadRetainResultSchema>;
 
 export const TurnSubmitResultSchema = z.object({
   threadId: UuidSchema,
@@ -1649,6 +1665,7 @@ export const HostRpcResultSchemaByType = {
   'thread.stop': ThreadStopResultSchema,
   'thread.plan.cancel': ThreadPlanCancelResultSchema,
   'thread.background.stop': ThreadBackgroundStopResultSchema,
+  'thread.retain': ThreadRetainResultSchema,
   'thread.resume': ThreadResumeResultSchema,
   'thread.rewind.prepare': ThreadRewindPrepareResultSchema,
   'thread.rewind.discard': ThreadRewindDiscardResultSchema,

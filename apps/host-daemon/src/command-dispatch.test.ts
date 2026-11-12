@@ -689,6 +689,21 @@ describe('host command dispatch', () => {
     expect(runtime.threads.has(threadId)).toBe(true);
   });
 
+  it('forwards a thread retain hold to the runtime and tolerates a runtime without one', async () => {
+    const calls: Array<{ threadId: string; retainUntilMs: number }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      retainThread: async (input) => { calls.push(input); }
+    });
+    const threadId = randomUUID();
+    await expect(dispatchHostCommand(runtime, { type: 'thread.retain', threadId, retainUntilMs: 123 }))
+      .resolves.toEqual({ threadId, retainUntilMs: 123 });
+    expect(calls).toEqual([{ threadId, retainUntilMs: 123 }]);
+    const bare = createCommandRuntime({ verifyProviders: async () => installedClaude });
+    await expect(dispatchHostCommand(bare, { type: 'thread.retain', threadId, retainUntilMs: 0 }))
+      .resolves.toEqual({ threadId, retainUntilMs: 0 });
+  });
+
   it('reports a background stop as not stopped when the runtime cannot stop tasks', async () => {
     const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude });
     const threadId = randomUUID();

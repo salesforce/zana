@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ExecutionDeadlineWatchdog, executionProgressAnchor } from '../deadline-watchdog.js';
+import { DEFAULT_BLOCKED_WAIT_MS, ExecutionDeadlineWatchdog, deadlineTimings, executionProgressAnchor, nextDeadlineAt, planDeadline } from '../deadline-watchdog.js';
 import type { ExecutionRecord } from '../store.js';
 
 const units = (progressAts: Array<number | undefined>): ExecutionRecord['workUnits'] =>
@@ -120,5 +120,71 @@ describe('ExecutionDeadlineWatchdog', () => {
     f.fireNext();
     await vi.waitFor(() => expect(f.onDeadline).toHaveBeenCalledTimes(2));
     expect(f.pending.size).toBe(0);
+  });
+});
+
+describe('planDeadline and nextDeadlineAt', () => {
+  const blocker = (over: Partial<NonNullable<ExecutionRecord['blockers']>[number]> = {}) =>
+    ({ id: 'b', workUnitId: 'u', slotId: 's', question: 'q', resolved: false, createdAt: 2_000, ...over });
+  const timings = { deadlineMs: 100, blockedWaitMs: 1_000 };
+
+  it('plans the idle deadline from the progress anchor when no human blocker is open', () => {
+    expect(planDeadline(record(), timings, 1_000)).toEqual({ phase: 'idle', at: 1_100 });
+    expect(planDeadline(record({ blockers: [blocker({ resolved: true })] }), timings, 1_000)).toEqual({ phase: 'idle', at: 1_100 });
+    expect(planDeadline(record({ blockers: [blocker({ audience: 'coordinator' })] }), timings, 1_000)).toEqual({ phase: 'idle', at: 1_100 });
+  });
+
+  it('anchors the blocked wait at the oldest open human blocker and plans warn then stop', () => {
+    const r = record({ blockers: [blocker({ createdAt: 2_500 }), blocker({ id: 'older', createdAt: 2_000 })] });
+    expect(planDeadline(r, timings, 2_100)).toEqual({ phase: 'blocked-warn', at: 2_750 }); // lead = min(15 min, 1_000 / 4)
+    expect(planDeadline({ ...r, blockedWarnedAt: 2_750 }, timings, 2_800)).toEqual({ phase: 'blocked-stop', at: 3_000 });
+    expect(planDeadline(r, timings, 3_000)).toEqual({ phase: 'blocked-stop', at: 3_000 }); // warning window missed
+  });
+
+  it('has nothing due for a blocked run with no cap', () => {
+    expect(planDeadline(record({ blockers: [blocker()] }), { deadlineMs: 100, blockedWaitMs: 0 }, 5_000)).toBeUndefined();
+  });
+
+  it('derives timings from policy with the 4 h default and tolerates invalid values', () => {
+    expect(deadlineTimings(record())).toEqual({ deadlineMs: 100, blockedWaitMs: DEFAULT_BLOCKED_WAIT_MS });
+    const withPolicy = (policy: object) => record({ request: { ...record().request, policy } as never });
+    expect(deadlineTimings(withPolicy({ deadlineMs: 100, blockedWaitMs: 0 }))).toEqual({ deadlineMs: 100, blockedWaitMs: 0 });
+    expect(deadlineTimings(withPolicy({ deadlineMs: 100, blockedWaitMs: -5 }))?.blockedWaitMs).toBe(DEFAULT_BLOCKED_WAIT_MS);
+    expect(deadlineTimings(withPolicy({ deadlineMs: 0 }))).toBeUndefined();
+    expect(deadlineTimings(withPolicy({}))).toBeUndefined();
+  });
+
+  it('nextDeadlineAt is undefined for terminal runs, runs without a deadline and blocked runs with no cap', () => {
+    expect(nextDeadlineAt(record({ state: 'STOPPED' }), 0)).toBeUndefined();
+    expect(nextDeadlineAt(record({ request: { ...record().request, policy: {} } as never }), 0)).toBeUndefined();
+    expect(nextDeadlineAt(record(), 0)).toBe(1_100);
+  });
+});
+
+describe('ExecutionDeadlineWatchdog scheduling with blockers', () => {
+  const stale = { id: 'b', workUnitId: 'u', slotId: 's', question: 'q', resolved: true, createdAt: 1_100 };
+
+  it('ignores a stale-past blockerGraceUntil on a persisted record and arms from the anchor', () => {
+    const f = fixture(1_050);
+    f.watchdog.schedule(record({ blockerGraceUntil: 900, blockers: [stale] }));
+    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 50);
+  });
+
+  it('restore re-derives the arm target from blockers and never arms a blocked no-cap run', () => {
+    const f = fixture(1_050);
+    f.watchdog.restore([
+      record({ id: 'a', blockerGraceUntil: 900 }),
+      record({ id: 'b', request: { ...record().request, policy: { deadlineMs: 100, blockedWaitMs: 0 } } as never, blockers: [{ ...stale, resolved: false }] })
+    ]);
+    expect(f.setTimer).toHaveBeenCalledTimes(1);
+    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 50);
+  });
+
+  it('floors the arm target with notBefore so a past target cannot re-arm at delay 0', () => {
+    const f = fixture(5_000);
+    f.watchdog.schedule(record({ blockerGraceUntil: 900 }));
+    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 0); // genuinely overdue: fire now
+    f.watchdog.schedule(record(), 6_000);
+    expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 1_000);
   });
 });

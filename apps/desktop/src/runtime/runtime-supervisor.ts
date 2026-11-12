@@ -31,6 +31,7 @@ import {
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   SquadMemberControlRequestSchema,
+  SquadMemberRetainRequestSchema,
   SquadMemberResumeRequestSchema,
   SquadMemberResumeResultSchema,
   SquadMemberDeliveryRequestSchema,
@@ -52,6 +53,7 @@ import {
   type SquadMemberDeliveryRequest,
   type SquadMemberRuntimeRequest,
   type SquadMemberControlRequest,
+  type SquadMemberRetainRequest,
   type SquadMemberDeliveryResult,
   type SquadMemberDeliveryCompletion,
   type SquadMemberResumeRequest,
@@ -112,6 +114,8 @@ export interface RuntimeSupervisor {
   getSquadMemberStatus(request: SquadMemberControlRequest): Promise<SquadMemberStatus>;
   isSquadMemberLive(threadId: string, projectId: string, generation: number): Promise<boolean>;
   stopSquadMember(threadId: string, projectId: string, generation: number): Promise<boolean>;
+  /** Idle-sweep hold on a member's live session until `retainUntilMs` (epoch ms, 0 clears). Resolves true once the host acknowledged it. */
+  retainSquadMember(request: SquadMemberRetainRequest): Promise<boolean>;
   resumeSquadMember(request: SquadMemberResumeRequest): Promise<SquadMemberResumeResult>;
   /**
    * Queue a text turn into a live Modern thread. Never rejects for a dead
@@ -248,8 +252,8 @@ export interface StartRuntimeSupervisorOptions {
   onLocalThreadWork?: (working: boolean) => void;
 }
 
-type SquadOperation = 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-resume';
-type SquadRequest = SquadMemberResumeRequest | SquadRuntimePreflightRequest | SquadMemberRuntimeRequest | SquadMemberDeliveryRequest | SquadMemberControlRequest | SquadMemberDeliveryCompletion;
+type SquadOperation = 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-retain' | 'squad-member-resume';
+type SquadRequest = SquadMemberRetainRequest | SquadMemberResumeRequest | SquadRuntimePreflightRequest | SquadMemberRuntimeRequest | SquadMemberDeliveryRequest | SquadMemberControlRequest | SquadMemberDeliveryCompletion;
 
 /** Main-only adapter; every response must retain the requested binding/correlation. */
 export function createSquadMemberRuntimeAdapter(call: (operation: SquadOperation, request: SquadRequest) => Promise<unknown>) {
@@ -304,6 +308,10 @@ export function createSquadMemberRuntimeAdapter(call: (operation: SquadOperation
     async stopSquadMember(threadId: string, projectId: string, generation: number) {
       const request = SquadMemberControlRequestSchema.parse({ bindingId: threadId, projectId, generation });
       return zod.boolean().parse(await call('squad-member-stop', request));
+    },
+    async retainSquadMember(input: SquadMemberRetainRequest) {
+      const request = SquadMemberRetainRequestSchema.parse(input);
+      return zod.boolean().parse(await call('squad-member-retain', request));
     },
     async resumeSquadMember(input: SquadMemberResumeRequest) {
       const request = SquadMemberResumeRequestSchema.parse(input);
@@ -438,6 +446,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     getSquadMemberStatus: async () => { throw new Error('Modern squad runtime is unavailable'); },
     isSquadMemberLive: async () => false,
     stopSquadMember: async () => false,
+    retainSquadMember: async () => false,
     resumeSquadMember: async () => { throw new Error('Modern squad runtime is unavailable'); },
     queueThreadTurn: async () => ({ ok: false, reason: 'runtime-unavailable' }),
     listMenubarThreads: async () => ({ agents: [], needsYou: 0, working: 0 }),
@@ -554,6 +563,7 @@ interface UtilityRuntime {
   request(operation: 'squad-member-delivery-complete', request: SquadMemberDeliveryCompletion): Promise<unknown>;
   request(operation: 'squad-runtime-preflight', request: SquadRuntimePreflightRequest): Promise<unknown>;
   request(operation: 'squad-member-status' | 'squad-member-stop', request: SquadMemberControlRequest): Promise<unknown>;
+  request(operation: 'squad-member-retain', request: SquadMemberRetainRequest): Promise<unknown>;
   request(operation: 'squad-member-resume', request: SquadMemberResumeRequest): Promise<unknown>;
   request(operation: 'thread-queue-turn', threadId: string, projectId: string, text: string): Promise<unknown>;
   request(operation: 'menubar-threads-list', limit: number): Promise<unknown>;
@@ -1065,7 +1075,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'named-checks-get' | 'named-checks-set' | 'plugins-tool-settled' | 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-dispatch-admission' | 'plugins-pty-lifecycle-event' | 'plugins-pty-session-instructions' | 'plugins-pty-session-tools' | 'plugins-pty-session-tool-call' | 'plugins-tool-policy-inventory' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+      operation: 'named-checks-get' | 'named-checks-set' | 'plugins-tool-settled' | 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-retain' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-dispatch-admission' | 'plugins-pty-lifecycle-event' | 'plugins-pty-session-instructions' | 'plugins-pty-session-tools' | 'plugins-pty-session-tool-call' | 'plugins-tool-policy-inventory' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
         ...args: [NamedCheckScope] | [NamedCheckScope, NamedCheck[]] | [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [DispatchAdmissionMainRequest] | [PtyLifecycleEventMainRequest] | [NativeToolSettledMainRequest] | [PtySessionInstructionsMainRequest] | [PtySessionToolsMainRequest] | [PtySessionToolCallMainRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, string?] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
@@ -1098,6 +1108,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
            ...(operation === 'thread-live' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
              ...((operation === 'squad-member-create' || operation === 'squad-member-activate') ? { request: args[0] as SquadMemberRuntimeRequest } : {}),
             ...(operation === 'squad-member-deliver' ? { request: args[0] as SquadMemberDeliveryRequest } : {}),
+            ...(operation === 'squad-member-retain' ? { request: args[0] as SquadMemberRetainRequest } : {}),
             ...(operation === 'squad-member-resume' ? { request: args[0] as SquadMemberResumeRequest } : {}),
             ...(operation === 'squad-member-delivery-complete' ? { request: args[0] as SquadMemberDeliveryCompletion } : {}),
            ...(operation === 'squad-runtime-preflight' ? { request: args[0] as SquadRuntimePreflightRequest } : {}),

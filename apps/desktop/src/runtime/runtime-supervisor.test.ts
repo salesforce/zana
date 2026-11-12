@@ -51,6 +51,7 @@ describe('runtime supervisor', () => {
     // safe-defaults false (never rejects), so no loopback launch can pass on it.
     await expect(runtime.isThreadLive('thread-1', 'project-1')).resolves.toBe(false);
     await expect(runtime.queueThreadTurn('thread-1', 'project-1', 'hello')).resolves.toEqual({ ok: false, reason: 'runtime-unavailable' });
+    await expect(runtime.retainSquadMember({ bindingId: randomUUID(), projectId: 'project-1', generation: 1, retainUntilMs: 5 })).resolves.toBe(false);
     // Without the plugin host there is no tool policy decision; main's hook route then denies.
     await expect(runtime.decideToolPolicy({
       invocationId: 'a'.repeat(64), threadId: 'thread-1', projectId: 'project-1', profile: 'claude', toolName: 'Bash', input: {}
@@ -219,6 +220,23 @@ describe('main-owned squad runtime adapter', () => {
     }
   });
 
+  it('retainSquadMember validates the request, forwards it, and requires a boolean reply', async () => {
+    const request = { ...control, retainUntilMs: 1_700_000_000_000 };
+    const call = vi.fn(async () => true as unknown);
+    const adapter = createSquadMemberRuntimeAdapter(call);
+    await expect(adapter.retainSquadMember(request)).resolves.toBe(true);
+    expect(call).toHaveBeenLastCalledWith('squad-member-retain', request);
+    await expect(adapter.retainSquadMember({ ...request, retainUntilMs: 0 })).resolves.toBe(true); // release
+    call.mockResolvedValue(false);
+    await expect(adapter.retainSquadMember(request)).resolves.toBe(false);
+    call.mockResolvedValue({ ok: true });
+    await expect(adapter.retainSquadMember(request)).rejects.toThrow();
+    call.mockClear();
+    await expect(adapter.retainSquadMember({ ...request, retainUntilMs: -1 })).rejects.toThrow();
+    await expect(adapter.retainSquadMember({ ...request, extra: 1 } as never)).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it('validates resume request and correlates every resume result field', async () => {
     const resume = { bindingId: create.cohortId, projectId: control.projectId, expectedGeneration: 1, newGeneration: 2, expectedProviderThreadId: 'provider-thread-1' };
     const ok = { bindingId: resume.bindingId, projectId: resume.projectId, generation: 2, providerThreadId: 'provider-thread-1' };
@@ -248,12 +266,15 @@ describe('main-owned squad runtime adapter', () => {
     const utility = createUtilityRuntime({ child: child as never, url: 'http://127.0.0.1:1' });
     await utility.request('squad-member-status', control);
     await utility.request('squad-member-stop', control);
+    const retain = { ...control, retainUntilMs: 1_700_000_000_000 };
+    await utility.request('squad-member-retain', retain);
     await utility.request('squad-member-activate', create);
     await utility.request('squad-member-deliver', delivery);
     const { message: _message, ...completion } = delivery;
     await utility.request('squad-member-delivery-complete', completion);
     expect(posted.map(row => ({ operation: row.operation, request: row.request }))).toEqual([
       { operation: 'squad-member-status', request: control }, { operation: 'squad-member-stop', request: control },
+      { operation: 'squad-member-retain', request: retain },
       { operation: 'squad-member-activate', request: create },
       { operation: 'squad-member-deliver', request: delivery },
       { operation: 'squad-member-delivery-complete', request: completion }

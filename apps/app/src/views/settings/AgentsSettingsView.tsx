@@ -456,7 +456,7 @@ export function AgentsSettingsView({
         <Field
           label="Squad idle timeout (minutes, 0 = no timeout)"
           searchId="agents.squad-idle-timeout"
-          help="How long a Squad run may go WITHOUT making progress before timing out. Worker output and heartbeats reset the clock, so a long but healthy run is never cut off — only a stalled one times out. Set to 0 to disable completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
+          help="How long a Squad run may go WITHOUT making progress before timing out. Genuine worker progress, such as real output or a resolved question, resets the clock; silent keep-alives do not. The clock is paused while a question awaits a person, up to the maximum blocked wait below, and answering it restarts a full window. Set to 0 to disable completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
         >
           <input
             type="number"
@@ -481,6 +481,37 @@ export function AgentsSettingsView({
                   ? 0
                   : Math.max(1, Math.min(1440, minutes)) * 60000;
               onUpdate({ autonomousTimeoutMs: clamped });
+            }}
+          />
+        </Field>
+        <Field
+          label="Squad max blocked wait (minutes, 0 = no cap)"
+          searchId="agents.squad-blocked-wait"
+          help="How long a Squad run may wait on a question that needs a person before it is stopped. The idle timeout is paused during this wait. A single warning is sent shortly before the stop. Set to 0 for no cap. Default is 240 minutes (4 hours). Range 0 (no cap) or 1–1440."
+        >
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            value={
+              config.autonomousBlockedWaitMs === 0
+                ? 0
+                : Math.round((config.autonomousBlockedWaitMs ?? 240 * 60 * 1000) / 60000)
+            }
+            onChange={(e) => {
+              const minutes = parseInt(e.target.value, 10);
+              if (!Number.isNaN(minutes)) {
+                onConfigDraft({ ...config, autonomousBlockedWaitMs: minutes === 0 ? 0 : minutes * 60000 });
+              }
+            }}
+            onBlur={(e) => {
+              const minutes = parseInt(e.target.value, 10);
+              const clamped = Number.isNaN(minutes)
+                ? 240 * 60 * 1000
+                : minutes <= 0
+                  ? 0
+                  : Math.max(1, Math.min(1440, minutes)) * 60000;
+              onUpdate({ autonomousBlockedWaitMs: clamped });
             }}
           />
         </Field>

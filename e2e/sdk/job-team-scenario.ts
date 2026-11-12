@@ -35,12 +35,12 @@ export interface JobTeamContext {
  * project dir, and wire renderer/main diagnostics capture. Call {@link launchJobTeamCliOwner}
  * next, and {@link teardownJobTeam} in the spec's `finally`.
  */
-export function createJobTeamContext(app: AppHandle, opts: { tmpPrefix: string; scenario?: JobTeamScenario; root?: string }): JobTeamContext {
+export function createJobTeamContext(app: AppHandle, opts: { tmpPrefix: string; scenario?: JobTeamScenario; root?: string; deadlineMs?: number }): JobTeamContext {
   const { window } = app;
   const diagnostics: string[] = [];
   window.on('console', (message) => diagnostics.push(`[renderer:${message.type()}] ${message.text()}`));
   app.electron.process()?.stderr?.on('data', (chunk) => diagnostics.push(`[main] ${String(chunk)}`));
-  const agent = makeJobTeamCoordinatorBinary(opts.scenario ? { scenario: opts.scenario } : {});
+  const agent = makeJobTeamCoordinatorBinary({ ...(opts.scenario ? { scenario: opts.scenario } : {}), ...(opts.deadlineMs ? { deadlineMs: opts.deadlineMs } : {}) });
   const projectDir = mkdtempSync(join(opts.root ?? tmpdir(), opts.tmpPrefix));
   const projectName = basename(projectDir);
   return {

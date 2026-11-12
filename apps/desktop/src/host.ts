@@ -2423,7 +2423,13 @@ const mailDrain = new AgentMailDrainService({
   },
   isRestful: (sessionId) => modernMemberStatus.has(sessionId)
     ? modernMemberStatus.get(sessionId)?.status === 'idle' : isRestfulAgentState(agentStatus.get(sessionId)),
-  reply: replyToSquadMember,
+  reply: replyToSquadMemberForDrain,
+  onStalled: async (_sessionId, deliveries) => {
+    const executionIds = [...new Set(deliveries.map(delivery => delivery.executionId))];
+    for (const executionId of executionIds) {
+      await squadExecutionService.announceDeliveryStall(executionId, deliveries.filter(delivery => delivery.executionId === executionId).map(delivery => delivery.id));
+    }
+  },
   isReplyIdempotent: sessionId => !ptys.getSession(sessionId)
 });
 let stopAgentSoundEvents: (() => void) | undefined;
@@ -3403,6 +3409,11 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
 }
 
 async function replyToSquadMember(sessionId: string, text: string, correlation?: { assignmentId: string; idempotencyKey: string }): Promise<boolean> {
+  return (await replyToSquadMemberForDrain(sessionId, text, correlation)) !== false;
+}
+
+/** Same delivery as replyToSquadMember, but surfaces an 'uncertain' receipt so the delivery drain can retry and report a stall. */
+async function replyToSquadMemberForDrain(sessionId: string, text: string, correlation?: { assignmentId: string; idempotencyKey: string }): Promise<boolean | 'uncertain'> {
   const session = ptys.getSession(sessionId);
   if (session) {
     return replyJobTeamPty({ admit: admitPtyDispatch, reply: (id, body) => ptys.reply(id, body) }, { id: sessionId, projectId: session.projectId }, text);
@@ -3414,7 +3425,7 @@ async function replyToSquadMember(sessionId: string, text: string, correlation?:
   const id = correlation?.assignmentId ?? randomUUID();
   const receipt = await squadRuntime().deliverSquadMember({ bindingId: binding.threadId, generation: binding.generation,
     projectId: binding.projectId, assignmentId: id, idempotencyKey: correlation?.idempotencyKey ?? id, message: text });
-  return receipt.state !== 'rejected';
+  return receipt.state === 'rejected' ? false : receipt.state === 'uncertain' ? 'uncertain' : true;
 }
 // Main's /hook/nativetool handler (OBL-004), wired into the MCP server in
 // bootstrapNormal. Identity comes from the live PTY record; the decision comes
@@ -7481,6 +7492,13 @@ const squadExecutionService = new SquadExecutionService({
    spawnDeferredWorker: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
    recycleSeat: (recordId, slotId) => seatRecycler.recycle(recordId, slotId),
    recordUnitDelivered: seatLifecycle.recordDelivered,
+   // Keeps a worker parked on an open blocker out of the idle thread-session sweep (self-expiring timestamp).
+   retainParkedWorker: async (record, sessionId, retainUntilMs) => {
+     const member = await teamLifecycle.findModernWorkerBinding(sessionId, record.projectId);
+     // CLI/PTY workers are not swept, so only a bound Modern member needs (or accepts) a hold.
+     if (!member || member.worker.modernContext?.executionId !== record.id) return;
+     await squadRuntime().retainSquadMember({ bindingId: sessionId, generation: member.generation, projectId: record.projectId, retainUntilMs: retainUntilMs ?? 0 });
+   },
    queuedForSession: (sessionId) => workerInjector.pendingCount(sessionId),
    deliverAssignment: async (sessionId, text, correlation) => {
      const execution = await executionStore.get(correlation.executionId);
@@ -7964,6 +7982,7 @@ const squadLaunchDeps: SquadLaunchDeps = {
   planCorrectionLaunchBinding,
   nameTeamExecution: (launchId, objective, explicitTitle, sourceTexts) => nameTeamExecution(launchId, objective, explicitTitle, sourceTexts),
   autonomousTimeoutMs: () => store.getConfig().autonomousTimeoutMs,
+  autonomousBlockedWaitMs: () => store.getConfig().autonomousBlockedWaitMs,
   squadExecutionService: { start: async (...args: Parameters<SquadExecutionService['start']>) => {
     try { return await squadExecutionService.start(...args); }
     finally { if (args[2].launchRequestId) pendingSquadPreviews.delete(args[2].launchRequestId); }

@@ -360,4 +360,68 @@ describe('ExecutionDeliveryDrainService', () => {
     // Retry budget exhausted (3) — no fourth timer is scheduled.
     expect(timers).toHaveLength(3);
   });
+
+  describe('uncertain resume receipt', () => {
+    function uncertainHarness(opts: { onStalled?: ExecutionDeliveryDrainDeps['onStalled']; restful?: () => boolean } = {}) {
+      const timers: Array<() => void> = [];
+      const send = vi.fn(async (..._args: unknown[]) => 'uncertain' as const);
+      const onStalled = opts.onStalled ?? vi.fn(async () => {});
+      const logError = vi.fn();
+      const svc = new ExecutionDeliveryDrainService({
+        pending: async () => [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }],
+        isRestful: opts.restful ?? (() => true), reply: send, onStalled, logError,
+        setTimer: fn => { timers.push(fn); return timers.length; }, clearTimer: () => {}
+      });
+      return { timers, send, onStalled, logError, svc };
+    }
+
+    it('retries uncertain exactly MAX_PENDING_RETRIES times with one stable key, then reports one stall', async () => {
+      const h = uncertainHarness();
+      h.svc.observe('worker', 'idle');
+      for (let i = 1; i <= 3; i++) {
+        await vi.waitFor(() => expect(h.timers).toHaveLength(i));
+        h.timers[i - 1]();
+      }
+      await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(4));
+      await vi.waitFor(() => expect(h.onStalled).toHaveBeenCalledTimes(1));
+      expect(h.onStalled).toHaveBeenCalledWith('worker', [{ id: 'delivery-1', executionId: 'execution-1' }]);
+      expect(h.timers).toHaveLength(3);
+      // The same correlation key every time: the transport dedupes, nothing is blindly re-sent.
+      const keys = new Set(h.send.mock.calls.map(call => (call[2] as { idempotencyKey: string }).idempotencyKey));
+      expect(keys.size).toBe(1);
+      // A later idle edge re-sends (delivery is still PENDING) but never raises a second notice.
+      h.svc.observe('worker', 'working');
+      h.svc.observe('worker', 'idle');
+      await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(5));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(h.onStalled).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not report a stall while retry budget remains', async () => {
+      const h = uncertainHarness();
+      h.svc.observe('worker', 'idle');
+      await vi.waitFor(() => expect(h.timers).toHaveLength(1));
+      expect(h.onStalled).not.toHaveBeenCalled();
+    });
+
+    it('logs and survives a failing stall notice', async () => {
+      const onStalled = vi.fn(async () => { throw new Error('inbox down'); });
+      const h = uncertainHarness({ onStalled });
+      h.svc.observe('worker', 'idle');
+      for (let i = 1; i <= 3; i++) { await vi.waitFor(() => expect(h.timers).toHaveLength(i)); h.timers[i - 1](); }
+      await vi.waitFor(() => expect(h.logError).toHaveBeenCalledWith(expect.stringContaining('stall notice failed'), expect.any(Error)));
+    });
+
+    it('no stall without an onStalled dep', async () => {
+      const timers: Array<() => void> = [];
+      const send = vi.fn(async () => 'uncertain' as const);
+      const svc = new ExecutionDeliveryDrainService({
+        pending: async () => [{ id: 'd', executionId: 'e', attempt: 0 }], isRestful: () => true, reply: send,
+        setTimer: fn => { timers.push(fn); return timers.length; }, clearTimer: () => {}
+      });
+      svc.observe('w', 'idle');
+      for (let i = 1; i <= 3; i++) { await vi.waitFor(() => expect(timers).toHaveLength(i)); timers[i - 1](); }
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(4));
+    });
+  });
 });

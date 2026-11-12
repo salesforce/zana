@@ -41,6 +41,8 @@ export interface ThreadRuntimeAdapter {
   stopWork(input: { threadId: string }): Promise<void>;
   cancelPlan?(input: { threadId: string; expectedTurnId: string }): Promise<boolean>;
   stopBackgroundTask?(input: { threadId: string; itemId: string }): Promise<boolean>;
+  /** Hold a thread's live provider session out of the idle sweep until `retainUntilMs` (epoch ms; 0 clears). */
+  retainThread?(input: { threadId: string; retainUntilMs: number }): Promise<void>;
   prepareRewind(input: ThreadRewindPrepareInput): Promise<{ providerThreadId: string }>;
   discardRewind(input: { leaseId: string; environmentId: string }): Promise<void>;
   renameWork(input: { threadId: string; title: string }): Promise<void>;

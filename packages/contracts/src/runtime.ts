@@ -388,6 +388,12 @@ export const SquadMemberControlRequestSchema = z.object({
 }).strict();
 export type SquadMemberControlRequest = z.infer<typeof SquadMemberControlRequestSchema>;
 
+/** Hold a bound member's live session out of the idle sweep until `retainUntilMs` (epoch ms, self-expiring); 0 clears it. */
+export const SquadMemberRetainRequestSchema = SquadMemberControlRequestSchema.extend({
+  retainUntilMs: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+}).strict();
+export type SquadMemberRetainRequest = z.infer<typeof SquadMemberRetainRequestSchema>;
+
 /** Main-signed Modern resume of a confirmed-stopped member on its stored provider thread. */
 export const SquadMemberResumeRequestSchema = z.object({
   bindingId: z.string().uuid(),
@@ -473,6 +479,7 @@ export const SquadRuntimeOperationSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('squad-member-delivery-complete'), request: SquadMemberDeliveryCompletionSchema }).strict(),
   z.object({ operation: z.literal('squad-member-status'), request: SquadMemberControlRequestSchema }).strict(),
   z.object({ operation: z.literal('squad-member-stop'), request: SquadMemberControlRequestSchema }).strict(),
+  z.object({ operation: z.literal('squad-member-retain'), request: SquadMemberRetainRequestSchema }).strict(),
   z.object({ operation: z.literal('squad-member-resume'), request: SquadMemberResumeRequestSchema }).strict()
 ]);
 export const SQUAD_RUNTIME_OPERATION_PATH = '/internal/main/squad-runtime';
@@ -535,6 +542,10 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('squad-member-stop'),
     request: SquadMemberControlRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-member-retain'),
+    request: SquadMemberRetainRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('squad-member-resume'),

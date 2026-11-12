@@ -24,6 +24,8 @@ import type {
 export const AUTONOMOUS_DEFAULTS = {
   maxRounds: 30,
   timeoutMs: 45 * 60 * 1000,
+  /** Longest a Squad run waits on an open human question before it is stopped (0 disables the cap). */
+  blockedWaitMs: 4 * 60 * 60 * 1000,
   nudgeDelaySeconds: 45
 } as const;
 

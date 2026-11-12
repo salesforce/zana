@@ -15,6 +15,7 @@ import { createCommandRuntime, type CommandRuntime } from './command-dispatch.js
 import { MachineEnvironment } from './machine-environment.js';
 import { handleHostRpcRequest } from './command-router.js';
 import { loadHostAppConfig, resolveZccDataDir } from './host-config.js';
+import { e2eIdleReapOverrides } from './e2e-idle-reap.js';
 import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manager.js';
 import { createEnrolledPty, type EnrolledPty } from './enrolled-pty.js';
 import { createInteractiveRequestHttpClient } from './interactive-request-client.js';
@@ -157,6 +158,7 @@ export function startEnrolledHostConnection(options: {
   const runtime = options.runtime ?? (() => {
     const loadConfig = () => loadHostAppConfig(options.dataDir);
     adapter = createRuntimeManager({
+      ...e2eIdleReapOverrides(),
       emit: (event) => sink.emit(event),
       dataDir: options.dataDir,
       loadConfig,
@@ -236,6 +238,7 @@ export function startEnrolledHostConnection(options: {
         await sink.flush();
         return stopped;
       },
+      retainThread: async (input) => { await adapter!.retainThread?.(input); },
       prepareRewind: (input) => adapter!.prepareRewind(input),
       discardRewind: (input) => adapter!.discardRewind(input),
       renameWork: (input) => adapter!.renameWork(input),

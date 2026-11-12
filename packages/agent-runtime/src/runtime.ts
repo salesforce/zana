@@ -147,6 +147,7 @@ interface FindReapableIdleProviderSessionArgs {
   idleForMs: number;
   nowMs: number;
   providerSessionReapingEnabled: boolean;
+  isThreadHeld?: (threadId: string, nowMs: number) => boolean;
   threadId: string;
 }
 
@@ -1033,7 +1034,8 @@ function createAgentRuntimeInternal(
     if (
       threadHasInFlightOperation(args.threadId) ||
       pendingTurnStartThreadIds.has(args.threadId) ||
-      turnState.getActiveTurnId(args.threadId) !== null
+      turnState.getActiveTurnId(args.threadId) !== null ||
+      args.isThreadHeld?.(args.threadId, args.nowMs) === true
     ) {
       return null;
     }
@@ -2765,6 +2767,7 @@ function createAgentRuntimeInternal(
       idleForMs,
       nowMs,
       providerSessionReapingEnabled,
+      isThreadHeld,
       runThreadExclusive,
     }) {
       const reapedSessions: ReapedIdleProviderSession[] = [];
@@ -2774,6 +2777,7 @@ function createAgentRuntimeInternal(
             idleForMs,
             nowMs,
             providerSessionReapingEnabled,
+            isThreadHeld,
             threadId,
           });
           if (!candidate) {
