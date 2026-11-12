@@ -6,11 +6,20 @@ import { promisify } from 'node:util';
 import { test, expect, launchApp } from './fixtures/app.js';
 
 const exec = promisify(execFile);
-test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { npm_config_registry: 'https://registry.npmjs.org/' } });
+test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { npm_config_registry: 'https://registry.npmjs.org/', ZCC_FAKE_PROVIDER: '1' } });
 
 test('packaged CLI creates, exercises, reloads, and diagnoses a plugin in built Electron', async ({ app: initialApp, home }) => {
   test.setTimeout(240_000);
   let app = initialApp;
+  const tutorialHint = app.window.getByRole('button', { name: 'Dismiss tutorial hint', exact: true });
+  async function dismissTutorialHint() {
+    await app.window.removeLocatorHandler(tutorialHint);
+    if (await tutorialHint.isVisible()) await tutorialHint.click();
+    await app.window.addLocatorHandler(tutorialHint, async hint => {
+      await hint.click();
+    }, { times: 1 });
+  }
+  await dismissTutorialHint();
   const id = 'live-authoring-e2e';
   const copiedCli = join(home, 'cli');
   const shippedCli = await app.electron.evaluate(({ app }) => {
@@ -74,6 +83,73 @@ ${readFileSync(serverPath, 'utf8')}`);
     expect(listed.code, listed.stderr).toBe(0);
     expect(listed.stdout).toContain('[x] Saved across reload');
 
+    // The freshly scaffolded SDK publisher and server resolver must orient a
+    // generic side-panel agent without the user naming the plugin or its data.
+    const canonicalTodos = await app.window.evaluate(async pluginId =>
+      await window.cc.pluginApps.callRpc(pluginId, 'list', {}) as Array<{ id: string; title: string; done: boolean }>, id);
+    expect(canonicalTodos).toHaveLength(1);
+    await dismissTutorialHint();
+    await app.window.getByTestId('plugin-panel-agent-show').click();
+    const composer = app.window.getByTestId('panel-agent-tab-composer');
+    const pagePrompt = 'What does this page contain?';
+    await composer.getByTestId('thread-command-input').fill(pagePrompt);
+    await expect(composer.getByTestId('thread-command-input')).toHaveText(pagePrompt);
+    await expect(composer.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+    const createdResponse = app.window.waitForResponse(response =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/threads');
+    await composer.getByTestId('thread-command-send').click();
+    const created = await (await createdResponse).json() as { thread: { id: string } };
+    const threadId = created.thread.id;
+    const pageReply = app.window.getByTestId('panel-agent-tab-chat').getByTestId('thread-assistant-text').last();
+    await expect(pageReply).toContainText(pagePrompt, { timeout: 30_000 });
+    await expect(pageReply).toContainText(id);
+    await expect(pageReply).toContainText('Todo list');
+    await expect(pageReply).toContainText('page_context_read');
+    await expect(pageReply).toContainText('todos');
+    await expect(pageReply).not.toContainText(canonicalTodos[0]!.id);
+    await expect(pageReply).not.toContainText('Saved across reload');
+    await expect(pageReply).not.toContainText('"done":true');
+    await expect(pageReply).not.toHaveAttribute('data-streaming', 'true');
+    const chat = app.window.getByTestId('panel-agent-tab-chat');
+    await expect(chat.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Send');
+    const readArgs = Buffer.from(JSON.stringify({ pluginId: id, providerId: 'page', itemId: 'todos' })).toString('base64url');
+    await chat.getByTestId('thread-command-input').fill(`report_tool_result call_tool:page_context_read tool_args:${readArgs}`);
+    await chat.getByTestId('thread-command-send').click();
+    const readReply = chat.getByTestId('thread-assistant-text').nth(1);
+    await expect(readReply).toContainText('Tool called: page_context_read', { timeout: 30_000 });
+    await expect(readReply).toContainText(canonicalTodos[0]!.id);
+    await expect(readReply).toContainText('Saved across reload');
+    await expect.poll(() => app.window.evaluate(async id =>
+      (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status, threadId)).toBe('idle');
+    // Read raw assistant Markdown through the product API: rendering JSON as
+    // Markdown consumes escapes needed to decode its nested tool result.
+    const rawReply = await app.window.evaluate(async id => {
+      const timeline = await (await fetch(`/api/v1/threads/${id}/timeline`)).json() as {
+        rows: Array<{ kind: string; role?: string; text?: string }>
+      };
+      return timeline.rows.filter(row => row.kind === 'conversation' && row.role === 'assistant').at(-1)?.text;
+    }, threadId);
+    expect(rawReply).toContain('Tool called: page_context_read');
+    const readResult = JSON.parse(rawReply!.replace(/^Tool called: page_context_read\s*/, '')) as {
+      success: boolean; contentItems: Array<{ type: string; text?: string }>
+    };
+    expect(readResult.success).toBe(true);
+    const resource = JSON.parse(readResult.contentItems.find(item => item.type === 'inputText')!.text!) as {
+      ok: boolean; context: string
+    };
+    expect(resource.ok).toBe(true);
+    expect(JSON.parse(resource.context)).toMatchObject({ page: 'Todo list', count: 1, todos: [canonicalTodos[0]] });
+    expect(canonicalTodos[0]!.done).toBe(true);
+    await expect(chat.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Send');
+    const missingArgs = Buffer.from(JSON.stringify({ pluginId: id, providerId: 'page', itemId: 'missing-todo-page' })).toString('base64url');
+    await chat.getByTestId('thread-command-input').fill(`report_tool_result call_tool:page_context_read tool_args:${missingArgs}`);
+    await chat.getByTestId('thread-command-send').click();
+    const failedReply = chat.getByTestId('thread-assistant-text').nth(2);
+    await expect(failedReply).toContainText('Tool called: page_context_read', { timeout: 30_000 });
+    await expect(failedReply).toContainText('"success":false');
+    await expect(failedReply).toContainText('Unknown page');
+    await app.window.getByTestId('thread-secondary-hide').click();
+
     const appPath = join(source, 'app.tsx');
     const updated = readFileSync(appPath, 'utf8').replace(`>${id}</h2>`, '>Reload verified</h2>');
     writeFileSync(appPath, updated);
@@ -127,7 +203,7 @@ ${readFileSync(serverPath, 'utf8')}`);
     }
     app = await launchApp(home, {
       initialConfig: { sponsorPromptDismissed: true },
-      env: { npm_config_registry: 'https://registry.npmjs.org/' }
+      env: { npm_config_registry: 'https://registry.npmjs.org/', ZCC_FAKE_PROVIDER: '1' }
     });
     env.ZCC_SERVER_URL = new URL(app.window.url()).origin;
     await app.window.locator('.nav-item', { hasText: id }).first().click();

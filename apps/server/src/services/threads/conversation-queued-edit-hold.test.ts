@@ -205,6 +205,33 @@ describe('lapsed-hold sweep', () => {
 });
 
 describe('saving an edit', () => {
+  it('preserves submitted page snapshots around the edited text through dispatch without exposing them in the editor', async () => {
+    const before = { type: 'text', text: 'earlier agent context', visibility: 'agent-only' };
+    const page = { type: 'text', text: 'Page B at submission', visibility: 'agent-only', mentions: [] };
+    const row = queue([before, { type: 'text', text: 'original', mentions: [{ start: 0 }] }, page, { type: 'text', text: 'extra' }]);
+    const saved = saveDeferredConversationMessageEdit(context, threadId, row.id, { text: 'edited' });
+    expect(saved.item.text).toBe('edited');
+    const expected = [before, { type: 'text', text: 'edited', mentions: [] }, page];
+    expect(JSON.parse(getDeferredThreadMessage(db, key(row))!.payload).input).toEqual(expected);
+    const deliver = vi.fn(async () => undefined);
+    await flushDeferredConversationMessages(context, threadId, deliver);
+    expect(inputs(deliver)).toEqual([expected]);
+  });
+
+  it('rejects clearing visible text when only agent context would remain', () => {
+    const page = { type: 'text', text: 'submitted page', visibility: 'agent-only' };
+    const row = queue([{ type: 'text', text: 'keep me' }, page]);
+    expect(() => saveDeferredConversationMessageEdit(context, threadId, row.id, { text: ' ' })).toThrowError(expect.objectContaining({ code: 'empty_queued_message' }));
+    expect(getDeferredThreadMessage(db, key(row))).toEqual(row);
+    const attachment = { type: 'image', url: 'a.png' };
+    const withAttachment = queue([{ type: 'text', text: 'caption' }, page, attachment]);
+    expect(saveDeferredConversationMessageEdit(context, threadId, withAttachment.id, { text: '' }).item.text).toBe('');
+    expect(JSON.parse(getDeferredThreadMessage(db, key(withAttachment))!.payload).input).toEqual([page, attachment]);
+    // Adding a caption must not replace the agent-only part when there was no visible text.
+    saveDeferredConversationMessageEdit(context, threadId, withAttachment.id, { text: 'new caption' });
+    expect(JSON.parse(getDeferredThreadMessage(db, key(withAttachment))!.payload).input).toEqual([{ type: 'text', text: 'new caption', mentions: [] }, page, attachment]);
+  });
+
   it('replaces plain text and moves the revision so other tabs must reconfirm', () => {
     const row = queue('original');
     const saved = saveDeferredConversationMessageEdit(context, threadId, row.id, { text: '  edited  ' });

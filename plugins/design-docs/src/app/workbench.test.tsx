@@ -55,6 +55,48 @@ describe('plugin app', () => {
   });
 });
 
+describe('side-panel page context', () => {
+  it('tracks the active document and path, clears stale resources in settings and the catalogue, and clears on unmount', async () => {
+    const harness = createHarness({ panelAgent: true });
+    const first = harness.store.create({
+      title: 'Payments API', projectId: 'p1',
+      files: [{ path: 'README.md', content: 'Payment overview' }, { path: 'api.md', content: 'Payment endpoints' }]
+    }, UI_USER);
+    const second = seed(harness.store, { title: 'Glossary', projectId: 'p1' });
+    const view = openInProjectTab(harness, first.id);
+    const current = () => harness.navigateCalls.filter(call => call.method === 'setPageContext').at(-1);
+
+    await screen.findByText('Payment overview');
+    expect(current()).toEqual({ method: 'setPageContext', context: {
+      title: 'Payments API', resourceId: first.id, path: 'README.md',
+      mention: { providerId: 'design-doc', itemId: first.id }
+    } });
+
+    fireEvent.click(screen.getByRole('button', { name: /^api\.md/ }));
+    await screen.findByText('Payment endpoints');
+    expect(current()).toEqual({ method: 'setPageContext', context: {
+      title: 'Payments API', resourceId: first.id, path: 'api.md',
+      mention: { providerId: 'design-doc', itemId: first.id }
+    } });
+
+    fireEvent.click(screen.getByText('Glossary', { selector: '.dd-doc-row-title' }));
+    await waitFor(() => expect(current()).toEqual({ method: 'setPageContext', context: {
+      title: 'Glossary', resourceId: second.id, path: 'README.md',
+      mention: { providerId: 'design-doc', itemId: second.id }
+    } }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(current()).toEqual({ method: 'setPageContext', context: { title: 'Design Docs settings' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Back to design docs' }));
+    await waitFor(() => expect(current()).toMatchObject({ context: { resourceId: second.id } }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    expect(current()).toEqual({ method: 'setPageContext', context: { title: 'Design Docs catalogue' } });
+    view.unmount();
+    expect(current()).toEqual({ method: 'setPageContext', context: null });
+  });
+});
+
 function configuredPeers(syncNow: () => Promise<{ attempted: number; synced: number; blocked: number }>, replicas = ['a', 'b']) {
   return { status: () => ({ configured: true, replicaId: 'r-a', members: replicas.map((name) => ({ replicaId: `r-${name}`, machineId: `app-${name}` })) }), syncNow } as never;
 }
@@ -85,7 +127,7 @@ describe('peers view', () => {
     expect(screen.queryByRole('button', { name: 'New' })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(`${window.location.pathname}${window.location.search}${window.location.hash}`).toBe(before);
-    expect(harness.navigateCalls).toEqual([]);
+    expect(harness.navigateCalls.filter(call => call.method !== 'setPageContext')).toEqual([]);
 
     const back = screen.getByRole('button', { name: 'Back to design docs' });
     expect(back.textContent).toContain('Design docs');
@@ -381,7 +423,7 @@ describe('creating docs', () => {
     const doc = harness.store.list({})[0]!;
     expect(spawned.pluginMetadata.designDocId).toBe(doc.id);
     // Without a side panel composer, the thread starts here and the doc opens beside it.
-    expect(harness.navigateCalls).toEqual([
+    expect(harness.navigateCalls.filter(call => call.method !== 'setPageContext')).toEqual([
       { method: 'openPanelAgent', options: { draft: { prompt: spawned.prompt, view: doc.id, projectId: 'p2' }, title: 'Offline sync' } },
       { method: 'openPanelAgent', options: { threadId: 'thread-1', title: 'Offline sync' } },
       { method: 'openThreadPanel', options: { actionId: 'design-doc', title: 'Offline sync', params: { docId: doc.id }, threadId: 'thread-1' } },
@@ -403,7 +445,7 @@ describe('creating docs', () => {
     expect(harness.spawn).not.toHaveBeenCalled();
     const doc = harness.store.list({})[0]!;
     expect(doc.projectId).toBeNull();
-    expect(harness.navigateCalls).toEqual([{ method: 'toPluginPanel', path: 'design-docs', options: { subPath: doc.id } }]);
+    expect(harness.navigateCalls.filter(call => call.method !== 'setPageContext')).toEqual([{ method: 'toPluginPanel', path: 'design-docs', options: { subPath: doc.id } }]);
   });
 
   it('says the doc was created when only the drafting agent fails to start', async () => {

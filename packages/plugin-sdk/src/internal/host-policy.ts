@@ -77,6 +77,7 @@ export const RESERVED_AGENT_TOOL_NAMES: readonly string[] = [
   "agent_inbox",
   "update_environment_directory",
   "preview_file",
+  "page_context_read",
   "share_preview",
   "run_in_terminal",
   "inbox_push",

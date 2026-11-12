@@ -1,5 +1,6 @@
 import { remotePreviewGuidance } from '@zana-ai/zcc-domain';
 import { SHARE_PREVIEW_TOOL, invokeSharePreview } from './host-share-preview-tool.js';
+import { HOST_PAGE_CONTEXT_TOOL_NAME, HOST_PAGE_CONTEXT_TOOL, HOST_PAGE_CONTEXT_INSTRUCTION, invokeHostPageContextTool } from './host-page-context-tool.js';
 import { HOST_PEER_TOOLS, HOST_PEER_INSTRUCTION, invokeHostPeerTool } from './host-peer-tools.js';
 import { peerToolNames, type PeerToolName } from '../agents/peer-tool-contract.js';
 /**
@@ -88,6 +89,7 @@ export type { PackedSessionTooling };
 export const HOST_SHARE_TOOL_NAMES = [
   HOST_PREVIEW_FILE_TOOL_NAME,
   'share_preview',
+  HOST_PAGE_CONTEXT_TOOL_NAME,
   INBOX_PUSH_NAME,
   INBOX_SEARCH_NAME,
   SUGGEST_ACTION_NAME,
@@ -140,6 +142,7 @@ export const HOST_PTY_ONLY_TOOL_NAMES = [
 const HOST_SESSION_TOOLS: DynamicTool[] = [
   HOST_PREVIEW_FILE_TOOL,
   SHARE_PREVIEW_TOOL,
+  HOST_PAGE_CONTEXT_TOOL,
   ...HOST_INBOX_TOOLS,
   ...HOST_LIBRARY_TOOLS,
   ...HOST_GOAL_TOOLS,
@@ -150,6 +153,7 @@ const HOST_SESSION_TOOLS: DynamicTool[] = [
 
 export const HOST_SESSION_INSTRUCTION = [
   HOST_PREVIEW_FILE_INSTRUCTION,
+  HOST_PAGE_CONTEXT_INSTRUCTION,
   HOST_INBOX_INSTRUCTION,
   HOST_LIBRARY_INSTRUCTION,
   HOST_GOAL_INSTRUCTION,
@@ -179,6 +183,7 @@ export function mergeHostSessionTooling(
     ? [
         HOST_PREVIEW_FILE_INSTRUCTION,
         HOST_RUN_IN_TERMINAL_INSTRUCTION,
+        HOST_PAGE_CONTEXT_INSTRUCTION,
         HOST_INBOX_INSTRUCTION,
         HOST_LIBRARY_INSTRUCTION,
         HOST_GOAL_INSTRUCTION,
@@ -192,7 +197,7 @@ export function mergeHostSessionTooling(
     : hostTools;
   const tools = [...selectedHostTools.filter(tool => opts?.threadCommunicationEnabled !== false || !(peerToolNames as readonly string[]).includes(tool.name)), ...pluginTools].slice(0, HOST_SESSION_TOOLS_MAX);
   const guidance = opts?.remoteSurface
-    ? [remotePreviewGuidance(opts.remoteSurface.label), HOST_INBOX_INSTRUCTION, HOST_LIBRARY_INSTRUCTION, HOST_GOAL_INSTRUCTION, HOST_SCHEDULE_INSTRUCTION, HOST_CATALOG_INSTRUCTION, HOST_PEER_INSTRUCTION].join('\n')
+    ? [remotePreviewGuidance(opts.remoteSurface.label), HOST_PAGE_CONTEXT_INSTRUCTION, HOST_INBOX_INSTRUCTION, HOST_LIBRARY_INSTRUCTION, HOST_GOAL_INSTRUCTION, HOST_SCHEDULE_INSTRUCTION, HOST_CATALOG_INSTRUCTION, HOST_PEER_INSTRUCTION].join('\n')
     : hostInstruction;
   const instructions = [opts?.threadCommunicationEnabled === false ? guidance.replace(HOST_PEER_INSTRUCTION, '') : guidance, packed.instructions]
     .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
@@ -212,6 +217,7 @@ export async function invokeHostSessionTool(
   const { name } = args;
   if ((peerToolNames as readonly string[]).includes(name)) return invokeHostPeerTool(ctx, { ...args, name: name as PeerToolName });
   if (name === 'share_preview') return invokeSharePreview(ctx, args);
+  if (name === HOST_PAGE_CONTEXT_TOOL_NAME) return invokeHostPageContextTool(ctx, args);
   if (name === HOST_PREVIEW_FILE_TOOL_NAME) {
     return invokeHostPreviewFileTool(ctx, args);
   }

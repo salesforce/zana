@@ -7,6 +7,7 @@
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import { threadPanelActionMatchesScope, type PluginThreadPanelPage } from '@zana-ai/zcc-plugin-sdk';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+import { pluginPageResourceSchema, type PluginPageResource } from '@zana-ai/zcc-domain/thread-runtime';
 import { listThreadPanelActions } from './plugin-slots.js';
 
 export const PLUGIN_PANEL_TOOL_EVENT = 'zcc:plugin-panel-tool-open';
@@ -35,19 +36,26 @@ interface PluginPanelToolRequest {
 
 const PluginPagePanelContext = createContext<PluginThreadPanelPage | null>(null);
 const PluginPagePanelOpenContext = createContext<boolean | undefined>(undefined);
+const PluginPagePublicationScopeContext = createContext<object | undefined>(undefined);
 
 /**
  * Marks a plugin page as sitting beside a host side panel (`useZccContext().sidePanel`);
  * `open` is whether that panel is showing (`useZccContext().sidePanelOpen`).
  */
-export function PluginPagePanelProvider({ page, open, children }: { page: PluginThreadPanelPage; open?: boolean; children: ReactNode }) {
+export function PluginPagePanelProvider({ page, open, publicationScope, children }: { page: PluginThreadPanelPage; open?: boolean; publicationScope?: object; children: ReactNode }) {
   return createElement(PluginPagePanelContext.Provider, { value: page },
-    createElement(PluginPagePanelOpenContext.Provider, { value: open }, children));
+    createElement(PluginPagePanelOpenContext.Provider, { value: open },
+      createElement(PluginPagePublicationScopeContext.Provider, { value: publicationScope }, children)));
 }
 
 /** The page whose side panel encloses the caller, or null outside one. */
 export function usePluginPagePanel(): PluginThreadPanelPage | null {
   return useContext(PluginPagePanelContext);
+}
+
+/** Publications follow the host route; panel ownership and event routing keep their stable page token. */
+export function usePluginPagePublicationScope(): object | undefined {
+  return useContext(PluginPagePublicationScopeContext);
 }
 
 /** Whether the enclosing side panel is showing; undefined when the layout does not say. */
@@ -128,6 +136,27 @@ export const PANEL_SCOPE_ID_MAX_LENGTH = 4096;
 const PANEL_SCOPE_VIEW_MAX_LENGTH = 500;
 const PANEL_SCOPE_PROJECT_MAX_LENGTH = 200;
 const pageScopes = new WeakMap<PluginThreadPanelPage, PluginPanelScope | null>();
+const defaultPublicationScope = {};
+// Old route tokens disappear with their publisher/capture closures, without an
+// accumulating route catalogue or cleanup that could erase a newer publication.
+const pageContexts = new WeakMap<PluginThreadPanelPage, WeakMap<object, PluginPageResource>>();
+
+export function requestPluginPageContext(pluginId: string, value: unknown, page?: PluginThreadPanelPage, publicationScope = defaultPublicationScope): boolean {
+  if (!page || page.pluginId !== pluginId) return false;
+  if (value === null) { pageContexts.get(page)?.delete(publicationScope); return true; }
+  const parsed = pluginPageResourceSchema.safeParse(value);
+  if (!parsed.success) return false;
+  let contexts = pageContexts.get(page);
+  if (!contexts) { contexts = new WeakMap(); pageContexts.set(page, contexts); }
+  contexts.set(publicationScope, parsed.data);
+  return true;
+}
+
+/** Read synchronously at Send, even before a pending React render commits. */
+export function getPluginPageContext(page: PluginThreadPanelPage, publicationScope = defaultPublicationScope): PluginPageResource | null {
+  const context = pageContexts.get(page)?.get(publicationScope);
+  return context ? structuredClone(context) : null;
+}
 
 export function parsePluginPanelScope(value: unknown): PluginPanelScope | null | undefined {
   if (value === null) return null;

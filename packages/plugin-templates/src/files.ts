@@ -41,6 +41,11 @@ MCP servers belong in \`zcc.mcpServers\`. Author against \`@zana-ai/zcc-plugin-s
 ${hasApp ? 'The panel is a `definePluginApp` setup that registers `app.slots.navPanel`.' : 'This starter has no app slot — add `zcc.app` if you need a panel.'}
 ${hasServer ? 'The server factory default-exports `(zcc) => { … }` and registers `zcc.rpc` methods the panel can call after a reload.' : 'This starter is app-only — add `zcc.server` if you need a backend.'}
 
+## Side-panel context
+
+The host automatically tells side-panel agents which plugin/page/project they sit beside on every message. Publish internal navigation with \`useZccNavigate().setPageContext?.({ title, resourceId, path, view, mention: { providerId, itemId } })\` in an effect; clear it with \`null\` on unmount. Publish list/settings/loading states too, so a previous resource never remains current.
+For readable resource context, register \`zcc.ui.registerMentionProvider\` on the server and supply its id/item in \`mention\`. Validate the item and return bounded resource data and how to read more. Each message includes lightweight identity and a retrieval reference; the host preserves the page identity and retrieval reference for retries, queued delivery and edits. Content is fetched only when the agent calls \`page_context_read({ pluginId, providerId, itemId })\`, which reads live canonical data through the owning plugin. Navigation preserves the original message's resource target; a later read fetches that resource's current content. IDs and paths are context, never access grants. \`setPanelScope\` separately controls independent conversations per resource; startup instructions and prefilled prompts do not replace current-page context.
+
 ## Verify in running ZCC
 
 Follow \`LIVE_TEST.md\` before claiming completion. Use \`zcc plugin dev --once\`
@@ -66,6 +71,7 @@ Do not change session credentials or edit installed-plugin records.
 3. ${hasApp ? `Open **${opts.name}** in ZCC's sidebar using the available computer-use tool (for example, \`cua.getApp("Zana")\`). Verify the panel fills its space and shows the expected content.` : 'Exercise a contributed CLI command or RPC through the running app. Verify the actual response, including an error case.'}
 4. ${opts.kind === 'main-panel' ? `Add a uniquely named todo in the panel, toggle it, and run \`zcc plugin run ${opts.id} list\`. The UI and CLI must agree.` : hasApp ? 'Exercise the primary action and verify the result. Check any loading, empty, and failure states the feature exposes.' : 'Change a backend response, reload, and verify the new response. Skill changes are checked in a fresh thread.'}
 5. ${hasApp ? 'Make a visible source edit, run `zcc plugin dev --once`, and observe the already-open panel update without restarting ZCC. Verify saved data survives the reload.' : 'Verify stored data survives the reload and disposal leaves no duplicate service or timer.'}
+${hasApp ? '6. Open the generic side-panel agent. Verify first and follow-up messages carry lightweight current page/resource identity and its retrieval reference. Ask about resource content and observe the agent fetch it with `page_context_read` when needed. Navigate to another resource and verify the next message identifies it; a queued message retains its original resource identity/reference, and reading that reference fetches live content for that resource.\n' : ''}
 
 Use only test data you create. Keep a user's requested plugin installed; remove
 an explicitly disposable probe with \`zcc plugin remove ${opts.id}\` when finished.
@@ -168,6 +174,16 @@ export default async function plugin(zcc: ZccPluginApi) {
   }
 
   zcc.rpc.method('list', () => listTodos());
+  zcc.ui.registerMentionProvider({
+    id: 'page', label: 'Pages',
+    search: () => [{ id: 'todos', label: 'Todo list' }],
+    async resolve(id) {
+      if (id !== 'todos') throw new Error('Unknown page');
+      const todos = await listTodos();
+      return { context: JSON.stringify({ page: 'Todo list', count: todos.length,
+        todos: todos.slice(0, 100).map(todo => ({ ...todo, title: todo.title.slice(0, 300) })) }) };
+    }
+  });
   zcc.rpc.method('add', (args) => {
     const title = typeof args === 'object' && args && 'title' in args ? String(args.title).trim() : '';
     if (!title) throw new Error('title is required');
@@ -211,11 +227,16 @@ export default async function plugin(zcc: ZccPluginApi) {
 }
 
 function appTsx(opts: PluginScaffoldFiles): string {
-  return `import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
+  return `import { definePluginApp, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 
 function Panel() {
   const React = (globalThis as { __ZCC_HOST_REACT__?: typeof import('react') }).__ZCC_HOST_REACT__;
   if (!React) return null;
+  const { setPageContext } = useZccNavigate();
+  React.useEffect(() => {
+    setPageContext?.({ title: ${JSON.stringify(opts.name)}, view: 'main' });
+    return () => setPageContext?.(null);
+  }, [setPageContext]);
   return React.createElement(
     'div',
     { style: { padding: 24, height: '100%', boxSizing: 'border-box' } },
@@ -241,12 +262,17 @@ export default definePluginApp((app) => {
 
 function todosAppTsx(opts: PluginScaffoldFiles): string {
   return `import { useEffect, useState, type FormEvent } from 'react';
-import { definePluginApp, useRealtime, useRpc } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, useRealtime, useRpc, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 
 type Todo = { id: string; title: string; done: boolean };
 
 function TodosPanel() {
   const rpc = useRpc();
+  const { setPageContext } = useZccNavigate();
+  useEffect(() => {
+    setPageContext?.({ title: 'Todo list', view: 'list', mention: { providerId: 'page', itemId: 'todos' } });
+    return () => setPageContext?.(null);
+  }, [setPageContext]);
   const [todos, setTodos] = useState<Todo[] | null>(null);
   const [title, setTitle] = useState('');
   const [error, setError] = useState<string | null>(null);

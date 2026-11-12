@@ -82,7 +82,7 @@ describe("createAgentRuntime tool calls", () => {
     await runtime.runTurn({
       clientRequestId: "creq_222222223z",
       threadId: "t1",
-      input: [promptTextInput({ text: "call_tool:my_test_tool" })],
+      input: [promptTextInput({ text: "call_tool:my_test_tool report_tool_result" })],
       options: fullRuntimeOptions,
     });
     await waitForRuntimeState({
@@ -101,6 +101,8 @@ describe("createAgentRuntime tool calls", () => {
       providerThreadId: "prov-1",
       tool: "my_test_tool",
     });
+    expect(events.some(event => event.type === "item/completed" && event.item.type === "agentMessage"
+      && event.item.text.includes("tool result"))).toBe(true);
     await runtime.shutdown();
   });
 

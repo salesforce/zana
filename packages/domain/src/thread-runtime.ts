@@ -1,5 +1,6 @@
 /** BB thread/runtime domain surface. Isolated from product.ts / TerminalSession. */
 export * from './bb-thread/index.js';
+export * from './plugin-page-context.js';
 
 // Named re-exports so bundlers (electron-vite/rolldown) that omit colliding or
 // nested `export *` members still see the plugin-icon and system-message APIs.

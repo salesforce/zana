@@ -8,7 +8,7 @@ import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserT
 import { PanelAgentTab } from '../../components/thread/secondary-panel/PanelAgentTab.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { onPluginPanelAgentRequest, type PanelAgentTarget } from '../../plugins/plugin-panel-agent.js';
-import { onPluginPanelToolRequest, onPluginPanelScopeRequest, getPluginPanelScope, type PanelToolTarget, PLUGIN_PAGE_PANEL_OWNER_PREFIX, PluginPagePanelProvider, type PluginPanelScope } from '../../plugins/plugin-page-panel.js';
+import { getPluginPageContext, onPluginPanelToolRequest, onPluginPanelScopeRequest, getPluginPanelScope, type PanelToolTarget, PLUGIN_PAGE_PANEL_OWNER_PREFIX, PluginPagePanelProvider, type PluginPanelScope } from '../../plugins/plugin-page-panel.js';
 import { useSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import {
   activeClosableTab
@@ -67,6 +67,7 @@ function PluginPageSidePanelHost({
   children: ReactNode;
 }) {
   const page = useMemo(() => ({ pluginId, page: panelPath }), [pluginId, panelPath]);
+  const publicationScope = useMemo(() => ({}), [subPath, resourceId]);
   const [resource, setResource] = useState<PluginPanelScope | null>(null);
   const [presentation, setPresentation] = useState({ isOpen: false, isMaximized: false, widthPx: 352 });
   useEffect(() => onPluginPanelScopeRequest(page, setResource), [page]);
@@ -115,7 +116,7 @@ function PluginPageSidePanelHost({
       style={presentation.isOpen ? { ['--thread-secondary-width' as string]: `${presentation.widthPx}px` } : undefined}
     >
       <div className="split-plugin-main">
-        <PluginPagePanelProvider page={page} open={presentation.isOpen}>{children}</PluginPagePanelProvider>
+        <PluginPagePanelProvider page={page} open={presentation.isOpen} publicationScope={publicationScope}>{children}</PluginPagePanelProvider>
       </div>
       {/* Only the side panel changes ownership. The plugin editor and its live
           runners above retain their React identity when another resource opens. */}
@@ -126,8 +127,11 @@ function PluginPageSidePanelHost({
         panelPath={panelPath}
         scopeId={panelProjectId}
         resourceLabel={selectedResourceId?.split(/[\\/]/).at(-1)}
+        contextResourceId={resourceId}
+        contextSubPath={subPath}
         subPath={assistantView ?? (selectedResourceId ? undefined : subPath)}
         page={page}
+        publicationScope={publicationScope}
         viewRef={viewRef}
         onPresentation={setPresentation}
         connect={connect}
@@ -137,15 +141,18 @@ function PluginPageSidePanelHost({
 }
 
 function PluginResourceSidePanel({
-  ownerId, pluginId, panelPath, scopeId, resourceLabel, subPath, page, viewRef, onPresentation, connect
+  ownerId, pluginId, panelPath, scopeId, resourceLabel, contextResourceId, contextSubPath, subPath, page, publicationScope, viewRef, onPresentation, connect
 }: {
   ownerId: string;
   resourceLabel?: string;
+  contextResourceId?: string;
+  contextSubPath?: string;
   pluginId: string;
   panelPath: string;
   scopeId?: string;
   subPath?: string;
   page: { pluginId: string; page: string };
+  publicationScope: object;
   viewRef: { current: HTMLDivElement | null };
   connect: (controller: PanelController) => () => void;
   onPresentation: (state: { isOpen: boolean; isMaximized: boolean; widthPx: number }) => void;
@@ -207,6 +214,13 @@ function PluginResourceSidePanel({
         projectId={scopeId}
         resourceLabel={resourceLabel}
         pluginPanel={{ pluginId, panel: panelPath, ...(view ? { view } : {}) }}
+        capturePageContext={() => {
+          const context = getPluginPageContext(page, publicationScope);
+          const scope = getPluginPanelScope(page);
+          const currentView = context ? context.view : contextResourceId ?? contextSubPath ?? scope?.view ?? scope?.id;
+          return { pluginId, panel: panelPath, ...(scopeId ? { projectId: scopeId } : {}),
+            ...(currentView ? { view: currentView } : {}), ...(context ? { page: context } : {}) };
+        }}
         onCreated={(threadId) => panel.patchTab(tabId, { threadId, draft: undefined, draftReferences: undefined, draftSelection: undefined, draftProjectId: undefined, draftView: undefined })}
         onOpenConversation={({ id, title }) => {
           // Reopening a conversation already in a tab focuses it, not a duplicate.

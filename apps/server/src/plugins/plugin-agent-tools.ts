@@ -146,7 +146,7 @@ export function panelAgentGrounding(
     toolNames.length > 0
       ? `Prefer ${name}'s own tools over guessing: ${toolNames.join(', ')}.`
       : `${name} gives you no tools of its own, so answer from what the user tells you and Zana's general tools.`,
-    'You cannot see the page itself; ask the user when you need something that is only on screen.'
+    'Use the current page identity attached to each message. When it includes a read reference, use `page_context_read` or the plugin\'s read tools for content you need; reuse content already read. Ask the user only for information unavailable through these tools.'
   ].join(' ');
 }
 

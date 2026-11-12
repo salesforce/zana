@@ -533,6 +533,7 @@ export interface CcApi {
       acpMode?: string;
       /** Started from a plugin page's side-panel Agent tab; main validates the plugin. */
       pluginPanel?: { pluginId: string; panel: string; view?: string };
+      pageContext?: import('@zana-ai/zcc-domain/thread-runtime').PluginPageContext;
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -599,6 +600,7 @@ export interface CcApi {
       input: string | unknown[],
       mode?: string,
       extras?: {
+        pageContext?: import('@zana-ai/zcc-domain/thread-runtime').PluginPageContext;
         permissionMode?: 'accept-edits' | 'auto' | 'full';
         model?: string;
         reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';

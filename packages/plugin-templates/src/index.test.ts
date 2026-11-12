@@ -1,13 +1,40 @@
+// @vitest-environment happy-dom
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup } from '@testing-library/react';
+import { transformSync } from 'esbuild';
+import * as React from 'react';
+import * as jsxRuntime from 'react/jsx-runtime';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as pluginAppSdk from '@zana-ai/zcc-plugin-sdk/app';
+import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
+import { collectTestPluginApp, renderSlot } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { clampPluginStarterKind, scaffoldPlugin } from './index.js';
 
 const dirs: string[] = [];
 afterEach(() => {
+  cleanup();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+/** Execute generated source against the current SDK without building its dist. */
+function generatedModule<T>(source: string, loader: 'ts' | 'tsx'): T {
+  const compiled = transformSync(source, { loader, format: 'cjs', jsx: 'automatic' }).code;
+  const module = { exports: {} };
+  const require = createRequire(import.meta.url);
+  const imports: Record<string, unknown> = {
+    react: React,
+    'react/jsx-runtime': jsxRuntime,
+    '@zana-ai/zcc-plugin-sdk/app': pluginAppSdk
+  };
+  new Function('require', 'module', 'exports', compiled)(
+    (id: string) => id in imports ? imports[id] : require(id), module, module.exports
+  );
+  return module.exports as T;
+}
 
 describe('scaffoldPlugin', () => {
   it.each(['panel', 'main-panel', 'mcp-consumer', 'agent-preset'])('teaches %s live verification to every agent provider', async (kind) => {
@@ -51,6 +78,56 @@ describe('scaffoldPlugin', () => {
     expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).not.toContain('extension.json');
     expect(readFileSync(join(dest, 'app.js'), 'utf8')).not.toMatch(/activate\s*\(/);
     expect(readFileSync(join(dest, 'skills', 'hello-abcd', 'SKILL.md'), 'utf8')).toMatch(/hello-abcd/);
+  });
+
+  it.each(['panel', 'main-panel'])('%s publishes page context and clears it on unmount', async (kind) => {
+    const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-page-context-'));
+    dirs.push(dest);
+    await scaffoldPlugin({ targetDir: dest, id: 'context', name: 'Context', kind });
+    const definition = generatedModule<{ default: unknown }>(readFileSync(join(dest, 'app.tsx'), 'utf8'), 'tsx');
+    const app = collectTestPluginApp(definition.default, 'context');
+    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'context', subPath: '' }, {
+      rpc: { list: () => [] }
+    });
+    const expected = kind === 'main-panel'
+      ? { title: 'Todo list', view: 'list', mention: { providerId: 'page', itemId: 'todos' } }
+      : { title: 'Context', view: 'main' };
+    expect(slot.inspection.navigateCalls).toContainEqual({ method: 'setPageContext', context: expected });
+    expect(slot.inspection.navigateCalls.some(call => call.method === 'setPanelScope')).toBe(false);
+    slot.unmount();
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: 'setPageContext', context: null });
+    const instructions = readFileSync(join(dest, 'AGENTS.md'), 'utf8');
+    expect(instructions).toContain('setPageContext');
+    expect(instructions).toContain('Publish list/settings/loading states');
+    expect(instructions).toContain('preserves the page identity and retrieval reference for retries');
+    expect(instructions).toContain('Content is fetched only when the agent calls `page_context_read');
+    const recipe = readFileSync(join(dest, 'LIVE_TEST.md'), 'utf8');
+    expect(recipe).toContain('observe the agent fetch it with `page_context_read` when needed');
+    expect(recipe).toContain('a queued message retains its original resource identity/reference');
+  });
+
+  it('main-panel resolves canonical current todos and bounds page context', async () => {
+    const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-page-resolver-'));
+    dirs.push(dest);
+    await scaffoldPlugin({ targetDir: dest, id: 'context', name: 'Context', kind: 'main-panel' });
+    const server = generatedModule<{ default: (zcc: ZccPluginApi) => Promise<void> }>(readFileSync(join(dest, 'server.ts'), 'utf8'), 'ts');
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'context' });
+    const registerMentionProvider = vi.spyOn(zcc.ui, 'registerMentionProvider');
+    await server.default(zcc);
+    const provider = registerMentionProvider.mock.calls.find(([provider]) => provider.id === 'page')![0];
+    await expect(provider.resolve('unknown')).rejects.toThrow('Unknown page');
+    expect(await provider.resolve('todos')).toEqual({ context: JSON.stringify({ page: 'Todo list', count: 0, todos: [] }) });
+    const added = await harness.callRpc('add', { title: 'Read current document' });
+    expect(await provider.resolve('todos')).toEqual({
+      context: JSON.stringify({ page: 'Todo list', count: 1, todos: [added] })
+    });
+    await zcc.storage.kv.set('todos', Array.from({ length: 101 }, (_, i) => ({ id: String(i), title: 'x'.repeat(1_000), done: false })));
+    const snapshot = await provider.resolve('todos');
+    const resolved = JSON.parse(snapshot.context) as { count: number; todos: Array<{ title: string }> };
+    expect(resolved.count).toBe(101);
+    expect(resolved.todos).toHaveLength(100);
+    expect(resolved.todos.every(todo => todo.title.length === 300)).toBe(true);
+    expect(snapshot.context.length).toBeLessThan(60_000);
   });
 
   it('clamps unknown kinds to panel and does not clobber edits', async () => {

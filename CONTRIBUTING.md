@@ -39,8 +39,11 @@ during `git push` alongside Zana's own verification. It never blocks a push and
 public CI never runs it. It sends the outgoing diff to an internal AI gateway,
 so read the data policy in the guide first.
 
-1. Install TinyNod 2.5.0+ from the CodeNod homepage,
-   <https://git.soma.salesforce.com/cc-oms/pr-reviewer> ("tinynod (standalone CLI)").
+1. Obtain TinyNod 2.5.0+ through a distribution confirmed by the CodeNod
+   maintainers. Do not install it from public npm. Follow the
+   [installation source guidance](docs/tinynod-local-review.md#install) before
+   running any TinyNod command or supplying credentials. A version check does
+   not verify the executable's provenance.
 2. If the CodeNod app is running, import its settings first:
    `tinynod config import --from-app` (settings only, no key). Then store a
    gateway key and a full model id. With DevBar / AI Suite:
