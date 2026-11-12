@@ -30,7 +30,7 @@ import type {
   Project,
   SessionCohort
 } from '@zana-ai/zcc-domain/product';
-import { BUILTIN_PERSONA_SKILLS, sanitizePersonaSkills } from '@zana-ai/zcc-domain/product';
+import { BUILTIN_PERSONA_SKILLS, sanitizePersonaMcpServers, sanitizePersonaSkills } from '@zana-ai/zcc-domain/product';
 import { PERSONA_MCP_ALLOWLIST_OPERATION, personaMcpAllowlistNotice, resolveModernMcpAllowlist } from '../services/threads/persona-mcp-allowlist.js';
 import { MODERN_SQUAD_PRIVATE_NAMESPACE } from '@zana-ai/zcc-domain/squad-origin';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
@@ -283,7 +283,7 @@ export function emitPersonaMcpNotice(ctx: ProductHttpContext, threadId: string, 
 type PersonaMcpSource =
   | { kind: 'none' }
   | { kind: 'unresolvable' }
-  | { kind: 'found'; allowlist: string[] | undefined };
+  | { kind: 'found'; allowlist: string[] | undefined; stored?: string[] };
 
 /** Same lookup precedence as {@link resolvePersonaSkillSource}; built-in personas carry no MCP list. */
 function resolvePersonaMcpSource(
@@ -296,7 +296,10 @@ function resolvePersonaMcpSource(
   const raw = (project && !project.remote
     ? (listJsonFiles(join(project.path, '.zcc', 'personas')) as Persona[]).find((row) => row.id === personaId)
     : undefined) ?? findPersona(ctx, personaId);
-  if (raw) return { kind: 'found', allowlist: resolveModernMcpAllowlist(raw) };
+  if (raw) {
+    const stored = sanitizePersonaMcpServers(raw.mcpServers);
+    return { kind: 'found', allowlist: resolveModernMcpAllowlist(raw), ...(Array.isArray(stored) ? { stored } : {}) };
+  }
   if (Object.hasOwn(BUILTIN_PERSONA_SKILLS, personaId)) return { kind: 'found', allowlist: undefined };
   return project?.remote ? { kind: 'unresolvable' } : { kind: 'none' };
 }
@@ -336,6 +339,37 @@ export function personaMcpAllowlistLaunchNotice(
     allowlist: source.allowlist,
     personaLabel: input.personaId
   });
+}
+
+/** Operation name of the one-time legacy `mcpServers` meaning-change notice. */
+export const PERSONA_MCP_LEGACY_VALUE_OPERATION = 'persona_mcp_legacy_value';
+
+/** Personas already notified in this server process (keyed by id + stored value). */
+const legacyMcpNotified = new Set<string>();
+
+/** Test hook: forget which personas were already notified. */
+export function resetPersonaMcpLegacyNoticeState(): void {
+  legacyMcpNotified.clear();
+}
+
+/**
+ * One-time notice for a persona carrying an explicit stored `mcpServers` value (`[]` or a list),
+ * whose meaning changed from additive to an exclusive allowlist. Absent or malformed values give
+ * none. Returns the text and marks the persona notified only when `commit` runs.
+ */
+export function personaMcpLegacyValueNotice(
+  ctx: ProductHttpContext,
+  personaId: string | undefined,
+  project?: Pick<Project, 'path' | 'remote'>
+): { message: string; commit: () => void } | undefined {
+  const source = resolvePersonaMcpSource(ctx, personaId, project);
+  if (source.kind !== 'found' || source.stored === undefined || !personaId) return undefined;
+  const key = `${personaId}:${JSON.stringify(source.stored)}`;
+  if (legacyMcpNotified.has(key)) return undefined;
+  const message = source.stored.length === 0
+    ? `Persona "${personaId}" has an explicit empty MCP server list. It now means no MCP servers beyond zcc-inbox (previously it added nothing). Remove the field to allow all servers.`
+    : `Persona "${personaId}" lists MCP servers (${source.stored.join(', ')}). The list is now an exclusive allowlist: only these servers plus zcc-inbox are available (previously they were added to the defaults). Remove the field to allow all servers.`;
+  return { message, commit: () => { legacyMcpNotified.add(key); } };
 }
 
 export function persistThreadSkillSelection(
@@ -616,6 +650,13 @@ async function startThreadOnHost(
   persistThreadSkillSelection(ctx, args.thread.id, { ...skillFields, ...(mcpAllowlist ? { mcpAllowlist } : {}) });
   emitPersonaSkillNotice(ctx, args.thread.id, personaSkillAllowlistNotice(ctx, args.input.personaId, args.project));
   emitPersonaMcpNotice(ctx, args.thread.id, family === 'shell' ? undefined : personaMcpAllowlistLaunchNotice(ctx, args.input, args.project));
+  if (family !== 'shell') {
+    const legacy = personaMcpLegacyValueNotice(ctx, args.input.personaId, args.project);
+    if (legacy) {
+      emitPersonaNotice(ctx, args.thread.id, PERSONA_MCP_LEGACY_VALUE_OPERATION, legacy.message);
+      legacy.commit();
+    }
+  }
   await ctx.hostHub.callHostOnlineRpc<ThreadStartResult>({
     hostId: args.hostId,
     command: {
