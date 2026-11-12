@@ -21,7 +21,8 @@
 import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
-import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { mcpAllowlistCovers, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { rewritePluginMcpArgs } from '@zana-ai/zcc-host-workspace';
 import { resolveZccDataDir } from './host-config.js';
 
@@ -202,29 +203,56 @@ function allAlwaysOnServerNames(): string[] {
 }
 
 /**
- * Claude `--allowedTools` wildcards for always-on plugin/extension MCP servers.
- * `.mcp.json` keys are `plugin:<id>:<name>` / `ext:<id>:<name>`; Claude names
- * the server with colons turned into underscores (`mcp__plugin_id_name`).
+ * Matcher view of a registry key. `plugin:<id>:<name>` / `ext:<id>:<name>` keys
+ * are pinned sources; seed keys are bare app-owned names.
  */
-export function alwaysOnPluginMcpAllowlist(): string[] {
-  return allAlwaysOnServerNames().map((key) => `mcp__${key.replace(/:/g, '_')}`);
+function serverRef(key: string): McpServerRef {
+  const prefix = key.startsWith('plugin:') ? 'plugin' : key.startsWith('ext:') ? 'extension' : null;
+  if (!prefix) return { key, source: 'user', name: key };
+  const nameStart = key.indexOf(':', key.indexOf(':') + 1) + 1;
+  return { key, source: prefix, name: nameStart > 0 ? key.slice(nameStart) : key };
 }
 
 /**
  * The one enablement rule for plugin/extension MCP servers on every PTY
- * surface: every currently-registered `alwaysOn` entry plus the entries a
- * persona names. Registry membership already encodes enabled (and, for
- * extensions, consented) state. Unknown names are ignored.
+ * surface. `undefined` = all mode (persona has no `mcpServers`): every
+ * registered `alwaysOn` entry plus any named extras, unchanged from before.
+ * An array = allowlist mode: exactly the registered servers a list entry
+ * covers via the shared {@link mcpAllowlistCovers}; `[]` selects none and an
+ * `alwaysOn` server is NOT exempt (only `zcc-inbox`, which is not in this
+ * registry, is always allowed). Registry membership already encodes enabled
+ * (and, for extensions, consented) state. Unknown names are ignored.
  */
 function selectedServerEntries(extraServerNames?: string[]): Array<[string, McpServerDef]> {
   const registry = mcpServerRegistry();
-  const names = new Set([...(extraServerNames ?? []), ...allAlwaysOnServerNames()]);
   const entries: Array<[string, McpServerDef]> = [];
-  for (const name of names) {
-    const def = registry[name];
-    if (def) entries.push([name, def]);
+  if (extraServerNames === undefined) {
+    const names = new Set(allAlwaysOnServerNames());
+    for (const name of names) {
+      const def = registry[name];
+      if (def) entries.push([name, def]);
+    }
+    return entries;
+  }
+  for (const [key, def] of Object.entries(registry)) {
+    const ref = serverRef(key);
+    if (extraServerNames.some((entry) => mcpAllowlistCovers(entry, ref))) entries.push([key, def]);
   }
   return entries;
+}
+
+/**
+ * Claude `--allowedTools` wildcards for always-on plugin/extension MCP servers.
+ * `.mcp.json` keys are `plugin:<id>:<name>` / `ext:<id>:<name>`; Claude names
+ * the server with colons turned into underscores (`mcp__plugin_id_name`).
+ * Uses the same selection as the config body: in allowlist mode (an array) only
+ * `alwaysOn` servers the list selected are pre-allowed, so the wildcards can
+ * never name a server the config omits.
+ */
+export function alwaysOnPluginMcpAllowlist(extraServerNames?: string[]): string[] {
+  const alwaysOn = new Set(allAlwaysOnServerNames());
+  const keys = selectedServerEntries(extraServerNames).map(([key]) => key).filter((key) => alwaysOn.has(key));
+  return keys.map((key) => `mcp__${key.replace(/:/g, '_')}`);
 }
 
 /** A plugin MCP server rendered for a CLI that takes servers as args or config. */
@@ -328,4 +356,43 @@ export function ensureMcpConfigForProjectSync(
   writeFileSync(tmp, configBody(extraServerNames), 'utf-8');
   renameSync(tmp, target);
   return target;
+}
+
+const SESSION_FILE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** Path of the per-session allowlist-mode `.mcp.json`; ids are validated (never path-joined raw). */
+export function sessionMcpConfigPath(projectId: string, sessionId: string): string {
+  if (!SESSION_FILE_ID_RE.test(projectId) || !SESSION_FILE_ID_RE.test(sessionId)) {
+    throw new Error('invalid projectId or sessionId for MCP session config');
+  }
+  return join(mcpConfigDir(), 'sessions', `${projectId}.${sessionId}.json`);
+}
+
+/**
+ * Allowlist-mode writer: a private (0600) per-session `.mcp.json` so two
+ * sessions of one project with different allowlists never overwrite each
+ * other. Atomic (tmp + uniquely-suffixed rename). Used only when a persona
+ * carries an `mcpServers` list; unset personas keep the shared per-project file.
+ */
+export function ensureSessionMcpConfigSync(projectId: string, sessionId: string, allowlist: string[]): string {
+  const target = sessionMcpConfigPath(projectId, sessionId);
+  mkdirSync(join(mcpConfigDir(), 'sessions'), { recursive: true });
+  const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    writeFileSync(tmp, configBody(allowlist), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, target);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+  return target;
+}
+
+/** Remove a session's config on its shutdown path. Best-effort; never throws. */
+export function removeSessionMcpConfig(projectId: string, sessionId: string): void {
+  try {
+    rmSync(sessionMcpConfigPath(projectId, sessionId), { force: true });
+  } catch {
+    /* already gone or invalid ids */
+  }
 }
