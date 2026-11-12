@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import { AddMachineDialog, AddMachineDialogView } from './AddMachineDialog.js';
+import { SetupPageContext } from '../../components/setup/SetupFrame.js';
 
 const render = (ui: React.ReactNode) => renderReact(<MemoryRouter>{ui}</MemoryRouter>);
 
@@ -65,6 +66,20 @@ function view(overrides: Partial<Parameters<typeof AddMachineDialogView>[0]> = {
     />
   );
 }
+
+it('presents machine connection as a normal setup page when page-hosted', () => {
+  const onClose = vi.fn();
+  render(<SetupPageContext.Provider value={{ active: true, setBusy: vi.fn() }}>
+    {view({ onClose, connectBusy: true })}
+  </SetupPageContext.Provider>);
+  expect(screen.getByRole('region', { name: 'Connect a machine' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Connect a machine' })).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect((screen.getByRole('button', { name: 'Done' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  expect(onClose).not.toHaveBeenCalled();
+  cleanup();
+});
 
 describe('AddMachineDialogView', () => {
   it('shows the pairing command, copy, expiry, and waiting status', () => {
