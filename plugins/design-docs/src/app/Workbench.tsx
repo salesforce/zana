@@ -296,7 +296,8 @@ function DocList({
   useEffect(() => {
     if (!seenRaw) setSeenRaw(JSON.stringify(seen));
   }, [seenRaw, seen, setSeenRaw]);
-  const activeUpdatedAt = docs.data?.find((doc) => doc.id === activeId)?.updatedAt ?? null;
+  // An unassigned (peer) doc is listed separately from `docs`, so look it up there too.
+  const activeUpdatedAt = (docs.data?.find((doc) => doc.id === activeId) ?? unassignedDocs.data?.find((doc) => doc.id === activeId))?.updatedAt ?? null;
   // The open doc is seen, including edits that land while it is open.
   useEffect(() => {
     if (!activeId || activeUpdatedAt === null) return;
