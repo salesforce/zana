@@ -37,6 +37,7 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 
 Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enabled true` or `ZANA_TINYNOD_REVIEW=1`; the pre-push adapter (`scripts/tinynod-pre-push-review.mjs`) runs an advisory review when enabled. Setup, opt-in/out, reading results, and troubleshooting are in the guide.
 
+- Do not install TinyNod from public npm. Verify the installed executable's provenance against a distribution confirmed by the CodeNod maintainers before any TinyNod command (including `--version`), hook exercise, credential setup, or opt-in. If provenance is unknown, leave review off and follow the guide's installation-source instructions.
 - When reporting a push or handoff, state the skip/review reason, base, head, and which checks ran (Zana verification, TinyNod). Include no secrets, config bodies, or prompt contents.
 - Never claim a change was reviewed by TinyNod when review was skipped, failed, timed out, or returned non-JSON; that is a warning, not a clean review.
 - Never use `TINYNOD_SKIP_HOOK` to hide findings. It skips TinyNod only; Zana verification still runs.
