@@ -47,7 +47,7 @@ async function expectTooltipInWindow(button: Locator, text: string): Promise<voi
 
 test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
-test('Design Docs list: group toggle flips, collapse-all works, and controls disable instead of vanishing', async ({ app, home }, testInfo) => {
+test('Design Docs list: group toggle flips, collapse-all works, and controls disable instead of vanishing', async ({ app, home }) => {
   test.setTimeout(150_000);
   const win = app.window;
   await win.setViewportSize({ width: 1100, height: 800 }).catch(() => undefined);
@@ -63,7 +63,6 @@ test('Design Docs list: group toggle flips, collapse-all works, and controls dis
 
   // Tooltip is instant (data-tip, not native title) and its full rectangle stays inside the window.
   await expectTooltipInWindow(group, 'Grouped by project');
-  await testInfo.attach('grouped', { body: await win.screenshot(), contentType: 'image/png' });
 
   // Collapse all hides every row; the same button then expands them.
   await expect(collapse).toBeEnabled();
@@ -78,7 +77,6 @@ test('Design Docs list: group toggle flips, collapse-all works, and controls dis
   await expect(group).toHaveAttribute('aria-pressed', 'false');
   await expect(collapse).toBeDisabled();
   await expect(win.getByText('alpha spec')).toBeVisible();
-  await testInfo.attach('flat', { body: await win.screenshot(), contentType: 'image/png' });
   await expectTooltipInWindow(group, 'Flat list');
 
   // Search disables collapse-all even when grouped.
