@@ -310,7 +310,9 @@ describe('Modern composer beside a plugin page', () => {
   it('fixes the page project and run target, and drops Create plugin', async () => {
     h.threads = [];
     const view = render(composer({ threadId: undefined, pluginPanel }));
-    expect(view.container.querySelector('.thread-command-project')).toBeNull();
+    // The project stays visible, read-only, so the panel names where it runs.
+    expect(view.container.querySelector('.thread-command-project')).not.toBeNull();
+    expect(h.locationProps).toMatchObject({ value: 'p1', disabled: true, title: 'Locked to this project' });
     expect(screen.queryByText('Working folder')).toBeNull();
     expect(screen.getByTestId('host-action')).toBeTruthy();
     expect(screen.getByTestId('plugin-chrome').dataset.createPlugin).toBe('false');
