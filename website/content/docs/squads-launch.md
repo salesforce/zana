@@ -46,7 +46,7 @@ When the Squad starts, a toast says "Squad launched. Open Agents board to monito
 
 If something blocks the launch, the composer says why.
 
-- "Squad requirements need attention" lists missing Skills and MCP servers. Choose **Configure project**, **Edit plan** or **Cancel**.
+- "Squad requirements need attention" lists missing Skills and MCP servers. Choose **Configure project**, **Edit plan** or **Cancel**. A Persona that uses **Restrict MCP servers** can make a required server unavailable to a worker; see [Restrict MCP servers](/docs/squads-customize/#restrict-mcp-servers).
 - "Project capabilities could not be verified" offers **Retry** or **Cancel**.
 
 Launching from the composer never waits for approval. The Launch approval setting only applies to agents that start a Squad on their own.
