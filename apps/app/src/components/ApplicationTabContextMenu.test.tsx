@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { ThreadTabContextMenu } from './ThreadTabContextMenu.js';
+import { ApplicationTabContextMenu } from './ApplicationTabContextMenu.js';
 
 afterEach(() => { cleanup(); document.body.replaceChildren(); vi.restoreAllMocks(); });
 
@@ -9,7 +9,7 @@ function setup() {
   const anchor = document.createElement('button'); document.body.append(anchor);
   const onClose = vi.fn(), run = vi.fn();
   const items = [{ label: 'Copy', run }, { label: 'Unavailable', run, disabled: true }, { label: 'Close', run, separatorBefore: true }];
-  const view = render(<ThreadTabContextMenu x={3000} y={3000} anchor={anchor} items={items} onClose={onClose} />);
+  const view = render(<ApplicationTabContextMenu x={3000} y={3000} note="Close tab" anchor={anchor} items={items} onClose={onClose} />);
   return { anchor, onClose, run, view };
 }
 
@@ -53,7 +53,7 @@ it('dismisses on outside pointer/context menu, blur, resize and scrolling, clean
 it('uses a gutter at the left and top edges and tolerates a removed anchor', () => {
   const anchor = document.createElement('button'); document.body.append(anchor);
   const onClose = vi.fn();
-  render(<ThreadTabContextMenu x={-30} y={-30} anchor={anchor} items={[{ label: 'Close', run: vi.fn() }]} onClose={onClose} />);
+  render(<ApplicationTabContextMenu x={-30} y={-30} note="Close tab" anchor={anchor} items={[{ label: 'Close', run: vi.fn() }]} onClose={onClose} />);
   const menu = screen.getByRole('menu'); expect(menu.style.left).toBe('8px'); expect(menu.style.top).toBe('8px');
   anchor.remove(); fireEvent.keyDown(menu, { key: 'Escape' }); expect(onClose).toHaveBeenCalledOnce();
 });
@@ -62,9 +62,9 @@ it('keeps measured coordinates on rerender and reclamps when another tab opens t
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 252, height: 300 } as DOMRect);
   const { anchor, view, onClose } = setup();
   const items = [{ label: 'Copy', run: vi.fn() }];
-  view.rerender(<ThreadTabContextMenu x={3000} y={3000} anchor={anchor} items={items} onClose={onClose} />);
+  view.rerender(<ApplicationTabContextMenu x={3000} y={3000} note="Close tab" anchor={anchor} items={items} onClose={onClose} />);
   expect(screen.getByRole('menu').style.top).toBe(`${window.innerHeight - 308}px`);
-  view.rerender(<ThreadTabContextMenu x={10} y={20} anchor={anchor} items={items} onClose={onClose} />);
+  view.rerender(<ApplicationTabContextMenu x={10} y={20} note="Close tab" anchor={anchor} items={items} onClose={onClose} />);
   expect(screen.getByRole('menu').style.left).toBe('10px');
   expect(screen.getByRole('menu').style.top).toBe('20px');
 });

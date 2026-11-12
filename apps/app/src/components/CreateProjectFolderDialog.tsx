@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { FolderOpen } from 'lucide-react';
-import { Modal } from './Modal.js';
+import { SetupFrame as Modal, useSetupBusy } from './setup/SetupFrame.js';
 import { product } from '../lib/product-client.js';
 import { createProjectFolder } from '../lib/machine-project-client.js';
 import { useData } from '../store.js';
@@ -16,6 +16,7 @@ export function CreateProjectFolderDialog({ group, onClose, onAdded }: {
   const [entries, setEntries] = useState<Array<{ name: string; path: string }>>([]);
   const [parent, setParent] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useSetupBusy(busy);
   const [error, setError] = useState('');
   const operation = useRef({ key: '', id: '' });
   const nameInput = useRef<HTMLInputElement>(null);

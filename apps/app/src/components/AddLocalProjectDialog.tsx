@@ -4,7 +4,7 @@ import { HostMachinePicker } from './HostMachinePicker.js';
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 import { folderPathPlaceholder } from '../lib/path.js';
 import { product } from '../lib/product-client.js';
-import { Modal } from './Modal.js';
+import { SetupFrame as Modal, useSetupBusy } from './setup/SetupFrame.js';
 
 interface AddLocalProjectDialogProps {
   fixedHostId?: string;
@@ -27,6 +27,7 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit, fixedHostId
   const [hostId, setHostId] = useState<string | undefined>(fixedHostId);
   const [path, setPath] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  useSetupBusy(submitting);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<Array<{ kind: 'file' | 'directory'; name: string; path: string }>>([]);
   const [parent, setParent] = useState<string | null>(null);
@@ -181,7 +182,7 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit, fixedHostId
             </ul>
           )}
 
-          {error && <div className="modal-error">{error}</div>}
+          {error && <div className="modal-error" role="alert">{error}</div>}
     </Modal>
   );
 }

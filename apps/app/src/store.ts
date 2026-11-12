@@ -141,6 +141,7 @@ function sidebarCollapsedKey(): string {
 
 /** Built-in nav destinations. App modules (plugins/*) add their own ids. */
 export type CoreNavId =
+  | 'setup'
   | 'home'
   | 'projects'
   | 'agents'
@@ -161,6 +162,7 @@ export type CoreNavId =
  * currently-loaded module id (a removed/disabled extension).
  */
 export const CORE_NAV_IDS = new Set<CoreNavId>([
+  'setup',
   'home',
   'projects',
   'agents',

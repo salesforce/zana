@@ -41,6 +41,16 @@ describe('route memory', () => {
     expect(visible.projectBackRoutePath).toBe('/agents');
   });
 
+  it('returns to the project list rather than a completed setup page', () => {
+    let stored = nextStoredRouteMemory(INITIAL_STORED_ROUTE_MEMORY, loc('/agents'));
+    stored = nextStoredRouteMemory(stored, loc('/setup/project%3Amac%3Aopen'));
+    // Settings can resume a draft while it is open, but project Back must
+    // still work once a successful registration has closed that draft.
+    expect(stored.lastAppRoutePath).toBe('/setup/project%3Amac%3Aopen');
+    stored = nextStoredRouteMemory(stored, loc('/projects/new'));
+    expect(visibleRouteMemory(stored, loc('/projects/new')).projectBackRoutePath).toBe('/agents');
+  });
+
   it("treats a project's Inbox as the cross-project Inbox for project-rail Back", () => {
     let stored = INITIAL_STORED_ROUTE_MEMORY;
     stored = nextStoredRouteMemory(stored, loc('/agents'));

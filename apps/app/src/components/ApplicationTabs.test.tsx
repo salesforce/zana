@@ -20,18 +20,22 @@ vi.mock('../thread-store.js', async () => {
 vi.mock('./thread/pickers/ProviderIcon.js', () => ({ ProviderIcon: ({ providerId }: { providerId: string }) => <i data-provider={providerId} /> }));
 import { useData } from '../store.js';
 import { useThreads } from '../thread-store.js';
-import { TitlebarThreadTabs } from './TitlebarThreadTabs.js';
+import { useApplicationTabs } from '../lib/application-tabs.js';
+import { useSetupPages, setupPath } from './setup/setup-pages.js';
+import { ApplicationTabs } from './ApplicationTabs.js';
 
 const row = (id: string, projectId = 'p', extra: Partial<ThreadListItem> = {}): ThreadListItem => ({ id, projectId, title: `Thread ${id}`, providerId: 'fake', status: 'idle', hostId: 'local', environmentId: null, createdAt: 1, cwd: null, branchName: null, isWorktree: false, ...extra });
 function Probe() {
   const location = useLocation(); const navigate = useNavigate();
-  return <><output data-testid="route">{location.pathname}</output>{['/threads/a', '/threads/b', '/threads/c', '/threads/hidden', '/threads/archived', '/settings', '/projects/p/threads/a'].map(path => <button key={path} onClick={() => navigate(path)}>{path}</button>)}</>;
+  return <><output data-testid="route">{location.pathname}</output>{['/threads/a', '/threads/b', '/threads/c', '/threads/hidden', '/threads/archived', '/settings', '/projects/p/threads/a', '/setup/machine'].map(path => <button key={path} onClick={() => navigate(path)}>{path}</button>)}</>;
 }
-function mount(path = '/threads/a') { return render(<MemoryRouter initialEntries={[path]}><TitlebarThreadTabs /><Probe /></MemoryRouter>); }
+function mount(path = '/threads/a', includeThreads = true) { return render(<MemoryRouter initialEntries={[path]}><ApplicationTabs includeThreads={includeThreads} /><Probe /></MemoryRouter>); }
 const visit = (path: string) => fireEvent.click(screen.getByRole('button', { name: path, exact: true }));
 const tabs = () => screen.getAllByRole('tab');
 
 beforeEach(() => {
+  useApplicationTabs.setState({ open: [], closed: [], initializedScope: undefined });
+  useSetupPages.setState({ pages: [] });
   h.scope = null; h.load.mockReset().mockResolvedValue(undefined); h.unsubscribe.mockReset(); sessionStorage.clear();
   h.copy.mockReset().mockResolvedValue(undefined); h.toast.mockReset();
   h.archive.mockReset().mockResolvedValue({ ok: true });
@@ -70,7 +74,7 @@ it('uses each project’s saved icon and color in tabs and the overflow list, in
   expect(document.querySelector('[data-provider]')).toBeNull();
   const overflow = document.querySelector('.titlebar-threads-results')!;
   expect([...overflow.querySelectorAll('.project-dot')].map(marker => marker.outerHTML)).toEqual(markers.map(marker => marker.outerHTML));
-  fireEvent.change(screen.getByLabelText('Find an open thread'), { target: { value: 'Project Q' } });
+  fireEvent.change(screen.getByLabelText('Find an open tab'), { target: { value: 'Project Q' } });
   expect(overflow.querySelector('[data-project-icon="Cloud"]')).toBeTruthy();
   expect(overflow.querySelector('[data-project-icon="Rocket"]')).toBeNull();
 });
@@ -158,7 +162,7 @@ it('closes shortcuts, selects adjacent tabs, reopens closed tabs and falls back 
   fireEvent.click(screen.getByRole('button', { name: 'Close tab: Thread a' }));
   fireEvent.click(screen.getByRole('button', { name: 'Close tab: Untitled thread' }));
   expect(screen.getByTestId('route').textContent).toBe('/agents');
-  expect(screen.getByText('Open a thread to keep it here')).toBeTruthy();
+  expect(document.querySelector('.titlebar-threads-empty')?.textContent).toBe('No open tabs');
   expect(useThreads.getState().threads).toHaveLength(5);
 });
 
@@ -223,7 +227,7 @@ it('provides searchable overflow, keyboard tab navigation and dismissible menus'
   menu.open = true;
   fireEvent(menu, new Event('toggle'));
   expect(document.querySelector<HTMLElement>('.titlebar-threads-popover')!.style.left).toBe('8px');
-  fireEvent.change(screen.getByRole('textbox', { name: 'Find an open thread' }), { target: { value: 'Project P' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Find an open tab' }), { target: { value: 'Project P' } });
   const results = within(document.querySelector('.titlebar-threads-results')! as HTMLElement);
   expect(results.getAllByRole('button')).toHaveLength(1);
   fireEvent.click(results.getByRole('button'));
@@ -236,7 +240,7 @@ it('provides searchable overflow, keyboard tab navigation and dismissible menus'
 
 const openActions = (name = 'Thread a — Project P') => {
   fireEvent.contextMenu(screen.getByRole('tab', { name, exact: true }), { clientX: 200, clientY: 40 });
-  return screen.getByRole('menu', { name: 'Thread tab actions' });
+  return screen.getByRole('menu', { name: 'Tab actions' });
 };
 const action = (label: string) => fireEvent.click(screen.getByRole('menuitem', { name: label, exact: true }));
 
@@ -384,4 +388,96 @@ it.each(['refused', 'offline'])('reports an archive request that is %s and keeps
   expect(h.remove).not.toHaveBeenCalled();
   expect(tabs()).toHaveLength(1);
   expect(screen.getByTestId('route').textContent).toBe('/threads/a');
+});
+
+function openMachineSetup(busy = false) {
+  act(() => {
+    const id = useSetupPages.getState().open({ kind: 'machine' }, '/threads/a')!;
+    useSetupPages.getState().setBusy(id, busy);
+  });
+  visit('/setup/machine');
+}
+
+it('interleaves tab kinds by opening order, searches both and uses one roving keyboard focus', () => {
+  mount(); openMachineSetup(); visit('/threads/b');
+  expect(tabs().map(tab => tab.getAttribute('aria-label'))).toEqual(['Thread a — Project P', 'Connect a machine', 'Thread b — Project Q']);
+  expect(screen.getByRole('tablist', { name: 'Open tabs' })).toBeTruthy();
+  fireEvent.keyDown(tabs()[2]!, { key: 'ArrowLeft' });
+  expect(screen.getByTestId('route').textContent).toBe(setupPath('machine'));
+  expect(tabs().map(tab => tab.getAttribute('tabindex'))).toEqual(['-1', '0', '-1']);
+  const results = document.querySelector('.titlebar-threads-results')! as HTMLElement;
+  expect(within(results).getAllByRole('button')).toHaveLength(3);
+  fireEvent.change(screen.getByLabelText('Find an open tab'), { target: { value: 'setup' } });
+  expect(within(results).getAllByRole('button')).toHaveLength(1);
+  expect(within(results).getByRole('button', { name: /Connect a machine/ })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Find an open tab'), { target: { value: 'no match' } });
+  expect(within(results).getByText('No matching tabs')).toBeTruthy();
+});
+
+it('offers kind-specific actions and closes mixed neighbors without mutating conversations', () => {
+  mount(); openMachineSetup(); visit('/threads/b');
+  const menu = openActions('Connect a machine');
+  expect(within(menu).queryByRole('menuitem', { name: 'Archive' })).toBeNull();
+  expect(within(menu).queryByRole('menuitem', { name: 'Copy thread link' })).toBeNull();
+  expect(within(menu).getByText('Close setup and discard its draft')).toBeTruthy();
+  action('Close other tabs');
+  expect(tabs()).toHaveLength(1);
+  expect(screen.getByTestId('route').textContent).toBe('/setup/machine');
+  expect(useThreads.getState().threads).toHaveLength(5);
+  openActions('Connect a machine'); action('Reopen closed tab');
+  expect(screen.getByTestId('route').textContent).toBe('/threads/b');
+  fireEvent.click(screen.getByRole('button', { name: 'Close tab: Thread b' }));
+  expect(screen.getByTestId('route').textContent).toBe('/setup/machine');
+  openActions('Connect a machine'); action('Close all tabs');
+  expect(screen.queryByRole('tab')).toBeNull();
+  expect(useSetupPages.getState().pages).toHaveLength(0);
+  expect(useApplicationTabs.getState().closed.every(tab => tab.kind === 'thread')).toBe(true);
+  expect(screen.getByTestId('route').textContent).toBe('/agents');
+});
+
+it('protects busy setup tabs from every close action and selects a surviving setup after bulk close', () => {
+  mount(); openMachineSetup(true); visit('/threads/b');
+  expect((screen.getByRole('button', { name: 'Close tab: Connect a machine' }) as HTMLButtonElement).disabled).toBe(true);
+  openActions('Connect a machine');
+  expect((screen.getByRole('menuitem', { name: 'Close tab', exact: true }) as HTMLButtonElement).disabled).toBe(true);
+  action('Close all tabs');
+  expect(tabs()).toHaveLength(1);
+  expect(useSetupPages.getState().pages[0]?.busy).toBe(true);
+  expect(screen.getByTestId('route').textContent).toBe('/setup/machine');
+  expect(h.toast).toHaveBeenCalledWith('1 tab stays open while setup is in progress');
+  openActions('Connect a machine');
+  expect((screen.getByRole('menuitem', { name: 'Close all tabs' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+  act(() => useSetupPages.getState().setBusy('machine', false));
+  fireEvent.click(screen.getByRole('button', { name: 'Close tab: Connect a machine' }));
+  expect(screen.queryByRole('tab')).toBeNull();
+});
+
+it('reorders mixed tabs from their menus and by dragging without navigating or losing drafts', () => {
+  mount(); openMachineSetup(); visit('/threads/b');
+  openActions('Connect a machine'); action('Move tab left');
+  expect(tabs()[0]!.getAttribute('aria-label')).toBe('Connect a machine');
+  expect(screen.getByTestId('route').textContent).toBe('/threads/b');
+  openActions('Connect a machine'); action('Move tab right');
+  const transfer = { setData: vi.fn(), effectAllowed: '' };
+  fireEvent.dragStart(tabs()[1]!, { dataTransfer: transfer });
+  expect(transfer.setData).toHaveBeenCalledWith('text/plain', 'setup:machine');
+  fireEvent.dragOver(tabs()[2]!); fireEvent.drop(tabs()[2]!); fireEvent.dragEnd(tabs()[1]!);
+  expect(tabs()[2]!.getAttribute('aria-label')).toBe('Connect a machine');
+  expect(useSetupPages.getState().pages).toHaveLength(1);
+  expect(screen.getByTestId('route').textContent).toBe('/threads/b');
+});
+
+it('keeps setup tabs available when thread tabs are disabled and restores only conversations after reload', () => {
+  const id = useSetupPages.getState().open({ kind: 'machine' }, '/')!;
+  const view = mount(setupPath(id), false);
+  expect(tabs()).toHaveLength(1);
+  expect(h.load).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: 'New thread' })).toBeNull();
+  expect(sessionStorage.getItem('zcc.application-tabs.v1:main')).not.toContain('machine');
+  view.unmount();
+  useApplicationTabs.setState({ open: [], closed: [], initializedScope: undefined });
+  useSetupPages.setState({ pages: [] });
+  mount('/settings');
+  expect(screen.queryByRole('tab')).toBeNull();
 });

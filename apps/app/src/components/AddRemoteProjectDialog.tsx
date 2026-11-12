@@ -1,7 +1,8 @@
+import { SetupFrame, useSetupBusy, useSetupPage } from './setup/SetupFrame.js';
 import { product } from '../lib/product-client.js';
 import { hasDesktopBridge } from '../lib/app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Search, X } from 'lucide-react';
+import { RefreshCw, Search } from 'lucide-react';
 import type { Project, SshHostEntry } from '@zana-ai/zcc-domain/product';
 import { StencilList } from './ui/Skeleton.js';
 
@@ -35,6 +36,8 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess, fixedTarg
   const [remotePath, setRemotePath] = useState('');
   const [proxyJump, setProxyJump] = useState(fixedTarget?.proxyJump ?? '');
   const [submitting, setSubmitting] = useState(false);
+  const page = useSetupPage();
+  useSetupBusy(submitting);
   const [loading, setLoading] = useState(false);
   const loadSeq = useRef(0);
 
@@ -78,12 +81,13 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess, fixedTarg
   }, [loadHosts, fixedTarget]);
 
   useEffect(() => {
+    if (page) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && !submitting) onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [submitting, onClose]);
+  }, [submitting, onClose, page]);
 
   const filtered = useMemo(() => {
     if (!hosts) return [];
@@ -210,22 +214,16 @@ export function AddRemoteProjectDialogView({
   onSubmit: () => void;
   onClose: () => void;
 }) {
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
-    >
-      <div className="modal remote-project-modal" role="dialog" aria-modal="true" aria-label={fixedMachineName ? `Add project on ${fixedMachineName}` : 'Add remote project'}>
-        <div className="modal-header">
-          <h3>{fixedMachineName ? `Add project on ${fixedMachineName}` : 'Add remote project'}</h3>
-          <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
-            <X size={14} />
+  return <SetupFrame title={fixedMachineName ? `Add project on ${fixedMachineName}` : 'Add remote project'} onClose={onClose} closeOnBackdrop={!busy} className="remote-project-modal"
+    footer={<>
+          <button className="btn" onClick={onClose} disabled={busy}>
+            Cancel
           </button>
-        </div>
+          <button className="btn primary" disabled={!canSubmit} onClick={onSubmit}>
+            Add
+          </button>
+    </>}>
 
-        <div className="modal-body">
           {fixedMachineName ? <p className="modal-hint">Machine: <strong>{fixedMachineName}</strong></p> : <><div className="list-filter">
             <Search size={12} className="list-filter-icon" />
             <input
@@ -323,17 +321,5 @@ export function AddRemoteProjectDialogView({
               Install the host daemon later from the composer. Send waits until that daemon is bound and online.
             </p>
           </div>
-        </div>
-
-        <div className="modal-footer">
-          <button className="btn" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={!canSubmit} onClick={onSubmit}>
-            Add
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  </SetupFrame>;
 }

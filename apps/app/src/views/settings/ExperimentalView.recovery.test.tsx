@@ -39,7 +39,8 @@ it.each([undefined, true, false])('offers thread tabs, enabled by default: %s', 
   expect(toggle.getAttribute('aria-checked')).toBe(String(enabled ?? true));
   fireEvent.click(toggle);
   expect(update).toHaveBeenCalledWith({ threadTabsEnabled: !(enabled ?? true) });
-  expect(screen.getByText(/Closing a tab keeps the thread running/)).toBeTruthy();
+  expect(screen.getByText(/Closing a thread tab keeps it running/)).toBeTruthy();
+  expect(screen.getByText(/setup tabs remain available/)).toBeTruthy();
 });
 
 it.each([undefined, true, false])('offers dockable thread tools, enabled by default: %s', enabled => {
