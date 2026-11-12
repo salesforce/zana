@@ -107,6 +107,14 @@ describe('buildMcpCatalogue', () => {
     expect(({} as Record<string, unknown>).command).toBeUndefined();
   });
 
+  it('notes an unreadable project .mcp.json and still lists user servers', () => {
+    writeUser({ mine: { command: 'c' } });
+    writeFileSync(join(project, '.mcp.json'), '{not json');
+    const r = buildMcpCatalogueWithNotes({ env: env(), projectRoot: project });
+    expect(r.entries).toEqual([{ key: 'mine', source: 'user', available: true }]);
+    expect(r.notes.join('\n')).toMatch(/project \.mcp\.json is unreadable/);
+  });
+
   it('notes and returns nothing for malformed config', () => {
     writeFileSync(join(dir, '.claude.json'), '{not json');
     const r = buildMcpCatalogueWithNotes({ env: env() });

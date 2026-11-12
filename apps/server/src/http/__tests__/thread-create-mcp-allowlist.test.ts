@@ -73,6 +73,24 @@ describe('personaThreadMcpFields', () => {
   });
 });
 
+describe('project-scoped persona (.zcc/personas)', () => {
+  it('prefers the local project persona over the global store and resolves its list', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'zcc-persona-mcp-proj-'));
+    mkdirSync(join(projectDir, '.zcc', 'personas'), { recursive: true });
+    writeFileSync(join(projectDir, '.zcc', 'personas', 'open.json'),
+      JSON.stringify({ id: 'open', name: 'open', baseProfile: 'claude', mcpServers: ['linear'] }));
+    try {
+      const project = { path: projectDir } as never;
+      const out = personaThreadMcpFields(ctx, 'open', project);
+      expect(out.mcpAllowlist).toEqual(expect.arrayContaining(['linear', 'zcc-inbox']));
+      // A remote project never reads its local path: it falls back to the global store (unrestricted here).
+      expect(personaThreadMcpFields(ctx, 'open', { path: projectDir, remote: { hostId: 'h' } } as never)).toEqual({});
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('persona MCP allowlist notice', () => {
   const base = { allowlist: ['zcc-inbox', 'github'], personaLabel: 'p' };
 

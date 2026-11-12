@@ -83,6 +83,18 @@ describe('mcp catalogue IPC', () => {
     for (const e of r.value.entries) expect(Object.keys(e).sort()).toEqual(expect.arrayContaining(['available', 'key', 'source']));
   });
 
+  it('the handler error fallback is a clean MCP_CATALOGUE_FAILED without the thrown message', async () => {
+    vi.resetModules();
+    let fallback: ((e: unknown) => unknown) | undefined;
+    const { bindIpcCtx } = await import('../ipc/ctx.js');
+    bindIpcCtx({ safeHandle: (_c: string, _h: unknown, onError: (e: unknown) => unknown) => { fallback = onError; } } as any);
+    const mod = await import('../ipc/mcp-catalogue.js');
+    mod.registerMcpCatalogueIpc();
+    expect(fallback?.(new Error('/Users/secret'))).toEqual({
+      ok: false, code: 'MCP_CATALOGUE_FAILED', message: 'MCP server catalogue is unavailable'
+    });
+  });
+
   it('is registered once by registerIpcFamilies, not per window', async () => {
     const { readFileSync } = await import('node:fs');
     const reg = readFileSync(new URL('../ipc/register.ts', import.meta.url), 'utf8');

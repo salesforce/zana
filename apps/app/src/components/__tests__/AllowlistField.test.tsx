@@ -63,6 +63,17 @@ describe('AllowlistField', () => {
     expect(input().value).toBe('alp');
   });
 
+  it('re-opens the suggestions on focus only when a draft is present', () => {
+    render(<Harness />);
+    fireEvent.focus(input());
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+    fireEvent.change(input(), { target: { value: 'alp' } });
+    fireEvent.keyDown(input(), { key: 'Escape' });
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+    fireEvent.focus(input());
+    expect(input().getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('opens the full list on ArrowDown with an empty draft; clicking an option adds it', () => {
     render(<Harness />);
     fireEvent.keyDown(input(), { key: 'ArrowDown' });

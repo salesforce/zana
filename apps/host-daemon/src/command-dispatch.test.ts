@@ -81,6 +81,13 @@ describe('host command dispatch', () => {
     });
     await expect(dispatchHostCommand(runtime, { ...command, cwd: 'relative/path' })).rejects.toThrow('cwd must be absolute');
   });
+  it('dispatches host.mcp_catalogue to the bounded catalogue builder (entries + notes only)', async () => {
+    const runtime = createCommandRuntime({});
+    const result = (await dispatchHostCommand(runtime, { type: 'host.mcp_catalogue' })) as { entries: unknown[]; notes: unknown[] };
+    expect(Array.isArray(result.entries)).toBe(true);
+    expect(Array.isArray(result.notes)).toBe(true);
+    expect(Object.keys(result).sort()).toEqual(['entries', 'notes']);
+  });
   it('rejects a missing unmanaged path without crashing', async () => {
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude
