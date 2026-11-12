@@ -36865,13 +36865,22 @@ body.split-frame-guard webview {
   pointer-events: none;
 }
 
-.thread-timeline-row.is-user .thread-message-actions,
-.thread-timeline-row.is-assistant .thread-message-actions {
+/* Pinned prompts must not grow, so the user bar overlays below the bubble. */
+.thread-timeline-row.is-user .thread-message-actions {
   position: absolute;
   top: 100%;
   right: 0;
   margin: 0;
   padding: 6px 0 4px;
+  justify-content: flex-end;
+}
+
+/* Assistant bars reserve their own line: overlaying below the reply painted
+   them over the next user prompt. */
+.thread-timeline-row.is-assistant .thread-message-actions {
+  position: relative;
+  margin: 0;
+  padding: 2px 0 0;
   justify-content: flex-end;
 }
 

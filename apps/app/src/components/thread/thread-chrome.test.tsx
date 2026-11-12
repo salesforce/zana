@@ -946,12 +946,20 @@ describe('expandable row and chips', () => {
       css.indexOf('.thread-timeline-row.is-assistant .thread-message-actions {'),
       css.indexOf('.thread-timeline-row:hover .thread-message-actions')
     );
-    expect(assistantActions).toContain('position: absolute;');
-    expect(assistantActions).toContain('right: 0;');
-    expect(assistantActions).not.toContain('left: 0;');
+    // Assistant bars stay in flow so they never paint over the next prompt.
+    expect(assistantActions).toContain('position: relative;');
+    expect(assistantActions).not.toContain('position: absolute;');
+    expect(assistantActions).not.toContain('top: 100%;');
     expect(assistantActions).toContain('justify-content: flex-end;');
-    expect(assistantActions).toContain('top: 100%;');
-    expect(assistantActions).toContain('padding: 6px 0 4px;');
+    const userActions = css.slice(
+      css.indexOf('.thread-timeline-row.is-user .thread-message-actions {'),
+      css.indexOf('.thread-timeline-row.is-assistant .thread-message-actions {')
+    );
+    expect(userActions).toContain('position: absolute;');
+    expect(userActions).toContain('right: 0;');
+    expect(userActions).not.toContain('left: 0;');
+    expect(userActions).toContain('top: 100%;');
+    expect(userActions).toContain('padding: 6px 0 4px;');
     const hiddenActions = css.slice(
       css.indexOf('.thread-message-actions {'),
       css.indexOf('.thread-timeline-row.is-user .thread-message-actions {')
