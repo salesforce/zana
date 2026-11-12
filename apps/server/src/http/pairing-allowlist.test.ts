@@ -12,6 +12,11 @@ describe('pairing allowlist', () => {
     expect(isAllowedHttp('POST', '/internal/hosts/tool-call')).toBe(true);
     expect(isAllowedHttp('POST', '/internal/hosts/cli-callback')).toBe(true);
     expect(isAllowedHttp('GET', '/internal/hosts/cli-callback')).toBe(false);
+    // The daemon's fail-closed native tool veto and its settle event: without them every remote tool call is denied.
+    expect(isAllowedHttp('POST', '/internal/hosts/native-tool-policy')).toBe(true);
+    expect(isAllowedHttp('POST', '/internal/hosts/tool-settled')).toBe(true);
+    expect(isAllowedHttp('GET', '/internal/hosts/native-tool-policy')).toBe(false);
+    expect(isAllowedHttp('POST', '/internal/hosts/native-tool-policy', PEER_LINK_ALLOWLIST)).toBe(false);
     expect(isAllowedWs('/internal/hosts/ws')).toBe(true);
     expect(isAllowedWs('/internal/hosts/ws/')).toBe(true);
   });

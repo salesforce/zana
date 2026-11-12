@@ -332,6 +332,26 @@ describe('MachineCard', () => {
     expect(html).toContain('Harness CLIs');
   });
 
+  it('offers Reinstall daemon on a connected remote and shows its progress and error', () => {
+    const props = {
+      projectCount: 0, now: Date.now(), cliRows: [], busyKey: null, renaming: false, renameValue: '',
+      reconnectError: null, onRenameValue: vi.fn(), onRenameStart: vi.fn(), onRenameCommit: vi.fn(),
+      onPermissionChange: vi.fn(), onRetryUpdate: vi.fn(), onRemove: vi.fn(), onReconnect: vi.fn(), onInstall: vi.fn()
+    };
+    const idle = renderToStaticMarkup(<MachineCard {...props} host={host()} reconnecting={false} onReinstall={vi.fn()} />);
+    expect(idle).toContain('data-testid="machine-reinstall-h1"');
+    expect(idle).toContain('Reinstall daemon');
+    const busy = renderToStaticMarkup(
+      <MachineCard {...props} host={host()} reconnecting reconnectError="upload failed" onReinstall={vi.fn()} />
+    );
+    expect(busy).toContain('Reinstalling…');
+    expect(busy).toContain('upload failed');
+    expect(renderToStaticMarkup(<MachineCard {...props} host={host()} reconnecting={false} />)).not.toContain('Reinstall daemon');
+    expect(renderToStaticMarkup(
+      <MachineCard {...props} host={host({ isPrimary: true })} reconnecting={false} onReinstall={vi.fn()} />
+    )).not.toContain('Reinstall daemon');
+  });
+
   it('surfaces a CLI install failure on the connected card', () => {
     const html = renderToStaticMarkup(
       <MachineCard

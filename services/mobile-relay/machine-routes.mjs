@@ -1,7 +1,7 @@
 export const MACHINE_HOST_HEADER = 'x-zcc-connect-machine-host';
 export const MACHINE_INSTANCE_HEADER = 'x-zcc-connect-machine-instance';
 export const MACHINE_CREDENTIAL_HEADER = 'x-zcc-machine-credential';
-const POSTS = new Set(['/internal/hosts/enroll', '/internal/hosts/tool-call', '/internal/hosts/cli-callback', '/internal/hosts/interactive-request', '/internal/hosts/interactive-request/interrupt']);
+const POSTS = new Set(['/internal/hosts/enroll', '/internal/hosts/tool-call', '/internal/hosts/native-tool-policy', '/internal/hosts/tool-settled', '/internal/hosts/cli-callback', '/internal/hosts/interactive-request', '/internal/hosts/interactive-request/interrupt']);
 const GETS = new Set(['/install.sh', '/install/version', '/install/zcc-host.tgz']);
 
 /** Both ends of the tunnel use this closed host-protocol surface. */

@@ -28,6 +28,22 @@ describe('native tool policy HTTP client', () => {
     const client = createNativeToolPolicyHttpClient({ ...options, fetchFn: vi.fn(async () => response) });
     expect((await client(input, new AbortController().signal)).action).toBe('deny');
   });
+  it.each([
+    ['a refused route', () => new Response('{"error":"path is not allowed"}', { status: 403 }), 'server refused (HTTP 403)'],
+    ['an empty reply', () => new Response(null), 'empty reply'],
+    ['a malformed reply', () => new Response('{'), 'invalid reply'],
+    ['an invalid decision', () => new Response('{"action":"maybe"}'), 'invalid reply'],
+    ['an oversized reply', () => new Response('x'.repeat(16_385)), 'reply too large'],
+  ])('names %s in the denial without echoing the body', async (_case, reply, detail) => {
+    const client = createNativeToolPolicyHttpClient({ ...options, fetchFn: vi.fn(async () => reply()) });
+    const decision = await client(input, new AbortController().signal);
+    expect(decision).toEqual({ action: 'deny', reason: `native policy unavailable or invalid: ${detail}` });
+    expect(JSON.stringify(decision)).not.toContain('path is not allowed');
+  });
+  it('names a transport failure as no reply', async () => {
+    const client = createNativeToolPolicyHttpClient({ ...options, fetchFn: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) });
+    expect(await client(input, new AbortController().signal)).toEqual({ action: 'deny', reason: 'native policy unavailable or invalid: no reply' });
+  });
   it('preserves plugin denial and fails closed on fetch rejection', async () => {
     const fetchFn = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ action: 'deny', reason: 'blocked' })))
       .mockRejectedValueOnce(new Error('network'));
@@ -47,7 +63,8 @@ describe('native tool policy HTTP client', () => {
     const result = client(input, controller.signal);
     if (mode === 'timeout') await vi.advanceTimersByTimeAsync(RELAY_BACKSTOP_MS);
     else controller.abort();
-    expect((await result).action).toBe('deny');
+    expect(await result).toEqual({ action: 'deny',
+      reason: `native policy unavailable or invalid: ${mode === 'timeout' ? 'timed out' : 'cancelled'}` });
     expect(vi.getTimerCount()).toBe(0);
   });
 });

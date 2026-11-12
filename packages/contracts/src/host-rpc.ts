@@ -96,7 +96,10 @@ import {
 // 47: bounded directory inspection for remote project registration and availability.
 // 48: durable machine project catalogue publication and bounded registration.
 // 50: exact-name file listing and host-owned listing deadlines.
-// 51: thread.retain holds a thread's live provider session out of the idle sweep until a timestamp.
+// 51: thread.retain holds a thread's live provider session out of the idle sweep until a timestamp;
+// provider bridges route native tool calls through the host daemon's fail-closed
+// tool/policy/decide relay (/internal/hosts/native-tool-policy). A pre-51 daemon answers
+// that request as unsupported, so the bridge denies every tool; the bump makes it self-update.
 export const HOST_RPC_PROTOCOL_VERSION = 51;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;

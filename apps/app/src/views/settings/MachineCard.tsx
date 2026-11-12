@@ -20,7 +20,7 @@ import {
   type ProviderCliTone
 } from './machine-provider-clis.js';
 import { ProviderCliUpdateHint } from './ProviderCliUpdateHint.js';
-import { machineCanReconnect, machineCanRelaunchLocal } from './machine-reconnect.js';
+import { machineCanReconnect, machineCanReinstall, machineCanRelaunchLocal } from './machine-reconnect.js';
 import { machineConnectionCopy, permissionLabel } from './machine-status.js';
 
 /**
@@ -173,6 +173,7 @@ export function MachineCard({
   onReconnect,
   onRepairPairing,
   onRelaunch,
+  onReinstall,
   onInstall,
   onWorkspacePathChange
 }: {
@@ -198,6 +199,8 @@ export function MachineCard({
   onReconnect: () => void;
   onRepairPairing?: () => void;
   onRelaunch?: () => void;
+  /** Re-upload and restart the daemon on a connected remote machine. */
+  onReinstall?: () => void;
   onInstall: (provider: ProviderCliKey, actionKind: ProviderCliInstallActionKind) => void;
   onWorkspacePathChange?: (path: string) => void;
 }) {
@@ -206,6 +209,7 @@ export function MachineCard({
   const projectLabel = `${projectCount} ${projectCount === 1 ? 'project' : 'projects'}`;
   const showReconnect = machineCanReconnect(host);
   const showRelaunch = machineCanRelaunchLocal(host);
+  const showReinstall = Boolean(onReinstall) && machineCanReinstall(host);
   const [workspacePath, setWorkspacePath] = useState(host.defaultWorkspacePath ?? '');
   useEffect(() => {
     setWorkspacePath(host.defaultWorkspacePath ?? '');
@@ -298,6 +302,20 @@ export function MachineCard({
               {relaunching ? 'Relaunching…' : 'Relaunch harness'}
             </button>
           ) : null}
+          {showReinstall ? (
+            <button
+              type="button"
+              className="settings-btn"
+              disabled={reconnecting}
+              onClick={onReinstall}
+              aria-label={`Reinstall the host daemon on ${host.name}`}
+              title="Upload the current host daemon over SSH and restart it"
+              data-testid={`machine-reinstall-${host.id}`}
+            >
+              <RefreshCw size={13} aria-hidden="true" className={reconnecting ? 'spinning' : undefined} />
+              {reconnecting ? 'Reinstalling…' : 'Reinstall daemon'}
+            </button>
+          ) : null}
           {host.lastRejectedProtocolVersion ? (
             <button type="button" className="settings-btn" onClick={onRetryUpdate}>
               Retry update
@@ -347,6 +365,9 @@ export function MachineCard({
             installLogs={installLogs}
             onInstall={onInstall}
           />
+          {reconnectError ? (
+            <p className="machine-reconnect-error" role="alert">{reconnectError}</p>
+          ) : null}
           {relaunchError ? (
             <p className="machine-reconnect-error" role="alert">{relaunchError}</p>
           ) : null}

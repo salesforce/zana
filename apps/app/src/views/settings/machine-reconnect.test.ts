@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   machineCanReconnect,
+  machineCanReinstall,
   machineCanRelaunchLocal,
-  reconnectMachine
+  reconnectMachine,
+  reinstallConfirmMessage
 } from './machine-reconnect.js';
 
 function host(overrides: Partial<Host> = {}): Host {
@@ -126,5 +128,18 @@ describe('reconnectMachine', () => {
         throw 'nope';
       }
     })).resolves.toEqual({ ok: false, message: 'Could not reconnect this machine' });
+  });
+});
+
+describe('machineCanReinstall', () => {
+  it('offers reinstall on connected remotes only', () => {
+    expect(machineCanReinstall(host({ status: 'connected' }))).toBe(true);
+    expect(machineCanReinstall(host())).toBe(false);
+    expect(machineCanReinstall(host({ isPrimary: true, status: 'connected' }))).toBe(false);
+  });
+
+  it('warns that running threads are interrupted', () => {
+    expect(reinstallConfirmMessage('limited-pony')).toMatch(/^Reinstall the host daemon on limited-pony\?/);
+    expect(reinstallConfirmMessage('limited-pony')).toContain('interrupted');
   });
 });
