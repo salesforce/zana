@@ -8,7 +8,7 @@ import {
   hashBytes,
   readRawFile
 } from '../harness-routing/storage.js';
-import { EXECUTION_FAILURE_CODES, isDurableCoordination, isOrchestratorSlotId, isSquadExecutionTargetSelector, enforcedSkillAllowlist, skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
+import { EXECUTION_FAILURE_CODES, isDurableCoordination, isOrchestratorSlotId, isSquadExecutionTargetSelector, enforcedSkillAllowlist, mcpAllowlistCovers, skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import type { SquadExecutionTargetSelector, SquadWorktreeOwnership } from '@zana-ai/zcc-domain/product';
 import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
@@ -629,6 +629,11 @@ export interface ResolvedModelSnapshotV1 {
   maxAgeMs?: number;
   /** Resolved persona skill allowlist for the slot; undefined = unrestricted (reaches every skill). */
   skillAllowlist?: string[];
+  /**
+   * Effective persona MCP allowlist for the slot (includes the always-allowed server); undefined =
+   * unrestricted. Set only when the slot's harness enforces it: `supportsMcp: false` harnesses ignore it (D7).
+   */
+  mcpServers?: string[];
 }
 
 export interface RoutingDecisionV1 {
@@ -1242,7 +1247,8 @@ function validModelSnapshot(value: unknown): value is ResolvedModelSnapshotV1 {
     && (snapshot.health === undefined || snapshot.health === 'available' || snapshot.health === 'unavailable' || snapshot.health === 'unknown')
     && (snapshot.observedAt === undefined || typeof snapshot.observedAt === 'number' && Number.isFinite(snapshot.observedAt) && snapshot.observedAt >= 0)
     && (snapshot.maxAgeMs === undefined || validNonNegativeInteger(snapshot.maxAgeMs))
-    && (snapshot.skillAllowlist === undefined || validStringList(snapshot.skillAllowlist));
+    && (snapshot.skillAllowlist === undefined || validStringList(snapshot.skillAllowlist))
+    && (snapshot.mcpServers === undefined || validStringList(snapshot.mcpServers));
 }
 
 function validRouting(value: unknown): value is WorkUnitRoutingV1 {
@@ -1558,14 +1564,43 @@ export function unreachableSkills(unit: { requires?: WorkUnitRequirementsV1 }, m
   return (unit.requires?.skills ?? []).filter((skill) => !skillAllowlistCovers(allowlist, skill));
 }
 
+/** Whether MCP allowlist `entry` covers the required server `name` (a bare name or a `plugin:`/`ext:` key). */
+function mcpEntryCoversRequired(entry: string, name: string): boolean {
+  if (name.startsWith('plugin:') || name.startsWith('ext:')) {
+    return mcpAllowlistCovers(entry, { key: name, source: name.startsWith('plugin:') ? 'plugin' : 'extension', name: name.slice(name.lastIndexOf(':') + 1) });
+  }
+  // A bare required name may be a user, project, plugin or extension server: any entry that could cover one of them keeps it reachable.
+  if (mcpAllowlistCovers(entry, { key: name, source: 'user', name })) return true;
+  return (entry.startsWith('plugin:') || entry.startsWith('ext:')) && entry.slice(entry.lastIndexOf(':') + 1) === name;
+}
+
 /**
- * Slot eligibility for a unit: routing predicate plus skill reach. A slot whose allowlist
+ * Required MCP servers (`requires.mcpServers`) a slot's persona allowlist excludes (D10); empty when
+ * unrestricted or none required. A hard mismatch. A server that is allowlisted but not installed is
+ * never reported here: that is advisory only and must not block launch.
+ */
+export function unreachableMcpServers(unit: { requires?: WorkUnitRequirementsV1 }, model: Pick<ResolvedModelSnapshotV1, 'mcpServers'> | undefined): string[] {
+  const allowlist = model?.mcpServers;
+  if (allowlist === undefined) return [];
+  return (unit.requires?.mcpServers ?? []).filter((name) => !allowlist.some((entry) => mcpEntryCoversRequired(entry, name)));
+}
+
+/** True when the slot reaches every required skill and MCP server of the unit. */
+export function slotReachesRequirements(unit: { requires?: WorkUnitRequirementsV1 }, model: Pick<ResolvedModelSnapshotV1, 'skillAllowlist' | 'provider' | 'mcpServers'> | undefined): boolean {
+  return unreachableSkills(unit, model).length === 0 && unreachableMcpServers(unit, model).length === 0;
+}
+
+/**
+ * Slot eligibility for a unit: routing predicate plus skill and MCP reach. A slot whose allowlist
  * cannot see a required skill is a hard FAIL, never UNKNOWN (an absent allowlist is unrestricted).
  */
 export function unitSlotEligibility(unit: { routing?: WorkUnitRoutingV1; requires?: WorkUnitRequirementsV1 }, slot: { slotId: string; personaId: string }, model: ResolvedModelSnapshotV1 | undefined): ReturnType<typeof evaluateSlotEligibility> {
   const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(slot, model));
-  const missing = unreachableSkills(unit, model);
-  return missing.length ? { ...eligibility, status: 'FAIL', reasons: [...missing.map((skill) => `skill unreachable: ${skill}`), ...eligibility.reasons].slice(0, 16) } : eligibility;
+  const reasons = [
+    ...unreachableSkills(unit, model).map((skill) => `skill unreachable: ${skill}`),
+    ...unreachableMcpServers(unit, model).map((server) => `mcp server unreachable: ${server}`)
+  ];
+  return reasons.length ? { ...eligibility, status: 'FAIL', reasons: [...reasons, ...eligibility.reasons].slice(0, 16) } : eligibility;
 }
 
 const KICKOFF_TITLE_BUDGET = 200;
@@ -2654,11 +2689,11 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             deriveReadiness(record);
             continue;
           }
-          if (unit.requires?.skills?.length && workerSlots.length && !workerSlots.some((slot) => unreachableSkills(unit, modelBySlot.get(slot.slotId)).length === 0)) {
-            // No worker slot, busy or free, can reach every required skill: waiting never helps, so surface it.
+          if ((unit.requires?.skills?.length || unit.requires?.mcpServers?.length) && workerSlots.length && !workerSlots.some((slot) => slotReachesRequirements(unit, modelBySlot.get(slot.slotId)))) {
+            // No worker slot, busy or free, can reach every required skill and MCP server: waiting never helps, so surface it.
             unit.state = 'FAILED';
             unit.failureCode = 'NO_QUALIFIED_ROUTE';
-            unit.failure = 'no authorized worker slot allows every required skill';
+            unit.failure = unit.requires?.mcpServers?.length && !unit.requires.skills?.length ? 'no authorized worker slot allows every required MCP server' : unit.requires?.mcpServers?.length ? 'no authorized worker slot allows every required skill and MCP server' : 'no authorized worker slot allows every required skill';
             unit.history.push({ action: 'failed', attempt: unit.attempt, at: timestamp, detail: unit.failure });
             decisionsChanged = true;
             deriveReadiness(record);
@@ -2684,7 +2719,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             // sort keeps the existing free-slot order as the final tie-break.
             let open = freeSlots.map((slot, position) => ({ slot, position })).filter((entry) => !excludedSlots.has(entry.slot.slotId));
             // A slot that cannot reach a required skill never takes the unit (AC3), routed or not.
-            if (unit.requires?.skills?.length) open = open.filter((entry) => unreachableSkills(unit, modelBySlot.get(entry.slot.slotId)).length === 0);
+            if (unit.requires?.skills?.length || unit.requires?.mcpServers?.length) open = open.filter((entry) => slotReachesRequirements(unit, modelBySlot.get(entry.slot.slotId)));
             if (unit.routing) {
               // Advisory routing still decides who may take the unit: PASS slots first, then non-FAIL;
               // only when every open slot fails does the existing first-free/cheapest semantics apply.
@@ -3176,7 +3211,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         .sort((a, b) => compareCheapestFit(a, b))
         .map((ranked) => ranked.entry);
       // A slot that cannot reach a required skill never takes the unit, routed or not (same check as dispatch).
-      const untried = workerSlots.filter((slot) => !tried.has(slot.slotId) && unreachableSkills(unit, modelBySlot.get(slot.slotId)).length === 0);
+      const untried = workerSlots.filter((slot) => !tried.has(slot.slotId) && slotReachesRequirements(unit, modelBySlot.get(slot.slotId)));
       let fresh = cheapestFirst(untried.map((slot) => ({ slot })))[0]?.slot;
       if (unit.routing) {
         // Routing decides who may take the unit: never a FAIL slot, PASS before UNKNOWN, cheapest-fit within each.
@@ -3950,7 +3985,8 @@ function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedMode
     ...(snapshot.health === undefined ? {} : { health: snapshot.health }),
     ...(snapshot.observedAt === undefined ? {} : { observedAt: finiteTimestamp(snapshot.observedAt, 'model observation time') }),
     ...(snapshot.maxAgeMs === undefined ? {} : { maxAgeMs: nonNegativeInteger(snapshot.maxAgeMs, 'model max age') }),
-    ...(snapshot.skillAllowlist === undefined ? {} : { skillAllowlist: normalizeStringList(snapshot.skillAllowlist, 'model skill allowlist') })
+    ...(snapshot.skillAllowlist === undefined ? {} : { skillAllowlist: normalizeStringList(snapshot.skillAllowlist, 'model skill allowlist') }),
+    ...(snapshot.mcpServers === undefined ? {} : { mcpServers: normalizeStringList(snapshot.mcpServers, 'model MCP allowlist') })
   };
   if (!validModelSnapshot(normalized)) throw new Error('invalid resolved model snapshot');
   return normalized;
