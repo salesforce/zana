@@ -18,6 +18,7 @@ import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { useUninstalledSkills } from '../lib/use-uninstalled-skills.js';
 import { effectivePersonaRouting } from '../lib/personaRouting.js';
 import { fileManagerName } from '../lib/file-manager.js';
+import { stableDraftJson } from '../lib/stable-draft-json.js';
 import {
   PERSONA_ICON_NAMES,
   personaIconByName,
@@ -52,23 +53,6 @@ function parseList(raw: string): string[] {
     .split(/[\n,]/)
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-/** JSON comparison must ignore object insertion order from async routing controls. */
-function stablePersonaDraftJson(value: unknown): string {
-  const normalize = (current: unknown): unknown => {
-    if (Array.isArray(current)) return current.map(normalize);
-    if (current && typeof current === 'object') {
-      return Object.fromEntries(
-        Object.entries(current as Record<string, unknown>)
-          .filter(([, child]) => child !== undefined)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, child]) => [key, normalize(child)])
-      );
-    }
-    return current;
-  };
-  return JSON.stringify(normalize(value));
 }
 
 /** Notice shown with the skills field: it is a context filter, never a sandbox. */
@@ -662,12 +646,19 @@ function PersonaForm({
     description: description.trim() || undefined,
     baseProfile: baseProfile || undefined,
     modelLevel: !baseProfile && modelLevel !== 'default' ? modelLevel as any : undefined,
-    reasoningLevel: showReasoning && reasoningLevel !== 'default' ? reasoningLevel as PersonaReasoningLevel : undefined,
+    // Reasoning effort is saved for a neutral persona or one pinned to an agent
+    // harness (each maps it to its own setting); a shell persona drops it.
+    // 'default' clears it.
+    reasoningLevel: showReasoning && reasoningLevel !== 'default' ? (reasoningLevel as PersonaReasoningLevel) : undefined,
     executionState: !baseProfile && executionState !== 'default' ? executionState as any : undefined,
+    // Structured controls replace legacy routing fields. Keeping old values
+    // here makes a profile change silently route through hidden stale state.
     model: undefined,
     permissionMode: undefined,
     codexSandbox: undefined,
     codexApproval: undefined,
+    // Portable model level is the persona model contract. Exact harness targets
+    // belong to launch/project settings, not a reusable persona.
     harnessRouting: Object.keys(harnessRouting).length
       ? { schemaVersion: 1, byAdapter: harnessRouting }
       : undefined,
@@ -676,13 +667,18 @@ function PersonaForm({
     allowedTools: parseList(allowedTools),
     deniedTools: parseList(deniedTools),
     addDirs: parseList(addDirs),
+    // Portable persona capabilities remain stored even when a selected harness
+    // cannot express them. Existing MCP references are legacy Claude-local data:
+    // preserve them on edit, but do not advertise an inert free-text control.
     mcpServers: persona?.mcpServers,
     skills: restrictSkills ? parseList(skills) : undefined,
+    // Persist the microVM image only while the feature is enabled AND a value
+    // is set; base-profile-agnostic (applies in the microVM env for any CLI).
     microVmImage: microVmEnabled && microVmImage.trim() ? microVmImage.trim() : undefined
   });
   const baselineRef = useRef<string | null>(null);
   // Compare raw controls too: hidden values are still unsaved edits and must not disappear.
-  const draftJson = stablePersonaDraftJson({
+  const draftJson = stableDraftJson({
     name,
     icon,
     description,
@@ -709,6 +705,7 @@ function PersonaForm({
   }, [dirty, onDirtyChange]);
 
   const canSave = name.trim().length > 0 && !saving;
+  const isBuiltinOverride = !!persona?.id.startsWith('builtin:');
 
   const save = async () => {
     if (!canSave) return;
@@ -729,7 +726,7 @@ function PersonaForm({
   const remove = async () => {
     if (!persona) return;
     if (dirty && !window.confirm(
-      persona.id.startsWith('builtin:')
+      isBuiltinOverride
         ? 'Discard unsaved changes and reset to the built-in default?'
         : 'Discard unsaved changes and delete this persona?'
     )) return;
@@ -739,7 +736,7 @@ function PersonaForm({
       return;
     }
     pushToast(
-      persona.id.startsWith('builtin:')
+      isBuiltinOverride
         ? `Reset “${persona.name}” to the built-in default`
         : `Deleted persona “${persona.name}”`,
       'info'
@@ -748,7 +745,6 @@ function PersonaForm({
   };
 
   const isUserPersona = persona?.source === 'user';
-  const isBuiltinOverride = !!persona?.id.startsWith('builtin:');
   const title = !persona
     ? 'New persona'
     : isProjectSource

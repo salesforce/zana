@@ -2,6 +2,7 @@ import { product } from '../lib/product-client.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
+import { stableDraftJson } from '../lib/stable-draft-json.js';
 import type { Persona, SquadTransport, Team, TeamInput, TeamSlot } from '@zana-ai/zcc-domain/product';
 import { usePersonas, useData, useUi } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
@@ -360,7 +361,7 @@ function TeamForm({
     worktreeIsolation, worktreeOnComplete, routingEnforced, retainOrchestrator,
     leanWorkers, transport, defaultPlanning, launchApproval, slots
   } satisfies TeamDraft;
-  const isDirty = JSON.stringify(draft) !== JSON.stringify(initialDraft.current);
+  const isDirty = stableDraftJson(draft) !== stableDraftJson(initialDraft.current);
 
   useLayoutEffect(() => {
     onDirtyChange(isDirty);
@@ -369,6 +370,7 @@ function TeamForm({
   const tabs = totalTabs(slots.map((s) => ({ personaId: s.personaId, quantity: s.quantity })));
   const hasValidSlot = slots.some((s) => s.personaId.trim().length > 0);
   const canSave = name.trim().length > 0 && hasValidSlot && !saving;
+  const isBuiltinTeam = team?.id.startsWith('builtin:') ?? false;
 
   const addSlot = () => {
     const firstUnused =
@@ -478,7 +480,7 @@ function TeamForm({
 
   const remove = async () => {
     if (!team) return;
-    const action = team.id.startsWith('builtin:') ? 'reset this squad to its built-in default' : 'delete this squad';
+    const action = isBuiltinTeam ? 'reset this squad to its built-in default' : 'delete this squad';
     if (isDirty && !window.confirm(`Discard unsaved squad edits and ${action}?`)) return;
     const result = await product.teams.delete(team.id);
     if (!result.ok) {
@@ -486,7 +488,7 @@ function TeamForm({
       return;
     }
     pushToast(
-      team.id.startsWith('builtin:')
+      isBuiltinTeam
         ? `Reset “${team.name}” to the built-in default`
         : `Deleted squad “${team.name}”`,
       'info'
@@ -495,7 +497,6 @@ function TeamForm({
   };
 
   const isUserTeam = team?.source === 'user';
-  const isBuiltinTeam = team?.id.startsWith('builtin:') ?? false;
   const title = !team
     ? 'New squad'
     : isForeignSource
