@@ -1,6 +1,6 @@
 import { machineProjectPageSchema, machineProjectRegisterSchema, machineProjectSchema } from './machine-projects.js';
 import { CliDiscoveryCommandSchema, CliDiscoveryResultSchema } from './cli-discovery.js';
-import { CliTerminalStartCommandSchema } from './cli-terminal.js';
+import { CliTerminalStartCommandSchema, PersonaMcpServersWireSchema } from './cli-terminal.js';
 import { z } from 'zod';
 import { ProjectHistoryResultSchema } from './project-history.js';
 import {
@@ -293,7 +293,7 @@ const threadLaunchPersonaSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
   deniedTools: z.array(z.string()).optional(),
   addDirs: z.array(z.string()).optional(),
-  mcpServers: z.array(z.string()).optional(),
+  mcpServers: PersonaMcpServersWireSchema.optional(),
   initialPrompt: z.string().optional()
 }).strict();
 
