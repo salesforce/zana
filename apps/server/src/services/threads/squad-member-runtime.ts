@@ -33,6 +33,8 @@ import { capabilityRegistry } from '../../plugins/capability-registry.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
 import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
+import { personaMcpAllowlistNotice } from './persona-mcp-allowlist.js';
+import { emitPersonaMcpNotice } from '../../http/thread-create.js';
 
 /** Host-owned namespace. Only trusted IPC (or an authenticated main seam) may write it. */
 export const MODERN_SQUAD_BINDING_ORIGIN = MODERN_SQUAD_THREAD_ORIGIN;
@@ -254,12 +256,18 @@ export async function createSquadMemberConversation(
           squadHost: preflight.hostId, squadEnvironmentPath: environment.path, squadCreateFingerprint: fingerprint,
           squadRole: request.role, ...(request.executionId ? { squadExecution: request.executionId } : {}),
           automatedSkillIds,
-          ...(request.allowedSkillNames !== undefined ? { allowedSkillNames: request.allowedSkillNames } : {}) });
+          ...(request.allowedSkillNames !== undefined ? { allowedSkillNames: request.allowedSkillNames } : {}),
+          ...(request.mcpAllowlist !== undefined ? { mcpAllowlist: request.mcpAllowlist } : {}) });
       }
     });
     if (thread.id !== request.bindingId) throw new Error('squad runtime did not preserve reserved binding UUID');
     const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
     if (!environment?.path) throw new Error('squad member environment is unavailable');
+    if (request.mcpAllowlist !== undefined) {
+      emitPersonaMcpNotice(ctx, thread.id, personaMcpAllowlistNotice({
+        providerId: canonicalThreadProviderId(request.providerId), isolated: true, allowlist: request.mcpAllowlist
+      }));
+    }
     return { threadId: thread.id };
   })();
   pending.set(request.bindingId, { fingerprint, promise });

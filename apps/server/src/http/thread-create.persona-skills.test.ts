@@ -88,7 +88,7 @@ describe('personaThreadSkillFields persona resolution and persistence', () => {
     expect(() => persistThreadSkillSelection(c, 't1', { allowedSkillNames: ['x'] })).toThrow(/metadata limit/);
     patch.ok = true;
     const source = readFileSync(new URL('./thread-create.ts', import.meta.url), 'utf8');
-    expect(source).toContain('persistThreadSkillSelection(ctx, args.thread.id, skillFields)');
+    expect(source).toContain('persistThreadSkillSelection(ctx, args.thread.id, {');
   });
 });
 

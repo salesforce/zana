@@ -144,6 +144,7 @@ import { providerCapabilities, harnessFamilyOf, isClaudeProfile, isCodexProfile,
 import { canonicalThreadProviderId, getThreadProvider, personaEffortForProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
+import { resolveModernMcpAllowlist } from '@zana-ai/zcc-server/services/threads/persona-mcp-allowlist';
 import { narrowAutomatedSkillIds, providerSkillAllowlist, resolvePersonaSkillSelection } from '@zana-ai/zcc-server/services/threads/persona-skill-selection';
 import { resolveSkillSettings } from '@zana-ai/zcc-host-daemon/skill-allowlist-settings';
 import type { SkillSettings } from '@zana-ai/zcc-host-daemon/harness/registration';
@@ -5800,6 +5801,25 @@ export function slotSkillAllowlistFact(
   return skillAllowlist === undefined ? {} : { skillAllowlist };
 }
 
+/**
+ * Plan fact for admission: the slot's effective MCP allowlist (includes `zcc-inbox`); absent for an
+ * unrestricted slot, or (D7) when the slot's harness cannot deliver MCP at all (shell, remote CLI
+ * sessions) so a list there is not a restriction the launch can honour.
+ */
+export function slotMcpAllowlistFact(
+  team: Pick<Team, 'leanWorkers'> | undefined,
+  personaSnapshot: readonly Pick<Persona, 'id' | 'mcpServers'>[],
+  personaId: string | undefined,
+  slotId: string,
+  delivery: { provider: string | undefined; remoteCli: boolean }
+): { mcpServers?: string[] } {
+  if (delivery.provider === 'shell' || delivery.remoteCli) return {};
+  const persona = personaSnapshot.find((candidate) => candidate.id === personaId);
+  if (!persona) return {};
+  const mcpServers = resolveModernMcpAllowlist(persona, isOrchestratorSlotId(slotId) ? 'orchestrator' : 'worker');
+  return mcpServers === undefined ? {} : { mcpServers };
+}
+
 /** Resolve Team slot route facts in main before durable execution is claimed. */
 async function resolveTeamModelSnapshots(
   projectId: string,
@@ -5846,7 +5866,9 @@ async function resolveTeamModelSnapshots(
       maxAgeMs: 30_000,
       ...(roleOwnedModel ? { roleOwnedModel: true } : {}),
       // Dispatch-time skill reach: absent for an unrestricted slot so those records stay byte-identical.
-      ...slotSkillAllowlistFact(team, personaSnapshot, slot.personaId, slots[index].slotId)
+      ...slotSkillAllowlistFact(team, personaSnapshot, slot.personaId, slots[index].slotId),
+      ...slotMcpAllowlistFact(team, personaSnapshot, slot.personaId, slots[index].slotId,
+        { provider: provider.adapter.descriptor.id, remoteCli: team.transport !== 'MODERN' && !!project.remote })
     };
   }));
 }
@@ -6457,7 +6479,9 @@ export async function launchTeam(
   }
   const modernSlots = new Map<string, { providerId: string; model?: string; reasoningLevel?: Persona['reasoningLevel']; permissionMode?: 'accept-edits' | 'auto' | 'full'; systemPrompt?: string;
     /** Main-resolved persona skill allowlist; `{}` = unrestricted. An empty array is restrictive, not unset. */
-    skills: { automatedSkillIds?: string[]; allowedSkillNames?: string[] } }>();
+    skills: { automatedSkillIds?: string[]; allowedSkillNames?: string[] };
+    /** Main-resolved persona MCP allowlist (always includes `zcc-inbox`); undefined = unrestricted. */
+    mcpAllowlist?: string[] }>();
   let modernHostId: string | undefined;
   if (team.transport === 'MODERN') {
     try {
@@ -6470,7 +6494,7 @@ export async function launchTeam(
         const provider = providerFor(profile);
         const input = { config: currentConfig, projectSettings, persona, profile, extraArgs: [], scope: 'local' as const };
         if (resolveRoleTarget(provider, input).targetId) throw new Error('Modern squad native role selection is not supported');
-        if (persona.allowedTools?.length || persona.deniedTools?.length || persona.addDirs?.length || persona.mcpServers?.length
+        if (persona.allowedTools?.length || persona.deniedTools?.length || persona.addDirs?.length
           || persona.codexSandbox || persona.codexApproval) throw new Error('Modern squad persona tool or sandbox overrides are not supported');
         const execution = resolveExecutionState(provider, input);
         if (execution.state === 'plan' || persona.permissionMode === 'plan') throw new Error('Modern squad plan-only execution is not supported');
@@ -6485,7 +6509,8 @@ export async function launchTeam(
           : wantsAuto && supportsAuto ? 'auto' as const : 'accept-edits' as const;
         modernSlots.set(slot.slotId, { providerId,
           model: resolveModelTarget(provider, input).targetId, reasoningLevel: personaEffortForProvider(providerId, persona.reasoningLevel), permissionMode, systemPrompt: persona.appendSystemPrompt,
-          skills: resolvePersonaSkillSelection(electronZccDataDir(), team, persona, slot.role) });
+          skills: resolvePersonaSkillSelection(electronZccDataDir(), team, persona, slot.role),
+          mcpAllowlist: resolveModernMcpAllowlist(persona, slot.role) });
       }
       const preflight = await squadRuntime().preflightSquadRuntime({ projectId: targetProjectId,
         ...(project.hostId ? { hostId: project.hostId } : {}), providerIds: [...new Set([...modernSlots.values()].map(slot => slot.providerId))],
@@ -6709,6 +6734,8 @@ export async function launchTeam(
           // `allowedSkillNames` is present only for a restricted persona (an empty array still restricts).
           automatedSkillIds: narrowAutomatedSkillIds(structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds, selected.skills.automatedSkillIds),
           ...(selected.skills.allowedSkillNames === undefined ? {} : { allowedSkillNames: selected.skills.allowedSkillNames }),
+          // `mcpAllowlist` is present only for a restricted persona (always includes `zcc-inbox`; `[]` input still restricts).
+          ...(selected.mcpAllowlist === undefined ? {} : { mcpAllowlist: selected.mcpAllowlist }),
           prompt: [selected.systemPrompt, !durableCoordination ? personaSnapshot.find(persona => persona.id === personaId)?.initialPrompt : undefined,
              request.prompt ?? 'Await squad instructions.'].filter(Boolean).join('\n\n'), title: (request.title ?? personaName(personaId)).slice(0, 120) };
         const created = await squadRuntime().createSquadMember(runtimeRequest);
@@ -7723,7 +7750,9 @@ const squadExecutionService = new SquadExecutionService({
       level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
       modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
       observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
-      ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId)
+      ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId),
+      ...slotMcpAllowlistFact(team, personaSnapshot, model.personaId, model.slotId,
+        { provider: model.provider, remoteCli: team?.transport !== 'MODERN' && !!project?.remote })
     }));
     const workerRoutes = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
     const routingRequested = team?.routingEnforced ?? config.teamRoutingEnforcementEnabled === true;

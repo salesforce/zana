@@ -304,6 +304,6 @@ function personaFacets(persona: Persona | undefined): HarnessPersonaFacet[] {
     persona.allowedTools?.length ? 'tool-allowlist' : undefined,
     persona.deniedTools?.length ? 'tool-denylist' : undefined,
     persona.addDirs?.length ? 'context-directories' : undefined,
-    persona.mcpServers?.length ? 'mcp-references' : undefined
+    persona.mcpServers !== undefined ? 'mcp-references' : undefined
   ].filter((facet): facet is HarnessPersonaFacet => !!facet);
 }

@@ -377,7 +377,9 @@ export const SquadMemberRuntimeRequestSchema = z.object({
   /** Main-authorized automated catalog selection. Never renderer input. */
   automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional(),
   /** Main-authorized user/plugin skill names (allowlist entries matching no catalog id). Never renderer input. */
-  allowedSkillNames: z.array(z.string().min(1).max(256)).max(64).optional()
+  allowedSkillNames: z.array(z.string().min(1).max(256)).max(64).optional(),
+  /** Main-resolved persona MCP allowlist (always contains `zcc-inbox`); absent = unrestricted. Never renderer input. */
+  mcpAllowlist: z.array(z.string().min(1).max(128)).max(64).optional()
 }).strict();
 export type SquadMemberRuntimeRequest = z.infer<typeof SquadMemberRuntimeRequestSchema>;
 

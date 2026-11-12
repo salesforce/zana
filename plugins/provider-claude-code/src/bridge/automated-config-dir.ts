@@ -502,3 +502,18 @@ export function sweepAutomatedConfigDirs(args: {
     now: args.now,
   });
 }
+
+/**
+ * Persona MCP allowlist launch warnings (an allowlisted server missing or stripped of credentials)
+ * as visible `provider.warning` deltas. Server names and reasons only; never definitions or
+ * credential values.
+ */
+export function mcpLaunchWarningDeltas(
+  warnings: readonly McpLaunchWarning[],
+): Array<{ kind: "provider.warning"; summary: string; details: string }> {
+  return warnings.map((warning) => ({
+    kind: "provider.warning" as const,
+    summary: `Persona MCP allowlist: ${warning.server}`,
+    details: warning.message,
+  }));
+}

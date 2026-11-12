@@ -130,7 +130,9 @@ import {
   toPendingInteractionPermissionProfile,
 } from "../interactive-contract.js";
 import {
-  createAutomatedConfigDir,
+  createAutomatedConfigDirWithWarnings,
+  mcpLaunchWarningDeltas,
+  type McpLaunchWarning,
   AutomatedConfigAdmissionError,
   removeAutomatedConfigDir,
   sweepAutomatedConfigDirs,
@@ -274,6 +276,8 @@ interface SessionIsolation {
   admission: ClaudeSessionAdmission;
   dataDir: string;
   configDir: string | null;
+  /** Persona MCP allowlist launch warnings from seeding the isolated config; empty otherwise. */
+  mcpWarnings: McpLaunchWarning[];
   /** The generated per-run `settings.json` exists, so it is the one setting source. */
   seeded: boolean;
   startedAt: number;
@@ -957,6 +961,13 @@ function sendThreadDeltas(
     method: THREAD_DELTA_NOTIFICATION_METHOD,
     params: { threadId, deltas: [...deltas] },
   });
+}
+
+function sendMcpLaunchWarnings(
+  threadId: string,
+  isolation: SessionIsolation,
+): void {
+  sendThreadDeltas(threadId, mcpLaunchWarningDeltas(isolation.mcpWarnings));
 }
 
 function sendSessionReset(threadId: string): void {
@@ -2067,9 +2078,19 @@ function beginSessionIsolation(args: {
   });
   let { kind, admission } = normalized;
   let configDir: string | null = null;
+  let mcpWarnings: McpLaunchWarning[] = [];
   if (kind === "automated") {
     sweepStaleAutomatedConfigDirsOnce(dataDir);
-    configDir = createAutomatedConfigDir(dataDir, args.threadId);
+    const created = createAutomatedConfigDirWithWarnings(dataDir, args.threadId, {
+      ...(args.params.mcpAllowlist !== undefined
+        ? { mcpAllowlist: args.params.mcpAllowlist }
+        : {}),
+      ...(args.params.mcpExternallyProvided !== undefined
+        ? { externallyProvidedMcps: args.params.mcpExternallyProvided }
+        : {}),
+    });
+    configDir = created.configDir;
+    mcpWarnings = created.warnings;
   }
   return {
     requestedKind: requested === "automated" ? "automated" : "interactive",
@@ -2077,6 +2098,7 @@ function beginSessionIsolation(args: {
     admission,
     dataDir,
     configDir,
+    mcpWarnings,
     seeded:
       configDir !== null && existsSync(joinPath(configDir, "settings.json")),
     startedAt: Date.now(),
@@ -2844,6 +2866,7 @@ async function handleThreadStart(
     sessionOptions,
     params.dynamicTools?.length ?? 0,
   );
+  sendMcpLaunchWarnings(threadIdRef.current, isolation);
 
   const attachment = createThreadAttachment({
     isolation,
@@ -2959,6 +2982,7 @@ async function handleThreadResume(
     sessionOptions,
     params.dynamicTools?.length ?? 0,
   );
+  sendMcpLaunchWarnings(threadId, isolation);
   const attachment = createThreadAttachment({
     isolation,
     liveSettings: toInitialLiveSessionSettings(params),
@@ -3041,6 +3065,7 @@ async function handleThreadFork(
     sessionOptions,
     params.dynamicTools?.length ?? 0,
   );
+  sendMcpLaunchWarnings(threadId, isolation);
   const attachment = createThreadAttachment({
     isolation,
     liveSettings: toInitialLiveSessionSettings(params),

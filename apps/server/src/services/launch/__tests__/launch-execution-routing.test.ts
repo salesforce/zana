@@ -136,6 +136,17 @@ describe('production execution routing preflight', () => {
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
+  it('treats an empty persona MCP allowlist as a requested mcp-references facet, an unset one as none', async () => {
+    const services = deps();
+    const base = { config: config(), profile: 'opencode' as const, projectId: 'p1', scope: 'local' as const, mode: 'interactive' as const };
+    for (const [key, mcpServers] of [['empty', []], ['listed', ['zcc-inbox', 'github']]] as const) {
+      await expect(preflightTerminalExecution({ ...base, idempotencyKey: key, persona: { id: 'p', name: 'P', mcpServers: [...mcpServers] } }, services))
+        .resolves.toMatchObject({ decision: 'allowed', scope: 'local' });
+    }
+    await expect(preflightTerminalExecution({ ...base, idempotencyKey: 'unset', persona: { id: 'p', name: 'P' } }, services))
+      .resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
   it('preserves legacy Team persona facets without weakening explicit routing evidence', async () => {
     const services = deps();
     const persona = { id: 'p', name: 'P', initialPrompt: 'start', appendSystemPrompt: 'existing instructions' };

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { enforcedSkillAllowlist, isOrchestratorSlotId, skillAllowlistCovers, uninstalledAllowlistSkills } from '@zana-ai/zcc-domain/product';
+import { enforcedSkillAllowlist, isOrchestratorSlotId, mcpAllowlistCovers, skillAllowlistCovers, uninstalledAllowlistSkills } from '@zana-ai/zcc-domain/product';
 import { launchDigest } from './digest.js';
 import { projectIdentityDigest } from './commit-revalidation.js';
 import type { LaunchAuthorizationBinding, LaunchConsumerKind, LaunchPrincipalRef } from './types.js';
@@ -139,6 +139,8 @@ export interface TeamAdmissionResultV1 {
 export type SlotRoute = SlotRouteSnapshotV1 & {
   /** Resolved skill allowlist for this slot. Absent = every skill (PASS); never `capabilities`. */
   skillAllowlist?: readonly string[];
+  /** Effective persona MCP allowlist (includes `zcc-inbox`). Absent = every server; unset for harnesses that cannot deliver MCP. */
+  mcpServers?: readonly string[];
 };
 /** The part of a work unit tier-fit analysis reads. */
 export type PlanUnitRouting = Pick<AdmissionWorkUnitInput, 'id' | 'routing'>;
@@ -244,6 +246,7 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
   }
   for (const unit of normalizedPlan ?? []) {
     skillReachChecks(unit, input.slotRoutes, add);
+    mcpReachChecks(unit, input.slotRoutes, add);
   }
   modelHealthChecks(requiredModels, input.inventory?.models, inventoryFresh, add);
   healthChecks('PROVIDER_HEALTH', requiredProviders, input.inventory?.providers, inventoryFresh, add);
@@ -294,7 +297,7 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
       providers: [...input.inventory.providers].sort((a, b) => a.id.localeCompare(b.id)),
       sourceStatuses: input.inventory.sourceStatuses?.slice().sort((a, b) => a.source.localeCompare(b.source))
     },
-    slotRoutes: input.slotRoutes?.map(({ observedAt: _observedAt, skillAllowlist, ...slot }) => ({ ...slot, capabilities: slot.capabilities?.slice().sort(), modalities: slot.modalities?.slice().sort(), ...(skillAllowlist ? { skillAllowlist: skillAllowlist.slice().sort() } : {}) }))
+    slotRoutes: input.slotRoutes?.map(({ observedAt: _observedAt, skillAllowlist, mcpServers, ...slot }) => ({ ...slot, capabilities: slot.capabilities?.slice().sort(), modalities: slot.modalities?.slice().sort(), ...(skillAllowlist ? { skillAllowlist: skillAllowlist.slice().sort() } : {}), ...(mcpServers ? { mcpServers: mcpServers.slice().sort() } : {}) }))
       .sort((a, b) => a.slotId.localeCompare(b.slotId))
   };
   // A failed read only matters when a requirement depends on that source (its
@@ -641,6 +644,42 @@ function skillReachChecks(
   if (unreachable.length) {
     add({ code: 'SKILL_AVAILABLE', status: 'FAIL', required: true, subject: unit.id, unavailable: unreachable,
       message: `work unit ${unit.id} requirement unavailable: skills no worker slot allows: ${unreachable.join(', ')}` });
+  }
+}
+
+/**
+ * Per-slot MCP reach for `requires.mcpServers` (D10 twin of {@link skillReachChecks}). A slot without
+ * `mcpServers` reaches every server. No worker slot able to reach a required server is a hard FAIL;
+ * only some slots able is an advisory serialization warning. Allowlisted-but-not-installed is never
+ * a FAIL here: that is the separate inventory check. Name-based, needs no inventory.
+ */
+function mcpReachChecks(
+  unit: AdmissionWorkUnitInput,
+  slotRoutes: readonly SlotRoute[] | undefined,
+  add: (check: AdmissionCheck) => void
+): void {
+  const required = unit.requires?.mcpServers;
+  const workers = (slotRoutes ?? []).filter((slot) => !isOrchestratorSlotId(slot.slotId));
+  if (!required?.length || !workers.some((slot) => slot.mcpServers !== undefined)) return;
+  const reaches = (slot: SlotRoute, name: string): boolean => slot.mcpServers === undefined
+    || slot.mcpServers.some((entry) => mcpAllowlistCovers(entry, { key: name, source: 'user', name })
+      || ((entry.startsWith('plugin:') || entry.startsWith('ext:')) && entry.slice(entry.lastIndexOf(':') + 1) === name));
+  const unreachable: string[] = [];
+  for (const name of required) {
+    const able = workers.filter((slot) => reaches(slot, name)).length;
+    if (able === 0) unreachable.push(name);
+    else if (able < workers.length) {
+      add({ code: 'MCP_AVAILABLE', status: 'UNKNOWN', required: false, subject: unit.id,
+        message: `work unit ${unit.id} MCP server ${name} is reachable by ${able} of ${workers.length} worker slots; work may serialize` });
+    }
+  }
+  if (!unreachable.length && required.length > 1 && !workers.some((slot) => required.every((name) => reaches(slot, name)))) {
+    add({ code: 'MCP_AVAILABLE', status: 'FAIL', required: true, subject: unit.id, unavailable: [...required],
+      message: `work unit ${unit.id} requirement unavailable: no single worker slot allows all required MCP servers: ${required.join(', ')}` });
+  }
+  if (unreachable.length) {
+    add({ code: 'MCP_AVAILABLE', status: 'FAIL', required: true, subject: unit.id, unavailable: unreachable,
+      message: `work unit ${unit.id} requirement unavailable: MCP servers no worker slot allows: ${unreachable.join(', ')}` });
   }
 }
 
