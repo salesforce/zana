@@ -205,7 +205,7 @@
   .pageme.hov { background:#f2555a; box-shadow:0 0 0 3px rgba(229,72,77,.3); }
   .ocsec { padding:12px 16px 0; font-size:10.5px; letter-spacing:.08em; color:var(--muted); display:flex; justify-content:space-between; }
   .person { display:flex; gap:10px; align-items:center; margin:8px 16px 0; padding:9px 11px; border:1px solid var(--border); border-radius:9px; background:#1f1f1f; }
-  .av { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-size:11px; font-weight:700; flex:none; } .av.a { background:#3b4d7a; color:#dbe6ff; } .av.b { background:#3d5a45; color:#d6f5dc; }
+  .av { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-size:11px; font-weight:700; flex:none; } .av-blue { background:#3b4d7a; color:#dbe6ff; } .av-green { background:#3d5a45; color:#d6f5dc; }
   .person b { display:block; font-size:12.5px; } .person small { color:var(--muted); font-size:11px; } .person .live { margin-left:auto; font-size:10.5px; color:var(--green); display:inline-flex; gap:5px; align-items:center; } .person .live::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
   .person.alt { opacity:.75; }
   .incs { margin:8px 16px 0; display:flex; flex-direction:column; gap:6px; }
@@ -276,7 +276,7 @@
   body.light .xpill .n { color:#010409; } body.light .xpill small { color:#57606a; }
   body.light .coremsg .cchips span, body.light .eflow span { background:#fff; color:#1f2328; }
   body.light .person, body.light .inc, body.light .pc { background:#fff; }
-  body.light .av.a { background:#ddf4ff; color:#0550ae; } body.light .av.b { background:#dafbe1; color:#1a7f37; }
+  body.light .av-blue { background:#ddf4ff; color:#0550ae; } body.light .av-green { background:#dafbe1; color:#1a7f37; }
   body.light .ochead.alarm { background:linear-gradient(90deg, rgba(207,34,46,.12), rgba(207,34,46,.03)); border-bottom-color:rgba(207,34,46,.35); }
   body.light .sev.p1, body.light .rbdg, body.light .pageme { background:#cf222e; } body.light .pageme.hov { background:#e0303c; box-shadow:0 0 0 3px rgba(207,34,46,.2); }
   body.light .sev.p2 { background:#fff1e5; color:#bc4c00; border-color:rgba(188,76,0,.35); }
@@ -380,8 +380,8 @@
               <div class="ochead" id="ocHead"><span class="oc-ic"><i data-i="siren"></i></span><div><h3>On-call</h3><small id="ocSub">Platform team · all quiet</small></div>
                 <span class="pageme" id="pageMe"><i data-i="bell" class="s"></i>Page me</span></div>
               <div class="ocsec"><span>THIS WEEK</span><span>Nov 10 – 16</span></div>
-              <div class="person"><span class="av a">MR</span><div><b>Maya Reyes</b><small>Primary · until Fri 9:00</small></div><span class="live">on call</span></div>
-              <div class="person alt"><span class="av b">JO</span><div><b>Jonas Okafor</b><small>Secondary</small></div></div>
+              <div class="person"><span class="av av-blue">MR</span><div><b>Maya Reyes</b><small>Primary · until Fri 9:00</small></div><span class="live">on call</span></div>
+              <div class="person alt"><span class="av av-green">JO</span><div><b>Jonas Okafor</b><small>Secondary</small></div></div>
               <div class="ocsec" style="padding-top:16px"><span>OPEN INCIDENTS</span><span id="ocCount">2</span></div>
               <div class="incs">
                 <div class="inc new" id="incP1"><span class="sev p1">P1</span>Checkout API 5xx spike<small>just now</small></div>
