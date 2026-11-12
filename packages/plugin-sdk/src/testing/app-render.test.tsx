@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup } from '@testing-library/react';
-import { definePluginApp, useRpc, useWindowTitle, useZccContext, useZccDeepLinks, useZccNavigate } from '../app.js';
+import { definePluginApp, experimental_useProjectAppearanceMenu, experimental_useProjects, useRpc, useWindowTitle, useZccContext, useZccDeepLinks, useZccNavigate } from '../app.js';
 import { loadPluginApp, renderSlot } from './app-render.js';
 
 afterEach(() => {
@@ -300,5 +300,72 @@ describe('useZccDeepLinks without a host runtime', () => {
     expect(links.base()).toBeNull();
     expect(links.on('join', () => undefined)()).toBeUndefined();
     await expect(links.open('x')).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+});
+
+function ProjectsPanel() {
+  const { status, projects } = experimental_useProjects();
+  return <div>{status}:{projects.map(p => `${p.name}/${p.color ?? '-'}`).join(',')}</div>;
+}
+
+describe('experimental_useProjects fake host', () => {
+  const load = () => loadPluginApp(() => Promise.resolve(definePluginApp((pluginApp) => {
+    pluginApp.slots.navPanel({ id: 'main', title: 'P', icon: 'FileText', component: ProjectsPanel });
+  })), 'projects-plugin');
+
+  it('supplies projects and defaults to a ready empty list', async () => {
+    const app = await load();
+    const withProjects = renderSlot(app.navPanels[0]!, { pluginId: 'projects-plugin', subPath: '' }, {
+      projects: { projects: [{ id: 'a', name: 'Alpha', color: '#3fb950' }] }
+    });
+    await withProjects.findByText('ready:Alpha/#3fb950');
+    cleanup();
+    const empty = renderSlot(app.navPanels[0]!, { pluginId: 'projects-plugin', subPath: '' });
+    await empty.findByText('ready:');
+  });
+
+  it('can report the loading state', async () => {
+    const app = await load();
+    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'projects-plugin', subPath: '' }, { projects: { status: 'loading' } });
+    await slot.findByText('loading:');
+  });
+});
+
+function AppearanceButton() {
+  const menu = experimental_useProjectAppearanceMenu();
+  return <button onClick={() => menu.open('p1', { x: 3, y: 4 })}>recolor</button>;
+}
+
+describe('experimental_useProjectAppearanceMenu', () => {
+  const load = () => loadPluginApp(() => Promise.resolve(definePluginApp((pluginApp) => {
+    pluginApp.slots.navPanel({ id: 'main', title: 'P', icon: 'FileText', component: AppearanceButton });
+  })), 'appearance-plugin');
+
+  it('forwards open() to the fake host', async () => {
+    const app = await load();
+    const calls: unknown[] = [];
+    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'appearance-plugin', subPath: '' }, {
+      onOpenProjectAppearanceMenu: (id, at) => calls.push([id, at])
+    });
+    act(() => { (slot.getByText('recolor') as HTMLButtonElement).click(); });
+    expect(calls).toEqual([['p1', { x: 3, y: 4 }]]);
+  });
+
+  it('is a safe no-op without a handler', async () => {
+    const app = await load();
+    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'appearance-plugin', subPath: '' });
+    expect(() => act(() => { (slot.getByText('recolor') as HTMLButtonElement).click(); })).not.toThrow();
+  });
+});
+
+describe('experimental_useProjectAppearanceMenu without a host runtime', () => {
+  it('returns a no-op open', () => {
+    const saved = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__;
+    delete (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__;
+    try {
+      expect(() => experimental_useProjectAppearanceMenu().open('x', { x: 0, y: 0 })).not.toThrow();
+    } finally {
+      (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__ = saved;
+    }
   });
 });

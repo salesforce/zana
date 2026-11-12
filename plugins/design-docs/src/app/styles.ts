@@ -484,7 +484,6 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-row-meta > span.dd-doc-row-project { flex: 0 1 auto; gap: 5px; min-width: 0; color: var(--text-muted); }
 .dd-doc-row-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dd-doc-row-unseen { flex: 0 0 auto; color: var(--accent-blue); font-weight: 600; }
-.dd-swatch { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 2px; }
 .dd-doc-row-comments { color: var(--accent-gold); }
 .dd-doc-row-alt { position: relative; width: calc(100% - 14px); margin-left: 14px; padding-top: 4px; padding-bottom: 4px; }
 .dd-doc-row-alt::before { content: ''; position: absolute; left: -8px; top: 0; height: 50%; width: 6px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 4px; }

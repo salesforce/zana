@@ -6,3 +6,5 @@ prefix is dropped.
 | Member | Surface | Status |
 | --- | --- | --- |
 | `agents.experimental_registerProvider` | `@zana-ai/zcc-plugin-sdk/server` | experimental |
+| `experimental_useProjects` | `@zana-ai/zcc-plugin-sdk/app` | experimental |
+| `experimental_useProjectAppearanceMenu` | `@zana-ai/zcc-plugin-sdk/app` | experimental |

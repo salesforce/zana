@@ -1,4 +1,6 @@
 import { useSidebarThreads, useSidebarThreadActions, useSidebarThreadSplit } from './sidebar-thread-hooks.js';
+import { useProjects } from './project-hooks.js';
+import { useProjectAppearanceMenu } from './project-appearance-menu.js';
 import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type {
@@ -367,6 +369,8 @@ export function installPluginRuntime(): void {
       },
       run: { isRunning: false, isSubmitting: false }
     },
+    experimental_useProjects: useProjects,
+    experimental_useProjectAppearanceMenu: useProjectAppearanceMenu,
     experimental_useSidebarThreads: useSidebarThreads,
     experimental_useSidebarThreadActions: useSidebarThreadActions,
     experimental_useSidebarThreadPullRequest: () => ({ isLoading: false, pullRequest: null }),

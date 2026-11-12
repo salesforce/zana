@@ -56,6 +56,7 @@ import { OnboardingHost } from './components/onboarding/Onboarding.js';
 import { useOnboarding } from './components/onboarding/onboarding-store.js';
 import { SetupChecklistHost } from './components/SetupChecklist.js';
 import { Toaster } from './components/Toaster.js';
+import { ProjectAppearanceMenuHost } from './plugins/project-appearance-menu.js';
 import { PendingLaunches } from './components/PendingLaunches.js';
 import { HostDialogs } from './components/HostDialogs.js';
 import { nextHostDialogId as hostDialogId } from './modules/host.js';
@@ -913,6 +914,7 @@ function AppShell() {
       <PluginContentScriptsHost />
       <PluginThemesHost />
       <CommandPaletteHost />
+      <ProjectAppearanceMenuHost />
       <QuickOpenHost />
       <ResumePickerHost />
       <ConversationHistoryDialog />

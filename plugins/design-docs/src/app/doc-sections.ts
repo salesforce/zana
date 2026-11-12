@@ -120,16 +120,6 @@ export function anyOpen(keys: readonly string[], collapsedRaw: string): boolean 
   return keys.some((key) => !collapsed.has(key));
 }
 
-const SWATCH_HUES = [217, 262, 173, 24, 330, 142, 45, 195];
-
-/** A stable color for a project, so its docs read as one group across sections. */
-export function projectSwatch(projectId: string | null): string {
-  if (!projectId) return 'var(--text-dim)';
-  let hash = 0;
-  for (let index = 0; index < projectId.length; index += 1) hash = (hash * 31 + projectId.charCodeAt(index)) | 0;
-  return `hsl(${SWATCH_HUES[Math.abs(hash) % SWATCH_HUES.length]} 62% 52%)`;
-}
-
 const NEEDS_ALL_PROJECTS = 'Show All projects to';
 
 /** Tooltip for the group toggle: says why it is disabled, else the current mode and the action. */

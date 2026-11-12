@@ -1,7 +1,10 @@
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
 import { DOC_PANEL_ACTION } from './src/app/Agents.js';
 import { DirectiveCard, NAV_PATH, NavPanel, ProjectTab, ThreadPanel, saveMessageAsDoc } from './src/app/slots.js';
+import projectMarkerCss from '@zana-ai/zcc-ui/project-marker.css';
 import { DESIGN_DOCS_STYLES } from './src/app/styles.js';
+
+const STYLES = `${projectMarkerCss}\n${DESIGN_DOCS_STYLES}`;
 
 const STYLE_TAG_ID = 'design-docs-plugin-styles';
 
@@ -9,12 +12,12 @@ export function injectStyles(): void {
   if (typeof document === 'undefined') return;
   const existing = document.getElementById(STYLE_TAG_ID);
   if (existing instanceof HTMLStyleElement) {
-    existing.textContent = DESIGN_DOCS_STYLES;
+    existing.textContent = STYLES;
     return;
   }
   const tag = document.createElement('style');
   tag.id = STYLE_TAG_ID;
-  tag.textContent = DESIGN_DOCS_STYLES;
+  tag.textContent = STYLES;
   document.head.appendChild(tag);
 }
 
