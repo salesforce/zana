@@ -638,7 +638,8 @@ function TeamForm({
                       type="text"
                       value={slot.label}
                       onChange={(e) => updateSlot(idx, { label: e.target.value })}
-                      placeholder="Label (optional)"
+                      placeholder="Role label (blank = persona name)"
+                      title="Role label shown in the squad. Leave blank to use the persona name."
                       aria-label="Slot label"
                     />
                     <span className="composer-control-tooltip team-slot-qty-tip" data-tooltip="Tabs to open for this slot">

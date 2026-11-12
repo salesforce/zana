@@ -428,7 +428,12 @@ function TeamRow({
     if (team.orchestratorPersonaId) {
       const persona = allPersonas.find((p) => p.id === team.orchestratorPersonaId) ?? null;
       personas.push({
-        slot: { personaId: team.orchestratorPersonaId, quantity: 1, label: 'Orchestrator' },
+        // Carry the author's label if the orchestrator also appears in `slots`.
+        slot: {
+          personaId: team.orchestratorPersonaId,
+          quantity: 1,
+          label: team.slots.find((s) => s.personaId === team.orchestratorPersonaId)?.label
+        },
         persona
       });
     }
@@ -666,6 +671,12 @@ function TeamRow({
                 const { slot, persona } = item;
                 const quantity = Math.max(1, Math.min(TEAM_SLOT_MAX, slot.quantity ?? 1));
                 const isOrchestrator = slot.personaId === team.orchestratorPersonaId;
+                // Label (squad role) leads; persona is a secondary chip. No label
+                // (or label equal to persona name) → persona name only.
+                const personaName = persona?.name ?? slot.personaId;
+                const label = slot.label?.trim();
+                const displayName = label || personaName;
+                const personaChip = label && label !== personaName ? personaName : null;
 
                 return (
                   <li key={`${slot.personaId}-${idx}`} className={`teams-agent-item ${squadTransportClass(transport)}`.trimEnd()}>
@@ -675,8 +686,17 @@ function TeamRow({
                     <div className="teams-agent-body">
                       <div className="teams-agent-header">
                         <span className="teams-agent-name">
-                          {persona?.name ?? slot.personaId}
+                          {displayName}
                         </span>
+                        {personaChip && (
+                          <span
+                            className="teams-agent-persona-chip"
+                            data-testid="teams-agent-persona-chip"
+                            title={`Persona: ${personaChip}`}
+                          >
+                            {personaChip}
+                          </span>
+                        )}
                         {isOrchestrator && (
                           <span
                             className="teams-agent-badge teams-agent-badge--orch composer-control-tooltip"

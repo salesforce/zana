@@ -41745,6 +41745,15 @@ body.split-frame-guard webview {
   background: var(--bg-hover, rgba(255, 255, 255, 0.04));
 }
 
+.teams-agent-persona-chip {
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
 .teams-agent-badge--orch {
   color: var(--accent-gold, #d8b25a);
   border-color: color-mix(in srgb, var(--accent-gold, #d8b25a) 45%, transparent);
