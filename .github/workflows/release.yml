@@ -49,7 +49,7 @@ jobs:
         shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -122,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -200,7 +200,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -330,7 +330,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@v7
         with:
@@ -433,7 +433,7 @@ jobs:
           echo "title=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           # Keep the published feed aligned with electron-builder.yml
           # (owner: salesforce, repo: zana). Publish into this repository
