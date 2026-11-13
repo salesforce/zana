@@ -10,8 +10,9 @@
  * The fake agent is the Playwright runner's own node.exe on a script, which is
  * exactly the shape of such a forwarder. Windows only; skips elsewhere.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 
@@ -21,6 +22,7 @@ test.skip(process.platform !== 'win32', 'cmd.exe shims exist only on Windows');
 
 const READY = 'FAKE-CLAUDE-READY';
 const CMD_LIMIT = 8191;
+const SHIM_FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'host-daemon', 'src', 'harness', '__tests__', 'fixtures', 'windows-shims');
 
 function writeAgent(dir: string, shimBody: (script: string) => string): string {
   mkdirSync(dir, { recursive: true });
@@ -68,6 +70,33 @@ test('a CLI Agent behind a forwarding claude.cmd starts with its full argv', asy
   } finally {
     // The fake agent never exits on its own; a live child keeps the isolated
     // runtime folder locked and the worker teardown fails with EPERM.
+    await app.window.evaluate((id) => window.cc.terminals.close(id), created.id).catch(() => {});
+  }
+});
+
+test('a CLI Agent behind an npm cmd-shim starts with its full argv', async ({ app }) => {
+  // The real `npm install -g @openai/codex` shim, retargeted at the fake agent
+  // (its own `node_modules\fake\agent.cjs`), with node.exe next to it as the
+  // shim prefers.
+  const projectDir = join(app.home, 'npm shim project');
+  const npmDir = join(app.home, 'npm global');
+  const npmShim = readFileSync(join(SHIM_FIXTURES, 'npm-codex.cmd'), 'utf8')
+    .replace('\\node_modules\\@openai\\codex\\bin\\codex.js', '\\node_modules\\fake\\agent.cjs');
+  expect(npmShim).toContain('\\node_modules\\fake\\agent.cjs');
+  writeAgent(join(npmDir, 'node_modules', 'fake'), () => '');
+  copyFileSync(process.execPath, join(npmDir, 'node.exe'));
+  const shim = join(npmDir, 'claude.cmd');
+  writeFileSync(shim, npmShim);
+  const created = await launchAgent(app.window, projectDir, shim);
+  expect(created.ok, created.ok ? '' : created.message).toBe(true);
+  if (!created.ok) return;
+  try {
+    const backlog = () => app.window.evaluate((id) => window.cc.terminals.backlog(id), created.id);
+    await expect.poll(backlog, { timeout: 30_000 }).toContain(READY);
+    const text = await backlog();
+    expect(text).not.toContain('The command line is too long');
+    expect(Number(text.match(/chars=(\d+)/)?.[1])).toBeGreaterThan(CMD_LIMIT);
+  } finally {
     await app.window.evaluate((id) => window.cc.terminals.close(id), created.id).catch(() => {});
   }
 });
