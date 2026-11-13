@@ -40,6 +40,8 @@ const MAX_MAPPINGS = 200;
 const MAX_ID_LENGTH = 512;
 const MAX_UNASSIGNED = 200;
 const SAMPLE_TITLES = 3;
+/** Cap for the on-demand title listing (decision D1: bounded, no pagination). */
+export const MAX_TITLES = 500;
 const REMOVED_SUFFIX = ' (project removed)';
 
 /** SQL fragments over `docs d`; shared with the store's list scoping. */
@@ -55,6 +57,9 @@ export const MAPPED_TO_ANY = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN d
   ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND ${ALIAS_LIVE})`;
 export const MAPPED_TO_PROJECT = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN dd_project_aliases a
   ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND a.local_project_id = ? AND ${ALIAS_LIVE})`;
+
+/** Display-safe doc title: sanitized like labels; a title that is blank after cleaning keeps its row as 'Untitled'. */
+const displayTitle = (title: string): string => cleanLabel(title) ?? 'Untitled';
 
 /** Display-safe text: control and bidirectional characters removed, blank as null. */
 export function cleanLabel(value: string | null | undefined): string | null {
@@ -220,10 +225,29 @@ export class DesignDocProjectRefs {
         const titles = this.db.prepare(`SELECT d.title FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
           WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ? ORDER BY d.updated_at DESC, d.id LIMIT ${SAMPLE_TITLES}`)
           .all(key) as Array<{ title: string }>;
-        return { foreignProjectId: row.fid, localProjectId: row.lid, docCount: count?.n ?? 0, sampleTitles: titles.map((t) => t.title), ...this.senderLabel(row.fid), localRegistered: live.has(row.lid) };
+        return { foreignProjectId: row.fid, localProjectId: row.lid, docCount: count?.n ?? 0, sampleTitles: titles.map((t) => displayTitle(t.title)), ...this.senderLabel(row.fid), localRegistered: live.has(row.lid) };
       });
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Titles (never doc ids) of the received docs carrying this foreign project id, newest first, at most
+   * MAX_TITLES. Serves mapped and unmapped ids alike, so there is no MAPPED_TO_ANY filter. Throws when unavailable so the UI can offer Retry.
+   */
+  listForeignProjectTitles(foreignId: unknown): string[] {
+    const foreign = cleanId(foreignId, 'foreignProjectId');
+    if (!this.available) throw new DesignDocError('invalid', 'titles unavailable');
+    try {
+      // docs-kind: allow Titles are joined to doc-kind rows only.
+      const rows = this.db.prepare(`SELECT d.title FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
+        WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ? ORDER BY d.updated_at DESC, d.id LIMIT ${MAX_TITLES}`)
+        .all(JSON.stringify(foreign)) as Array<{ title: string }>;
+      return rows.map((row) => displayTitle(row.title));
+    } catch {
+      this.tables = false; // re-probed on next use
+      throw new DesignDocError('invalid', 'titles unavailable');
     }
   }
 
@@ -252,7 +276,7 @@ export class DesignDocProjectRefs {
       const titles = this.db.prepare(`SELECT d.title FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
         WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ? ORDER BY d.updated_at DESC, d.id LIMIT ${SAMPLE_TITLES}`)
         .all(JSON.stringify(row.fid)) as Array<{ title: string }>;
-      out.push({ foreignProjectId: row.fid, docCount: row.n, sampleTitles: titles.map((t) => t.title), ...this.senderLabel(row.fid), suggestion: this.suggest(row.fid, registered) });
+      out.push({ foreignProjectId: row.fid, docCount: row.n, sampleTitles: titles.map((t) => displayTitle(t.title)), ...this.senderLabel(row.fid), suggestion: this.suggest(row.fid, registered) });
     }
     return out;
   }

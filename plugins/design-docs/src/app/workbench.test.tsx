@@ -601,6 +601,7 @@ describe('doc list', () => {
     expect(screen.queryByRole('menuitem', { name: /Move to project/ })).toBeNull();
     fireEvent.click(menuItem(/Map to a Project/));
     expect(await screen.findByRole('dialog', { name: /Map projects from other computers/ })).toBeTruthy();
+    expect(await screen.findByText('No docs from other computers yet.')).toBeTruthy();
     fireEvent.click(within(screen.getByRole('dialog', { name: /Map projects from other computers/ })).getByText('Close', { selector: '.btn' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Map projects from other computers/ })).toBeNull());
     fireEvent.keyDown(document.body, { key: 'Escape' });
@@ -1034,6 +1035,24 @@ describe('doc list sections', () => {
     await waitFor(() => expect(within(row('Plan')).queryByText('New edits')).toBeNull());
     const seen = JSON.parse(JSON.parse(localStorage.getItem('zcc.design-docs.list-seen')!)) as { docs: Record<string, number> };
     expect(seen.docs[plan.id]).toBe(harness.store.summary(plan.id).updatedAt);
+  });
+
+  it('records an opened unassigned peer doc as seen so "New edits" stays cleared', async () => {
+    localStorage.setItem('zcc.design-docs.list-seen', JSON.stringify(JSON.stringify({ since: 0, docs: {} })));
+    const db = createTestDatabase();
+    const harness = createHarness({ store: new DesignDocStore(db) });
+    const peer = seed(harness.store, { title: 'Peer plan', projectId: null });
+    db.prepare('INSERT INTO sync_doc_references VALUES (?, ?, ?)').run(peer.id, '"foreign"', '[]');
+    seed(harness.store, { title: 'Mine', projectId: 'p1' });
+    await harness.asAgent((store) => store.update(peer.id, { status: 'review' }, AGENT));
+    harness.render(<NavPanel pluginId="design-docs" subPath={peer.id} />);
+
+    await screen.findByText('Peer plan', { selector: '.dd-doc-row-title' });
+    await waitFor(() => {
+      const seen = JSON.parse(JSON.parse(localStorage.getItem('zcc.design-docs.list-seen')!)) as { docs: Record<string, number> };
+      expect(seen.docs[peer.id]).toBe(harness.store.summary(peer.id).updatedAt);
+    });
+    expect(within(row('Peer plan')).queryByText('New edits')).toBeNull();
   });
 
   it('pins docs, surfaces docs with open comments, and nests alternatives', async () => {

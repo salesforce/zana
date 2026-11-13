@@ -177,6 +177,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       store.projectRefs.observe(projects);
       return store.projectRefs.listProjectMappings(projects);
     },
+    // Titles only, capped (500), for one foreign project id; serves mapped and unmapped ids.
+    listForeignProjectTitles: (raw) => store.projectRefs.listForeignProjectTitles(onlyKeys(raw, ['foreignProjectId']).foreignProjectId),
     unmapForeignProject: (raw) => {
       const result = store.projectRefs.unmapForeignProject(onlyKeys(raw, ['foreignProjectId']).foreignProjectId);
       changed('');

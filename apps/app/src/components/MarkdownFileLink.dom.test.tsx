@@ -193,3 +193,13 @@ it('prevents repeat and auxiliary navigation while resolving an anchor', async (
   expect(h.resolve).toHaveBeenCalledTimes(1);
   await act(async () => resolve({ kind: 'resolved', path: 'docs/guide.md' }));
 });
+
+it('renders a file-like href as a plain anchor when the host resolves file links itself', () => {
+  const { container, rerender } = render(<MarkdownContent text="[x](diagrams/architecture.mmd)" fileLinksAsAnchors />);
+  expect(container.querySelector('a')?.getAttribute('href')).toBe('diagrams/architecture.mmd');
+  expect(screen.queryByRole('button', { name: 'x' })).toBeNull();
+  // Default behaviour is unchanged: without a thread the link is unavailable, not an anchor.
+  rerender(<MarkdownContent text="[x](diagrams/architecture.mmd)" />);
+  expect(container.querySelector('a')).toBeNull();
+  expect(screen.getByRole('button', { name: 'x' })).toBeTruthy();
+});
