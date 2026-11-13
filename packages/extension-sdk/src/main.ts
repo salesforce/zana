@@ -597,6 +597,14 @@ export interface Persona {
   allowedTools?: string[];
   deniedTools?: string[];
   addDirs?: string[];
+  /**
+   * MCP server allowlist (names only; a context/surface filter, not a security
+   * boundary) — see core's `Persona.mcpServers`. Omit for no limit; `[]` keeps
+   * only `zcc-inbox`; a list keeps exactly those servers plus `zcc-inbox`
+   * (exclusive, not additive). Entries are bare names or pinned
+   * `plugin:<id>:<name>` / `ext:<id>:<name>` keys; no globs; at most 63
+   * entries of at most 128 characters.
+   */
   mcpServers?: string[];
   initialPrompt?: string;
   /** Skill allowlist (context filter, not a security boundary) — see core's `Persona.skills`. */

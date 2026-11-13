@@ -67,6 +67,11 @@ import {
 import { parseModelsResponse } from "../models.js";
 import { macOsPermissionPresentation } from "../presentation.js";
 import {
+  CODEX_MCP_ELICITATION_KIND,
+  buildCodexMcpElicitationResponse,
+  codexMcpElicitationSchema,
+} from "../mcp-elicitation.js";
+import {
   resolveCodexInstructionOverrides,
   toCodexDynamicTools,
   buildCodexMcpServerConfig,
@@ -934,6 +939,22 @@ function handleChildRequest(
     return;
   }
   const request = decoded;
+
+  // Codex delivers MCP tool approvals as elicitations, outside the native
+  // command/file approval path. Full access authorizes these calls too. Accept
+  // once so changing modes still takes effect and no permanent grant is saved.
+  if (
+    request.payload.kind === CODEX_MCP_ELICITATION_KIND &&
+    session.turnPermissionSettings.sandbox === "danger-full-access"
+  ) {
+    const elicitation = codexMcpElicitationSchema.parse(request.payload.data);
+    if (elicitation.kind === "tool_approval") {
+      responder.result(
+        buildCodexMcpElicitationResponse(elicitation, { action: "accept" }),
+      );
+      return;
+    }
+  }
 
   // OBL-018: command + file-change approvals are a native-tool veto point, not a
   // human prompt. Route them through the policy; permission_grant + user_question

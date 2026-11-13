@@ -1,10 +1,13 @@
 import { z } from 'zod';
+import { PERSONA_MCP_NAME_MAX, PERSONA_MCP_SERVERS_MAX } from '@zana-ai/zcc-domain/product';
 import { CliCallbackGrantSchema } from './cli-callbacks.js';
 import { ProjectSettingsPatchSchema } from './project-settings.js';
 
 const settings = ProjectSettingsPatchSchema.shape;
 const text = z.string().max(32_768);
 const strings = z.array(text).max(256);
+/** Persona MCP allowlist: same bounds as `sanitizePersonaMcpServers` (names only; main/host resolve them). */
+export const PersonaMcpServersWireSchema = z.array(z.string().min(1).max(PERSONA_MCP_NAME_MAX)).max(PERSONA_MCP_SERVERS_MAX);
 export const CliProfileSchema = z.enum([
   'claude', 'claude-resume', 'claude-yolo', 'cursor', 'cursor-resume', 'cursor-yolo',
   'codex', 'codex-resume', 'codex-yolo', 'pi', 'pi-resume',
@@ -53,7 +56,7 @@ export const CliPersonaSchema = ProjectSettingsPatchSchema.pick({
 }).extend({
   id: z.string().min(1).max(200), name: z.string().min(1).max(200),
   baseProfile: CliProfileSchema.optional(), initialPrompt: text.optional(),
-  mcpServers: strings.optional()
+  mcpServers: PersonaMcpServersWireSchema.optional()
 }).strict();
 
 /** Main authorizes the launch before sending this command. The host still

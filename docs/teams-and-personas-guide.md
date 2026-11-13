@@ -35,7 +35,7 @@ A Persona is a JSON file that declares how a Claude session should be configured
   "allowedTools": ["Read", "Grep", "Glob"],
   "deniedTools": ["Write"],
   "addDirs": ["../other-repo"],
-  "mcpServers": ["zana"],       // extra MCP servers from the MCP registry
+  "mcpServers": ["github"],     // optional MCP server allowlist; omit for no limit (see "MCP server allowlist")
   "initialPrompt": "Opening instruction typed on first turn."
 }
 ```
@@ -228,8 +228,7 @@ Create persona files under `~/.zcc/personas/`:
   "model": "opus",
   "permissionMode": "plan",
   "addDirs": ["/path/to/your/repo"],
-  "appendSystemPrompt": "You are an architect for this codebase. Plan implementations considering existing conventions, performance limits, and backward compatibility.",
-  "mcpServers": ["zana"]
+  "appendSystemPrompt": "You are an architect for this codebase. Plan implementations considering existing conventions, performance limits, and backward compatibility."
 }
 ```
 
@@ -243,8 +242,7 @@ Create persona files under `~/.zcc/personas/`:
   "baseProfile": "claude",
   "model": "sonnet",
   "addDirs": ["/path/to/your/repo"],
-  "appendSystemPrompt": "You are an engineer on this codebase. Write code that follows existing patterns, passes tests, and meets project conventions.",
-  "mcpServers": ["zana"]
+  "appendSystemPrompt": "You are an engineer on this codebase. Write code that follows existing patterns, passes tests, and meets project conventions."
 }
 ```
 
@@ -258,8 +256,7 @@ Create persona files under `~/.zcc/personas/`:
   "baseProfile": "claude",
   "model": "sonnet",
   "addDirs": ["/path/to/your/repo"],
-  "appendSystemPrompt": "You are a QA engineer for this codebase. Write tests, validate edge cases, and check for regressions.",
-  "mcpServers": ["zana"]
+  "appendSystemPrompt": "You are a QA engineer for this codebase. Write tests, validate edge cases, and check for regressions."
 }
 ```
 
@@ -284,9 +281,31 @@ Create `~/.zcc/teams/feature-squad.json`:
 }
 ```
 
+### MCP server allowlist (`mcpServers`)
+
+`mcpServers` is an exclusive allowlist of MCP servers, not a list of extras. It is a context filter, not a security boundary.
+
+| Stored value | Meaning |
+| --- | --- |
+| Absent (field omitted) | No limit: every server the harness would normally load. |
+| `[]` | Only `zcc-inbox`, which is always allowed. |
+| `["a", "b"]` | Exactly `a` and `b`, plus `zcc-inbox`. |
+
+Entries are server names. `name` matches a user, project, plugin or extension server with that name; `plugin:<id>:<name>` and `ext:<id>:<name>` pin one source. There are no globs and no `server:tool` selectors: this restricts servers only, and tool control stays with `allowedTools` and `deniedTools`. `alwaysOn` plugin servers are not exempt; a plugin server not named is dropped. Limits: at most 63 entries of at most 128 characters; invalid entries are dropped with a warning.
+
+Behaviour change: before the allowlist, a stored list only added servers to the defaults. A persona that already stores `["zana"]` or `[]` now narrows to exactly those servers, and Zana posts a one-time notice at launch for such personas. Remove the field to allow all servers. A build that predates the allowlist treats the stored list as additive again.
+
+Where it applies:
+
+- **CLI Agents and Squads (Claude, Codex, OpenCode):** the harness is launched with only the allowlisted servers plus `zcc-inbox`. Claude builds a per-session MCP config from sanitised copies of the user and project definitions. Codex and OpenCode have no switch that disables every server, so unlisted user servers are disabled by name.
+- **Modern threads and Modern Squads:** only the plugin servers that Zana injects are limited. The ACP protocol adds Zana's servers to the agent's own configuration and cannot exclude servers the agent configures itself, so those stay available. A launch notice states this limit. Automated Claude sessions on a Zana-generated config also filter the user-config servers.
+- **Ignored:** harnesses that do not support MCP, and SSH sessions that cannot deliver MCP, ignore the allowlist. A launch notice says so; save and launch are never blocked.
+- **Authentication stays with the harness.** The allowlist never delivers or changes credentials. When an allowlisted server's credentials are stripped from the sanitised config, or the server is missing, the launch shows a warning naming it.
+- **Squad Requires:** a server in a plan's `requires.mcpServers` that a slot's persona allowlist excludes fails the launch check; an allowlisted server that is merely missing is an advisory warning only.
+
 ### 3. Skills Each Persona Should Use
 
-Each persona's `mcpServers` and `allowedTools` determine what capabilities it has at runtime. Additionally, Claude Code skills (from `~/.claude/commands/` and plugins) are available to all agents in the session. Key skills to enable per role:
+Each persona's `allowedTools`/`deniedTools` control which tools it may call, and its optional `mcpServers` allowlist controls which MCP servers it can see (see below). Additionally, Claude Code skills (from `~/.claude/commands/` and plugins) are available to all agents in the session. Key skills to enable per role:
 
 - **Orchestrator**: coordination skills (`zana:team`, agent messaging), planning skills
 - **Architect**: code search, doc search, chat search for context

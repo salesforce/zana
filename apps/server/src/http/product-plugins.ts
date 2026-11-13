@@ -37,6 +37,7 @@ import { resolvePluginDefaultExecutionOptions, overlayCustomModels } from '../se
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { asControlResult, callControlAsProductServer } from './cli-agent-ops.js';
 import type { Persona, PersonaInput, TeamInput } from '@zana-ai/zcc-domain/product';
+import { isProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { harnessEffectiveDefault, harnessVerifyBundle } from './harness-via-rpc.js';
 import { listJsonFiles } from './disk-json.js';
 import {
@@ -72,7 +73,7 @@ export function productListProjects(
   ctx: Pick<ProductHttpContext, 'projects'> & Partial<Pick<ProductHttpContext, 'db'>>
 ): PluginSdkProject[] {
   const localHostId = ctx.db ? getPrimaryHost(ctx.db)?.id : undefined;
-  return ctx.projects.list().map((row) => ({ id: row.id, name: row.name, path: row.path, local: !row.remote && (!row.hostId || row.hostId === localHostId), ...(row.icon ? { icon: row.icon } : {}), ...(row.quickAgent === true ? { quickAgent: true } : {}) }));
+  return ctx.projects.list().map((row) => ({ id: row.id, name: row.name, path: row.path, local: !row.remote && (!row.hostId || row.hostId === localHostId), ...(row.icon ? { icon: row.icon } : {}), ...(isProjectColor(row.color) ? { color: row.color } : {}), ...(row.quickAgent === true ? { quickAgent: true } : {}) }));
 }
 
 /**

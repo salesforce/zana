@@ -80,6 +80,16 @@ export interface HarnessAuthInjection {
 }
 
 /** Native MCP approval overrides supported by a provider's CLI. */
+/**
+ * The MCP servers a harness loads from its own user/project config, by name
+ * only. `unreadable` marks a config that exists but could not be read in bounds
+ * (nothing could be enumerated from it, so its servers cannot be disabled).
+ */
+export interface UserMcpEnumeration {
+  names: string[];
+  unreadable?: boolean;
+}
+
 export interface McpToolApproval {
   /** Approve every tool on the zcc-inbox server. */
   defaultToolsApprovalMode?: 'approve';
@@ -424,7 +434,22 @@ export interface LaunchProvider {
    * `PtyManager` calls this for every provider when it has a live MCP base URL, so
    * the concrete `-c mcp_servers…` string lives ONLY in the codex provider (Rule 6).
    */
-  mcpArgs(profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): string[];
+  mcpArgs(
+    profile: LaunchProfileId,
+    mcpUrl: string,
+    servers?: readonly HarnessMcpServer[],
+    disabledServers?: readonly string[]
+  ): string[];
+
+  /**
+   * Names of the MCP servers this harness loads from its OWN user/project config
+   * (read-only, bounded, never any definition or credential). A persona MCP
+   * allowlist is applied by disabling every unlisted name (the harness has no
+   * clear-all switch), so a provider returns `null` when it cannot: the
+   * allowlist is then ignored with a launch notice (D7). The list is read at
+   * launch, so a server added after it is not covered (enumeration race).
+   */
+  enumerateUserMcpServers(input: { cwd: string; env: NodeJS.ProcessEnv }): UserMcpEnumeration | null;
 
   /**
    * Argv fragment that applies native per-server or per-tool MCP approval

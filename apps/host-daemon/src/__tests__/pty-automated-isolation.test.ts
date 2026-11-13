@@ -40,7 +40,9 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
-  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => []
+  alwaysOnPluginMcpAllowlist: () => [], sessionPluginMcpServers: () => [],
+  externallyProvidedAllowlistEntries: (list: string[]) => list.filter((entry) => entry === 'registered-bare'),
+  prepareSessionMcpConfig: (o: { dir: string; sessionId: string }) => ({ path: `${o.dir}/${o.sessionId}.json`, warnings: [] })
 }));
 
 vi.mock('../tmux.js', () => ({
@@ -167,6 +169,53 @@ describe('PtyManager.create — unattended Claude config isolation', () => {
     it('ignores an empty list', () => {
       create(new PtyManager(), { scheduled: true, requiredMcps: [] });
       expect(spawned).toHaveLength(1);
+    });
+  });
+
+  describe('persona MCP allowlist and launch warnings', () => {
+    beforeEach(() => {
+      writeFileSync(
+        join(claudeHome, '.claude.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: { command: 'npx', args: ['slack-mcp'], env: { TOKEN: 'SECRET-ENV' }, headers: { Authorization: 'Bearer SECRET-HDR' } },
+            jira: { command: 'npx', args: ['jira-mcp'] }
+          }
+        })
+      );
+    });
+
+    it('passes the allowlist to the isolated plan and surfaces its warnings once through the launch hook', () => {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl('http://127.0.0.1:39999');
+      const events: Array<{ sessionId: string; warnings: Array<{ code: string; server?: string; message: string }> }> = [];
+      mgr.on('launchWarning', (event) => events.push(event));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const session = create(mgr, { scheduled: true, persona: { id: 'pp', name: 'P', mcpServers: ['slack', 'ghost', 'registered-bare'] } });
+      const leaf = spawned[0]!.env.CLAUDE_CONFIG_DIR!;
+      // Only the allowlisted user server is carried into the isolated config, with credentials stripped.
+      const carried = JSON.parse(readFileSync(join(leaf, '.claude.json'), 'utf8')).mcpServers as Record<string, unknown>;
+      expect(Object.keys(carried)).toEqual(['slack']);
+      expect(JSON.stringify(carried)).not.toMatch(/SECRET/);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.sessionId).toBe(session.id);
+      // `registered-bare` is delivered by the registry (externallyProvided), so it is not reported missing.
+      expect(events[0]!.warnings.map((w) => [w.code, w.server])).toEqual([
+        ['allowlisted-mcp-credentials-stripped', 'slack'],
+        ['allowlisted-mcp-not-carried', 'ghost']
+      ]);
+      expect(JSON.stringify(events)).not.toMatch(/SECRET/);
+      warn.mockRestore();
+    });
+
+    it('an unset allowlist carries every sanitized server and raises no warning', () => {
+      const mgr = new PtyManager();
+      const events: unknown[] = [];
+      mgr.on('launchWarning', (event) => events.push(event));
+      create(mgr, { scheduled: true, persona: { id: 'pp', name: 'P' } });
+      const leaf = spawned[0]!.env.CLAUDE_CONFIG_DIR!;
+      expect(Object.keys(JSON.parse(readFileSync(join(leaf, '.claude.json'), 'utf8')).mcpServers).sort()).toEqual(['jira', 'slack']);
+      expect(events).toEqual([]);
     });
   });
 

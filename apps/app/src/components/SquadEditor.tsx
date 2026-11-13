@@ -9,7 +9,8 @@ import { resolveIcon } from '../lib/resolveIcon.js';
 import { personaIcon } from '../lib/profileIcon.js';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
 import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
-import { uninstalledAllowlistSkills } from '@zana-ai/zcc-domain/product';
+import { catalogueName } from '../lib/use-mcp-catalogue.js';
+import { ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { SquadTransportChip } from './SquadTransportChip.js';
@@ -31,6 +32,32 @@ import { isLaunchApproval, type LaunchApproval } from '@zana-ai/zcc-domain/squad
  */
 
 const TEAM_SLOT_MAX = 16;
+
+/** Catalogue entry -> matcher ref (see `catalogueName`: only plugin/extension keys carry a prefix). */
+function catalogueRef(entry: { key: string; source: string }): McpServerRef {
+  return { key: entry.key, source: entry.source, name: catalogueName(entry) };
+}
+
+/**
+ * Host MCP catalogue keys + availability, or `undefined` while loading or when it is
+ * unavailable (the missing-server advisory then stays silent, never failing the editor).
+ */
+function useMcpCatalogue(enabled: boolean): Array<McpServerRef & { available: boolean }> | undefined {
+  const [refs, setRefs] = useState<Array<McpServerRef & { available: boolean }> | undefined>(undefined);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void Promise.resolve()
+      .then(() => product.mcp.catalogue())
+      .then((res) => {
+        if (cancelled) return;
+        setRefs(res.ok ? res.value.entries.map((e) => ({ ...catalogueRef(e), available: e.available })) : undefined);
+      })
+      .catch(() => { if (!cancelled) setRefs(undefined); });
+    return () => { cancelled = true; };
+  }, [enabled]);
+  return refs;
+}
 
 /** A team whose source is an object is project- or extension-scoped (not user/builtin). */
 function sourceIsForeign(source: Team['source']): boolean {
@@ -427,6 +454,36 @@ function TeamForm({
       .map((p) => ({ name: p.name, missing: uninstalledAllowlistSkills(p.skills, installedSkills) }))
       .filter((m) => m.missing.length > 0),
     [restrictedMembers, installedSkills]
+  );
+
+  // MCP allowlists (D9/D10). Advisory + indications only: nothing here gates save.
+  const mcpMembers = useMemo(() => {
+    const unique = new Map<string, { persona: Persona; orchestrator: boolean }>();
+    for (const s of slots) {
+      const p = personaById.get(s.personaId);
+      if (p?.mcpServers === undefined) continue;
+      const orchestrator = s.personaId === orchestratorPersonaId;
+      const prev = unique.get(p.id);
+      unique.set(p.id, { persona: p, orchestrator: (prev?.orchestrator ?? false) || orchestrator });
+    }
+    return [...unique.values()];
+  }, [slots, orchestratorPersonaId, personaById]);
+  const mcpCatalogue = useMcpCatalogue(mcpMembers.some((m) => m.persona.mcpServers!.length > 0));
+  const mcpRows = useMemo(() => mcpMembers.map(({ persona, orchestrator }) => {
+    const effective = effectiveMcpServers(undefined, persona) ?? [];
+    const missing = mcpCatalogue
+      ? (persona.mcpServers ?? []).filter((entry) => !(ALWAYS_ALLOWED_MCP_SERVERS as readonly string[]).includes(entry)
+        && !mcpCatalogue.some((srv) => srv.available && mcpAllowlistCovers(entry, srv)))
+      : [];
+    return { id: persona.id, name: persona.name, orchestrator, effective, missing };
+  }), [mcpMembers, mcpCatalogue]);
+  // Requires check: a work item that Requires a server fails to launch when no worker allowlist reaches it.
+  const workerSlots = useMemo(() => slots.filter((s) => s.personaId !== orchestratorPersonaId), [slots, orchestratorPersonaId]);
+  const allWorkersMcpRestricted = workerSlots.length > 0
+    && workerSlots.every((s) => personaById.get(s.personaId)?.mcpServers !== undefined);
+  const workerReachableMcp = useMemo(
+    () => [...new Set(workerSlots.flatMap((s) => effectiveMcpServers(undefined, personaById.get(s.personaId)) ?? []))],
+    [workerSlots, personaById]
   );
 
   const save = async () => {
@@ -845,6 +902,33 @@ function TeamForm({
           <p className="settings-help" role="status" data-testid="team-uninstalled-skills-warning">
             Allowlisted skills not installed: {membersWithMissingSkills.map((m) => `${m.name} (${m.missing.join(', ')})`).join('; ')}. You can still save; launches will warn until they are installed.
           </p>
+        )}
+
+        {mcpRows.length > 0 && (
+          <div className="scheduler-form-field" data-testid="team-mcp-summary">
+            <label>MCP servers by member</label>
+            <ul className="settings-help">
+              {mcpRows.map((r) => (
+                <li key={r.id} data-testid={`team-mcp-row-${r.id}`}>
+                  {r.name}{r.orchestrator ? ' (orchestrator)' : ''}: {r.effective.join(', ')}
+                  {r.effective.length === ALWAYS_ALLOWED_MCP_SERVERS.length ? ' (always-allowed only)' : ''}
+                </li>
+              ))}
+            </ul>
+            <p className="settings-help" data-testid="team-mcp-independent-note">
+              Restrict skills and Restrict MCP servers are independent controls. A set MCP list decides the server set; the skills list does not add or remove servers.
+            </p>
+            {mcpRows.some((r) => r.missing.length > 0) && (
+              <p className="settings-help" role="status" data-testid="team-mcp-missing-warning">
+                Allowlisted MCP servers not available: {mcpRows.filter((r) => r.missing.length > 0).map((r) => `${r.name} (${r.missing.join(', ')})`).join('; ')}. You can still save; launches will warn until they are installed.
+              </p>
+            )}
+            {allWorkersMcpRestricted && (
+              <p className="settings-help" role="status" data-testid="team-mcp-requires-hardfail">
+                Launch fails for work that Requires an MCP server no worker allows. Servers workers can reach: {workerReachableMcp.join(', ')}.
+              </p>
+            )}
+          </div>
         )}
 
         <div className="scheduler-form-field">

@@ -66,18 +66,22 @@ import type {
   McpToolApproval,
   RemoteCommandResult,
   ResolvedLaunch,
-  SquadSeatCapability
+  SquadSeatCapability,
+  UserMcpEnumeration
 } from '../launch-provider.js';
+
 import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
 import { BaseLaunchProvider } from '../base-provider.js';
 import type { HarnessModelTarget, ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { enumerateCodexUserMcpServers } from './user-mcp-servers.js';
 import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { codexLegacyRouting } from './legacy-routing.js';
 import { codexInteractionHook } from './interaction-hooks.js';
 import { buildCodexHookSpecs, renderHookOverrides, tomlBasic } from './hook-trust-specs.js';
 import { resolveHarnessCommand, verificationSearchPath } from '../harness-command.js';
 import { CODEX_BYPASS_HOOK_TRUST_FLAG, codexHookStateArgs, type CodexHookTrustMode } from './hook-trust.js';
+import { BARE_KEY } from '../../mcp-allowlist-disable.js';
 
 export const CODEX_EVIDENCE_VERSION = '0.140.0';
 const codexEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -90,12 +94,18 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
     id: 'codex', label: 'Codex', agentDefaultEligible: true, terminalEligible: false, defaultProfileId: 'codex',
     profiles: [{ id: 'codex', posture: 'default' }, { id: 'codex-resume', posture: 'resume' }, { id: 'codex-yolo', posture: 'unrestricted' }],
     capabilities: facetSupport(
-      { 'opening-prompt': 'exact', 'model-selection': 'exact', 'execution-policy': 'exact' },
+      { 'opening-prompt': 'exact', 'model-selection': 'exact', 'execution-policy': 'exact', 'mcp-references': 'exact' },
       { 'opening-prompt': 'exact' },
-      { 'opening-prompt': {
-        local: codexEvidence('codex.facet.opening-prompt', 'local', 'CLI binds opening prompt at spawn.'),
-        remote: codexEvidence('codex.facet.opening-prompt', 'remote', 'Remote command binds opening prompt at spawn.')
-      } }
+      {
+        'opening-prompt': {
+          local: codexEvidence('codex.facet.opening-prompt', 'local', 'CLI binds opening prompt at spawn.'),
+          remote: codexEvidence('codex.facet.opening-prompt', 'remote', 'Remote command binds opening prompt at spawn.')
+        },
+        'mcp-references': codexEvidence(
+          'codex.facet.mcp-references', 'local',
+          'Persona MCP allowlist disables each unlisted user server by name with -c mcp_servers.<n>.enabled=false; no generated file.'
+        )
+      }
     ),
     settingsContributionIds: ['codex-global-defaults'],
     configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'argv-app-store', rawEdit: false, reason: 'Zana uses verified argv and app settings; native file mapping is not verified.' }],
@@ -302,7 +312,16 @@ export class CodexProvider extends BaseLaunchProvider {
     };
   }
 
-  mcpArgs(_profile: LaunchProfileId, mcpUrl: string, servers?: readonly HarnessMcpServer[]): string[] {
+  enumerateUserMcpServers(input: { cwd: string; env: NodeJS.ProcessEnv }): UserMcpEnumeration {
+    return enumerateCodexUserMcpServers(input);
+  }
+
+  mcpArgs(
+    _profile: LaunchProfileId,
+    mcpUrl: string,
+    servers?: readonly HarnessMcpServer[],
+    disabledServers?: readonly string[]
+  ): string[] {
     // codex reads MCP servers from `~/.codex/config.toml` [mcp_servers], but the
     // `-c key=value` GLOBAL override injects one at spawn with NO file written and
     // NO change to the user's config — the true `--mcp-config` analogue. codex's
@@ -319,7 +338,13 @@ export class CodexProvider extends BaseLaunchProvider {
     // `-c` is a global option accepted before OR after the `resume` subcommand
     // (verified), so appending it to the base argv is safe for both profiles.
     const tomlValue = `"${mcpUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-    return ['-c', `mcp_servers.zcc-inbox.url=${tomlValue}`, ...(servers ?? []).flatMap((server) => codexServerArgs(server))];
+    // A persona MCP allowlist: Codex has no clear-all, so each unlisted user server is
+    // disabled by name. Names are bare config keys (the host skips any that are not),
+    // and only the name is written, never a definition or credential.
+    const disableArgs = (disabledServers ?? [])
+      .filter((name) => BARE_KEY.test(name))
+      .flatMap((name) => ['-c', `mcp_servers.${name}.enabled=false`]);
+    return ['-c', `mcp_servers.zcc-inbox.url=${tomlValue}`, ...(servers ?? []).flatMap((server) => codexServerArgs(server)), ...disableArgs];
   }
 
   mcpApprovalArgs(_profile: LaunchProfileId, approval: McpToolApproval): string[] {

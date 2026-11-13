@@ -22,6 +22,7 @@ import { registerModulesIpc } from './modules.js';
 import { registerMobileIpc } from './mobile.js';
 import { registerApiErrorResumeIpc } from './api-error-resume.js';
 import { registerCompanionIpc } from './companion.js';
+import { registerMcpCatalogueIpc } from './mcp-catalogue.js';
 
 export function registerIpcFamilies(host: IpcCtx, namedChecks?: NamedChecksSettingsService): void {
   bindIpcCtx(host);
@@ -48,4 +49,5 @@ export function registerIpcFamilies(host: IpcCtx, namedChecks?: NamedChecksSetti
   registerMobileIpc();
   registerApiErrorResumeIpc();
   registerCompanionIpc();
+  registerMcpCatalogueIpc();
 }

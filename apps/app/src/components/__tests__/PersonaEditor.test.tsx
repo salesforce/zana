@@ -60,7 +60,8 @@ describe('PersonaEditor harness-neutral fields', () => {
     expect(html).not.toContain('Allowed tools');
     expect(html).not.toContain('Denied tools');
     expect(html).not.toContain('Extra dirs');
-    expect(html).not.toContain('MCP servers');
+    // The restrict control is collapsed by default: no free-text MCP entry until it is enabled.
+    expect(html).not.toContain('aria-label="Allowed MCP servers"');
   });
 
   it('shows existing Claude values in edit mode below prompts', () => {

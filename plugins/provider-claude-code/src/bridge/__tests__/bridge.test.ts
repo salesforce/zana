@@ -3316,6 +3316,141 @@ describe("bridge", () => {
       }
     });
 
+    describe("persona MCP allowlist launch warnings", () => {
+      function withMcp(
+        request: ReturnType<typeof startRequest>,
+        providerOptions: Record<string, unknown>,
+      ) {
+        return {
+          ...request,
+          options: {
+            ...request.options,
+            providerOptions: { ...request.options.providerOptions, ...providerOptions },
+          },
+        };
+      }
+
+      function warningDeltas(
+        bridge: ReturnType<typeof createBridgeJsonRpcTestHarness>,
+        threadId: string,
+      ): Array<{ kind: string; summary: string; details: string }> {
+        return bridge.messages
+          .filter((m) => m.method === "thread/delta")
+          .map((m) => m.params as unknown as { threadId: string; deltas: Array<{ kind: string; summary: string; details: string }> })
+          .filter((p) => p.threadId === threadId)
+          .flatMap((p) => p.deltas)
+          .filter((d) => d.kind === "provider.warning");
+      }
+
+      it("warns for an allowlisted server missing from the user config when only mcpAllowlist is set", async () => {
+        const bridge = createBridgeJsonRpcTestHarness(handleLine);
+        queryMock.mockImplementation(() => createControlledClaudeQuery());
+        try {
+          bridge.sendRequest(
+            1,
+            "thread/start",
+            withMcp(startRequest("thread-mcp-warn", "automated"), {
+              mcpAllowlist: ["zcc-inbox", "ghost"],
+            }),
+          );
+          await bridge.waitForResponse(1);
+          const warnings = warningDeltas(bridge, "thread-mcp-warn");
+          expect(warnings).toHaveLength(1);
+          expect(warnings[0]!.summary).toContain("ghost");
+          expect(warnings[0]!.details).toMatch(/not found/);
+        } finally {
+          bridge.restore();
+        }
+      });
+
+      it("suppresses the warning when the allowlisted server is externally provided", async () => {
+        const bridge = createBridgeJsonRpcTestHarness(handleLine);
+        queryMock.mockImplementation(() => createControlledClaudeQuery());
+        try {
+          bridge.sendRequest(
+            1,
+            "thread/start",
+            withMcp(startRequest("thread-mcp-ext", "automated"), {
+              mcpAllowlist: ["zcc-inbox", "ghost"],
+              mcpExternallyProvided: ["ghost"],
+            }),
+          );
+          await bridge.waitForResponse(1);
+          expect(warningDeltas(bridge, "thread-mcp-ext")).toEqual([]);
+        } finally {
+          bridge.restore();
+        }
+      });
+
+      it("emits no warning when only mcpExternallyProvided is set", async () => {
+        const bridge = createBridgeJsonRpcTestHarness(handleLine);
+        queryMock.mockImplementation(() => createControlledClaudeQuery());
+        try {
+          bridge.sendRequest(
+            1,
+            "thread/start",
+            withMcp(startRequest("thread-mcp-only-ext", "automated"), {
+              mcpExternallyProvided: ["ghost"],
+            }),
+          );
+          await bridge.waitForResponse(1);
+          expect(warningDeltas(bridge, "thread-mcp-only-ext")).toEqual([]);
+        } finally {
+          bridge.restore();
+        }
+      });
+
+      it("emits no warning when neither field is set", async () => {
+        const bridge = createBridgeJsonRpcTestHarness(handleLine);
+        queryMock.mockImplementation(() => createControlledClaudeQuery());
+        try {
+          bridge.sendRequest(1, "thread/start", startRequest("thread-mcp-none", "automated"));
+          await bridge.waitForResponse(1);
+          expect(warningDeltas(bridge, "thread-mcp-none")).toEqual([]);
+        } finally {
+          bridge.restore();
+        }
+      });
+
+      it("emits warnings on resume and fork of an automated session", async () => {
+        const bridge = createBridgeJsonRpcTestHarness(handleLine);
+        queryMock.mockImplementation(() => createControlledClaudeQuery());
+        try {
+          bridge.sendRequest(
+            1,
+            "thread/resume",
+            withMcp(
+              { ...startRequest("thread-mcp-resume", "automated"), providerThreadId: "provider-resume" } as ReturnType<
+                typeof startRequest
+              >,
+              { mcpAllowlist: ["ghost-resume"] },
+            ),
+          );
+          await bridge.waitForResponse(1);
+          const resumed = warningDeltas(bridge, "thread-mcp-resume");
+          expect(resumed).toHaveLength(1);
+          expect(resumed[0]!.summary).toContain("ghost-resume");
+
+          bridge.sendRequest(
+            2,
+            "thread/fork",
+            withMcp(
+              { ...startRequest("thread-mcp-fork", "automated"), sourceProviderThreadId: "source-session" } as ReturnType<
+                typeof startRequest
+              >,
+              { mcpAllowlist: ["ghost-fork"] },
+            ),
+          );
+          await bridge.waitForResponse(2);
+          const forked = warningDeltas(bridge, "thread-mcp-fork");
+          expect(forked).toHaveLength(1);
+          expect(forked[0]!.summary).toContain("ghost-fork");
+        } finally {
+          bridge.restore();
+        }
+      });
+    });
+
     it("keeps a session without sessionKind interactive and unisolated", async () => {
       const bridge = createBridgeJsonRpcTestHarness(handleLine);
       queryMock.mockImplementation(() => createControlledClaudeQuery());

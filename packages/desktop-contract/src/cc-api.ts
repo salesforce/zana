@@ -1724,6 +1724,7 @@ export interface CcApi {
     list(projectPath: string): Promise<McpServer[]>;
     setEnabled(projectPath: string, name: string, enabled: boolean): Promise<void>;
     listAll(): Promise<McpServerEntry[]>;
+    catalogue(): Promise<{ ok: true; value: import('@zana-ai/zcc-contracts/host-rpc').HostMcpCatalogueResult } | { ok: false; code: string; message: string }>;
     setEnabledById(id: string, enabled: boolean): Promise<Result<true>>;
     reveal(id: string): Promise<Result<true>>;
     onChanged(cb: (entries: McpServerEntry[]) => void): () => void;

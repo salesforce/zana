@@ -1003,7 +1003,8 @@ export class ExecutionService {
         level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
         modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
         observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
-        ...(model.skillAllowlist === undefined ? {} : { skillAllowlist: model.skillAllowlist })
+        ...(model.skillAllowlist === undefined ? {} : { skillAllowlist: model.skillAllowlist }),
+        ...(model.mcpServers === undefined ? {} : { mcpServers: model.mcpServers })
       }))
     };
   }

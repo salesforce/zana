@@ -9,6 +9,7 @@ import {
   BRIDGE_JSON_RPC_ERRORS,
   interactionRequestPayloadSchema,
   type JsonValue,
+  type RuntimePermissionPolicy,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 import computerUseElicitation from "../fixtures/computer-use-elicitation.json";
@@ -192,9 +193,11 @@ async function waitForInteractionRequest(
 }
 
 async function runElicitation(args: {
-  answer: JsonValue;
+  answer?: JsonValue;
   request: ScriptedElicitationRequest;
   runtimeError?: string;
+  options?: RuntimePermissionPolicy;
+  turnOptions?: RuntimePermissionPolicy;
 }) {
   const tempDir = mkdtempSync(join(tmpdir(), "bb-codex-elicitation-"));
   const scriptPath = join(tempDir, "script.json");
@@ -222,7 +225,7 @@ async function runElicitation(args: {
       threadId,
       cwd: tempDir,
       instructionMode: "append",
-      options: { ...sessionOptions },
+      options: args.options ?? { ...sessionOptions },
     });
     const startResponse = await harness.waitForResponse(startRequestId);
     providerThreadId = threadStartResultSchema.parse(
@@ -234,28 +237,36 @@ async function runElicitation(args: {
       providerThreadId,
       input: [{ type: "text", text: "open Calculator", mentions: [] }],
       clientRequestId: "creq_23456789ab",
-      options: { ...sessionOptions },
+      options: args.turnOptions ?? args.options ?? { ...sessionOptions },
     });
-    const request = await waitForInteractionRequest(harness);
-    const params = interactionRequestParamsSchema.parse(request.params);
-    handleLine(
-      JSON.stringify(
-        args.runtimeError === undefined
-          ? {
-              jsonrpc: "2.0",
-              id: request.id,
-              result: { kind: "request_answer", value: args.answer },
-            }
-          : {
-              jsonrpc: "2.0",
-              id: request.id,
-              error: { code: -32000, message: args.runtimeError },
-            },
-      ),
-    );
+    let interaction;
+    if (args.answer !== undefined) {
+      const request = await waitForInteractionRequest(harness);
+      interaction = interactionRequestParamsSchema.parse(request.params);
+      handleLine(
+        JSON.stringify(
+          args.runtimeError === undefined
+            ? {
+                jsonrpc: "2.0",
+                id: request.id,
+                result: { kind: "request_answer", value: args.answer },
+              }
+            : {
+                jsonrpc: "2.0",
+                id: request.id,
+                error: { code: -32000, message: args.runtimeError },
+              },
+        ),
+      );
+    }
     await harness.waitForResponse(turnRequestId);
+    if (args.answer === undefined) {
+      expect(harness.messages.filter((message) =>
+        message.method === BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest,
+      )).toEqual([]);
+    }
     return {
-      interaction: params,
+      interaction,
       nativeResponse: nativeResponseEnvelopeSchema.parse(
         JSON.parse(readFileSync(responseLogPath, "utf8").trim()),
       ),
@@ -287,7 +298,7 @@ it.sequential.each(validCases)(
       turnId: null,
       providerNativeIds: true,
     });
-    expect(interaction.payload).toEqual({
+    expect(interaction?.payload).toEqual({
       kind: CODEX_MCP_ELICITATION_KIND,
       title: "Allow Codex to use Calculator?",
       data: {
@@ -337,7 +348,7 @@ it.sequential("round-trips a validated generic form response", async () => {
       content: { project: "bb", retries: 4, notify: false },
     },
   });
-  expect(interaction.payload).toEqual({
+  expect(interaction?.payload).toEqual({
     kind: CODEX_MCP_ELICITATION_KIND,
     title: formElicitation.params.message,
     data: {
@@ -411,7 +422,7 @@ it.sequential("round-trips URL acceptance without form content", async () => {
     request: urlElicitation,
     answer: { action: "accept" },
   });
-  expect(interaction.payload).toEqual({
+  expect(interaction?.payload).toEqual({
     kind: CODEX_MCP_ELICITATION_KIND,
     title: urlElicitation.params.message,
     data: {
@@ -434,7 +445,7 @@ it.sequential("lets the user decline an unsupported elicitation", async () => {
     request: unsupportedElicitation,
     answer: { action: "decline" },
   });
-  expect(interaction.payload).toMatchObject({
+  expect(interaction?.payload).toMatchObject({
     kind: CODEX_MCP_ELICITATION_KIND,
     title: unsupportedElicitation.params.message,
     data: {
@@ -485,8 +496,14 @@ it.sequential.each([
     const { interaction, nativeResponse } = await runElicitation({
       request: mcpToolApprovalElicitation,
       answer,
+      turnOptions: {
+        permissionMode: "accept-edits",
+        permissionScope: "workspace",
+        approvalReviewer: "user",
+        permissionEscalation: "ask",
+      },
     });
-    expect(interaction.payload).toMatchObject({
+    expect(interaction?.payload).toMatchObject({
       kind: CODEX_MCP_ELICITATION_KIND,
       title: mcpToolApprovalElicitation.params.message,
       data: {
@@ -503,6 +520,37 @@ it.sequential.each([
       jsonrpc: "2.0",
       id: "fx-req-1",
       result: native,
+    });
+  },
+  30_000,
+);
+
+it.sequential.each([
+  { scopes: [] },
+  { scopes: ["session"] },
+  { scopes: ["session", "always"] },
+])(
+  "auto-accepts MCP tool approvals in Full mode without saving offered grants $scopes",
+  async ({ scopes }) => {
+    const { interaction, nativeResponse } = await runElicitation({
+      request: {
+        ...mcpToolApprovalElicitation,
+        params: {
+          ...mcpToolApprovalElicitation.params,
+          _meta: { ...mcpToolApprovalElicitation.params._meta, persist: scopes },
+        },
+      },
+      options: {
+        permissionMode: "accept-edits",
+        permissionScope: "workspace",
+        approvalReviewer: "user",
+        permissionEscalation: "ask",
+      },
+      turnOptions: sessionOptions,
+    });
+    expect(interaction).toBeUndefined();
+    expect(nativeResponse).toMatchObject({
+      result: { action: "accept", content: {}, _meta: null },
     });
   },
   30_000,

@@ -56,6 +56,8 @@ back the built-in. A Persona you created has **Delete** in the same place.
 | **Execution state** | **Use harness default (unset)** | Shown while the harness profile is neutral. Choose **Plan (planning only)**, **Interactive (human-in-loop)**, **Accept Edits (auto-approve edits)**, or **Autonomous (fully auto)**. |
 | **System prompt (appended)** | empty | To give the Persona standing instructions. |
 | **Opening prompt** | empty | Text written to the session after it starts. |
+| **Restrict skills** | off (no limit) | To load only the skills you list, plus `zcc-inbox`. |
+| **Restrict MCP servers** | off (no limit) | To load only the MCP servers you list, plus `zcc-inbox`. See [Restrict MCP servers](#restrict-mcp-servers). |
 
 Persona settings apply after Global and Project defaults and before the choices
 made for a single Agent: Global, then Project, then Persona, then Agent.
@@ -66,6 +68,38 @@ Project and Global settings.
 
 A Persona that cannot write files cannot write a plan. This matters for the
 Orchestrator. See [Infer plan from goal](#infer-plan-from-goal-a-second-step).
+
+### Restrict MCP servers
+
+**Restrict MCP servers** is an exclusive allowlist, not a list of extras. It
+limits which MCP servers load, to cut startup context and cost. It is a context
+filter, not a security boundary.
+
+| Setting | What loads |
+|---|---|
+| Off (the default) | Every server the harness would normally load. |
+| On, with no entries | Only `zcc-inbox`, which is always allowed. |
+| On, with entries | Exactly the servers you list, plus `zcc-inbox`. |
+
+- Enter a server name. Use `plugin:<id>:<name>` or `ext:<id>:<name>` to pin one
+  source. Wildcards and tool names are not accepted. Tool control stays in the
+  Persona's allowed and denied tools. You can list up to 63 servers.
+- Plugin servers that are always on are not exempt. A plugin server you do not
+  list is dropped.
+- A server that is listed but not installed, or whose credentials are stripped,
+  is flagged. You can still save; launches warn until it is available.
+  Authentication stays with the harness.
+- Claude, Codex and OpenCode launch with only the listed servers. Modern threads
+  limit only the plugin servers Zana injects, because the agent's own configured
+  servers cannot be excluded; a launch notice says so. Harnesses without MCP
+  support, and SSH sessions that cannot deliver MCP, ignore the list.
+- **Restrict skills** is a separate control. It does not add or remove servers.
+- Behaviour change: a stored list used to add servers to the defaults. It now
+  narrows to exactly those servers. A Persona that already stores a list posts a
+  one-time notice at launch. Turn **Restrict MCP servers** off to allow all.
+
+The Squad editor shows the effective MCP servers for each member. A launch fails
+when a step's **Requires** names an MCP server that no worker's Persona allows.
 
 ---
 

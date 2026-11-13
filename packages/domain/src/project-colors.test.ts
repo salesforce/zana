@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROJECT_COLORS, pickProjectColor } from './project-colors.js';
+import { PROJECT_COLORS, isProjectColor, pickProjectColor } from './project-colors.js';
 
 describe('pickProjectColor', () => {
   it('returns the first palette color when nothing is in use', () => {
@@ -29,5 +29,15 @@ describe('pickProjectColor', () => {
   it('always returns a palette member', () => {
     const picked = pickProjectColor(['#2f81f7', '#3fb950']);
     expect(PROJECT_COLORS).toContain(picked);
+  });
+});
+
+describe('isProjectColor', () => {
+  it('accepts every palette color', () => {
+    for (const c of PROJECT_COLORS) expect(isProjectColor(c)).toBe(true);
+  });
+
+  it.each([undefined, null, 5, '', '#123456', '#2F81F7', 'blue'])('rejects %s', (v) => {
+    expect(isProjectColor(v)).toBe(false);
   });
 });

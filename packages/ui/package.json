@@ -16,6 +16,12 @@
       "default": "./src/kanban.tsx"
     },
     "./kanban.css": "./src/kanban.css",
+    "./project-marker": {
+      "types": "./src/project-marker.tsx",
+      "source": "./src/project-marker.tsx",
+      "default": "./src/project-marker.tsx"
+    },
+    "./project-marker.css": "./src/project-marker.css",
     "./popover-picklist": {
       "types": "./src/popover-picklist.tsx",
       "source": "./src/popover-picklist.tsx",

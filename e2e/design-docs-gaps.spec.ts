@@ -174,10 +174,15 @@ test('shows the stored name for a removed project and maps a peer project on con
 
   const dialog = win.getByRole('dialog', { name: 'Map projects from other computers' });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel('Your Project for Unnamed project').selectOption(targetId);
+  // No sender name: the card heading falls back to the first doc title.
+  await expect(dialog.getByRole('heading', { name: /Needs a Project \(1\)/ })).toBeVisible();
+  // Show docs lazily loads the full title list over the new RPC (titles only, never ids).
+  await dialog.getByRole('button', { name: 'Show docs' }).click();
+  await expect(dialog.getByRole('list', { name: 'Doc titles' }).getByText('Peer received doc')).toBeVisible({ timeout: 30_000 });
+  await dialog.getByLabel('Your Project for Peer received doc').selectOption(targetId);
   // Picking alone applies nothing: only Map applies it.
   expect((await rpc<unknown[]>(win, 'listUnassignedProjects')).length).toBeGreaterThan(0);
-  await dialog.getByRole('button', { name: 'Map', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Map 1 doc to dd-gaps-target', exact: true }).click();
   await expect.poll(async () =>
     (await rpc<Array<{ foreignProjectId: string }>>(win, 'listUnassignedProjects')).map((p) => p.foreignProjectId),
   { timeout: 30_000 }).not.toContain(foreign);

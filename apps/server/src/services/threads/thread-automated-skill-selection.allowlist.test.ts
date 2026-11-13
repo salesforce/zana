@@ -8,7 +8,7 @@ vi.mock('@zana-ai/zcc-db', async (orig) => ({
 }));
 const patch = vi.hoisted(() => ({ calls: [] as unknown[], result: { ok: true } as { ok: boolean } }));
 
-import { copyThreadSkillSelection, threadAllowedSkillNames, threadSkillSelection } from './thread-automated-skill-selection.js';
+import { copyThreadSkillSelection, threadAllowedSkillNames, threadMcpAllowlist, threadSkillSelection } from './thread-automated-skill-selection.js';
 
 const db = {} as never;
 const set = (metadata: Record<string, unknown>, corrupt = false) => { meta.value = { metadata, corrupt }; };
@@ -63,5 +63,29 @@ describe('copyThreadSkillSelection (fork)', () => {
     set({ allowedSkillNames: ['x'] });
     patch.result = { ok: false };
     expect(() => copyThreadSkillSelection(db, 's', 't')).toThrow(/exceeds limit/);
+  });
+});
+
+describe('threadMcpAllowlist (persona MCP allowlist metadata)', () => {
+  it('is undefined when the key is absent (unrestricted) and preserves a restricting empty-ish list', () => {
+    expect(threadMcpAllowlist(db, 't')).toBeUndefined();
+    set({ mcpAllowlist: ['zcc-inbox'] });
+    expect(threadMcpAllowlist(db, 't')).toEqual(['zcc-inbox']);
+    set({ mcpAllowlist: [] });
+    expect(threadMcpAllowlist(db, 't')).toEqual([]);
+  });
+  it('fails closed on corrupt or invalid metadata', () => {
+    set({}, true);
+    expect(() => threadMcpAllowlist(db, 't')).toThrow(/corrupt/);
+    for (const bad of ['x', [1], [''], ['a'.repeat(129)], Array.from({ length: 65 }, (_, i) => `s${i}`)]) {
+      set({ mcpAllowlist: bad });
+      expect(() => threadMcpAllowlist(db, 't')).toThrow(/invalid/);
+    }
+  });
+  it('is part of the selection and is copied to a fork', () => {
+    set({ mcpAllowlist: ['zcc-inbox', 'github'] });
+    expect(threadSkillSelection(db, 't')).toEqual({ mcpAllowlist: ['zcc-inbox', 'github'] });
+    copyThreadSkillSelection(db, 's', 't');
+    expect(patch.calls[0]).toMatchObject({ threadId: 't', set: { mcpAllowlist: ['zcc-inbox', 'github'] } });
   });
 });

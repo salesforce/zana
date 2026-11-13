@@ -104,12 +104,34 @@ export function toggleCollapsed(raw: string, key: string): string {
   return JSON.stringify([...keys]);
 }
 
-const SWATCH_HUES = [217, 262, 173, 24, 330, 142, 45, 195];
+/** Every section collapsed: stores each key once. */
+export function collapseAll(keys: readonly string[]): string {
+  return JSON.stringify([...new Set(keys)]);
+}
 
-/** A stable color for a project, so its docs read as one group across sections. */
-export function projectSwatch(projectId: string | null): string {
-  if (!projectId) return 'var(--text-dim)';
-  let hash = 0;
-  for (let index = 0; index < projectId.length; index += 1) hash = (hash * 31 + projectId.charCodeAt(index)) | 0;
-  return `hsl(${SWATCH_HUES[Math.abs(hash) % SWATCH_HUES.length]} 62% 52%)`;
+/** Every section open. */
+export function expandAll(): string {
+  return '[]';
+}
+
+/** True when at least one of the sections is currently open. */
+export function anyOpen(keys: readonly string[], collapsedRaw: string): boolean {
+  const collapsed = parseCollapsed(collapsedRaw);
+  return keys.some((key) => !collapsed.has(key));
+}
+
+const NEEDS_ALL_PROJECTS = 'Show All projects to';
+
+/** Tooltip for the group toggle: says why it is disabled, else the current mode and the action. */
+export function groupHint(state: { projectFilter: boolean; grouped: boolean }): string {
+  if (state.projectFilter) return `${NEEDS_ALL_PROJECTS} group`;
+  return state.grouped ? 'Grouped by project: click for a flat list' : 'Flat list: click to group by project';
+}
+
+/** Tooltip for the collapse/expand-all button: says why it is disabled, else the action. */
+export function collapseAllHint(state: { projectFilter: boolean; grouped: boolean; searching: boolean; someOpen: boolean }): string {
+  if (state.projectFilter) return `${NEEDS_ALL_PROJECTS} use`;
+  if (!state.grouped) return 'Group by project to collapse sections';
+  if (state.searching) return 'Clear search to collapse or expand sections';
+  return state.someOpen ? 'Collapse all sections' : 'Expand all sections';
 }

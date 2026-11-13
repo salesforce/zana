@@ -286,6 +286,8 @@ export {
   useWindowTitle,
   useComposer,
   useComposerView,
+  experimental_useProjects,
+  experimental_useProjectAppearanceMenu,
   experimental_useSidebarThreads,
   experimental_useSidebarThreadActions,
   experimental_useSidebarThreadPullRequest,

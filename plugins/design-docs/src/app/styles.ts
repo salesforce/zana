@@ -75,13 +75,28 @@ export const DESIGN_DOCS_STYLES = `
 .dd-field-help { margin: 8px 0 0; font-size: 12px; }
 .dd-field-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
 .dd-field-inline .dd-select { width: auto; max-width: 180px; }
-.dd-map-row .dd-field-inline { flex-wrap: wrap; }
-.dd-map-source { display: block; font-size: 12px; margin: 2px 0 6px; }
-.dd-map-titles-primary { font-weight: 600; }
-.dd-map-row .dd-field-inline { margin-top: 4px; }
-.dd-map-mapped { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
-.dd-map-mapped .dd-field-inline { margin-bottom: 8px; align-items: center; }
-.dd-map-row .dd-field-inline .dd-select { flex: 1 1 auto; min-width: 180px; max-width: 100%; width: auto; }
+.dd-map-section { margin: 0 0 8px; font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.dd-map-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); padding: 10px 12px; margin-bottom: 10px; }
+.dd-map-card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.dd-map-preview { margin: 6px 0 4px; font-size: 12px; }
+.dd-map-link { background: none; border: 0; color: var(--accent-blue); cursor: pointer; padding: 0; font: inherit; font-size: 12px; }
+.dd-map-tlist { margin: 6px 0; padding: 6px 8px 6px 26px; max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-base); font-size: 12px; }
+.dd-map-tlist li { padding: 1px 0; }
+.dd-map-tlist .dd-map-more { list-style: none; margin-left: -18px; color: var(--text-muted); font-style: italic; }
+.dd-map-status { margin: 6px 0; font-size: 12px; }
+.dd-map-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.dd-map-pick .dd-select { width: auto; max-width: 100%; min-width: 180px; }
+.dd-map-chip { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--accent-blue); color: var(--accent-blue); white-space: nowrap; }
+.dd-map-mapped { margin-top: 18px; }
+.dd-map-acc { width: 100%; display: flex; align-items: center; gap: 6px; background: none; border: 0; border-top: 1px solid var(--border); padding: 12px 0 8px; color: var(--text-primary); font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
+.dd-map-grid { display: grid; grid-template-columns: minmax(0, 1fr) 190px max-content; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.dd-map-src { min-width: 0; }
+.dd-map-exp { margin-right: 4px; }
+.dd-map-tgt { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.dd-map-tgt-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-map-act { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; min-width: 70px; }
+.dd-map-grid-titles { grid-column: 1 / -1; }
+.dd-map-tag { font-size: 11px; padding: 1px 7px; border-radius: 4px; background: color-mix(in srgb, var(--warning, #b7791f) 18%, transparent); color: var(--warning, #b7791f); border: 1px solid var(--warning, #b7791f); font-weight: 500; }
 .dd-form { display: flex; flex-direction: column; gap: 14px; }
 
 .dd-segmented {
@@ -484,7 +499,6 @@ export const DESIGN_DOCS_STYLES = `
 .dd-doc-row-meta > span.dd-doc-row-project { flex: 0 1 auto; gap: 5px; min-width: 0; color: var(--text-muted); }
 .dd-doc-row-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dd-doc-row-unseen { flex: 0 0 auto; color: var(--accent-blue); font-weight: 600; }
-.dd-swatch { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 2px; }
 .dd-doc-row-comments { color: var(--accent-gold); }
 .dd-doc-row-alt { position: relative; width: calc(100% - 14px); margin-left: 14px; padding-top: 4px; padding-bottom: 4px; }
 .dd-doc-row-alt::before { content: ''; position: absolute; left: -8px; top: 0; height: 50%; width: 6px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 4px; }

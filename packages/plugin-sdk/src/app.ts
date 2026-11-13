@@ -2,6 +2,8 @@ export * from './context-reference.js';
 export { EDITOR_SELECTION_MIME, MAX_EDITOR_SELECTION_TEXT, parseEditorSelection, editorSelectionFromClipboard, editorSelectionLabel, editorSelectionPrompt, type EditorSelection } from './editor-selection.js';
 import type {
   ComposerView,
+  PluginProjectsState,
+  PluginProjectAppearanceMenu,
   HarnessRoutingEditorProps,
   MarkdownProps,
   NewThreadComposerProps,
@@ -112,6 +114,9 @@ export type {
   PluginBrowserPage,
   PluginBrowserComposer,
   PluginThreadListProps,
+  PluginAppProject,
+  PluginProjectsState,
+  PluginProjectAppearanceMenu,
   PluginSidebarThread,
   PluginSidebarThreadActions,
   PluginThreadListRegistration,
@@ -285,6 +290,16 @@ export function useComposer(): PluginComposerApi {
 
 export function useComposerView(): ComposerView {
   return pluginRuntime().useComposerView?.() ?? missing('useComposerView');
+}
+
+export function experimental_useProjects(): PluginProjectsState {
+  return pluginRuntime().experimental_useProjects?.() ?? { status: 'loading', projects: [] };
+}
+
+const NOOP_APPEARANCE_MENU: PluginProjectAppearanceMenu = { open() { /* no host */ } };
+
+export function experimental_useProjectAppearanceMenu(): PluginProjectAppearanceMenu {
+  return pluginRuntime().experimental_useProjectAppearanceMenu?.() ?? NOOP_APPEARANCE_MENU;
 }
 
 export function experimental_useSidebarThreads() {

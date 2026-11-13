@@ -5,11 +5,14 @@ import {
   ArrowLeft,
   Bot,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   CircleDot,
   DraftingCompass,
   FolderOpen,
   House,
-  ListTree,
+  Layers,
+  List,
   MoreHorizontal,
   MessageSquare,
   PanelLeftClose,
@@ -32,7 +35,8 @@ import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, ty
 import { needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
-import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
+import { ProjectMark } from './ProjectMark.js';
+import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useRemovedProjects, useTemplates, useUnassignedDocs, useUnassignedProjects } from './hooks.js';
 import { UNASSIGNED_LABEL, UnassignedProjectsDialog } from './UnassignedProjects.js';
@@ -174,8 +178,9 @@ function DocRow({
         <span className="dd-doc-row-meta">
           {projectName !== null ? (
             <span className="dd-doc-row-project" title={projectName}>
-              <span className="dd-swatch" style={{ background: projectSwatch(doc.projectId) }} aria-hidden />
-              <span className="dd-doc-row-project-name">{projectName}</span>
+              <ProjectMark projectId={doc.projectId}>
+                <span className="dd-doc-row-project-name">{projectName}</span>
+              </ProjectMark>
             </span>
           ) : null}
           {comments ? (
@@ -202,10 +207,17 @@ function SectionHead({ section, open, onToggle }: { section: ListSection; open: 
     <button type="button" className={`dd-list-section dd-list-section-${section.kind}`} aria-expanded={open} onClick={onToggle}>
       <ChevronDown size={12} aria-hidden className="dd-list-section-caret" />
       {Glyph ? <Glyph size={11} aria-hidden /> : null}
-      {section.kind === 'project' ? <span className="dd-swatch" style={{ background: projectSwatch(section.projectId ?? null) }} aria-hidden /> : null}
-      <span className="dd-list-section-label" title={section.label}>
-        {section.label}
-      </span>
+      {section.kind === 'project' ? (
+        <ProjectMark projectId={section.projectId ?? null}>
+          <span className="dd-list-section-label" title={section.label}>
+            {section.label}
+          </span>
+        </ProjectMark>
+      ) : (
+        <span className="dd-list-section-label" title={section.label}>
+          {section.label}
+        </span>
+      )}
       {section.current ? (
         <span className="dd-list-section-here" title="The project you are in">
           Here
@@ -284,7 +296,8 @@ function DocList({
   useEffect(() => {
     if (!seenRaw) setSeenRaw(JSON.stringify(seen));
   }, [seenRaw, seen, setSeenRaw]);
-  const activeUpdatedAt = docs.data?.find((doc) => doc.id === activeId)?.updatedAt ?? null;
+  // An unassigned (peer) doc is listed separately from `docs`, so look it up there too.
+  const activeUpdatedAt = (docs.data?.find((doc) => doc.id === activeId) ?? unassignedDocs.data?.find((doc) => doc.id === activeId))?.updatedAt ?? null;
   // The open doc is seen, including edits that land while it is open.
   useEffect(() => {
     if (!activeId || activeUpdatedAt === null) return;
@@ -295,6 +308,13 @@ function DocList({
   const headed = !(sections.length === 1 && sections[0]?.kind === 'recent');
   // Searching shows every match, even inside collapsed sections.
   const collapsed = useMemo(() => (debounced ? new Set<string>() : parseCollapsed(collapsedRaw)), [debounced, collapsedRaw]);
+  const searching = debounced.length > 0;
+  const sectionKeys = useMemo(
+    () => [...sections.map((section) => section.key), ...(unassignedList.length ? ['unassigned'] : [])],
+    [sections, unassignedList.length]
+  );
+  const someOpen = anyOpen(sectionKeys, collapsedRaw);
+  const collapseHint = collapseAllHint({ projectFilter: !!projectFilter, grouped, searching, someOpen });
   const projectLabel = (doc: DesignDocSummary, section: ListSection) => {
     if (section.kind === 'project') return null;
     if (showProjects) return doc.projectId ? names.get(doc.projectId) ?? 'Unknown project' : 'Global';
@@ -374,10 +394,27 @@ function DocList({
             triggerIcon={<FolderOpen size={12} aria-hidden />}
           />
         ) : null}
-        {showProjects && !projectFilter ? (
+        {showProjects ? (
           <>
             <span className="dd-spacer" />
-            <IconButton icon={ListTree} label="Group by project" active={grouped} size={13} onClick={() => setGrouped(!grouped)} />
+            <IconButton
+              icon={grouped ? Layers : List}
+              label="Group by project"
+              hint={groupHint({ projectFilter: !!projectFilter, grouped })}
+              active={byProject}
+              pressed={grouped}
+              disabled={!!projectFilter}
+              size={13}
+              onClick={() => setGrouped(!grouped)}
+            />
+            <IconButton
+              icon={someOpen ? ChevronsDownUp : ChevronsUpDown}
+              label={someOpen ? 'Collapse all sections' : 'Expand all sections'}
+              hint={collapseHint}
+              disabled={!byProject || searching}
+              size={13}
+              onClick={() => setCollapsedRaw(someOpen ? collapseAll(sectionKeys) : expandAll())}
+            />
           </>
         ) : null}
       </div>

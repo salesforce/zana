@@ -49,6 +49,10 @@ export const claudeThreadStartParamsSchema = z.object({
   plugins: bridgeClaudePluginsSchema,
   /** Skill allowlist for `Options.skills`; absent = every skill. An empty list hides all. */
   skills: z.array(z.string()).optional(),
+  /** Persona MCP allowlist (includes `zcc-inbox`); absent = unrestricted. Names only, never definitions. */
+  mcpAllowlist: z.array(z.string().min(1).max(256)).max(128).optional(),
+  /** Allowlist entries Zana injects as plugin servers (not warned as missing). */
+  mcpExternallyProvided: z.array(z.string().min(1).max(256)).max(128).optional(),
   permissionMode: claudePermissionModeSchema,
   approvedPlanPermissionMode: claudePermissionModeSchema,
   permissionScope: bridgePermissionScopeSchema,

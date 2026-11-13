@@ -5,6 +5,7 @@ import { useDocActions } from './DocActions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TAG_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
 import { ActorLabel, IconButton, MenuItem, Popover, StatusPill, TimeAgo } from './ui.js';
+import { ProjectMark } from './ProjectMark.js';
 import { PeerConflictView } from './PeerConflictView.js';
 import { SYNC_STATE_HELP, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 
@@ -285,8 +286,14 @@ export function DocHeader({
       <div className="dd-doc-meta">
         {template ? null : <StatusMenu status={doc.status} onChange={(status) => void update({ status }).catch(() => undefined)} />}
         {template ? null : <span className="dd-doc-project" title={project ? `Project · ${project.name}` : 'Visible to agents in every project'}>
-          {project ? null : <Globe size={12} aria-hidden />}
-          {project ? project.name : doc.projectId ? 'Unknown project' : 'Global'}
+          {project || doc.projectId ? (
+            <ProjectMark projectId={doc.projectId}>{project ? project.name : 'Unknown project'}</ProjectMark>
+          ) : (
+            <>
+              <Globe size={12} aria-hidden />
+              Global
+            </>
+          )}
         </span>}
         {template || collapsed ? null : <TagEditor tags={doc.tags} onChange={(tags) => void update({ tags }).catch(() => undefined)} />}
         <span className="dd-spacer" />
