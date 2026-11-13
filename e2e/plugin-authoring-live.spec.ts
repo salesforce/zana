@@ -101,7 +101,15 @@ ${readFileSync(serverPath, 'utf8')}`);
     const created = await (await createdResponse).json() as { thread: { id: string } };
     const threadId = created.thread.id;
     const pageReply = app.window.getByTestId('panel-agent-tab-chat').getByTestId('thread-assistant-text').last();
-    await expect(pageReply).toContainText(pagePrompt, { timeout: 30_000 });
+    try {
+      await expect(pageReply).toContainText(pagePrompt, { timeout: 30_000 });
+    } catch (error) {
+      // The UI hides a failed command's detail; surface it in the CI log.
+      const timeline = await app.window.evaluate(async id =>
+        await (await fetch(`/api/v1/threads/${id}/timeline`)).text(), threadId).catch(String);
+      console.error(`[plugin-authoring-live] thread ${threadId} timeline: ${timeline.slice(0, 8_000)}`);
+      throw error;
+    }
     await expect(pageReply).toContainText(id);
     await expect(pageReply).toContainText('Todo list');
     await expect(pageReply).toContainText('page_context_read');
