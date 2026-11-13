@@ -37,6 +37,12 @@ export interface ZoomTarget {
   setZoomFactor(factor: number): void;
 }
 
+/** The part of `BrowserWindow` the zoom commands use. */
+export interface ZoomWindow {
+  isDestroyed(): boolean;
+  webContents: ZoomTarget;
+}
+
 /**
  * View-menu zoom entries.
  *
@@ -52,8 +58,12 @@ export interface ZoomTarget {
  */
 export function zoomMenuItems(
   platform: NodeJS.Platform,
-  target: () => ZoomTarget | null
+  focusedWindow: () => ZoomWindow | null
 ): MenuItemConstructorOptions[] {
+  const target = (): ZoomTarget | null => {
+    const win = focusedWindow();
+    return win && !win.isDestroyed() ? win.webContents : null;
+  };
   const step = (direction: 1 | -1) => () => {
     const wc = target();
     if (wc) wc.setZoomLevel(steppedZoomLevel(wc.getZoomLevel(), direction));

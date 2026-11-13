@@ -8,7 +8,8 @@ import {
   zoomFactorFromLevel,
   zoomLevelFromFactor,
   zoomMenuItems,
-  type ZoomTarget
+  type ZoomTarget,
+  type ZoomWindow
 } from './window-zoom.js';
 
 function fakeTarget(factor = DEFAULT_RENDERER_ZOOM_FACTOR) {
@@ -25,7 +26,8 @@ function fakeTarget(factor = DEFAULT_RENDERER_ZOOM_FACTOR) {
       level = zoomLevelFromFactor(next);
     }
   };
-  return { target, calls, factor: () => zoomFactorFromLevel(level) };
+  const win: ZoomWindow = { isDestroyed: () => false, webContents: target };
+  return { target: win, calls, factor: () => zoomFactorFromLevel(level) };
 }
 
 function byAccelerator(items: MenuItemConstructorOptions[], accelerator: string) {
@@ -103,9 +105,12 @@ describe('zoomMenuItems on Windows and Linux', () => {
     expect(factor()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR);
   });
 
-  it('does nothing when no app window is focused', () => {
-    const items = zoomMenuItems('win32', () => null);
-    for (const item of items) expect(() => press(item)).not.toThrow();
+  it('does nothing when no app window is focused, or the focused one is destroyed', () => {
+    for (const item of zoomMenuItems('win32', () => null)) expect(() => press(item)).not.toThrow();
+    const { target, calls } = fakeTarget();
+    const destroyed: ZoomWindow = { ...target, isDestroyed: () => true };
+    for (const item of zoomMenuItems('win32', () => destroyed)) press(item);
+    expect(calls).toEqual([]);
   });
 });
 

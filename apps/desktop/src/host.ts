@@ -9302,10 +9302,7 @@ function buildAppMenu() {
         { role: 'forceReload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },
-        ...zoomMenuItems(process.platform, () => {
-          const win = focusedAppWindow();
-          return win && !win.isDestroyed() ? win.webContents : null;
-        }),
+        ...zoomMenuItems(process.platform, focusedAppWindow),
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
