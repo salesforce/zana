@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Anonymous usage analytics. Never sends prompts or replies.",
+  "description": "Retired. PostHog analytics is disabled and sends no events.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "zcc": {
     "name": "PostHog Analytics",
-    "description": "Anonymous usage analytics. Never sends prompts or replies.",
+    "description": "Retired. PostHog analytics is disabled and sends no events.",
     "branding": {
       "icon": "LineChart"
     },

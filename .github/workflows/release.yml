@@ -157,7 +157,6 @@ jobs:
           # electron-vite build; raise it (matches the build job below).
           NODE_OPTIONS: --max-old-space-size=6144
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
-          ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
           ZCC_GA4_MEASUREMENT_ID: ${{ secrets.ZCC_GA4_MEASUREMENT_ID }}
           ZCC_GA4_API_SECRET: ${{ secrets.ZCC_GA4_API_SECRET }}
 
@@ -276,7 +275,6 @@ jobs:
           # runners have >=7 GB RAM.
           NODE_OPTIONS: --max-old-space-size=6144
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
-          ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
           ZCC_GA4_MEASUREMENT_ID: ${{ secrets.ZCC_GA4_MEASUREMENT_ID }}
           ZCC_GA4_API_SECRET: ${{ secrets.ZCC_GA4_API_SECRET }}
           # Passed in under *_SECRET names; the script promotes them to the real
@@ -356,7 +354,6 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
-          ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
           ZCC_GA4_MEASUREMENT_ID: ${{ secrets.ZCC_GA4_MEASUREMENT_ID }}
           ZCC_GA4_API_SECRET: ${{ secrets.ZCC_GA4_API_SECRET }}
 

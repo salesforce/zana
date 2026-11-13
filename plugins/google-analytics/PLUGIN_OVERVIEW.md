@@ -1,5 +1,5 @@
 App opens, visible activity, and coarse page views in your Google Analytics 4
-property. Runs independently alongside PostHog so you can compare the two.
+property.
 
 ## What you get
 

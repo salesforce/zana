@@ -1941,9 +1941,7 @@ describe('listBundledPluginCatalog', () => {
     expect(out.find((entry) => entry.id === 'docs')?.overview).toContain('## What you get');
     expect(out.find(entry => entry.id === 'provider-codex')?.iconUrl).toMatch(/^data:image\/svg\+xml;base64,/);
     expect(out.find(entry => entry.id === 'slack-bridge-2ff2')?.iconUrl).toMatch(/^data:image\/png;base64,/);
-    expect(out.find((entry) => entry.id === 'posthog-analytics')?.description).toBe(
-      'Anonymous usage analytics. Never sends prompts or replies.'
-    );
+    expect(out.map(entry => entry.id)).not.toContain('posthog-analytics');
     expect(out.map(entry => entry.id)).not.toContain('salesforce');
     expect(out.find((entry) => entry.id === 'tasks')?.category).toBe('Workflow management');
     expect(out.map((entry) => entry.id)).toEqual(
@@ -2126,6 +2124,14 @@ describe('installBundledPlugin', () => {
 
   it('returns null when the id is not a plugin package in the bundled root', async () => {
     expect(await installBundledPlugin('echo', { dataDir: root(), bundledRoot: root() })).toBeNull();
+  });
+
+  it('rejects a retired plugin even when its old bundled package is still present', async () => {
+    const bundled = root();
+    writePlugin(join(bundled, 'posthog-analytics'), 'posthog-analytics');
+    expect(listBundledPluginCatalog(bundled)).toEqual([]);
+    expect(await installBundledPlugin('posthog-analytics', { dataDir: root(), bundledRoot: bundled }))
+      .toEqual({ ok: false, code: 'NOT_FOUND', message: 'Plugin "posthog-analytics" is retired' });
   });
 
   it('installs a bundled plugin and is idempotent once installed', async () => {
