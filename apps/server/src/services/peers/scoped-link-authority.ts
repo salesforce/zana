@@ -40,6 +40,11 @@ export interface EnrolledPeerBridge {
   useRequest?(hostId: string, input: { recipientInstanceId: string; pairingId: string; pluginId: string }, signal: AbortSignal): Promise<{ accepted: boolean }>;
   useDecision?(hostId: string, input: { recipientInstanceId: string; pairingId: string; pluginId: string; approved: boolean; revoke?: true }, signal: AbortSignal): Promise<{ accepted: boolean }>;
 }
+/** Why a pair's enrollment generations are stale. Fixed codes: nothing here may carry a key, hash or token. */
+export type GenerationStaleReason = 'enrollment-missing' | 'enrollment-not-link-capable' | 'enrollment-key-changed' | 'reverse-enrollment-missing'
+  | 'reverse-capability-changed' | 'reverse-host-changed' | 'reverse-key-changed' | 'link-not-usable' | 'reverse-link-not-usable';
+/** Why `validateGrant` or the guard it returns says a pair is no longer valid. */
+export type GrantInvalidReason = GenerationStaleReason | 'authority-disposed' | 'fenced' | 'revoked' | 'no-matching-record' | 'use-not-approved';
 /** A plugin pair over a connection with no approved use for that plugin. Revocation is never gated by it. */
 export class PeerUseError extends Error {
   readonly reason = 'use_not_approved' as const;
@@ -88,6 +93,7 @@ export class ScopedLinkAuthority {
   private readonly operations = new Set<AbortController>();
   private readonly bridgeWork = new Set<Promise<unknown>>();
   private readonly fences = new Set<string>();
+  private readonly lastInvalid = new Map<string, GrantInvalidReason>();
   constructor(private readonly options: {
     directory: string; instanceId: string; keyProvider: PeerKeyProvider; pairs: PairStore;
     enrollment(hostId: string): EnrollmentChannel | null;
@@ -126,11 +132,32 @@ export class ScopedLinkAuthority {
       state.records.some(r => r.proposal.pairId === pairId && r.status === 'revoked')) throw new Error('peer authority revoked or mismatched');
   }
 
-  private generationsCurrent(proposal: PairProposal, keyHash: string, reverseKeyHash: string, reverseHostId: string): boolean {
+  /** The first reason a pair's enrollment generations are stale, as a fixed code; null when current. Never carries key material. */
+  private staleReason(proposal: PairProposal, keyHash: string, reverseKeyHash: string, reverseHostId: string): GenerationStaleReason | null {
     const outgoing = this.options.enrollment(proposal.targetHostId), reverse = this.options.currentReverseEnrollment(proposal.remoteInstanceId);
-    return !!outgoing && linkCapable(outgoing.capability) && outgoing.keyHash === keyHash && !!reverse &&
-      reverse.capability === outgoing.capability && reverse.hostId === reverseHostId && reverse.keyHash === reverseKeyHash &&
-      this.usable(proposal.targetHostId) && this.usable(reverseHostId);
+    if (!outgoing) return 'enrollment-missing';
+    if (!linkCapable(outgoing.capability)) return 'enrollment-not-link-capable';
+    if (outgoing.keyHash !== keyHash) return 'enrollment-key-changed';
+    if (!reverse) return 'reverse-enrollment-missing';
+    if (reverse.capability !== outgoing.capability) return 'reverse-capability-changed';
+    if (reverse.hostId !== reverseHostId) return 'reverse-host-changed';
+    if (reverse.keyHash !== reverseKeyHash) return 'reverse-key-changed';
+    if (!this.usable(proposal.targetHostId)) return 'link-not-usable';
+    if (!this.usable(reverseHostId)) return 'reverse-link-not-usable';
+    return null;
+  }
+
+  private generationsCurrent(proposal: PairProposal, keyHash: string, reverseKeyHash: string, reverseHostId: string): boolean {
+    return this.staleReason(proposal, keyHash, reverseKeyHash, reverseHostId) === null;
+  }
+
+  /** Why a pair stopped validating, logged once per pair and reason (cleared when it validates again). Fixed codes and the pair id only. */
+  private noteValidation(pairId: string, reason: GrantInvalidReason | null): void {
+    if (reason === null) { this.lastInvalid.delete(pairId); return; }
+    if (this.lastInvalid.get(pairId) === reason) return;
+    if (this.lastInvalid.size >= 256) this.lastInvalid.clear();
+    this.lastInvalid.set(pairId, reason);
+    console.warn(`[zcc] peer pair ${pairId} no longer valid: ${reason}`);
   }
 
   private usable(hostId: string): boolean {
@@ -148,15 +175,22 @@ export class ScopedLinkAuthority {
   /** No pair calls under authority mutex. PairStore runs this outside its own mutex. */
   readonly validateGrant = async (grant: Readonly<PeerPairGrant>): Promise<(() => boolean) | null> => {
     const proposal = proposalForGrant(grant);
-    const record = await this.storage.transaction(async state => {
-      if (this.disposed || this.fences.has(grant.pairId) || state.revokedIds.includes(grant.pairId)) return null;
-      return state.records.find(r => r.status !== 'revoked' && JSON.stringify(r.proposal) === JSON.stringify(proposal)) ?? null;
+    type Lookup = { record: State['records'][number]; reason?: undefined } | { record?: undefined; reason: GrantInvalidReason };
+    const lookup = await this.storage.transaction<Lookup>(async state => {
+      if (this.disposed) return { reason: 'authority-disposed' };
+      if (this.fences.has(grant.pairId)) return { reason: 'fenced' };
+      if (state.revokedIds.includes(grant.pairId)) return { reason: 'revoked' };
+      const found = state.records.find(r => r.status !== 'revoked' && JSON.stringify(r.proposal) === JSON.stringify(proposal));
+      return found ? { record: found } : { reason: 'no-matching-record' };
     });
-    if (!record) return null;
+    const record = lookup.record;
+    if (!record) { this.noteValidation(grant.pairId, lookup.reason ?? 'no-matching-record'); return null; }
     await this.options.reverseEnrollment(proposal.remoteInstanceId);
+    const why = (): GrantInvalidReason | null => this.disposed ? 'authority-disposed' : this.fences.has(proposal.pairId) ? 'fenced'
+      : !this.approved(proposal) ? 'use-not-approved'
+        : this.staleReason(proposal, record.channelKeyHash, record.reverseKeyHash, record.reverseHostId);
     // Runs synchronously inside the PairStore mutex at commit, so a stopped use fences the very next request.
-    const current = () => !this.disposed && !this.fences.has(proposal.pairId) && this.approved(proposal) &&
-      this.generationsCurrent(proposal, record.channelKeyHash, record.reverseKeyHash, record.reverseHostId);
+    const current = () => { const reason = why(); this.noteValidation(proposal.pairId, reason); return reason === null; };
     return current() ? current : null;
   };
 

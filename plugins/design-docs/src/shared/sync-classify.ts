@@ -36,6 +36,23 @@ export function boundSyncError(message: string): string {
   return clean.length > MAX_SYNC_ERROR_LENGTH ? `${clean.slice(0, MAX_SYNC_ERROR_LENGTH - 1)}…` : clean;
 }
 
+export interface PeerFault { code: 'enrollment' | 'grant'; hint: string }
+
+/**
+ * The likely cause behind a computer's newest error, with advice. Derived from error text only: the plugin cannot see
+ * pair state, and the link can read "connected" while the pairing is revoked, so the error is the only evidence.
+ */
+export function diagnoseFault(message: string | null | undefined): PeerFault | null {
+  if (!message) return null;
+  if (/enrollment changed|revoked/i.test(message)) {
+    return { code: 'enrollment', hint: 'Pairing with this computer was changed or revoked. The link can still show connected, and Sync Now will fail the same way until the two computers are paired again.' };
+  }
+  if (/peer grant unavailable/i.test(message)) {
+    return { code: 'grant', hint: 'This computer was not listed as connected with a grant when the send was tried. Sync Now retries it.' };
+  }
+  return null;
+}
+
 /** A short, fixed code for logs and diagnostics: never the message itself, so nothing secret can ride along. */
 export function deliveryReasonCode(message: string | null | undefined): string {
   if (!message) return 'none';

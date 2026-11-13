@@ -93,6 +93,17 @@ describe('queued delivery diagnostics', () => {
     expect(docs).toHaveLength(22);
   });
 
+  it('fault follows the newest error only, and is null with no error', () => {
+    const a = fixture('a');
+    shared(a, 'One'); shared(a, 'Two');
+    expect(a.service.peerDiagnostics()[0]!.fault).toBeNull();
+    const [first, second] = a.db.prepare('SELECT id FROM sync_intents ORDER BY created_at, id').all() as Array<{ id: string }>;
+    a.db.prepare("INSERT INTO sync_retry VALUES (?, 10, 0, 100, 'peer grant unavailable')").run(first!.id);
+    expect(a.service.peerDiagnostics()[0]!.fault).toMatchObject({ code: 'grant' });
+    a.db.prepare("INSERT INTO sync_retry VALUES (?, 2, 0, 200, 'peer enrollment changed or revoked')").run(second!.id);
+    expect(a.service.peerDiagnostics()[0]!.fault).toMatchObject({ code: 'enrollment' });
+  });
+
   it('deferIntent returns the attempt count; the debug line carries ids and a reason code, never the error text', async () => {
     const a = fixture('a'), b = fixture('b'); shared(a, 'Log');
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});

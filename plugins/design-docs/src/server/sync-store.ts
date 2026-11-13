@@ -32,7 +32,7 @@ import { MAX_FILES_PER_DOC, MAX_COMMENTS_PER_DOC, MAX_THREAD_LINKS_PER_DOC, MAX_
 import type { DocActor, PeerConflictPage, PeerConflictReview, PeerConflictFile, PeerResolutionChoice, PeerConflictChoices, PeerConflictQuestion, PeerConflictSettled } from '../shared/contract.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import type { CompareResult, PeerDiagnostics, SyncQueueEntry } from '../shared/sync-diagnostics.js';
-import { boundSyncError, classifyDelivery, isOfflineSyncError, isStageToken } from '../shared/sync-classify.js';
+import { boundSyncError, classifyDelivery, diagnoseFault, isOfflineSyncError, isStageToken } from '../shared/sync-classify.js';
 import { mergeDocument, mergeHistory, orderedProjection, utf8Order, type DocumentMergeResult } from './peer-merge.js';
 import { DOC_ONLY, TEMPLATE_ONLY } from './store.js';
 import { cleanLabel } from './project-refs.js';
@@ -2136,7 +2136,9 @@ export class DesignDocSyncStore {
     const queue = this.queuedDeliveries(undefined, 2000);
     return this.members(local.repoId).filter((member) => member.replicaId !== local.replicaId).map((member) => {
       const mine = queue.filter((entry) => entry.replicaId === member.replicaId);
+      const errors = mine.filter((entry) => entry.lastError).sort((a, b) => (b.lastErrorAt ?? 0) - (a.lastErrorAt ?? 0));
       return { replicaId: member.replicaId, peerId: member.machineId, queueDepth: mine.length,
+        fault: diagnoseFault(errors[0]?.lastError),
         queuedDocs: new Set(mine.map((entry) => entry.docId)).size,
         failed: mine.filter((entry) => entry.state === 'failed').length, waiting: mine.filter((entry) => entry.state === 'waiting').length,
         oldestQueuedAt: mine.length ? Math.min(...mine.map((entry) => entry.queuedAt)) : null,

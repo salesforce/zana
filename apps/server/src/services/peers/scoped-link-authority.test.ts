@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, realpath, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PairStore } from './pair-store.js';
 import { PeerUseError, ScopedLinkAuthority, signMutualEnrollmentProof, type EnrolledPeerBridge, type EnrollmentChannel, type PairProposal } from './scoped-link-authority.js';
 import { unsealPeerBytes, sealPeerBytes } from './peer-auth.js';
@@ -488,6 +488,76 @@ it.each(['host-b', 'host-a'])('active grant validation flips false when %s becom
   expect(current!()).toBe(true);
   f.setThrowing(true);
   expect(current!()).toBe(false);
+});
+
+describe('pair invalidation logging', () => {
+  const warnings = () => (console.warn as unknown as ReturnType<typeof vi.fn>).mock.calls.map(call => String(call[0])).filter(line => line.includes('no longer valid'));
+  async function activeGrant(gated = false, uses?: Set<string>) {
+    const f = await fixture(gated, uses);
+    await f.a.activate(proposal);
+    const grant = (await f.pairsA.grant(proposal.pairId))!;
+    const current = (await f.a.validateGrant(grant))!;
+    expect(current()).toBe(true);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    return { f, grant, current };
+  }
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it.each([
+    ['enrollment-key-changed', (f: Awaited<ReturnType<typeof fixture>>) => { f.channels.set('host-b', { ...f.channels.get('host-b')!, keyHash: hash('rotated') }); }],
+    ['reverse-key-changed', (f: Awaited<ReturnType<typeof fixture>>) => { f.channels.set('host-a', { ...f.channels.get('host-a')!, keyHash: hash('rotated') }); }],
+    ['enrollment-missing', (f: Awaited<ReturnType<typeof fixture>>) => { f.channels.delete('host-b'); }],
+    ['reverse-enrollment-missing', (f: Awaited<ReturnType<typeof fixture>>) => { f.channels.delete('host-a'); }],
+    ['enrollment-not-link-capable', (f: Awaited<ReturnType<typeof fixture>>) => { f.channels.set('host-b', { ...f.channels.get('host-b')!, capability: 'bogus' as never }); }],
+    ['reverse-capability-changed', (f: Awaited<ReturnType<typeof fixture>>) => { f.channels.set('host-a', { ...f.channels.get('host-a')!, capability: 'peer.forward' }); }]
+  ])('names %s once, with the pair id and no key material', async (reason, mutate) => {
+    const { f, current } = await activeGrant();
+    mutate(f);
+    expect(current()).toBe(false);
+    expect(current()).toBe(false);
+    expect(warnings()).toEqual([`[zcc] peer pair ${proposal.pairId} no longer valid: ${reason}`]);
+    expect(warnings().join('')).not.toMatch(/[a-f0-9]{32}/);
+  });
+
+  it.each([['host-b', 'link-not-usable'], ['host-a', 'reverse-link-not-usable']])('names an unusable %s as %s', async (blockedHost, reason) => {
+    const { f, current } = await activeGrant(true);
+    f.blocked.add(blockedHost);
+    expect(current()).toBe(false);
+    expect(warnings()).toEqual([`[zcc] peer pair ${proposal.pairId} no longer valid: ${reason}`]);
+  });
+
+  it('names a withdrawn use once, and again after the pair recovered and failed anew', async () => {
+    const uses = new Set(['host-a/test-plugin', 'host-b/test-plugin']);
+    const { f, current } = await activeGrant(true, uses);
+    uses.clear();
+    expect(current()).toBe(false);
+    f.blocked.add('host-b');
+    expect(current()).toBe(false);
+    uses.add('host-b/test-plugin'); f.blocked.delete('host-b');
+    expect(current()).toBe(true);
+    f.blocked.add('host-b');
+    expect(current()).toBe(false);
+    f.blocked.delete('host-b');
+    expect(current()).toBe(true);
+    uses.clear();
+    expect(current()).toBe(false);
+    // Same reason while it persists is silent; a different reason, and the same one after recovery, log again.
+    expect(warnings().map(line => line.split(': ')[1])).toEqual(['use-not-approved', 'link-not-usable', 'use-not-approved']);
+  });
+
+  it('names a revoked pair when validation runs again', async () => {
+    const { f, grant } = await activeGrant();
+    await f.a.revoke(proposal.pairId);
+    await expect(f.a.validateGrant(grant)).resolves.toBeNull();
+    expect(warnings().length).toBe(1);
+    expect(warnings()[0]).toMatch(/: (revoked|fenced|no-matching-record)$/);
+  });
+
+  it('stays silent for a healthy pair', async () => {
+    const { current } = await activeGrant();
+    current(); current();
+    expect(warnings()).toEqual([]);
+  });
 });
 
 it('forwards the connect offer form through introduction enrollment relays', async () => {

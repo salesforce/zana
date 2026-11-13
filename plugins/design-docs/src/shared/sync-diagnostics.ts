@@ -1,4 +1,5 @@
 /** Shapes of the sync diagnostics shared by the CLI, the RPC layer and the Peers screen (R8, R10). */
+import type { PeerFault } from './sync-classify.js';
 
 /** One queued, not yet delivered send of a doc version to one computer. */
 export interface SyncQueueEntry {
@@ -29,6 +30,8 @@ export interface PeerDiagnostics {
   oldestQueuedAt: number | null;
   /** Newest first, at most 20. */
   recentErrors: Array<{ docId: string; error: string; at: number; attempts: number }>;
+  /** Likely cause of the newest error, with advice; null when there is no error or it is not recognised. Optional for older servers. */
+  fault?: PeerFault | null;
 }
 
 export interface DocCounts {

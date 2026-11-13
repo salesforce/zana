@@ -42,6 +42,20 @@ describe('SyncDiagnosticsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(api.syncDiagnostics).toHaveBeenCalledTimes(2));
   });
+  it('shows the likely cause, in the panel and in the copied text, and nothing for an older server', async () => {
+    const fault = { code: 'enrollment' as const, hint: 'Pairing with this computer was changed or revoked.' };
+    api.syncDiagnostics.mockResolvedValue({ ...data, peers: [{ ...data.peers[0]!, fault }] });
+    const { unmount } = render(<SyncDiagnosticsPanel nameOf={(id) => id} />);
+    const note = await screen.findByTestId('peer-fault');
+    expect(note.textContent).toBe(fault.hint);
+    expect(note.getAttribute('data-fault')).toBe('enrollment');
+    expect(formatDiagnostics({ ...data, peers: [{ ...data.peers[0]!, fault }] })).toContain('Likely cause (enrollment): Pairing');
+    unmount();
+    api.syncDiagnostics.mockResolvedValue(data);
+    render(<SyncDiagnosticsPanel nameOf={(id) => id} />);
+    await screen.findByText(/2 queued for 2 docs/);
+    expect(screen.queryByTestId('peer-fault')).toBeNull();
+  });
   it('says so quietly when the read fails, and shows nothing queued', async () => {
     api.syncDiagnostics.mockRejectedValueOnce(new Error('boom'));
     const { unmount } = render(<SyncDiagnosticsPanel nameOf={(id) => id} />);

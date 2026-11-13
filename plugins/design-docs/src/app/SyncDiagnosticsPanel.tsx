@@ -14,6 +14,7 @@ export function formatDiagnostics(data: SyncDiagnostics, nameOf: (peerId: string
     lines.push('', `${nameOf(peer.peerId)} (${peer.peerId})`,
       `  queued ${peer.queueDepth} (${peer.queuedDocs} docs): ${peer.failed} failed, ${peer.waiting} waiting` +
       (peer.oldestQueuedAt ? `, oldest ${relativeTime(peer.oldestQueuedAt, now)}` : ''));
+    if (peer.fault) lines.push(`  Likely cause (${peer.fault.code}): ${peer.fault.hint}`);
     for (const error of peer.recentErrors) lines.push(`  ${error.docId} x${error.attempts} ${relativeTime(error.at, now)}: ${boundSyncError(error.error)}`);
   }
   return lines.join('\n');
@@ -44,6 +45,7 @@ export function SyncDiagnosticsPanel({ nameOf }: { nameOf(peerId: string): strin
             {peer.queueDepth ? `${peer.queueDepth} queued for ${peer.queuedDocs} docs (${peer.failed} failed, ${peer.waiting} waiting)` : 'Nothing queued'}
             {peer.oldestQueuedAt ? `, oldest ${relativeTime(peer.oldestQueuedAt, Date.now())}` : ''}
           </p>
+          {peer.fault ? <p className="dd-peers-hint" role="status" data-testid="peer-fault" data-fault={peer.fault.code}>{peer.fault.hint}</p> : null}
           {peer.recentErrors.length ? (
             <ul className="dd-peers-list" aria-label={`Last errors for ${nameOf(peer.peerId)}`}>
               {peer.recentErrors.map((entry) => <li key={`${entry.docId}-${entry.at}`}>{entry.docId}: {boundSyncError(entry.error)}</li>)}

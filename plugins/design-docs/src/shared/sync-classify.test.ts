@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boundSyncError, classifyDelivery, isOfflineSyncError, isStageToken, MAX_SYNC_ERROR_LENGTH } from './sync-classify.js';
+import { boundSyncError, classifyDelivery, diagnoseFault, isOfflineSyncError, isStageToken, MAX_SYNC_ERROR_LENGTH } from './sync-classify.js';
 
 describe('classifyDelivery', () => {
   it('is waiting for no error, stage tokens and offline errors; failed for anything else', () => {
@@ -15,6 +15,21 @@ describe('classifyDelivery', () => {
     expect(isStageToken('merged')).toBe(true);
     expect(isStageToken('merged soon')).toBe(false);
     expect(isStageToken(null)).toBe(false);
+  });
+});
+
+describe('diagnoseFault', () => {
+  it('names a revoked or changed pairing, and a missing grant, and nothing else', () => {
+    expect(diagnoseFault('peer enrollment changed or revoked')).toMatchObject({ code: 'enrollment' });
+    expect(diagnoseFault('peer enrollment changed')).toMatchObject({ code: 'enrollment' });
+    expect(diagnoseFault('peer grant unavailable')).toMatchObject({ code: 'grant' });
+    expect(diagnoseFault('peer request failed: 409')).toBeNull();
+    expect(diagnoseFault(null)).toBeNull();
+    expect(diagnoseFault('')).toBeNull();
+  });
+  it('enrollment advice says Sync Now will not help; grant advice says it will', () => {
+    expect(diagnoseFault('peer enrollment changed or revoked')!.hint).toMatch(/paired again/);
+    expect(diagnoseFault('peer grant unavailable')!.hint).toMatch(/Sync Now retries/);
   });
 });
 
