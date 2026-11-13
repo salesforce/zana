@@ -27,8 +27,8 @@ describe('diagnoseFault', () => {
     expect(diagnoseFault(null)).toBeNull();
     expect(diagnoseFault('')).toBeNull();
   });
-  it('enrollment advice says Sync Now will not help; grant advice says it will', () => {
-    expect(diagnoseFault('peer enrollment changed or revoked')!.hint).toMatch(/paired again/);
+  it('enrollment advice says restart may clear it, else pair again; grant advice says Sync Now retries', () => {
+    expect(diagnoseFault('peer enrollment changed or revoked')!.hint).toMatch(/after Zana restarts.*pair the two computers again/);
     expect(diagnoseFault('peer grant unavailable')!.hint).toMatch(/Sync Now retries/);
   });
 });

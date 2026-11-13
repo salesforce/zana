@@ -45,7 +45,7 @@ export interface PeerFault { code: 'enrollment' | 'grant'; hint: string }
 export function diagnoseFault(message: string | null | undefined): PeerFault | null {
   if (!message) return null;
   if (/enrollment changed|revoked/i.test(message)) {
-    return { code: 'enrollment', hint: 'Pairing with this computer was changed or revoked. The link can still show connected, and Sync Now will fail the same way until the two computers are paired again.' };
+    return { code: 'enrollment', hint: 'Pairing with this computer was changed or revoked. The link can still show connected. This can clear on its own after Zana restarts; if Sync Now keeps failing the same way, pair the two computers again.' };
   }
   if (/peer grant unavailable/i.test(message)) {
     return { code: 'grant', hint: 'This computer was not listed as connected with a grant when the send was tried. Sync Now retries it.' };
