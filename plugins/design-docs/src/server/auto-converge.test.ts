@@ -184,12 +184,14 @@ describe('automatic content convergence', () => {
     b.store.update(doc.id, { status: 'archived', expectedHead: b.sync.head('repo-a', doc.id)! }, actor);
     send(a, b); enable(true);
     const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+    // The separate "sync pass" summary also prints when this computer still has its own queued delivery; random ids decide
+    // whether the settle closed it, so only the settlement lines are counted here.
+    const settlements = () => log.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('automatic settlement'));
     try {
       await b.service.deliverPending({ list: async () => [] } as never);
-      expect(log).toHaveBeenCalledTimes(1);
-      expect(log.mock.calls[0]![0]).toBe('[design-docs] automatic settlement: identical 1');
+      expect(settlements()).toEqual(['[design-docs] automatic settlement: identical 1']);
       await b.service.deliverPending({ list: async () => [] } as never);
-      expect(log).toHaveBeenCalledTimes(1);
+      expect(settlements()).toHaveLength(1);
     } finally { log.mockRestore(); }
   });
 

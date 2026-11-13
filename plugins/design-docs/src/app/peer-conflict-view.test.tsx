@@ -156,8 +156,8 @@ describe('peer conflict review', () => {
     expect((screen.getByRole('radio', { name: 'Merge changes' }) as HTMLInputElement).checked).toBe(true);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Resolve reviewed fork' })); });
     await screen.findByText(/stays in history/);
-    fireEvent.click(screen.getByRole('button', { name: 'Open history' }));
-    expect(opened).toBe(true);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open history' })); });
+    await waitFor(() => expect(opened).toBe(true));
   });
 
   it('offers only Keep mine and Use theirs when no merge is available and requires an explicit pick', async () => {
