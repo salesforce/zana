@@ -79,6 +79,7 @@ import {
 } from './lib/route-paths.js';
 import {
   getRememberedAppRoutePath,
+  getRouteBeforeInbox,
   getRouteBeforeProjectSettings,
   resolveProjectBackPath
 } from './lib/route-memory.js';
@@ -625,6 +626,12 @@ interface UiState {
    * the rail's "Back to app" link uses.
    */
   toggleSettings: () => void;
+  /**
+   * Ctrl/Cmd+I and View → Toggle Inbox. Opens the Inbox (the focused
+   * project's, while drilled into one). From the Inbox, returns to the route
+   * open before it; Home only when there is none or its project was removed.
+   */
+  toggleInbox: () => void;
   /** Page selected in the focused top-level Extensions workspace. */
   extensionsTab: ExtensionsTab;
   setExtensionsTab: (tab: ExtensionsTab) => void;
@@ -1300,6 +1307,19 @@ export const useUi = create<UiState>((set, get) => ({
       return;
     }
     applyDestination(set, getRememberedAppRoutePath());
+  },
+  toggleInbox: () => {
+    const s = get();
+    if (s.nav !== 'inbox') {
+      s.setNav('inbox');
+      return;
+    }
+    const before = getRouteBeforeInbox();
+    const beforeProjectId = before ? decodeDestination(before).focusedProjectId : null;
+    const projectGone =
+      beforeProjectId != null && !useData.getState().projects.some((p) => p.id === beforeProjectId);
+    if (before && !projectGone) applyDestination(set, before);
+    else s.setNav('home');
   },
   setExtensionsTab: (extensionsTab) =>
     applyDestination(set, getExtensionsTabRoutePath(extensionsTab)),

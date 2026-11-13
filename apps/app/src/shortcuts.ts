@@ -112,11 +112,11 @@ export function installShortcuts(): () => void {
       ui.closeThreadModal();
       return;
     }
-    // cmd+i — toggle Inbox. Returns to Home when already on inbox so it
-    // works as a single round-trip key from anywhere in the app.
+    // cmd+i — toggle Inbox. From the Inbox, returns to the view that was open
+    // before it (Home only when there is none), as a round-trip key.
     if (e.key === 'i' && !e.shiftKey) {
       e.preventDefault();
-      ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
+      ui.toggleInbox();
       return;
     }
     // cmd+o — jump to the Agents dashboard (kanban). Exits any opened

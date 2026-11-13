@@ -20,6 +20,7 @@ const { uiState, dataState } = vi.hoisted(() => ({
     closeThreadModal: vi.fn(),
     setNav: vi.fn(),
     toggleSettings: vi.fn(),
+    toggleInbox: vi.fn(),
     exitProjectFocus: vi.fn(),
     selectedProjectId: 'p1' as string | undefined,
     focusedProjectId: null as string | null,
@@ -156,10 +157,13 @@ describe('shortcuts: round-trip and dashboard chords', () => {
     expect(uiState.exitProjectFocus).toHaveBeenCalled();
   });
 
-  it('⌘I round-trips Inbox back to Home', () => {
+  it('⌘I toggles the Inbox through the store (which returns to the previous view)', () => {
+    uiState.toggleInbox.mockClear();
     uiState.nav = 'inbox';
-    kb.press('i', { meta: true });
-    expect(uiState.setNav).toHaveBeenCalledWith('home');
+    const { preventDefault } = kb.press('i', { meta: true });
+    expect(uiState.toggleInbox).toHaveBeenCalledTimes(1);
+    expect(uiState.setNav).not.toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalled();
   });
 
   it('⌘J round-trips Scheduler back to Home', () => {

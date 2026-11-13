@@ -117,6 +117,13 @@ let storedMemory: StoredRouteMemory = { ...INITIAL_STORED_ROUTE_MEMORY };
 let recordedLocationKey = '';
 /** Last app route that wasn't a project's Settings: where closing it returns. */
 let lastRouteBeforeProjectSettings = APP_ROOT_ROUTE_PATH;
+/** Last route that wasn't an Inbox: where Ctrl/Cmd+I returns. Null until one is seen. */
+let lastRouteBeforeInbox: string | null = null;
+
+/** The cross-project `/inbox` or a project's `/projects/:id/inbox`. */
+export function isInboxRoutePath(pathname: string): boolean {
+  return pathname === INBOX_ROUTE_PATH || isProjectInboxRoutePath(pathname);
+}
 
 /** Records a rendered location (once per distinct URL) and returns the memory. */
 export function rememberLocation(location: {
@@ -134,11 +141,27 @@ export function rememberLocation(location: {
   return storedMemory;
 }
 
+/**
+ * Records a committed route as Ctrl/Cmd+I's return target. Called only from a
+ * commit-phase effect, never during render: a render React discards must not
+ * become the place Ctrl+I goes back to. Inbox routes are skipped, so moving
+ * between Inboxes keeps the last non-Inbox view.
+ */
+export function rememberInboxReturnRoute(location: {
+  pathname: string;
+  search: string;
+  hash: string;
+}): void {
+  if (isInboxRoutePath(location.pathname)) return;
+  lastRouteBeforeInbox = getLocationRoutePath(location);
+}
+
 /** Test-only: drop remembered paths so files don't leak across workers. */
 export function resetAppSettingsRouteMemory(): void {
   storedMemory = { ...INITIAL_STORED_ROUTE_MEMORY };
   recordedLocationKey = '';
   lastRouteBeforeProjectSettings = APP_ROOT_ROUTE_PATH;
+  lastRouteBeforeInbox = null;
 }
 
 /** The "Back to app" destination from Settings, for callers outside React. */
@@ -149,4 +172,12 @@ export function getRememberedAppRoutePath(): string {
 /** The app route seen last before a project's Settings, for callers outside React. */
 export function getRouteBeforeProjectSettings(): string {
   return lastRouteBeforeProjectSettings;
+}
+
+/**
+ * The route seen last before the Inbox (any page, Settings included), for
+ * Ctrl/Cmd+I's return trip. Null when the Inbox is all this window has shown.
+ */
+export function getRouteBeforeInbox(): string | null {
+  return lastRouteBeforeInbox;
 }
