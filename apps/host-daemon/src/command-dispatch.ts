@@ -412,9 +412,11 @@ function confineThreadCwd(environmentPath: string, requested?: string): string {
   let realEnv: string;
   let realRequested: string;
   try {
-    realEnv = realpathSync(environmentPath);
-    realRequested = realpathSync(requested);
-  } catch {
+    // Native realpath expands Windows 8.3 short names (RUNNER~1) and casing, so
+    // a short-form cwd and a long-form environment compare in one shape.
+    realEnv = realpathSync.native(environmentPath);
+    realRequested = realpathSync.native(requested);
+  } catch (error) {
     throw new HostCommandError('cwd-escape', 'cwd is outside the environment');
   }
   if (!isWithin(realRequested, realEnv)) {

@@ -12,9 +12,17 @@ export function fakeProviderEnabled(env: NodeJS.ProcessEnv = process.env): boole
 export function createFakeAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   return createAgentRuntimeWithAdapters({
     ...options,
-    adapterFactory: () => {
+    adapterFactory: (_providerId, adapterOptions) => {
       const adapter = createFakeAdapter({ scriptPath: fakeProviderScriptPath });
-      return { ...adapter, capabilities: { ...adapter.capabilities, supportsServiceTier: true } };
+      // Run the script with the runtime's own Node, like real bridges: a
+      // packaged app has no `node` on PATH (spawn node ENOENT on Windows).
+      const command = adapterOptions.bridgeNodeExecutablePath ?? adapter.process.command;
+      const env = adapterOptions.bridgeNodeEnv;
+      return {
+        ...adapter,
+        process: { ...adapter.process, command, ...(env ? { env: { ...adapter.process.env, ...env } } : {}) },
+        capabilities: { ...adapter.capabilities, supportsServiceTier: true }
+      };
     }
   });
 }
