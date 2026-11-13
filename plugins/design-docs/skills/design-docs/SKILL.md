@@ -205,6 +205,20 @@ The panel highlights the quote, and you are told when it cannot. Cover gaps,
 contradictions, risky assumptions and mismatches with the code. Do not edit the
 files unless asked. Summarise the main concerns in your reply.
 
+## Sync troubleshooting
+
+When docs do not reach the other computer, read `runbook.md` in the design doc
+`dd_b86ded3115bc` ("Design Docs - Peer Sync Failures") with `design_doc_read`.
+Quick map:
+
+- `zcc design-docs sync status <doc>`: per-doc state (`unsent`, `waiting`,
+  `failed`, `up-to-date`). Agents may run it.
+- `zcc design-docs peers --diagnose`, `compare --json` and `sync` are owner
+  only. Ask the user to run them on each computer and paste ids, counts and
+  error codes, never doc content.
+- Run them against the right server: a dev instance needs `ZCC_DATA_DIR` and
+  `ZCC_SERVER_URL` set.
+
 ## Boundaries
 
 - Docs belong to a project or are global. Without `scope: "all"`, listing stays
