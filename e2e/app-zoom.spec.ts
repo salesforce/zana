@@ -12,24 +12,27 @@ import { test, expect, launchApp, closeApp, type AppHandle } from './fixtures/ap
 test.skip(process.platform === 'darwin', 'macOS keeps Electron’s zoomIn / zoomOut roles (Cmd+Plus)');
 
 const STEPS = 8;
+// Menu accelerators act on the focused window, and a hidden E2E window never takes focus.
+const VISIBLE = { env: { ZCC_E2E_VISIBLE: '1' } };
 
+/** The BrowserWindow behind the Playwright page. */
 async function zoomFactor(app: AppHandle): Promise<number> {
-  return app.electron.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isVisible());
+  return app.electron.evaluate(({ BrowserWindow }, url) => {
+    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.getURL() === url);
     return win ? win.webContents.getZoomFactor() : Number.NaN;
-  });
+  }, app.window.url());
 }
 
 async function pressCtrl(app: AppHandle, keyCode: string, shift = false): Promise<void> {
   await app.electron.evaluate(({ BrowserWindow }, args) => {
-    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isVisible());
-    if (!win) throw new Error('no visible app window');
+    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.getURL() === args.url);
+    if (!win) throw new Error('no app window for the test page');
     win.focus();
     const modifiers = args.shift ? ['control', 'shift'] : ['control'];
     for (const type of ['rawKeyDown', 'char', 'keyUp'] as const) {
       win.webContents.sendInputEvent({ type, keyCode: args.keyCode, modifiers: modifiers as Electron.InputEvent['modifiers'] });
     }
-  }, { keyCode, shift });
+  }, { keyCode, shift, url: app.window.url() });
 }
 
 /** The body text size in device pixels: grows with page zoom. */
@@ -40,7 +43,7 @@ async function bodyFontDevicePx(app: AppHandle): Promise<number> {
 test('Ctrl+= keeps zooming the whole UI past 200%, and the zoom survives a relaunch', async ({ home }) => {
   test.setTimeout(180_000);
   let zoomed = 0;
-  const first = await launchApp(home);
+  const first = await launchApp(home, VISIBLE);
   try {
     const startFactor = await zoomFactor(first);
     expect(startFactor).toBeCloseTo(0.95, 2);
@@ -65,7 +68,7 @@ test('Ctrl+= keeps zooming the whole UI past 200%, and the zoom survives a relau
     await closeApp(first.electron);
   }
 
-  const second = await launchApp(home);
+  const second = await launchApp(home, VISIBLE);
   try {
     await expect.poll(() => zoomFactor(second), { timeout: 20_000 }).toBeCloseTo(zoomed, 2);
     await pressCtrl(second, '0');
