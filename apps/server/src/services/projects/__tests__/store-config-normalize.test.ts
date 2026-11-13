@@ -664,6 +664,14 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({}).terminalCtrlVPasteEnabled).toBeUndefined();
   });
 
+  it('passes through a boolean terminalCopyOnSelectEnabled, drops non-booleans and leaves it unset by default', () => {
+    expect(normalizeConfig({ terminalCopyOnSelectEnabled: true }).terminalCopyOnSelectEnabled).toBe(true);
+    expect(normalizeConfig({ terminalCopyOnSelectEnabled: false }).terminalCopyOnSelectEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ terminalCopyOnSelectEnabled: 'yes' }).terminalCopyOnSelectEnabled).toBeUndefined();
+    expect(normalizeConfig({}).terminalCopyOnSelectEnabled).toBeUndefined();
+  });
+
   it('passes through a boolean terminalClipboardWriteEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ terminalClipboardWriteEnabled: true }).terminalClipboardWriteEnabled).toBe(true);
     expect(normalizeConfig({ terminalClipboardWriteEnabled: false }).terminalClipboardWriteEnabled).toBe(false);

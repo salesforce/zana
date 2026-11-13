@@ -2571,6 +2571,13 @@ export interface AppConfig {
    */
   terminalClipboardWriteEnabled?: boolean;
   /**
+   * Copy on select: when a mouse selection ends in a terminal, copy the
+   * selected text to the system clipboard. Default true. Empty selections and
+   * selections made by search or by programs are never copied. Ctrl+C still
+   * sends SIGINT. See `apps/app/src/lib/terminalCopyOnSelect.ts`.
+   */
+  terminalCopyOnSelectEnabled?: boolean;
+  /**
    * Whether Ctrl+V pastes the clipboard into a terminal on Windows and Linux,
    * like Shift+Insert (and Ctrl+Shift+V, which always pastes there). When off,
    * Ctrl+V sends the literal `^V` control character to the program, as

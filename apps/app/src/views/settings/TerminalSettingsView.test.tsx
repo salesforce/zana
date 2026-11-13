@@ -40,6 +40,25 @@ describe('TerminalSettingsView settings-search targets', () => {
   });
 });
 
+describe('TerminalSettingsView Copy selected text automatically', () => {
+  const toggle = () => screen.getByRole('switch', { name: 'Copy selected text automatically' });
+
+  it('is on by default and saves the change', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    render(<TerminalSettingsView config={config} onConfigDraft={vi.fn()} onUpdate={onUpdate} />);
+    await screen.findByText('tmux 3.4');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle());
+    expect(onUpdate).toHaveBeenCalledWith({ terminalCopyOnSelectEnabled: false });
+  });
+
+  it('shows a stored off value', async () => {
+    render(<TerminalSettingsView config={{ ...config, terminalCopyOnSelectEnabled: false }} onConfigDraft={vi.fn()} onUpdate={vi.fn().mockResolvedValue(undefined)} />);
+    await screen.findByText('tmux 3.4');
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+  });
+});
+
 describe('TerminalSettingsView Ctrl+V pastes', () => {
   const toggle = () => screen.getByRole('switch', { name: 'Ctrl+V pastes' });
 

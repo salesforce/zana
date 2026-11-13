@@ -59,7 +59,7 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
   hasSelection() { return false; }
   write(_d: string, done?: () => void) { done?.(); }
   reset() {}
-  onScroll() { return { dispose() {} }; } onData() { return { dispose() {} }; }
+  onScroll() { return { dispose() {} }; } onData() { return { dispose() {} }; } onSelectionChange() { return { dispose() {} }; }
   attachCustomKeyEventHandler() {} attachCustomWheelEventHandler() {}
 } }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));

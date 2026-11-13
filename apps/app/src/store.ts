@@ -858,6 +858,7 @@ function mirroredConfigFlags(config: AppConfig) {
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
     terminalClipboardWriteEnabled: config.terminalClipboardWriteEnabled ?? true,
+    terminalCopyOnSelectEnabled: config.terminalCopyOnSelectEnabled ?? true,
     terminalCtrlVPasteEnabled: config.terminalCtrlVPasteEnabled ?? ctrlVPastesByDefault(),
     autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
     structuredQuestionsEnabled: config.structuredQuestionsEnabled ?? true,
@@ -1715,6 +1716,9 @@ interface DataState {
    *  kept live by the Settings toggle. Default TRUE (write path shipped on); when
    *  off, terminal output can never touch the system clipboard. */
   terminalClipboardWriteEnabled: boolean;
+  /** Mirror of AppConfig.terminalCopyOnSelectEnabled — copy a finished mouse
+   *  selection to the clipboard. Default TRUE; read live by TerminalView. */
+  terminalCopyOnSelectEnabled: boolean;
   /** Mirror of AppConfig.terminalCtrlVPasteEnabled — whether Ctrl+V pastes in a
    *  terminal on Windows/Linux (off: it sends `^V`). Resolved with the platform
    *  default (on for Windows) when unset; read live by TerminalView's key handler. */
@@ -1817,6 +1821,7 @@ interface DataState {
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
   setTerminalClipboardWriteEnabled: (on: boolean) => void;
+  setTerminalCopyOnSelectEnabled: (on: boolean) => void;
   setTerminalCtrlVPasteEnabled: (on: boolean) => void;
   setAutoOpenThreadPlanPanel: (on: boolean) => void;
   setSuggestionsEnabled: (on: boolean) => void;
@@ -2218,6 +2223,7 @@ export const useData = create<DataState>((set, get) => ({
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
   terminalClipboardWriteEnabled: true,
+  terminalCopyOnSelectEnabled: true,
   terminalCtrlVPasteEnabled: ctrlVPastesByDefault(),
   autoOpenThreadPlanPanel: false,
   suggestionsEnabled: false,
@@ -2376,6 +2382,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setTerminalClipboardWriteEnabled(on) {
     set({ terminalClipboardWriteEnabled: on });
+  },
+
+  setTerminalCopyOnSelectEnabled(on) {
+    set({ terminalCopyOnSelectEnabled: on });
   },
 
   setTerminalCtrlVPasteEnabled(on) {

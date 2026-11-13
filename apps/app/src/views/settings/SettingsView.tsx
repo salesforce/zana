@@ -196,6 +196,9 @@ export function SettingsView() {
       if (typeof patch.terminalClipboardWriteEnabled === 'boolean') {
         useData.getState().setTerminalClipboardWriteEnabled(patch.terminalClipboardWriteEnabled);
       }
+      if (typeof patch.terminalCopyOnSelectEnabled === 'boolean') {
+        useData.getState().setTerminalCopyOnSelectEnabled(patch.terminalCopyOnSelectEnabled);
+      }
       if (typeof patch.terminalCtrlVPasteEnabled === 'boolean') {
         useData.getState().setTerminalCtrlVPasteEnabled(patch.terminalCtrlVPasteEnabled);
       }

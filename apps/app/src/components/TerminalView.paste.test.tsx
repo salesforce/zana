@@ -30,7 +30,7 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
   hasSelection() { return false; } getSelection() { return ''; }
   write(_data: string, done: () => void) { done(); }
   reset() {}
-  onScroll() { return { dispose() {} }; } onData() { return { dispose() {} }; }
+  onScroll() { return { dispose() {} }; } onData() { return { dispose() {} }; } onSelectionChange() { return { dispose() {} }; }
   attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) { h.keyHandler = fn; }
   attachCustomWheelEventHandler() {}
 } }));
