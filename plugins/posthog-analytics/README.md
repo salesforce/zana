@@ -1,165 +1,17 @@
-# PostHog Analytics
+# PostHog Analytics (retired)
 
-Usage analytics for Zana installs, event-only (never prompt/response content).
+PostHog analytics has been shut down. This plugin is no longer automatically
+installed or listed in the plugin catalogue. Startup removes existing first-party
+installations and their saved settings when users install an app build containing this change.
 
-> **Disclaimer — auto-installed and on by default.** This plugin is **builtin**
-> (`autoInstall: true`) — it's installed and enabled for every user with no
-> setup step, and official builds bake in `ZCC_POSTHOG_API_KEY` so it starts
-> sending events right away. (A local `pnpm dev` checkout without that env var
-> set has the master switch on but nothing to send to, until you set one.) To
-> opt out entirely, turn off **Send anonymous usage events to PostHog** — or
-> uninstall the plugin, which is not silently reinstalled once you do. To send
-> events to a different PostHog project, replace **PostHog Project API Key**
-> with your own project's write-only `phc_` key.
+The remaining server and renderer entries are inert compatibility stubs. They
+never read a key, subscribe to events, observe clicks or navigation, or make
+network requests, even when old settings still enable analytics.
 
-## What is sent
+Releases no longer bundle a PostHog project key, and local development no longer
+loads one from `.env`.
 
-Only agent/thread lifecycle events — never prompt or response content, file
-paths, titles, or any other user-generated text:
-
-| Event | Fires when |
-| --- | --- |
-| `zcc_thread_created` | An agent thread is created |
-| `zcc_thread_active` | An agent starts working |
-| `zcc_thread_idle` | An agent goes idle |
-| `zcc_thread_failed` | An agent thread fails |
-| `zcc_thread_archived` | An agent thread is archived |
-| `zcc_thread_deleted` | An agent thread is deleted |
-
-Each event's payload is exactly:
-
-```json
-{
-  "event": "zcc_thread_created",
-  "distinct_id": "<random UUID, generated once per install, stored locally>",
-  "properties": {
-    "projectId": "<project id or null>",
-    "providerId": "<harness id, e.g. claude-code/codex/shell, or null>",
-    "model": "<model name, or null>",
-    "reasoningLevel": "<reasoning-effort level, e.g. medium/high, or null>",
-    "executionState": "<permission mode this run started with, e.g. accept-edits/auto/full, or null>",
-    "hadAttachments": "<true/false/null — presence only, never file names or paths>"
-  }
-}
-```
-
-`distinct_id` is a random UUID generated on first use and stored in this
-plugin's local KV storage — it identifies an *installation*, not a person,
-and is never derived from any account/email.
-
-`providerId`/`model`/`reasoningLevel`/`executionState`/`hadAttachments` are
-best-effort — a field the plugin didn't have in hand at that particular event
-(e.g. `model` before the first turn has been sent) is sent as `null` rather
-than omitted, so every `zcc_thread_*` event has the same property shape.
-`executionState` reflects the server-computed permission mode a run started
-with (a proxy for "plan vs. an actual autonomous run") — it is **not** the
-raw client-side launcher label. There is currently no reliable server-side
-signal that distinguishes a voice-recorded turn from a typed one, so a
-"used voice" field was deliberately left out rather than guessed.
-
-### Optional: coarse UI-click events
-
-If you additionally turn on **Also track UI clicks (button ids only)**, the
-plugin emits a `zcc_ui_click` event on each click of an actionable element,
-carrying only:
-
-```json
-{ "event": "zcc_ui_click", "distinct_id": "…", "properties": { "testid": "agent-delete-quick", "role": "button" } }
-```
-
-- `testid` is the developer-authored `data-testid` on the element (stable,
-  content-free), resolved by walking up from the clicked node.
-- `role` is the element role or tag (`button` / `link` / `tab` / …).
-
-It **never** reads button text, `aria-label`, or input values — those routinely
-embed project names and thread titles, so they are deliberately never captured.
-The renderer content script only reports these two fields, and the server
-re-validates them (dropping anything else, non-strings, or over-long values)
-before sending. A click with no `data-testid` and no actionable role sends
-nothing. This toggle is independent and also off by default.
-
-### Optional: page navigation & dwell-time events
-
-If you additionally turn on **Also track page navigation & time spent**, the
-plugin emits a `zcc_page_view` event on each section change, carrying only:
-
-```json
-{
-  "event": "zcc_page_view",
-  "distinct_id": "…",
-  "properties": { "from": "inbox", "to": "agents", "durationMs": 4213 }
-}
-```
-
-- `from`/`to` are the coarse top-level section name (`home` / `inbox` /
-  `agents` / `followups` / `suggestions` / `scheduler` / `goals` / `settings`
-  / `extensions` / `projects`), re-derived in the renderer content script
-  directly from `location.pathname` (mirroring the same fixed literals
-  `apps/app/src/lib/decode-route.ts`'s `DecodedRoute.nav` uses) — **never** a
-  project id, thread id, or other dynamic path segment. Any nav value outside
-  that fixed set — including a plugin's own panel nav id — is bucketed as the
-  literal string `"plugin"` rather than forwarded verbatim.
-- `durationMs` is how long the previous section was open, in milliseconds.
-- The server re-validates both fields before sending: `from`/`to` must be in
-  the fixed enum above (an unrecognized `to` is rejected outright, never
-  forwarded), and `durationMs` must be a finite, non-negative number under a
-  24-hour sanity cap.
-
-This toggle is independent of, and off by default like, **Also track UI
-clicks** — either can be on without the other.
-
-### What we looked at but didn't ship: voice/audio presence
-
-The product ask also included "whether the user attached an image or used
-voice/audio recording." Image-attachment presence is covered by
-`hadAttachments` above. There is currently no reliable **server-side** signal
-that distinguishes a voice-recorded turn from a typed one — the renderer's
-voice-recording UI state doesn't reach the server in a form distinct from a
-plain text turn — so rather than guess at a fake signal, this was left out.
-
-## Enabling it / opting out / pointing at your own project
-
-1. Nothing to do — this plugin is **builtin and auto-installed** for every
-   user, and ships **enabled out of the box**. Official builds bake
-   `ZCC_POSTHOG_API_KEY`; local `pnpm dev` reads it from `.env`.
-2. Open its Configure page in the Plugins hub to change any of this.
-3. To opt out entirely: turn off **Send anonymous usage events to PostHog**.
-   This stops all outbound requests immediately.
-4. To send events to your *own* PostHog project:
-   replace **PostHog Project API Key** with your own project's key. This is
-   the public, write-only key that starts with `phc_` — find it in PostHog
-   under **Project Settings → Project API Key**. (It is *not* your numeric
-   project id, and *not* a personal API key.)
-5. Optionally change **PostHog Host** if you run a self-hosted PostHog
-   (defaults to `https://us.posthog.com`).
-6. Optionally turn on **Also track UI clicks (button ids only)** for
-   content-free click events (see above) — this toggle is independent and
-   off by default even when the master switch is on.
-7. Optionally turn on **Also track page navigation & time spent** for
-   content-free page-view/dwell events (see above) — also independent and
-   off by default.
-
-Nothing is sent unless the master toggle is on AND an API key is set. The
-key is empty until `ZCC_POSTHOG_API_KEY` (or the Settings field) provides one.
-
-## Why no prompt/content tracking
-
-This plugin deliberately never captures prompt/response content, button text,
-labels, or input values — only lifecycle events and (optionally) content-free
-click ids. Sending prompt/response text to a third-party service risks leaking
-proprietary code or secrets, so it is out of scope by design. UI-click tracking
-is intentionally limited to developer-authored `data-testid`s + element roles
-rather than autocapture, to avoid ever reading user-generated text. If you need
-richer local insight, see **Settings → Usage** in the app itself, which computes
-a purely local, content-free usage summary that never leaves your device.
-
-## How it works
-
-The plugin lives in this directory. The default API key is **not** hardcoded:
-`ZCC_POSTHOG_API_KEY` is read at runtime (and copied onto `process.env` from
-the official-build bake so packaged apps see it). It consumes:
-
-- `zcc.events.on('thread.*')` for lifecycle events (server side).
-- A renderer **content script** (`app.js`, via `app.contentScripts.register`)
-  for the optional click listener, which reports to the plugin server over
-  `zcc.rpc` — so the API key stays server-side and the renderer never sees it.
+Previously released apps already contain the former project key. Removing the
+release secret cannot change those binaries. To stop ingestion from those apps,
+rotate the project key in PostHog and delete the backup key for the old value.
+See [PostHog API key documentation](https://posthog.com/docs/api).

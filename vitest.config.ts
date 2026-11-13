@@ -84,8 +84,7 @@ const serialFiles = serialTestFiles(__dirname);
 export default defineConfig({
   define: {
     __ZCC_DEV_WS_PORT__: 'undefined',
-    __ZCC_BUNDLED_APP_URL__: JSON.stringify(''),
-    __ZCC_BUNDLED_POSTHOG_API_KEY__: JSON.stringify('')
+    __ZCC_BUNDLED_APP_URL__: JSON.stringify('')
   },
   test: {
     sequence: { sequencer: DurationSequencer },

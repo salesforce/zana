@@ -27,10 +27,6 @@ function bundledAppUrl(): string {
   return '';
 }
 
-function bundledPosthogApiKey(): string {
-  return process.env.ZCC_POSTHOG_API_KEY?.trim() || pairingEnvFile().ZCC_POSTHOG_API_KEY?.trim() || '';
-}
-
 // Resolve the extension SDK (`@zana-ai/zcc-extension-sdk` + subpaths) to its source
 // in all three bundles. The SDK is the canonical extension contract; core and
 // plugins both consume it. Subpaths (`/renderer`, `/main`, `/helpers`) map to
@@ -164,14 +160,11 @@ export default defineConfig(({ command }) => {
   const out = process.env.ZCC_BUILD_OUT_DIR || resolve(__dirname, command === 'serve' ? 'out-dev' : 'out');
   return {
   main: {
-    // Official releases set ZCC_APP_URL + ZCC_POSTHOG_API_KEY in the build env
-    // so packaged laptops know their public origin and default PostHog without
-    // Settings. Local/dev falls back to .env then the
-    // repo public-app-url file. Runtime process.env still wins. Never define
-    // these on the renderer.
+    // Official releases set ZCC_APP_URL so packaged laptops know their public
+    // origin. Local/dev falls back to .env then public-app-url. Runtime env
+    // still wins. Never define this on the renderer.
     define: {
       __ZCC_BUNDLED_APP_URL__: JSON.stringify(bundledAppUrl()),
-      __ZCC_BUNDLED_POSTHOG_API_KEY__: JSON.stringify(bundledPosthogApiKey()),
       __ZCC_BUNDLED_INSTALL_SCRIPT__: JSON.stringify(readFileSync(resolve(__dirname, 'apps/server/src/assets/install-machine.sh'), 'utf8'))
     },
     // Leave jiti external. Rolldown emits an empty `jiti-*.js` chunk when it is

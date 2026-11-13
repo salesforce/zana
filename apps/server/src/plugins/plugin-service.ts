@@ -109,7 +109,6 @@ import {
   selectBuiltinSkillDirectoryRoots,
   writeInjectedSkillRootManifest
 } from './injected-skill-roots.js';
-import { applyBundledPosthogApiKey } from '../bundled-posthog-api-key.js';
 import type {
   PluginAgentConfigureContext,
   PluginAgentToolContext,
@@ -635,7 +634,6 @@ function resolveBundledDir(bundledRoot: string, name: string): string {
 
 export function createPluginService(opts: PluginServiceOptions): PluginService {
   const developmentEnabled = () => opts.getAppConfig?.().pluginDevelopmentEnabled ?? opts.watchBuiltinPluginSources === true;
-  applyBundledPosthogApiKey();
   const store: PluginStore = createPluginStore({ file: pluginStorePath(opts.dataDir) });
   const uninstalled = createPluginUninstalledStore({ file: pluginUninstalledPath(opts.dataDir) });
   const marketplaces: MarketplaceStore = createMarketplaceStore({
@@ -3630,6 +3628,7 @@ export function listBundledPluginCatalog(
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .map((entry) => entry.name);
     for (const name of names) {
+      if (isRetiredFirstPartyPluginId(name)) continue;
       const dir = join(bundledRoot, name);
       const pkgPath = join(dir, 'package.json');
       if (!existsSync(pkgPath)) continue;
@@ -3684,6 +3683,9 @@ export async function installBundledPlugin(
   opts: { dataDir?: string; bundledRoot?: string } = {}
 ): Promise<{ ok: true; value: { id: string } } | { ok: false; code: string; message: string } | null> {
   if (!isPluginId(id)) return null;
+  if (isRetiredFirstPartyPluginId(id)) {
+    return { ok: false, code: 'NOT_FOUND', message: `Plugin "${id}" is retired` };
+  }
   const bundledRoot = opts.bundledRoot ?? defaultBundledRoot();
   const dataDir = opts.dataDir ?? defaultPluginDataDir();
   const dir = join(bundledRoot, id);
