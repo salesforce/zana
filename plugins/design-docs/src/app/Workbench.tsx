@@ -479,11 +479,6 @@ function DocList({
             {visible.length}
           </span>
         ) : null}
-        {totals && totals.total !== visible.length ? (
-          <span className="dd-list-total" title={`${totals.total} docs across all projects and statuses, ${totals.unmapped} unmapped`}>
-            of {totals.total}{totals.unmapped ? <> · <button type="button" className="dd-link" onClick={() => setMapping(true)}>{totals.unmapped} unmapped</button></> : null}
-          </span>
-        ) : null}
         <span className="dd-spacer" />
         <IconButton icon={House} label="Home" onClick={onHome} />
         <SettingsToggle open={false} onToggle={onOpenSettings} />
@@ -494,6 +489,12 @@ function DocList({
         <IconButton icon={PanelLeftClose} label="Hide doc list" onClick={onCollapse} />
         {headerActions}
       </div>
+      {totals && totals.total !== visible.length ? (
+        <div className="dd-list-total" title={`${totals.total} docs across all projects and statuses, ${totals.unmapped} unmapped`}>
+          <span>{visible.length} of {totals.total} docs</span>
+          {totals.unmapped ? <><span aria-hidden>·</span><button type="button" className="dd-link" onClick={() => setMapping(true)}>{totals.unmapped} unmapped</button></> : null}
+        </div>
+      ) : null}
       <div className="dd-list-tools">
         <label className="dd-search">
           <Search size={13} aria-hidden />

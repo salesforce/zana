@@ -387,6 +387,9 @@ export const DESIGN_DOCS_STYLES = `
 .dd-list-head .dd-list-count { margin-left: 2px; }
 .dd-list-title { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .dd-list-count { flex: 0 0 auto; color: var(--text-dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.dd-list-total { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 4px 14px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.dd-link { padding: 0; border: 0; background: none; color: var(--accent, inherit); font: inherit; text-decoration: underline; cursor: pointer; }
+.dd-link:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
 .dd-list-collapsed {
   display: flex;
   flex-direction: column;

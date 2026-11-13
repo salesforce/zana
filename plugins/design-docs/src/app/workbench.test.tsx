@@ -436,6 +436,17 @@ describe('creating docs', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New design doc' })).toBeNull());
   });
 
+  it('shows the all-docs total on its own line under the header, and nothing when the list shows every doc', async () => {
+    const harness = createHarness();
+    seed(harness.store, { title: 'Active one', projectId: null });
+    seed(harness.store, { title: 'Old one', projectId: null, status: 'archived' });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    const line = await screen.findByText(/1 of 2 docs/);
+    expect(line.closest('.dd-list-total')).not.toBeNull();
+    expect(line.closest('.dd-list-head')).toBeNull();
+    expect(screen.queryByRole('button', { name: /unmapped/ })).toBeNull();
+  });
+
   it('creates a global doc without drafting when there is no project to run in', async () => {
     const harness = createHarness({ projects: [] });
     harness.render(<NavPanel pluginId="design-docs" subPath="" />);
