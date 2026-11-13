@@ -850,8 +850,8 @@ importers:
   packages/hono-typed-routes:
     dependencies:
       hono:
-        specifier: ^4.7.0
-        version: 4.13.8
+        specifier: ^4.13.16
+        version: 4.13.18
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -872,8 +872,8 @@ importers:
         specifier: workspace:*
         version: link:../hono-typed-routes
       hono:
-        specifier: ^4.7.0
-        version: 4.13.8
+        specifier: ^4.13.16
+        version: 4.13.18
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -1210,8 +1210,8 @@ importers:
         specifier: workspace:*
         version: link:../host-daemon-contract
       hono:
-        specifier: ^4.7.0
-        version: 4.13.8
+        specifier: ^4.13.16
+        version: 4.13.18
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -7922,8 +7922,8 @@ packages:
   hoist-non-react-statics@3.3.2:
     resolution: {integrity: sha512-/gGivxi8JPKWNm/W0jSmzcMPpfpPLc3dY/6GxhX2hQ9iGj3aDfklV4ET7NjKpSinLpJ5vafa9iiGIEZg10SfBw==}
 
-  hono@4.13.8:
-    resolution: {integrity: sha512-/Gng7NfoykZl2pjukW5Z6+8Yxm3BPRf86GTbQnt0SbySkvax4fyL4H3HhY1cCpBGmiW9XDRFzRV+CXK2W8QudQ==}
+  hono@4.13.18:
+    resolution: {integrity: sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@4.1.0:
@@ -12853,9 +12853,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@hono/node-server@2.1.5(hono@4.13.8)':
+  '@hono/node-server@2.1.5(hono@4.13.18)':
     dependencies:
-      hono: 4.13.8
+      hono: 4.13.18
 
   '@hugeicons/core-free-icons@4.3.5': {}
 
@@ -13214,7 +13214,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.0(supports-color@8.1.1)(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 2.1.5(hono@4.13.8)
+      '@hono/node-server': 2.1.5(hono@4.13.18)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -13224,7 +13224,7 @@ snapshots:
       eventsource-parser: 3.1.1
       express: 5.2.1(supports-color@8.1.1)
       express-rate-limit: 8.7.0(express@5.2.1(supports-color@8.1.1))(supports-color@8.1.1)
-      hono: 4.13.8
+      hono: 4.13.18
       jose: 6.2.12
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -17613,7 +17613,7 @@ snapshots:
     dependencies:
       react-is: 16.13.1
 
-  hono@4.13.8: {}
+  hono@4.13.18: {}
 
   hosted-git-info@4.1.0:
     dependencies:
