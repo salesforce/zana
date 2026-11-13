@@ -2000,7 +2000,10 @@ export class DesignDocSyncStore {
           continue;
         }
         if (!row.error) continue;
-        if (!members.has(row.member_replica_id) || (!isOfflineSyncError(row.error) && !/^peer request failed: (409|429|5\d\d)(?:\b|:)/.test(row.error))) continue;
+        // An enrollment fault can clear by itself (a restart did on the dev pair), so an owner retry tries it once more;
+        // a still-revoked pair fails again and parks after the usual attempts. Removed members stay excluded above.
+        if (!members.has(row.member_replica_id) || (!isOfflineSyncError(row.error) && !/^peer enrollment changed or revoked/.test(row.error)
+          && !/^peer request failed: (409|429|5\d\d)(?:\b|:)/.test(row.error))) continue;
         const receipt = this.db.prepare('SELECT stage FROM sync_receipts WHERE repo_id = ? AND member_replica_id = ? AND frozen_head = ?')
           .get(local.repoId, row.member_replica_id, row.frozen_head) as { stage: string } | undefined;
         if (receipt?.stage === 'conflict' || (this.isDeletionHead(local.repoId, this.head(local.repoId, row.doc_id) ?? '') &&

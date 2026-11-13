@@ -155,6 +155,19 @@ describe('per-doc sync status', () => {
     expect(a.sync.readyIntents('repo').some(row => row.id === intent.id)).toBe(false);
   });
 
+  it('explicit retry revives an intent parked on an enrollment fault, but not for a removed member', () => {
+    const a = fixture('a'); shared(a, 'Enrollment retry');
+    const intent = a.sync.readyIntents('repo')[0]!;
+    a.db.prepare("UPDATE sync_intents SET state = 'blocked'").run();
+    a.db.prepare("INSERT INTO sync_retry VALUES (?, 10, 0, 0, 'peer enrollment changed or revoked')").run(intent.id);
+    a.db.prepare("UPDATE sync_group_members SET removed_at = 1 WHERE replica_id = 'replica-b'").run();
+    a.sync.retryBlockedIntents(); expect(a.sync.readyIntents('repo')).toEqual([]);
+    a.db.prepare("UPDATE sync_group_members SET removed_at = NULL WHERE replica_id = 'replica-b'").run();
+    a.sync.retryBlockedIntents();
+    expect(a.sync.readyIntents('repo').map(row => row.id)).toEqual([intent.id]);
+    expect(a.db.prepare('SELECT COUNT(*) AS n FROM sync_retry').get()).toEqual({ n: 0 });
+  });
+
   it('is empty without a sync group', () => {
     const db = createTestDatabase();
     new DesignDocStore(db);
