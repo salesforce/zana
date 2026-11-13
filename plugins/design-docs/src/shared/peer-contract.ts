@@ -81,6 +81,20 @@ export function isDeletionClosure(closure: PeerDocumentClosure): boolean {
   return closure.deleted !== undefined;
 }
 export interface PeerVersion { operation: PeerOperation; closure: PeerDocumentClosure }
+
+/** User-visible content, independent of replica bookkeeping and local project mapping. */
+export function documentContent(closure: PeerDocumentClosure): Record<string, unknown> {
+  const { status, title, summary, tags, entry_path } = closure.doc;
+  const order = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+  return { status, title, summary, tags, entry_path, deleted: closure.deleted !== undefined,
+    files: closure.files.map(({ path, content, encoding }) => ({ path, content, encoding })).sort((a, b) => order(a.path, b.path)),
+    comments: closure.comments.map(({ created_at: _created, resolved_at: _resolved, ...comment }) => comment).sort((a, b) => order(a.id, b.id)),
+    threads: closure.threads.map(row => row.thread_id).sort(order) };
+}
+
+export function contentEquals(left: PeerDocumentClosure, right: PeerDocumentClosure): boolean {
+  return canonicalPeerHash(documentContent(left)) === canonicalPeerHash(documentContent(right));
+}
 export interface PeerAppliedReceipt {
   sessionId: string; scopeHash: string; checkpointHash: string;
   stage: PeerReceiptStage; heads: Record<string, string>; appliedHeads: Record<string, string>;

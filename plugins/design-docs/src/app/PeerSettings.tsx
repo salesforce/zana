@@ -7,6 +7,7 @@ import { PEER_STATE_CHANNEL } from '../shared/contract.js';
 import { syncResultMessage } from './sync-status.js';
 import { errorMessage, toast, useApi, type ConnectionView, type PeerStatus } from './api.js';
 import { IconButton, Spinner } from './ui.js';
+import { SyncDiagnosticsPanel } from './SyncDiagnosticsPanel.js';
 
 export interface PeerSync {
   /** Sync group status, null until loaded or when it cannot be read. */
@@ -391,6 +392,7 @@ export function PeerSettings() {
         </div>
       ) : null}
       {error ? <p role="alert" className="dd-banner dd-banner-error">{error}</p> : null}
+      {configured ? <SyncDiagnosticsPanel nameOf={nameOf} /> : null}
       {status ? (
         <>
           <div className="dd-peers-block">

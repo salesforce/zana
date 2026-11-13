@@ -78,6 +78,11 @@ describe('Design Docs RPC', () => {
     expect(() => rpc.resolvePeerConflict!({ doc: doc.id, expectedHead: 'local', remoteHead: 'remote', choice: 'force' })).toThrow(/choice/);
     expect(rpc.resolvePeerConflict!({ doc: doc.id, expectedHead: 'local', remoteHead: 'remote', choice: 'remote', origin: 'local-authoring' })).toEqual({ head: 'resolved' });
     expect(peerSync.resolveConflict).toHaveBeenCalledExactlyOnceWith({ docId: doc.id, expectedHead: 'local', remoteHead: 'remote', choice: 'remote' }, UI_USER);
+    expect(() => rpc.resolvePeerConflict!({ doc: doc.id, expectedHead: 'local', remoteHead: 'remote' })).toThrow(/choice or choices/);
+    expect(() => rpc.resolvePeerConflict!({ doc: doc.id, expectedHead: 'local', remoteHead: 'remote', choices: ['x'] })).toThrow(/choice or choices/);
+    peerSync.resolveConflict.mockClear();
+    expect(rpc.resolvePeerConflict!({ doc: doc.id, expectedHead: 'local', remoteHead: 'remote', choices: { 'file:a.md': 'remote' } })).toEqual({ head: 'resolved' });
+    expect(peerSync.resolveConflict).toHaveBeenCalledExactlyOnceWith({ docId: doc.id, expectedHead: 'local', remoteHead: 'remote', choices: { 'file:a.md': 'remote' } }, UI_USER);
     const unavailable = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never });
     expect(unavailable.peerConflicts!({ doc: doc.id })).toEqual({ remoteHeads: [], nextCursor: null });
     for (const method of ['peerConflictReview', 'peerConflictFile', 'resolvePeerConflict']) {
@@ -510,7 +515,7 @@ describe('Design Docs RPC', () => {
     expect(method.mock.calls.map(([name]) => name)).not.toContain('setAgentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentHarnesses');
     expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining(['harnessDescriptors', 'harnessRouting', 'setHarnessRouting']));
-    expect(method).toHaveBeenCalledTimes(68);
+    expect(method).toHaveBeenCalledTimes(70);
   });
 });
 

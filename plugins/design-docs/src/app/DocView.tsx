@@ -388,6 +388,7 @@ export function DocView({
         compact={compact}
         collapsible={narrow}
         onDeleted={onDeleted}
+        onOpenHistory={() => { setTab('history'); setRailOpen(true); }}
         template={kind === 'template'}
         actions={
           <>

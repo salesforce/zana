@@ -21,7 +21,7 @@ import {
   type PeerReceiptStage,
   PeerProtocolError,
   validatePeerGroupMembers,
-  canonicalJson, canonicalPeerHash, validateDocumentClosure, isDeletionClosure, PEER_DELETE_KIND, PEER_DOCUMENT_KIND,
+   canonicalJson, canonicalPeerHash, validateDocumentClosure, isDeletionClosure, PEER_DELETE_KIND, PEER_DOCUMENT_KIND, contentEquals, documentContent,
   type PeerDocumentClosure, type PeerVersion, type PeerAppliedReceipt
 } from '../shared/peer-contract.js';
 import { createCheckpointHash, createScopeHash, validateAppliedReceipt, validateOperation, validateSessionOffer,
@@ -29,9 +29,11 @@ import { createCheckpointHash, createScopeHash, validateAppliedReceipt, validate
    type PeerSessionOffer, type PeerTransfer, type PeerChunk, type PeerReceiptQuery, type PeerHandshake, type PeerMissing,
    type PeerAncestryPage, type PeerAncestorStubs, type PeerProjectHint } from './peer-protocol.js';
 import { MAX_FILES_PER_DOC, MAX_COMMENTS_PER_DOC, MAX_THREAD_LINKS_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
-import type { DocActor, PeerConflictPage, PeerConflictReview, PeerConflictFile, PeerResolutionChoice } from '../shared/contract.js';
+import type { DocActor, PeerConflictPage, PeerConflictReview, PeerConflictFile, PeerResolutionChoice, PeerConflictChoices, PeerConflictQuestion, PeerConflictSettled } from '../shared/contract.js';
 import { normalizeDocPath } from '../shared/paths.js';
-import { mergeDocument, mergeHistory, type DocumentMergeResult } from './peer-merge.js';
+import type { CompareResult, PeerDiagnostics, SyncQueueEntry } from '../shared/sync-diagnostics.js';
+import { boundSyncError, classifyDelivery, isOfflineSyncError, isStageToken } from '../shared/sync-classify.js';
+import { mergeDocument, mergeHistory, orderedProjection, utf8Order, type DocumentMergeResult } from './peer-merge.js';
 import { DOC_ONLY, TEMPLATE_ONLY } from './store.js';
 import { cleanLabel } from './project-refs.js';
 
@@ -40,6 +42,7 @@ export interface SyncStoreOptions {
   randomId?: () => string;
   /** Tombstone head retention cap; tests lower it. */
   maxTombstones?: number;
+  autoConverge?: () => boolean;
 }
 
 /** Store mutation kind for a whole-document delete; the doc rows are already gone when it is recorded. */
@@ -58,9 +61,19 @@ function validatedClosure(input: unknown): PeerDocumentClosure {
 }
 /** canonicalPeerHash of a validated closure, computed once per (immutable) closure object. */
 const closureHashes = new WeakMap<PeerDocumentClosure, string>();
+const projectionHashes = new WeakMap<PeerDocumentClosure, string>();
 function closurePayloadHash(closure: PeerDocumentClosure): string {
   let hash = closureHashes.get(closure);
   if (hash === undefined) { hash = canonicalPeerHash(closure); if (validatedClosures.has(closure)) closureHashes.set(closure, hash); }
+  return hash;
+}
+function projectionHash(closure: PeerDocumentClosure): string {
+  const cached = projectionHashes.get(closure);
+  if (cached !== undefined) return cached;
+  const sorted = <T>(rows: T[], key: (row: T) => string) => rows.every((row, index) => index === 0 || utf8Order(key(rows[index - 1]!), key(row)) <= 0);
+  const canonicalOrder = sorted(closure.files, row => row.path) && sorted(closure.comments, row => row.id) && sorted(closure.threads, row => row.thread_id);
+  const hash = canonicalOrder ? closurePayloadHash(closure) : canonicalPeerHash(orderedProjection(closure));
+  if (validatedClosures.has(closure)) projectionHashes.set(closure, hash);
   return hash;
 }
 
@@ -107,6 +120,9 @@ export class DesignDocSyncStore {
   private readonly now: () => number;
   private readonly randomId: () => string;
   private readonly maxTombstones: number;
+  private readonly autoConverge: () => boolean;
+  private sweepCursor = '';
+  private settlementCounts: Record<string, number> = {};
   /**
    * Hash-verified versions, scoped to one apply transaction (null outside one). A version is immutable per
    * operation id, so a peer apply re-reading the same head reuses the verification instead of re-hydrating and
@@ -119,6 +135,7 @@ export class DesignDocSyncStore {
     this.now = options.now ?? Date.now;
     this.randomId = options.randomId ?? randomUUID;
     this.maxTombstones = options.maxTombstones ?? MAX_PEER_TOMBSTONES;
+    this.autoConverge = options.autoConverge ?? (() => false);
   }
 
   initialize(repoId: string, replicaId: string): void {
@@ -284,7 +301,8 @@ export class DesignDocSyncStore {
       const closure = this.capture(input.docId);
       const payloadHash = canonicalPeerHash(closure);
       const parent = this.head(local.repoId, input.docId);
-      if (parent && this.version(local.repoId, parent)?.operation.payloadHash === payloadHash) return;
+      const previous = parent && this.version(local.repoId, parent);
+      if (previous && projectionHash(previous.closure) === payloadHash) return;
       const next = this.db.prepare(
         'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM sync_operations WHERE repo_id = ? AND replica_id = ?'
       ).get(local.repoId, local.replicaId) as { sequence: number };
@@ -570,8 +588,14 @@ export class DesignDocSyncStore {
       const closure = this.version(local.repoId, head)!.closure;
       return { title: closure.doc.title, status: closure.doc.status, summary: closure.doc.summary, paths: closure.files.map((file) => file.path) };
     };
+    const baseVersion = preview.baseHead ? this.version(local.repoId, preview.baseHead) : null;
+    const base: PeerDocumentClosure | null = baseVersion === null ? null : baseVersion.closure;
+    const left = this.version(local.repoId, preview.localHead)!.closure;
+    const right = this.version(local.repoId, remoteHead)!.closure;
     return { localHead: preview.localHead, remoteHead, baseHead: preview.baseHead, conflicts: preview.conflicts,
-      mergeAvailable: preview.candidate !== null, local: summary(preview.localHead), remote: summary(remoteHead) };
+      mergeAvailable: preview.candidate !== null, questions: this.conflictQuestions(base, left, right, preview.conflicts),
+      settled: this.conflictSettled(base, left, right, preview.conflicts),
+      local: summary(preview.localHead), remote: summary(remoteHead) };
   }
 
   conflictFile(docId: string, remoteHead: string, path: string): PeerConflictFile {
@@ -581,8 +605,46 @@ export class DesignDocSyncStore {
       const row = closure?.files.find((file) => file.path === path);
       return row ? { content: row.content, encoding: row.encoding } : null;
     };
-    return { localHead: preview.localHead, remoteHead, local: file(this.version(local.repoId, preview.localHead)!.closure),
+    const base = preview.baseHead ? this.version(local.repoId, preview.baseHead) : null;
+    const baseClosure: PeerDocumentClosure | null = base === null ? null : base.closure;
+    return { localHead: preview.localHead, remoteHead, base: file(baseClosure), local: file(this.version(local.repoId, preview.localHead)!.closure),
       remote: file(this.version(local.repoId, remoteHead)!.closure), candidate: file(preview.candidate) };
+  }
+
+  private conflictSettled(base: PeerDocumentClosure | null, local: PeerDocumentClosure, remote: PeerDocumentClosure, conflicts: string[]): PeerConflictSettled[] {
+    if (!base) return [];
+    const equal = (left: unknown, right: unknown) => left === undefined || right === undefined ? left === right : canonicalPeerHash(left) === canonicalPeerHash(right);
+    const maps = [base, local, remote].map((closure) => new Map(closure.files.map((file) => [file.path, file])));
+    const result: PeerConflictSettled[] = [];
+    for (const path of [...new Set(maps.flatMap((map) => [...map.keys()]))].sort(utf8Order)) {
+      const [before, left, right] = maps.map((map) => map.get(path));
+      if (equal(left, before) && equal(right, before)) continue;
+      if (conflicts.some((conflict) => conflict.startsWith(`file ${path}:`)) && !equal(left, right)) continue;
+      result.push({ path, state: equal(left, right) ? 'same' : equal(left, before) ? 'only-theirs' : equal(right, before) ? 'only-mine' : 'merged' });
+    }
+    return result;
+  }
+
+  private conflictQuestions(base: PeerDocumentClosure | null, local: PeerDocumentClosure, remote: PeerDocumentClosure, conflicts: string[]): PeerConflictQuestion[] {
+    if (!base) return [];
+    const equal = (left: unknown, right: unknown) => left === undefined || right === undefined ? left === right : canonicalPeerHash(left) === canonicalPeerHash(right);
+    const questions: PeerConflictQuestion[] = [];
+    const byPath = (closure: PeerDocumentClosure) => new Map(closure.files.map((file) => [file.path, file]));
+    const maps = [base, local, remote].map(byPath);
+    for (const path of new Set(maps.flatMap((map) => [...map.keys()]))) {
+      const [before, left, right] = maps.map((map) => map.get(path));
+      if (conflicts.some((conflict) => conflict.startsWith(`file ${path}:`)) && !equal(left, before) && !equal(right, before) && !equal(left, right)) {
+        questions.push({ kind: 'file', key: `file:${path}`, label: path, choices: ['local', 'remote'] });
+      }
+    }
+    for (const key of ['title', 'summary', 'status', 'tags', 'entry_path'] as const) {
+      if (!equal(local.doc[key], base.doc[key]) && !equal(remote.doc[key], base.doc[key]) && !equal(local.doc[key], remote.doc[key])) {
+        const show = (value: unknown) => (typeof value === 'string' ? value : JSON.stringify(value ?? null)).slice(0, 500);
+        questions.push({ kind: 'field', key: `field:${key}`, label: key === 'entry_path' ? 'entry path' : key, choices: ['local', 'remote'],
+          localValue: show(local.doc[key]), remoteValue: show(remote.doc[key]) });
+      }
+    }
+    return questions;
   }
 
   conflictCandidate(docId: string, remoteHead: string): DocumentMergeResult & { localHead: string; remoteHead: string; baseHead: string | null } {
@@ -627,30 +689,271 @@ export class DesignDocSyncStore {
     return common.filter((head) => !nonBases.has(head));
   }
 
+  /** Decide before writing; missing, ambiguous or bounded-out ancestry remains an ordinary fork. */
+  private autoSettlement(repoId: string, docId: string, current: string, incoming: string):
+    { head: string; rule: string; candidate?: PeerDocumentClosure } | null {
+    if (!this.autoConverge()) return null;
+    try {
+      const local = this.localRepository()!, left = this.version(repoId, current), right = this.version(repoId, incoming);
+      if (!left || !right || isDeletionClosure(left.closure) || isDeletionClosure(right.closure)) return null;
+      if (left.closure.doc.slug !== right.closure.doc.slug) return null;
+      if (canonicalPeerHash(this.capture(docId)) !== projectionHash(left.closure)) return null;
+      for (const operation of [left.operation, right.operation]) {
+        if (!this.db.prepare('SELECT 1 FROM sync_group_members WHERE repo_id = ? AND replica_id = ?').get(repoId, operation.replicaId)) return null;
+      }
+      const bases = this.mergeBases(repoId, docId, current, incoming);
+      if (bases.length !== 1) return null;
+      const base = this.version(repoId, bases[0]!);
+      if (!base || isDeletionClosure(base.closure)) return null;
+      if (contentEquals(left.closure, right.closure)) return { head: [current, incoming].sort()[0]!, rule: 'identical' };
+      if (contentEquals(left.closure, base.closure)) return { head: incoming, rule: 'one-sided' };
+      if (contentEquals(right.closure, base.closure)) return { head: current, rule: 'one-sided' };
+      // A sibling duplicate can be bypassed; a later deliberate revert cannot.
+      const duplicateWinners = new Set<string>();
+      for (const [duplicate, descendant] of [[left, right], [right, left]]) {
+        const pending = [...descendant!.operation.parents], seen = new Set<string>();
+        while (pending.length) {
+          const head = pending.pop()!;
+          if (seen.has(head)) continue;
+          if (seen.size >= MAX_PEER_SESSION_OPERATIONS) return null;
+          seen.add(head);
+          const ancestor = this.version(repoId, head);
+          if (!ancestor) return null;
+          if (contentEquals(duplicate!.closure, ancestor.closure) &&
+            duplicate!.operation.parents.every(parent => this.isAncestor(repoId, parent, head))) {
+            duplicateWinners.add(descendant!.operation.id);
+            break;
+          }
+          pending.push(...(this.operation(repoId, head)?.parents ?? []));
+        }
+      }
+      if (duplicateWinners.size > 1) return null;
+      if (duplicateWinners.size === 1) return { head: [...duplicateWinners][0]!, rule: 'duplicate-ancestor' };
+      const result = mergeDocument(base.closure, left.closure, right.closure);
+      if (!result.candidate) return null;
+      const authors = this.members(repoId).map(member => member.replicaId)
+        .filter(id => id === left.operation.replicaId || id === right.operation.replicaId).sort();
+      if (!authors.length) return null;
+      // A status retained after editing is not consent to publish those new edits or their parents.
+      for (const head of [current, incoming]) if (!this.db.prepare(`SELECT 1 FROM sync_intents WHERE repo_id = ? AND frozen_head = ?
+        UNION ALL SELECT 1 FROM sync_peer_known WHERE repo_id = ? AND head_id = ? LIMIT 1`).get(repoId, head, repoId, head)) return null;
+      return authors[0] === local.replicaId ? { head: current, rule: 'merge', candidate: result.candidate }
+        : { head: current, rule: 'waiting' };
+    } catch (error) {
+      if (error instanceof PeerProtocolError && error.code === 'limit') return null;
+      throw error;
+    }
+  }
+
+  private commitSettlement(repoId: string, docId: string, current: string, incoming: string,
+    settlement: { head: string; rule: string; candidate?: PeerDocumentClosure }): string {
+    let winner = settlement.head;
+    if (settlement.candidate) {
+      const local = this.localRepository()!;
+      const resolved = validateDocumentClosure(orderedProjection({ ...settlement.candidate,
+        doc: { ...settlement.candidate.doc, updated_at: this.now(), updated_by: canonicalJson({ kind: 'user', label: 'Peer sync', threadId: null }) } }));
+      const next = this.db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM sync_operations WHERE repo_id = ? AND replica_id = ?')
+        .get(repoId, local.replicaId) as { sequence: number };
+      const operation: PeerOperation = { id: this.randomId(), replicaId: local.replicaId, sequence: next.sequence, docId,
+        parents: [current, incoming].sort(), kind: PEER_DOCUMENT_KIND, payloadHash: canonicalPeerHash(resolved), origin: 'maintenance' };
+      this.saveVersion(repoId, { operation, closure: resolved });
+      winner = operation.id;
+    }
+    const version = this.version(repoId, winner)!;
+    // Selecting local unsent content does not authorize publishing it as replacement for another head.
+    const sharedWinner = !!this.db.prepare(`SELECT 1 FROM sync_intents WHERE repo_id = ? AND frozen_head = ?
+      UNION ALL SELECT 1 FROM sync_peer_known WHERE repo_id = ? AND head_id = ? LIMIT 1`).get(repoId, winner, repoId, winner);
+    if (winner !== current) this.project(version.closure);
+    if (canonicalPeerHash(this.capture(docId)) !== projectionHash(version.closure)) {
+      throw new PeerProtocolError('conflict', 'automatic settlement projection does not match candidate');
+    }
+    this.setHead(repoId, docId, winner);
+    this.settlementCounts[settlement.rule] = (this.settlementCounts[settlement.rule] ?? 0) + 1;
+    this.db.prepare('DELETE FROM sync_conflicts WHERE repo_id = ? AND doc_id = ? AND ((local_head = ? AND remote_head = ?) OR (local_head = ? AND remote_head = ?))')
+      .run(repoId, docId, current, incoming, incoming, current);
+    this.db.prepare("DELETE FROM sync_retry WHERE intent_id = ?").run(this.waitKey(repoId, docId, current, incoming));
+    const discarded = [current, incoming].filter(head => head !== winner && !this.isAncestor(repoId, head, winner));
+    for (const head of discarded) {
+      const intents = this.db.prepare("SELECT id, member_replica_id FROM sync_intents WHERE repo_id = ? AND doc_id = ? AND frozen_head = ? AND state <> 'synced' LIMIT ?")
+        .all(repoId, docId, head, MAX_PENDING_PEER_INTENTS) as Array<{ id: string; member_replica_id: string }>;
+      // Replace already-authorized deliveries, rather than losing third-party recipients with an offline winner.
+      if (!sharedWinner) continue;
+      if (intents.length) this.createFrozenIntents(repoId, docId, winner, version.operation.payloadHash,
+        this.members(repoId).map(member => member.replicaId).filter(id => !intents.some(intent => intent.member_replica_id === id)));
+      for (const intent of intents) {
+        this.db.prepare("UPDATE sync_intents SET state = 'synced', updated_at = ? WHERE id = ?").run(this.now(), intent.id);
+        this.db.prepare('DELETE FROM sync_retry WHERE intent_id = ?').run(intent.id);
+        this.db.prepare('DELETE FROM sync_outgoing_sessions WHERE intent_id = ?').run(intent.id);
+        this.db.prepare(`DELETE FROM sync_transfer_chunks WHERE direction = 'out' AND (repo_id, sender_replica_id, session_id) IN
+          (SELECT repo_id, sender_replica_id, session_id FROM sync_transfers WHERE direction = 'out' AND intent_id = ?)`).run(intent.id);
+        this.db.prepare("DELETE FROM sync_transfers WHERE direction = 'out' AND intent_id = ?").run(intent.id);
+      }
+    }
+    if (settlement.candidate && ['approved', 'implemented', 'archived'].includes(version.closure.doc.status)) {
+      this.createFrozenIntents(repoId, docId, winner, version.operation.payloadHash);
+    }
+    return winner;
+  }
+
+  takeSettlementCounts(): Record<string, number> {
+    const result = this.settlementCounts;
+    this.settlementCounts = {};
+    return result;
+  }
+
+  /** Existing conflict rows and bounded retry metadata retain waiting pairs across restart. */
+  sweepAutoSettlements(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    const local = this.localRepository();
+    if (!local?.groupId || this.isRetiringReplica(local.repoId, local.replicaId)) return counts;
+    this.withVerifiedVersions(() => this.db.transaction(() => {
+      const cursor = this.sweepCursor ? JSON.parse(this.sweepCursor) as [string, string] : ['', ''];
+      const rows = this.db.prepare(`SELECT doc_id, local_head, remote_head FROM sync_conflicts WHERE repo_id = ?
+        AND (doc_id, remote_head) > (?, ?) ORDER BY doc_id, remote_head LIMIT ?`)
+        .all(local.repoId, ...cursor, MAX_PEER_PAGE_OPERATIONS) as Array<{ doc_id: string; local_head: string; remote_head: string; waitKey?: string }>;
+      this.sweepCursor = rows.length === MAX_PEER_PAGE_OPERATIONS ? JSON.stringify([rows.at(-1)!.doc_id, rows.at(-1)!.remote_head]) : '';
+      const waits = this.db.prepare(`SELECT intent_id, error FROM sync_retry WHERE intent_id LIKE 'auto-wait:%'
+        ORDER BY attempts, intent_id LIMIT ?`).all(MAX_PEER_PAGE_OPERATIONS) as Array<{ intent_id: string; error: string }>;
+      for (const row of waits) {
+        const wait = JSON.parse(row.error) as { repoId: string; docId: string; current: string; incoming: string };
+        if (wait.repoId === local.repoId) rows.push({ doc_id: wait.docId, local_head: wait.current, remote_head: wait.incoming, waitKey: row.intent_id });
+      }
+      const seen = new Set<string>();
+      for (const row of rows.slice(0, MAX_PEER_PAGE_OPERATIONS * 2)) {
+        const current = this.head(local.repoId, row.doc_id), incoming = row.remote_head;
+        const key = `${row.doc_id}:${incoming}`;
+        if (seen.has(key)) { if (row.waitKey) this.waitExpired(local.repoId, row.doc_id, row.local_head, incoming, true); continue; }
+        if (!current || this.isDeletionHead(local.repoId, current)) {
+          if (row.waitKey) this.db.prepare('DELETE FROM sync_retry WHERE intent_id = ?').run(row.waitKey);
+          continue;
+        }
+        if (current === incoming || this.isAncestor(local.repoId, incoming, current)) {
+          this.db.prepare('DELETE FROM sync_conflicts WHERE repo_id = ? AND doc_id = ? AND remote_head = ?')
+            .run(local.repoId, row.doc_id, incoming);
+          if (row.waitKey) this.db.prepare('DELETE FROM sync_retry WHERE intent_id = ?').run(row.waitKey);
+          continue;
+        }
+        seen.add(key);
+        const right = this.version(local.repoId, incoming);
+        // docs-kind: allow Slug uniqueness includes templates; any collision prevents projection.
+        if (!right || this.db.prepare('SELECT 1 FROM docs WHERE slug = ? AND id <> ?').get(right.closure.doc.slug, row.doc_id) ||
+          right.closure.comments.some(comment => this.db.prepare('SELECT 1 FROM doc_comments WHERE id = ? AND doc_id <> ?').get(comment.id, row.doc_id))) {
+          if (row.waitKey) {
+            this.fileConflict(local.repoId, row.doc_id, current, incoming);
+            this.db.prepare('DELETE FROM sync_retry WHERE intent_id = ?').run(row.waitKey);
+          }
+          continue;
+        }
+        const settlement = this.autoSettlement(local.repoId, row.doc_id, current, incoming);
+        if (!settlement) {
+          if (row.waitKey) { this.fileConflict(local.repoId, row.doc_id, current, incoming); this.db.prepare('DELETE FROM sync_retry WHERE intent_id = ?').run(row.waitKey); }
+          continue;
+        }
+        if (settlement.rule === 'waiting') {
+          if (row.local_head !== current || this.waitExpired(local.repoId, row.doc_id, current, incoming, true)) {
+            this.fileConflict(local.repoId, row.doc_id, current, incoming);
+          }
+          else this.db.prepare('DELETE FROM sync_conflicts WHERE repo_id = ? AND doc_id = ? AND local_head = ? AND remote_head = ?')
+            .run(local.repoId, row.doc_id, row.local_head, incoming);
+          continue;
+        }
+        this.commitSettlement(local.repoId, row.doc_id, current, incoming, settlement);
+        counts[settlement.rule] = (counts[settlement.rule] ?? 0) + 1;
+      }
+    }));
+    return counts;
+  }
+
+  private waitExpired(repoId: string, docId: string, current: string, incoming: string, pass = false): boolean {
+    const key = this.waitKey(repoId, docId, current, incoming);
+    const row = this.db.prepare('SELECT attempts, last_attempt FROM sync_retry WHERE intent_id = ?').get(key) as
+      { attempts: number; last_attempt: number } | undefined;
+    if (!row) {
+      const count = this.db.prepare("SELECT COUNT(*) AS n FROM sync_retry WHERE intent_id LIKE 'auto-wait:%'").get() as { n: number };
+      if (count.n >= MAX_PEER_STORED_VERSIONS) return true;
+      this.db.prepare('INSERT INTO sync_retry VALUES (?, 0, 0, ?, ?)').run(key, this.now(), canonicalJson({ repoId, docId, current, incoming }));
+    }
+    else if (pass) this.db.prepare('UPDATE sync_retry SET attempts = attempts + 1 WHERE intent_id = ?').run(key);
+    return !!row && row.attempts + Number(pass) >= 3 && this.now() - row.last_attempt >= 30 * 60_000;
+  }
+
+  private waitKey(repoId: string, docId: string, current: string, incoming: string): string {
+    return `auto-wait:${canonicalPeerHash([repoId, docId, [current, incoming].sort()])}`;
+  }
+
+  private fileConflict(repoId: string, docId: string, current: string, incoming: string): void {
+    const count = this.db.prepare('SELECT COUNT(*) AS n FROM sync_conflicts').get() as { n: number };
+    if (count.n >= MAX_PEER_STORED_VERSIONS) throw new PeerProtocolError('limit', 'conflict capacity reached');
+    this.db.prepare('INSERT OR IGNORE INTO sync_conflicts (repo_id, doc_id, local_head, remote_head) VALUES (?, ?, ?, ?)')
+      .run(repoId, docId, current, incoming);
+  }
+
   /** A resolution journals both forks but does not grant permission to share private parents. */
-  resolveConflict(input: { docId: string; expectedHead: string; remoteHead: string; choice: PeerResolutionChoice }, actor: DocActor): string {
+  resolveConflict(input: { docId: string; expectedHead: string; remoteHead: string; choice?: PeerResolutionChoice; choices?: PeerConflictChoices }, actor: DocActor): string {
     return this.db.transaction(() => {
       const local = this.localRepository();
       if (!local?.groupId) throw new PeerProtocolError('invalid', 'sync group is not configured');
       const current = this.head(local.repoId, input.docId);
       if (!input.expectedHead || current !== input.expectedHead) throw new PeerProtocolError('conflict', 'design doc head changed; review the fork again');
       const version = this.version(local.repoId, current);
-      if (!version || canonicalPeerHash(this.capture(input.docId)) !== version.operation.payloadHash) {
+      if (!version || canonicalPeerHash(this.capture(input.docId)) !== projectionHash(version.closure)) {
         throw new PeerProtocolError('conflict', 'design doc projection changed; review the fork again');
       }
       const preview = this.conflictCandidate(input.docId, input.remoteHead);
       let closure: PeerDocumentClosure;
-      if (input.choice === 'merge') {
+      if (input.choices) {
+        if (input.choice !== undefined) throw new PeerProtocolError('invalid', 'provide either choice or choices, not both');
+        const localClosure = this.version(local.repoId, current)!.closure;
+        const remoteClosure = this.version(local.repoId, input.remoteHead)!.closure;
+        const baseVersion = preview.baseHead ? this.version(local.repoId, preview.baseHead) : null;
+        const questions = this.conflictQuestions(baseVersion ? baseVersion.closure : null, localClosure, remoteClosure, preview.conflicts);
+        const keys = Object.keys(input.choices).sort();
+        if (keys.length !== questions.length || keys.some((key, index) => key !== questions.map((q) => q.key).sort()[index])) {
+          throw new PeerProtocolError('conflict', 'review questions changed; review the fork again');
+        }
+        // Settle each asked question by making both sides agree on the chosen value, then run the ordinary
+        // three-way merge: remote-only comments, threads, history and settled files are preserved by mergeDocument.
+        if (!baseVersion) throw new PeerProtocolError('conflict', 'common ancestor unavailable; review the fork again');
+        const baseClosure = baseVersion.closure;
+        const adjusted = { local: { ...localClosure, doc: { ...localClosure.doc }, files: [...localClosure.files] },
+          remote: { ...remoteClosure, doc: { ...remoteClosure.doc }, files: [...remoteClosure.files] } };
+        const labelPath = (id: string) => (baseClosure.files.find((f) => f.sync_id === id) ?? localClosure.files.find((f) => f.sync_id === id)
+          ?? remoteClosure.files.find((f) => f.sync_id === id))!.path;
+        for (const question of questions) {
+          const choice = input.choices[question.key];
+          if (!choice || !question.choices.includes(choice)) throw new PeerProtocolError('invalid', `invalid choice for ${question.label}`);
+          const source = choice === 'remote' ? remoteClosure : localClosure;
+          if (question.kind === 'file') {
+            const path = question.key.slice('file:'.length);
+            const ids = new Set([baseClosure, localClosure, remoteClosure].flatMap((c) => c.files.map((f) => f.sync_id)));
+            for (const id of ids) {
+              if (labelPath(id) !== path) continue;
+              const chosen = source.files.find((f) => f.sync_id === id);
+              for (const side of [adjusted.local, adjusted.remote]) {
+                side.files = side.files.filter((f) => f.sync_id !== id);
+                if (chosen) side.files.push(chosen);
+              }
+            }
+          } else {
+            const field = question.key.slice('field:'.length) as 'title' | 'summary' | 'status' | 'tags' | 'entry_path';
+            Object.assign(adjusted.local.doc, { [field]: source.doc[field] });
+            Object.assign(adjusted.remote.doc, { [field]: source.doc[field] });
+          }
+        }
+        const merged = mergeDocument(baseClosure, adjusted.local, adjusted.remote);
+        if (!merged.candidate) throw new PeerProtocolError('conflict', `unresolved differences remain: ${merged.conflicts.join('; ')}`);
+        closure = merged.candidate;
+      } else if (input.choice === 'merge') {
         if (!preview.candidate) throw new PeerProtocolError('conflict', preview.conflicts.join('; '));
         closure = preview.candidate;
       } else if (input.choice === 'local' || input.choice === 'remote') {
         closure = this.version(local.repoId, input.choice === 'local' ? current : input.remoteHead)!.closure;
       } else throw new PeerProtocolError('invalid', 'invalid peer resolution choice');
       const base = preview.baseHead && this.version(local.repoId, preview.baseHead);
-      const history = input.choice === 'merge' ? closure.history : mergeHistory([
+      const history = input.choice === 'merge' || input.choices ? closure.history : mergeHistory([
         ...(base ? [base.closure.history] : []), version.closure.history, this.version(local.repoId, input.remoteHead)!.closure.history], closure.history);
-      const resolved = validateDocumentClosure({ ...closure, history,
-        doc: { ...closure.doc, updated_at: this.now(), updated_by: canonicalJson(actor) } });
+      const resolved = validateDocumentClosure(orderedProjection({ ...closure, history,
+        doc: { ...closure.doc, updated_at: this.now(), updated_by: canonicalJson(actor) } }));
       const next = this.db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM sync_operations WHERE repo_id = ? AND replica_id = ?')
         .get(local.repoId, local.replicaId) as { sequence: number };
       const operation: PeerOperation = { id: this.randomId(), replicaId: local.replicaId, sequence: next.sequence, docId: input.docId,
@@ -1171,6 +1474,7 @@ export class DesignDocSyncStore {
       };
       const closure = validatedClosure({ ...manifest, files: hydrate(manifest.files), history: hydrate(manifest.history) });
       closurePayloadHash(closure); // Warm the payload hash outside the fence; saveVersion re-uses it.
+      projectionHash(closure);
       return { operation: version.operation, closure };
     });
     return { versions, used: used.size };
@@ -1251,14 +1555,17 @@ export class DesignDocSyncStore {
         this.saveVersion(offer.repoId, version);
       }
       const appliedHeads: Record<string, string> = {};
-      let merged = false, deleted = false;
+      let merged = false, deleted = false, waiting = false;
+      const settledHeads = new Set<string>();
       for (const [docId, incoming] of Object.entries(offer.heads)) {
         const version = this.version(offer.repoId, incoming)!;
+        this.markKnown(offer.repoId, offer.senderReplicaId, incoming);
         this.refuseTemplateId(docId);
         const exists = this.db.prepare(`SELECT id FROM docs WHERE ${DOC_ONLY} AND id = ?`).get(docId);
         let current = this.head(offer.repoId, docId);
         // Untracked/preexisting local data is a fork, not permission to overwrite.
-        if (exists && (!current || canonicalPeerHash(this.capture(docId)) !== this.version(offer.repoId, current)?.operation.payloadHash)) {
+        const currentVersion = current && this.version(offer.repoId, current);
+        if (exists && (!currentVersion || canonicalPeerHash(this.capture(docId)) !== projectionHash(currentVersion.closure))) {
           this.recordLocalMutation({ docId, kind: 'document', payload: null, origin: 'maintenance' });
           current = this.head(offer.repoId, docId);
         }
@@ -1310,6 +1617,20 @@ export class DesignDocSyncStore {
         // docs-kind: allow Slug uniqueness spans both kinds; a collision must become a fork, never overwrite a template.
         const slugClash = this.db.prepare('SELECT id FROM docs WHERE slug = ? AND id <> ?').get(version.closure.doc.slug, docId);
         const commentClash = version.closure.comments.some((comment) => this.db.prepare('SELECT id FROM doc_comments WHERE id = ? AND doc_id <> ?').get(comment.id, docId));
+        if (!safe && current && !slugClash && !commentClash) {
+          const settlement = this.autoSettlement(offer.repoId, docId, current, incoming);
+          if (settlement && settlement.rule !== 'waiting') {
+            appliedHeads[docId] = this.commitSettlement(offer.repoId, docId, current, incoming, settlement);
+            merged = true;
+            settledHeads.add(incoming);
+            continue;
+          }
+          if (settlement?.rule === 'waiting' && !this.waitExpired(offer.repoId, docId, current, incoming)) {
+            appliedHeads[docId] = current;
+            waiting = true;
+            continue;
+          }
+        }
         if (!safe || slugClash || commentClash) {
           const count = this.db.prepare('SELECT COUNT(*) AS n FROM sync_conflicts').get() as { n: number };
           if (count.n >= MAX_PEER_STORED_VERSIONS) throw new PeerProtocolError('limit', 'conflict capacity reached');
@@ -1318,7 +1639,7 @@ export class DesignDocSyncStore {
           continue;
         }
         if (current !== incoming || !exists) this.project(version.closure);
-        if (canonicalPeerHash(this.capture(docId)) !== version.operation.payloadHash) {
+        if (canonicalPeerHash(this.capture(docId)) !== projectionHash(version.closure)) {
           throw new PeerProtocolError('conflict', 'durable projection does not match frozen payload');
         }
         this.setHead(offer.repoId, docId, incoming);
@@ -1329,11 +1650,12 @@ export class DesignDocSyncStore {
       for (const [docId, incoming] of Object.entries(offer.heads)) {
         const version = this.version(offer.repoId, incoming)!;
         this.markKnown(offer.repoId, offer.senderReplicaId, incoming);
+        if (settledHeads.has(incoming) && appliedHeads[docId] !== incoming) continue;
         this.createFrozenIntents(offer.repoId, docId, incoming, version.operation.payloadHash, [offer.senderReplicaId, version.operation.replicaId]);
       }
       if (deleted) this.pruneTombstones(offer.repoId);
       const body: Omit<PeerAppliedReceipt, 'checkpointHash'> = { sessionId: offer.sessionId, scopeHash: offer.scopeHash,
-        stage: Object.keys(appliedHeads).length === Object.keys(offer.heads).length ? merged ? 'merged' : 'synced' : 'conflict',
+        stage: Object.keys(appliedHeads).length === Object.keys(offer.heads).length ? waiting ? 'received' : merged ? 'merged' : 'synced' : 'conflict',
         heads: offer.heads, appliedHeads };
       const receipt = { ...body, checkpointHash: createCheckpointHash(body) };
       const count = this.db.prepare('SELECT COUNT(*) AS n FROM sync_checkpoints').get() as { n: number };
@@ -1416,6 +1738,15 @@ export class DesignDocSyncStore {
   private setHead(repoId: string, docId: string, head: string): void {
     this.db.prepare('INSERT INTO sync_doc_heads (repo_id, doc_id, head_id) VALUES (?, ?, ?) ON CONFLICT (repo_id, doc_id) DO UPDATE SET head_id = excluded.head_id')
       .run(repoId, docId, head);
+    const waits = this.db.prepare(`SELECT intent_id, error FROM sync_retry WHERE intent_id LIKE 'auto-wait:%'
+      AND json_extract(error, '$.repoId') = ? AND json_extract(error, '$.docId') = ? LIMIT ?`)
+      .all(repoId, docId, MAX_PEER_PAGE_OPERATIONS) as Array<{ intent_id: string; error: string }>;
+    for (const wait of waits) {
+      const pair = JSON.parse(wait.error) as { current: string; incoming: string };
+      if (this.isAncestor(repoId, pair.current, head) && this.isAncestor(repoId, pair.incoming, head)) {
+        this.db.prepare('DELETE FROM sync_retry WHERE intent_id = ?').run(wait.intent_id);
+      }
+    }
   }
 
   private reserveBytes(extra: number): void {
@@ -1548,7 +1879,7 @@ export class DesignDocSyncStore {
     const foreign = refs ? JSON.parse(refs.threads_json) as PeerDocumentClosure['threads'] : [];
     const mergedThreads = new Map([...foreign, ...threads].map((thread) => [thread.thread_id, thread]));
     return validateDocumentClosure({ doc: { ...doc, tags: JSON.parse(doc.tags), project_id: refs ? JSON.parse(refs.project_json) : doc.project_id },
-      files, history, comments, threads: [...mergedThreads.values()].sort((a, b) => a.thread_id.localeCompare(b.thread_id)) });
+      files, history, comments, threads: [...mergedThreads.values()].sort((a, b) => utf8Order(a.thread_id, b.thread_id)) });
   }
 
   private project(closure: PeerDocumentClosure): void {
@@ -1653,15 +1984,43 @@ export class DesignDocSyncStore {
     ).all(repoId, includeDeferred ? Number.MAX_SAFE_INTEGER : this.now(), Math.min(Math.max(1, limit), 100)) as IntentRow[]).map(toIntent);
   }
 
-  deferIntent(intent: FrozenSyncIntent, error: string): void {
+  /** Explicit owner retry never revives removed recipients, fork receipts or retired deletes. */
+  retryBlockedIntents(): void {
+    const local = this.localRepository();
+    if (!local?.groupId || this.isRetiringReplica(local.repoId, local.replicaId)) return;
     this.db.transaction(() => {
-      if (!this.db.prepare("SELECT 1 FROM sync_intents WHERE id = ? AND repo_id = ? AND state = 'pending'").get(intent.id, intent.repoId)) return;
+      const rows = this.db.prepare(`SELECT i.*, r.error FROM sync_intents i LEFT JOIN sync_retry r ON r.intent_id = i.id
+        WHERE i.repo_id = ? AND i.state IN ('pending', 'blocked') LIMIT ?`)
+        .all(local.repoId, MAX_PENDING_PEER_INTENTS) as Array<IntentRow & { error: string | null }>;
+      const members = new Set(this.members(local.repoId).map(member => member.replicaId));
+      for (const row of rows) {
+        if (this.db.prepare('SELECT 1 FROM sync_peer_known WHERE repo_id = ? AND member_replica_id = ? AND head_id = ?')
+          .get(local.repoId, row.member_replica_id, row.frozen_head)) {
+          this.markKnown(local.repoId, row.member_replica_id, row.frozen_head);
+          continue;
+        }
+        if (!row.error) continue;
+        if (!members.has(row.member_replica_id) || (!isOfflineSyncError(row.error) && !/^peer request failed: (409|429|5\d\d)(?:\b|:)/.test(row.error))) continue;
+        const receipt = this.db.prepare('SELECT stage FROM sync_receipts WHERE repo_id = ? AND member_replica_id = ? AND frozen_head = ?')
+          .get(local.repoId, row.member_replica_id, row.frozen_head) as { stage: string } | undefined;
+        if (receipt?.stage === 'conflict' || (this.isDeletionHead(local.repoId, this.head(local.repoId, row.doc_id) ?? '') &&
+          row.frozen_head !== this.head(local.repoId, row.doc_id))) continue;
+        this.db.prepare("UPDATE sync_intents SET state = 'pending', updated_at = ? WHERE id = ?").run(this.now(), row.id);
+        this.db.prepare('DELETE FROM sync_retry WHERE intent_id = ?').run(row.id);
+      }
+    });
+  }
+
+  /** Records one failed or unfinished attempt; returns the attempt count so far (0 when nothing was recorded). */
+  deferIntent(intent: FrozenSyncIntent, error: string): number {
+    return this.db.transaction(() => {
+      if (!this.db.prepare("SELECT 1 FROM sync_intents WHERE id = ? AND repo_id = ? AND state = 'pending'").get(intent.id, intent.repoId)) return 0;
       const replicaId = this.repository(intent.repoId)?.replica_id;
-      if (replicaId && this.isRetiringReplica(intent.repoId, replicaId)) return;
+      if (replicaId && this.isRetiringReplica(intent.repoId, replicaId)) return 0;
       if (this.isRetiringReplica(intent.repoId, intent.memberReplicaId)) {
         this.db.prepare("UPDATE sync_intents SET state = 'blocked', updated_at = ? WHERE id = ? AND state = 'pending'")
           .run(this.now(), intent.id);
-        return;
+        return 0;
       }
       const attempts = ((this.db.prepare('SELECT attempts FROM sync_retry WHERE intent_id = ?').get(intent.id) as { attempts: number } | undefined)?.attempts ?? 0) + 1;
       if (attempts >= MAX_INTENT_ATTEMPTS) {
@@ -1670,7 +2029,8 @@ export class DesignDocSyncStore {
       const delay = Math.min(PEER_RETRY_MAX_MS, 1000 * 2 ** Math.min(attempts - 1, 10));
       this.db.prepare(`INSERT INTO sync_retry VALUES (?, ?, ?, ?, ?) ON CONFLICT (intent_id) DO UPDATE SET
         attempts = excluded.attempts, next_at = excluded.next_at, last_attempt = excluded.last_attempt, error = excluded.error`)
-        .run(intent.id, attempts, this.now() + delay, this.now(), error.slice(0, 240));
+        .run(intent.id, attempts, this.now() + delay, this.now(), boundSyncError(error));
+      return attempts;
     });
   }
 
@@ -1689,26 +2049,119 @@ export class DesignDocSyncStore {
       : this.db.prepare('SELECT doc_id, head_id FROM sync_doc_heads WHERE repo_id = ? ORDER BY doc_id LIMIT ?').all(local.repoId, MAX_DOC_SYNC_STATUS)
     ) as Array<{ doc_id: string; head_id: string }>;
     const known = this.db.prepare('SELECT 1 FROM sync_peer_known WHERE repo_id = ? AND member_replica_id = ? AND head_id = ?');
-    const intent = this.db.prepare(`SELECT i.state AS state, r.error AS error FROM sync_intents i LEFT JOIN sync_retry r ON r.intent_id = i.id
+    const intent = this.db.prepare(`SELECT i.state AS state, r.error AS error, r.last_attempt AS lastAttempt FROM sync_intents i LEFT JOIN sync_retry r ON r.intent_id = i.id
       WHERE i.repo_id = ? AND i.doc_id = ? AND i.frozen_head = ? AND i.member_replica_id = ?`);
     const receipt = this.db.prepare('SELECT stage FROM sync_receipts WHERE repo_id = ? AND member_replica_id = ? AND frozen_head = ?');
-    const conflict = this.db.prepare('SELECT 1 FROM sync_conflicts WHERE repo_id = ? AND doc_id = ? LIMIT 1');
     return heads.map((row) => {
-      let state: DocSyncState = 'up-to-date', computers = 0;
+      let state: DocSyncState = 'up-to-date', computers = 0, lastError: string | null = null, lastErrorAt: number | null = null;
       const raise = (next: DocSyncState) => { if (SYNC_STATE_RANK[next] > SYNC_STATE_RANK[state]) state = next; };
-      if (conflict.get(local.repoId, row.doc_id)) raise('needs-choice');
-      for (const member of members) {
-        if (known.get(local.repoId, member.replicaId, row.head_id)) continue;
-        computers++;
-        const queued = intent.get(local.repoId, row.doc_id, row.head_id, member.replicaId) as { state: string; error: string | null } | undefined;
-        const stage = (receipt.get(local.repoId, member.replicaId, row.head_id) as { stage: PeerReceiptStage } | undefined)?.stage;
-        if (stage === 'conflict') raise('needs-choice');
-        else if (!queued) raise('unsent');
-        else if (queued.state === 'blocked') raise(queued.error && !isOfflineSyncError(queued.error) ? 'failed' : 'waiting');
-        else raise('waiting');
+      const closure = this.version(local.repoId, row.head_id)?.closure;
+      const differences = new Set<string>();
+      if (this.db.prepare(`SELECT 1 FROM sync_retry WHERE intent_id LIKE 'auto-wait:%' AND json_extract(error, '$.repoId') = ?
+        AND json_extract(error, '$.docId') = ? LIMIT 1`).get(local.repoId, row.doc_id)) raise('waiting');
+      const forks = this.db.prepare('SELECT remote_head FROM sync_conflicts WHERE repo_id = ? AND doc_id = ? LIMIT ?')
+        .all(local.repoId, row.doc_id, MAX_PEER_PAGE_OPERATIONS) as Array<{ remote_head: string }>;
+      for (const fork of forks) {
+        const remote = this.version(local.repoId, fork.remote_head)?.closure;
+        if (!closure || !remote) raise('unknown');
+        else if (!contentEquals(closure, remote)) {
+          raise('needs-choice');
+          for (const difference of contentDifferences(closure, remote)) differences.add(difference);
+        }
       }
-      return { docId: row.doc_id, state, computers: state === 'up-to-date' ? 0 : computers };
+      for (const member of members) {
+        const peerHeads = this.db.prepare(`SELECT k.head_id FROM sync_peer_known k JOIN sync_operations o
+          ON o.repo_id = k.repo_id AND o.op_id = k.head_id WHERE k.repo_id = ? AND k.member_replica_id = ? AND o.doc_id = ?
+          AND NOT EXISTS (SELECT 1 FROM sync_peer_known child JOIN sync_operations co ON co.repo_id = child.repo_id AND co.op_id = child.head_id,
+            json_each(co.parents_json) p WHERE child.repo_id = k.repo_id AND child.member_replica_id = k.member_replica_id AND p.value = k.head_id)
+          LIMIT ?`).all(local.repoId, member.replicaId, row.doc_id, MAX_PEER_PAGE_OPERATIONS + 1) as Array<{ head_id: string }>;
+        const remote = peerHeads.length === 1 ? this.version(local.repoId, peerHeads[0]!.head_id)?.closure : null;
+        if (closure && peerHeads.length && peerHeads.length <= MAX_PEER_PAGE_OPERATIONS && peerHeads.every(head => {
+          const peerClosure = this.version(local.repoId, head.head_id)?.closure;
+          return peerClosure && contentEquals(closure, peerClosure);
+        })) continue;
+        if (closure && remote && contentEquals(closure, remote)) continue;
+        if (!peerHeads.length && known.get(local.repoId, member.replicaId, row.head_id)) continue;
+        computers++;
+        if (peerHeads.length && !remote) { raise('unknown'); continue; }
+        const queued = intent.get(local.repoId, row.doc_id, row.head_id, member.replicaId) as { state: string; error: string | null; lastAttempt: number | null } | undefined;
+        const stage = (receipt.get(local.repoId, member.replicaId, row.head_id) as { stage: PeerReceiptStage } | undefined)?.stage;
+        if (stage === 'conflict') {
+          if (!closure || !remote) raise('unknown');
+          else { raise('needs-choice'); for (const difference of contentDifferences(closure, remote)) differences.add(difference); }
+        }
+        else if (!queued) raise('unsent');
+        else {
+          // Pending (retrying) and blocked deliveries are classified from the same stored error, so a retrying
+          // delivery that keeps failing reads `failed` rather than a silent `waiting`.
+          raise(classifyDelivery(queued.error));
+          if (queued.error && !isStageToken(queued.error) && (lastErrorAt === null || (queued.lastAttempt ?? 0) >= lastErrorAt)) {
+            lastError = boundSyncError(queued.error); lastErrorAt = queued.lastAttempt ?? 0;
+          }
+        }
+      }
+      const final = state as DocSyncState, shown = final === 'waiting' || final === 'failed';
+      return { docId: row.doc_id, state, computers: state === 'up-to-date' ? 0 : computers,
+        lastError: shown ? lastError : null, lastErrorAt: shown && lastError ? lastErrorAt : null,
+        ...(differences.size ? { differences: [...differences].sort(utf8Order) } : {}) };
     });
+  }
+
+  /**
+   * Every queued, undelivered send, per doc and computer, with its stored error. No schema change: `sync_retry` is
+   * keyed by intent, and an intent is one doc version for one computer. Bounded, oldest first.
+   */
+  queuedDeliveries(docId?: string, limit = 500): SyncQueueEntry[] {
+    const local = this.localRepository();
+    if (!local?.groupId || local.rosterEpoch < 1) return [];
+    const machines = new Map(this.members(local.repoId).map((member) => [member.replicaId, member.machineId]));
+    const rows = this.db.prepare(`SELECT i.doc_id, i.member_replica_id, i.state, i.created_at, r.attempts, r.last_attempt, r.error
+      FROM sync_intents i LEFT JOIN sync_retry r ON r.intent_id = i.id
+      WHERE i.repo_id = ? AND i.state <> 'synced' ${docId ? 'AND i.doc_id = ?' : ''}
+      ORDER BY i.created_at, i.id LIMIT ?`)
+      .all(...(docId ? [local.repoId, docId] : [local.repoId]), Math.min(Math.max(1, limit), 2000)) as Array<{
+        doc_id: string; member_replica_id: string; state: string; created_at: number; attempts: number | null; last_attempt: number | null; error: string | null }>;
+    return rows.filter((row) => machines.has(row.member_replica_id)).map((row) => {
+      const error = row.error && !isStageToken(row.error) ? boundSyncError(row.error) : null;
+      return { docId: row.doc_id, peerId: machines.get(row.member_replica_id)!, replicaId: row.member_replica_id, direction: 'outgoing' as const,
+        state: classifyDelivery(row.error), lastError: error, lastErrorAt: error ? row.last_attempt : null,
+        attempts: row.attempts ?? 0, queuedAt: row.created_at, parked: row.state === 'blocked' };
+    });
+  }
+
+  /** Per other computer: queue depth, oldest queued age and the last 20 errors. Read-only. */
+  peerDiagnostics(): PeerDiagnostics[] {
+    const local = this.localRepository();
+    if (!local?.groupId || local.rosterEpoch < 1) return [];
+    const queue = this.queuedDeliveries(undefined, 2000);
+    return this.members(local.repoId).filter((member) => member.replicaId !== local.replicaId).map((member) => {
+      const mine = queue.filter((entry) => entry.replicaId === member.replicaId);
+      return { replicaId: member.replicaId, peerId: member.machineId, queueDepth: mine.length,
+        queuedDocs: new Set(mine.map((entry) => entry.docId)).size,
+        failed: mine.filter((entry) => entry.state === 'failed').length, waiting: mine.filter((entry) => entry.state === 'waiting').length,
+        oldestQueuedAt: mine.length ? Math.min(...mine.map((entry) => entry.queuedAt)) : null,
+        recentErrors: mine.filter((entry) => entry.lastError).sort((a, b) => (b.lastErrorAt ?? 0) - (a.lastErrorAt ?? 0)).slice(0, 20)
+          .map((entry) => ({ docId: entry.docId, error: entry.lastError!, at: entry.lastErrorAt ?? 0, attempts: entry.attempts })) };
+    });
+  }
+
+  /**
+   * A content hash per doc head, salted with the sync group id: two computers in the group get equal hashes for
+   * equal content whatever their internal heads, and hashes mean nothing outside the group. Paged by doc id.
+   */
+  compareDocs(offset = 0, limit = 500): CompareResult | null {
+    const local = this.localRepository();
+    if (!local?.groupId || local.rosterEpoch < 1) return null;
+    const bounded = Math.min(Math.max(1, Math.trunc(limit)), MAX_COMPARE_PAGE), start = Math.max(0, Math.trunc(offset));
+    const total = (this.db.prepare('SELECT COUNT(*) AS n FROM sync_doc_heads WHERE repo_id = ?').get(local.repoId) as { n: number }).n;
+    const heads = this.db.prepare('SELECT doc_id, head_id FROM sync_doc_heads WHERE repo_id = ? ORDER BY doc_id LIMIT ? OFFSET ?')
+      .all(local.repoId, bounded, start) as Array<{ doc_id: string; head_id: string }>;
+    const docs = heads.map((row) => {
+      const closure = this.version(local.repoId, row.head_id)?.closure;
+      return { docId: row.doc_id, hash: closure ? canonicalPeerHash({ salt: local.groupId, content: documentContent(closure) }).slice(0, 16) : null,
+        files: closure?.files.length ?? 0 };
+    });
+    return { total, offset: start, limit: bounded, docs };
   }
 
   private markKnown(repoId: string, member: string, head: string): void {
@@ -1724,6 +2177,19 @@ export class DesignDocSyncStore {
     }
     const count = this.db.prepare('SELECT COUNT(*) AS n FROM sync_peer_known').get() as { n: number };
     if (count.n > MAX_PEER_STORED_VERSIONS * MAX_PEER_GROUP_MEMBERS) throw new PeerProtocolError('limit', 'peer known head capacity reached');
+    // Inbound heads and verified receipts both prove durable possession; close stale failures too.
+    const intents = this.db.prepare(`SELECT i.* FROM sync_intents i JOIN sync_peer_known k ON k.repo_id = i.repo_id
+      AND k.member_replica_id = i.member_replica_id AND k.head_id = i.frozen_head
+      WHERE i.repo_id = ? AND i.member_replica_id = ? AND i.state <> 'synced' LIMIT ?`)
+      .all(repoId, member, MAX_PENDING_PEER_INTENTS) as IntentRow[];
+    for (const intent of intents) {
+      this.recordReceipt(repoId, member, intent.frozen_head, intent.scope_hash, 'synced');
+      this.db.prepare('DELETE FROM sync_retry WHERE intent_id = ?').run(intent.id);
+      this.db.prepare('DELETE FROM sync_outgoing_sessions WHERE intent_id = ?').run(intent.id);
+      this.db.prepare(`DELETE FROM sync_transfer_chunks WHERE direction = 'out' AND (repo_id, sender_replica_id, session_id) IN
+        (SELECT repo_id, sender_replica_id, session_id FROM sync_transfers WHERE direction = 'out' AND intent_id = ?)`).run(intent.id);
+      this.db.prepare("DELETE FROM sync_transfers WHERE direction = 'out' AND intent_id = ?").run(intent.id);
+    }
   }
 
   acceptReceipt(intent: FrozenSyncIntent, offer: PeerSessionOffer, receipt: PeerAppliedReceipt): void {
@@ -1736,8 +2202,7 @@ export class DesignDocSyncStore {
     }
     this.db.transaction(() => {
       this.recordReceipt(intent.repoId, intent.memberReplicaId, intent.frozenHead, intent.scopeHash, receipt.stage);
-      // A verified synced or merged receipt proves the recipient holds the frozen ancestry, as for transfers.
-      if (delivered(receipt.stage)) this.markKnown(intent.repoId, intent.memberReplicaId, intent.frozenHead);
+      this.markAppliedKnown(intent, receipt);
     });
   }
 
@@ -1797,6 +2262,19 @@ export class DesignDocSyncStore {
     const pins = new Set<string>();
     const pin = (head: unknown) => { if (typeof head === 'string' && head) pins.add(head); };
     const heads = (record: unknown) => Object.values((record ?? {}) as Record<string, unknown>).forEach(pin);
+    for (const row of this.db.prepare("SELECT error FROM sync_retry WHERE intent_id LIKE 'auto-wait:%' LIMIT ?")
+      .all(MAX_PEER_STORED_VERSIONS) as Array<{ error: string }>) {
+      const wait = JSON.parse(row.error) as { repoId: string; current: string; incoming: string };
+      if (wait.repoId !== repoId) continue;
+      const pending = [wait.current, wait.incoming], seen = new Set<string>();
+      while (pending.length) {
+        const head = pending.pop()!;
+        if (seen.has(head)) continue;
+        if (seen.size >= MAX_PEER_SESSION_OPERATIONS) throw new PeerProtocolError('limit', 'waiting ancestry capacity reached');
+        seen.add(head); pin(head);
+        pending.push(...(this.operation(repoId, head)?.parents ?? []));
+      }
+    }
     for (const row of this.db.prepare('SELECT head_id FROM sync_doc_heads WHERE repo_id = ?').all(repoId) as Array<{ head_id: string }>) pin(row.head_id);
     // Unsent frozen heads plus the ancestry the recipient is not yet known to hold (what a delta send needs).
     const intents = this.db.prepare(`SELECT frozen_head, member_replica_id FROM sync_intents WHERE repo_id = ? AND state <> 'synced'
@@ -1870,12 +2348,7 @@ export class DesignDocSyncStore {
     this.db.transaction(() => {
       this.recordReceipt(intent.repoId, intent.memberReplicaId, intent.frozenHead, intent.scopeHash, receipt.stage);
       if (delivered(receipt.stage)) {
-        this.markKnown(intent.repoId, intent.memberReplicaId, intent.frozenHead);
-        // A newer applied head covers immutable ancestors, but never claims those old projections are current.
-        this.db.prepare(`UPDATE sync_intents SET state = 'blocked', updated_at = ? WHERE repo_id = ? AND member_replica_id = ?
-          AND frozen_head <> ? AND state = 'pending' AND frozen_head IN
-          (SELECT head_id FROM sync_peer_known WHERE repo_id = ? AND member_replica_id = ?)`)
-          .run(this.now(), intent.repoId, intent.memberReplicaId, intent.frozenHead, intent.repoId, intent.memberReplicaId);
+        this.markAppliedKnown(intent, receipt);
         this.db.prepare("DELETE FROM sync_transfer_chunks WHERE direction = 'out' AND repo_id = ? AND sender_replica_id = ? AND session_id = ?")
           .run(transfer.repoId, transfer.senderReplicaId, transfer.sessionId);
         this.db.prepare("DELETE FROM sync_transfers WHERE direction = 'out' AND intent_id = ?").run(intent.id);
@@ -1884,6 +2357,15 @@ export class DesignDocSyncStore {
         this.pruneTombstones(intent.repoId);
       }
     });
+  }
+
+  private markAppliedKnown(intent: FrozenSyncIntent, receipt: PeerAppliedReceipt): void {
+    if (!delivered(receipt.stage)) return;
+    const applied = receipt.appliedHeads[intent.docId];
+    // A merged ACK can discard a concurrent head. Possession is not inferred from delivery alone.
+    if (applied && this.operationDoc(intent.repoId, applied) === intent.docId) {
+      this.markKnown(intent.repoId, intent.memberReplicaId, applied);
+    }
   }
 
   private recordReceipt(repoId: string, memberReplicaId: string, frozenHead: string, scopeHash: string, stage: PeerReceiptStage): void {
@@ -1980,16 +2462,28 @@ export function delivered(stage: PeerReceiptStage): boolean {
   return stage === 'synced' || stage === 'merged';
 }
 
-/** A failed delivery that only means the other computer was not reachable; it is retried on its own. */
-export function isOfflineSyncError(message: string): boolean {
-  return /unavailable|timed? ?out|not connected|disconnect|ECONN|ENOTFOUND|EHOSTUNREACH|authorization changed/i.test(message);
+export { isOfflineSyncError, classifyDelivery } from '../shared/sync-classify.js';
+
+export type DocSyncState = 'up-to-date' | 'unsent' | 'waiting' | 'needs-choice' | 'failed' | 'unknown';
+export interface DocSyncStatus {
+  docId: string; state: DocSyncState; /** Computers not yet holding this doc's latest version. */ computers: number; differences?: string[];
+  /** Newest bounded, redacted delivery error among this doc's queued deliveries; null when there is none. */
+  lastError: string | null; lastErrorAt: number | null;
 }
 
-export type DocSyncState = 'up-to-date' | 'unsent' | 'waiting' | 'needs-choice' | 'failed';
-export interface DocSyncStatus { docId: string; state: DocSyncState; /** Computers not yet holding this doc's latest version. */ computers: number }
-
-const SYNC_STATE_RANK: Record<DocSyncState, number> = { 'up-to-date': 0, unsent: 1, waiting: 2, failed: 3, 'needs-choice': 4 };
+const SYNC_STATE_RANK: Record<DocSyncState, number> = { 'up-to-date': 0, unsent: 1, waiting: 2, unknown: 3, failed: 4, 'needs-choice': 5 };
 const MAX_DOC_SYNC_STATUS = 2000;
+const MAX_COMPARE_PAGE = 2000;
+
+function contentDifferences(left: PeerDocumentClosure, right: PeerDocumentClosure): string[] {
+  const a = documentContent(left), b = documentContent(right);
+  const result = Object.keys(a).filter(key => key !== 'files' && canonicalPeerHash(a[key]) !== canonicalPeerHash(b[key]));
+  const files = [left, right].map(closure => new Map(closure.files.map(file => [file.path, { content: file.content, encoding: file.encoding }])));
+  for (const path of new Set([...files[0]!.keys(), ...files[1]!.keys()])) {
+    if (canonicalPeerHash(files[0]!.get(path) ?? null) !== canonicalPeerHash(files[1]!.get(path) ?? null)) result.push(path);
+  }
+  return result;
+}
 
 /** The newest stubs ride inline (one page at most); older ones go first as separate ancestry pages. */
 function inlineStubs(stubs: PeerOperation[]): PeerAncestorStubs {

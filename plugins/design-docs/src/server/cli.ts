@@ -7,15 +7,14 @@ import { join, relative, resolve, sep } from 'node:path';
 import type { PluginCliContext, PluginCliResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import type { DocActor } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
-import { MAX_DOC_BYTES, MAX_FILES_PER_DOC } from '../shared/limits.js';
-import { formatBundle } from './format.js';
+import { DEFAULT_LIST_LIMIT, MAX_DOC_BYTES, MAX_FILES_PER_DOC, MAX_LIST_LIMIT } from '../shared/limits.js';
+import { formatBundle, formatList } from './format.js';
 import {
   addFromTemplate,
   commentDoc,
   createDoc,
   docHistory,
   docRef,
-  listDocs,
   readDoc,
   readTemplate,
   updateDoc,
@@ -35,13 +34,15 @@ import type { PluginSdkPeers } from '@zana-ai/zcc-plugin-sdk/server';
 export const CLI_NAME = 'design-docs';
 
 export const CLI_COMMANDS = [
-  { name: 'peers', summary: 'Show database group, link status and pending introductions', usage: 'peers [--json]' },
+  { name: 'peers', summary: 'Show database group, link status and pending introductions; --diagnose adds per-computer queue depth, oldest queued age and last errors (owner only)', usage: 'peers [--diagnose] [--json]' },
   { name: 'enable', summary: 'Enable this database with one mutually enrolled app', usage: 'enable <peer-id>' },
   { name: 'retry-introductions', summary: 'Retry durable group setup jobs', usage: 'retry-introductions' },
   { name: 'remove-peer', summary: 'Commit group removal and queue secure revocation', usage: 'remove-peer <replica-id>' },
   { name: 'revoke-peer', summary: 'Disable local database links without claiming group removal', usage: 'revoke-peer <peer-id>' },
-  { name: 'sync', summary: 'Sync persisted database changes, including drafts', usage: 'sync' },
-  { name: 'list', summary: 'List design docs', usage: 'list [--query <text>] [--status active|all|<status>] [--all-projects] [--json]' },
+  { name: 'sync', summary: 'Sync persisted database changes, including drafts; `sync status [<doc>]` reads queued deliveries and their errors without syncing', usage: 'sync [status [<doc>]]' },
+  { name: 'compare', summary: 'Salted content hash per doc, for diffing two computers (owner only)', usage: 'compare [--offset <n>] [--limit <n>] [--json]' },
+  { name: 'counts', summary: 'Doc totals: all projects and statuses, with the unmapped sub-count', usage: 'counts [--json]' },
+  { name: 'list', summary: 'List design docs', usage: 'list [--query <text>] [--status active|all|<status>] [--offset <n>] [--limit <n>] [--all-projects] [--json]' },
   { name: 'templates', summary: 'List, export, import or purge templates', usage: 'templates (list [--json] | export [key...] --out <file> | import <file> | purge --out <file>)' },
   { name: 'template-read', summary: 'Print a template\'s full files as JSON', usage: 'template-read <key>' },
   { name: 'add-from-template', summary: 'Add a template\'s files to an existing doc (never overwrites)', usage: 'add-from-template <doc> <template-key> [--title <t>] [--summary <s>]' },
@@ -87,7 +88,7 @@ export const CLI_COMMANDS = [
   { name: 'preview', summary: 'Print the URL of an HTML page rendered like the published site', usage: 'preview <doc> [<page.html>]' }
 ] as const;
 
-const BOOLEAN_FLAGS = new Set(['json', 'all', 'all-projects', 'global', 'replace-all', 'help']);
+const BOOLEAN_FLAGS = new Set(['json', 'all', 'all-projects', 'global', 'replace-all', 'diagnose', 'help']);
 
 export interface ParsedArgs {
   positional: string[];
@@ -161,6 +162,11 @@ export interface LocalFile {
   sizeBytes: number;
 }
 
+interface CliOutput {
+  stdout: string;
+  stderr?: string;
+}
+
 export interface CliDeps {
   store: DesignDocStore;
   changed(docId: string): void;
@@ -193,23 +199,41 @@ function stringFlag(flags: ParsedArgs['flags'], name: string): string | undefine
   return typeof value === 'string' ? value : undefined;
 }
 
+function paginationFlag(flags: ParsedArgs['flags'], name: string, fallback: number, minimum: number): number {
+  const raw = stringFlag(flags, name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < minimum) {
+    throw new DesignDocError('invalid', `--${name} must be an integer ${minimum === 0 ? 'at least 0' : 'greater than 0'}`);
+  }
+  return value;
+}
+
 function need(positional: string[], index: number, name: string): string {
   const value = positional[index];
   if (!value) throw new DesignDocError('invalid', `missing <${name}>; see zcc design-docs help`);
   return value;
 }
 
+/** Most docs listed in the `sync` output; the summary counts stay complete. */
+const SYNC_DOCS_LIMIT = 100;
+
 export async function runCli(deps: CliDeps, argv: string[], ctx: PluginCliContext): Promise<PluginCliResult> {
   try {
-    const stdout = await dispatch(deps, argv, ctx);
-    return { exitCode: 0, stdout: stdout.endsWith('\n') ? stdout : `${stdout}\n` };
+    const result = await dispatch(deps, argv, ctx);
+    const stdout = typeof result === 'string' ? result : result.stdout;
+    return {
+      exitCode: 0,
+      stdout: stdout.endsWith('\n') ? stdout : `${stdout}\n`,
+      ...(typeof result === 'string' || !result.stderr ? {} : { stderr: result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n` })
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { exitCode: error instanceof DesignDocError && error.code === 'invalid' ? 2 : 1, stderr: `${message}\n` };
   }
 }
 
-async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): Promise<string> {
+async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): Promise<string | CliOutput> {
   const [verb, ...rest] = argv;
   if (!verb || verb === 'help' || verb === '--help' || verb === '-h') return helpText();
   const { positional, flags } = parseArgs(rest);
@@ -232,11 +256,31 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
   const json = flags.json === true;
 
   // Only the owner changes database sharing: an agent thread must not enable, remove or revoke peers, or start a sync.
-  if (caller.actor.kind === 'agent' && (verb === 'enable' || verb === 'remove-peer' || verb === 'revoke-peer' || verb === 'sync')) {
+  const readOnlySyncStatus = verb === 'sync' && positional[0] === 'status';
+  if (caller.actor.kind === 'agent' && !readOnlySyncStatus && (verb === 'enable' || verb === 'remove-peer' || verb === 'revoke-peer' || verb === 'sync')) {
     throw new DesignDocError('invalid', `${verb} is reserved for the owner and cannot be run by an agent`);
+  }
+  // Diagnostics that name doc ids per computer or hash content are owner-only too.
+  if (caller.actor.kind === 'agent' && (verb === 'compare' || (verb === 'peers' && flags.diagnose === true))) {
+    throw new DesignDocError('invalid', `${verb}${verb === 'peers' ? ' --diagnose' : ''} is reserved for the owner and cannot be run by an agent`);
   }
 
   switch (verb) {
+    case 'compare': {
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      const result = deps.peerSync.compareDocs(paginationFlag(flags, 'offset', 0, 0), paginationFlag(flags, 'limit', 500, 1));
+      if (!result) throw new DesignDocError('invalid', 'database sync is not set up');
+      if (json) return JSON.stringify(result, null, 2);
+      return { stdout: result.docs.map((doc) => `${doc.docId} ${doc.hash ?? 'unavailable'} files=${doc.files}`).join('\n') || 'No docs.',
+        ...(result.offset + result.docs.length < result.total ? { stderr: `showing ${result.docs.length} of ${result.total}` } : {}) };
+    }
+    case 'counts': {
+      const counts = deps.store.counts();
+      if (json) return JSON.stringify(counts, null, 2);
+      return [`${counts.total} docs, ${counts.unmapped} unmapped`,
+        `by status: ${Object.entries(counts.byStatus).map(([status, n]) => `${status} ${n}`).join(', ')}`,
+        ...Object.entries(counts.byProject).map(([id, n]) => `project ${projectName(id) ?? id}: ${n}`)].join('\n');
+    }
     case 'peers':
     case 'enable':
     case 'retry-introductions':
@@ -246,6 +290,13 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
         : verb === 'remove-peer' ? await deps.pairing.remove(need(positional, 0, 'replica-id'))
         : verb === 'retry-introductions' ? (await deps.pairing.retry(true), await deps.pairing.status())
         : await deps.pairing.status();
+      if (verb === 'peers' && flags.diagnose === true) {
+        const diagnostics = deps.peerSync?.peerDiagnostics() ?? [];
+        const members = status.members.map((member) => ({ replicaId: member.replicaId, machineId: member.machineId,
+          connected: member.connected, authorized: member.authorized, grantEpoch: member.grantEpoch }));
+        return JSON.stringify({ ...status, diagnostics: members.filter((member) => diagnostics.some((item) => item.replicaId === member.replicaId))
+          .map((member) => ({ ...member, ...diagnostics.find((item) => item.replicaId === member.replicaId)! })) }, null, 2);
+      }
       return JSON.stringify(status, null, 2);
     }
     case 'revoke-peer': {
@@ -254,19 +305,46 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
     }
     case 'sync': {
       if (!deps.peerSync || !deps.peers) throw new DesignDocError('invalid', 'peer sync is unavailable');
-      return JSON.stringify(await deps.peerSync.syncNow(deps.peers), null, 2);
+      if (readOnlySyncStatus) {
+        const docId = positional[1] ? ref(1) : undefined;
+        const now = Date.now();
+        const queue = deps.peerSync.queuedDeliveries(docId).map((entry) => ({ ...entry, ageMs: Math.max(0, now - entry.queuedAt) }));
+        return JSON.stringify({ docs: deps.peerSync.docSyncStatuses(docId), queue }, null, 2);
+      }
+      const summary = await deps.peerSync.syncNow(deps.peers);
+      // Per doc, so the reason a delivery is failed or waiting is visible without reading SQLite (R1).
+      const all = deps.peerSync.docSyncStatuses();
+      const queue = deps.peerSync.queuedDeliveries();
+      const docs = all.filter((doc) => doc.state === 'failed' || doc.state === 'waiting').slice(0, SYNC_DOCS_LIMIT)
+        .map(({ docId, state, computers, lastError, lastErrorAt }) => {
+          const mine = queue.filter((entry) => entry.docId === docId);
+          return { docId, state, computers, lastError, lastErrorAt, attempts: Math.max(0, ...mine.map((entry) => entry.attempts)),
+            queuedAt: mine.length ? Math.min(...mine.map((entry) => entry.queuedAt)) : null,
+            deliveries: mine.map(({ peerId, direction, state: deliveryState, attempts, lastError: error, lastErrorAt: at }) => ({ peerId, direction, state: deliveryState, attempts, lastError: error, lastErrorAt: at })) };
+        });
+      return JSON.stringify({ ...summary, docs }, null, 2);
     }
     case 'list': {
       const scope = flags['all-projects'] === true ? 'all' : 'project';
-      if (json) {
-        const docs = deps.store.list({
-          projectId: scope === 'project' && caller.projectId ? caller.projectId : undefined,
-          query: stringFlag(flags, 'query'),
-          status: (stringFlag(flags, 'status') ?? 'active') as 'active'
-        });
-        return JSON.stringify(docs, null, 2);
-      }
-      return listDocs(operation, { query: stringFlag(flags, 'query'), status: stringFlag(flags, 'status'), scope });
+      const offset = paginationFlag(flags, 'offset', 0, 0);
+      const limit = Math.min(paginationFlag(flags, 'limit', DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
+      const filter = {
+        projectId: scope === 'project' && caller.projectId ? caller.projectId : undefined,
+        query: stringFlag(flags, 'query'),
+        status: (stringFlag(flags, 'status') ?? 'active') as 'active',
+        offset,
+        limit
+      };
+      const docs = deps.store.list(filter);
+      const total = deps.store.count(filter);
+      if (json) return JSON.stringify({ docs, total, offset, limit }, null, 2);
+      const header = scope === 'project' && caller.projectId
+        ? 'Design docs for this project (plus global docs), newest first:'
+        : 'Design docs across all projects, newest first:';
+      return {
+        stdout: `${header}\n${formatList(docs)}`,
+        ...(docs.length < total ? { stderr: `showing ${docs.length} of ${total}` } : {})
+      };
     }
     case 'templates': {
       const action = positional[0] ?? 'list';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, canonicalPeerHash, validateDocumentClosure, validatePeerGroupMembers, validatePeerPacket, type PeerDocumentClosure } from './peer-contract.js';
+import { canonicalJson, canonicalPeerHash, contentEquals, documentContent, validateDocumentClosure, validatePeerGroupMembers, validatePeerPacket, type PeerDocumentClosure } from './peer-contract.js';
 import { MAX_PEER_PACKET_BYTES, PEER_PROTOCOL_VERSION } from './peer-limits.js';
 
 function closure(): PeerDocumentClosure {
@@ -11,6 +11,25 @@ function closure(): PeerDocumentClosure {
 }
 
 describe('bounded canonical peer contract', () => {
+  it('compares keyed files, comment semantics and thread ids, ignoring clocks and mapping', () => {
+    const left = closure(), right = closure(), author = left.doc.created_by;
+    left.files.push({ ...left.files[0]!, sync_id: 'z-file', path: 'Z.md' });
+    left.comments = ['z', 'A'].map(id => ({ id, body: 'body', path: null, quote: null, author,
+      status: 'open', created_at: 1, resolved_at: null, parent_id: null }));
+    left.threads = ['z-thread', 'A-thread'].map(thread_id => ({ thread_id, title: 'Title', role: 'reviewer', last_activity_at: 1 }));
+    Object.assign(right, structuredClone(left));
+    right.files.reverse(); right.comments.reverse(); right.threads.reverse();
+    right.doc.project_id = 'mapped'; right.doc.updated_at = 5;
+    right.files.forEach(file => { file.sync_id += '-different'; file.updated_at = 9; });
+    right.comments.forEach(comment => { comment.created_at = 9; comment.resolved_at = 9; });
+    right.threads.forEach(thread => { thread.last_activity_at = 9; });
+    expect(contentEquals(left, right)).toBe(true);
+    expect(documentContent(left)).toHaveProperty('threads', ['A-thread', 'z-thread']);
+    right.comments[0]!.body = 'different';
+    expect(contentEquals(left, right)).toBe(false);
+    right.comments = structuredClone(left.comments); right.doc.status = 'archived';
+    expect(contentEquals(left, right)).toBe(false);
+  });
   it('freezes canonical SHA-256 bytes across key order and preserves array order', () => {
     expect(canonicalJson({ b: [2, 1], a: 'x' })).toBe('{"a":"x","b":[2,1]}');
     expect(canonicalPeerHash({ b: [2, 1], a: 'x' })).toBe(canonicalPeerHash({ a: 'x', b: [2, 1] }));

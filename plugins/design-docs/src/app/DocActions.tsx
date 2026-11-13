@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Archive, ArchiveRestore, Copy, Download, FolderInput, FolderOpen, GitFork, Hash, Link2, Pin, PinOff, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Copy, Download, FolderInput, FolderOpen, GitFork, Hash, Link2, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
 import { designDocDirective, type DesignDocSummary } from '../shared/contract.js';
 import { crossDocMarkdownLink } from '../shared/paths.js';
 import { copyText } from './clipboard.js';
-import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
+import { errorMessage, toast, useApi, type DocKind, type ProjectInfo, type UpdateArgs } from './api.js';
 import { saveBytes, siteZip } from './download.js';
 import { useDocs, useUnassignedProjects } from './hooks.js';
 import { UnassignedProjectsDialog } from './UnassignedProjects.js';
@@ -145,6 +145,96 @@ export function DeleteDocBody({ doc }: { doc: Pick<DesignDocSummary, 'title' | '
   );
 }
 
+function MenuDivider() {
+  return <div className="dd-menu-sep" role="separator" />;
+}
+
+/** The save was refused because the doc's head moved on (another computer, an agent). */
+export function isStaleHead(error: unknown): boolean {
+  return /head changed|changed since revision/i.test(errorMessage(error));
+}
+
+/** A rename that lost to another computer's rename: both titles stay on screen until the user picks. */
+export interface RenameStale {
+  id: string;
+  mine: string;
+  theirs: string;
+  head: string | null;
+}
+
+/**
+ * The one save path every rename entry point uses (`update({ title })`). A stale head never overwrites:
+ * if the title itself changed elsewhere the user chooses (`stale`); any other stale head is an error toast
+ * and is never retried against the newer head.
+ */
+export function useTitleRename(kind: DocKind = 'doc') {
+  const api = useApi();
+  const [stale, setStale] = useState<RenameStale | null>(null);
+  const write = (id: string, title: string, head: string | null) =>
+    kind === 'template' ? api.templateUpdateMeta(id, { title, expectedHead: head }) : api.update(id, { title, expectedHead: head });
+  const noun = kind === 'template' ? 'template' : 'doc';
+
+  /** 'stale' leaves the choice in `stale`; 'failed' has already toasted. */
+  const save = async (doc: { id: string; title: string; head: string | null }, title: string): Promise<'saved' | 'stale' | 'failed'> => {
+    try {
+      await write(doc.id, title, doc.head);
+      setStale(null);
+      return 'saved';
+    } catch (error) {
+      if (!isStaleHead(error)) {
+        toast(`Could not update the ${noun}: ${errorMessage(error)}`, 'error');
+        return 'failed';
+      }
+      try {
+        const latest = await api.get(doc.id, kind);
+        if (latest.title.trim() === title) {
+          setStale(null);
+          return 'saved';
+        }
+        if (latest.title === doc.title) {
+          // Only other parts of the doc moved: consent was given for the old head, so never retry against a newer one.
+          toast(`Could not update the ${noun}: ${errorMessage(error)}`, 'error');
+          return 'failed';
+        }
+        setStale({ id: doc.id, mine: title, theirs: latest.title, head: latest.head });
+        return 'stale';
+      } catch (retry) {
+        toast(`Could not update the ${noun}: ${errorMessage(retry)}`, 'error');
+        return 'failed';
+      }
+    }
+  };
+
+  const keepMine = async () => {
+    if (!stale) return;
+    try {
+      await write(stale.id, stale.mine, stale.head);
+      setStale(null);
+    } catch (error) {
+      toast(`Could not update the ${noun}: ${errorMessage(error)}`, 'error');
+      setStale(null);
+    }
+  };
+
+  return { save, stale, keepMine, useTheirs: () => setStale(null) };
+}
+
+export function RenameStaleNotice({ stale, onKeepMine, onUseTheirs }: { stale: RenameStale; onKeepMine(): void; onUseTheirs(): void }) {
+  return (
+    <div className="dd-rename-stale" role="alert">
+      <span>
+        Title changed on another computer to <strong>{stale.theirs}</strong>
+      </span>
+      <button type="button" className="btn" onClick={onKeepMine}>
+        Keep yours
+      </button>
+      <button type="button" className="btn" onClick={onUseTheirs}>
+        Use theirs
+      </button>
+    </div>
+  );
+}
+
 async function copy(text: string, what: string) {
   if (await copyText(text)) toast(`Copied ${what}`);
   else toast(`Could not copy ${what}`, 'error');
@@ -156,7 +246,7 @@ async function copy(text: string, what: string) {
  * after the menu closes, since moving and deleting ask first.
  */
 export function useDocActions(projects: ProjectInfo[]): {
-  items(doc: DesignDocSummary, close: () => void, onDeleted: () => void, onOpen?: () => void): ReactNode;
+  items(doc: DesignDocSummary, close: () => void, onDeleted: () => void, onOpen?: () => void, onRename?: () => void): ReactNode;
   dialogs: ReactNode;
 } {
   const api = useApi();
@@ -193,7 +283,7 @@ export function useDocActions(projects: ProjectInfo[]): {
     }
   };
 
-  const items = (doc: DesignDocSummary, close: () => void, onDeleted: () => void, onOpen?: () => void) => {
+  const items = (doc: DesignDocSummary, close: () => void, onDeleted: () => void, onOpen?: () => void, onRename?: () => void) => {
     const archived = doc.status === 'archived';
     const run = (action: () => void) => () => {
       close();
@@ -207,10 +297,13 @@ export function useDocActions(projects: ProjectInfo[]): {
         ) : (
           <MenuItem icon={Pin} label="Pin to top" onSelect={run(() => void pin(doc, true))} />
         )}
+        <MenuDivider />
         <MenuItem icon={Copy} label="Copy chat reference" hint="Paste into any thread" onSelect={run(() => void copy(designDocDirective(doc.id), 'reference'))} />
         <MenuItem icon={Link2} label="Copy doc link" hint="Paste into another doc" onSelect={run(() => void copy(crossDocMarkdownLink(doc), 'doc link'))} />
         <MenuItem icon={Hash} label="Copy id" hint={doc.id} onSelect={run(() => void copy(doc.id, 'id'))} />
         <MenuItem icon={Download} label="Download .zip" hint={`${doc.slug}.zip`} onSelect={run(() => void download(doc))} />
+        <MenuDivider />
+        {onRename ? <MenuItem icon={Pencil} label="Rename" hint="F2" onSelect={run(onRename)} /> : null}
         {doc.projectLocked ? (
           <MenuItem icon={FolderInput} label="Map to a Project…" hint="Peer-owned" onSelect={run(() => setMapping(true))} />
         ) : (
@@ -222,6 +315,7 @@ export function useDocActions(projects: ProjectInfo[]): {
           hint={doc.alternativeTo ? 'Linked' : undefined}
           onSelect={run(() => setLinking(doc))}
         />
+        <MenuDivider />
         <MenuItem
           icon={archived ? ArchiveRestore : Archive}
           label={archived ? 'Unarchive' : 'Archive'}

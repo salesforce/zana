@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { ALIAS_LIVE, DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT } from './project-refs.js';
 import type { PluginDatabase, PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
+import type { DocCounts } from '../shared/sync-diagnostics.js';
 import {
+  DOC_STATUSES,
   isDocStatus,
   type CommentExcerpt,
   type CommentStatus,
@@ -121,6 +123,8 @@ export interface ListFilter {
   /** `active` hides archived docs; `all` shows everything. Default `all`. */
   status?: DocStatus | 'active' | 'all';
   limit?: number;
+  /** Number of matching docs to skip before returning a page. */
+  offset?: number;
 }
 
 export interface CreateDocInput {
@@ -512,7 +516,7 @@ export class DesignDocStore {
     });
   }
 
-  list(filter: ListFilter = {}): DesignDocSummary[] {
+  private listWhere(filter: ListFilter): { where: string[]; params: unknown[] } {
     const where: string[] = [`d.${DOC_ONLY}`];
     const params: unknown[] = [];
     const aliases = this.projectRefs.available;
@@ -554,12 +558,43 @@ export class DesignDocStore {
       params.push(like, like, like, like);
       if (contents) params.push(like);
     }
+    return { where, params };
+  }
+
+  count(filter: ListFilter = {}): number {
+    const { where, params } = this.listWhere(filter);
+    // docs-kind: allow The WHERE list always starts with d.DOC_ONLY.
+    return (this.db.prepare(`SELECT COUNT(*) AS count FROM docs d WHERE ${where.join(' AND ')}`).get(...params) as { count: number }).count;
+  }
+
+  /**
+   * One total over every project and status (archived and unmapped included), so two synced computers show the same
+   * number, with the unmapped docs counted in it and again on their own (R10).
+   */
+  counts(): DocCounts {
+    const byStatus: Record<string, number> = Object.fromEntries(DOC_STATUSES.map((status) => [status, 0]));
+    // docs-kind: allow The WHERE list always starts with d.DOC_ONLY.
+    for (const row of this.db.prepare(`SELECT d.status AS status, COUNT(*) AS n FROM docs d WHERE d.${DOC_ONLY} GROUP BY d.status`).all() as Array<{ status: string; n: number }>) {
+      byStatus[row.status] = row.n;
+    }
+    const byProject: Record<string, number> = {};
+    // docs-kind: allow The WHERE list always starts with d.DOC_ONLY.
+    for (const row of this.db.prepare(`SELECT d.project_id AS id, COUNT(*) AS n FROM docs d WHERE d.${DOC_ONLY} AND d.project_id IS NOT NULL GROUP BY d.project_id`).all() as Array<{ id: string; n: number }>) {
+      byProject[row.id] = row.n;
+    }
+    return { total: Object.values(byStatus).reduce((sum, n) => sum + n, 0), byStatus, byProject, unmapped: this.count({ unassigned: true, status: 'all' }) };
+  }
+
+  list(filter: ListFilter = {}): DesignDocSummary[] {
+    const { where, params } = this.listWhere(filter);
+    const aliases = this.projectRefs.available;
     const limit = clampLimit(filter.limit, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+    const offset = clampOffset(filter.offset);
     // docs-kind: allow The WHERE list always starts with d.DOC_ONLY.
     const sql = `SELECT ${SUMMARY_COLUMNS} FROM docs d
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ORDER BY d.updated_at DESC, d.id LIMIT ?`;
-    const rows = this.db.prepare(sql).all(...params, limit) as DocRow[];
+      ORDER BY d.updated_at DESC, d.id LIMIT ? OFFSET ?`;
+    const rows = this.db.prepare(sql).all(...params, limit, offset) as DocRow[];
     const mapped = aliases ? this.aliasedProjects(rows.filter((row) => row.project_id === null).map((row) => row.id)) : new Map<string, string>();
     return rows.map((row) => {
       const summary = toSummary(row);
@@ -1790,6 +1825,11 @@ function clampLimit(value: unknown, fallback: number, max: number): number {
   const number = typeof value === 'number' ? Math.floor(value) : Number.NaN;
   if (!Number.isFinite(number) || number <= 0) return fallback;
   return Math.min(number, max);
+}
+
+function clampOffset(value: unknown): number {
+  const number = typeof value === 'number' ? Math.floor(value) : Number.NaN;
+  return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
 function escapeLike(value: string): string {

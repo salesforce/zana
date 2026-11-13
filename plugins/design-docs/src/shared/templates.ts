@@ -14,6 +14,11 @@ export interface DesignDocTemplate {
   entryPath?: string;
 }
 
+const ISSUE_TEMPLATE_FILE_RETENTION = {
+  old: '`research.md` is optional: delete it when the cause is already clear. Keep `plan.md` once a fix is planned.',
+  next: 'Keep `plan.md`. Delete `research.md` only when the cause is clear. Never delete template files unless the user asks.'
+} as const;
+
 const TECHNICAL_README_CONTENT = `# {{title}}
 
 > {{summary}}
@@ -256,7 +261,7 @@ export const DESIGN_DOC_TEMPLATES: readonly DesignDocTemplate[] = [
       { path: 'issue.md', content: ISSUE_MD_CONTENT },
       { path: 'research.md', content: ISSUE_RESEARCH_MD_CONTENT },
       { path: 'plan.md', content: PLAN_MD_CONTENT },
-      { path: 'AGENTS.md', content: ISSUE_AGENTS_CONTENT }
+      { path: 'AGENTS.md', content: ISSUE_AGENTS_CONTENT.replace(ISSUE_TEMPLATE_FILE_RETENTION.old, ISSUE_TEMPLATE_FILE_RETENTION.next) }
     ]
   },
   {

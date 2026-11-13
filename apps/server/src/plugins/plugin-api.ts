@@ -1,4 +1,5 @@
 import { pagedConversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
+import { redactPromptText } from './admission-prompt.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { captureStablePluginToolApprovalIdentity, isPluginToolApprovalScopeLive, parsePluginApprovalBinding, parsePluginToolApprovalRequest, type PluginApprovalResult, type PluginToolApprovalIdentity, type PluginToolApprovalRequest, type PluginToolApprovalScope } from '../http/plugin-approval-proof.js';
@@ -1225,7 +1226,21 @@ export function createPluginApi(
             signal.throwIfAborted();
             await lease.assertActive();
             if (Buffer.byteLength(result.body) > 8 * 1024 * 1024) throw new Error('peer response exceeds 8 MiB');
-            if (result.status < 200 || result.status >= 300) throw new Error(`peer request failed: ${result.status}`);
+            if (result.status < 200 || result.status >= 300) {
+              let reason = '';
+              // Only the RPC error field is diagnostic, never raw HTTP bodies or parser errors.
+              try {
+                const rejected = JSON.parse(result.body);
+                const text = typeof rejected?.error === 'string' ? rejected.error : typeof rejected?.error?.message === 'string' ?
+                  rejected.error.message : typeof rejected?.code === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(rejected.code) ? rejected.code : undefined;
+                if (typeof text === 'string') reason = redactPromptText(text.slice(0, 8192)
+                  .replace(/\bauthorization["']?\s*[:=]\s*(?:bearer\s+|basic\s+)?[^\r\n,;]+/gi, 'Authorization: [REDACTED]')
+                  .replace(/\bhttps?:\/\/[^\s/@]+:[^\s/@]+@/gi, 'https://[REDACTED]@')
+                  .replace(/\?[^\s"'<>]*/g, '?[REDACTED]'))
+                  .replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 300);
+              } catch { /* Missing or malformed structured reason keeps the legacy error. */ }
+              throw new Error(`peer request failed: ${result.status}${reason ? `: ${reason}` : ''}`);
+            }
             let response: { ok?: unknown; result?: unknown } | null;
             // Never surface the parser message: it can quote fragments of the peer's body.
             try { response = JSON.parse(result.body) as typeof response; } catch { throw new Error('invalid peer response'); }

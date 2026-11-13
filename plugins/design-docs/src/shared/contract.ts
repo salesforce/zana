@@ -142,6 +142,22 @@ export interface TextEdit {
 }
 
 export type PeerResolutionChoice = 'merge' | 'local' | 'remote';
+export interface PeerConflictQuestion {
+  kind: 'file' | 'field';
+  key: string;
+  label: string;
+  choices: PeerResolutionChoice[];
+  settled?: boolean;
+  /** Field questions only: the two values, as display text. */
+  localValue?: string;
+  remoteValue?: string;
+}
+/** A file that needs no question: only one side changed it (or both changed it identically). */
+export interface PeerConflictSettled {
+  path: string;
+  state: 'only-mine' | 'only-theirs' | 'same' | 'merged';
+}
+export type PeerConflictChoices = Record<string, PeerResolutionChoice>;
 export interface PeerConflictPage {
   remoteHeads: string[];
   nextCursor: string | null;
@@ -152,12 +168,15 @@ export interface PeerConflictReview {
   baseHead: string | null;
   conflicts: string[];
   mergeAvailable: boolean;
+  questions: PeerConflictQuestion[];
+  settled?: PeerConflictSettled[];
   local: { title: string; status: string; summary: string; paths: string[] };
   remote: { title: string; status: string; summary: string; paths: string[] };
 }
 export interface PeerConflictFile {
   localHead: string;
   remoteHead: string;
+  base: { content: string; encoding: 'utf8' | 'base64' } | null;
   local: { content: string; encoding: 'utf8' | 'base64' } | null;
   remote: { content: string; encoding: 'utf8' | 'base64' } | null;
   candidate: { content: string; encoding: 'utf8' | 'base64' } | null;

@@ -30,7 +30,7 @@ function installEditorProbe(): { props: () => any } {
 async function openAgentSettings(harness: ReturnType<typeof createHarness>) {
   harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
   fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Agent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'AI Harness' }));
 }
 
 describe('Design Docs settings: Agent section', () => {
@@ -38,10 +38,10 @@ describe('Design Docs settings: Agent section', () => {
     const harness = createHarness();
     const probe = installEditorProbe();
     await openAgentSettings(harness);
-    expect(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('button', { name: 'AI Harness' }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('button', { name: 'Peers' }).getAttribute('aria-current')).toBeNull();
     expect(screen.queryByRole('region', { name: 'Database sync peers' })).toBeNull();
-    expect(screen.getByRole('heading', { name: 'Agent harness' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'AI Harness' })).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId('harness-editor').getAttribute('data-loading')).toBe('false'));
     expect(probe.props().descriptors.map((entry: { id: string }) => entry.id)).toEqual(['claude']);
     expect(screen.getByRole('tab', { name: 'Default' }).getAttribute('aria-selected')).toBe('true');

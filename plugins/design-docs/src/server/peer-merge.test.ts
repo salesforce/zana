@@ -118,6 +118,10 @@ describe('mergeText', () => {
   it('preserves overlapping edits as a conflict', () => {
     expect(mergeText('one\ntwo', 'ONE\ntwo', 'Uno\ntwo')).toEqual({ content: null, conflicts: ['overlapping text edits'] });
   });
+
+  it('conservatively treats separated edits within one side as a single range', () => {
+    expect(mergeText('one\ntwo\nthree', 'ONE\ntwo\nTHREE', 'one\nTWO\nthree').content).toBeNull();
+  });
 });
 
 describe('mergeHistory', () => {

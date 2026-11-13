@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
@@ -32,9 +32,9 @@ import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
 import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, type ProjectInfo, type TemplateInfo } from './api.js';
-import { needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
+import { effectiveSyncState, needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 import type { DocLocation } from './content.js';
-import { useDocActions } from './DocActions.js';
+import { RenameStaleNotice, useDocActions, useTitleRename, type RenameStale } from './DocActions.js';
 import { ProjectMark } from './ProjectMark.js';
 import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
@@ -111,6 +111,95 @@ function rowTooltip(doc: DesignDocSummary): string {
   return doc.summary ? `${doc.title}\n${doc.summary}` : doc.title;
 }
 
+/**
+ * The row's inline rename: the title becomes an input in place and the doc is not opened. Enter saves, Esc
+ * cancels, blur saves a changed non-empty title; an empty Enter shows an alert and stays. The draft lives in
+ * the list (not here) so a refresh that re-sorts or remounts the row keeps what was typed.
+ */
+function RowRename({
+  doc,
+  draft,
+  stale,
+  onDraft,
+  onCommit,
+  onCancel,
+  onKeepMine,
+  onUseTheirs
+}: {
+  doc: DesignDocSummary;
+  draft: string;
+  stale: RenameStale | null;
+  onDraft(next: string): void;
+  onCommit(): Promise<void>;
+  onCancel(): void;
+  onKeepMine(): void;
+  onUseTheirs(): void;
+}) {
+  const [error, setError] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  const errorId = useId();
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+  const finish = (save: boolean, viaBlur = false) => {
+    if (done.current || (stale && viaBlur)) return;
+    const next = draft.trim();
+    if (!save || next === doc.title.trim() || (!next && viaBlur)) {
+      done.current = true;
+      onCancel();
+      return;
+    }
+    if (!next) {
+      setError(true);
+      return;
+    }
+    done.current = true;
+    void onCommit().finally(() => {
+      done.current = false;
+    });
+  };
+  return (
+    <div
+      className={`dd-doc-row dd-doc-row-editing${stale ? ' dd-doc-row-stale' : ''}`}
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.stopPropagation()}
+    >
+      <input
+        ref={input}
+        className="dd-editable-input dd-doc-row-input"
+        value={draft}
+        maxLength={MAX_TITLE_LENGTH}
+        aria-label="Rename design doc"
+        aria-invalid={error || undefined}
+        aria-describedby={error ? errorId : undefined}
+        onChange={(event) => {
+          onDraft(event.target.value);
+          setError(false);
+        }}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            finish(false);
+          } else if (event.key === 'Enter') {
+            event.preventDefault();
+            finish(true);
+          }
+        }}
+        onBlur={() => finish(true, true)}
+      />
+      {error ? (
+        <span id={errorId} className="dd-field-error" role="alert">
+          Title can’t be empty
+        </span>
+      ) : null}
+      {stale ? <RenameStaleNotice stale={stale} onKeepMine={onKeepMine} onUseTheirs={onUseTheirs} /> : null}
+    </div>
+  );
+}
+
 function DocRow({
   doc,
   active,
@@ -120,6 +209,7 @@ function DocRow({
   syncState,
   now,
   menuOpen,
+  rename,
   onSelect,
   onMenu
 }: {
@@ -134,12 +224,15 @@ function DocRow({
   syncState?: DocSyncState;
   now: number;
   menuOpen: boolean;
+  /** Set while this row is being renamed in place. */
+  rename?: ReactNode;
   onSelect(): void;
   onMenu(at: { x: number; y: number }): void;
 }) {
   const excerpt = doc.lastComment;
   // The excerpt already says there is a comment; the count adds only "more than one".
   const comments = doc.openComments > (excerpt ? 1 : 0);
+  if (rename) return <>{rename}</>;
   return (
     <button
       type="button"
@@ -264,6 +357,8 @@ function DocList({
   const [menu, setMenu] = useState<{ doc: DesignDocSummary; at: { x: number; y: number } } | null>(null);
   const context = useZccContext();
   const docActions = useDocActions(projects);
+  const titleRename = useTitleRename();
+  const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null);
   const debounced = useDebounced(query.trim(), 200);
   const now = useNow();
   const docs = useDocs({ ...(projectId ? { projectId } : showProjects ? { excludeUnassigned: true } : {}), ...(debounced ? { query: debounced } : {}), status });
@@ -277,6 +372,14 @@ function DocList({
   const unassignedDocs = useUnassignedDocs(inUnassignedScope, { ...(debounced ? { query: debounced } : {}), status });
   const unassignedProjects = useUnassignedProjects(showProjects);
   const [mapping, setMapping] = useState(false);
+  // One total over every project and status, so the count matches the other computer's (R10). A failed read hides it.
+  const api = useApi();
+  const [totals, setTotals] = useState<{ total: number; unmapped: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.docCounts().then((value) => { if (live) setTotals(value); }, () => { if (live) setTotals(null); });
+    return () => { live = false; };
+  }, [api, docs.data]);
   const unassignedList = inUnassignedScope ? unassignedDocs.data ?? [] : [];
   const unassignedOpen = !(debounced ? new Set<string>() : parseCollapsed(collapsedRaw)).has('unassigned');
   const visible = useMemo(() => {
@@ -329,9 +432,35 @@ function DocList({
       alternative={alternative}
       projectName={alternative ? null : projectLabel(doc, section)}
       unseen={doc.id !== activeId && unseenAgentEdit(doc, seen)}
-      syncState={needsAttention(syncStates.get(doc.id)?.state) ? syncStates.get(doc.id)?.state : undefined}
+      syncState={(() => { const row = syncStates.get(doc.id); const state = row && effectiveSyncState(row); return needsAttention(state) ? state : undefined; })()}
       now={now}
       menuOpen={menu?.doc.id === doc.id}
+      rename={
+        renaming?.id === doc.id ? (
+          <RowRename
+            doc={doc}
+            draft={renaming.draft}
+            stale={titleRename.stale?.id === doc.id ? titleRename.stale : null}
+            onDraft={(draft) => setRenaming({ id: doc.id, draft })}
+            onCancel={() => {
+              titleRename.useTheirs();
+              setRenaming(null);
+            }}
+            onCommit={async () => {
+              // A stale head keeps the row open for the Keep yours / Use theirs choice; anything else closes it.
+              if ((await titleRename.save(doc, renaming.draft.trim())) !== 'stale') setRenaming(null);
+            }}
+            onKeepMine={() => {
+              void titleRename.keepMine();
+              setRenaming(null);
+            }}
+            onUseTheirs={() => {
+              titleRename.useTheirs();
+              setRenaming(null);
+            }}
+          />
+        ) : undefined
+      }
       onSelect={() => onSelect(doc.id)}
       onMenu={(at) => setMenu({ doc, at })}
     />
@@ -348,6 +477,11 @@ function DocList({
         {docs.data ? (
           <span className="dd-list-count" title={`${visible.length} ${visible.length === 1 ? 'doc' : 'docs'}`}>
             {visible.length}
+          </span>
+        ) : null}
+        {totals && totals.total !== visible.length ? (
+          <span className="dd-list-total" title={`${totals.total} docs across all projects and statuses, ${totals.unmapped} unmapped`}>
+            of {totals.total}{totals.unmapped ? <> · <button type="button" className="dd-link" onClick={() => setMapping(true)}>{totals.unmapped} unmapped</button></> : null}
           </span>
         ) : null}
         <span className="dd-spacer" />
@@ -479,7 +613,8 @@ function DocList({
             menu.doc,
             () => setMenu(null),
             () => onDeleted(menu.doc.id),
-            menu.doc.id === activeId ? undefined : () => onSelect(menu.doc.id)
+            menu.doc.id === activeId ? undefined : () => onSelect(menu.doc.id),
+            () => setRenaming({ id: menu.doc.id, draft: menu.doc.title })
           )}
         </ContextMenu>
       ) : null}

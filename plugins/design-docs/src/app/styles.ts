@@ -152,7 +152,7 @@ export const DESIGN_DOCS_STYLES = `
 .dd-settings-body { flex: 1 1 auto; min-height: 0; display: flex; overflow: hidden; }
 .dd-settings-nav { width: 184px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 14px; padding: 20px 10px; overflow-y: auto; border-right: 1px solid var(--border); }
 .dd-nav-group { display: flex; flex-direction: column; gap: 2px; }
-.dd-nav-group-label { padding: 0 8px 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--text-muted); }
+.dd-nav-group-label { padding: 0 8px 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.6px; color: var(--text-muted); }
 .dd-nav-row { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 32px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 12px; text-align: left; cursor: pointer; transition: background 0.12s, color 0.12s; }
 .dd-nav-row:hover, .dd-nav-row.active { background: var(--bg-hover); color: var(--text-primary); }
 .dd-nav-row.active { font-weight: 550; }
@@ -622,6 +622,14 @@ export const DESIGN_DOCS_STYLES = `
   font: inherit;
   resize: none;
 }
+.dd-editable-wrap { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.dd-field-error { color: var(--accent-red, #d64545); font-size: 12px; }
+.dd-rename-pencil { display: inline-flex; opacity: 0; transition: opacity .12s; }
+.dd-doc-header:hover .dd-rename-pencil, .dd-rename-pencil:focus-within { opacity: 1; }
+.dd-rename-stale { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; padding: 6px 8px; border: 1px solid var(--accent-amber, #d9a400); border-radius: 6px; font-size: 12px; }
+.dd-menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+.dd-doc-row-editing { display: flex; flex-direction: column; gap: 4px; cursor: default; }
+.dd-doc-row-input { margin-left: 0; width: 100%; box-sizing: border-box; }
 .dd-doc-title { font-size: 18px; font-weight: 650; line-height: 1.3; letter-spacing: -0.01em; color: var(--text-bright, var(--text-primary)); flex: 0 1 auto; }
 .dd-doc-header-compact .dd-doc-title { font-size: 14px; }
 .dd-doc-header-compact button.dd-doc-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }

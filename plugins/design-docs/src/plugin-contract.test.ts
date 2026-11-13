@@ -36,6 +36,14 @@ function docIdIn(text: string): string {
 }
 
 describe('design-docs plugin contract', () => {
+  it('defines safe automatic convergence as a default-off plugin setting', async () => {
+    const host = createFakePluginHost({ pluginId: 'design-docs', database: createTestDatabase() });
+    plugin(host.zcc);
+    expect(host.harness.settings.autoConverge).toMatchObject({ type: 'boolean', default: false });
+    await host.harness.setSettings({ autoConverge: true });
+    await host.harness.setSettings({ autoConverge: false });
+    await host.harness.dispose();
+  });
   it('keeps standalone docs usable when production host omits peer SDK', async () => {
     const host = createFakePluginHost({ pluginId: 'design-docs', database: createTestDatabase() });
     delete (host.zcc.sdk as Partial<typeof host.zcc.sdk>).peers;

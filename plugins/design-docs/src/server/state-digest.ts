@@ -1,7 +1,7 @@
 import { canonicalPeerHash } from '../shared/peer-contract.js';
 
 interface DigestStore {
-  list(filter: { status: 'all' }): Array<{ id: string }>;
+  list(filter: { status: 'all' }): Array<{ id: string; status?: string; title?: string; summary?: string; tags?: string[]; entryPath?: string }>;
   readAllFiles(ref: string): Array<{ path: string; encoding: string; content: string }>;
 }
 interface DigestSyncStore {
@@ -20,11 +20,13 @@ export function createStateDigest(store: DigestStore, sync: DigestSyncStore): ()
   return () => {
     const local = sync.localRepository();
     if (!local) return null;
-    const docs = store.list({ status: 'all' }).map((doc) => doc.id).sort();
+    const rows = store.list({ status: 'all' }).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const docs = rows.map(doc => doc.id);
     const key = canonicalPeerHash(docs.map((docId) => [docId, sync.head(local.repoId, docId)]));
     if (cached?.key === key) return cached.digest;
-    const digest = canonicalPeerHash(docs.map((docId) => [docId,
-      store.readAllFiles(docId).map((file) => [file.path, file.encoding, canonicalPeerHash(file.content)]).sort()]));
+    const digest = canonicalPeerHash(rows.map(({ id, status, title, summary, tags, entryPath }) => [id,
+      { status: status ?? null, title: title ?? null, summary: summary ?? null, tags: tags ?? [], entryPath: entryPath ?? null },
+      store.readAllFiles(id).map((file) => [file.path, file.encoding, canonicalPeerHash(file.content)]).sort()]));
     cached = { key, digest };
     return digest;
   };

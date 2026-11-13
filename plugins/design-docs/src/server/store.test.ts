@@ -682,6 +682,16 @@ describe('DesignDocStore — docs', () => {
     }
   });
 
+  it('ships Issue template instructions that preserve template files by default', () => {
+    const issue = makeStore().templateByKey('issue');
+    const agents = issue?.files.find((file) => file.path === 'AGENTS.md');
+
+    expect(agents?.content).toContain('Keep `plan.md`.');
+    expect(agents?.content).toContain('Delete `research.md` only when the cause is clear.');
+    expect(agents?.content).toContain('Never delete template files unless the user asks.');
+    expect(issue?.files.map((file) => file.path).sort()).toEqual(['AGENTS.md', 'issue.md', 'plan.md', 'research.md']);
+  });
+
   it('keeps the review method out of built-in agent instructions and asks for one coverage check', () => {
     const store = makeStore();
     const checkLine = '- Before finishing, check that the design and execution plan cover every acceptance criterion.';
@@ -772,6 +782,8 @@ describe('DesignDocStore — docs', () => {
     expect(store.list({ query: 'zzz' })).toEqual([]);
     expect(store.list({ limit: 1 })).toHaveLength(1);
     expect(store.list({ limit: -3 })).toHaveLength(3);
+    expect(store.list({ limit: 1, offset: 1 })).toHaveLength(1);
+    expect(store.count({ status: 'all' })).toBe(3);
     expectError(() => store.list({ status: 'nope' as never }), 'invalid');
     const [first] = store.list({ projectId: 'p1', status: 'archived' });
     expect(first).toMatchObject({ fileCount: 1, openComments: 0, tags: ['mobile-app'] });

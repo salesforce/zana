@@ -5,7 +5,7 @@ import { DesignDocStore } from './store.js';
 import { DesignDocPeerService } from './peer-service.js';
 import { MAX_PENDING_PEER_INTENTS, MAX_PEER_STORED_BYTES, MAX_PEER_STORED_VERSIONS, MAX_PEER_STORED_OPERATIONS } from '../shared/peer-limits.js';
 import { DESIGN_DOC_MIGRATIONS } from './schema.js';
-import { canonicalPeerHash } from '../shared/peer-contract.js';
+import { canonicalPeerHash, type PeerDocumentClosure } from '../shared/peer-contract.js';
 import { transferQuery } from './peer-protocol.js';
 import { createScopeHash } from './peer-protocol.js';
 import { MAX_TEXT_REVISIONS_PER_FILE } from '../shared/limits.js';
@@ -448,7 +448,8 @@ describe('immutable sync store', () => {
     restarted.acceptTransferReceipt(intent, rotated, receipt(rotated));
     expect(restarted.readyIntents('repo-a')).toEqual([]);
   });
-  function fork(projectId: string | null = null, remoteProjectId: string | null = projectId, maxHistoryBytes?: number) {
+  function fork(projectId: string | null = null, remoteProjectId: string | null = projectId, maxHistoryBytes?: number,
+    shapeRemote?: (closure: PeerDocumentClosure) => void) {
     const state = fixture(true, maxHistoryBytes);
     const doc = state.store.create({ title: 'Merge', projectId, files: [{ path: 'README.md', content: 'one\ntwo\nthree' }] }, actor);
     const base = state.sync.head('repo-a', doc.id)!;
@@ -456,6 +457,7 @@ describe('immutable sync store', () => {
     remote.operation = { ...remote.operation, id: 'remote-head', replicaId: 'replica-b', sequence: 1, parents: [base] };
     remote.closure.files[0]!.content = 'one\ntwo\nTHREE';
     remote.closure.doc.project_id = remoteProjectId;
+    shapeRemote?.(remote.closure);
     remote.operation.payloadHash = canonicalPeerHash(remote.closure);
     state.store.writeFile(doc.id, { path: 'README.md', content: 'ONE\ntwo\nthree' }, actor);
     const body = { protocolVersion: 2, repoId: 'repo-a', senderReplicaId: 'replica-b', recipientReplicaId: 'replica-a',
@@ -465,6 +467,88 @@ describe('immutable sync store', () => {
     expect(state.sync.apply(offer).stage).toBe('conflict');
     return { ...state, doc, base, remote, offer, localHead: state.sync.head('repo-a', doc.id)! };
   }
+
+  it.each(['merge', 'local', 'remote'] as const)('round-trips nested and mixed-case files, comments and threads for %s', (choice) => {
+    const { sync, store, doc, localHead, remote } = fork(null, 'foreign-project', undefined, (closure) => {
+      closure.files.push(...['mockups/plan.html', 'Z.md', 'apple.md'].map((path, index) => ({ ...closure.files[0]!,
+        sync_id: `added-${index}`, path, content: 'nested', size: 6 })));
+      closure.comments = ['a-comment', 'Z-comment'].map((id) => ({ id, path: null, quote: null, body: 'Review',
+        author: JSON.stringify(actor), status: 'open', created_at: 1, resolved_at: null, parent_id: null }));
+      closure.threads = ['a-thread', 'Z-thread'].map((thread_id) => ({ thread_id, title: 'Thread', role: 'reviewer', last_activity_at: 1 }));
+      closure.files.sort((a, b) => a.path.localeCompare(b.path));
+    });
+    const resolved = sync.resolveConflict({ docId: doc.id, expectedHead: localHead, remoteHead: remote.operation.id, choice }, actor);
+    expect(store.readFile(doc.id, 'README.md').content).toBe(choice === 'merge' ? 'ONE\ntwo\nTHREE' : choice === 'local' ? 'ONE\ntwo\nthree' : 'one\ntwo\nTHREE');
+    const closure = sync.version('repo-a', resolved)!.closure;
+    expect(closure.files.map((row) => row.path)).toEqual(choice === 'local' ? ['README.md'] : ['README.md', 'Z.md', 'apple.md', 'mockups/plan.html']);
+    expect(closure.threads.map((row) => row.thread_id)).toEqual(choice === 'local' ? [] : ['Z-thread', 'a-thread']);
+    expect(() => sync.freezeManual()).not.toThrow();
+    expect(sync.head('repo-a', doc.id)).toBe(resolved);
+  });
+
+  describe('per-file choices', () => {
+    const conflicting = () => fork(null, null, undefined, (closure) => {
+      closure.files[0]!.content = 'Uno\ntwo\nthree'; closure.files[0]!.size = 13;
+      closure.files.push({ ...closure.files[0]!, sync_id: 'remote-extra', path: 'extra.md', content: 'remote only', size: 11 });
+      closure.comments = [{ id: 'remote-comment', path: null, quote: null, body: 'Remote review', author: JSON.stringify(actor), status: 'open',
+        created_at: 1, resolved_at: null, parent_id: null }];
+      closure.threads = [{ thread_id: 'remote-thread', title: 'Thread', role: 'reviewer', last_activity_at: 1 }];
+      closure.doc.title = 'Remote title';
+    });
+
+    it('reviews contested files and fields as questions and lists untouched changes as settled', () => {
+      const { sync, store, doc, remote } = conflicting();
+      store.update(doc.id, { title: 'Local title', expectedHead: sync.head('repo-a', doc.id)! }, actor);
+      const review = sync.conflictReview(doc.id, remote.operation.id);
+      expect(review.questions.map((q) => [q.key, q.choices])).toEqual([['file:README.md', ['local', 'remote']], ['field:title', ['local', 'remote']]]);
+      expect(review.questions[1]).toMatchObject({ localValue: 'Local title', remoteValue: 'Remote title' });
+      expect(review.settled).toEqual([{ path: 'extra.md', state: 'only-theirs' }]);
+      const file = sync.conflictFile(doc.id, remote.operation.id, 'README.md');
+      expect(file.base?.content).toBe('one\ntwo\nthree');
+    });
+
+    it.each(['local', 'remote'] as const)('assembles %s choices and keeps remote comments, threads, files and history', (side) => {
+      const { sync, store, doc, remote } = conflicting();
+      store.update(doc.id, { title: 'Local title', expectedHead: sync.head('repo-a', doc.id)! }, actor);
+      const localHead = sync.head('repo-a', doc.id)!;
+      const resolved = sync.resolveConflict({ docId: doc.id, expectedHead: localHead, remoteHead: remote.operation.id,
+        choices: { 'file:README.md': side, 'field:title': side === 'local' ? 'remote' : 'local' } }, actor);
+      const closure = sync.version('repo-a', resolved)!.closure;
+      expect(store.readFile(doc.id, 'README.md').content).toBe(side === 'local' ? 'ONE\ntwo\nthree' : 'Uno\ntwo\nthree');
+      expect(closure.doc.title).toBe(side === 'local' ? 'Remote title' : 'Local title');
+      expect(closure.files.map((f) => f.path)).toEqual(['README.md', 'extra.md']);
+      expect(closure.comments.map((c) => c.id)).toEqual(['remote-comment']);
+      expect(closure.threads.map((t) => t.thread_id)).toEqual(['remote-thread']);
+      expect(closure.history.length).toBeGreaterThanOrEqual(sync.version('repo-a', localHead)!.closure.history.length);
+      expect(sync.version('repo-a', resolved)!.operation.parents).toEqual([localHead, remote.operation.id].sort());
+      expect(sync.conflicts(doc.id).remoteHeads).toEqual([]);
+    });
+
+    it('rejects a missing, extra, invalid or combined choice and leaves the fork open', () => {
+      const { sync, doc, remote } = conflicting();
+      const localHead = sync.head('repo-a', doc.id)!, base = { docId: doc.id, expectedHead: localHead, remoteHead: remote.operation.id };
+      expect(() => sync.resolveConflict({ ...base, choices: {} }, actor)).toThrow(/review questions changed/);
+      expect(() => sync.resolveConflict({ ...base, choices: { 'file:README.md': 'local', 'file:other.md': 'local' } }, actor)).toThrow(/review questions changed/);
+      expect(() => sync.resolveConflict({ ...base, choices: { 'file:README.md': 'merge' } }, actor)).toThrow(/invalid choice/);
+      expect(() => sync.resolveConflict({ ...base, choice: 'local', choices: { 'file:README.md': 'local' } }, actor)).toThrow(/either choice or choices/);
+      expect(sync.conflicts(doc.id).remoteHeads).toEqual([remote.operation.id]);
+    });
+
+    it('refuses a stale head and refuses when a non-asked conflict remains', () => {
+      const { sync, store, doc, remote } = conflicting();
+      const localHead = sync.head('repo-a', doc.id)!, base = { docId: doc.id, expectedHead: localHead, remoteHead: remote.operation.id };
+      store.writeFile(doc.id, { path: 'README.md', content: 'newer' }, actor);
+      expect(() => sync.resolveConflict({ ...base, choices: { 'file:README.md': 'local' } }, actor)).toThrow(/head changed/);
+    });
+
+    it('has no questions when the fork merges, and then accepts an empty choice set as the merge', () => {
+      const { sync, store, doc, localHead, remote } = fork();
+      expect(sync.conflictReview(doc.id, remote.operation.id)).toMatchObject({ questions: [], mergeAvailable: true });
+      expect(sync.conflictReview(doc.id, remote.operation.id).settled).toEqual([{ path: 'README.md', state: 'merged' }]);
+      sync.resolveConflict({ docId: doc.id, expectedHead: localHead, remoteHead: remote.operation.id, choices: {} }, actor);
+      expect(store.readFile(doc.id, 'README.md').content).toBe('ONE\ntwo\nTHREE');
+    });
+  });
 
   it('resolves reviewed forks atomically with both parents and no synthetic milestone intent', () => {
     const { sync, store, db, doc, localHead, remote } = fork();
