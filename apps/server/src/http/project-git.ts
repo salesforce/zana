@@ -1,9 +1,9 @@
-import { posix } from 'node:path';
+import { posix, win32 } from 'node:path';
 import { z } from 'zod';
 import { getPrimaryHost, listEnvironmentsByProject } from '@zana-ai/zcc-db';
 import type { GitBranch, GitFileCode, GitStatus, WorkspaceStatus, Worktree } from '@zana-ai/zcc-domain/product';
 import type { ProductHttpContext } from './product-context.js';
-import { authorizeScopedPath, parseProjectFileScope, ProjectFsError } from './project-fs-via-host.js';
+import { authorizeScopedPath, parseProjectFileScope, ProjectFsError, WINDOWS_ABSOLUTE_PATH } from './project-fs-via-host.js';
 import { resolveProjectHost } from './project-host.js';
 import { isSafeRelPath } from './library-via-host.js';
 import { cachedWorkspaceStatus } from '../services/environments/workspace-status-cache.js';
@@ -46,6 +46,10 @@ export async function projectGit(ctx: ProductHttpContext, input: unknown) {
   if (!status.isGitRepo) return null;
   const codes = { untracked: '?', added: 'A', modified: 'M', deleted: 'D', renamed: 'R', copied: 'C', typechange: 'M' } as const;
   const files: Record<string, GitFileCode> = {};
-  for (const file of status.files) if (isSafeRelPath(file.path)) files[posix.join(source.root, file.path)] = codes[file.kind];
+  // Key each file the way the checkout's own listDir spells it, so Explorer's
+  // exact lookups (active row, git colour, dirty folders) match. Git reports
+  // `/`-separated relative paths; a Windows checkout lists `\`-joined ones.
+  const joinPath = WINDOWS_ABSOLUTE_PATH.test(source.root) ? win32.join : posix.join;
+  for (const file of status.files) if (isSafeRelPath(file.path)) files[joinPath(source.root, file.path)] = codes[file.kind];
   return { branch: status.branchName, detached: status.checkout.kind === 'detached', ahead: status.ahead ?? 0, behind: status.behind ?? 0, dirty: status.dirty, toplevel: source.root, files } satisfies GitStatus;
 }
