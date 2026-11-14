@@ -131,17 +131,30 @@ describe('normalizeConfig — sidebar chrome', () => {
   it('keeps collapse maps, hide flags, and nav order', () => {
     expect(normalizeConfig({
       collapsedSections: { 'scheduler:groups': true, skip: 'nope' as never },
+      projectExpanded: { 'proj-1': false, 'local:default': false, '': true, skip: 'nope' as never },
       hideIdleProjects: true,
       hideSchedulelessProjects: false,
       sidebarNavOrder: ['home', 'inbox', 'home', ''],
       projectSidebarNavOrder: ['agents']
     })).toEqual(expect.objectContaining({
       collapsedSections: { 'scheduler:groups': true },
+      projectExpanded: { 'proj-1': false, 'local:default': false },
       hideIdleProjects: true,
       hideSchedulelessProjects: false,
       sidebarNavOrder: ['home', 'inbox'],
       projectSidebarNavOrder: ['agents']
     }));
+  });
+
+  it('keeps the newest 200 projectExpanded entries so a fresh toggle is never dropped', () => {
+    const input: Record<string, boolean> = {};
+    for (let i = 0; i < 205; i += 1) input[`p${i}`] = true;
+    input.fresh = false;
+    const kept = normalizeConfig({ projectExpanded: input }).projectExpanded!;
+    expect(Object.keys(kept)).toHaveLength(200);
+    expect(kept.fresh).toBe(false);
+    expect(kept.p0).toBeUndefined();
+    expect(kept.p6).toBe(true);
   });
 
   it('normalizes and bounds hidden destinations independently for each rail', () => {
