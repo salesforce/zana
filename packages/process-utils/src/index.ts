@@ -57,3 +57,12 @@ export function buildChildEnv(source: NodeJS.ProcessEnv = process.env): Record<s
 }
 
 export { createRuntimeLog, installRuntimeLog, redactRuntimeLog } from './runtime-log.js';
+export {
+  DEFAULT_SHELL_FALLBACKS,
+  LAST_RESORT_SHELL,
+  NoShellFoundError,
+  defaultShellSetting,
+  resolveDefaultShell,
+  type DefaultShellSettingOptions,
+  type ShellProbe
+} from './default-shell.js';

@@ -1,8 +1,8 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { loadHostAppConfig, resolveZccDataDir, ZCC_DATA_DIR_NAME } from './host-config.js';
+import { describe, expect, it, vi } from 'vitest';
+import { hostFallbackShell, loadHostAppConfig, resolveZccDataDir, ZCC_DATA_DIR_NAME } from './host-config.js';
 
 describe('loadHostAppConfig', () => {
   it('projects the canonical persisted harness settings instead of probing stale legacy binaries', () => {
@@ -53,5 +53,52 @@ describe('loadHostAppConfig', () => {
     );
     expect(resolveZccDataDir({ ZCC_CENTER_DIR: '/tmp/zcc-center' }, '/home/u')).toBe('/tmp/zcc-center');
     expect(resolveZccDataDir({}, '/home/u')).toBe(join('/home/u', ZCC_DATA_DIR_NAME));
+  });
+});
+
+describe('host default shell', () => {
+  const only = (...present: string[]) => (path: string) => present.includes(path);
+
+  it('uses SHELL when it exists', () => {
+    expect(hostFallbackShell({ platform: 'linux', env: { SHELL: '/usr/bin/fish' }, loginShell: () => '/bin/zsh', isExecutable: only('/usr/bin/fish', '/bin/zsh') }))
+      .toBe('/usr/bin/fish');
+  });
+
+  it('takes the passwd login shell when SHELL is set but missing', () => {
+    expect(hostFallbackShell({ platform: 'linux', env: { SHELL: '/bin/zsh' }, loginShell: () => '/bin/bash', isExecutable: only('/bin/bash', '/bin/sh') }))
+      .toBe('/bin/bash');
+  });
+
+  it('keeps zsh on macOS through the login shell when SHELL is unset', () => {
+    expect(hostFallbackShell({ platform: 'darwin', env: {}, loginShell: () => '/bin/zsh', isExecutable: only('/bin/zsh', '/bin/bash', '/bin/sh') }))
+      .toBe('/bin/zsh');
+  });
+
+  it('falls back to /bin/sh when it is the only shell', () => {
+    expect(hostFallbackShell({ platform: 'linux', env: {}, loginShell: () => null, isExecutable: only('/bin/sh') })).toBe('/bin/sh');
+  });
+
+  it('logs a clear error and still returns a value when no shell exists', () => {
+    const warn = vi.fn();
+    expect(hostFallbackShell({ platform: 'linux', env: {}, loginShell: () => null, isExecutable: () => false, warn })).toBe('/bin/sh');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('No usable shell found. Tried /bin/bash, /bin/sh.'));
+  });
+
+  it('keeps the previous /bin/zsh value on Windows', () => {
+    expect(hostFallbackShell({ platform: 'win32', env: { SHELL: '/bin/bash' }, isExecutable: () => true })).toBe('/bin/zsh');
+  });
+
+  it('loadHostAppConfig fills a missing shell from the lookup and keeps a saved one', () => {
+    const expected = hostFallbackShell();
+    expect(hostFallbackShell()).toBe(expected);
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-host-shell-'));
+    expect(loadHostAppConfig(dataDir).shell).toBe(expected);
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ claudeBinary: 'claude' }));
+    expect(loadHostAppConfig(dataDir).shell).toBe(expected);
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ shell: '/opt/custom/sh' }));
+    expect(loadHostAppConfig(dataDir).shell).toBe('/opt/custom/sh');
+    writeFileSync(join(dataDir, 'config.json'), '{broken');
+    expect(loadHostAppConfig(dataDir).shell).toBe(expected);
+    if (process.platform === 'win32') expect(expected).toBe('/bin/zsh');
   });
 });

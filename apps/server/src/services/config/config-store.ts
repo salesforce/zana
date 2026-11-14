@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig, type PluginHarnessOverrideV1 } from '@zana-ai/zcc-domain/product';
 import { DEFAULT_TERMINAL_THEME } from '@zana-ai/zcc-domain/terminal-themes';
+import { defaultShellSetting, type DefaultShellSettingOptions } from '@zana-ai/zcc-process-utils';
 import { atomicDurableWrite, DurableWriteConflictError } from '../../durable-store.js';
 import { PLUGIN_HARNESS_ROUTING_KEY, pluginHarnessRoutingOf, type PluginHarnessRoutingMap } from './plugin-harness-routing-map.js';
 
@@ -18,6 +19,8 @@ export interface ConfigStoreDependencies {
   projectConfigCompatibility(config: AppConfig): AppConfig;
   canonicalConfigForWrite(config: AppConfig): AppConfig;
   harnessEnabled(config: AppConfig, id: NonNullable<AppConfig['defaultHarness']>): boolean;
+  /** Test seam for the default-shell lookup (platform, env, login shell, executable check). */
+  shellProbe?: Omit<DefaultShellSettingOptions, 'windows'>;
 }
 
 export interface ConfigStoreOptions {
@@ -114,11 +117,16 @@ export function createConfigStore(
     writeRaw(withPluginHarnessRouting(config, pluginHarnessRoutingOf(disk.value)), disk.hash);
   };
 
+  // Resolved once per store: the lookup stats files, and fallback() runs on every read.
+  let defaultShell: string | undefined;
+  const fallbackShell = (): string =>
+    (defaultShell ??= defaultShellSetting({ windows: process.env.SHELL || '/bin/zsh', ...deps.shellProbe }));
+
   const fallback = (): AppConfig => ({
     version: 1,
     theme: 'dark',
     terminalTheme: DEFAULT_TERMINAL_THEME,
-    shell: process.env.SHELL || '/bin/zsh',
+    shell: fallbackShell(),
     claudeBinary: 'claude',
     fontSize: 13,
     lastProjectId: null,

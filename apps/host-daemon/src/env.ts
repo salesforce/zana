@@ -3,6 +3,7 @@ import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync 
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NoShellFoundError, resolveDefaultShell, type ShellProbe } from '@zana-ai/zcc-process-utils';
 
 /**
  * PATH repair for GUI launches.
@@ -305,8 +306,10 @@ export function loginShellProbePath(platform: NodeJS.Platform, ppid: number, inh
 
 /**
  * Resolve the PATH a real interactive login shell would have, by running it
- * once and printing `$PATH`. Returns null when it can't be determined (Windows,
- * missing shell, timeout) so the caller can fall back to the guessed dirs.
+ * once and printing `$PATH`. The shell is the first one that exists
+ * ({@link resolveDefaultShell}: `SHELL`, the login shell, `/bin/bash`,
+ * `/bin/sh`). Returns null when it can't be determined (Windows, no shell,
+ * timeout) so the caller can fall back to the guessed dirs.
  *
  * `-i` (interactive) is deliberate: many users set PATH in `~/.zshrc` /
  * `~/.bashrc`, which a non-interactive shell skips. We bracket the value in
@@ -330,9 +333,16 @@ export function loginShellProbePath(platform: NodeJS.Platform, ppid: number, inh
  * Linux has no `path_helper`, and its `/usr/local/bin` and similar come from
  * PAM or systemd, not from the shell.
  */
-function loginShellPath(): string | null {
+export function loginShellPath(probe: ShellProbe = {}): string | null {
   if (process.platform === 'win32') return null;
-  const shell = process.env.SHELL || '/bin/zsh';
+  let shell: string;
+  try {
+    shell = resolveDefaultShell(probe);
+  } catch (error) {
+    if (!(error instanceof NoShellFoundError)) throw error;
+    console.warn(`[env] login-shell PATH probe skipped: ${error.message}`);
+    return null;
+  }
   const marker = '__ZCC_PATH_START__';
   const endMarker = '__ZCC_PATH_END__';
   try {
