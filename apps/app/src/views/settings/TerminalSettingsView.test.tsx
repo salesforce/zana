@@ -57,6 +57,22 @@ describe('TerminalSettingsView Copy selected text automatically', () => {
     await screen.findByText('tmux 3.4');
     expect(toggle().getAttribute('aria-checked')).toBe('false');
   });
+
+  it('says that OSC 52 copies follow the OSC 52 setting, in the same words as settings search', async () => {
+    render(<TerminalSettingsView config={config} onConfigDraft={vi.fn()} onUpdate={vi.fn().mockResolvedValue(undefined)} />);
+    await screen.findByText('tmux 3.4');
+    const helpId = toggle().getAttribute('aria-describedby');
+    const help = helpId ? document.getElementById(helpId)?.textContent : undefined;
+    expect(help).toContain(
+      "Some of these programs, such as Claude Code, also copy your selection themselves through OSC 52; that copy follows the OSC 52 setting below, not this one."
+    );
+    expect(help).toBe(terminalEntries.find((e) => e.id === 'terminal.copy-on-select')?.help);
+    // "the setting below" must stay true: the OSC 52 switch follows this one.
+    const names = screen.getAllByRole('switch').map((s) => s.getAttribute('aria-label'));
+    expect(names.indexOf('Allow terminal output to write the clipboard (OSC 52)')).toBe(
+      names.indexOf('Copy selected text automatically') + 1
+    );
+  });
 });
 
 describe('TerminalSettingsView Ctrl+V pastes', () => {
