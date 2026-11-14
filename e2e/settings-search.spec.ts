@@ -230,8 +230,10 @@ test('plugin-defined settings are searchable, land on #plugin-configure and neve
       configure: JSON.stringify(await window.cc.pluginApps.getSettings(secretId))
     }), SECRET_ID);
     expect(reads.search).not.toContain(VALUES.secret.secretValue);
+    expect(reads.search).not.toContain(VALUES.secret.secretDefault);
     expect(reads.search).toContain('accessPhrase');
     expect(reads.configure).toContain(VALUES.secret.secretValue);
+    expect(reads.configure).toContain(VALUES.secret.secretDefault);
 
     const search = await openSettings(win);
     await search.fill('quokka');

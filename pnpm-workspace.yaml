@@ -46,3 +46,10 @@ overrides:
   '@earendil-works/pi-coding-agent>undici': 8.12.4
   'shell-quote@<1.11.0': 1.11.0
   'uuid@<11.1.1': 11.1.1
+  # Keep these security updates within each consumer's existing major version.
+  'markdown-it@14': 14.3.3
+  'hono@4': 4.13.18
+  '@hono/node-server@2': 2.1.6
+  'source-map-js@1': 1.2.2
+  'ip-address@10': 10.7.4
+  'qs@6': 6.16.1

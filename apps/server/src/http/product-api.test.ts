@@ -2586,7 +2586,7 @@ describe('product HTTP plugins', () => {
     await expect(after.json()).resolves.toEqual({ apps: [] });
   });
 
-  it('omits secret plugin setting values when asked (?secrets=omit) and keeps descriptors', async () => {
+  it('omits secret plugin setting values and defaults when asked (?secrets=omit)', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-secrets-'));
     server = await startTestProductServer({
       dataDir,
@@ -2594,7 +2594,7 @@ describe('product HTTP plugins', () => {
     });
     const settings = {
       descriptors: {
-        apiKey: { type: 'string' as const, label: 'API key', secret: true },
+        apiKey: { type: 'string' as const, label: 'API key', secret: true, default: 'fixture-default-should-not-leave' },
         region: { type: 'string' as const, label: 'Region' }
       },
       values: { apiKey: 'sk-live-should-not-leave', region: 'eu' } as Record<string, string | boolean | undefined>
@@ -2608,9 +2608,10 @@ describe('product HTTP plugins', () => {
 
     const redacted = await fetch(`${server.url}api/v1/plugin-apps/demo/settings?secrets=omit`);
     const body = await redacted.json();
-    expect(body.descriptors).toEqual(settings.descriptors);
+    expect(body.descriptors).toEqual({ ...settings.descriptors, apiKey: { type: 'string', label: 'API key', secret: true } });
     expect(body.values).toEqual({ region: 'eu' });
     expect(JSON.stringify(body)).not.toContain('sk-live-should-not-leave');
+    expect(JSON.stringify(body)).not.toContain('fixture-default-should-not-leave');
 
     // Without the flag the Configure page keeps its existing contract.
     const full = await fetch(`${server.url}api/v1/plugin-apps/demo/settings`);
