@@ -32,12 +32,22 @@ vi.mock('../lib/executionInboxBlockerState.js', () => ({ useExecutionInboxBlocke
 import { InboxDetail } from './InboxDetail.js';
 import { inboxThreadCache } from '../hooks/useInboxThread.js';
 import { resetComposerSessions } from './composer/composer-session.js';
+import { useInboxReplyDrafts } from '../stores/inbox-reply-drafts.js';
 
 function Location() { return <output data-testid="location">{useLocation().pathname}</output>; }
 const view = () => <MemoryRouter><InboxDetail visible /><Location /></MemoryRouter>;
+/** Typing re-renders Send as enabled; clicking before that commit hits a disabled button and sends nothing. */
+async function sendReply(input: HTMLElement, value: string) {
+  fireEvent.change(input, { target: { value } });
+  const send = screen.getByRole('button', { name: 'Send', exact: true });
+  await waitFor(() => expect(send.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(send);
+}
 beforeEach(() => {
   inboxThreadCache.clear();
   resetComposerSessions();
+  // Drafts live in a module-level store; a draft left by an earlier test pre-expands the reply box.
+  useInboxReplyDrafts.setState({ drafts: {}, order: [], composeRequest: null });
   vi.resetAllMocks();
   h.compact = false; h.terminals = []; h.hostActions = {};
   h.entry = { id: 'report', ts: 1, projectId: 'p', sessionId: 'thread', subject: 'Report', comments: 'Ready for your reply.' };
@@ -85,8 +95,7 @@ it('sends a reply to the thread and marks answered only after delivery', async (
   let deliver!: (value: { ok: boolean }) => void;
   h.send.mockReturnValue(new Promise((resolve) => { deliver = resolve; }));
   render(view());
-  fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Continue the analysis' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await sendReply(await screen.findByRole('textbox'), 'Continue the analysis');
   await waitFor(() => expect(h.send).toHaveBeenCalledWith('thread', 'Continue the analysis', 'queue-if-active'));
   expect(h.markAnswered).not.toHaveBeenCalled();
   deliver({ ok: true });
@@ -109,8 +118,7 @@ it('retains a failed reply without marking it answered', async () => {
   h.send.mockRejectedValue(new Error('Host offline'));
   render(view());
   const input = await screen.findByRole('textbox');
-  fireEvent.change(input, { target: { value: 'Keep this draft' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await sendReply(input, 'Keep this draft');
   await waitFor(() => expect(h.toast).toHaveBeenCalledWith('Host offline', 'error'));
   expect((input as HTMLTextAreaElement).value).toBe('Keep this draft');
   expect(h.markAnswered).not.toHaveBeenCalled();
@@ -121,8 +129,7 @@ it('refreshes the archived indicator after a reply restores the conversation', a
   h.get.mockResolvedValueOnce({ thread: { id: 'thread', projectId: 'p', archivedAt: 1 } });
   render(view());
   await screen.findByText('Archived');
-  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Continue' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await sendReply(screen.getByRole('textbox'), 'Continue');
   await screen.findByText('Thread');
   expect(h.unarchive).toHaveBeenCalledWith('thread');
   expect(h.markAnswered).toHaveBeenCalledWith('report');
