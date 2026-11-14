@@ -83,6 +83,7 @@ import {
   getRememberedAppRoutePath,
   getRouteBeforeInbox,
   getRouteBeforeProjectSettings,
+  getRouteBeforeScheduler,
   resolveProjectBackPath
 } from './lib/route-memory.js';
 import {
@@ -636,6 +637,11 @@ interface UiState {
    * open before it; Home only when there is none or its project was removed.
    */
   toggleInbox: () => void;
+  /**
+   * Ctrl/Cmd+J. Opens the Scheduler. From the Scheduler, returns to the route
+   * open before it; Home only when there is none or its project was removed.
+   */
+  toggleScheduler: () => void;
   /** Page selected in the focused top-level Extensions workspace. */
   extensionsTab: ExtensionsTab;
   setExtensionsTab: (tab: ExtensionsTab) => void;
@@ -1049,9 +1055,10 @@ export function pushErrorToast(message: string) {
 const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
 
 /**
- * The return leg of a toggle shortcut: the remembered route, or null (go Home)
- * when there is none or its project was removed. A removed thread or session
- * falls back to its project's home, or Home outside a project.
+ * The return leg of a toggle shortcut (Ctrl/Cmd+I, Ctrl/Cmd+J): the remembered
+ * route, or null (go Home) when there is none or its project was removed. A
+ * removed thread or session falls back to its project's home, or Home outside
+ * a project.
  */
 function liveReturnRoute(before: string | null): string | null {
   if (!before) return null;
@@ -1379,6 +1386,16 @@ export const useUi = create<UiState>((set, get) => ({
       return;
     }
     const before = liveReturnRoute(getRouteBeforeInbox());
+    if (before) applyDestination(set, before);
+    else s.setNav('home');
+  },
+  toggleScheduler: () => {
+    const s = get();
+    if (s.nav !== 'scheduler') {
+      s.setNav('scheduler');
+      return;
+    }
+    const before = liveReturnRoute(getRouteBeforeScheduler());
     if (before) applyDestination(set, before);
     else s.setNav('home');
   },
