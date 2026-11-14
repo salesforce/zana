@@ -14,7 +14,7 @@ import {
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Link } from 'react-router-dom';
-import { Bug, Ellipsis, Smartphone, Settings } from 'lucide-react';
+import { Bug, Ellipsis, Settings } from 'lucide-react';
 import { openBugReport } from '../lib/report-bug.js';
 import { useUi } from '../store.js';
 import { useRouteState } from '../hooks/useRouteState.js';
@@ -110,7 +110,7 @@ export function SidebarRail({
     setSaveError(false);
     void useUi.getState().setSidebarNavHidden(storageKey, ids, resetOrder).catch(() => setSaveError(true));
   };
-  const { nav, settingsTab } = useRouteState();
+  const { nav } = useRouteState();
   const routeMemory = useAppSettingsRouteMemory();
   const footerActions = useSyncExternalStore(
     subscribePluginSlots,
@@ -303,16 +303,6 @@ export function SidebarRail({
         >
           <Bug size={18} aria-hidden="true" />
         </button>
-        <Link
-          to="/settings/remote-access"
-          className={`sidebar-utility-button${nav === 'settings' && settingsTab === 'remote-access' ? ' active' : ''}`}
-          aria-label="Remote access"
-          aria-current={nav === 'settings' && settingsTab === 'remote-access' ? 'page' : undefined}
-          title="Remote access"
-          onClick={() => dismissMobileNav?.()}
-        >
-          <Smartphone size={18} aria-hidden="true" />
-        </Link>
         {footerActions.map((action) => {
           const Icon = resolveIcon(action.icon);
           const active = nav === action.pluginId;

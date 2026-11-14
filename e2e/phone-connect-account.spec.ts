@@ -90,9 +90,9 @@ test('Connect enrolls through desktop IPC and serves authenticated phone traffic
     const win = app.window;
     const bug = win.getByRole('button', { name: 'Report a bug', exact: true });
     await expect(bug).toBeVisible();
-    expect(await bug.evaluate(element => element.nextElementSibling?.getAttribute('aria-label'))).toBe('Remote access');
-    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('remote-access-shortcut.png'));
-    await win.getByRole('link', { name: 'Remote access', exact: true }).click();
+    await expect(win.getByLabel('Sidebar utilities').getByRole('link', { name: 'Remote access', exact: true })).toHaveCount(0);
+    await win.getByRole('link', { name: 'Settings', exact: true }).click();
+    await win.getByTestId('settings-nav-remote-access').click();
     await expect(win.getByRole('heading', { name: 'Remote access', exact: true })).toBeVisible();
     await expect(win.getByRole('alert').filter({ hasText: 'Local-network connections are no longer supported' })).toBeVisible();
     await expect(win.getByRole('button', { name: 'Set up remote access' })).toBeVisible();

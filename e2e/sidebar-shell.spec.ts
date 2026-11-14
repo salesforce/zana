@@ -9,7 +9,7 @@ test('the shell keeps its sidebar trigger and history controls in Electron title
 
   await expect(sidebar).toBeVisible();
   await expect(sidebar.getByRole('button', { name: 'Minimize to Command Center' })).toHaveCount(0);
-  await expect(sidebar.getByRole('link', { name: 'Remote access' })).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'Remote access' })).toHaveCount(0);
   await expect(sidebarTrigger).toBeVisible();
   const historyControls = window.getByTestId('sidebar-history-controls');
   await expect(historyControls).toBeVisible();
@@ -45,4 +45,13 @@ test('the shell keeps its sidebar trigger and history controls in Electron title
     'aria-expanded',
     'true'
   );
+});
+
+test('Remote access is reachable through Settings without a footer shortcut', async ({ app }) => {
+  const { window } = app;
+  const utilities = window.getByLabel('Sidebar utilities');
+  await expect(utilities.getByRole('link', { name: 'Remote access', exact: true })).toHaveCount(0);
+  await utilities.getByRole('link', { name: 'Settings', exact: true }).click();
+  await window.getByTestId('settings-nav-remote-access').click();
+  await expect(window.getByRole('heading', { name: 'Remote access', exact: true })).toBeVisible();
 });
