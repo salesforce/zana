@@ -3,6 +3,7 @@ import { shallow } from 'zustand/vanilla/shallow';
 import { subscribeProductReconnect } from './lib/product-ws.js';
 import { product } from './lib/product-client.js';
 import type { ThreadActivityState } from '@zana-ai/zcc-domain/thread-runtime';
+import { markThreadsLive, markThreadsRemoved } from './lib/removed-routes.js';
 
 export interface ThreadListItem {
   id: string;
@@ -192,6 +193,7 @@ export const useThreads = create<ThreadStore>((set, get) => ({
     try {
       const listed = withoutArchived(await product.threads.list());
       if (generation !== loadGeneration) return;
+      markThreadsLive(listed.map((row) => row.id));
       set({ threads: reconcileLoadedRoster(listed, before, get().threads), loading: false });
     } catch {
       if (generation === loadGeneration) set({ loading: false });
@@ -202,11 +204,16 @@ export const useThreads = create<ThreadStore>((set, get) => ({
     const current = get().threads;
     const threads = mergeThreadRoster(current, thread);
     if (threads !== current) set({ threads });
+    // Archived: its route is dead for every remembered return path. A hidden
+    // thread still opens by route (plugin panels), so it stays live.
+    if (thread.archivedAt) markThreadsRemoved([thread.id]);
+    else markThreadsLive([thread.id]);
     if (thread.archivedAt && current.some((row) => row.id === thread.id && !row.archivedAt)) {
       for (const listener of [...archivedListeners]) listener(thread.id);
     }
   },
   remove(id) {
+    markThreadsRemoved([id]);
     set({ threads: get().threads.filter((row) => row.id !== id) });
   }
 }));
