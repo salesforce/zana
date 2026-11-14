@@ -1,6 +1,6 @@
 import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
 import { normalizeAgentSoundVolume, normalizeNotificationSoundProvider } from '@zana-ai/zcc-domain/product';
-import { isAgentsViewId } from '@zana-ai/zcc-domain/product';
+import { isAgentsViewId, PROJECT_EXPANDED_CAP } from '@zana-ai/zcc-domain/product';
 import { onboardingProgressSchema } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { isNotificationLevel, isOwnNotificationLevel, isProjectIcon } from '@zana-ai/zcc-domain';
@@ -931,6 +931,13 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
       if (Object.keys(collapsed).length >= 200) break;
     }
     normalized.collapsedSections = collapsed;
+  }
+  if (input.projectExpanded && typeof input.projectExpanded === 'object' && !Array.isArray(input.projectExpanded)) {
+    // Keep the newest entries: the renderer appends the latest toggle last,
+    // so trimming from the front never drops a fresh change.
+    const valid = Object.entries(input.projectExpanded).filter((entry): entry is [string, boolean] =>
+      Boolean(entry[0].trim()) && entry[0].length <= 128 && typeof entry[1] === 'boolean');
+    normalized.projectExpanded = Object.fromEntries(valid.slice(-PROJECT_EXPANDED_CAP));
   }
   if (typeof input.hideIdleProjects === 'boolean') {
     normalized.hideIdleProjects = input.hideIdleProjects;

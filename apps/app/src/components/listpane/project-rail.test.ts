@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import { isProjectRailExpanded, pinDefaultProjectFirst, pinFavoriteProjectsFirst } from './project-rail.js';
+import { isProjectRailExpanded, machineSectionKey, pinDefaultProjectFirst, pinFavoriteProjectsFirst, projectRailDisclosureId } from './project-rail.js';
 
 function project(id: string, favorite = false, extras: Partial<Project> = {}): Project {
   return {
@@ -68,5 +68,22 @@ describe('isProjectRailExpanded', () => {
     expect(isProjectRailExpanded(undefined, false)).toBe(false);
     expect(isProjectRailExpanded(false, true)).toBe(false);
     expect(isProjectRailExpanded(true, false)).toBe(true);
+  });
+});
+describe('projectRailDisclosureId and machineSectionKey', () => {
+  it('keeps the primary machine Default Project disclosure key stable across host hydration', () => {
+    const scratch = project('default', false, { name: 'zcc-workspace', quickAgent: true });
+    const regular = project('app');
+    // Before hosts hydrate: id is 'local'. After hosts hydrate: id is primary host UUID.
+    expect(projectRailDisclosureId(scratch, { id: 'local', primary: true })).toBe('local:default');
+    expect(projectRailDisclosureId(scratch, { id: 'host-uuid-1', primary: true })).toBe('local:default');
+    expect(projectRailDisclosureId(scratch, { id: 'remote-1', primary: false })).toBe('remote-1:default');
+    expect(projectRailDisclosureId(regular, { id: 'host-uuid-1', primary: true })).toBe('app');
+  });
+
+  it('keeps the primary machine section key stable across host hydration', () => {
+    expect(machineSectionKey({ id: 'local', primary: true })).toBe('sidebar:machine:local');
+    expect(machineSectionKey({ id: 'host-uuid-1', primary: true })).toBe('sidebar:machine:local');
+    expect(machineSectionKey({ id: 'remote-1', primary: false })).toBe('sidebar:machine:remote-1');
   });
 });

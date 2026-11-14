@@ -1875,6 +1875,12 @@ export const DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS = 4 * 60 * 60 * 1000;
 export const MIN_AUTONOMOUS_WAIT_MS = 60_000;
 export const MAX_AUTONOMOUS_WAIT_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Max `AppConfig.projectExpanded` entries kept. The renderer appends the latest
+ * toggle last and the server keeps the newest entries, so both must share this.
+ */
+export const PROJECT_EXPANDED_CAP = 200;
+
 export interface AppConfig {
   version: 1;
   /**
@@ -2147,6 +2153,11 @@ export interface AppConfig {
    * Absent key = expanded. Migrated once from `zcc.collapsedSections`.
    */
   collapsedSections?: Record<string, boolean>;
+  /**
+   * Per-project session-tree disclosure map in the Projects rail.
+   * Absent key falls back to auto-expanding when the project has live sessions.
+   */
+  projectExpanded?: Record<string, boolean>;
   /** Hide projects with no live sessions in the Projects rail. */
   hideIdleProjects?: boolean;
   /** Hide projects with no schedules in the Scheduler rail. */

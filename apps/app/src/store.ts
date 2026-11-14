@@ -1,4 +1,4 @@
-import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type CloseFollowupKeptOpen, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
+import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, PROJECT_EXPANDED_CAP, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type CloseFollowupKeptOpen, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
 import { subscribeClientRecovery } from './lib/client-recovery.js';
 import { create } from 'zustand';
 import type {
@@ -569,6 +569,8 @@ interface UiState {
   // keyed by a stable section id like 'scheduler:groups'. Persisted on AppConfig.
   collapsedSections: Record<string, boolean>;
   toggleSection: (key: string) => void;
+  /** One-time rename of a collapse key; an existing `to` value wins, `from` is dropped. */
+  migrateSectionKey: (from: string, to: string) => void;
   sidebarNavOrder: unknown;
   projectSidebarNavOrder: unknown;
   setSidebarNavOrder: (storageKey: string, order: string[]) => void;
@@ -900,13 +902,56 @@ function persistSidebarChrome(patch: Partial<AppConfig>) {
   product.config.set(patch).catch(() => {});
 }
 
-let collapsedSectionsTimer: number | null = null;
-function persistCollapsedSections(next: Record<string, boolean>) {
-  if (collapsedSectionsTimer !== null) window.clearTimeout(collapsedSectionsTimer);
-  collapsedSectionsTimer = window.setTimeout(() => {
-    collapsedSectionsTimer = null;
-    persistSidebarChrome({ collapsedSections: next });
+/**
+ * Debounced write of one disclosure map. It stays pending from the first local
+ * change until the config write settles, so a broadcast that lands mid-write
+ * cannot replace newer local state (see applySidebarChrome).
+ */
+interface DisclosureWrite { timer: number | null; inFlight: number }
+const collapsedSectionsWrite: DisclosureWrite = { timer: null, inFlight: 0 };
+const projectExpandedWrite: DisclosureWrite = { timer: null, inFlight: 0 };
+
+function isDisclosureWritePending(write: DisclosureWrite): boolean {
+  return write.timer !== null || write.inFlight > 0;
+}
+
+function scheduleDisclosureWrite(write: DisclosureWrite, patch: Partial<AppConfig>) {
+  if (write.timer !== null) window.clearTimeout(write.timer);
+  write.timer = window.setTimeout(() => {
+    write.timer = null;
+    let result: unknown;
+    try {
+      result = product.config.set(patch);
+    } catch {
+      result = undefined;
+    }
+    write.inFlight += 1;
+    Promise.resolve(result)
+      .catch(() => {})
+      .finally(() => { write.inFlight -= 1; });
   }, 200);
+}
+
+function persistCollapsedSections(next: Record<string, boolean>) {
+  scheduleDisclosureWrite(collapsedSectionsWrite, { collapsedSections: next });
+}
+
+// Re-insert the touched key at the end so insertion order tracks recency; the
+// server keeps the newest PROJECT_EXPANDED_CAP entries, so a fresh toggle is
+// never the one trimmed.
+export function withRecentProjectExpanded(
+  current: Record<string, boolean>,
+  key: string,
+  value: boolean
+): Record<string, boolean> {
+  const rest = { ...current };
+  delete rest[key];
+  const entries = Object.entries({ ...rest, [key]: value });
+  return Object.fromEntries(entries.slice(-PROJECT_EXPANDED_CAP));
+}
+
+function persistProjectExpanded(next: Record<string, boolean>) {
+  scheduleDisclosureWrite(projectExpandedWrite, { projectExpanded: next });
 }
 
 function readStoredNavOrder(key: string): unknown {
@@ -1153,6 +1198,15 @@ export const useUi = create<UiState>((set, get) => ({
   toggleSection: (key) =>
     set((s) => {
       const next = { ...s.collapsedSections, [key]: !s.collapsedSections[key] };
+      persistCollapsedSections(next);
+      return { collapsedSections: next };
+    }),
+  migrateSectionKey: (from, to) =>
+    set((s) => {
+      if (from === to || !(from in s.collapsedSections)) return s;
+      const next = { ...s.collapsedSections };
+      if (!(to in next)) next[to] = next[from];
+      delete next[from];
       persistCollapsedSections(next);
       return { collapsedSections: next };
     }),
@@ -1519,13 +1573,17 @@ export const useUi = create<UiState>((set, get) => ({
       }
     })),
   toggleProjectExpanded: (projectId) =>
-    set((s) => ({
-      projectExpanded: { ...s.projectExpanded, [projectId]: !s.projectExpanded[projectId] }
-    })),
+    set((s) => {
+      const next = withRecentProjectExpanded(s.projectExpanded, projectId, !s.projectExpanded[projectId]);
+      persistProjectExpanded(next);
+      return { projectExpanded: next };
+    }),
   setProjectExpanded: (projectId, expanded) =>
-    set((s) => ({
-      projectExpanded: { ...s.projectExpanded, [projectId]: expanded }
-    })),
+    set((s) => {
+      const next = withRecentProjectExpanded(s.projectExpanded, projectId, expanded);
+      persistProjectExpanded(next);
+      return { projectExpanded: next };
+    }),
   setSplitLayout: (projectId, layout) =>
     set((s) => {
       const cap = SPLIT_CAPACITY[layout];
@@ -2144,10 +2202,15 @@ export function sortProjectsAlphabetically(projects: Project[]): Project[] {
 }
 
 function applySidebarChrome(config: AppConfig) {
+  // A local write that is debounced or still in flight is newer than any
+  // broadcast that arrives before it settles; keep the local map so the next
+  // toggle is not built on stale state.
+  const local = useUi.getState();
   useUi.setState({
     hideIdleProjects: config.hideIdleProjects === true,
     hideSchedulelessProjects: config.hideSchedulelessProjects === true,
-    collapsedSections: config.collapsedSections ?? {},
+    collapsedSections: isDisclosureWritePending(collapsedSectionsWrite) ? local.collapsedSections : config.collapsedSections ?? {},
+    projectExpanded: isDisclosureWritePending(projectExpandedWrite) ? local.projectExpanded : config.projectExpanded ?? {},
     sidebarNavOrder: config.sidebarNavOrder ?? null,
     projectSidebarNavOrder: config.projectSidebarNavOrder ?? null,
     sidebarNavHidden: config.sidebarNavHidden ?? [],
@@ -3457,7 +3520,18 @@ export const useData = create<DataState>((set, get) => ({
       drop('splitLayout');
       drop('splitTabIds');
       drop('selectedTabId');
-      drop('projectExpanded');
+      const nextExpanded = { ...s.projectExpanded };
+      let expandedChanged = false;
+      for (const key of Object.keys(nextExpanded)) {
+        if (key === id || key.endsWith(`:${id}`)) {
+          delete nextExpanded[key];
+          expandedChanged = true;
+        }
+      }
+      if (expandedChanged) {
+        patch.projectExpanded = nextExpanded;
+        persistProjectExpanded(nextExpanded);
+      }
       drop('recentFiles');
       drop('explorerFile');
       drop('explorerGoto');
