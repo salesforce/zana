@@ -56,7 +56,8 @@ it('passes straight through when Git credentials already work', async () => {
   expect(screen.getByText('Connected to the corporate network')).toBeTruthy();
   expect(screen.getByText(`ada@${HOST}`)).toBeTruthy();
   expect(busy).toHaveBeenCalledWith(true);
-  expect(busy).toHaveBeenLastCalledWith(false);
+  // The text renders on commit; onBusyChange(false) comes from a passive effect after it.
+  await waitFor(() => expect(busy).toHaveBeenLastCalledWith(false));
 });
 
 it('accepts existing non-gh credentials (SSH / credential manager) without asking to sign in', async () => {
