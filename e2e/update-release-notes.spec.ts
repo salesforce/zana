@@ -7,6 +7,8 @@ const currentVersion = JSON.parse(readFileSync(new URL('../package.json', import
 
 for (const maximized of [false, true]) {
   test(`post-update release notes preserve a ${maximized ? 'maximized' : 'windowed'} window`, async () => {
+    test.skip(maximized && process.platform === 'linux' && !!process.env.CI,
+      'Linux CI runs bare Xvfb without a window manager; native maximize is verified on macOS.');
     const home = mkdtempSync(join(tmpdir(), 'zcc-e2e-post-update-bounds-'));
     const notesDir = join(home, 'release-notes');
     mkdirSync(notesDir);
