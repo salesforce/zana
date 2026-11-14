@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import type { Project } from '@zana-ai/zcc-domain/product';
 import {
   FolderPlus,
   LoaderCircle,
@@ -29,6 +30,7 @@ import {
 } from '../lib/application-tabs.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 import { ProjectDot } from './listpane/ProjectDot.js';
+import { TitlebarProjectButton } from './TitlebarProjectButton.js';
 import { copyTextOrFail } from '../lib/copy-text.js';
 import { product } from '../lib/product-client.js';
 import { withRunningProcessWarning } from '../lib/thread-running-processes.js';
@@ -40,9 +42,11 @@ import {
 
 /** Content adapters supply identity, live metadata and lifecycle rules to one tab shell. */
 export function ApplicationTabs({
-  includeThreads = true
+  includeThreads = true,
+  project
 }: {
   includeThreads?: boolean;
+  project?: Project | null;
 }) {
   const route = useRouteState();
   const location = useLocation();
@@ -295,6 +299,7 @@ export function ApplicationTabs({
   return (
     <ApplicationTabBar
       tabs={views}
+      leading={project ? <TitlebarProjectButton key={project.id} project={project} /> : undefined}
       onSelect={select}
       onClose={close}
       onMove={(id, to) => useApplicationTabs.getState().moveTab(id, to)}

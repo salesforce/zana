@@ -782,7 +782,7 @@ function AppShell() {
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
-        {(threadTabsEnabled || hasSetupPages) && !mobileNavigation.isCompact ? <ApplicationTabs includeThreads={threadTabsEnabled} /> : (
+        {(threadTabsEnabled || hasSetupPages) && !mobileNavigation.isCompact ? <ApplicationTabs includeThreads={threadTabsEnabled} project={titlebarProject} /> : (
           <ShellTitlebarTitle
             project={titlebarProject}
             label={titlebarLabel}
