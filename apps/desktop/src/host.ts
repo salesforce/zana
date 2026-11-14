@@ -8402,6 +8402,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
           win,
           initialBounds: restored.bounds,
           initialMaximized: config.windowMaximized,
+          restorePending: true,
           write: (state) => store.setConfig(state)
         });
     boundsControllers.set(win.id, controller);
@@ -8470,10 +8471,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     // process relaunch, overriding explicit constructor bounds. Reassert normal
     // state once native window restoration has finished.
     win.once('ready-to-show', () => {
-      if (win.isDestroyed() || win.isFullScreen()) return;
-      win.unmaximize();
-      win.setBounds(restored.bounds);
-      if (restored.maximized) win.maximize();
+      boundsControllers.get(win.id)?.restore(restored);
     });
   }
 

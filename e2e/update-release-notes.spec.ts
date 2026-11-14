@@ -1,7 +1,67 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
+
+const currentVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
+
+for (const maximized of [false, true]) {
+  test(`post-update release notes preserve a ${maximized ? 'maximized' : 'windowed'} window`, async () => {
+    test.skip(maximized && process.platform === 'linux' && !!process.env.CI,
+      'Linux CI runs bare Xvfb without a window manager; native maximize is verified on macOS.');
+    const home = mkdtempSync(join(tmpdir(), 'zcc-e2e-post-update-bounds-'));
+    const notesDir = join(home, 'release-notes');
+    mkdirSync(notesDir);
+    writeFileSync(join(notesDir, `${currentVersion}.md`), '# Updated successfully\n\nKeep the previous window size.');
+    const opts = {
+      // Keep the first renderer: its startup pull consumes the one-shot release notes.
+      tutorialDiscovery: true,
+      useAppManifest: true,
+      env: { ZCC_RELEASE_NOTES_DIR: notesDir },
+      initialConfig: {
+        sponsorPromptDismissed: true,
+        lastSeenVersion: '0.0.1',
+        windowBounds: { x: 0, y: 0, width: 1000, height: 650 },
+        windowMaximized: maximized
+      }
+    };
+    let app: Awaited<ReturnType<typeof launchApp>> | undefined;
+    try {
+      app = await launchApp(home, opts);
+      const readState = () => app!.electron.evaluate(({ BrowserWindow }) => {
+        const win = BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed() && candidate.webContents.getURL().startsWith('http://127.0.0.1:'));
+        if (!win) throw new Error('Main window not found');
+        return { maximized: win.isMaximized(), fullscreen: win.isFullScreen(), bounds: win.getNormalBounds() };
+      });
+      const expectedBounds = await app.electron.evaluate(({ screen }) => {
+        const area = screen.getPrimaryDisplay().workArea;
+        return { x: area.x, y: area.y, width: Math.min(1000, area.width), height: Math.min(650, area.height) };
+      });
+      const dialog = app.window.getByRole('dialog', { name: `What’s new in v${currentVersion}` });
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText('Keep the previous window size.');
+      await expect.poll(readState).toEqual({ maximized, fullscreen: false, bounds: expectedBounds });
+      await dialog.getByRole('button', { name: 'Got it', exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await expect.poll(readState).toEqual({ maximized, fullscreen: false, bounds: expectedBounds });
+
+      await closeApp(app.electron);
+      app = undefined;
+      const config = JSON.parse(readFileSync(join(home, '.zcc', 'config.json'), 'utf8'));
+      // Startup may clamp an old off-screen position without rewriting it.
+      // Verify the effective geometry after relaunch below.
+      expect(config.windowMaximized).toBe(maximized);
+
+      // A second restart must retain the same state after the notes were consumed.
+      app = await launchApp(home, opts);
+      await expect.poll(readState).toEqual({ maximized, fullscreen: false, bounds: expectedBounds });
+      await expect(app.window.getByRole('dialog', { name: `What’s new in v${currentVersion}` })).toBeHidden();
+    } finally {
+      if (app) await closeApp(app.electron);
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+}
 
 // Pre-update release notes at the real Electron boundary: main's updater status
 // (here the ZCC_FAKE_UPDATE dev shim) carries normalized notes over IPC, the

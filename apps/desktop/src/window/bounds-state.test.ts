@@ -11,6 +11,7 @@ function windowStub(overrides: Partial<BoundsWindow> = {}): BoundsWindow {
     isMaximized: () => false,
     isNormal: () => true,
     isFullScreen: () => false,
+    maximize: () => {},
     unmaximize: () => {},
     setBounds: () => {},
     getNormalBounds: () => ({ x: 10, y: 20, width: 1000, height: 700 }),
@@ -21,6 +22,105 @@ function windowStub(overrides: Partial<BoundsWindow> = {}): BoundsWindow {
 afterEach(() => vi.useRealTimers());
 
 describe('createBoundsStateController', () => {
+  it('keeps startup native events from replacing the state saved before an update', () => {
+    vi.useFakeTimers();
+    let nativeMaximized = true;
+    const saved = { bounds: { x: 80, y: 80, width: 1000, height: 700 }, minWidth: 900, minHeight: 600, maximized: false };
+    let nativeBounds = { x: 0, y: 0, width: 1440, height: 900 };
+    const write = vi.fn();
+    const win = windowStub({
+      isMaximized: () => nativeMaximized,
+      unmaximize: () => { nativeMaximized = false; controller.setMaximized(false); },
+      getNormalBounds: () => nativeBounds,
+      setBounds: value => { nativeBounds = value; controller.scheduleBounds(); }
+    });
+    const controller = createBoundsStateController({
+      win, initialBounds: saved.bounds, initialMaximized: false, restorePending: true, write
+    });
+    // Native restoration can report zoom before ready-to-show reasserts our saved geometry.
+    controller.setMaximized(true);
+    controller.scheduleBounds();
+    controller.flushForClose();
+    vi.advanceTimersByTime(400);
+    expect(write).not.toHaveBeenCalled();
+
+    controller.restore(saved);
+    expect(nativeMaximized).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+    controller.scheduleBounds();
+    vi.advanceTimersByTime(400);
+    expect(write).toHaveBeenLastCalledWith({ windowBounds: saved.bounds, windowMaximized: false });
+  });
+
+  it('restores an intentionally maximized window without persisting its intermediate unmaximize', () => {
+    const write = vi.fn();
+    const saved = { bounds: { x: 80, y: 80, width: 1000, height: 700 }, maximized: true };
+    const maximize = vi.fn(() => controller.setMaximized(true));
+    const setBounds = vi.fn(() => controller.scheduleBounds());
+    const win = windowStub({
+      unmaximize: () => controller.setMaximized(false),
+      maximize,
+      setBounds
+    });
+    const controller = createBoundsStateController({ win, restorePending: true, write });
+    controller.restore(saved);
+    expect(setBounds).toHaveBeenCalledWith(saved.bounds);
+    expect(maximize).toHaveBeenCalledOnce();
+    expect(write).not.toHaveBeenCalled();
+    controller.flush();
+    expect(write).not.toHaveBeenCalled();
+    controller.setMaximized(true);
+    expect(write).toHaveBeenCalledWith({ windowBounds: saved.bounds, windowMaximized: true });
+  });
+
+  it('cancels pending geometry when restoring saved bounds', () => {
+    vi.useFakeTimers();
+    const write = vi.fn();
+    const controller = createBoundsStateController({ win: windowStub(), write });
+    controller.scheduleBounds();
+    controller.restore({ bounds: { x: 80, y: 80, width: 1000, height: 700 }, maximized: false });
+    vi.runAllTimers();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it.each(['destroyed', 'fullscreen'] as const)('does not restore a %s window', kind => {
+    const unmaximize = vi.fn();
+    const setBounds = vi.fn();
+    const write = vi.fn();
+    const controller = createBoundsStateController({
+      win: windowStub({ isDestroyed: () => kind === 'destroyed', isFullScreen: () => kind === 'fullscreen', unmaximize, setBounds }),
+      restorePending: true, write
+    });
+    controller.restore({ bounds: { x: 80, y: 80, width: 1000, height: 700 }, maximized: false });
+    expect(unmaximize).not.toHaveBeenCalled();
+    expect(setBounds).not.toHaveBeenCalled();
+    controller.setMaximized(false);
+    expect(write).toHaveBeenCalledTimes(kind === 'destroyed' ? 0 : 1);
+  });
+
+  it('resumes persistence if native restoration fails', () => {
+    const write = vi.fn();
+    const controller = createBoundsStateController({
+      win: windowStub({ setBounds: () => { throw new Error('native window failure'); } }),
+      restorePending: true, write
+    });
+    expect(() => controller.restore({ bounds: { x: 80, y: 80, width: 1000, height: 700 }, maximized: false })).toThrow('native window failure');
+    controller.setMaximized(true);
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it('ignores fullscreen events until saved state has been restored', () => {
+    const write = vi.fn();
+    const controller = createBoundsStateController({ win: windowStub(), restorePending: true, write });
+    controller.beginFullscreenTransition();
+    controller.endFullscreenTransition();
+    controller.flush();
+    expect(write).not.toHaveBeenCalled();
+    controller.restore({ bounds: { x: 80, y: 80, width: 1000, height: 700 }, maximized: false });
+    controller.beginFullscreenTransition();
+    expect(write).toHaveBeenCalledOnce();
+  });
+
   it('flushes latest bounds once when closed before debounce expires', () => {
     vi.useFakeTimers();
     const write = vi.fn();
