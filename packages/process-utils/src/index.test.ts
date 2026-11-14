@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildChildEnv } from './index.js';
+import { buildChildEnv, resolveDefaultShell } from './index.js';
 
 describe('buildChildEnv', () => {
   it('includes PATH/HOME but excludes secrets', () => {
@@ -23,5 +23,11 @@ describe('buildChildEnv', () => {
 
   it('returns a fresh object, never the live process.env', () => {
     expect(buildChildEnv()).not.toBe(process.env);
+  });
+});
+
+describe('package exports', () => {
+  it('exports the default-shell lookup', () => {
+    expect(resolveDefaultShell({ env: {}, loginShell: () => null, isExecutable: (path) => path === '/bin/sh' })).toBe('/bin/sh');
   });
 });
