@@ -3,15 +3,25 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { defaultShellSetting, type DefaultShellSettingOptions } from '@zana-ai/zcc-process-utils';
 
-const FALLBACK: AppConfig = {
+const FALLBACK: Omit<AppConfig, 'shell'> = {
   version: 1,
   theme: 'dark',
-  shell: '/bin/zsh',
   claudeBinary: 'claude',
   fontSize: 13,
   lastProjectId: null
 };
+
+/** Windows keeps the old fixed value; elsewhere the first shell that exists. */
+const WINDOWS_FALLBACK_SHELL = '/bin/zsh';
+let fallbackShell: string | undefined;
+
+/** The host's default `shell` when config.json has none. Resolved once per process. */
+export function hostFallbackShell(probe?: Omit<DefaultShellSettingOptions, 'windows'>): string {
+  if (probe) return defaultShellSetting({ windows: WINDOWS_FALLBACK_SHELL, ...probe });
+  return (fallbackShell ??= defaultShellSetting({ windows: WINDOWS_FALLBACK_SHELL }));
+}
 
 /** Packaged / production data-dir name under HOME. */
 export const ZCC_DATA_DIR_NAME = '.zcc';
@@ -47,10 +57,10 @@ function resolveHostConfigDir(dataDir?: string, env: NodeJS.ProcessEnv = process
 export function loadHostAppConfig(dataDir?: string, env: NodeJS.ProcessEnv = process.env): AppConfig {
   try {
     const file = hostConfigPath(resolveHostConfigDir(dataDir, env));
-    if (!existsSync(file)) return { ...FALLBACK };
+    if (!existsSync(file)) return { ...FALLBACK, shell: hostFallbackShell() };
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<AppConfig>;
-    return projectConfigCompatibility({ ...FALLBACK, ...parsed, version: 1 });
+    return projectConfigCompatibility({ ...FALLBACK, shell: hostFallbackShell(), ...parsed, version: 1 });
   } catch {
-    return { ...FALLBACK };
+    return { ...FALLBACK, shell: hostFallbackShell() };
   }
 }
