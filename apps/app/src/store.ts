@@ -81,6 +81,7 @@ import {
   getRememberedAppRoutePath,
   getRouteBeforeInbox,
   getRouteBeforeProjectSettings,
+  getRouteBeforeScheduler,
   resolveProjectBackPath
 } from './lib/route-memory.js';
 import {
@@ -632,6 +633,11 @@ interface UiState {
    * open before it; Home only when there is none or its project was removed.
    */
   toggleInbox: () => void;
+  /**
+   * Ctrl/Cmd+J. Opens the Scheduler. From the Scheduler, returns to the route
+   * open before it; Home only when there is none or its project was removed.
+   */
+  toggleScheduler: () => void;
   /** Page selected in the focused top-level Extensions workspace. */
   extensionsTab: ExtensionsTab;
   setExtensionsTab: (tab: ExtensionsTab) => void;
@@ -1008,6 +1014,18 @@ function decodeDestination(path: string) {
 }
 
 /**
+ * The return leg of a toggle shortcut (Ctrl/Cmd+I, Ctrl/Cmd+J): the remembered
+ * route, or null (go Home) when there is none or its project was removed.
+ */
+function liveReturnRoute(before: string | null): string | null {
+  if (!before) return null;
+  const beforeProjectId = decodeDestination(before).focusedProjectId;
+  const projectGone =
+    beforeProjectId != null && !useData.getState().projects.some((p) => p.id === beforeProjectId);
+  return projectGone ? null : before;
+}
+
+/**
  * The project the shell is drilled into, if it still exists. A focus left
  * behind by a removed project is cleared by App; don't route into it (its
  * Settings or Inbox) in the meantime.
@@ -1315,11 +1333,18 @@ export const useUi = create<UiState>((set, get) => ({
       s.setNav('inbox');
       return;
     }
-    const before = getRouteBeforeInbox();
-    const beforeProjectId = before ? decodeDestination(before).focusedProjectId : null;
-    const projectGone =
-      beforeProjectId != null && !useData.getState().projects.some((p) => p.id === beforeProjectId);
-    if (before && !projectGone) applyDestination(set, before);
+    const before = liveReturnRoute(getRouteBeforeInbox());
+    if (before) applyDestination(set, before);
+    else s.setNav('home');
+  },
+  toggleScheduler: () => {
+    const s = get();
+    if (s.nav !== 'scheduler') {
+      s.setNav('scheduler');
+      return;
+    }
+    const before = liveReturnRoute(getRouteBeforeScheduler());
+    if (before) applyDestination(set, before);
     else s.setNav('home');
   },
   setExtensionsTab: (extensionsTab) =>
