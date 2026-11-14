@@ -36,6 +36,13 @@ export async function cleanupRun(
     } catch {
       /* already gone */
     }
+    // Archive too: it closes the session for good, and its host release runs
+    // again for a thread whose stop raced its own start and left a provider.
+    try {
+      await http.request('POST', `/api/v1/threads/${encodeURIComponent(id)}/archive`, { body: {} });
+    } catch {
+      /* already gone or archived */
+    }
   }
 
   const agentIds = new Set(journal?.cliAgentIds ?? []);

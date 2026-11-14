@@ -598,7 +598,9 @@ afterEach(async () => {
   }
   vi.unstubAllEnvs();
   output.restore();
-  rmSync(workspaceDir, { recursive: true, force: true });
+  // A stopped agent behind a cmd.exe shim ends through taskkill.exe on
+  // Windows (about 1.5 s) and can hold the directory as its cwd until then.
+  rmSync(workspaceDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 100 });
 });
 
 describe("acp bridge", () => {
