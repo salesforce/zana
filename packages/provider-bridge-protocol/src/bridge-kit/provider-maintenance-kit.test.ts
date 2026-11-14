@@ -4,6 +4,7 @@ import {
   compareVersions,
   formatCommand,
   installationVerification,
+  npmGlobalInstallCommand,
   npmGlobalInstallSource,
   versionFrom,
 } from "./provider-maintenance-kit.js";
@@ -32,6 +33,23 @@ describe("provider maintenance kit", () => {
     expect(formatCommand("sh", ["-c", "echo 'hi' && ls"])).toBe(
       "sh -c 'echo '\\''hi'\\'' && ls'",
     );
+  });
+
+
+  it("pins a global npm install to latest, or the requested dist-tag", () => {
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    expect(npmGlobalInstallCommand("@anthropic-ai/claude-code")).toEqual({
+      command: npm,
+      args: ["install", "-g", "@anthropic-ai/claude-code@latest"],
+      displayCommand: `${npm} install -g @anthropic-ai/claude-code@latest`,
+    });
+    expect(
+      npmGlobalInstallCommand("@anthropic-ai/claude-code", "stable"),
+    ).toEqual({
+      command: npm,
+      args: ["install", "-g", "@anthropic-ai/claude-code@stable"],
+      displayCommand: `${npm} install -g @anthropic-ai/claude-code@stable`,
+    });
   });
 
   it("attributes an executable inside npm's global bin to npm", () => {

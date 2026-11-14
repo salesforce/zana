@@ -59,6 +59,124 @@ describe("resolveClaudeCodeExecutable on PATH", () => {
     } finally { rmSync(root, { force: true, recursive: true }); }
   });
 
+  it("resolves the npm global package image when PATH only has claude.cmd", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-npm-"));
+    try {
+      const prefix = join(root, "npm");
+      const exe = join(prefix, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+      mkdirSync(join(exe, ".."), { recursive: true });
+      writeExecutable(join(prefix, "claude"));
+      writeExecutable(join(prefix, "claude.cmd"));
+      writeExecutable(exe);
+      expect(
+        resolveClaudeCodeExecutable({ env: { PATH: prefix }, platform: "win32" }),
+      ).toBe(exe);
+    } finally { rmSync(root, { force: true, recursive: true }); }
+  });
+
+  it("prefers an earlier npm global install over a later claude.exe", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-npm-order-"));
+    try {
+      const prefix = join(root, "npm");
+      const later = join(root, "later");
+      const exe = join(prefix, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+      mkdirSync(join(exe, ".."), { recursive: true });
+      mkdirSync(later);
+      writeExecutable(exe);
+      writeExecutable(join(later, "claude.exe"));
+      expect(
+        resolveClaudeCodeExecutable({
+          env: { PATH: [prefix, later].join(delimiter) },
+          platform: "win32",
+        }),
+      ).toBe(exe);
+    } finally { rmSync(root, { force: true, recursive: true }); }
+  });
+
+  it("reads the claude.exe path out of an npm claude.cmd shim", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-cmd-"));
+    try {
+      const prefix = join(root, "npm");
+      const exe = join(prefix, "node_modules", "@anthropic-ai", "claude-code", "claude.exe");
+      mkdirSync(join(exe, ".."), { recursive: true });
+      writeFileSync(
+        join(prefix, "claude.cmd"),
+        '@ECHO off\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\claude.exe" %*\r\n',
+      );
+      writeExecutable(exe);
+      expect(
+        resolveClaudeCodeExecutable({ env: { PATH: prefix }, platform: "win32" }),
+      ).toBe(exe);
+    } finally { rmSync(root, { force: true, recursive: true }); }
+  });
+
+  it("accepts an absolute claude.exe path only under the shim's package directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-cmd-abs-"));
+    try {
+      const prefix = join(root, "npm");
+      const packaged = join(prefix, "node_modules", "@anthropic-ai", "claude-code", "claude.exe");
+      const outside = join(root, "outside", "claude.exe");
+      mkdirSync(join(packaged, ".."), { recursive: true });
+      mkdirSync(join(root, "outside"));
+      writeExecutable(packaged);
+      writeExecutable(outside);
+      writeFileSync(join(prefix, "claude.cmd"), `@ECHO off\r\n"${packaged}" %*\r\n`);
+      expect(
+        resolveClaudeCodeExecutable({ env: { PATH: prefix }, platform: "win32" }),
+      ).toBe(packaged);
+      writeFileSync(join(prefix, "claude.cmd"), `@ECHO off\r\n"${outside}" %*\r\n`);
+      expect(
+        resolveClaudeCodeExecutable({ env: { PATH: prefix }, platform: "win32" }),
+      ).toBeNull();
+    } finally { rmSync(root, { force: true, recursive: true }); }
+  });
+
+  it("ignores a claude.cmd shim that escapes its directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-cmd-escape-"));
+    try {
+      const prefix = join(root, "npm");
+      mkdirSync(prefix, { recursive: true });
+      writeExecutable(join(root, "claude.exe"));
+      writeFileSync(
+        join(prefix, "claude.cmd"),
+        '@ECHO off\r\n"%dp0%\\..\\claude.exe" %*\r\n',
+      );
+      expect(
+        resolveClaudeCodeExecutable({ env: { PATH: prefix }, platform: "win32" }),
+      ).toBeNull();
+    } finally { rmSync(root, { force: true, recursive: true }); }
+  });
+
+  it("finds a global npm install under APPDATA when it is not on PATH", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-appdata-"));
+    try {
+      const exe = join(root, "npm", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+      mkdirSync(join(exe, ".."), { recursive: true });
+      writeExecutable(exe);
+      expect(
+        resolveClaudeCodeExecutable({
+          env: { APPDATA: root, PATH: "" },
+          platform: "win32",
+        }),
+      ).toBe(exe);
+    } finally { rmSync(root, { force: true, recursive: true }); }
+  });
+
+  it("finds a global npm install under ProgramFiles nodejs", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcc-claude-win-programfiles-"));
+    try {
+      const exe = join(root, "nodejs", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+      mkdirSync(join(exe, ".."), { recursive: true });
+      writeExecutable(exe);
+      expect(
+        resolveClaudeCodeExecutable({
+          env: { ProgramFiles: root, PATH: "" },
+          platform: "win32",
+        }),
+      ).toBe(exe);
+    } finally { rmSync(root, { force: true, recursive: true }); }
+  });
+
   it("keeps resolving the bare claude name off Windows", () => {
     const root = mkdtempSync(join(tmpdir(), "zcc-claude-posix-path-"));
     try {
