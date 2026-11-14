@@ -65,7 +65,9 @@ import { product } from './lib/product-client.js';
 import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog, threadModelCatalogForHost, modelDiscoveryConfigKey, invalidateModelCatalogs } from './components/thread/pickers/thread-model-catalog.js';
 import { decodeRoutePath } from './lib/decode-route.js';
+import { liveRoutePath, markSessionsRemoved } from './lib/removed-routes.js';
 import {
+  APP_ROOT_ROUTE_PATH,
   getExtensionsTabRoutePath,
   getFollowUpsRoutePath,
   getNavRoutePath,
@@ -1008,6 +1010,19 @@ function decodeDestination(path: string) {
 }
 
 /**
+ * The return leg of a toggle shortcut: the remembered route, or null (go Home)
+ * when there is none or its project was removed. A removed thread or session
+ * falls back to its project's home, or Home outside a project.
+ */
+function liveReturnRoute(before: string | null): string | null {
+  if (!before) return null;
+  const beforeProjectId = decodeDestination(before).focusedProjectId;
+  const projectGone =
+    beforeProjectId != null && !useData.getState().projects.some((p) => p.id === beforeProjectId);
+  return projectGone ? null : liveRoutePath(before, null);
+}
+
+/**
  * The project the shell is drilled into, if it still exists. A focus left
  * behind by a removed project is cleared by App; don't route into it (its
  * Settings or Inbox) in the meantime.
@@ -1299,7 +1314,7 @@ export const useUi = create<UiState>((set, get) => ({
     if (projectId) {
       // Back to the project route it was opened from (a schedule, a thread…),
       // else to the project's last view.
-      const before = getRouteBeforeProjectSettings();
+      const before = liveRoutePath(getRouteBeforeProjectSettings(), APP_ROOT_ROUTE_PATH);
       if (decodeDestination(before).focusedProjectId === projectId) {
         applyDestination(set, before);
       } else {
@@ -1307,7 +1322,7 @@ export const useUi = create<UiState>((set, get) => ({
       }
       return;
     }
-    applyDestination(set, getRememberedAppRoutePath());
+    applyDestination(set, liveRoutePath(getRememberedAppRoutePath(), APP_ROOT_ROUTE_PATH));
   },
   toggleInbox: () => {
     const s = get();
@@ -1315,11 +1330,8 @@ export const useUi = create<UiState>((set, get) => ({
       s.setNav('inbox');
       return;
     }
-    const before = getRouteBeforeInbox();
-    const beforeProjectId = before ? decodeDestination(before).focusedProjectId : null;
-    const projectGone =
-      beforeProjectId != null && !useData.getState().projects.some((p) => p.id === beforeProjectId);
-    if (before && !projectGone) applyDestination(set, before);
+    const before = liveReturnRoute(getRouteBeforeInbox());
+    if (before) applyDestination(set, before);
     else s.setNav('home');
   },
   setExtensionsTab: (extensionsTab) =>
@@ -3604,6 +3616,7 @@ export const useData = create<DataState>((set, get) => ({
         detachedStack: { ...s.detachedStack, [projectId]: detached }
       };
     });
+    markSessionsRemoved([sessionId]);
     // Drop the session's live agent state so the project rollup dot recomputes
     // (else a closed-while-idle session leaves a stale green dot behind). Runs
     // after the terminals `set` so recomputeRollup sees the session gone.
@@ -3647,6 +3660,7 @@ export const useData = create<DataState>((set, get) => ({
         sessionIds.filter((sessionId) => !ids.has(sessionId))
       ]))
     }));
+    markSessionsRemoved(ids);
     for (const sessionId of ids) {
       useUi.getState().clearUnread(sessionId);
       const projectId = projectIdBySession.get(sessionId) ?? null;
