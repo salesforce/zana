@@ -21,6 +21,8 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { hasLine, plainLines, windowsBash, windowsBashConfig, windowsBashSkipReason } from './fixtures/terminal-lines.js';
 
+test.use({ e2e: true, initialConfig: { tmuxScope: 'off', ...windowsBashConfig } });
+
 /** Distance from the screen's edge to a point inside the first or last cell. */
 const EDGE_INSET = 4;
 /** Clipboard text a step sets first, so "unchanged" is a real check. */
