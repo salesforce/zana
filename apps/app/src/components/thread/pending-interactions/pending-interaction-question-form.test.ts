@@ -37,6 +37,24 @@ describe('pending interaction question form', () => {
     expect(optionInvitesFreeText({ value: 'workspace', label: 'This workspace/codebase' })).toBe(false);
   });
 
+  it.each(['Other', 'Other…', 'OTHER...', 'Something else:', 'Custom', 'Other (Recommended)'])(
+    'preserves the explicit legacy custom-answer label %s', (label) => {
+      expect(optionInvitesFreeText({ value: 'legacy', label })).toBe(true);
+    }
+  );
+
+  it.each(['Other on every question', 'Other on the last question', 'Other environment', 'Custom DNS', 'Something else happened'])(
+    'keeps %s an ordinary choice even when its value is other', (label) => {
+      const question = { ...optionQuestion, options: [{ value: 'other', label }] };
+      const answer = { selected: ['other'], otherSelected: false };
+      expect(optionInvitesFreeText(question.options[0])).toBe(false);
+      expect(shouldShowOtherChoice(question)).toBe(true);
+      expect(shouldShowFreeTextInput(question, answer)).toBe(false);
+      expect(isQuestionAnswered(question, answer)).toBe(true);
+      expect(toUserAnswerResolution([question], { q1: answer })).toEqual({ q1: { selected: ['other'] } });
+    }
+  );
+
   it('adds Other only when free text is allowed and no option already invites it', () => {
     expect(shouldShowOtherChoice(optionQuestion)).toBe(false);
     expect(shouldShowOtherChoice({

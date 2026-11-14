@@ -18,10 +18,10 @@ export function pendingQuestionBannerTitle(count: number): string {
 }
 
 export function optionInvitesFreeText(option: { label: string; value: string }): boolean {
-  const label = option.label.trim();
-  const value = option.value.trim();
-  return /^(other|something else|custom)([.…: ]|$)/i.test(label)
-    || /^(other|custom)$/i.test(value);
+  // Preserve explicit legacy Other choices without turning ordinary labels such
+  // as “Other environment” or “Custom DNS” into required free-text answers.
+  const { label } = splitRecommendedLabel(option.label);
+  return /^(other|something else|custom)[.…:]*$/i.test(label.trim());
 }
 
 export function shouldShowOtherChoice(

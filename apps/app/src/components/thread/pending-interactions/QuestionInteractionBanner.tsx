@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FocusEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type FocusEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { Check } from 'lucide-react';
 import { platformKey, platformShortcut } from '../../../lib/platformShortcut.js';
 import type { PendingInteractionUserAnswer, PendingInteractionUserQuestionQuestion } from '@zana-ai/zcc-domain/thread-runtime';
@@ -7,6 +7,7 @@ import { PendingInteractionShell } from './PendingInteractionShell.js';
 import {
   OTHER_OPTION_LABEL,
   isQuestionAnswered,
+  optionInvitesFreeText,
   pendingQuestionBannerTitle,
   questionChoiceIndexForKey,
   shouldShowFreeTextInput,
@@ -108,6 +109,8 @@ export function QuestionInteractionBanner({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [validationAttempted, setValidationAttempted] = useState(false);
+  const incompleteHintId = useId();
   const draftKey = questionDraftKey(threadId, interactionId);
   const signature = JSON.stringify(questions);
   const identity = `${draftKey}:${signature}`;
@@ -127,22 +130,24 @@ export function QuestionInteractionBanner({
   const disabled = busy || resolving;
   const formRef = useRef<HTMLFormElement>(null);
   const [panelFocus, setPanelFocus] = useState<PanelFocus>('other');
-  const refocusAfterMove = useRef(false);
-  useEffect(() => {
-    // A move can unmount the focused control; keep focus in the panel so the
-    // next key (digit, Enter, ⌘↵) still reaches it.
-    if (!refocusAfterMove.current) return;
-    refocusAfterMove.current = false;
+  const focusAfterUpdate = useRef<'answer' | 'move' | null>(null);
+  useLayoutEffect(() => {
+    const request = focusAfterUpdate.current;
+    if (!request) return;
+    focusAfterUpdate.current = null;
     const form = formRef.current;
-    if (!form || form.contains(document.activeElement)) return;
-    const target = form.querySelector<HTMLElement>('.thread-pending-option.is-selected')
+    if (!form || (request === 'move' && form.contains(document.activeElement))) return;
+    const input = form.querySelector<HTMLTextAreaElement>('.thread-pending-question-input');
+    const target = (request !== 'move' ? input : null)
+      ?? form.querySelector<HTMLElement>('.thread-pending-option.is-selected')
       ?? form.querySelector<HTMLElement>('.thread-pending-option, .thread-pending-question-input');
     target?.focus();
-  }, [currentIndex]);
+  }, [activeDraft]);
   const isAnswered = (question: PendingInteractionUserQuestionQuestion) => (
     isQuestionAnswered(question, answers[question.id] ?? { selected: [], otherSelected: false })
   );
-  const allAnswered = questions.length > 0 && questions.every(isAnswered);
+  const unansweredQuestions = questions.filter((question) => !isAnswered(question));
+  const allAnswered = total > 0 && unansweredQuestions.length === 0;
   const updateAnswer = (
     questionId: string,
     update: (answer: QuestionAnswerDraft) => QuestionAnswerDraft
@@ -163,36 +168,54 @@ export function QuestionInteractionBanner({
       setBusy(false);
     });
   };
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!allAnswered) return;
-    finish(() => onSubmit(toUserAnswerResolution(questions, answers)), 'Failed to answer question');
-  };
   const isLast = currentIndex >= total - 1;
+  const showIncompleteHint = unansweredQuestions.length > 0 && (isLast || validationAttempted);
   const currentOptions = current?.options ?? [];
   const showOther = current ? shouldShowOtherChoice(current) : false;
   const choiceCount = currentOptions.length + (showOther ? 1 : 0);
   const selectChoice = (index: number) => {
     if (!current) return;
     const option = currentOptions[index];
+    const focusText = (answer: QuestionAnswerDraft) => {
+      const selectedCustomChoice = option
+        ? optionInvitesFreeText(option) && answer.selected.includes(option.value)
+        : answer.otherSelected;
+      if (selectedCustomChoice && shouldShowFreeTextInput(current, answer)) focusAfterUpdate.current = 'answer';
+      return answer;
+    };
     if (option) {
-      updateAnswer(current.id, (draft) => toggleQuestionOption(current, draft, option.value));
+      updateAnswer(current.id, (draft) => focusText(toggleQuestionOption(current, draft, option.value)));
     } else if (showOther && index === currentOptions.length) {
-      updateAnswer(current.id, (draft) => toggleOtherChoice(current, draft));
+      updateAnswer(current.id, (draft) => focusText(toggleOtherChoice(current, draft)));
     }
   };
   // Back/Next and keyboard moves can unmount the focused control (Back on
   // question 1, Next becoming Submit, an option); moveTo keeps focus in the panel.
-  const moveTo = (index: number) => {
-    refocusAfterMove.current = true;
+  const moveTo = (index: number, focusAnswer = false) => {
+    focusAfterUpdate.current = focusAnswer ? 'answer' : 'move';
     setCurrentIndex(index);
+  };
+  const reviewUnanswered = () => {
+    const index = questions.findIndex((question) => !isAnswered(question));
+    if (index < 0) return;
+    setValidationAttempted(true);
+    moveTo(index, true);
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (disabled) return;
+    if (!allAnswered) {
+      reviewUnanswered();
+      return;
+    }
+    finish(() => onSubmit(toUserAnswerResolution(questions, answers)), 'Failed to answer question');
   };
   // What the primary button does: Next, Submit, or (last question, something
   // earlier unanswered) jump back to the first unanswered question.
   const advance = (form: HTMLFormElement) => {
     if (!isLast) moveTo(Math.min(currentIndex + 1, total - 1));
     else if (allAnswered) form.requestSubmit();
-    else if (current && isAnswered(current)) moveTo(questions.findIndex((question) => !isAnswered(question)));
+    else reviewUnanswered();
   };
   const onFormKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     // ⌘↵ / Ctrl+↵ works from anywhere in the panel, including the free-text box.
@@ -305,6 +328,13 @@ export function QuestionInteractionBanner({
             ) : null}
           </fieldset>
         ) : null}
+        {showIncompleteHint ? (
+          <p id={incompleteHintId} className="thread-pending-banner-reason" role="status">
+            Answer before submitting: {unansweredQuestions.map((question) => (
+              question.shortLabel || `Question ${questions.indexOf(question) + 1}`
+            )).join(', ')}.
+          </p>
+        ) : null}
         <div className="thread-pending-banner-actions">
           {choiceCount > 1 ? (
             <span className="thread-pending-question-hint" data-testid="thread-pending-question-hint" aria-hidden="true">
@@ -333,30 +363,21 @@ export function QuestionInteractionBanner({
               Back
             </button>
           ) : null}
-          {isLast ? (
-            <button
-              type="submit"
-              className="thread-pending-banner-decision is-primary"
-              data-testid="thread-pending-question-submit"
-              title={platformShortcut('Submit (⌘↵)')}
-              aria-keyshortcuts={PRIMARY_KEYSHORTCUTS}
-              disabled={disabled || !allAnswered}
-            >
-              Submit
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="thread-pending-banner-decision is-primary"
-              data-testid="thread-pending-question-next"
-              title={platformShortcut('Next (⌘↵)')}
-              aria-keyshortcuts={PRIMARY_KEYSHORTCUTS}
-              disabled={disabled}
-              onClick={() => moveTo(Math.min(currentIndex + 1, total - 1))}
-            >
-              Next
-            </button>
-          )}
+          {/* A stable button type prevents a Next click from becoming a native submit. */}
+          <button
+            type="button"
+            className="thread-pending-banner-decision is-primary"
+            data-testid={isLast ? 'thread-pending-question-submit' : 'thread-pending-question-next'}
+            title={platformShortcut(isLast ? 'Submit (⌘↵)' : 'Next (⌘↵)')}
+            aria-keyshortcuts={PRIMARY_KEYSHORTCUTS}
+            aria-describedby={showIncompleteHint ? incompleteHintId : undefined}
+            disabled={disabled || total === 0}
+            onClick={(event) => {
+              if (event.currentTarget.form) advance(event.currentTarget.form);
+            }}
+          >
+            {isLast ? 'Submit' : 'Next'}
+          </button>
         </div>
       </form>
     </PendingInteractionShell>
