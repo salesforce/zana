@@ -2,7 +2,10 @@ import { matchPath } from 'react-router-dom';
 import {
   APP_ROOT_ROUTE_PATH,
   INBOX_ROUTE_PATH,
+  NEW_SCHEDULE_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
+  SCHEDULER_ROUTE_PATH,
+  SCHEDULE_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   TOOLS_PLUGINS_ROUTE_PATH,
   getAgentsRoutePath,
@@ -119,10 +122,25 @@ let recordedLocationKey = '';
 let lastRouteBeforeProjectSettings = APP_ROOT_ROUTE_PATH;
 /** Last route that wasn't an Inbox: where Ctrl/Cmd+I returns. Null until one is seen. */
 let lastRouteBeforeInbox: string | null = null;
+/** Last route that wasn't the Scheduler: where Ctrl/Cmd+J returns. Null until one is seen. */
+let lastRouteBeforeScheduler: string | null = null;
 
 /** The cross-project `/inbox` or a project's `/projects/:id/inbox`. */
 export function isInboxRoutePath(pathname: string): boolean {
   return pathname === INBOX_ROUTE_PATH || isProjectInboxRoutePath(pathname);
+}
+
+/**
+ * The routes that open the top-level Scheduler (`nav === 'scheduler'`): its
+ * overview, a new schedule and a schedule's detail. A project's Scheduler tab
+ * is a project view, so Ctrl/Cmd+J can return to it.
+ */
+export function isSchedulerRoutePath(pathname: string): boolean {
+  return (
+    pathname === SCHEDULER_ROUTE_PATH ||
+    pathname === NEW_SCHEDULE_ROUTE_PATH ||
+    matchPath(SCHEDULE_ROUTE_PATH, pathname) !== null
+  );
 }
 
 /** Records a rendered location (once per distinct URL) and returns the memory. */
@@ -156,12 +174,27 @@ export function rememberInboxReturnRoute(location: {
   lastRouteBeforeInbox = getLocationRoutePath(location);
 }
 
+/**
+ * Ctrl/Cmd+J's counterpart of `rememberInboxReturnRoute`, under the same
+ * commit-phase rule. Scheduler routes are skipped, so opening a schedule and
+ * going back to the overview keeps the view the Scheduler was opened from.
+ */
+export function rememberSchedulerReturnRoute(location: {
+  pathname: string;
+  search: string;
+  hash: string;
+}): void {
+  if (isSchedulerRoutePath(location.pathname)) return;
+  lastRouteBeforeScheduler = getLocationRoutePath(location);
+}
+
 /** Test-only: drop remembered paths so files don't leak across workers. */
 export function resetAppSettingsRouteMemory(): void {
   storedMemory = { ...INITIAL_STORED_ROUTE_MEMORY };
   recordedLocationKey = '';
   lastRouteBeforeProjectSettings = APP_ROOT_ROUTE_PATH;
   lastRouteBeforeInbox = null;
+  lastRouteBeforeScheduler = null;
 }
 
 /** The "Back to app" destination from Settings, for callers outside React. */
@@ -180,4 +213,12 @@ export function getRouteBeforeProjectSettings(): string {
  */
 export function getRouteBeforeInbox(): string | null {
   return lastRouteBeforeInbox;
+}
+
+/**
+ * The route seen last before the Scheduler, for Ctrl/Cmd+J's return trip.
+ * Null when the Scheduler is all this window has shown.
+ */
+export function getRouteBeforeScheduler(): string | null {
+  return lastRouteBeforeScheduler;
 }
