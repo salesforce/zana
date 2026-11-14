@@ -274,7 +274,7 @@ describe('AgentSessionView', () => {
     persistPanel('s-term', { activeId: 'term:1', tabs: [{ id: 'term:1', kind: 'terminal', title: 'Terminal', sessionId: 'other' }] });
     expect(renderToStaticMarkup(
       <AgentSessionView session={session({ id: 's-term' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
-    )).toContain('A sidecar terminal cannot share this inspector');
+    )).toContain('data-terminal-session="other"');
   });
 
   it('applies maximized chrome and optional stage overlays', () => {
