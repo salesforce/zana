@@ -11,7 +11,7 @@ import { getPluginSettingsFromProductServer } from './plugin-apps-loopback.js';
 import { registerPluginsIpc } from './plugins.js';
 
 const snapshot = () => ({
-  descriptors: { token: { type: 'string', label: 'Token', secret: true }, relay: { type: 'string', label: 'Relay' } },
+  descriptors: { token: { type: 'string', label: 'Token', secret: true, default: 'fixture-default-secret' }, relay: { type: 'string', label: 'Relay' } },
   values: { token: 'sekret', relay: 'https://r' }
 });
 const handlers = new Map<string, (...args: any[]) => any>();
@@ -38,9 +38,10 @@ for (const [label, withSupervisor] of [['runtime supervisor', true], ['product-s
     const get = handlers.get(IPC.pluginApps.getSettings)!;
     const redacted = await get('p', { omitSecrets: true });
     expect(redacted.values).toEqual({ relay: 'https://r' });
-    expect(redacted.descriptors.token).toBeDefined();
+    expect(redacted.descriptors.token).toEqual({ type: 'string', label: 'Token', secret: true });
+    expect(JSON.stringify(redacted)).not.toContain('fixture-default-secret');
     for (const options of [undefined, {}, { omitSecrets: false }, { omitSecrets: 'true' }]) {
-      expect((await get('p', options)).values).toEqual({ token: 'sekret', relay: 'https://r' });
+      expect(await get('p', options)).toEqual(snapshot());
     }
     expect(withSupervisor ? supervisor.getPluginSettings : getPluginSettingsFromProductServer).toHaveBeenCalledWith('p');
   });

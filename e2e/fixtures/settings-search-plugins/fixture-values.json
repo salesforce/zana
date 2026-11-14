@@ -16,6 +16,7 @@
     "secretLabel": "Fixture access phrase",
     "secretDescription": "Fixture-only secret. Its value must never be searchable.",
     "secretValue": "hunter2-fixture-dummy-0000",
+    "secretDefault": "fixture-default-credential-0000",
     "plainLabel": "Fixture region",
     "plainValue": "ap-southeast-fixture"
   }
