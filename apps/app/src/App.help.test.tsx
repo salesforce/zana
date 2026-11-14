@@ -6,6 +6,7 @@ import { useHelp } from './components/help/HelpProvider.js';
 
 const fixtures = vi.hoisted(() => ({
   compact: false, unread: 0, drawer: vi.fn(),
+  nav: 'home',
   pluginChanged: null as null | ((entries: unknown[]) => void),
   navigateFromMain: null as null | ((path: string) => void),
   menuEvent: null as null | ((event: string) => void),
@@ -36,7 +37,7 @@ vi.mock('./store.js', async importOriginal => ({ ...await importOriginal<object>
   useUnreadInboxCount: () => fixtures.unread, installInboxCrossWindowSync: () => () => {}
 }));
 vi.mock('./hooks/useRouteSync.js', () => ({ useRouteSync: () => {} }));
-vi.mock('./hooks/useRouteState.js', () => ({ useRouteState: () => ({ nav: 'home', focusedProjectId: null }) }));
+vi.mock('./hooks/useRouteState.js', () => ({ useRouteState: () => ({ nav: fixtures.nav, focusedProjectId: null }) }));
 vi.mock('./hooks/useShellChromeState.js', () => ({ useShellChromeState: () => ({ platform: 'linux' }) }));
 vi.mock('./hooks/useCompactLayout.js', () => ({ useCompactLayout: () => fixtures.compact }));
 vi.mock('./hooks/useAgentCards.js', () => ({ useFavoriteCount: () => 0 }));
@@ -98,7 +99,7 @@ beforeAll(async () => {
   for (const [path, names] of Object.entries(emptyComponents)) {
     vi.doMock(path, () => Object.fromEntries(names.map(name => [name, ({ children }: any) => <>{children}</>])));
   }
-  vi.doMock('./components/ApplicationTabs.js', () => ({ ApplicationTabs: () => <div data-testid="thread-tabs-shell" /> }));
+  vi.doMock('./components/ApplicationTabs.js', () => ({ ApplicationTabs: ({ project }: { project?: { name: string } | null }) => <div data-testid="thread-tabs-shell">{project?.name}</div> }));
   vi.doMock('./components/ShortcutsHelp.js', () => ({
     ShortcutsHelp: ({ ctrlVPasteEnabled }: { ctrlVPasteEnabled?: boolean }) => <div data-testid="shortcuts-help">{String(ctrlVPasteEnabled)}</div>
   }));
@@ -140,6 +141,27 @@ it('switches titlebar navigation live and retains compact chrome', () => {
   view.rerender(<MemoryRouter><App /></MemoryRouter>);
   expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
   fixtures.compact = false;
+});
+
+it('passes the focused project to the tab bar only while its project rail is showing', () => {
+  const originalData = store.useData.getState();
+  const originalUi = store.useUi.getState();
+  fixtures.nav = 'projects';
+  store.useData.setState({ threadTabsEnabled: true, projects: [{ id: 'p-heading', name: 'Project heading', path: '/tmp/project-heading', createdAt: 0, lastActiveAt: 0 }] });
+  store.useUi.setState({ focusedProjectId: 'p-heading' });
+  try {
+    const view = render(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByTestId('thread-tabs-shell').textContent).toBe('Project heading');
+    act(() => store.useData.setState({ projects: [{ ...store.useData.getState().projects[0]!, name: 'Renamed project heading' }] }));
+    expect(screen.getByTestId('thread-tabs-shell').textContent).toBe('Renamed project heading');
+    fixtures.nav = 'agents';
+    view.rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByTestId('thread-tabs-shell').textContent).toBe('');
+  } finally {
+    fixtures.nav = 'home';
+    store.useData.setState({ projects: originalData.projects, threadTabsEnabled: originalData.threadTabsEnabled });
+    store.useUi.setState({ focusedProjectId: originalUi.focusedProjectId });
+  }
 });
 
 it('always applies the inset workspace design on desktop and retains compact chrome', () => {

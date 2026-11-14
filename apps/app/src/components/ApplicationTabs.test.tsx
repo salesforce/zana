@@ -18,6 +18,9 @@ vi.mock('../thread-store.js', async () => {
   return { useThreads: create(() => ({ threads: [], load: h.load, remove: h.remove })), onThreadArchived: (cb: (id: string) => void) => { h.archived = cb; return h.unsubscribe; } };
 });
 vi.mock('./thread/pickers/ProviderIcon.js', () => ({ ProviderIcon: ({ providerId }: { providerId: string }) => <i data-provider={providerId} /> }));
+vi.mock('./listpane/FocusedProjectMenu.js', () => ({
+  FocusedProjectMenu: ({ project }: { project: Project }) => <div role="group" aria-label={`Project menu for ${project.name}`} />
+}));
 import { useData } from '../store.js';
 import { useThreads } from '../thread-store.js';
 import { useApplicationTabs } from '../lib/application-tabs.js';
@@ -45,6 +48,31 @@ beforeEach(() => {
   useThreads.setState({ threads: [row('a'), row('b', 'q'), row('c', 'p', { title: null }), row('hidden', 'p', { visibility: 'hidden' }), row('archived', 'p', { archivedAt: 1 })] });
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+it('keeps the project actions before an empty tab strip and alongside open tabs', () => {
+  const project = useData.getState().projects[0]!;
+  const content = (current: Project | null) => <MemoryRouter initialEntries={['/projects/p']}><ApplicationTabs project={current} /><Probe /></MemoryRouter>;
+  const view = render(content(project));
+  const name = screen.getByRole('button', { name: 'Project actions for Project P' });
+  const bar = screen.getByTestId('application-tabs');
+  expect(bar.firstElementChild?.contains(name)).toBe(true);
+  expect(bar.children[1]?.getAttribute('role')).toBe('tablist');
+  expect(bar.querySelector('.titlebar-threads-empty')?.textContent).toBe('No open tabs');
+  fireEvent.click(name);
+  expect(screen.getByRole('group', { name: 'Project menu for Project P' })).toBeTruthy();
+  visit('/projects/p/threads/a');
+  expect(tabs()).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Project actions for Project P' })).toBe(name);
+  view.rerender(content({ ...project, name: 'A very long renamed project' }));
+  expect(screen.getByRole('button', { name: 'Project actions for A very long renamed project' })).toBe(name);
+  view.rerender(content(useData.getState().projects[1]!));
+  expect(screen.getByRole('button', { name: 'Project actions for Project Q' }).getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByRole('group', { name: /Project menu for/ })).toBeNull();
+  view.rerender(content(null));
+  expect(screen.queryByTestId('titlebar-project')).toBeNull();
+  expect(bar.firstElementChild?.getAttribute('role')).toBe('tablist');
+  expect(tabs()).toHaveLength(1);
+});
 
 it('opens visited threads only, keeps stable order and project context, and updates live metadata', () => {
   mount();
