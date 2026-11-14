@@ -120,11 +120,13 @@ export function LegacyAgentHomeComposer({
   onComposerProjectIdChange,
   initialText,
   onLaunched,
+  onCreated,
   onClose
 }: {
   project?: Project;
   initialText?: string;
   onLaunched?: (session: TerminalSession, projectId: string) => void;
+  onCreated?: (session: TerminalSession) => void;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
   const session = useComposerSession();
@@ -723,6 +725,7 @@ export function LegacyAgentHomeComposer({
         onError: setError
       });
       if (!session) return;
+      onCreated?.(session);
       field.clearIfRevision(revision);
       if (onLaunched) {
         onLaunched(session, project.id);

@@ -250,7 +250,8 @@ export function TerminalSurface() {
             : projectId === selectedProjectId
               ? areaByTabId.get(s.id)
               : undefined;
-          const target = !modalSessionId && !agentSessionId && !monitorSessionId ? dockTargets.get(s.id) ?? null : null;
+          const primarySessionId = modalSessionId ?? agentSessionId ?? monitorSessionId;
+          const target = s.id !== primarySessionId ? dockTargets.get(s.id) ?? null : null;
           return <PersistentTerminal key={s.id} session={s} area={area} target={target} scrollbackLimit={scrollbackLimit} />;
         })
       )}
