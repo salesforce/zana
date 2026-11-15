@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { buildHubRows } from './installed-plugins.js';
 vi.mock('./InstalledPluginCard.js', () => ({ InstalledPluginCard: ({ row, onOpen }: { row: { module: { id: string; title: string } }; onOpen: () => void }) =>
   <div role="listitem"><button onClick={onOpen}>{row.module.title}</button></div> }));
-import { InstalledPluginCollection } from './InstalledPluginCollection.js';
+import { clearInstalledCollectionMemory, InstalledPluginCollection } from './InstalledPluginCollection.js';
 
 const plugin = (id: string, over: Partial<PluginAppEntry> = {}): PluginAppEntry => ({ id, name: id, description: `${id} tool`, icon: 'Box', enabled: true,
   provenance: 'builtin', status: 'running', appUrl: null, ...over });
@@ -17,6 +17,7 @@ const setup = (input = rows()) => {
   return { ...render(<InstalledPluginCollection rows={input} onOpen={onOpen} onBrowse={onBrowse} headerActions={<button>Add plugin</button>} mobileHeader={<span>Mobile controls</span>} />), onOpen, onBrowse };
 };
 const collectionButton = (name: string) => within(screen.getByRole('navigation', { name: 'Plugin collections' })).getByRole('button', { name: new RegExp(`^${name}`) });
+beforeEach(clearInstalledCollectionMemory);
 afterEach(cleanup);
 
 it('keeps saved packs in Installed and hides them while reviewing plugin updates', () => {
