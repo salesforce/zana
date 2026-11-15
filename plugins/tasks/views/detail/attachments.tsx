@@ -57,6 +57,7 @@ export function Lightbox({
   return (
     <div
       role="dialog"
+      aria-modal="true"
       aria-label={attachment.fileName}
       className="fixed inset-0 z-50 flex items-center justify-center p-8"
       style={{ background: "color-mix(in oklab, var(--ink) 60%, transparent)" }}
