@@ -56,6 +56,7 @@ beforeEach(() => {
   h.selectedProjectId = 'p1';
   h.project.favorite = false;
   h.favoriteIds = {};
+  h.commands = [{ id: 'review', invocation: '/review', description: 'Review changes' }];
   HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 afterEach(cleanup);
@@ -164,6 +165,25 @@ describe('command palette integration', () => {
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(h.close).toHaveBeenCalledTimes(1);
     expect(h.createTerminal).not.toHaveBeenCalled();
+  });
+
+  it('shows the fairy empty state for files, launch targets and slash commands', async () => {
+    const { container } = render(<CommandPalette onClose={h.close} />);
+    const input = screen.getByRole('combobox');
+    const title = () => container.querySelector('.palette-empty .fairy-empty-title')?.textContent;
+    fireEvent.change(input, { target: { value: '@zzzqqq' } });
+    await waitFor(() => expect(title()).toBe('No matching files'));
+    fireEvent.change(input, { target: { value: '#zzzqqq' } });
+    await waitFor(() => expect(title()).toBe('No matching project or host'));
+    fireEvent.change(input, { target: { value: '/zzzqqq' } });
+    await waitFor(() => expect(title()).toBe('No matching commands'));
+  });
+
+  it('shows the fairy empty state when the project has no slash commands', async () => {
+    h.commands = [];
+    const { container } = render(<CommandPalette onClose={h.close} />);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '/' } });
+    await waitFor(() => expect(container.querySelector('.fairy-empty-title')?.textContent).toBe('No slash commands found'));
   });
 
   it('narrows Commands and executes the existing Settings navigation', () => {
