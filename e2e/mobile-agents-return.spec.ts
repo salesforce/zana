@@ -97,7 +97,7 @@ setInterval(() => {}, 1000);
           await phone.setViewportSize({ width, height: 844 });
           await expect(notice).toBeVisible();
           await expect(notice.getByRole('heading')).toHaveText('CLI Agents aren’t supported on mobile yet');
-          await expect(notice.locator('.lucide-monitor')).toBeVisible();
+          await expect(notice.locator('.fairy-mobile-laptop')).toBeVisible();
           await expect(phone.getByTestId('agent-session-view')).toHaveCount(0);
           expect(await phone.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
           if (width === 390) {

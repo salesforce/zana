@@ -74,7 +74,7 @@ export function DetachedPluginTab({ tab, projectId }: { tab: PluginProjectTabReg
   }
   return (
     <div className="plugin-tab-detached" data-testid="plugin-tab-detached">
-      <PaneEmptyState art="desktop" title={`${tab.label} is open in its own window`} hint="Work there, or bring the tab back to this window.">
+      <PaneEmptyState art="window" title={`${tab.label} is open in its own window`} hint="Work there, or bring the tab back to this window.">
         <div className="plugin-tab-detached-actions">
           <button type="button" className="btn primary" onClick={focusWindow} data-testid="plugin-tab-detached-focus">
             <ExternalLink size={14} aria-hidden="true" />

@@ -16,9 +16,13 @@ vi.mock('../../lib/product-client.js', () => ({
   }
 }));
 
+const updates = vi.hoisted(() => ({
+  status: { kind: 'idle' } as { kind: string; version?: string; message?: string },
+  progress: null as { percent: number } | null
+}));
+
 vi.mock('@/store', () => ({
-  useUpdates: (selector: (s: { status: { kind: string }; progress: null }) => unknown) =>
-    selector({ status: { kind: 'idle' }, progress: null }),
+  useUpdates: (selector: (s: typeof updates) => unknown) => selector(updates),
   openWhatsNewAll: vi.fn()
 }));
 
@@ -58,5 +62,46 @@ describe('AboutView credits', () => {
     );
     expect(html).toContain(`href="${GITHUB_REPO_URL}"`);
     expect(html).toContain('Star on GitHub');
+  });
+});
+
+describe('AboutView update status', () => {
+  const render = () => renderToStaticMarkup(<AboutView config={config} onUpdate={async () => undefined} />);
+
+  it('uses the fairy spinner while checking and downloading', () => {
+    updates.status = { kind: 'checking' };
+    expect(render()).toContain('Checking for updates…');
+    expect(render()).toContain('fairy-spinner');
+
+    updates.status = { kind: 'downloading', version: '2.0.0' };
+    updates.progress = { percent: 41.6 };
+    const downloading = render();
+    expect(downloading).toContain('Downloading v2.0.0…');
+    expect(downloading).toContain('42% complete');
+    expect(downloading).toContain('fairy-spinner');
+
+    updates.status = { kind: 'downloading' };
+    updates.progress = null;
+    const unknown = render();
+    expect(unknown).toContain('Downloading update…');
+    expect(unknown).not.toContain('% complete');
+
+    updates.status = { kind: 'idle' };
+  });
+
+  it.each([
+    [{ kind: 'idle' }, 'No update check yet'],
+    [{ kind: 'disabled' }, 'Auto-update unavailable'],
+    [{ kind: 'available', version: '2.0.0' }, 'Version 2.0.0 is available'],
+    [{ kind: 'not-available' }, 'on the latest version'],
+    [{ kind: 'downloaded', version: '2.0.0' }, 'Version 2.0.0 is ready'],
+    [{ kind: 'error', message: 'offline' }, 'offline']
+  ])('renders the %o status without a spinner', (status, text) => {
+    updates.status = status;
+    updates.progress = null;
+    const html = render();
+    expect(html).toContain(text);
+    expect(html).not.toContain('fairy-spinner');
+    updates.status = { kind: 'idle' };
   });
 });

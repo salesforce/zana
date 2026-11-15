@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, Check, Circle, Loader2 } from 'lucide-react';
+import { AlertCircle, Check, Circle } from 'lucide-react';
 import {
   HOST_INSTALL_STAGE_LABELS,
   formatHostInstallDuration,
   resolveStageDisplay,
   type HostInstallStageEntry
 } from '../lib/host-install-drawer.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 const TICK_MS = 1000;
 
@@ -43,7 +44,7 @@ export function HostInstallStages({
           data-status={view.status}
         >
           <span className="host-install-stage-icon" aria-hidden="true">
-            {view.status === 'running' ? <Loader2 size={14} className="thread-command-send-spin" />
+            {view.status === 'running' ? <ZanaSpinner size={14} className="thread-command-send-spin" />
               : view.status === 'passed' ? <Check size={14} />
               : view.status === 'failed' ? <AlertCircle size={14} />
               : <Circle size={14} />}

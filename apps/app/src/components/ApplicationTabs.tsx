@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import {
   FolderPlus,
-  LoaderCircle,
   MessageSquareText,
   Server,
   TriangleAlert
@@ -39,6 +38,7 @@ import {
   ApplicationTabBar,
   type ApplicationTabView
 } from './ApplicationTabBar.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /** Content adapters supply identity, live metadata and lifecycle rules to one tab shell. */
 export function ApplicationTabs({
@@ -164,7 +164,7 @@ export function ApplicationTabs({
             ? 'Setup is in progress'
             : 'Close setup and discard its draft',
           icon: page.busy ? (
-            <LoaderCircle size={13} className="spin" />
+            <ZanaSpinner size={13} className="spin" />
           ) : page.request.kind === 'machine' ? (
             <Server size={13} />
           ) : (
@@ -198,7 +198,7 @@ export function ApplicationTabs({
         : status === 'Needs you'
           ? MessageSquareText
           : status === 'Working'
-            ? LoaderCircle
+            ? ZanaSpinner
             : null;
     const unread = !active && (thread.maxSeq ?? 0) > (thread.lastReadSeq ?? 0);
     const title = thread.title || 'Untitled thread';

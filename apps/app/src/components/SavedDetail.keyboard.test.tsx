@@ -78,3 +78,15 @@ it('ignores Delete when hidden or unselected and releases its listener on unmoun
   expect(window.confirm).not.toHaveBeenCalled();
   expect(state.remove).not.toHaveBeenCalled();
 });
+
+it('shows the saved-reports fairy scene when nothing is saved', () => {
+  const records = state.records;
+  state.records = [];
+  try {
+    const { container } = render(view());
+    expect(screen.getByTestId('saved-detail-empty').getAttribute('data-art')).toBe('saved');
+    expect(container.querySelector('[data-scene="saved"] .fairy-saved-ribbon')).toBeTruthy();
+  } finally {
+    state.records = records;
+  }
+});

@@ -1,6 +1,7 @@
-import { Download, Loader2, Wrench } from 'lucide-react';
+import { Download, Wrench } from 'lucide-react';
 import { composerHostActionChipLabel, type ComposerHostAction } from './composer-host-status.js';
 import { ComposerDaemonRestart } from './ComposerDaemonRestart.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 export function ComposerHostActionChip({
   action,
@@ -36,7 +37,7 @@ export function ComposerHostActionChip({
         onClick={onAction}
       >
         {busyLabel ? (
-          <Loader2 size={12} className="thread-command-send-spin" aria-hidden="true" />
+          <ZanaSpinner size={12} className="thread-command-send-spin" aria-hidden="true" />
         ) : action.kind === 'install' ? (
           <Download size={12} aria-hidden="true" />
         ) : action.kind === 'fix' ? (
