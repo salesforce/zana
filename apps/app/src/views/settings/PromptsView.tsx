@@ -1,8 +1,9 @@
 import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { FolderOpen, Play, RotateCcw, Loader2 } from 'lucide-react';
+import { FolderOpen, Play, RotateCcw } from 'lucide-react';
 import type { LlmPromptEntry, LlmProviderId, LlmRunResult } from '@zana-ai/zcc-domain/product';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { ZanaSpinner } from '../../components/fairy/ZanaSpinner.js';
 
 /**
  * Providers offered in the editor, in display order. `base` is the human label;
@@ -363,7 +364,7 @@ export function PromptsView() {
                       disabled={testing || templateVars.some((v) => !(testVars[v] ?? '').trim())}
                       onClick={onTest}
                     >
-                      {testing ? <Loader2 size={13} className="prompts-spin" /> : <Play size={13} />}
+                      {testing ? <ZanaSpinner size={13} className="prompts-spin" /> : <Play size={13} />}
                       {testing ? 'Running…' : 'Test'}
                     </button>
                   </div>

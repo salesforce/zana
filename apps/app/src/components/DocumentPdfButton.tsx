@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
-import { Download, Loader2 } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { product } from '../lib/product-client.js';
 import { useUi } from '../store.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /** Export source content so long documents and unsaved edits are included. */
 export function DocumentPdfButton({
@@ -46,7 +47,7 @@ export function DocumentPdfButton({
       aria-label="Download PDF"
       title="Download this document as PDF"
     >
-      {exporting ? <Loader2 size={13} className="spin" aria-hidden /> : <Download size={13} aria-hidden />}
+      {exporting ? <ZanaSpinner size={13} className="spin" aria-hidden /> : <Download size={13} aria-hidden />}
       <span>{exporting ? 'Exporting…' : 'Download PDF'}</span>
     </button>
   );

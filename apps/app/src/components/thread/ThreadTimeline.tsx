@@ -308,13 +308,15 @@ export function ThreadTimeline({
           }}>{loadingOlder ? 'Loading earlier messages…' : 'Load earlier messages'}</button>}
         {showLoading ? (
           <PaneEmptyState
-            art="loading"
+            art="conversation"
             title="Loading conversation…"
             hint="Bringing your thread back into view."
             testId="thread-loading"
           />
         ) : viewRows.length === 0 ? (
-          loadError ? null : <p className="thread-detail-empty">Waiting for the first turn…</p>
+          loadError ? null : (
+            <PaneEmptyState art="first-turn" title="Waiting for the first turn…" testId="thread-first-turn" />
+          )
         ) : (
           <TimelineRows
             rows={viewRows}

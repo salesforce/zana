@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Pencil, Send, Sparkles, Square, SquareTerminal, Workflow } from 'lucide-react';
+import { Pencil, Send, Sparkles, Square, SquareTerminal, Workflow } from 'lucide-react';
 import type { GitHostPullRequest } from '@zana-ai/zcc-domain';
 import {
   isBackgroundAgentTaskType,
@@ -13,6 +13,7 @@ import { formatWorkingElapsed } from '../thread-timeline-model.js';
 import { useUi } from '../../../store.js';
 import { nextTurnItemText, queuedMessagePreview } from './queued-message-text.js';
 import { isQueuedEditConflict, queuedEditRejection, useQueuedMessageEditHold } from './useQueuedMessageEditHold.js';
+import { ZanaSpinner } from '../../fairy/ZanaSpinner.js';
 
 interface NextTurnItemView {
   id: string;
@@ -425,7 +426,7 @@ function BackgroundActivityRow({
       </span>
       <span className={`thread-background-activity-text${kind === 'command' ? ' is-command' : ''}`}>{text}</span>
       {kind === 'agent' && row.model ? <span className="thread-background-activity-badge">{row.model}</span> : null}
-      <Loader2 size={12} className="spin thread-background-activity-spinner" aria-hidden="true" />
+      <ZanaSpinner size={12} className="spin thread-background-activity-spinner" aria-hidden="true" />
       {elapsed ? <span className="thread-background-activity-elapsed">{elapsed}</span> : null}
     </>
   );

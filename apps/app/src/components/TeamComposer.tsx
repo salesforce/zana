@@ -2,7 +2,7 @@ import { product } from '../lib/product-client.js';
 import { SquadLaunchPolicyFields, SquadResolvedLaunchDetails } from './SquadLaunchSettings.js';
 import { launchOptionsSchema, type LaunchOptions, type ExecutionResolvedLaunchV1 } from '@zana-ai/zcc-domain/launch-options';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, FileText, Folder, Loader2, Paperclip, Users, X } from 'lucide-react';
+import { ArrowUp, FileText, Folder, Paperclip, Users, X } from 'lucide-react';
 import type { ExecutionSourceCapabilityView, Project, TeamAvailabilityUnknown, TeamCoordinationMode, TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import {
   CommandComposer,
@@ -46,6 +46,7 @@ import { NO_TARGET, squadTargetOptions, squadTargetSelector } from './team-compo
 import type { Worktree } from '@zana-ai/zcc-domain/product';
 import { platformShortcut } from '../lib/platformShortcut.js';
 import { sortCatalogueByName } from '../lib/catalogue-sort.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /** A source chip. A file outside the project (proposed from HOME or the clone root) shows its path. */
 type ComposerSource = ExecutionSourceCapabilityView & { path?: string; outsideProject?: boolean; attachment?: true };
@@ -631,7 +632,7 @@ export function TeamComposer({
                     onMouseDown={(event) => event.preventDefault()}
                   >
                     {launching ? (
-                      <Loader2 size={16} className="thread-command-send-spin" aria-hidden="true" />
+                      <ZanaSpinner size={16} className="thread-command-send-spin" aria-hidden="true" />
                     ) : (
                       <ArrowUp size={16} />
                     )}

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
-import { Loader2, RotateCw } from 'lucide-react';
+import { RotateCw } from 'lucide-react';
 import { product } from '../lib/product-client.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /** Uses the same main-authorized recovery path as Settings → Development. */
 export function ComposerDaemonRestart({ reason }: { reason: string }) {
@@ -31,7 +32,7 @@ export function ComposerDaemonRestart({ reason }: { reason: string }) {
     <button type="button" className="thread-command-host-action-btn is-cta"
       data-testid="composer-host-action" title={reason} disabled={busy}
       onClick={() => void restart()}>
-      {busy ? <Loader2 size={12} className="thread-command-send-spin" aria-hidden="true" />
+      {busy ? <ZanaSpinner size={12} className="thread-command-send-spin" aria-hidden="true" />
         : <RotateCw size={12} aria-hidden="true" />}
       {busy ? 'Restarting…' : 'Restart host daemon'}
     </button>

@@ -10,7 +10,6 @@ import {
   ChevronRight,
   ExternalLink,
   Inbox,
-  Loader2,
   MailCheck,
   RotateCw,
   Square,
@@ -72,6 +71,7 @@ import {
   type MonitorListFilter,
   type MonitorListSort
 } from './agent-monitor-list.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /**
  * The Agents "List" view: a live monitor — item list (left), the selected
@@ -709,7 +709,7 @@ function AgentMonitorSession({
           disabled={closingWithFollowup}
           title={closeFollowupTitle(wrapUpClose)}
         >
-          {closingWithFollowup ? <Loader2 size={13} className="spin" /> : <MailCheck size={13} />}
+          {closingWithFollowup ? <ZanaSpinner size={13} className="spin" /> : <MailCheck size={13} />}
           {closingWithFollowup ? (wrapUpClose ? 'Wrapping up…' : 'Closing…') : 'Close with follow-up'}
         </button>
       )}
@@ -721,7 +721,7 @@ function AgentMonitorSession({
           disabled={summarizing}
           title="Summarize this agent's work and send it to your inbox"
         >
-          {summarizing ? <Loader2 size={13} className="spin" /> : <Inbox size={13} />}
+          {summarizing ? <ZanaSpinner size={13} className="spin" /> : <Inbox size={13} />}
           {summarizing ? 'Summarizing…' : 'Summarize'}
         </button>
       )}

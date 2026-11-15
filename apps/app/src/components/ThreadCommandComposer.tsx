@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { promptInputSchema, type PluginPageContext, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, Laptop, Loader2, Minimize2, Paperclip, Square } from 'lucide-react';
+import { ArrowUp, Laptop, Minimize2, Paperclip, Square } from 'lucide-react';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
@@ -890,7 +891,7 @@ function ThreadComposerContent({
       onClick={() => void submit()}
     >
       {busy ? (
-        <Loader2 size={16} className="thread-command-send-spin" aria-hidden="true" />
+        <ZanaSpinner size={16} className="thread-command-send-spin" aria-hidden="true" />
       ) : (
         <ArrowUp size={16} />
       )}
@@ -996,7 +997,7 @@ function ThreadComposerContent({
       >
         {uploadProgress != null ? (
           <div className="thread-command-upload" role="status" data-testid="thread-command-upload-progress">
-            <Loader2 size={14} className="thread-command-send-spin" aria-hidden="true" />
+            <ZanaSpinner size={14} className="thread-command-send-spin" aria-hidden="true" />
             <span>Uploading {Math.round(uploadProgress * 100)}%</span>
           </div>
         ) : null}

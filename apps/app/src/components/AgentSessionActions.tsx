@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Archive, BellOff, Inbox, Loader2, MailCheck, Trash2 } from 'lucide-react';
+import { Archive, BellOff, Inbox, MailCheck, Trash2 } from 'lucide-react';
 import { product } from '../lib/product-client.js';
 import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isClaudeProfile } from '../lib/launchProfile.js';
@@ -15,6 +15,7 @@ import {
   closeAgentWithFollowup
 } from './agentCardActions.js';
 import { idleSurfacesToNeedsYou } from './AgentBoard.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /**
  * Shared CLI-agent footer actions (mark idle / archive / summarize). Used by the
@@ -107,7 +108,7 @@ export function AgentSessionActions({
           disabled={closingWithFollowup}
           title={closeFollowupTitle(wrapUpClose)}
         >
-          {closingWithFollowup ? <Loader2 size={13} className="spin" /> : <MailCheck size={13} />}
+          {closingWithFollowup ? <ZanaSpinner size={13} className="spin" /> : <MailCheck size={13} />}
           {closingWithFollowup ? (wrapUpClose ? 'Wrapping up…' : 'Closing…') : 'Close with follow-up'}
         </button>
       )}
@@ -119,7 +120,7 @@ export function AgentSessionActions({
           disabled={summarizing}
           title="Summarize this agent's work and send it to your inbox"
         >
-          {summarizing ? <Loader2 size={13} className="spin" /> : <Inbox size={13} />}
+          {summarizing ? <ZanaSpinner size={13} className="spin" /> : <Inbox size={13} />}
           {summarizing ? 'Summarizing…' : 'Summarize to inbox'}
         </button>
       )}

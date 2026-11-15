@@ -1,6 +1,7 @@
 import { product } from '../lib/product-client.js';
-import { Sparkles, X, Loader2, CheckCircle2 } from 'lucide-react';
+import { Sparkles, X, CheckCircle2 } from 'lucide-react';
 import { useUpdates, useUpdateBanner, useWhatsNew, isUpdateBannerVisible } from '../store.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /**
  * App-wide "a new version is available" banner, driven by the electron-updater
@@ -91,7 +92,7 @@ export function UpdateBanner() {
 
       {kind === 'downloading' && (
         <span className="update-banner-progress">
-          <Loader2 size={13} className="update-banner-spin" aria-hidden="true" />
+          <ZanaSpinner size={13} className="update-banner-spin" aria-hidden="true" />
           {pct}%
         </span>
       )}

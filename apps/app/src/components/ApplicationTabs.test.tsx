@@ -153,7 +153,7 @@ it('uses distinct working, input and error icons while leaving idle tabs and pro
   act(() => useThreads.setState({ threads: [row('a', 'p', { status: 'active' }), row('b', 'q', { status: 'active', hasPendingInteraction: true })] }));
   const working = screen.getByRole('img', { name: 'Working' });
   const pending = screen.getByRole('img', { name: 'Needs you' });
-  expect(working.querySelector('svg.lucide-loader-circle')?.getAttribute('aria-hidden')).toBe('true');
+  expect(working.querySelector('svg.fairy-spinner')?.getAttribute('aria-hidden')).toBe('true');
   expect(pending.querySelector('svg.lucide-message-square-text')).toBeTruthy();
   // A failed thread takes precedence over any leftover pending interaction.
   act(() => useThreads.setState({ threads: [row('a', 'p', { status: 'error', hasPendingInteraction: true }), row('b', 'q')] }));

@@ -4,6 +4,7 @@ import { Search } from 'lucide-react';
 import type { Project, SearchHit, SearchResult } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store.js';
 import { highlightSearchHit } from './search-hit-highlight.js';
+import { FairyEmpty } from './fairy/ZanaSpinner.js';
 
 interface Props {
   project: Project;
@@ -163,7 +164,7 @@ export function SearchPanel({ project, onClose }: Props) {
           ) : running && !result ? (
             <div className="palette-empty">Searching…</div>
           ) : hits.length === 0 ? (
-            <div className="palette-empty">No matches</div>
+            <div className="palette-empty"><FairyEmpty title="No matches" hint="Try a different word or a shorter phrase." /></div>
           ) : (
             hits.map((h, i) => (
               <button

@@ -1,5 +1,6 @@
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import type { ProviderCliStatus } from '@zana-ai/zcc-contracts/host-rpc';
+import { ZanaSpinner } from '../fairy/ZanaSpinner.js';
 
 export function providerCliBlockedReason(input: {
   displayName: string;
@@ -74,7 +75,7 @@ export function ProviderCliBanner({
           >
             {actionRunning ? (
               <>
-                <Loader2 size={12} className="thread-command-send-spin" aria-hidden="true" />
+                <ZanaSpinner size={12} className="thread-command-send-spin" aria-hidden="true" />
                 {installed ? 'Updating…' : 'Installing…'}
               </>
             ) : (

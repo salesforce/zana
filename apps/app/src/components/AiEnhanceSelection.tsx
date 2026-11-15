@@ -1,10 +1,11 @@
 import { product } from '../lib/product-client.js';
 import { useCallback, useRef, useState } from 'react';
 import type { OnMount } from '@monaco-editor/react';
-import { Sparkles, Loader2 } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { Modal } from './Modal.js';
 import { useUi } from '../store.js';
 import { buildSurroundingContext } from '../lib/aiEnhanceContext.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 const ACTION_ID = 'zcc.ai-enhance-selection';
 
@@ -123,7 +124,7 @@ export function useAiEnhanceSelection() {
           <button className="btn primary" onClick={submit} disabled={busy}>
             {busy ? (
               <>
-                <Loader2 size={13} className="improve-prompt-spin" aria-hidden="true" /> Enhancing…
+                <ZanaSpinner size={13} className="improve-prompt-spin" aria-hidden="true" /> Enhancing…
               </>
             ) : (
               <>
