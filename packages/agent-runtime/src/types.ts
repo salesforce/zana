@@ -196,6 +196,8 @@ export interface AgentRuntimeOptions {
  * a plugin update (new artifact hash) gets a fresh bridge process.
  */
 export interface AgentRuntimeBridgeLaunch {
+  /** Host-owned opaque generation; separates new launches without interrupting existing threads. */
+  environmentRevision?: string;
   /** The plugin that ships this bridge. Scopes the process's directories. */
   pluginId: string;
   /**

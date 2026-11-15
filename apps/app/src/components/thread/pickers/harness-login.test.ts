@@ -45,7 +45,7 @@ describe('harness login status', () => {
   it('keeps the last known result while a provider refreshes in the background', () => {
     const entry = { models: [], selectedOnlyModels: [], modelLoadError: null };
     const refreshing = (id: string, value: object) => catalog({ byProvider: { [id]: { ...entry, ...value } }, inflight: new Set([id]) });
-    expect(harnessLoginStatus('codex', refreshing('codex', { lastAttemptAt: 1, lastSuccessAt: 1 }), true)?.state).toBe('signed_in');
+    expect(harnessLoginStatus('codex', refreshing('codex', { lastAttemptAt: 1, lastSuccessAt: 1 }), true)?.state).toBe('unverified');
     expect(harnessLoginStatus('codex', refreshing('codex', { lastAttemptAt: 1, modelLoadError: 'auth_required' }), true)?.state).toBe('sign_in_required');
     expect(harnessLoginStatus('codex', refreshing('codex', {}), true)?.state).toBe('checking');
   });
@@ -56,7 +56,7 @@ describe('harness login status', () => {
     }), true)).toEqual({ state: 'sign_in_required', loginCommand: 'cursor-agent login' });
     expect(harnessLoginStatus('codex', catalog({
       byProvider: { codex: { models: [], selectedOnlyModels: [], modelLoadError: null } }
-    }), true)?.state).toBe('signed_in');
+    }), true)?.state).toBe('unverified');
     expect(harnessLoginStatus('codex', catalog({
       byProvider: { codex: { models: [], selectedOnlyModels: [], modelLoadError: 'timeout' } }
     }), true)?.state).toBe('unverified');
@@ -82,7 +82,7 @@ describe('harness login status', () => {
           modelLoadError: null
         }
       }
-    }), true)?.state).toBe('signed_in');
+    }), true)?.state).toBe('unverified');
     expect(harnessLoginStatus('pi', catalog({
       byProvider: { pi: { models: [], selectedOnlyModels: [], modelLoadError: 'timeout' } }
     }), true)?.state).toBe('unverified');
@@ -114,7 +114,7 @@ describe('harness login status', () => {
           modelLoadError: null
         }
       }
-    }), true)?.state).toBe('signed_in');
+    }), true)?.state).toBe('unverified');
   });
 
   it('does not treat an empty Grok catalog as signed in', () => {

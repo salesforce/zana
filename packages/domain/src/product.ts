@@ -1484,6 +1484,8 @@ export interface TerminalSession {
   status: 'starting' | 'running' | 'exited';
   /** Command passed to `terminal.start` for a product PTY, when set. */
   launchCommand?: string;
+  /** Machine-owned, temporary provider authentication terminal; no project checkout. */
+  providerSignIn?: { providerId: string };
   exitCode?: number;
   createdAt: number;
   /**

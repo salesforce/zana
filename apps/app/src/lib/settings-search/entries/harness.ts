@@ -13,6 +13,12 @@ const text = (config: { [k: string]: unknown }, key: string): string | undefined
 
 export const entries: readonly SettingsSearchEntry[] = [
   {
+    id: 'harness.environment', section: 'harness', anchor: 'harness-environment',
+    label: 'API keys and environment',
+    help: 'Save variables for chat providers and terminals on one machine. Credentials are never forwarded to your other machines. Add, replace or remove encrypted values. Existing machine environment takes priority.',
+    keywords: ['api key', 'bring your own key', 'BYOK', 'credentials', 'environment variables', 'gateway'], kind: 'subsection'
+  },
+  {
     id: 'harness.registered',
     section: 'harness',
     anchor: 'harness-registered',

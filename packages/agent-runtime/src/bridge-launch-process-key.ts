@@ -56,5 +56,6 @@ export function bridgeLaunchProcessKey(
     capabilities: bridgeLaunch.capabilities,
     providerOptions: bridgeLaunch.providerOptions,
     envPassthrough: [...(bridgeLaunch.envPassthrough ?? [])].sort(),
+    ...(bridgeLaunch.environmentRevision ? { environmentRevision: bridgeLaunch.environmentRevision } : {}),
   })}`;
 }

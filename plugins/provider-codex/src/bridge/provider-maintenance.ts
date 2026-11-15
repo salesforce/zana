@@ -194,12 +194,18 @@ function healthResult(
       minimumSupportedVersion: CODEX_MINIMUM_SUPPORTED_VERSION,
       canInstall: true,
       canUpdate: status !== "not_installed",
-      loginCommand: "codex login",
+      loginCommand: "codex login --device-auth",
+      localLoginCommand: "codex login",
     },
   };
 }
 
-export async function getCodexProviderHealth(): Promise<ProviderHealthResult> {
+export const codexAccountReadSchema = z.object({
+  account: z.object({ type: z.string().min(1), email: z.string().nullish(), planType: z.string().nullish() }).nullable(),
+  requiresOpenaiAuth: z.boolean(),
+});
+
+export async function getCodexProviderHealth(readAccount?: () => Promise<z.infer<typeof codexAccountReadSchema>>): Promise<ProviderHealthResult> {
   if ((await resolveExecutablePath("codex")) === null) {
     return healthResult("not_installed");
   }
@@ -211,6 +217,20 @@ export async function getCodexProviderHealth(): Promise<ProviderHealthResult> {
     return healthResult("unsupported_version", { installedVersion: version });
   }
   try {
+    if (readAccount) {
+      // The native CLI owns keyring/auto/ephemeral stores and custom provider auth.
+      // No token is requested, refreshed, or copied into the application.
+      const native = await readAccount();
+      const result = healthResult(native.account || !native.requiresOpenaiAuth ? 'ready' : 'unauthenticated', {
+        installedVersion: version, accountEmail: native.account?.email ?? null,
+      });
+      if (result.supported && !native.requiresOpenaiAuth) {
+        result.health.loginCommand = null;
+        result.health.localLoginCommand = null;
+        result.health.statusMessage = 'Provider-managed credentials configured.';
+      }
+      return result;
+    }
     const credentials = await readCredentials();
     if (credentials === null) {
       return healthResult("unauthenticated", { installedVersion: version });
@@ -226,10 +246,10 @@ export async function getCodexProviderHealth(): Promise<ProviderHealthResult> {
         credentials.type === "chatgpt" ? credentials.accountEmail : null,
       installedVersion: version,
     });
-  } catch (error) {
+  } catch {
     return healthResult("unknown", {
       installedVersion: version,
-      statusMessage: error instanceof Error ? error.message : String(error),
+      statusMessage: 'Could not verify Codex credentials on this machine.',
     });
   }
 }

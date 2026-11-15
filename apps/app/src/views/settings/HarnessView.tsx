@@ -41,6 +41,7 @@ import {
 import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 import { ModelRefreshControl } from './ModelRefreshControl.js';
 import { RegisteredHarnesses } from './RegisteredHarnesses.js';
+import { MachineEnvironmentSettings } from './MachineEnvironmentSettings.js';
 import { RevealContext } from '@/lib/settings-search/reveal';
 import {
   BUILTIN_THREAD_PROVIDERS,
@@ -1091,6 +1092,7 @@ export function HarnessView({
 
   return (
     <div className="harness-settings">
+    <MachineEnvironmentSettings />
     <RegisteredHarnesses config={config} status={status} hostId={thisMachineId} hostName={thisMachine?.name} onUpdate={onUpdate} onRefreshStatus={() => runCheck(false)} checkingStatus={checking} />
     <Section
       searchId="harness.installed-harnesses"

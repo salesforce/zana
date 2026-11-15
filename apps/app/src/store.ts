@@ -3152,6 +3152,7 @@ export const useData = create<DataState>((set, get) => ({
     // or a scheduler-spawned tab being broadcast) come in via this push so the
     // tab strip re-renders without polling.
     product.terminals.onUpdated((session) => {
+      if (session.providerSignIn) return; // Owned by the Settings sign-in panel.
       set((s) => {
         const list = s.terminals[session.projectId];
         if (!list) {
