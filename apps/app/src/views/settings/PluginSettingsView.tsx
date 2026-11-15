@@ -86,7 +86,7 @@ function PluginSettingsPage({ row, hasCustomSections, customTitle }: { row: HubR
       {hasConfiguration ? <section className="ext-plugin-section ext-plugin-section--config" id="plugin-configure" tabIndex={-1} hidden={activeArea !== 'configuration'}>
         <h3>Configuration</h3>
         <PluginSettingsForm snap={snap!} onSave={async (key, value) => {
-          const savedVersion = version.current;
+          const savedVersion = ++version.current;
           const next = await product.pluginApps.setSettings(module.id, { [key]: value });
           if (savedVersion === version.current) setSnap(next);
         }} />

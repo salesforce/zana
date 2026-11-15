@@ -30,6 +30,35 @@ it('reports declaration metadata without touching saved values', async () => {
   } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+it('serializes concurrent field saves and recovers after a failed atomic write', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-writes-'));
+  const handle = createPluginApi('sample', dir);
+  handle.api.settings.define({ name: { type: 'string', label: 'Name' }, budget: { type: 'number', label: 'Budget' } });
+  try {
+    await Promise.all([handle.setSettings({ budget: 7 }), handle.setSettings({ name: 'Saved' })]);
+    expect(handle.getSettings().values).toEqual({ budget: 7, name: 'Saved' });
+    const path = join(dir, 'settings.json');
+    rmSync(path); mkdirSync(path);
+    await expect(handle.setSettings({ budget: 8 })).rejects.toThrow();
+    rmSync(path, { recursive: true });
+    await handle.setSettings({ budget: 9 });
+    expect(handle.getSettings().values.budget).toBe(9);
+  } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('cancels queued settings writes when their plugin is disposed', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-stop-'));
+  const handle = createPluginApi('sample', dir);
+  handle.api.settings.define({ name: { type: 'string', label: 'Name' } });
+  try {
+    const write = handle.setSettings({ name: 'Late' });
+    const disposed = handle.dispose();
+    await expect(write).rejects.toThrow('stale');
+    await disposed;
+    expect(handle.getSettings().values.name).toBeUndefined();
+  } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('strict disposal awaits host teardown, isolates plugin cleanup errors, and rejects stale settings writes', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'plugin-quiesce-'));
   const handle = createPluginApi('sample', dir); const order: string[] = [];

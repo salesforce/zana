@@ -35,7 +35,7 @@ import { InvitationError, type PublicInvitationStatus } from '../services/peers/
 import type { PeerLinkView } from '../services/peers/peer-links.js';
 import { SSH_REASONS } from '../services/peers/peer-ssh-contract.js';
 import * as jitiModule from 'jiti';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { openAsyncJsonStore } from '../services/storage/async-json-store.js';
 import { runInNewContext } from 'node:vm';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -236,7 +236,11 @@ function readJsonFile<T>(path: string, fallback: T): T {
 
 function writeJsonFile(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value)}\n`);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    renameSync(temporary, path);
+  } finally { rmSync(temporary, { force: true }); }
 }
 
 const MENTION_TRIGGER_SET = new Set<string>(PLUGIN_MENTION_TRIGGERS);
@@ -414,10 +418,11 @@ export function createPluginApi(
   const settingListeners: Array<(next: Record<string, PluginSettingValue | undefined>) => void> = [];
   const realtimeListeners = new Set<(event: string, payload: unknown) => void>();
   let settingDescriptors: Record<string, PluginSettingDescriptor> = {};
+  let settingsWrites: Promise<unknown> = Promise.resolve();
   let stale = false;
   let disposal: Promise<void> | undefined;
   const disposalErrors: unknown[] = [];
-  const quiesceHooks: Array<() => void | Promise<void>> = [];
+  const quiesceHooks: Array<() => void | Promise<void>> = [async () => { await settingsWrites; }];
   const assistantLifecycle = new AbortController();
   const toolInvocations = new AsyncLocalStorage<{
     threadId: string; projectId: string; invocationId: string; signal: AbortSignal; desktopPresentation: boolean; active: boolean;
@@ -2261,13 +2266,20 @@ export function createPluginApi(
     },
     async setSettings(values) {
       assertLive();
-      const next = { ...readSettings(), ...values };
-      await persistSecretSettings(kvDir, settingDescriptors, next);
-      writeJsonFile(settingsPath, publicSettingsValues(settingDescriptors, next));
-      const projected: Record<string, PluginSettingValue | undefined> = {};
-      for (const [key, descriptor] of Object.entries(settingDescriptors)) {
-        projected[key] = next[key] ?? descriptor.default;
-      }
+      const write = settingsWrites.then(async () => {
+        assertLive();
+        const next = { ...readSettings(), ...values };
+        await persistSecretSettings(kvDir, settingDescriptors, next);
+        writeJsonFile(settingsPath, publicSettingsValues(settingDescriptors, next));
+        const projected: Record<string, PluginSettingValue | undefined> = {};
+        for (const [key, descriptor] of Object.entries(settingDescriptors)) {
+          projected[key] = next[key] ?? descriptor.default;
+        }
+        return projected;
+      });
+      // Failed writes must reject their caller without poisoning later saves.
+      settingsWrites = write.catch(() => {});
+      const projected = await write;
       await Promise.allSettled(settingListeners.map(listener => Promise.resolve().then(() => listener(projected))));
     },
     subscribeRealtime(listener) {

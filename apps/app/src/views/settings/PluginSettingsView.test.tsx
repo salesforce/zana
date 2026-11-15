@@ -86,3 +86,17 @@ it('preserves legacy host readiness and renderer failure boundaries', async () =
   h.get.mockResolvedValue({ descriptors: {}, values: {} }); mount(); expect(screen.getByRole('alert').textContent).toBe('Renderer failed');
   expect(await screen.findByText(/Plugin settings are unavailable/)).toBeTruthy();
 });
+
+it('ignores an older save response after a newer field save completes', async () => {
+  let finishFirst!: (value: typeof snapshot) => void;
+  h.save.mockImplementationOnce(() => new Promise(done => { finishFirst = done; }))
+    .mockResolvedValueOnce({ ...snapshot, values: { name: 'After', budget: 7 } });
+  mount('/settings/plugins/sample?area=configuration');
+  const budget = await screen.findByRole('spinbutton', { name: 'Budget' });
+  fireEvent.change(budget, { target: { value: '7' } }); fireEvent.blur(budget);
+  const name = screen.getByRole('textbox', { name: 'Name' });
+  fireEvent.change(name, { target: { value: 'After' } }); fireEvent.blur(name);
+  await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
+  await act(async () => finishFirst({ ...snapshot, values: { name: 'Before', budget: 7 } }));
+  expect((name as HTMLInputElement).value).toBe('After');
+});
