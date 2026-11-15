@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Attachment } from "../../shared/contract.js";
-import { AttachmentsGrid } from "./attachments.js";
+import { AttachmentsGrid, Lightbox } from "./attachments.js";
 
 afterEach(() => {
   cleanup();
@@ -46,6 +46,22 @@ describe("AttachmentsGrid layout", () => {
       fileCard.compareDocumentPosition(image) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+});
+
+describe("Lightbox", () => {
+  it("is a modal dialog so the shell dims the whole window behind it", () => {
+    const onClose = vi.fn();
+    const screen = render(<Lightbox attachment={imageAttachment()} onClose={onClose} />);
+    const dialog = screen.getByRole("dialog", { name: "diagram.png" });
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+
+    fireEvent.click(screen.getByAltText("diagram.png"));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(dialog);
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 });
 
