@@ -52,6 +52,7 @@ export default function plugin(zcc) {
       },
       "experimental_resolvesNativeRoots": true
     },
+    usage: (hostId) => zcc.host.experimental_client().call('providerUsage', {}, {hostId, timeoutMs:30000}),
     displayName: 'Claude Code',
     icon: './icons/claude-code.svg',
     env: { passthrough: ['ZCC_CLAUDE_CODE_EXECUTABLE', 'BB_CLAUDE_CODE_EXECUTABLE'] },

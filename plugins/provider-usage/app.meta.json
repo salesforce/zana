@@ -1,0 +1,11 @@
+{
+  "sdkMajor": 1,
+  "sdkVersion": "0.1.0",
+  "artifactFormatVersion": 1,
+  "pluginId": "provider-usage",
+  "pluginVersion": "0.1.0",
+  "builtWith": {
+    "zccVersion": "2.6.1",
+    "pluginSdkVersion": "0.1.0"
+  }
+}

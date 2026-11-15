@@ -751,6 +751,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       providers: {
+        async usage(args) { return invokeSdk('providers.usage', async () => ({supported:false}), args) as ReturnType<ZccPluginApi['sdk']['providers']['usage']>; },
         async list(args) {
           if (!options?.listProviders) {
             throw new Error('zcc.sdk is not available in this runtime');

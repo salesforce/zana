@@ -1,4 +1,5 @@
 import os from "node:os";
+import { getCursorProviderUsage } from "./bridge/cursor-maintenance.js";
 import { experimental_defineHostEntry } from "@zana-ai/zcc-plugin-sdk/host";
 import { experimental_probeAcpAgent } from "@zana-ai/zcc-plugin-sdk/provider-bridge/acp";
 import { acpHostContract } from "./contract.js";
@@ -9,6 +10,7 @@ export { experimental_providerBridge } from "./bridge/bridge.js";
 export default experimental_defineHostEntry({
   contract: acpHostContract,
   handlers: {
+    providerUsage: () => getCursorProviderUsage(),
     probeAgent: async (input, context) =>
       experimental_probeAcpAgent({
         command: input.command,

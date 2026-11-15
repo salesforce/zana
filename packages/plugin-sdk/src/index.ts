@@ -60,6 +60,7 @@ export type {
   PluginAgentToolContext,
   PluginEvents,
   PluginHooks,
+  PluginProviderUsageResult,
   PluginDispatchAdmissionRequest,
   PluginToolPolicyRequest,
   PluginToolPolicyDecision,

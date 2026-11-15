@@ -33,6 +33,16 @@ describe("RuntimeTurnState", () => {
     vi.useRealTimers();
   });
 
+  it("clears only the stale turn named by the rejected steer", () => {
+    const state = new RuntimeTurnState();
+    state.observe(turnStarted("old"));
+    state.observe(turnStarted("new"));
+    expect(state.clearStaleTurn("t1", "old")).toBe(false);
+    expect(state.getActiveTurnId("t1")).toBe("new");
+    expect(state.clearStaleTurn("t1", "new")).toBe(true);
+    expect(state.getActiveTurnId("t1")).toBeNull();
+  });
+
   it("tracks only the current active turn", () => {
     const state = new RuntimeTurnState();
 

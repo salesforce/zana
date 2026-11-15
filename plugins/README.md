@@ -8,6 +8,7 @@ and loads any installed plugin.
 
 | Package | Role |
 | --- | --- |
+| `provider-usage/` | Optional — host-scoped subscription windows, reset times, and last-reading timestamps. |
 | `docs/` | Builtin (`autoInstall: true`) — Docs rail, per-project Library, and the library-curator skill. The panel UI is compiled into the renderer (`apps/app/src/views/library`); this package ships the skill + server. Packaged builds copy `plugins/` via electron-builder extraResources. |
 | `memory/` | Builtin (`autoInstall: true`) — durable global (shared across projects) and project-scoped memories, injected as a catalog into threads. |
 | `plugin-guide/` | Builtin (`autoInstall: true`) — Plugin Guide under Plugins: annotated wireframe map of every SDK surface, Copy for agent, and links into installed plugin hub pages. |

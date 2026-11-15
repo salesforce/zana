@@ -25,6 +25,7 @@ export interface PluginUpdateCheck {
 export interface PluginUpdateResolver {
   npmVersions(intent: Extract<PluginSourceIntent, { kind: 'npm' }>): Promise<unknown>;
   gitRefs(url: string): Promise<string>;
+  gitContentChanged?(intent: Extract<PluginSourceIntent, { kind: 'git' }>, installedCommit: string, candidateCommit: string): Promise<boolean>;
   gitManifest(intent: Extract<PluginSourceIntent, { kind: 'git' }>, commit: string): Promise<{
     id: string; version: string; engines: { zcc?: string; zccPluginSdk?: string };
   }>;
@@ -128,6 +129,11 @@ export async function resolvePluginUpdate(args: {
       return result('pinned');
     }
     if (remote.commit === row.gitResolvedCommit) return result('current');
+    if (intent.subdir && row.gitResolvedCommit && resolver.gitContentChanged) {
+      // A failed comparison must never hide an update; normal validation remains authoritative.
+      const changed = await resolver.gitContentChanged(intent, row.gitResolvedCommit, remote.commit).catch(() => true);
+      if (!changed) return result('current');
+    }
     const manifest = await resolver.gitManifest(intent, remote.commit);
     if (manifest.id !== row.id) throw new Error('The candidate plugin identity changed');
     if (!semver.valid(manifest.version)) throw new Error('The candidate plugin version is invalid');

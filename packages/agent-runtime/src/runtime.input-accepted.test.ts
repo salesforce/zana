@@ -316,7 +316,7 @@ rl.on("line", (line) => {
     await runtime.shutdown();
   });
 
-  it("maps a bridge no-active-turn error to a stale steer", async () => {
+  it.each(["acp-cursor", "codex"])("maps a %s bridge no-active-turn error to a stale steer", async (providerId) => {
     const events: ThreadEvent[] = [];
     const clearActiveTurnState = vi.fn();
     const staleSteerScriptPath = join(tmpDir, "stale-steer-provider.cjs");
@@ -374,7 +374,7 @@ rl.on("line", (line) => {
       }),
       adapterFactory: () => ({
         ...createFakeAdapter({
-          id: "acp-cursor",
+          id: providerId,
           scriptPath: staleSteerScriptPath,
         }),
         clearActiveTurnState,
@@ -385,7 +385,7 @@ rl.on("line", (line) => {
       environmentId: "env-1",
       threadId: "t1",
       projectId: "p1",
-      providerId: "acp-cursor",
+      providerId: providerId,
       options: fullRuntimeOptions,
     });
     await runtime.runTurn({
@@ -396,7 +396,7 @@ rl.on("line", (line) => {
     });
     await waitForThreadTurnStarted({
       events,
-      providerId: "acp-cursor",
+      providerId: providerId,
       runtime,
       threadId: "t1",
       turnId: "turn-1",
