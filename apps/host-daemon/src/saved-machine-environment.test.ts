@@ -9,7 +9,7 @@ let root: string;
 let target: NodeJS.ProcessEnv;
 let store: SavedMachineEnvironment;
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'zcc-saved-env-')); target = {}; store = new SavedMachineEnvironment(root, target); });
-afterEach(async () => { store.clear(); await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { await store.clear(); await rm(root, { recursive: true, force: true }); });
 const save = (name: string, value: string | null) => store.save({ name, value, expectedRevision: store.status().revision });
 
 it('does no disk or environment writes for an unconfigured machine', async () => {
@@ -26,12 +26,12 @@ it('encrypts values, exposes names only, persists owner-only files and reloads o
   expect(target.EXAMPLE_API_KEY).toBe('fixture-key-value'); expect(store.revision).toBe(result.revision);
   expect(await readFile(join(root, 'machine-environment.enc'), 'utf8')).not.toContain('fixture-key-value');
   if (process.platform !== 'win32') for (const name of ['machine-environment.enc', 'machine-environment.key']) expect((await stat(join(root, name))).mode & 0o777).toBe(0o600);
-  store.clear(); expect(target).toEqual({});
+  await store.clear(); expect(target).toEqual({});
   store = new SavedMachineEnvironment(root, target); await store.initialize();
   expect(target.EXAMPLE_API_KEY).toBe('fixture-key-value'); expect(store.status()).toEqual(result);
   const successor = { ...target }; successor.EXAMPLE_API_KEY = 'stale-value-from-old-process';
   const restarted = new SavedMachineEnvironment(root, successor); await restarted.initialize();
-  expect(successor.EXAMPLE_API_KEY).toBe('fixture-key-value'); restarted.clear();
+  expect(successor.EXAMPLE_API_KEY).toBe('fixture-key-value'); await restarted.clear();
 });
 it('preserves existing gateway URLs, tokens, helpers and externally replaced values', async () => {
   Object.assign(target, { ANTHROPIC_BASE_URL: 'https://gateway.example', ANTHROPIC_AUTH_TOKEN: 'host-owned', ANTHROPIC_API_KEY: 'ambient-key', OTHER: '' });
@@ -41,7 +41,7 @@ it('preserves existing gateway URLs, tokens, helpers and externally replaced val
   await save('OTHER', 'rotated'); expect(target.OTHER).toBe('rotated');
   target.OTHER = 'external-change'; await save('OTHER', null); expect(target.OTHER).toBe('external-change');
   await save('ANTHROPIC_API_KEY', null); expect(target.ANTHROPIC_API_KEY).toBe('ambient-key');
-  const third = new SavedMachineEnvironment(root, {}); await third.initialize(); expect(third.status().variables).toEqual([]); third.clear();
+  const third = new SavedMachineEnvironment(root, {}); await third.initialize(); expect(third.status().variables).toEqual([]); await third.clear();
 });
 it('removes only saved values and invalidates new launches even when removing the last key', async () => {
   await store.initialize(); await save('KEY', 'a'); const revision = store.revision;
@@ -70,12 +70,12 @@ it.each(['invalid-json', 'symlink', 'oversize'])('fails closed on %s storage wit
   await expect(store.initialize()).rejects.toMatchObject({ code: 'environment_unavailable' });
   expect(target.EXISTING_KEY).toBe('host-owned'); expect(() => store.status()).toThrow();
 });
-it.each(['missing-key', 'invalid-key', 'tampered', 'duplicate'])('never regenerates or silently discards an unreadable saved key (%s)', async (kind) => {
-  await store.initialize(); await save('KEY', 'fixture-sensitive-key'); store.clear();
+it.each(['missing-key', 'invalid-key', 'tampered', 'truncated-tag', 'duplicate'])('never regenerates or silently discards an unreadable saved key (%s)', async (kind) => {
+  await store.initialize(); await save('KEY', 'fixture-sensitive-key'); await store.clear();
   const path = join(root, 'machine-environment.enc'); const original = await readFile(path, 'utf8');
   if (kind === 'missing-key') await rm(join(root, 'machine-environment.key'));
   else if (kind === 'invalid-key') await writeFile(join(root, 'machine-environment.key'), 'bad');
-  else { const disk = JSON.parse(original); if (kind === 'duplicate') disk.variables.push(disk.variables[0]); else disk.variables[0].name = 'DIFFERENT_NAME'; await writeFile(path, JSON.stringify(disk)); }
+  else { const disk = JSON.parse(original); if (kind === 'duplicate') disk.variables.push(disk.variables[0]); else if (kind === 'truncated-tag') disk.variables[0].sealed = Buffer.from(disk.variables[0].sealed, 'base64').subarray(0, 20).toString('base64'); else disk.variables[0].name = 'DIFFERENT_NAME'; await writeFile(path, JSON.stringify(disk)); }
   store = new SavedMachineEnvironment(root, target);
   await expect(store.initialize()).rejects.toMatchObject({ code: 'environment_unavailable' });
   expect(target.KEY).toBeUndefined();
@@ -103,7 +103,7 @@ it('bounds the encrypted UTF-8 payload before committing or applying it', async 
 
 it('keeps server-forwarded gateway groups above saved values across restart and restores the fallback when removed', async () => {
   await store.initialize(); await save('EXAMPLE_API_KEY', 'personal-key');
-  store.clear();
+  await store.clear();
   store = new SavedMachineEnvironment(root, target); await store.initialize();
   const forwarded = new MachineEnvironment(target);
   const entries = [
@@ -120,7 +120,29 @@ it('keeps server-forwarded gateway groups above saved values across restart and 
   expect(target.EXAMPLE_API_KEY).toBe('rotated-personal-key'); expect(target.EXAMPLE_BASE_URL).toBeUndefined();
   expect(() => store.withHigherPriorityEnvironment(() => { throw new Error('fixture'); })).toThrow('fixture');
   expect(target.EXAMPLE_API_KEY).toBe('rotated-personal-key');
-  store.clear();
+  await store.clear();
   expect(store.withHigherPriorityEnvironment(() => 'unconfigured')).toBe('unconfigured');
   expect(target.EXAMPLE_API_KEY).toBeUndefined();
+});
+
+it('waits for in-flight writes before clearing daemon credentials and refuses writes queued after cleanup', async () => {
+  await store.initialize();
+  const expectedRevision = store.status().revision;
+  const writing = store.save({ name: 'KEY', value: 'fixture-key', expectedRevision });
+  const stopping = store.clear();
+  const late = store.save({ name: 'OTHER', value: 'late-key', expectedRevision });
+  await expect(late).rejects.toMatchObject({ code: 'environment_unavailable' });
+  await writing; await stopping;
+  expect(target).toEqual({});
+  expect(() => store.status()).toThrow();
+  const restarted = new SavedMachineEnvironment(root, target);
+  await restarted.initialize(); expect(target.KEY).toBe('fixture-key');
+  expect(target.OTHER).toBeUndefined(); await restarted.clear();
+});
+it('finishes initialization before clearing an encrypted environment', async () => {
+  await store.initialize(); await save('KEY', 'fixture-key'); await store.clear();
+  store = new SavedMachineEnvironment(root, target);
+  const initializing = store.initialize(); const stopping = store.clear();
+  await initializing; await stopping;
+  expect(target).toEqual({}); expect(() => store.status()).toThrow();
 });

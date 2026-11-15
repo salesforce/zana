@@ -85,6 +85,7 @@ export class SavedMachineEnvironment {
     if (!parsed.success) throw new HostCommandError('invalid_environment', 'Invalid environment variable.');
     if (!this.ready) this.status();
     return runInSerialLane(locks, this.path, async () => {
+      this.status(); // A queued write must not revive a store cleared during shutdown.
       const disk = await this.read();
       if (disk.revision !== input.expectedRevision) throw new HostCommandError('environment_conflict', 'Environment settings changed. Reload and try again.');
       const current = disk.variables.find((row) => row.name === input.name);
@@ -98,7 +99,7 @@ export class SavedMachineEnvironment {
       else {
         const key = await this.key(disk.variables.length === 0);
         const iv = randomBytes(12);
-        const cipher = createCipheriv('aes-256-gcm', key, iv);
+        const cipher = createCipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
         cipher.setAAD(Buffer.from(input.name));
         const ciphertext = Buffer.concat([cipher.update(input.value, 'utf8'), cipher.final()]);
         variables.push({ name: input.name, sealed: Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64') });
@@ -125,11 +126,13 @@ export class SavedMachineEnvironment {
     this.applied.clear();
   }
 
-  clear(): void {
-    this.removeApplied();
-    this.values.clear();
-    delete this.target[MARKER];
-    this.ready = false;
+  clear(): Promise<void> {
+    return runInSerialLane(locks, this.path, () => {
+      this.removeApplied();
+      this.values.clear();
+      delete this.target[MARKER];
+      this.ready = false;
+    });
   }
 
   private async read(): Promise<Disk> {
@@ -165,7 +168,7 @@ export class SavedMachineEnvironment {
       for (const { name, sealed } of disk.variables) {
         if (values.has(name)) throw new Error('Duplicate name');
         const bytes = Buffer.from(sealed, 'base64');
-        const cipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+        const cipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12), { authTagLength: 16 });
         cipher.setAAD(Buffer.from(name)); cipher.setAuthTag(bytes.subarray(12, 28));
         const value = Buffer.concat([cipher.update(bytes.subarray(28)), cipher.final()]).toString('utf8');
         HostEnvironmentEntrySchema.parse({ name, value });

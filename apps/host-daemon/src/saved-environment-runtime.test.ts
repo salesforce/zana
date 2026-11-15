@@ -50,5 +50,5 @@ it('routes saved settings through validated host RPC and redacts success and err
     delete runtime.savedEnvironment;
     expect((await call({ type: 'host.environment.settings' })).ok).toBe(false);
     expect((await call({ type: 'host.environment.save', name: 'KEY', value: 'x', expectedRevision: 'old' })).ok).toBe(false);
-  } finally { savedEnvironment.clear(); rmSync(root, { recursive: true, force: true }); }
+  } finally { await savedEnvironment.clear(); rmSync(root, { recursive: true, force: true }); }
 });

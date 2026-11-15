@@ -379,10 +379,10 @@ export function startEnrolledHostConnection(options: {
     peerControl.close();
     delivery.cancel();
     machineEnvironment?.clear();
-    await savedEnvironmentReady;
-    savedEnvironment?.clear();
     options.onConnectionChange?.(false);
     socket?.close();
+    await savedEnvironmentReady;
+    await savedEnvironment?.clear();
     previewTunnel.close();
     runtime.peerSsh?.close?.();
     await peerControl.whenIdle();
