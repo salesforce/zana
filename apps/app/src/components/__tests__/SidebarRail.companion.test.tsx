@@ -65,7 +65,7 @@ describe('SidebarRail Command Center button', () => {
   it('omits the companion shortcut even when Command Center is enabled on macOS', () => {
     mount();
     expect(screen.queryByLabelText('Minimize to Command Center')).toBeNull();
-    expect(screen.getByLabelText('Remote access')).toBeTruthy();
+    expect(screen.queryByLabelText('Remote access')).toBeNull();
     expect(screen.getByLabelText('Settings')).toBeTruthy();
     expect(h.enter).not.toHaveBeenCalled();
   });

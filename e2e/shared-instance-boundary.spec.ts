@@ -47,7 +47,8 @@ test('shared sign-in opens the system browser without a popup and refreshes inst
     await expect(picker.getByRole('button', { name: 'Refresh computers', exact: true })).toBeEnabled();
     expect(await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(win => win.id))).toEqual(windowIds);
     await app.window.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-    await app.window.getByRole('link', { name: 'Remote access', exact: true }).click();
+    await app.window.getByRole('link', { name: 'Settings', exact: true }).click();
+    await app.window.getByTestId('settings-nav-remote-access').click();
     await expect(app.window.locator('.instance-menu > summary')).toBeVisible();
     await app.window.getByRole('combobox', { name: 'Search settings' }).fill('Open another computer');
     await app.window.getByRole('option').filter({ hasText: 'Open another computer' }).click();

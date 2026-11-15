@@ -23,7 +23,8 @@ test('Remote access offers only Zana Connect and keeps a retired Heroku relay se
     expect(JSON.stringify(await win.evaluate(() => window.cc.config.get()))).not.toContain(token);
     expect(await win.evaluate(() => 'configure' in window.cc.mobile)).toBe(false);
     expect(readFileSync(saved, 'utf8')).toBe(legacy);
-    await win.getByRole('link', { name: 'Remote access', exact: true }).click();
+    await win.getByRole('link', { name: 'Settings', exact: true }).click();
+    await win.getByTestId('settings-nav-remote-access').click();
     await expect(win.getByLabel('Connection method')).toHaveCount(0);
     await expect(win.getByRole('button', { name: 'Show pairing QR' })).toHaveCount(0);
     await expect(win.getByRole('button', { name: 'Set up remote access' })).toBeVisible();

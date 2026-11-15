@@ -141,9 +141,8 @@ describe('SidebarRail', () => {
     expect(markup).toContain('class="sidebar-utility-bar"');
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('aria-label="Report a bug"');
-    expect(markup).toContain('aria-label="Remote access"');
-    expect(markup).toContain('href="/settings/remote-access"');
-    expect(markup.indexOf('aria-label="Remote access"')).toBeGreaterThan(markup.indexOf('aria-label="Report a bug"'));
+    expect(markup).not.toContain('aria-label="Remote access"');
+    expect(markup).not.toContain('href="/settings/remote-access"');
     expect(markup).toContain('href="/settings"');
     expect(markup).toContain('class="sidebar-resizer"');
     expect(markup).toContain('aria-orientation="vertical"');
