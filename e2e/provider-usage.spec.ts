@@ -16,8 +16,8 @@ test("Provider Usage installs and refreshes in built Electron", async ({ app }, 
     expect(catalogue.value.map(row => row.id)).not.toContain(id);
   }
   expect(await win.evaluate(() => window.cc.extensions.install({ kind: "bundled", id: "provider-usage" }))).toMatchObject({ ok: true });
-  expect(await win.evaluate(() => window.cc.pluginApps.setEnabled("provider-usage", true))).toMatchObject({ ok: true });
-  await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).find(row => row.id === "provider-usage")?.status)).toBe("running");
+  // Bundled installation enables this plugin; wait for activation instead of reloading it.
+  await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).find(row => row.id === "provider-usage")), { timeout: 60000 }).toMatchObject({ enabled: true, status: "running" });
   await win.evaluate(() => {
     window.history.pushState({}, "", "/plugins/provider-usage/usage");
     window.dispatchEvent(new PopStateEvent("popstate"));
