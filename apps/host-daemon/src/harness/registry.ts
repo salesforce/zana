@@ -104,8 +104,9 @@ export function providerFor(profile: LaunchProfileId): LaunchProvider {
 }
 
 /** Whether an adapter reports API-error stops: 'none' or no status means unsupported. */
-export function apiErrorResumeSupport(adapter: { readonly status?: { readonly apiErrorSignal: string } }): 'supported' | 'unsupported' {
-  return adapter.status && adapter.status.apiErrorSignal !== 'none' ? 'supported' : 'unsupported';
+export function apiErrorResumeSupport(adapter: { readonly status?: { readonly apiErrorSignal?: string } }): 'supported' | 'unsupported' {
+  const signal = adapter.status?.apiErrorSignal;
+  return signal && signal !== 'none' ? 'supported' : 'unsupported';
 }
 
 /** One trusted implementation per registered harness, in display order. */

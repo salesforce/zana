@@ -318,24 +318,16 @@ function useHarnessDescriptors(): HarnessAdapterDescriptor[] | null {
   return descriptors;
 }
 
-export function ApiErrorResumeSection({
-  config,
-  onUpdate,
-  onConfigDraft
-}: {
-  config: AppConfig;
-  onUpdate: (patch: Partial<AppConfig>, opts?: { throwOnError?: boolean }) => Promise<void> | void;
-  onConfigDraft: (next: AppConfig) => void;
-}) {
-  const current = config.apiErrorResume ?? EMPTY;
+type UpdateConfig = (patch: Partial<AppConfig>, opts?: { throwOnError?: boolean }) => Promise<void> | void;
+
+/** Saves whole `apiErrorResume` objects, serialised against saves still in flight. */
+function useResumeSave(current: ApiErrorResumeConfig, onUpdate: UpdateConfig) {
   const [saveFailed, setSaveFailed] = useState(false);
   // While saves are in flight the next one builds on the newest sent config, not
   // the stored one, so two quick changes (say, two suggestions) both land.
   const inFlight = useRef<{ count: number; sent: ApiErrorResumeConfig }>({ count: 0, sent: current });
   const saveSeq = useRef(0);
   const base = () => (inFlight.current.count > 0 ? inFlight.current.sent : current);
-  const draft = (patch: Partial<ApiErrorResumeConfig>) =>
-    onConfigDraft({ ...config, apiErrorResume: { ...current, ...patch } });
   // Always a whole object.
   const save: Save = async (patch) => {
     const from = base();
@@ -353,6 +345,22 @@ export function ApiErrorResumeSection({
       inFlight.current = { ...inFlight.current, count: inFlight.current.count - 1 };
     }
   };
+  return { save, base, saveFailed };
+}
+
+export function ApiErrorResumeSection({
+  config,
+  onUpdate,
+  onConfigDraft
+}: {
+  config: AppConfig;
+  onUpdate: UpdateConfig;
+  onConfigDraft: (next: AppConfig) => void;
+}) {
+  const current = config.apiErrorResume ?? EMPTY;
+  const { save, base, saveFailed } = useResumeSave(current, onUpdate);
+  const draft = (patch: Partial<ApiErrorResumeConfig>) =>
+    onConfigDraft({ ...config, apiErrorResume: { ...current, ...patch } });
   const rules = useResumeRules(current, save, () => base().rules);
   const coverage = apiErrorResumeCoverage(useHarnessDescriptors());
   const coverageLine = apiErrorResumeCoverageLine(coverage);

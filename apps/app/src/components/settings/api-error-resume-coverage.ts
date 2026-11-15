@@ -15,10 +15,10 @@ export const API_ERROR_RESUME_HELP =
 export const API_ERROR_RESUME_NONE_COVERED =
   'None of your installed agents can report API errors yet, so this setting has no effect.';
 
-/** Summarise which installed agents API-error resume covers; labels come from the descriptors. */
+/** Summarise which installed and enabled agents API-error resume covers; labels come from the descriptors. */
 export function apiErrorResumeCoverage(descriptors: readonly HarnessAdapterDescriptor[] | null | undefined): ApiErrorResumeCoverage {
   const known = (descriptors ?? []).filter(
-    (d) => d.availability.installed && d.agentDefaultEligible && d.apiErrorResume !== undefined
+    (d) => d.availability.installed && d.availability.enabled && d.agentDefaultEligible && d.apiErrorResume !== undefined
   );
   const covered = known.filter((d) => d.apiErrorResume === 'supported').map((d) => d.label);
   const uncovered = known.filter((d) => d.apiErrorResume !== 'supported').map((d) => d.label);
