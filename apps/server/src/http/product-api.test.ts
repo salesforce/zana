@@ -2660,7 +2660,7 @@ describe('product HTTP plugins', () => {
     });
     const settings = {
       descriptors: { token: { type: 'string' as const, label: 'Token' } },
-      values: { token: 'secret' as string | boolean | undefined }
+      values: { token: 'secret' as string | number | boolean | undefined }
     };
     server.ctx.plugins = {
       snapshot: () => [],
@@ -2673,7 +2673,7 @@ describe('product HTTP plugins', () => {
         if (pluginId !== 'pr-monitor') return { descriptors: {}, values: {} };
         return settings;
       },
-      setSettings: async (pluginId: string, values: Record<string, string | boolean | undefined>) => {
+      setSettings: async (pluginId: string, values: Record<string, string | number | boolean | undefined>) => {
         if (pluginId !== 'pr-monitor') throw new Error(`plugin not running: ${pluginId}`);
         settings.values = { ...settings.values, ...values };
       }
@@ -2706,14 +2706,14 @@ describe('product HTTP plugins', () => {
     const written = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ values: { token: 'next' } })
+      body: JSON.stringify({ values: { token: 'next', retryBudget: 7 } })
     });
-    await expect(written.json()).resolves.toMatchObject({ values: { token: 'next' } });
+    await expect(written.json()).resolves.toMatchObject({ values: { token: 'next', retryBudget: 7 } });
 
     const invalid = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ values: { token: 1 } })
+      body: JSON.stringify({ values: { token: { invalid: true } } })
     });
     expect(invalid.status).toBe(400);
 

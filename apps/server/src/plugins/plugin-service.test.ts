@@ -127,6 +127,20 @@ function writeLegacyExtension(dir: string, id: string): string {
 }
 
 describe('PluginService', () => {
+  it('projects settings declarations without reading values and clears them when the runtime stops', async () => {
+    const pluginDir = writePlugin(join(root(), 'settings-metadata'), 'settings-metadata', `export default api => { api.settings.define({ token: { type: 'string', label: 'Token', secret: true } }); };`);
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(pluginDir);
+    expect(toPluginAppSnapshot(service.snapshot()[0])).toHaveProperty('hasSettings', true);
+    expect(toPluginAppSnapshot(service.snapshot()[0])).not.toHaveProperty('values');
+    await service.disable('settings-metadata');
+    expect(toPluginAppSnapshot(service.snapshot()[0])).not.toHaveProperty('hasSettings');
+    await service.enable('settings-metadata');
+    expect(toPluginAppSnapshot(service.snapshot()[0])).toHaveProperty('hasSettings', true);
+    writeFileSync(join(pluginDir, 'server.mjs'), 'export default () => {};');
+    await service.reload('settings-metadata');
+    expect(toPluginAppSnapshot(service.snapshot()[0])).toHaveProperty('hasSettings', false);
+  });
   it('preserves coding-agent display grouping for disabled installs without exposing manifest extras', async () => {
     const dir = writePlugin(join(root(), 'custom-agent'), 'custom-agent', undefined, {
       extra: { threadProvider: true, privateSetting: '/private/plugin/path' }

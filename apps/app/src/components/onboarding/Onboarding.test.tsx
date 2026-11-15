@@ -170,7 +170,7 @@ it('keeps only installed selected members for a resumable connection checklist',
   render(<Onboarding profile={profile} />); click('Install fixture bundle');
   await screen.findByText('Example tool'); expect(screen.getByText('Needs configuration')).toBeTruthy();
   expect(useOnboarding.getState().progress).toMatchObject({ step: 'connections', pluginIds: ['tool'], packId: 'starter' });
-  click('Open plugin settings'); expect(api.navigate).toHaveBeenCalledWith(expect.stringContaining('/tool?view=installed#plugin-configure'));
+  click('Open plugin settings'); expect(api.navigate).toHaveBeenCalledWith(expect.stringContaining('/settings/plugins/tool'));
   expect(useOnboarding.getState().progress?.step).toBe('connections');
 });
 it.each([
@@ -245,7 +245,7 @@ it.each([true, false])('persists the completed bundle before opening settings fr
   if (completed) expect(api.set).toHaveBeenCalledWith(expect.objectContaining({ onboarding: expect.objectContaining({ step: 'connections', pluginIds: ['tool'] }) }));
   else expect(api.set).not.toHaveBeenCalled();
   expect(useOnboarding.getState().open).toBe(false);
-  expect(api.navigate).toHaveBeenCalledWith(expect.stringContaining('/tool?view=installed#plugin-configure'));
+  expect(api.navigate).toHaveBeenCalledWith(expect.stringContaining('/settings/plugins/tool'));
 });
 it('keeps setup recoverable if saving the review-to-settings transition fails', async () => {
   useOnboarding.setState({ progress: { ...progress, step: 'bundles' } }); api.set.mockRejectedValueOnce(new Error('Disk full'));

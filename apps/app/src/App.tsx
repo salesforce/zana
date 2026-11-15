@@ -36,6 +36,7 @@ import { TerminalSurface } from './components/TerminalSurface.js';
 import { SplitWorkspaceRoute } from '@/views/SplitWorkspaceRoute';
 import { ProjectScopedNav } from './components/ProjectScopedNav.js';
 import { LazySettingsView as SettingsView } from '@/views/settings/LazySettingsView';
+import { PluginSettingsView } from '@/views/settings/PluginSettingsView';
 import { ExtensionsView } from '@/views/extensions/ExtensionsView';
 import { FollowUpsView } from '@/views/follow-ups/FollowUpsView';
 import { SuggestionsView } from '@/views/suggestions/SuggestionsView';
@@ -137,6 +138,8 @@ import {
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
+  SETTINGS_PLUGIN_ROUTE_PATH,
+  legacyPluginSettingsRoute,
   SUGGESTIONS_ROUTE_PATH,
   NEW_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
@@ -161,6 +164,12 @@ function stayOnAgentsBoard(
   navigate: (to: string) => void
 ) {
   inspectAgentSession(session.id, projectId, navigate);
+}
+
+function PluginDetailRoute() {
+  const location = useLocation();
+  const settings = legacyPluginSettingsRoute(location);
+  return settings ? <Navigate to={settings} replace /> : <ExtensionsView />;
 }
 
 function ExtensionsLandingRedirect() {
@@ -201,11 +210,12 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={TOOLS_ROUTE_PATH} element={<ExtensionsLandingRedirect />} />
         <Route path={TOOLS_PLUGINS_ROUTE_PATH} element={<ExtensionsView />} />
         <Route path={TOOLS_PLUGIN_BROWSE_ROUTE_PATH} element={<ExtensionsView />} />
-        <Route path={TOOLS_PLUGIN_DETAIL_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={TOOLS_PLUGIN_DETAIL_ROUTE_PATH} element={<PluginDetailRoute />} />
         <Route path={TOOLS_SKILLS_ROUTE_PATH} element={<ExtensionsView />} />
         <Route path={TOOLS_MCP_ROUTE_PATH} element={<ExtensionsView />} />
         <Route path={TOOLS_HUB_PAGE_ROOT_ROUTE_PATH} element={<ExtensionsView />} />
         <Route path={TOOLS_HUB_PAGE_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={SETTINGS_PLUGIN_ROUTE_PATH} element={<PluginSettingsView />} />
         <Route path={SETTINGS_ROUTE_PATH} element={<SettingsView />} />
         <Route path={SETTINGS_PROJECT_ALIAS_ROUTE_PATH} element={<SettingsProjectAliasRedirect />} />
         <Route path={SETTINGS_SECTION_ROUTE_PATH} element={<SettingsView />} />

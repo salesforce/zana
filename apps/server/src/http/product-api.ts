@@ -339,10 +339,10 @@ async function handlePluginAppSettingsSet(
     sendJson(response, 400, { error: 'values required' });
     return;
   }
-  const values: Record<string, string | boolean | undefined> = {};
+  const values: Record<string, string | number | boolean | undefined> = {};
   for (const [key, value] of Object.entries(body.values as Record<string, unknown>)) {
     if (value === null || value === undefined) values[key] = undefined;
-    else if (typeof value === 'string' || typeof value === 'boolean') values[key] = value;
+    else if (typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) values[key] = value;
     else {
       sendJson(response, 400, { error: `invalid setting ${key}` });
       return;

@@ -6333,6 +6333,8 @@ export interface PluginUpdateStatus {
 export type PluginUpdatePolicy = 'bundled' | 'local' | 'independent' | 'migration-required';
 
 export interface PluginAppEntry {
+  /** Runtime declared settings, without reading values. Omitted while unavailable or on older hosts. */
+  hasSettings?: boolean;
   id: string;
   name: string;
   description: string;

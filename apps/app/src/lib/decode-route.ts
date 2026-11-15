@@ -23,6 +23,7 @@ import {
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
+  SETTINGS_PLUGIN_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
   NEW_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
@@ -174,6 +175,9 @@ export function decodeRoutePath(pathname: string, hash = '', search = ''): Decod
       settingsTab: pathname === SETTINGS_PROJECT_ALIAS_ROUTE_PATH ? 'project' : 'global',
       settingsAnchor: anchor
     };
+  }
+  if (matchPath(SETTINGS_PLUGIN_ROUTE_PATH, pathname)) {
+    return { ...DEFAULT_DECODED, nav: 'settings', settingsTab: 'plugins', settingsAnchor: anchor };
   }
   const settingsSection = matchPath(SETTINGS_SECTION_ROUTE_PATH, pathname);
   if (settingsSection) {

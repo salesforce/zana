@@ -181,7 +181,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 ### Configure
 
 - `notificationSoundProvider` — controls in Settings → Notifications, plus an exclusive host-gated background audio lifecycle.
-- `settingsSection` — React settings UI on the plugin’s Plugins hub detail (Configure)
+- `settingsSection` — React settings UI under **Settings → Plugins → [plugin name]** (`/settings/plugins/:pluginId`). The Plugins hub keeps installation and management actions.
 
 ### Platform
 
@@ -324,7 +324,7 @@ It mounts only the selected provider while the master sound switch is on, even
 when Settings is closed. The provider owns its own clips, imports, volume,
 event choices, cooldowns and playback policy. Do not add a second master switch
 or register the same player using general contentScripts. Ordinary
-settingsSection still belongs to the plugin's hub Configure page.
+settingsSection belongs to the plugin’s page under Settings → Plugins.
 
 The stable provider key is pluginId/slotId. The persisted app settings are
 notificationSoundProvider (builtin by default) and notificationSoundsEnabled.

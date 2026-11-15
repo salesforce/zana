@@ -20,9 +20,6 @@
 .ext-plugin-detail-tabs button[aria-selected='true'] { color: var(--text-primary); border-color: var(--accent); }
 .ext-plugin-detail-page .ext-plugin-detail-tabs { position: sticky; top: 0; z-index: 1; padding-top: 8px; background: var(--bg-panel); }
 .ext-plugin-detail-page [data-plugin-setting-key] { scroll-margin-top: 60px; }
-.ext-plugin-settings-areas { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
-.ext-plugin-settings-areas button { padding: 9px 13px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-panel); color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
-.ext-plugin-settings-areas button[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel)); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); color: var(--accent); }
 .ext-plugin-detail-page .ext-plugin-section--config { max-width: 880px; margin-inline: auto; }
 .ext-plugin-capabilities { display: flex; flex-wrap: wrap; gap: 4px; }
 .ext-plugin-capabilities > span { font-size: 9px; line-height: 1.5; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; background: var(--bg-panel); white-space: nowrap; }

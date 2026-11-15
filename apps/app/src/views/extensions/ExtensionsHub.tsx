@@ -1,7 +1,5 @@
 import { PluginSourceRecovery } from './PluginSourceRecovery.js';
 import { product } from '../../lib/product-client.js';
-import { revealElement } from '@/lib/settings-search/reveal';
-import { PLUGIN_SETTING_PARAM } from '@/lib/settings-search/providers/plugins';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { MobilePageHeader } from '@/components/MobilePageHeader';
@@ -9,9 +7,9 @@ import { DesktopOnlyPlugin } from './DesktopOnlyPlugin.js';
 /**
  * Extensions hub. Installed is a host-wide PluginService card collection;
  * clicking a card opens the
- * existing `/extensions/plugins/:id` About + settings detail. Core stays
+ * existing `/extensions/plugins/:id` management detail. Core stays
  * extension-agnostic — it never names a module here; each one supplies its own
- * settings UI through `AppModule.settingsPanel`.
+ * settings UI through registered contributions on its Settings page.
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
@@ -35,14 +33,14 @@ import {
 } from 'lucide-react';
 import { EXTENSION_PERMISSIONS } from '@zana-ai/zcc-extension-sdk';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
-import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry, PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
+import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { useMergedModules } from '@/modules';
-import { getHost } from '@/modules/ModulePanelHost';
 import { PluginBrandIcon } from './PluginBrandIcon.js';
 import { installedIconUrl } from './installed-collection.js';
 import { appNavigate } from '@/lib/app-navigate';
-import { getPluginDetailRoutePath } from '@/lib/route-paths';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { getPluginDetailRoutePath, getPluginSettingsRoutePath, legacyPluginSettingsRoute } from '@/lib/route-paths';
+import { useInstalledPlugins } from '@/plugins/installed-plugin-store';
+import { configurablePluginRows } from '@/plugins/plugin-settings-index';
 import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/ExtensionConsent';
 import { createPluginComposeNavigation } from '@/lib/compose-prompt-seed';
 import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
@@ -50,10 +48,8 @@ import { requestComposerCommandsReload } from '@/lib/composer-commands-reload';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { installedSource } from './plugin-presentation.js';
 import { PluginDetailPage } from './PluginDetailPage.js';
-import { PluginSettingsForm } from '@/plugins/PluginDefinedSettings';
 import { listNotificationSoundProviders } from '../../plugins/plugin-slots.js';
 import { soundProviderSettingsHref } from '../../plugins/notification-sounds.js';
-import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginHubIncludes } from './PluginHubIncludes.js';
 import { PluginSubmissionAction } from './PluginSubmissionAction.js';
@@ -68,9 +64,7 @@ import { PluginLoadFailure } from '../../plugins/PluginLoadFailure.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
-  hostSettingsPanelOf,
   moduleHostCallReady,
-  shouldMountHostSettings,
   type HubRow
 } from './installed-plugins.js';
 import {
@@ -307,8 +301,7 @@ export function InstalledView({ toolbarExtra, mobileActions, onBrowse, defaultUp
   const compact = useCompactLayout();
   const navigate = useNavigate();
   const modules = useMergedModules() as (AppModule & { loadError?: string })[];
-  const [entries, setEntries] = useState<ExtensionEntry[]>([]);
-  const [plugins, setPlugins] = useState<PluginAppEntry[]>([]);
+  const { entries, plugins } = useInstalledPlugins();
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedId = useUi((s) => s.settingsExtensionId);
   const selectSettingsExtension = useUi((s) => s.selectSettingsExtension);
@@ -344,36 +337,6 @@ export function InstalledView({ toolbarExtra, mobileActions, onBrowse, defaultUp
       document.removeEventListener('keydown', onKey);
     };
   }, [newMenuOpen]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      product.extensions
-        .list()
-        .then((next) => {
-          if (!cancelled) setEntries(next);
-        })
-        .catch(() => {});
-      product.pluginApps
-        .list()
-        .then((next) => {
-          if (!cancelled) setPlugins(next);
-        })
-        .catch(() => {});
-    };
-    load();
-    const offExt = product.extensions.onChanged((next) => {
-      if (!cancelled) setEntries(next);
-    });
-    const offApps = product.pluginApps.onChanged((next) => {
-      if (!cancelled) setPlugins(next);
-    });
-    return () => {
-      cancelled = true;
-      offExt();
-      offApps();
-    };
-  }, []);
 
   const rows = useMemo(
     () => buildHubRows(modules, entries, plugins),
@@ -470,41 +433,7 @@ export function InstalledView({ toolbarExtra, mobileActions, onBrowse, defaultUp
   );
 }
 
-/** Upper bound on waiting for the Configure form; it loads with the plugin's settings request. */
-export const PLUGIN_SETTING_WAIT_MS = 15_000;
-
-/**
- * Reveal the Configure-page row for descriptor `settingKey` (stable and unique,
- * unlike display labels). The form renders when the plugin's settings request
- * resolves, so a MutationObserver waits for the row instead of polling on a
- * fixed short budget; it stops on success, on the cap, or when cancelled (the
- * effect cleanup on navigation). Returns the cancel function.
- */
-export function revealPluginSetting(settingKey: string): () => void {
-  const selector = `#plugin-configure [data-plugin-setting-key="${CSS.escape(settingKey)}"]`;
-  const find = () => document.querySelector<HTMLElement>(selector);
-  const now = find();
-  if (now) {
-    revealElement(now);
-    return () => {};
-  }
-  let done = false;
-  const observer = new MutationObserver(() => {
-    const row = find();
-    if (!row) return;
-    stop();
-    revealElement(row);
-  });
-  const timer = window.setTimeout(() => stop(), PLUGIN_SETTING_WAIT_MS);
-  function stop() {
-    if (done) return;
-    done = true;
-    observer.disconnect();
-    window.clearTimeout(timer);
-  }
-  observer.observe(document.body, { childList: true, subtree: true });
-  return stop;
-}
+export { revealPluginSetting, PLUGIN_SETTING_WAIT_MS } from '@/plugins/reveal-plugin-setting';
 
 /** Format a build ISO timestamp as a short local date+time, or '' if unparseable. */
 function fmtBuilt(iso: string): string {
@@ -594,38 +523,16 @@ function rowStatus(
  */
 function ExtensionDetail({ row }: { row: HubRow }) {
   const { module, entry, plugin } = row;
-  const SettingsPanel = hostSettingsPanelOf(row);
-  const slotSettings = useSyncExternalStore(
-    subscribePluginSlots,
-    listSettingsSections,
-    listSettingsSections
-  ).filter((section) => section.pluginId === module.id);
   const soundProviders = useSyncExternalStore(subscribePluginSlots, listNotificationSoundProviders, listNotificationSoundProviders).filter(provider => provider.pluginId === module.id);
-  const hasSlotSettings = slotSettings.length > 0;
-  const [settingsArea, setSettingsArea] = useState<'plugin' | 'configuration'>('plugin');
+  const slotSettings = useSyncExternalStore(subscribePluginSlots, listSettingsSections, listSettingsSections);
+  const hasSettings = configurablePluginRows([row], slotSettings).length > 0;
   const [catalog, setCatalog] = useState<MarketplaceEntry[]>([]);
   const location = useLocation();
+  const navigate = useNavigate();
   const [detailTab, setDetailTab] = useState('overview');
-  const [settingsSnap, setSettingsSnap] = useState<PluginSettingsSnapshot | null>(null);
-  useEffect(() => {
-    if (!plugin) return;
-    let cancelled = false;
-    product.pluginApps.getSettings(module.id).then((snap) => {
-      if (!cancelled) setSettingsSnap(snap);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [module.id, plugin?.id]);
-  useEffect(() => {
-    if (location.hash === '#plugin-configure') {
-      setDetailTab('settings');
-      setSettingsArea('configuration');
-    }
-  }, [location.hash, location.key]);
-  const hasConfiguration = settingsSnap !== null && Object.keys(settingsSnap.descriptors).length > 0;
-  const hasPluginSettings = hasSlotSettings || !!SettingsPanel;
-  const hasSettings = hasConfiguration || hasPluginSettings;
-  const activeSettingsArea = hasPluginSettings && (!hasConfiguration || settingsArea === 'plugin') ? 'plugin' : 'configuration';
-  const configure = () => { setSettingsArea('configuration'); setDetailTab('settings'); };
+  const legacyTarget = legacyPluginSettingsRoute(location);
+  useEffect(() => { if (legacyTarget) void navigate(legacyTarget, { replace: true }); }, [legacyTarget, navigate]);
+  const configure = () => void navigate(getPluginSettingsRoutePath(module.id));
 
   useEffect(() => {
     product.extensions
@@ -636,29 +543,14 @@ function ExtensionDetail({ row }: { row: HubRow }) {
       .catch(() => {});
   }, [module.id]);
 
-  // Keyed on the navigation too: a jump to another setting of the plugin already
-  // open changes only the query, and re-opening the SAME result (identical URL)
-  // is still a new navigation (`key`), so both reveal again.
-  const { search: locationSearch, hash: locationHash, key: locationKey } = useLocation();
-  useEffect(() => {
-    if (detailTab !== 'settings') return;
-    const scroller = document.getElementById('plugin-detail-settings')?.closest('.ext-plugin-detail-page-body');
-    if (scroller) scroller.scrollTop = 0;
-    if (activeSettingsArea !== 'configuration') return;
-    document.getElementById('plugin-configure')?.focus({ preventScroll: true });
-    // Opened from a Settings search result: flash and focus the matching field.
-    const settingKey = new URLSearchParams(locationSearch).get(PLUGIN_SETTING_PARAM);
-    if (!settingKey) return;
-    return revealPluginSetting(settingKey);
-  }, [module.id, locationSearch, locationHash, locationKey, detailTab, activeSettingsArea]);
-
   const catalogEntry = catalog.find((item) => item.id === module.id) ?? null;
-  const detailTabs = ['overview', ...(hasSettings || detailTab === 'settings' ? ['settings'] : []), 'installation'];
+  const detailTabs = ['overview', 'installation'];
 
   if (!hasDesktopBridge() && entry && !plugin) return <DesktopOnlyPlugin entry={entry} />;
 
   return (
     <>
+      {hasSettings ? <Link className="settings-btn" to={getPluginSettingsRoutePath(module.id)}>Settings →</Link> : null}
       <AboutCard row={row} installation={detailTab === 'installation'} onConfigure={configure} onManage={() => setDetailTab('installation')} />
       {soundProviders.map(provider => <div key={provider.id} className="ext-plugin-section"><Link className="btn" to={soundProviderSettingsHref(provider)}>Configure sounds →</Link><p className="settings-help">{provider.title} is configured in Settings → Notifications.</p></div>)}
       {plugin?.description ? <PluginOverviewLead description={plugin.description} /> : null}
@@ -706,46 +598,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
         {plugin ? <PluginUpdateDetails plugin={plugin} /> : null}
         {entry ? <InstallConfirmationCard entry={entry} /> : null}
       </div>
-      <div id="plugin-detail-settings" role="tabpanel" aria-labelledby="plugin-detail-tab-settings" hidden={detailTab !== 'settings'}>
-        {hasConfiguration && hasPluginSettings ? <nav className="ext-plugin-settings-areas" aria-label="Plugin settings areas">
-          <button type="button" aria-pressed={activeSettingsArea === 'plugin'} onClick={() => setSettingsArea('plugin')}>
-            {slotSettings.length === 1 && slotSettings[0]?.title ? slotSettings[0].title : 'Plugin settings'}
-          </button>
-          <button type="button" aria-pressed={activeSettingsArea === 'configuration'} onClick={() => setSettingsArea('configuration')}>Configuration</button>
-        </nav> : null}
-        <section className="ext-plugin-section ext-plugin-section--config" id="plugin-configure" tabIndex={-1}
-          hidden={activeSettingsArea !== 'configuration'}>
-          <h3>Configuration</h3>
-          {settingsSnap ? <PluginSettingsForm snap={settingsSnap} onSave={async (key, value) => {
-            const next = await product.pluginApps.setSettings(module.id, { [key]: value });
-            setSettingsSnap(next);
-          }} /> : null}
-        </section>
-        <div hidden={activeSettingsArea !== 'plugin'}>
-          <PluginSettingsSections pluginId={module.id} />
-      {module.loadError ? null : SettingsPanel && shouldMountHostSettings(row) && !hasSlotSettings ? (
-        <ErrorBoundary key={module.id}>
-          <SettingsPanel host={getHost(module.id)} />
-        </ErrorBoundary>
-      ) : SettingsPanel && !hasSlotSettings ? (
-        <section className="settings-section">
-          <p className="settings-help settings-help--muted">
-            {entry
-              ? 'This extension’s main process is not running, so its settings cannot load. If you just turned it on, wait a moment or relaunch Zana.'
-              : 'This leftover extension still uses the old module host, which is not running. Uninstall it and install the official plugin from the Marketplace.'}
-          </p>
-        </section>
-      ) : hasSlotSettings || plugin ? null : (
-        <section className="settings-section">
-          <p className="settings-help settings-help--muted">
-            {entry
-              ? 'This extension does not expose any settings.'
-              : 'This built-in module has no configurable settings.'}
-          </p>
-        </section>
-      )}
-        </div>
-      </div>
+
     </>
   );
 }
