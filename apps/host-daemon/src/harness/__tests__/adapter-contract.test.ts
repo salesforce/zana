@@ -1,6 +1,7 @@
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { describe, expect, it } from 'vitest';
 import { availabilityFromVerify } from '@zana-ai/zcc-domain/harness-adapter';
+import type { HarnessApiErrorSignal, HarnessStatusAdapter } from '@zcc/harness-sdk';
 import { HARNESS_SETTINGS_CONTRIBUTIONS, hasNativeOption, validateConfigFiles } from '../adapter-contract.js';
 import { harnessAdapterDescriptors, registeredAdapters } from '../registry.js';
 
@@ -64,5 +65,54 @@ describe('trusted harness adapter contract', () => {
       expect(provider.adapter.descriptor.configFiles.length).toBeGreaterThan(0);
       expect(() => validateConfigFiles(provider.adapter.descriptor)).not.toThrow();
     }
+  });
+
+  // #649 REQ-1, REQ-2: every agent-capable adapter declares how it reports API errors.
+  describe('API-error signal declaration', () => {
+    const ALLOWED: readonly HarnessApiErrorSignal[] = ['hook', 'sdk-events', 'screen-scan', 'none'];
+    const canRunAgent = (adapter: { descriptor: { agentDefaultEligible?: boolean; profiles: readonly { id: string }[] } }) =>
+      Boolean(adapter.descriptor.agentDefaultEligible) || adapter.descriptor.profiles.some((profile) => profile.id !== 'shell');
+
+    /** The contract: what a trusted adapter's status must satisfy. Returns the first problem, or null. */
+    function apiErrorSignalProblem(status: Partial<HarnessStatusAdapter> | undefined): string | null {
+      if (!status) return 'no status';
+      const signal = status.apiErrorSignal;
+      if (!signal || !ALLOWED.includes(signal)) return 'apiErrorSignal missing or not allowed';
+      if (signal === 'hook' && !status.interactionHook) return "'hook' declared without an interactionHook";
+      return null;
+    }
+
+    it('requires an explicit allowed apiErrorSignal on every adapter that can run an agent', () => {
+      for (const { adapter } of registeredAdapters()) {
+        if (!canRunAgent(adapter)) continue;
+        expect(apiErrorSignalProblem(adapter.status), adapter.descriptor.id).toBeNull();
+      }
+    });
+
+    it('rejects an adapter that omits the field or declares hook without a hook', () => {
+      expect(apiErrorSignalProblem({ mode: 'osc' })).toMatch(/missing/);
+      expect(apiErrorSignalProblem({ mode: 'osc', apiErrorSignal: 'hook' })).toMatch(/without an interactionHook/);
+      expect(apiErrorSignalProblem({ mode: 'osc', apiErrorSignal: 'bogus' as HarnessApiErrorSignal })).toMatch(/missing or not allowed/);
+      expect(apiErrorSignalProblem(undefined)).toBe('no status');
+      expect(apiErrorSignalProblem({ mode: 'osc', apiErrorSignal: 'hook', interactionHook: () => null })).toBeNull();
+    });
+
+    it('makes the field required by type', () => {
+      // @ts-expect-error apiErrorSignal is required on HarnessStatusAdapter
+      const omitted: HarnessStatusAdapter = { mode: 'osc' };
+      expect(omitted.mode).toBe('osc');
+    });
+
+    it('declares hook for Claude, which provides the hook', () => {
+      const claude = registeredAdapters().find(({ adapter }) => adapter.descriptor.id === 'claude')!.adapter;
+      expect(claude.status?.apiErrorSignal).toBe('hook');
+      expect(claude.status?.interactionHook).toBeTypeOf('function');
+    });
+
+    it.each(['codex', 'opencode', 'cursor', 'pi', 'grok', 'mastracode', 'afcode'])('declares none for %s', (id) => {
+      const adapter = registeredAdapters().find((provider) => provider.adapter.descriptor.id === id)?.adapter;
+      expect(adapter, id).toBeDefined();
+      expect(adapter!.status?.apiErrorSignal).toBe('none');
+    });
   });
 });
