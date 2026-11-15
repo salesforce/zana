@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import { RegisteredHarnesses } from './RegisteredHarnesses.js';
 const state = vi.hoisted(() => ({ inventory: {} as any, snapshot: {} as any, ensure: vi.fn(), ensureProvider: vi.fn(), reload: vi.fn(), refresh: vi.fn(), refreshStatus: vi.fn(), catalog: null as any }));
-vi.mock('./ProviderAuthentication.js', () => ({ ProviderAuthentication: () => null }));
+vi.mock('./ProviderAuthentication.js', () => ({ ProviderAuthentication: ({ name, onReady }: { name: string; onReady: () => void }) => <button onClick={onReady}>Finish {name} sign-in</button> }));
 vi.mock('../../hooks/useRegisteredThreadProviders.js', () => ({ useRegisteredThreadProviders: () => state.inventory }));
 vi.mock('../../components/thread/pickers/ProviderIcon.js', () => ({ ProviderIcon: () => <span>icon</span> }));
 vi.mock('../../components/thread/pickers/thread-model-catalog.js', () => ({ threadModelCatalogForHost: () => state.catalog ?? ({ subscribe: () => () => {}, getSnapshot: () => state.snapshot, ensure: state.ensure, ensureProvider: state.ensureProvider, reload: state.reload, refresh: state.refresh }) }));
@@ -144,4 +144,10 @@ it('marks retained models stale when the real catalog roster refresh fails', asy
     fireEvent.click(screen.getByRole('button', { name: 'Browse Codex models' }));
     expect(screen.getByText('Model 0')).toBeTruthy();
   } finally { view.unmount(); catalogModule.resetThreadModelCatalog(); }
+});
+
+it('refreshes the selected machine provider catalogue when native sign-in becomes ready', () => {
+  render(<View />);
+  fireEvent.click(screen.getByRole('button', { name: 'Finish Codex sign-in' }));
+  expect(state.refresh).toHaveBeenCalledWith('codex');
 });

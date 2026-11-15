@@ -7,6 +7,9 @@ vi.mock('@zana-ai/zcc-plugin-sdk/provider-bridge', async (original) => ({
   ...(await original<typeof import('@zana-ai/zcc-plugin-sdk/provider-bridge')>()),
   experimental_resolveExecutablePath: async () => '/fixture/codex',
   experimental_readCliVersion: async () => '0.150.0',
+  experimental_commandOutput: async () => 'codex-cli 0.150.0',
+  experimental_npmLatestVersion: async () => null,
+  experimental_probeNpmGlobalPackage: async () => ({ npmBin: null, npmGlobalPackageVersion: null }),
 }));
 import { handleLine, experimental_killAllChildrenForTests } from './bridge.js';
 let dir: string, harness: ReturnType<typeof createHarness>;
@@ -34,4 +37,12 @@ it('asks the configured native app-server for its account without requesting tok
   expect(response.error).toBeUndefined();
   expect(response.result).toMatchObject({ health: { status: 'ready', accountEmail: 'keyring@example.com' } });
   expect(JSON.parse(await readFile(join(dir, 'request.json'), 'utf8'))).toEqual({ params: { refreshToken: false }, home: dir });
+});
+
+it('keeps usage and installation probes independent from native sign-in', async () => {
+  harness.sendRequest(2, 'provider/usage', { providerId: 'codex' });
+  expect((await harness.waitForResponse(2)).result).toMatchObject({ supported: true, usage: { status: 'unauthenticated' } });
+  harness.sendRequest(3, 'provider/installation/status', { providerId: 'codex' });
+  expect((await harness.waitForResponse(3)).result).toMatchObject({ installed: true, currentVersion: '0.150.0' });
+  await expect(readFile(join(dir, 'request.json'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
