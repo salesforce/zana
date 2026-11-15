@@ -5231,8 +5231,8 @@ body.resizing-col webview {
 }
 
 /* Modals rendered in place inside a routed panel (core or plugin) live in that
- * panel's stacking context: `.split-workspace { z-index: 0 }`, `.inbox-view` /
- * `.aurora-host { isolation: isolate }`. The sidebar (`z-index: 1`) and the
+ * panel's stacking context: `.split-workspace` (z-index 0), `.inbox-view` and
+ * `.aurora-host` (isolation: isolate). The sidebar (`z-index: 1`) and the
  * title-bar trigger overlay (`z-index: 50`) then paint over a full-window
  * `position: fixed` backdrop no matter how high its own z-index is, leaving the
  * left rail bright and clickable. While a panel holds an open modal, lift its
