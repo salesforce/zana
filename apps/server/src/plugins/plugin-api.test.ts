@@ -19,6 +19,17 @@ import {
   validatePluginRequestInput
 } from './plugin-api.js';
 
+it('reports declaration metadata without touching saved values', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-metadata-'));
+  const handle = createPluginApi('sample', dir);
+  try {
+    expect(handle.hasSettings).toBe(false);
+    handle.api.settings.define({ token: { type: 'string', label: 'Token', secret: true } });
+    expect(handle.hasSettings).toBe(true);
+    handle.api.settings.define({}); expect(handle.hasSettings).toBe(false);
+  } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('strict disposal awaits host teardown, isolates plugin cleanup errors, and rejects stale settings writes', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'plugin-quiesce-'));
   const handle = createPluginApi('sample', dir); const order: string[] = [];

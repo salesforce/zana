@@ -890,6 +890,7 @@ export const PluginAppSnapshotSchema = z.object({
   description: z.string().max(4096),
   icon: z.string().min(1).max(256),
   enabled: z.boolean(),
+  hasSettings: z.boolean().optional(),
   provenance: z.enum(['builtin', 'direct', 'catalog']),
   sourceKind: z.enum(['builtin', 'path', 'git', 'npm']).optional(),
   sourceRecovery: z.object({ canLocate: z.boolean(), canSwitchOfficial: z.boolean() }).strict().optional(),

@@ -182,7 +182,7 @@ Controls appear in Settings → Notifications; only the selected provider mounts
 while the host master is on. Provider changes leave playback off. Configure
 links inspect settings without enabling audio. Return a disposer and honor
 signal abort; do not duplicate the player in general contentScripts. Ordinary
-settingsSection remains on the plugin hub Configure page. See the SDK reference
+settingsSection appears under Settings → Plugins → [plugin name]. See the SDK reference
 for migration, missing-provider behavior and cross-window playback ownership.
 
 

@@ -2,13 +2,12 @@ import type { PluginAppEntry, PluginSettingsSnapshot } from '@zana-ai/zcc-domain
 import { listSettingsSections, listNotificationSoundProviders } from '../../../plugins/plugin-slots.js';
 import { soundProviderSettingsHref } from '../../../plugins/notification-sounds.js';
 import { product } from '../../product-client.js';
-import { getPluginDetailRoutePath } from '../../route-paths.js';
+import { getPluginSettingsRoutePath } from '../../route-paths.js';
 import { warnSettingsSearchOnce } from '../diagnostics';
 import { notifySettingsSearchSourcesChanged, registerSettingsSearchProvider } from '../registry';
 import type { SettingsSearchEntry, SettingsSearchProvider } from '../types';
 
-// Plugin-defined settings (`zcc.settings.define`) live on each plugin's hub
-// Configure page (guard tests keep them there), so results deep-link there.
+// Plugin-defined settings (`zcc.settings.define`) live in Settings → Plugins.
 // Nothing here names a plugin: ids, names and descriptors all come from the
 // running plugin list (Rule 6). SECRET values are dropped by the server
 // (`?secrets=omit`) so they never reach the renderer for search; the local
@@ -48,18 +47,9 @@ export function resetPluginSettingsCache(): void {
   inflight = null;
 }
 
-/**
- * The INSTALLED plugin page (`view=installed`): that is where the Configure
- * block lives. Without it the route opens the marketplace Browse detail, which
- * only knows catalogue entries, so a local plugin showed "Plugin not found".
- */
+/** Descriptor results open Configuration; custom sections choose their own area. */
 export function pluginConfigureHref(pluginId: string, params: Record<string, string> = {}): string {
-  const path = getPluginDetailRoutePath(pluginId, { view: 'installed' });
-  const [pathname, query = ''] = path.split('?');
-  const search = new URLSearchParams(query);
-  for (const [key, value] of Object.entries(params)) search.set(key, value);
-  const qs = search.toString();
-  return `${pathname}${qs ? `?${qs}` : ''}${PLUGIN_CONFIGURE_HASH}`;
+  return `${getPluginSettingsRoutePath(pluginId, { area: 'configuration', ...params })}${PLUGIN_CONFIGURE_HASH}`;
 }
 
 export function pluginSettingHref(pluginId: string, settingKey: string): string {
@@ -177,7 +167,7 @@ export const pluginSettingsSearchProvider: SettingsSearchProvider = () => {
       help: section.description,
       kind: 'setting',
       keywords: [name, 'plugin settings'],
-      href: pluginConfigureHref(section.pluginId)
+      href: getPluginSettingsRoutePath(section.pluginId, { area: 'plugin' })
     });
   }
   for (const provider of listNotificationSoundProviders()) {

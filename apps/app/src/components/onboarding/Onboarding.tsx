@@ -6,7 +6,7 @@ import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import type { PluginPackInstallation } from '@zana-ai/zcc-domain';
 import { product } from '../../lib/product-client.js';
 import { appNavigate } from '../../lib/app-navigate.js';
-import { getPluginDetailRoutePath, TOOLS_PLUGIN_BROWSE_ROUTE_PATH, TOOLS_PLUGINS_ROUTE_PATH } from '../../lib/route-paths.js';
+import { getPluginSettingsRoutePath, TOOLS_PLUGIN_BROWSE_ROUTE_PATH, TOOLS_PLUGINS_ROUTE_PATH } from '../../lib/route-paths.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { isScopedWindow } from '../../lib/windowScope.js';
 import { useDialogFocusTrap } from '../../hooks/useDialogFocusTrap.js';
@@ -140,7 +140,7 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
   };
   const openPlugin = (id: string) => {
     useOnboarding.setState({ open: false });
-    appNavigate(`${getPluginDetailRoutePath(id, { view: 'installed' })}#plugin-configure`);
+    appNavigate(getPluginSettingsRoutePath(id));
   };
   const complete = (openTools = false) => void run(async () => {
     await persist({ ...progress, step: 'complete' });

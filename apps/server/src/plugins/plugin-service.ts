@@ -314,6 +314,8 @@ export interface PluginToolPolicyReadiness {
 }
 
 export interface PluginUiSnapshot {
+  /** Undefined while the runtime is unavailable. */
+  hasSettings?: boolean;
   id: string;
   name: string;
   description: string;
@@ -367,6 +369,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     status: row.status,
     statusDetail: row.statusDetail,
     appUrl: row.appUrl,
+    ...(row.hasSettings !== undefined ? { hasSettings: row.hasSettings } : {}),
     ...(row.sourceRecovery ? { sourceRecovery: row.sourceRecovery } : {}),
     ...(row.updateCheck ? { updateCheck: row.updateCheck } : {}),
     ...(row.updatePolicy ? { updatePolicy: row.updatePolicy } : {}),
@@ -2577,6 +2580,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         status: row.status === 'running' && !live.get(row.id)?.handle ? 'degraded' : row.status,
         appEntry: row.appEntry,
         appUrl: live.get(row.id)?.handle ? appUrlFor(row) : null,
+        hasSettings: live.get(row.id)?.handle?.hasSettings,
         npmResolvedVersion: row.npmResolvedVersion,
         gitResolvedCommit: row.gitResolvedCommit,
         source: row.source,

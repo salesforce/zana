@@ -214,6 +214,8 @@ export interface PluginHandle {
   readonly hasToolSettledHandler: boolean;
   /** Deliver a settled native tool call to this plugin's `tool.settled` handlers; each failure is contained. */
   emitToolSettled(event: ToolSettledEvent): Promise<void>;
+  /** Declaration metadata; never reads persisted values or secrets. */
+  readonly hasSettings: boolean;
   getSettings(): {
     descriptors: Record<string, PluginSettingDescriptor>;
     values: Record<string, PluginSettingValue | undefined>;
@@ -2248,6 +2250,7 @@ export function createPluginApi(
         }
       }
     },
+    get hasSettings() { return Object.keys(settingDescriptors).length > 0; },
     getSettings() {
       const stored = readSettings();
       const values: Record<string, PluginSettingValue | undefined> = {};

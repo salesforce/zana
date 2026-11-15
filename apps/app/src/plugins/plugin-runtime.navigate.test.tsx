@@ -16,7 +16,8 @@ vi.mock('./plugin-slots.js', async (importOriginal) => ({
   listThreadPanelActions: () => pageActions
 }));
 
-import { installPluginRuntime } from './plugin-runtime.js';
+import { registerAppNavigate } from '@/lib/app-navigate';
+import { installPluginRuntime, openPluginSettings } from './plugin-runtime.js';
 import { PluginRuntimeContext } from './PluginSlotBoundary.js';
 import { onPluginPanelAgentRequest } from './plugin-panel-agent.js';
 import { parsePanelAgentTarget } from './plugin-panel-agent.js';
@@ -198,4 +199,10 @@ it('exposes context insertion only through a scoped composer and preserves legac
   setActiveComposerApi(null);
   view.rerender(element(null));
   expect(api!.insertContextReference).toBeUndefined();
+});
+
+it('opens plugin settings through the canonical Settings route', () => {
+  const navigate = vi.fn(); registerAppNavigate(navigate);
+  try { openPluginSettings('sample'); expect(navigate).toHaveBeenCalledWith('/settings/plugins/sample', undefined); }
+  finally { registerAppNavigate(null); }
 });
