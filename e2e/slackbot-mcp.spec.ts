@@ -14,6 +14,8 @@ import { createConnectGateway } from '../website/connect/gateway.mjs';
 import { createSlackService } from '../website/slack/service.mjs';
 import { phonePortEnv } from './fixtures/phone-port.js';
 import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
+import { chromium } from '@playwright/test';
+import { slackDiagramBrowserEnv } from './fixtures/slack-diagram-browser.js';
 
 // Exercise the bundled source by default; allow an explicit development override.
 const source = process.env.ZCC_SLACK_BRIDGE_DIR ?? fileURLToPath(new URL('../plugins/slack-bridge-2ff2', import.meta.url));
@@ -206,7 +208,7 @@ ${hangBranch}`));
         process.stdout.write(JSON.stringify(decision));
       }
     `); chmodSync(conversationCli, 0o755);
-    app = await launchApp(home, { caCertPath: cert, env: { ...await phonePortEnv(), PATH: `${activityBin}${delimiter}${resolve('e2e/fixtures/bin')}${delimiter}${process.env.PATH}`, FAKE_ACP_MODEL_CONFIG: '1', FAKE_ACP_MODE_CONFIG: '1' }, initialConfig: { tmuxScope: 'off', harnessOpenCodeEnabled: true, claudeBinary: conversationCli } });
+    app = await launchApp(home, { caCertPath: cert, env: { ...await phonePortEnv(), ...slackDiagramBrowserEnv(home, chromium.executablePath()), PATH: `${activityBin}${delimiter}${resolve('e2e/fixtures/bin')}${delimiter}${process.env.PATH}`, FAKE_ACP_MODEL_CONFIG: '1', FAKE_ACP_MODE_CONFIG: '1' }, initialConfig: { tmuxScope: 'off', harnessOpenCodeEnabled: true, claudeBinary: conversationCli } });
     await app.electron.evaluate(() => {
       const dns = process.getBuiltinModule('dns'), original = dns.lookup;
       dns.lookup = ((hostname: string, options: any, callback: any) => hostname.endsWith('.zana.test') ? callback(null, options?.all ? [{ address: '127.0.0.1', family: 4 }] : '127.0.0.1', 4) : original(hostname, options, callback)) as typeof dns.lookup;
