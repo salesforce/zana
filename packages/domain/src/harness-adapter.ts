@@ -195,6 +195,8 @@ export interface HarnessAdapterDescriptor {
   /** Some native CLIs cannot accept a model override even when their ACP sibling can. */
   modelSelection?: 'native-only';
   settingsContributionIds: readonly string[];
+  /** Whether the harness reports API-error stops. Absent (older or remote host) means unknown. */
+  apiErrorResume?: 'supported' | 'unsupported';
   /** Deliberate config matrix. Launch capabilities do not imply file support. */
   configFiles: readonly HarnessConfigFileDescriptor[];
   initialTaskDelivery: {

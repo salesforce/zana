@@ -82,7 +82,7 @@ const GROK_ADAPTER: TrustedHarnessAdapter = {
     execution: [{ names: ['--always-approve'], arity: 0 }],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'output-activity' },
+  status: { mode: 'output-activity', apiErrorSignal: 'none' },
   evidence: [GROK_OPENING_PROMPT_EVIDENCE]
 };
 

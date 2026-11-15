@@ -81,7 +81,7 @@ const PI_ADAPTER: TrustedHarnessAdapter = {
     model: [{ names: ['--provider', '--model', '--thinking'], arity: 1, acceptsAttachedValue: true }],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'output-activity' },
+  status: { mode: 'output-activity', apiErrorSignal: 'none' },
   legacyRouting: piLegacyRouting,
   evidence: [PI_OPENING_PROMPT_EVIDENCE]
 };
