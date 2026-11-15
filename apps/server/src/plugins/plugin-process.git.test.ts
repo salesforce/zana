@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { defaultCloneGit, defaultSpawnNpm, ensureDir } from './plugin-process.js';
+import { defaultCloneGit, defaultGitPluginChanged, defaultSpawnNpm, ensureDir } from './plugin-process.js';
 
 const roots: string[] = [];
 function root() { const dir = mkdtempSync(join(tmpdir(), 'plugin-git-')); roots.push(dir); return dir; }
@@ -60,4 +60,22 @@ describe('plugin source materialization commands', () => {
       expect((await defaultSpawnNpm(args, cwd)).code).not.toBe(0);
     } finally { registry.closeAllConnections(); registry.close(); }
   });
+});
+
+it('compares only the selected plugin and shared build inputs across real Git commits', async () => {
+  const dir=root();
+  const git=(args:string[])=>execFileSync('git',args,{cwd:dir,stdio:'pipe'}).toString().trim();
+  git(['init','-b','main']);
+  const commit=(path:string,text:string)=>{writeFileSync(join(dir,path),text);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-m',text]);return git(['rev-parse','HEAD']);};
+  mkdirSync(join(dir,'plugins/selected'),{recursive:true}); mkdirSync(join(dir,'plugins/sibling'),{recursive:true});
+  const first=commit('plugins/selected/server.ts','one');
+  const sibling=commit('plugins/sibling/server.ts','two');
+  const own=commit('plugins/selected/server.ts','three');
+  const shared=commit('package.json','{}');
+  const url=pathToFileURL(dir).href;
+  expect(await defaultGitPluginChanged(url,'plugins/selected',first,sibling)).toBe(false);
+  expect(await defaultGitPluginChanged(url,'plugins/selected',sibling,own)).toBe(true);
+  expect(await defaultGitPluginChanged(url,'plugins/selected',own,shared)).toBe(true);
+  await expect(defaultGitPluginChanged(url,'../escape',first,shared)).rejects.toThrow(/Invalid/);
+  await expect(defaultGitPluginChanged(url,'plugins/selected',first,'f'.repeat(40))).rejects.toThrow(/unavailable/);
 });

@@ -66,6 +66,12 @@ legacy behaviour kept for older plugins; new plugins should opt into
 `harness`. `sdk.providers.list()` reports `available: false` for a provider
 whose bridge failed or whose harness is not installed and enabled on the host.
 
+`sdk.providers.usage({ providerId, hostId })` reads a provider's optional
+`usage(hostId)` declaration on the selected enrolled host. It returns
+`{ supported: false }` when absent, or a supported reading with subscription
+windows, reset times, and authentication/error status. Credentials stay on the
+execution host.
+
 AI-harness overrides: a `harness: "project-default"` spawn also applies the
 resolved harness's overrides the way a new agent launch does — Settings → AI
 Harness, then the project's AI harness overrides — mapped onto the thread's

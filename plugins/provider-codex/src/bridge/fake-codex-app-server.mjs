@@ -545,6 +545,10 @@ async function handleRequest(message) {
       return;
     }
     case "turn/steer":
+      if (script?.steerError) {
+        respondError(id, script.steerError.code, script.steerError.message);
+        return;
+      }
       if (script?.strictTurnIds && params.expectedTurnId !== openTurnIdsByThreadId.get(params.threadId)) {
         respondError(id, -32603, `expected active turn id \`${params.expectedTurnId}\` but found \`${openTurnIdsByThreadId.get(params.threadId) ?? "none"}\``);
         return;

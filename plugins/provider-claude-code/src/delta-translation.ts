@@ -396,6 +396,9 @@ interface ClaudeThreadDialectState {
   startedTools: Map<string, ClaudeClassifiedTool>;
   tasksById: ClaudeTaskMap;
   taskPlan: ClaudeTaskPlanState;
+  unconsumedPromptIds: Set<string>;
+  promptConsumedSinceResult: boolean;
+  promptConsumptionReported: boolean;
 }
 
 function createThreadState(): ClaudeThreadDialectState {
@@ -413,6 +416,9 @@ function createThreadState(): ClaudeThreadDialectState {
     startedTools: new Map(),
     tasksById: new Map(),
     taskPlan: new Map(),
+    unconsumedPromptIds: new Set(),
+    promptConsumedSinceResult: false,
+    promptConsumptionReported: false,
   };
 }
 
@@ -952,6 +958,7 @@ export function createClaudeDeltaTranslator(
     }
     const toolResults = extractToolResults(parsedMessage.data);
     if (toolResults.length === 0) {
+      if (typeof parsedMessage.data.uuid === "string") consumePrompt(state, parsedMessage.data.uuid);
       return [];
     }
     if (!state.mirror.turnOpen) {
@@ -1008,6 +1015,33 @@ export function createClaudeDeltaTranslator(
     return deltas;
   }
 
+  function consumePrompt(state: ClaudeThreadDialectState, promptId: string): void {
+    if (state.unconsumedPromptIds.delete(promptId)) state.promptConsumedSinceResult = true;
+  }
+
+  function hasQueuedPromptAfterResult(state: ClaudeThreadDialectState, message: ClaudeResultMessage): boolean {
+    if (message.origin !== undefined && message.origin.kind !== "human") {
+      return state.promptConsumptionReported && state.unconsumedPromptIds.size > 0;
+    }
+    if (message.user_message_uuids === undefined) {
+      state.unconsumedPromptIds.clear();
+      state.promptConsumedSinceResult = false;
+      return false;
+    }
+    state.promptConsumptionReported = true;
+    for (const id of message.user_message_uuids) consumePrompt(state, id);
+    if (!state.promptConsumedSinceResult) {
+      const oldest = state.unconsumedPromptIds.values().next();
+      if (!oldest.done) state.unconsumedPromptIds.delete(oldest.value);
+    }
+    state.promptConsumedSinceResult = false;
+    return state.unconsumedPromptIds.size > 0;
+  }
+
+  function trackPushedPrompt(threadId: string, promptId: string): void {
+    stateFor({ threadId }).unconsumedPromptIds.add(promptId);
+  }
+
   function translateResultMessage(
     event: unknown,
     state: ClaudeThreadDialectState,
@@ -1018,6 +1052,7 @@ export function createClaudeDeltaTranslator(
       return unexpectedSdkEventDeltas(event, context);
     }
     const message = parsedMessage.data;
+    const promptQueued = hasQueuedPromptAfterResult(state, message);
     const resultCanClaimPendingInput =
       message.origin === undefined || message.origin.kind === "human";
     if (
@@ -1093,6 +1128,12 @@ export function createClaudeDeltaTranslator(
       });
     }
     state.armedHardRateLimitRejection = undefined;
+    if (failed) {
+      state.unconsumedPromptIds.clear();
+      state.promptConsumedSinceResult = false;
+    } else if (promptQueued) {
+      return deltas;
+    }
     if (!failed && hasCompletionBlockingClaudeTasks(state.tasksById)) {
       return deltas;
     }
@@ -1280,6 +1321,8 @@ export function createClaudeDeltaTranslator(
   function buildSessionSettlementDeltas(threadId: string): ThreadDelta[] {
     const state = stateFor({ threadId });
     const deltas: ThreadDelta[] = [];
+    state.unconsumedPromptIds.clear();
+    state.promptConsumedSinceResult = false;
     if (state.mirror.turnOpen) {
       deltas.push(...withMirror(state, [{ kind: "session.ended" }]));
     }
@@ -1323,6 +1366,7 @@ export function createClaudeDeltaTranslator(
 
   return {
     acceptInput,
+    trackPushedPrompt,
     buildSessionSettlementDeltas,
     configureInjectedTools,
     configureSandbox: (enabled: boolean) => { sandboxEnabled = enabled; },

@@ -32,6 +32,7 @@ export default function plugin(zcc) {
       },
       "experimental_resolvesNativeRoots": true
     },
+    usage: (hostId) => zcc.host.experimental_client().call('providerUsage', {}, {hostId, timeoutMs:30000}),
     displayName: 'Codex',
     icon: './icons/codex.svg',
     capabilities: {

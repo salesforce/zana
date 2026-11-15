@@ -371,7 +371,11 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
       const current = active.get(input.sessionId);
       if (current) {
         current.lastUsed = Date.now();
-        await save(current);
+        try {
+          await save(current);
+        } catch (error) {
+          zcc.log.warn(`Could not persist browser activity: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
   }

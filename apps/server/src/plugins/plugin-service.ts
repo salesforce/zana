@@ -1,3 +1,4 @@
+import { defaultGitPluginChanged } from './plugin-process.js';
 import { readCatalogIcon } from './catalog-icon.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
 import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
@@ -1980,6 +1981,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const result = await runPluginGitCommand(['ls-remote', '--', url, 'HEAD', 'refs/heads/*', 'refs/tags/*'], opts.dataDir, url, { signal: sourceCommands.signal });
       if (result.code !== 0) throw new Error(pluginGitFailure(result.stderr, 'Git source is unavailable'));
       return result.stdout;
+    },
+    async gitContentChanged(intent, installedCommit, candidateCommit) {
+      return defaultGitPluginChanged(intent.url, intent.subdir!, installedCommit, candidateCommit, sourceCommands.signal);
     },
     async gitManifest(intent, commit) {
       const cloned = await cloneGitTree(intent.url, `commit:${commit}`, intent.subdir);

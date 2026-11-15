@@ -48,6 +48,10 @@ export interface CodexAppServerConnection {
   readonly exited: boolean;
 }
 
+export class CodexAppServerRpcError extends Error {
+  constructor(readonly code: number | undefined, message: string) { super(message); this.name = "CodexAppServerRpcError"; }
+}
+
 export class CodexAppServerExitedError extends Error {
   readonly spawnFailed: boolean;
 
@@ -209,7 +213,8 @@ export function createCodexAppServerConnection(
           }
           if (message.error) {
             request.reject(
-              new Error(
+              new CodexAppServerRpcError(
+                message.error.code,
                 message.error.message ??
                   `codex app-server returned error code ${message.error.code ?? "unknown"}`,
               ),

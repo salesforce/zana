@@ -818,20 +818,23 @@ function logBridgeError(message: string): void {
   process.stderr.write(`claude-code bridge: ${message}\n`);
 }
 
-function pushPromptInput(
+async function pushPromptInput(
   threadSession: ThreadSession,
   input: string,
   permissionEscalation: PermissionEscalation | null,
-): Promise<void> {
+): Promise<string> {
   const promptId = randomUUID();
   threadSession.permissionEscalationByPromptId.set(
     promptId,
     permissionEscalation,
   );
-  return threadSession.session.pushInput(input, promptId).catch((error) => {
+  try {
+    await threadSession.session.pushInput(input, promptId);
+  } catch (error) {
     threadSession.permissionEscalationByPromptId.delete(promptId);
     throw error;
-  });
+  }
+  return promptId;
 }
 
 async function applyPermissionSettings(
@@ -1114,7 +1117,9 @@ function emitCanonicalTurnInputAccepted(
   threadSession: ThreadSession,
   acceptance: CanonicalTurnAcceptance,
   threadId: string,
+  promptId: string,
 ): void {
+  threadSession.translator.trackPushedPrompt(threadId, promptId);
   sendThreadDeltas(
     threadId,
     threadSession.translator.acceptInput(threadId, acceptance.clientRequestId),
@@ -3155,12 +3160,12 @@ async function runTurnStart(
   }
 
   try {
-    await pushPromptInput(
+    const promptId = await pushPromptInput(
       threadSession,
       promptText,
       params.permissionEscalation,
     );
-    emitCanonicalTurnInputAccepted(threadSession, acceptance, params.threadId);
+    emitCanonicalTurnInputAccepted(threadSession, acceptance, params.threadId, promptId);
     threadSession.attachment.permissionEscalation = params.permissionEscalation;
     sendResult(id, { threadId: params.threadId });
   } catch (error) {
@@ -3240,12 +3245,12 @@ async function runTurnSteer(
   }
 
   try {
-    await pushPromptInput(
+    const promptId = await pushPromptInput(
       threadSession,
       promptText,
       params.permissionEscalation,
     );
-    emitCanonicalTurnInputAccepted(threadSession, acceptance, params.threadId);
+    emitCanonicalTurnInputAccepted(threadSession, acceptance, params.threadId, promptId);
     threadSession.attachment.permissionEscalation = params.permissionEscalation;
     sendResult(id, { threadId: params.threadId });
   } catch (error) {

@@ -184,3 +184,12 @@ links inspect settings without enabling audio. Return a disposer and honor
 signal abort; do not duplicate the player in general contentScripts. Ordinary
 settingsSection remains on the plugin hub Configure page. See the SDK reference
 for migration, missing-provider behavior and cross-window playback ownership.
+
+
+### Provider usage
+
+Provider plugins can declare `usage(hostId)` on their provider registration. The
+host-scoped callback returns `PluginProviderUsageResult`; credentials stay on the
+execution host. Other plugins read it with
+`zcc.sdk.providers.usage({ providerId, hostId })`. Providers without a callback
+return `{ supported: false }`.
