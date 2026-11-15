@@ -45,7 +45,7 @@ describe('marketplace store', () => {
 
     await store.add('https://example.test/mp.json', INDEX);
     expect(store.list()[0]?.cachedIndex?.plugins).toHaveLength(1);
-    const failed = await store.recordRefreshError('https://example.test/mp.json', 'network down');
+    const failed = await store.beginRefresh('https://example.test/mp.json')!.fail('network down');
     expect(failed?.lastError).toBe('network down');
     expect(failed?.cachedIndex?.name).toBe('official');
     expect(failed?.entryCount).toBe(1);
@@ -146,8 +146,8 @@ describe('marketplace store', () => {
     const store = createMarketplaceStore({ file: marketplaceStorePath(dataDir) });
     const sources = ['https://example.test/a.json', 'https://example.test/b.json', 'https://example.test/c.json'];
     for (const source of sources) await store.add(source, INDEX);
-    await store.refresh(sources[0]!, INDEX);
-    await store.recordRefreshError(sources[1]!, 'HTTP 429');
+    await store.beginRefresh(sources[0]!)!.complete(INDEX);
+    await store.beginRefresh(sources[1]!)!.fail('HTTP 429');
     expect(store.list().map((row) => row.source)).toEqual(sources);
     await store.add('https://example.test/d.json', INDEX);
     expect(store.list().map((row) => row.source)).toEqual([...sources, 'https://example.test/d.json']);
@@ -160,6 +160,48 @@ describe('marketplace store', () => {
     await store.add('https://example.test/user.json', INDEX);
     await expect(store.remove('https://example.test/user.json')).resolves.toBe(true);
     expect(store.list()).toHaveLength(0);
+  });
+
+  it('does not begin refreshing a source that is not registered', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-missing-refresh-'));
+    dirs.push(dataDir);
+    const store = createMarketplaceStore({ file: marketplaceStorePath(dataDir) });
+    expect(store.beginRefresh('https://example.test/missing.json')).toBeNull();
+  });
+
+  it.each([false, true])('invalidates refresh commits inside the write queue (re-add: %s)', async (readd) => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-refresh-race-'));
+    dirs.push(dataDir);
+    const file = marketplaceStorePath(dataDir);
+    const store = createMarketplaceStore({ file });
+    const source = 'git:https://example.test/team/catalog';
+    await store.add(source, INDEX);
+    const attempt = store.beginRefresh(`${source}.git/`)!;
+    // Queue removal/replacement ahead of completion without yielding first.
+    const removed = store.remove(source);
+    const added = readd ? store.add(source, { ...INDEX, displayName: 'Replacement' }) : Promise.resolve();
+    const completed = expect(attempt.complete({ ...INDEX, displayName: 'Stale' }))
+      .rejects.toThrow(/removed or replaced/);
+    const failed = attempt.fail('Stale error');
+    await Promise.all([removed, added, completed]);
+    expect(await failed).toBeNull();
+    expect(store.list().map(row => row.displayName)).toEqual(readd ? ['Replacement'] : []);
+    expect(createMarketplaceStore({ file }).list()).toEqual(store.list());
+  });
+
+  it('allows concurrent refreshes while the registration remains current', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-refresh-current-'));
+    dirs.push(dataDir);
+    const store = createMarketplaceStore({ file: marketplaceStorePath(dataDir) });
+    const source = 'https://example.test/catalog.json';
+    await store.add(source, INDEX, { official: true });
+    const first = store.beginRefresh(source)!;
+    const second = store.beginRefresh(source)!;
+    await store.add('https://example.test/other.json', INDEX);
+    await first.complete({ ...INDEX, displayName: 'First' });
+    await second.complete({ ...INDEX, displayName: 'Second' });
+    expect(store.list()[0]).toMatchObject({ displayName: 'Second', official: true, lastError: null });
+    expect(await first.fail('Retry later')).toMatchObject({ displayName: 'Second', lastError: 'Retry later' });
   });
 
   it('upserts git source spellings by canonical identity and persists bare canonical source', async () => {
@@ -202,11 +244,11 @@ describe('marketplace store', () => {
     const canonical = 'git:https://example.test/team/catalog';
 
     await store.add('git:https://example.test/team/catalog.git/', INDEX);
-    const refreshed = await store.refresh('git:https://example.test/team/catalog', {
+    const refreshed = await store.beginRefresh('git:https://example.test/team/catalog')!.complete({
       ...INDEX,
       name: 'refreshed'
     });
-    const failed = await store.recordRefreshError('git:https://example.test/team/catalog.git', 'network down');
+    const failed = await store.beginRefresh('git:https://example.test/team/catalog.git')!.fail('network down');
 
     expect(refreshed.source).toBe(canonical);
     expect(store.list()).toHaveLength(1);

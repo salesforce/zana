@@ -96,9 +96,9 @@ describe('marketplace pack cache persistence', () => {
     await store.add('https://example.test/marketplace.json', index, { packs, packsError: null });
     expect(createMarketplaceStore({ file }).list()[0]?.cachedPacks).toEqual(packs);
     expect(toPublicMarketplaceCatalog(store.list()[0]!)).not.toHaveProperty('cachedPacks');
-    await store.refresh('https://example.test/marketplace.json', index);
+    await store.beginRefresh('https://example.test/marketplace.json')!.complete(index);
     expect(store.list()[0]?.cachedPacks).toEqual(packs);
-    await store.refresh('https://example.test/marketplace.json', index, { packs: null, packsError: 'Bad sidecar' });
+    await store.beginRefresh('https://example.test/marketplace.json')!.complete(index, { packs: null, packsError: 'Bad sidecar' });
     expect(store.list()[0]).toMatchObject({ cachedPacks: null, packsError: 'Bad sidecar' });
     expect(createMarketplaceStore({ file }).list()[0]).toMatchObject({ cachedPacks: null, packsError: 'Bad sidecar' });
   });
@@ -107,7 +107,7 @@ describe('marketplace pack cache persistence', () => {
     const dir = directory();
     const store = createMarketplaceStore({ file: marketplaceStorePath(dir) });
     await store.add('https://example.test/marketplace.json', index, { packs });
-    await store.recordRefreshError('https://example.test/marketplace.json', 'offline');
+    await store.beginRefresh('https://example.test/marketplace.json')!.fail('offline');
     expect(store.list()[0]?.cachedPacks).toEqual(packs);
     await store.add('https://example.test/marketplace.json', index, { official: true });
     expect(store.list()[0]).toMatchObject({ cachedPacks: packs, official: true });

@@ -205,4 +205,22 @@ describe('decodeRoutePath', () => {
       scopedWindowLockReplace({ pathname: '/schedules/new', search: '', hash: '' }, 'p1')
     ).toEqual({ pathname: '/projects/p1/schedules/new', search: '?projectId=p1', hash: '' });
   });
+
+  it.each(['machine', 'project%3Alocal%3Aopen'])('keeps setup %s inside a locked project window', (id) => {
+    const pathname = `/setup/${id}`;
+    const scoped = { pathname, search: '?surface=x&projectId=p1', hash: '#draft' };
+    expect(scopedWindowLockReplace(scoped, 'p1')).toBeNull();
+    for (const search of ['', '?surface=x', '?surface=x&projectId=other']) {
+      const next = scopedWindowLockReplace({ pathname, search, hash: '#draft' }, 'p1');
+      expect(next).toEqual({
+        pathname,
+        search: search ? '?surface=x&projectId=p1' : '?projectId=p1',
+        hash: '#draft'
+      });
+      expect(scopedWindowLockReplace(next!, 'p1')).toBeNull();
+    }
+    // Only recognized setup routes bypass the normal project-home redirect.
+    expect(scopedWindowLockReplace({ pathname: `${pathname}/extra`, search: '', hash: '' }, 'p1'))
+      .toEqual({ pathname: '/projects/p1', search: '?projectId=p1', hash: '' });
+  });
 });

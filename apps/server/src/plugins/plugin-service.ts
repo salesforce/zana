@@ -3417,12 +3417,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async refreshMarketplace(source) {
       const parsed = parseMarketplaceSource(source);
       const display = marketplaceSourceDisplay(parsed);
+      const refresh = marketplaces.beginRefresh(display);
+      if (!refresh) throw new Error(`Unknown marketplace: ${display}`);
       try {
         const materialized = await materializeMarketplaceSource(parsed, fetchJson, { includePacks: true });
-        return marketplaces.refresh(marketplaceSourceDisplay(materialized.source), materialized.index, materialized);
+        return await refresh.complete(materialized.index, materialized);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const row = await marketplaces.recordRefreshError(display, message);
+        const row = await refresh.fail(message);
         if (!row) throw error;
         return row;
       }
