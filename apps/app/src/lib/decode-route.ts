@@ -399,7 +399,8 @@ export function scopedProjectIdFromSearch(search: string): string | null {
 /**
  * Where a project-locked window must sit. Returns null when the URL is already
  * on `/projects/:lockId` (settings or workspace). A global `/threads/:id` click
- * is rewritten onto that project's thread route; any other path — including a
+ * is rewritten onto that project's thread route. Setup pages keep the window's
+ * project query; any other path — including a
  * query-less `/inbox` after a full document load — is replaced back onto the
  * project home, keeping `?projectId=`.
  */
@@ -414,6 +415,11 @@ export function scopedWindowLockReplace(
   );
   params.set('projectId', lockId);
   const search = `?${params.toString()}`;
+  if (decoded.nav === 'setup') {
+    return scopedProjectIdFromSearch(location.search) === lockId
+      ? null
+      : { pathname: location.pathname, search, hash: location.hash };
+  }
   // Keep the conversation when a rail click used the global `/threads/:id`
   // shape — bouncing to the project home made those clicks look dead.
   if (decoded.threadId) {
