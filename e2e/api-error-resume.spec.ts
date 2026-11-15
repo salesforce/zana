@@ -173,7 +173,7 @@ test('Settings → Agents adds a suggested rule and checks an error against it',
     await expect(help).toHaveText(/Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors\./);
     await expect(help).not.toContainText('Claude Code');
     const descriptors = await win.evaluate(() => window.cc.harness.descriptors());
-    const installed = descriptors.filter((d) => d.agentDefaultEligible && d.availability.installed && d.apiErrorResume);
+    const installed = descriptors.filter((d) => d.agentDefaultEligible && d.availability.installed && d.availability.enabled && d.apiErrorResume);
     const claude = installed.find((d) => d.id === 'claude');
     if (claude) {
       await expect(win.getByText(/^Works with: .*Claude Code/)).toBeVisible({ timeout: 15_000 });

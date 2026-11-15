@@ -16,7 +16,8 @@ export type HarnessApiErrorSignal = 'hook' | 'sdk-events' | 'screen-scan' | 'non
 
 /**
  * Shared API-error vocabulary. Each harness maps its own errors into these kinds.
- * Kinds in this list are temporary; a kind outside it is only retryable via `isRetryableApiErrorKind`.
+ * This list names the kinds known to be temporary. It does not decide retryability on its own:
+ * `isRetryableApiErrorKind` also treats any kind not known to be permanent as retryable.
  */
 export const API_ERROR_RETRYABLE_KINDS = ['rate_limit', 'overloaded', 'server_error', 'unknown'] as const;
 

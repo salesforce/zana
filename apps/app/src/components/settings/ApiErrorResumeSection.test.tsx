@@ -537,3 +537,15 @@ describe('apiErrorResumeCoverage', () => {
     }
   );
 });
+
+describe('apiErrorResumeCoverage enabled flag (#649 A3)', () => {
+  const off = { availability: { enabled: false, installed: true, reason: '' } };
+  it('ignores an installed harness that is turned off', () => {
+    expect(apiErrorResumeCoverage([descriptor('claude', 'Claude Code', { apiErrorResume: 'supported', ...off }), codex]))
+      .toEqual({ kind: 'none', covered: [], uncovered: ['Codex'] });
+  });
+
+  it('is unknown when the only installed harness is turned off', () => {
+    expect(apiErrorResumeCoverage([descriptor('claude', 'Claude Code', { apiErrorResume: 'supported', ...off })]).kind).toBe('unknown');
+  });
+});
