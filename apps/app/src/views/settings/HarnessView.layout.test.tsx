@@ -7,6 +7,8 @@ import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapt
 import { HarnessView } from './HarnessView.js';
 import { resetThreadModelCatalog } from '../../components/thread/pickers/thread-model-catalog.js';
 
+vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: vi.fn(async () => ({ hostId: 'local', revision: 'fixture', variables: [] })) }));
+
 vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: (props: unknown) => { state.registeredProps = props; return null; } }));
 
 const state = vi.hoisted(() => ({
@@ -93,16 +95,17 @@ describe('Harness setup layout', () => {
     expect(names).toEqual(['Claude Code', 'Codex', 'Pi', 'Pi']);
     expect(state.rows.map((row) => row.family)).toEqual(['pi', 'codex', 'claude', 'opencode']);
     fireEvent.click(await screen.findByRole('button', { name: 'Default harness' }));
-    const options = (await screen.findAllByRole('option')).map((el) => el.textContent ?? '');
+    const picker = await screen.findByRole('listbox');
+    const options = within(picker).getAllByRole('option').map((el) => el.textContent ?? '');
     expect(options.map((text) => text.replace(' (not installed)', '').trim())).toEqual(['Claude Code', 'Codex', 'Pi', 'Pi']);
   });
 
-  it('leads with installation, gives the machine context, and persists the enable switch immediately', async () => {
+  it('places API keys before installation, gives the machine context, and persists the enable switch immediately', async () => {
     const update = vi.fn(async () => undefined);
     const { container } = render(<View update={update} />);
     await waitFor(() => expect(screen.getByText('2 installed · 2 enabled')).toBeTruthy());
     const headings = [...container.querySelectorAll('.harness-settings > section > h3')].map((el) => el.textContent);
-    expect(headings).toEqual(['Installed harnesses', 'Model lists', 'Session settings']);
+    expect(headings).toEqual(['API keys and environment', 'Installed harnesses', 'Model lists', 'Session settings']);
     expect(screen.getByText('This machine · Studio Mac')).toBeTruthy();
     const status = within(screen.getByTestId('harness-status-list'));
     expect(status.getByText('Always on')).toBeTruthy();

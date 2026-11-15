@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import { RegisteredHarnesses } from './RegisteredHarnesses.js';
 const state = vi.hoisted(() => ({ inventory: {} as any, snapshot: {} as any, ensure: vi.fn(), ensureProvider: vi.fn(), reload: vi.fn(), refresh: vi.fn(), refreshStatus: vi.fn(), catalog: null as any }));
+vi.mock('./ProviderAuthentication.js', () => ({ ProviderAuthentication: () => null }));
 vi.mock('../../hooks/useRegisteredThreadProviders.js', () => ({ useRegisteredThreadProviders: () => state.inventory }));
 vi.mock('../../components/thread/pickers/ProviderIcon.js', () => ({ ProviderIcon: () => <span>icon</span> }));
 vi.mock('../../components/thread/pickers/thread-model-catalog.js', () => ({ threadModelCatalogForHost: () => state.catalog ?? ({ subscribe: () => () => {}, getSnapshot: () => state.snapshot, ensure: state.ensure, ensureProvider: state.ensureProvider, reload: state.reload, refresh: state.refresh }) }));

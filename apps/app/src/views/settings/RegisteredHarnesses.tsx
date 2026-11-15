@@ -10,6 +10,7 @@ import { getPluginBrowseRoutePath, getPluginDetailRoutePath } from '../../lib/ro
 import { HARNESS_ENABLE_KEY } from '../../lib/settings-search/providers/harness.js';
 import { Section } from '../../components/settings/FormFields.js';
 import { registeredHarnessStatus } from './registered-harness-status.js';
+import { ProviderAuthentication } from './ProviderAuthentication.js';
 import './registered-harnesses.css';
 
 export function RegisteredHarnesses({ config, status, hostId, hostName, onUpdate, onRefreshStatus, checkingStatus }: {
@@ -86,6 +87,7 @@ export function RegisteredHarnesses({ config, status, hostId, hostName, onUpdate
                 }}>{isDefault ? 'Default' : 'Use for new agents'}</button> : null}
               </div>
             </div>
+            <ProviderAuthentication key={`${hostId}:${provider.id}`} providerId={provider.id} name={provider.displayName} hostId={hostId} hostName={hostName} onReady={() => { void catalog.refresh(provider.id); }} />
             {expanded === provider.id ? <div className="registered-harness-models">
               <div className="registered-harness-model-heading"><strong>{provider.displayName} models</strong><button type="button" className="settings-btn" disabled={!hostId || models.inflight.has(provider.id)} onClick={() => { void catalog.refresh(provider.id); }}>Reload models</button></div>
               {entry?.modelLoadErrorDetail ? <p className="settings-help" role="status">{entry.modelLoadErrorDetail}</p> : null}

@@ -168,13 +168,28 @@ describe("Codex credential health and usage", () => {
         minimumSupportedVersion: "0.136.0",
         canInstall: true,
         canUpdate: true,
-        loginCommand: "codex login",
+        loginCommand: "codex login --device-auth",
+        localLoginCommand: "codex login",
       },
     });
     await expect(getCodexProviderUsage()).resolves.toEqual({
       supported: true,
       usage: { status: "unauthenticated" },
     });
+  });
+
+  it('uses the native account result for keyring credentials without requiring auth.json', async () => {
+    const read = vi.fn(async () => ({ account: { type: 'chatgpt', email: 'keyring@example.com', planType: 'plus' }, requiresOpenaiAuth: true }));
+    expect(await getCodexProviderHealth(read)).toMatchObject({ health: { status: 'ready', accountEmail: 'keyring@example.com' } });
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it('keeps custom provider authentication external and never suggests public OAuth for it', async () => {
+    expect(await getCodexProviderHealth(async () => ({ account: null, requiresOpenaiAuth: false }))).toMatchObject({
+      health: { status: 'ready', loginCommand: null, localLoginCommand: null },
+    });
+    expect(await getCodexProviderHealth(async () => ({ account: null, requiresOpenaiAuth: true }))).toMatchObject({ health: { status: 'unauthenticated' } });
+    expect(await getCodexProviderHealth(async () => { throw new Error('private-token'); })).toMatchObject({ health: { status: 'unknown', statusMessage: 'Could not verify Codex credentials on this machine.' } });
   });
 
   it("reports expired when the ChatGPT access token has passed its exp", async () => {

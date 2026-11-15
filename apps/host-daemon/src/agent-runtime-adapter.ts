@@ -335,6 +335,8 @@ export function createAgentRuntimeAdapter(options: {
   /** Live Settings read so provider-bridge record mode can follow the Debug toggle. */
   loadConfig?: () => AppConfig;
   createRuntime?: CreateAgentRuntimeFn;
+  /** New launches use a fresh bridge after an owner changes machine credentials. */
+  getEnvironmentRevision?: () => string | undefined;
   /**
    * Packed join artifact directory (worker + Pi bridge). Defaults to the
    * sibling files next to this module when present — so a remote `join.mjs`
@@ -396,13 +398,15 @@ export function createAgentRuntimeAdapter(options: {
     });
   }
 
-  function resolveLaunch(launch: HostBridgeLaunch): Promise<AgentRuntimeBridgeLaunch> {
-    return resolveRuntimeBridgeLaunch({
+  async function resolveLaunch(launch: HostBridgeLaunch): Promise<AgentRuntimeBridgeLaunch> {
+    const resolved = await resolveRuntimeBridgeLaunch({
       launch,
       daemonDataDir,
       fetchPluginHostArtifact: options.fetchPluginHostArtifact,
       logger: options.artifactCacheLogger
     });
+    const environmentRevision = options.getEnvironmentRevision?.();
+    return environmentRevision ? { ...resolved, environmentRevision } : resolved;
   }
 
   function effectiveAcpLaunchSpec(providerId: string, bridgeLaunch?: HostBridgeLaunch, providerOptions?: Record<string, unknown>): HostDaemonAcpLaunchSpec | undefined {

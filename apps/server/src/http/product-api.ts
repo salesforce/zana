@@ -13,6 +13,8 @@ import { classifyExpectedRpcError } from '@zana-ai/zcc-contracts/rpc-error';
 import { LibraryDocumentRequestSchema, LIBRARY_DOCUMENT_BODY_LIMIT } from '@zana-ai/zcc-contracts/library-documents';
 import { recoverFailedTerminalStart } from './terminal-start-recovery.js';
 import { registerProductTerminal } from './terminal-retention.js';
+import { handleProviderReadinessApi } from './provider-readiness-api.js';
+import { handleMachineEnvironmentApi } from './machine-environment-api.js';
 import { readProjectImage, ProjectFsError } from './project-fs-via-host.js';
 import { projectGit } from './project-git.js';
 import { usesConnect } from '../services/hosts/connect-enrollment.js';
@@ -541,6 +543,8 @@ export async function handleProductHttp(
   }
 
   try {
+    if (await handleProviderReadinessApi(request, response, ctx, requestUrl)) return true;
+    if (await handleMachineEnvironmentApi(request, response, ctx, requestUrl)) return true;
     if (await handleOnboardingApi(response, path, method, ctx.onboardingGitAuth)) return true;
     if (await handleHelpVideosApi(request, response, ctx.helpVideos, path, method)) return true;
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;

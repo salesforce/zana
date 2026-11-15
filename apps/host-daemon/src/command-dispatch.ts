@@ -1,4 +1,5 @@
 import { ProjectCatalogue } from './project-catalogue.js';
+import type { SavedMachineEnvironment } from './saved-machine-environment.js';
 import { listHostCommands } from "./native-root-scan.js";
 import { inspectDirectories } from './inspect-directories.js';
 import { discoverCliOnHost } from './cli-discovery.js';
@@ -241,6 +242,7 @@ export interface CommandRuntime {
   desktopBrowserBroker?: DesktopBrowserBroker;
   /** In-memory environment pushed by the server (host.environment.replace). */
   machineEnvironment?: MachineEnvironment;
+  savedEnvironment?: SavedMachineEnvironment;
 }
 
 export function createCommandRuntime(options: {
@@ -305,6 +307,7 @@ export function createCommandRuntime(options: {
   peerSsh?: PeerDaemonSsh;
   desktopBrowserBroker?: DesktopBrowserBroker;
   machineEnvironment?: MachineEnvironment;
+  savedEnvironment?: SavedMachineEnvironment;
   resolveLocalPeerApp?: LocalPeerAppResolver;
   peerForwardFetch?: typeof fetch;
 }): CommandRuntime {
@@ -351,6 +354,7 @@ export function createCommandRuntime(options: {
     peerForwarder: new PeerForwarder({ resolveLocalPeerApp: options.resolveLocalPeerApp, fetchFn: options.peerForwardFetch }),
     desktopBrowserBroker: options.desktopBrowserBroker,
     machineEnvironment: options.machineEnvironment,
+    savedEnvironment: options.savedEnvironment,
     verifyProviders: options.verifyProviders ?? (async () => {
       const [results, extraInstalledAgents] = await Promise.all([
         verifyHarnesses(loadConfig()),
@@ -1314,9 +1318,17 @@ export async function dispatchHostCommand(
         artifactPath: command.artifactPath
       });
     }
+    case 'host.environment.settings':
+      if (!runtime.savedEnvironment) throw new HostCommandError('unsupported', 'Environment settings are unavailable on this machine');
+      return runtime.savedEnvironment.status();
+    case 'host.environment.save':
+      if (!runtime.savedEnvironment) throw new HostCommandError('unsupported', 'Environment settings are unavailable on this machine');
+      return runtime.savedEnvironment.save({ name: command.name, value: command.value, expectedRevision: command.expectedRevision });
     case 'host.environment.replace':
       if (!runtime.machineEnvironment) throw new HostCommandError('unsupported', 'Machine environment is unavailable');
-      return runtime.machineEnvironment.replace(command.entries);
+      return runtime.savedEnvironment
+        ? runtime.savedEnvironment.withHigherPriorityEnvironment(() => runtime.machineEnvironment!.replace(command.entries))
+        : runtime.machineEnvironment.replace(command.entries);
     case 'preview.replace':
       if (!runtime.previewTunnel) throw new HostCommandError('unsupported', 'Preview sharing is unavailable on this machine');
       return runtime.previewTunnel.replace(command);
