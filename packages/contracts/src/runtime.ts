@@ -705,7 +705,7 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-settings-set'),
     pluginId: z.string().min(1).max(128),
-    values: z.record(z.string(), z.union([z.string(), z.boolean(), z.null()])).optional()
+    values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional()
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-cli-contributions')

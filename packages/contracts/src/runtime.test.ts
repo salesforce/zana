@@ -413,3 +413,9 @@ describe('DispatchAdmissionMainRequestSchema prompt', () => {
     expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'hi', extra: 1 } }).success).toBe(false);
   });
 });
+
+it('accepts finite numeric plugin settings writes at the desktop runtime boundary', () => {
+  const numericRequest = { ...request, operation: 'plugins-settings-set', pluginId: 'notes' };
+  expect(ServerRuntimeInboundSchema.safeParse({ ...numericRequest, values: { budget: 7, name: 'Saved', active: true, cleared: null } }).success).toBe(true);
+  for (const budget of [NaN, Infinity, {}]) expect(ServerRuntimeInboundSchema.safeParse({ ...numericRequest, values: { budget } }).success).toBe(false);
+});
