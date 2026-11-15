@@ -20,9 +20,11 @@ export type HarnessApiErrorSignal = 'hook' | 'sdk-events' | 'screen-scan' | 'non
  */
 export const API_ERROR_RETRYABLE_KINDS = ['rate_limit', 'overloaded', 'server_error', 'unknown'] as const;
 
+const PERMANENT_API_ERROR_KINDS: readonly string[] = ['invalid_request', 'authentication', 'permission', 'billing'];
+
 /** True for the temporary kinds and for any kind not known to be permanent. */
-export function isRetryableApiErrorKind(_kind: string): boolean {
-  throw new Error('not implemented');
+export function isRetryableApiErrorKind(kind: string): boolean {
+  return !PERMANENT_API_ERROR_KINDS.includes(kind);
 }
 
 export interface HarnessStatusAdapter {
