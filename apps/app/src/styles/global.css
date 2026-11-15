@@ -940,8 +940,9 @@ button.statusbar-update {
   overflow: visible;
   position: relative;
   /* Lift above the content track so the handle on the column edge stays
-     grabbable. Overlays (modals, palettes) must portal to document.body — a
-     descendant z-index cannot paint above this stacking context. */
+     grabbable. A content track holding an open modal is lifted above this
+     (see `.shell-main > :has(...)`); overlays opened from the sidebar itself
+     must still portal to document.body. */
   z-index: 1;
 }
 
@@ -5227,6 +5228,20 @@ body.resizing-col webview {
 
 .shell-main {
   display: contents;
+}
+
+/* Modals rendered in place inside a routed panel (core or plugin) live in that
+ * panel's stacking context: `.split-workspace { z-index: 0 }`, `.inbox-view` /
+ * `.aurora-host { isolation: isolate }`. The sidebar (`z-index: 1`) and the
+ * title-bar trigger overlay (`z-index: 50`) then paint over a full-window
+ * `position: fixed` backdrop no matter how high its own z-index is, leaving the
+ * left rail bright and clickable. While a panel holds an open modal, lift its
+ * whole content track above that chrome so every in-place modal dims and
+ * blocks the window, without each dialog having to portal to document.body.
+ * Stays below toasts and title-bar popovers (z-index ≥ 100). */
+.shell-main > :has(:is([aria-modal='true'], .modal-backdrop, .palette-backdrop)),
+.shell-main > .project-slot > :has(:is([aria-modal='true'], .modal-backdrop, .palette-backdrop)) {
+  z-index: 60;
 }
 
 .project-slot {
