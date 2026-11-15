@@ -25,7 +25,7 @@ function fixture() {
     productContext: { db } as ProductHttpContext,
   });
   cleanups.push(() => handle.dispose());
-  return { handle, host };
+  return { handle, host, dir };
 }
 it("routes usage through the declared provider only for registered execution hosts", async () => {
   const { handle, host } = fixture();
@@ -46,4 +46,25 @@ it("routes usage through the declared provider only for registered execution hos
   await expect(
     handle.api.sdk.providers.usage({ providerId: "missing", hostId: host.id }),
   ).resolves.toEqual({ supported: false });
+});
+
+it("rejects missing runtime context and disposed plugin callbacks", async () => {
+  const { handle, host, dir } = fixture();
+  const noContext = createPluginApi("usage-no-context", join(dir, "no-context"));
+  cleanups.push(() => noContext.dispose());
+  await expect(noContext.api.sdk.providers.usage({ providerId: "test", hostId: host.id })).rejects.toThrow("zcc.sdk is not available");
+  await handle.dispose();
+  await expect(handle.api.sdk.providers.usage({ providerId: "test", hostId: host.id })).rejects.toThrow();
+});
+
+it("treats unavailable providers and absent callbacks as unsupported and preserves provider failures", async () => {
+  const { handle, host } = fixture();
+  const usage = vi.fn(async () => ({ supported: false as const }));
+  for (const provider of [{}, { unavailableReason: "Bridge unavailable", usage }]) {
+    vi.mocked(getThreadProvider).mockReturnValue(provider as never);
+    await expect(handle.api.sdk.providers.usage({ providerId: "test", hostId: host.id })).resolves.toEqual({ supported: false });
+  }
+  expect(usage).not.toHaveBeenCalled();
+  vi.mocked(getThreadProvider).mockReturnValue({ usage: async () => { throw new Error("Host unavailable"); } } as never);
+  await expect(handle.api.sdk.providers.usage({ providerId: "test", hostId: host.id })).rejects.toThrow("Host unavailable");
 });
