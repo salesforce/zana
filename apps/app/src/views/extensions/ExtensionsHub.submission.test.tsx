@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 const plugins = vi.hoisted(() => ({ entries: [] as any[], modules: [] as any[] }));
@@ -39,6 +39,6 @@ it('keeps compiled modules without an installation out of marketplace submission
   useUi.setState({ settingsExtensionId: 'test' });
   render(<MemoryRouter><InstalledView /></MemoryRouter>);
   expect(screen.queryByText('Compiled module')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'More plugin actions' })).toBeNull();
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'More plugin actions' })).toBeNull());
   expect(screen.queryByRole('menuitem', { name: 'Submit to marketplace' })).toBeNull();
 });
