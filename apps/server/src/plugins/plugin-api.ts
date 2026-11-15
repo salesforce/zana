@@ -104,7 +104,7 @@ import {
   type JsonObject,
   type JsonValue
 } from '@zana-ai/zcc-domain/thread-runtime';
-import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import { getThreadProvider, registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 import {
   acquireDesktopBrowserControl,
   captureDesktopBrowserTab,
@@ -1656,6 +1656,14 @@ export function createPluginApi(
         }
       },
       providers: {
+        usage: async ({providerId, hostId}) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          if (!listExecutionHosts(options.productContext.db).some(host => host.id === hostId)) throw new Error('Unknown execution host');
+          const provider = getThreadProvider(providerId);
+          if (!provider || provider.unavailableReason || !provider.usage) return {supported:false};
+          return provider.usage(hostId);
+        },
         list: async (args) => {
           assertLive();
           if (!options?.listProviders) {

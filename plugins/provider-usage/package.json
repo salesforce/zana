@@ -1,0 +1,23 @@
+{
+  "name": "@zcc-ext/provider-usage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "View provider subscription windows across machines.",
+  "engines": {
+    "zcc": ">=2.6.1",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "build": "tsx ./build.ts"
+  },
+  "zcc": {
+    "name": "Provider Usage",
+    "description": "View provider subscription windows across machines.",
+    "branding": {
+      "icon": "Gauge"
+    },
+    "server": "./server.mjs",
+    "app": "./app.tsx"
+  }
+}

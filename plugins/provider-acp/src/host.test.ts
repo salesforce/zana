@@ -13,6 +13,8 @@ vi.mock('@zana-ai/zcc-plugin-sdk/provider-bridge/acp', async (importOriginal) =>
   ...await importOriginal<typeof import('@zana-ai/zcc-plugin-sdk/provider-bridge/acp')>(),
   experimental_probeAcpAgent: probeAgent,
 }));
+const usage = vi.hoisted(() => vi.fn());
+vi.mock('./bridge/cursor-maintenance.js', () => ({getCursorProviderUsage:usage}));
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 it('resolves native roots with the selected agent, project and execution-host environment', async () => {
@@ -42,4 +44,9 @@ it('keeps agent probes in the host-owned temporary directory and propagates fail
     probeAgent.mockRejectedValue(new Error('Probe failed'));
     await expect(harness.experimental_call('probeAgent', input)).rejects.toThrow('Probe failed');
   } finally { await harness.experimental_dispose(); }
+});
+
+it('reads Cursor usage through the validated execution-host entry', async () => {
+ const harness=experimental_createHostEntryHarness(entry);
+ try { usage.mockResolvedValue({supported:true,usage:{status:'unauthenticated'}});expect(await harness.experimental_call('providerUsage',{})).toEqual({supported:true,usage:{status:'unauthenticated'}}); } finally { await harness.experimental_dispose(); }
 });

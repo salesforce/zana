@@ -71,6 +71,7 @@ export default function plugin(zcc) {
   });
   zcc.agents.experimental_registerProvider({
     id: "acp-cursor",
+    usage: (hostId) => zcc.host.experimental_client().call('providerUsage', {}, {hostId, timeoutMs:30000}),
     ...{
       "experimental_nativeSkillRoots": {
         "user": [

@@ -24,7 +24,7 @@ function fixture(extra: Partial<PluginServiceOptions> = {}) {
     return { commit: selected, refKind: 'branch' as const };
   });
   const gitRefs = vi.fn(async () => `${commit}\tHEAD\n`);
-  const subject = createPluginService({ dataDir, bundledRoot: root(), cloneGit, updateResolver: { gitRefs }, ...extra });
+  const subject = createPluginService({ dataDir, bundledRoot: root(), cloneGit, updateResolver: { gitRefs, gitContentChanged: async () => true }, ...extra });
   services.push(subject);
   return { subject, dataDir, cloneGit, gitRefs, advance: (next = b) => { commit = next; } };
 }

@@ -712,7 +712,15 @@ export function createAcpDeltaTranslator(
             }),
           ];
         }
-        const mergedType = classifyCall(context, merged).item.type;
+        const classified = classifyCall(context, merged);
+        const mergedType = classified.item.type;
+        const previous = open === undefined ? undefined : classifyCall(context, open.event);
+        const refreshed: ThreadDelta[] = [];
+        if (previous?.item.type === "command" && classified.item.type === "command" &&
+          (previous.item.command !== classified.item.command || previous.presentation.title !== classified.presentation.title)) {
+          refreshed.push({ kind: "item.open", key: { providerItemId: event.toolCallId },
+            item: classified.item, presentation: classified.presentation, noTurnFallback: noTurnFallbackFor(rawEvent) });
+        }
         mergedToolCalls.set(key, {
           event: merged,
           openedType: open?.openedType ?? mergedType,
@@ -735,8 +743,9 @@ export function createAcpDeltaTranslator(
             dialect.normalizeCommandEvent?.(event) ?? event;
           const streamed = extractAcpStreamedCommandOutput(normalizedEvent);
           return streamed === undefined
-            ? suppressedUnhandled(rawEvent)
+            ? (refreshed.length ? refreshed : suppressedUnhandled(rawEvent))
             : [
+                ...refreshed,
                 {
                   kind: "command.outputSnapshot",
                   key: { providerItemId: event.toolCallId },
@@ -746,7 +755,7 @@ export function createAcpDeltaTranslator(
         }
         const progressText = extractAcpToolCallOutputText(event);
         if (progressText === undefined) {
-          return suppressedUnhandled(rawEvent);
+          return refreshed.length ? refreshed : suppressedUnhandled(rawEvent);
         }
         if (mergedType !== "command" && mergedType !== "fileChange") {
           return [
@@ -760,7 +769,7 @@ export function createAcpDeltaTranslator(
             },
           ];
         }
-        return suppressedUnhandled(rawEvent);
+        return refreshed.length ? refreshed : suppressedUnhandled(rawEvent);
       }
 
       case "plan": {
@@ -854,8 +863,10 @@ export function createAcpDeltaTranslator(
   ): ThreadDelta[] {
     const errorEnvelope = errorEnvelopeSchema.safeParse(event);
     if (errorEnvelope.success) {
+      const closed = flushOpenTurnWork(context, "failed");
       clearThreadCalls(context);
       return [
+        ...closed,
         {
           kind: "provider.error",
           message: "Provider error",
@@ -878,8 +889,9 @@ export function createAcpDeltaTranslator(
         if (!params.success) {
           return [];
         }
+        const closed = flushOpenTurnWork(context, "interrupted");
         clearThreadCalls(context);
-        return [{ kind: "turn.open" }];
+        return [...closed, { kind: "turn.open" }];
       }
 
       case ACP_TURN_COMPLETED_METHOD: {
@@ -899,8 +911,10 @@ export function createAcpDeltaTranslator(
         if (!params.success) {
           return [];
         }
+        const closed = flushOpenTurnWork(context, "interrupted");
         clearThreadCalls(context);
         return [
+          ...closed,
           { kind: "turn.open" },
           {
             kind: "item.open",

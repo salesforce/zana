@@ -149,3 +149,19 @@ describe('independent plugin update resolution', () => {
     expect(pluginUpdateFingerprint(row(), '1', '1')).not.toBe(pluginUpdateFingerprint(row({ rootDir: '/new' }), '1', '1'));
   });
 });
+
+it('ignores sibling-only branch changes, includes shared inputs and fails open on comparison errors', async () => {
+  const s = setup();
+  s.resolver.gitContentChanged = vi.fn(async () => false);
+  expect(await s.run()).toMatchObject({outcome:'current'});
+  expect(s.resolver.gitManifest).not.toHaveBeenCalled();
+  expect(s.resolver.gitContentChanged).toHaveBeenCalledWith(git, a, b);
+  s.resolver.gitContentChanged = async () => true;
+  expect(await s.run()).toMatchObject({outcome:'available'});
+  s.resolver.gitContentChanged = async () => { throw Error('base unavailable'); };
+  expect(await s.run()).toMatchObject({outcome:'available'});
+  s.args.intent = {...git, subdir:undefined};
+  s.resolver.gitContentChanged = vi.fn(async () => false);
+  expect(await s.run()).toMatchObject({outcome:'available'});
+  expect(s.resolver.gitContentChanged).not.toHaveBeenCalled();
+});
