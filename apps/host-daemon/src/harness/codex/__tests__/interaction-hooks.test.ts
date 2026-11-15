@@ -63,4 +63,11 @@ describe('Codex interaction hooks', () => {
     expect(plain?.kind).not.toBe('api-error-stop');
     expect(withError?.kind).not.toBe('api-error-stop');
   });
+
+  it('never turns an unknown event name or a Claude-shaped StopFailure body into api-error-stop', () => {
+    const claudeBody = JSON.stringify({ hook_event_name: 'StopFailure', error: 'server_error', error_details: '500', last_assistant_message: 'API Error' });
+    expect(codexInteractionHook(claudeBody)?.kind).not.toBe('api-error-stop');
+    expect(hook({ hook_event_name: 'SomeFutureEvent', error: 'rate_limit' })?.kind).not.toBe('api-error-stop');
+    expect(codexInteractionHook('{"hook_event_name":"StopFailure","error":')).toBeNull();
+  });
 });
