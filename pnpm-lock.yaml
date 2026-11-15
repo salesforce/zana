@@ -1690,6 +1690,8 @@ importers:
 
   plugins/provider-retry: {}
 
+  plugins/provider-usage: {}
+
   plugins/secrets: {}
 
   plugins/side-chat: {}
