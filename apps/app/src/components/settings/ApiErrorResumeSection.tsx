@@ -9,7 +9,11 @@ import {
   type ApiErrorResumeConfig,
   type ApiErrorResumeRule
 } from '@zana-ai/zcc-domain/product';
+import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { CheckboxField, Section } from '@/components/settings/FormFields';
+import { API_ERROR_RESUME_HELP, apiErrorResumeCoverage, apiErrorResumeCoverageLine } from '@/components/settings/api-error-resume-coverage';
+import { hasDesktopBridge } from '@/lib/app-surface';
+import { product } from '@/lib/product-client';
 import './api-error-resume.css';
 
 const D = API_ERROR_RESUME_DEFAULTS;
@@ -299,6 +303,21 @@ function ErrorCheck({ rows }: { rows: ApiErrorResumeRule[] }) {
   );
 }
 
+/** Installed agents' descriptors, or null until loaded (and for good when they can't be). */
+function useHarnessDescriptors(): HarnessAdapterDescriptor[] | null {
+  const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[] | null>(null);
+  useEffect(() => {
+    const load = hasDesktopBridge() ? product.harness.descriptors : undefined;
+    if (typeof load !== 'function') return;
+    let cancelled = false;
+    load()
+      .then((next) => { if (!cancelled) setDescriptors(next); })
+      .catch((error) => console.warn('[settings] loading harness descriptors failed; API-error coverage is hidden', error));
+    return () => { cancelled = true; };
+  }, []);
+  return descriptors;
+}
+
 export function ApiErrorResumeSection({
   config,
   onUpdate,
@@ -335,18 +354,23 @@ export function ApiErrorResumeSection({
     }
   };
   const rules = useResumeRules(current, save, () => base().rules);
+  const coverage = apiErrorResumeCoverage(useHarnessDescriptors());
+  const coverageLine = apiErrorResumeCoverageLine(coverage);
 
   return (
     <Section
       anchorId="api-error-resume"
       searchId="agents.api-error-resume.intro"
       title="Resume after API errors"
-      help="When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Works with Claude Code sessions: CLI Agent tabs, Squad engineers and scheduled runs."
+      help={API_ERROR_RESUME_HELP}
     >
+      {coverageLine && <p className="settings-help">{coverageLine}</p>}
       <CheckboxField
         label="Resume after matching API errors"
         searchId="agents.api-error-resume"
         checked={current.enabled}
+        // An enabled setting always stays switchable off.
+        disabled={!current.enabled && coverage.kind === 'none'}
         onChange={(enabled) => void save({ enabled })}
       />
       {saveFailed && (
