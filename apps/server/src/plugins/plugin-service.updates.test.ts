@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPluginService, toPluginAppSnapshot, type PluginServiceOptions } from './plugin-service.js';
 import { createPluginStore, pluginStorePath, type InstalledPluginRow } from './plugin-store.js';
 import { PLUGIN_UPDATE_CHECK_INTERVAL_MS } from './plugin-updates.js';
+import * as pluginProcess from './plugin-process.js';
 
 const roots: string[] = [], services: ReturnType<typeof createPluginService>[] = [];
 const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40);
@@ -29,9 +30,23 @@ function fixture(extra: Partial<PluginServiceOptions> = {}) {
   return { subject, dataDir, cloneGit, gitRefs, advance: (next = b) => { commit = next; } };
 }
 beforeEach(() => { vi.stubEnv('ZCC_OFFICIAL_MARKETPLACE_URL', 'off'); vi.stubEnv('ZCC_INTERNAL_MARKETPLACE_SOURCE', 'off'); });
-afterEach(() => { services.splice(0).forEach(s => s.stop()); roots.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })); vi.unstubAllEnvs(); });
+afterEach(() => { vi.restoreAllMocks(); services.splice(0).forEach(s => s.stop()); roots.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })); vi.unstubAllEnvs(); });
 
 describe('independent plugin updates through PluginService', () => {
+  it('uses the default scoped Git comparison and falls back to manifest validation on comparison failure', async () => {
+    const changed = vi.spyOn(pluginProcess, 'defaultGitPluginChanged')
+      .mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('base unavailable'));
+    const f = fixture({ updateResolver: { gitRefs: async () => `${b}\tHEAD\n` }, cloneGit: async (_url, dest, spec) => {
+      writePlugin(join(dest, 'plugins/sample'), 'sample', spec.startsWith('commit:') ? '1.1.0' : '1.0.0');
+      return { commit: spec.startsWith('commit:') ? spec.slice(7) : a, refKind: 'branch' };
+    } });
+    await f.subject.install('git:https://example.test/repo#subdir=plugins%2Fsample', { enable: false });
+    expect(await f.subject.checkUpdates()).toEqual([]);
+    expect(changed).toHaveBeenCalledWith('https://example.test/repo', 'plugins/sample', a, b, expect.any(AbortSignal));
+    expect(await f.subject.checkUpdates()).toMatchObject([{ id: 'sample', available: '1.1.0' }]);
+    expect(await f.subject.checkUpdates()).toMatchObject([{ id: 'sample', available: '1.1.0' }]);
+    expect(changed).toHaveBeenCalledTimes(3);
+  });
   it('checks without activating code, reloads installed bytes, and applies the exact commit preserving disabled state', async () => {
     const f = fixture();
     await f.subject.install('git:https://example.test/repo@HEAD', { enable: false });
