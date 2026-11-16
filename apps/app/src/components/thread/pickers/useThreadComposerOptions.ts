@@ -332,7 +332,7 @@ export function useThreadComposerOptions(input: {
     label: REASONING_LABELS[level]
   }));
   const provider = useMemo(() => providers.find((row) => row.id === providerId) ?? fallbackProviderOption(providerId), [providers, providerId]);
-  const providerUnavailable = !input.hostPending && !settling && (modelLoadError === 'provider_unavailable'
+  const providerUnavailable = !input.threadId && !input.hostPending && !settling && (modelLoadError === 'provider_unavailable'
     || (catalog.rosterReady && !catalog.rosterError && !registeredProviderIds.includes(providerId)));
   const selectionError = providerUnavailable
     ? 'The selected harness is unavailable on this machine. Choose an available harness or change the thread default in Settings.'

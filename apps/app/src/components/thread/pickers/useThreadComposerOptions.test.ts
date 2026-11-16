@@ -462,6 +462,18 @@ describe('composer host cache subscriptions', () => {
     expect(remote.result.current.model).toBe('remote-model');
   });
 
+  it('keeps an existing thread usable when its session provider is absent from the new-thread roster', async () => {
+    resetThreadModelCatalog(async () => ({
+      providers: [{ id: 'fake', displayName: 'Fake', capabilities: { permissionModes: ['auto'] } }],
+      models: [{ model: 'session-model', displayName: 'Session model', supportedReasoningEfforts: [], defaultReasoningEffort: 'medium' }],
+      selectedOnlyModels: [], modelLoadError: null
+    }) as never);
+    const view = renderHook(() => useThreadComposerOptions({ threadId: 'existing', lockedProviderId: 'codex' }));
+    await waitFor(() => expect(view.result.current.catalogSettled).toBe(true));
+    expect(view.result.current.providerId).toBe('codex');
+    expect(view.result.current.selectionError).toBeNull();
+  });
+
   it('does not start discovery before the host roster is ready', async () => {
     const fetcher = vi.fn(async () => ({ providers: [], models: [], selectedOnlyModels: [], modelLoadError: null }));
     resetThreadModelCatalog(fetcher as never);
