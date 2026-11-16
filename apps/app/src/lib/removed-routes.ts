@@ -1,4 +1,4 @@
-import { decodeRoutePath } from './decode-route.js';
+import { decodeRouteString } from './decode-route.js';
 import { getProjectRoutePath } from './route-paths.js';
 
 /**
@@ -12,21 +12,24 @@ import { getProjectRoutePath } from './route-paths.js';
  * from `terminals` may belong to a project whose hydration failed.
  */
 const MAX_REMOVED_IDS = 500;
-const removedThreads = new Map<string, true>();
-const removedSessions = new Map<string, true>();
+// id → removal stamp (a running count), so a list response can tell a
+// removal that happened while it was in flight from an older one.
+const removedThreads = new Map<string, number>();
+const removedSessions = new Map<string, number>();
 const listeners = new Set<() => void>();
 let version = 0;
+let removalStamp = 0;
 
 function changed(): void {
   version += 1;
   for (const listener of [...listeners]) listener();
 }
 
-function add(record: Map<string, true>, ids: Iterable<string>): void {
+function add(record: Map<string, number>, ids: Iterable<string>): void {
   let added = false;
   for (const id of ids) {
     if (record.has(id)) continue;
-    record.set(id, true);
+    record.set(id, ++removalStamp);
     added = true;
     // Bounded: drop the oldest ids first.
     if (record.size > MAX_REMOVED_IDS) record.delete(record.keys().next().value as string);
@@ -38,15 +41,40 @@ export function markThreadsRemoved(ids: Iterable<string>): void {
   add(removedThreads, ids);
 }
 
-/** A thread seen live again (restored from the archive, or listed by main). */
-export function markThreadsLive(ids: Iterable<string>): void {
-  let removed = false;
-  for (const id of ids) removed = removedThreads.delete(id) || removed;
-  if (removed) changed();
+function clear(record: Map<string, number>, ids: Iterable<string>, listedSince?: number): void {
+  let cleared = false;
+  for (const id of ids) {
+    const stamp = record.get(id);
+    if (stamp === undefined) continue;
+    // A removal after the list request started wins over its stale response.
+    if (listedSince !== undefined && stamp > listedSince) continue;
+    record.delete(id);
+    cleared = true;
+  }
+  if (cleared) changed();
+}
+
+/** Stamp to take when a list request starts; pass it back as `listedSince`. */
+export function getRemovalStamp(): number {
+  return removalStamp;
+}
+
+/**
+ * A thread seen live again: restored from the archive (no `listedSince`), or
+ * listed by main in a response to a request started at `listedSince`. A
+ * thread removed after that request started stays removed.
+ */
+export function markThreadsLive(ids: Iterable<string>, listedSince?: number): void {
+  clear(removedThreads, ids, listedSince);
 }
 
 export function markSessionsRemoved(ids: Iterable<string>): void {
   add(removedSessions, ids);
+}
+
+/** A session id seen live again (created or restored under the same id). */
+export function markSessionsLive(ids: Iterable<string>): void {
+  clear(removedSessions, ids);
 }
 
 /** Subscribe to removals, for `useSyncExternalStore`. */
@@ -68,17 +96,9 @@ export function resetRemovedRoutes(): void {
   changed();
 }
 
-/** Base for parsing an app route (path + query + hash) with `URL`. */
-const ROUTE_PARSE_BASE = 'http://zcc.local';
-
-function decode(path: string) {
-  const url = new URL(path, ROUTE_PARSE_BASE);
-  return decodeRoutePath(url.pathname, url.hash, url.search);
-}
-
 /** True when the route opens a thread or session this window saw removed. */
 export function isRemovedRoute(path: string): boolean {
-  const { threadId, sessionId } = decode(path);
+  const { threadId, sessionId } = decodeRouteString(path);
   return (
     (threadId != null && removedThreads.has(threadId)) ||
     (sessionId != null && removedSessions.has(sessionId))
@@ -92,6 +112,6 @@ export function isRemovedRoute(path: string): boolean {
  */
 export function liveRoutePath<T extends string | null>(path: string, fallback: T): string | T {
   if (!isRemovedRoute(path)) return path;
-  const projectId = decode(path).focusedProjectId;
+  const projectId = decodeRouteString(path).focusedProjectId;
   return projectId ? getProjectRoutePath(projectId) : fallback;
 }

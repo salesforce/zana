@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  getRemovalStamp,
   getRemovedRoutesVersion,
   isRemovedRoute,
   liveRoutePath,
+  markSessionsLive,
   markSessionsRemoved,
   markThreadsLive,
   markThreadsRemoved,
@@ -49,6 +51,24 @@ describe('liveRoutePath', () => {
     markThreadsRemoved(['t1']);
     markThreadsLive(['t1']);
     expect(liveRoutePath('/threads/t1', HOME)).toBe('/threads/t1');
+  });
+
+  it('lets a list response clear only removals from before its request started', () => {
+    markThreadsRemoved(['before']);
+    const listedSince = getRemovalStamp();
+    markThreadsRemoved(['during']);
+    markThreadsLive(['before', 'during'], listedSince);
+    expect(isRemovedRoute('/threads/before')).toBe(false);
+    expect(isRemovedRoute('/threads/during')).toBe(true);
+    // A later request sees that removal as old news.
+    markThreadsLive(['during'], getRemovalStamp());
+    expect(isRemovedRoute('/threads/during')).toBe(false);
+  });
+
+  it('treats a session id seen again as live', () => {
+    markSessionsRemoved(['s1']);
+    markSessionsLive(['s1', 'never-removed']);
+    expect(liveRoutePath('/sessions/s1', HOME)).toBe('/sessions/s1');
   });
 });
 

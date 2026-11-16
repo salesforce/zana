@@ -10,13 +10,29 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** What main lists on the next roster load. */
-const listed = vi.hoisted(() => ({ rows: [] as unknown[] }));
+const listed = vi.hoisted(() => ({ rows: [] as unknown[], gate: null as Promise<void> | null }));
+/** What main returns when a session is launched or restored. */
+const launched = vi.hoisted(() => ({ session: null as unknown }));
 vi.mock('../lib/product-client.js', () => ({
   product: {
     config: { set: vi.fn(async () => ({})) },
     projects: { touch: vi.fn(async () => {}) },
-    terminals: { close: vi.fn(async () => true) },
-    threads: { onUpdated: vi.fn(), onEvent: vi.fn(), list: vi.fn(async () => listed.rows) }
+    terminals: {
+      close: vi.fn(async () => true),
+      create: vi.fn(async () => ({ ok: true, value: launched.session })),
+      listTmuxRestoreCandidates: vi.fn(async () => [{ projectId: 'proj-1', capabilityId: 'cap-1' }]),
+      restore: vi.fn(async () => ({ ok: true, value: launched.session }))
+    },
+    threads: {
+      onUpdated: vi.fn(),
+      onEvent: vi.fn(),
+      list: vi.fn(async () => {
+        // Snapshot the roster when the request is issued, then wait.
+        const rows = listed.rows;
+        if (listed.gate) await listed.gate;
+        return rows;
+      })
+    }
   }
 }));
 vi.mock('../lib/product-ws.js', async (importOriginal) => ({
@@ -82,6 +98,8 @@ beforeEach(() => {
   resetAppSettingsRouteMemory();
   resetRemovedRoutes();
   listed.rows = [];
+  listed.gate = null;
+  launched.session = null;
   backLinks = null;
   useData.setState({ projects: [{ id: PROJECT_ID, name: 'one', path: '/p/one' }] as never, terminals: {} });
   useThreads.setState({ threads: [thread('thread-1'), thread('thread-2')] });
@@ -161,6 +179,36 @@ describe('Ctrl+I from the Inbox skips a removed thread or session', () => {
     press('i');
     expect(currentPath).toBe('/threads/thread-1');
   });
+
+  it('stays Home when the thread was archived while a roster load that lists it was in flight', async () => {
+    mountAt('/threads/thread-1');
+    press('i');
+    let respond: () => void = () => {};
+    listed.gate = new Promise<void>((resolve) => { respond = resolve; });
+    listed.rows = [thread('thread-1'), thread('thread-2')];
+    const loading = useThreads.getState().load();
+    removeThread['archived here']('thread-1');
+    // The stale response still lists the archived thread.
+    respond();
+    await act(() => loading);
+
+    press('i');
+    expect(currentPath).toBe('/');
+  });
+
+  for (const how of ['launched', 'restored'] as const) {
+    it(`returns to a closed session again once it is ${how} under the same id`, async () => {
+      launched.session = { id: 'sess-1', projectId: PROJECT_ID, title: 'one', status: 'running' };
+      mountAt(`/projects/${PROJECT_ID}/sessions/sess-1`);
+      press('i');
+      await removeSession.closed('sess-1');
+      if (how === 'launched') await act(() => useData.getState().createTerminal(PROJECT_ID, 'claude' as never, 80, 24));
+      else await act(() => useData.getState().restoreSessions());
+
+      press('i');
+      expect(currentPath).toBe(`/projects/${PROJECT_ID}/sessions/sess-1`);
+    });
+  }
 
   it('still returns to a live thread when another one was archived', () => {
     mountAt('/threads/thread-1');

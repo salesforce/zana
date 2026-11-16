@@ -64,8 +64,8 @@ import {
 import { product } from './lib/product-client.js';
 import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog, threadModelCatalogForHost, modelDiscoveryConfigKey, invalidateModelCatalogs } from './components/thread/pickers/thread-model-catalog.js';
-import { decodeRoutePath } from './lib/decode-route.js';
-import { liveRoutePath, markSessionsRemoved } from './lib/removed-routes.js';
+import { decodeRouteString } from './lib/decode-route.js';
+import { liveRoutePath, markSessionsLive, markSessionsRemoved } from './lib/removed-routes.js';
 import {
   APP_ROOT_ROUTE_PATH,
   getExtensionsTabRoutePath,
@@ -1046,13 +1046,6 @@ export function pushErrorToast(message: string) {
 }
 
 const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
-/** Base for parsing an app route (path + query + hash) with `URL`. */
-const ROUTE_PARSE_BASE = 'http://zcc.local';
-
-function decodeDestination(path: string) {
-  const url = new URL(path, ROUTE_PARSE_BASE);
-  return decodeRoutePath(url.pathname, url.hash, url.search);
-}
 
 /**
  * The return leg of a toggle shortcut: the remembered route, or null (go Home)
@@ -1061,7 +1054,7 @@ function decodeDestination(path: string) {
  */
 function liveReturnRoute(before: string | null): string | null {
   if (!before) return null;
-  const beforeProjectId = decodeDestination(before).focusedProjectId;
+  const beforeProjectId = decodeRouteString(before).focusedProjectId;
   const projectGone =
     beforeProjectId != null && !useData.getState().projects.some((p) => p.id === beforeProjectId);
   return projectGone ? null : liveRoutePath(before, null);
@@ -1082,7 +1075,7 @@ function applyDestination(
   path: string,
   extra?: Partial<UiState>
 ) {
-  const decoded = decodeDestination(path);
+  const decoded = decodeRouteString(path);
   set((s) => {
     const keepFocus =
       s.focusedProjectId != null &&
@@ -1369,7 +1362,7 @@ export const useUi = create<UiState>((set, get) => ({
       // Back to the project route it was opened from (a schedule, a thread…),
       // else to the project's last view.
       const before = liveRoutePath(getRouteBeforeProjectSettings(), APP_ROOT_ROUTE_PATH);
-      if (decodeDestination(before).focusedProjectId === projectId) {
+      if (decodeRouteString(before).focusedProjectId === projectId) {
         applyDestination(set, before);
       } else {
         s.setProjectView(projectId, s.projectView[projectId] ?? 'agents');
@@ -3602,6 +3595,9 @@ export const useData = create<DataState>((set, get) => ({
           terminals: { ...s.terminals, [projectId]: [...list, result.value] }
         };
       });
+      // Main mints a fresh id per launch today; if it ever reuses one, the
+      // route is live again.
+      markSessionsLive([result.value.id]);
       return result.value;
     } catch (err) {
       const message = errorMessage(err, 'Failed to create terminal');
@@ -3642,6 +3638,7 @@ export const useData = create<DataState>((set, get) => ({
           if (list.some((terminal) => terminal.id === created.id)) return state;
           return { terminals: { ...state.terminals, [item.projectId]: [...list, created] } };
         });
+        markSessionsLive([created.id]);
       }
     }
   },
