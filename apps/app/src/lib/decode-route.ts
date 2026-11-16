@@ -393,6 +393,15 @@ export function decodeRoutePath(pathname: string, hash = '', search = ''): Decod
   return { ...DEFAULT_DECODED, settingsAnchor: anchor };
 }
 
+/** Base for parsing an app route string (path + query + hash) with `URL`. */
+const ROUTE_PARSE_BASE = 'http://zcc.local';
+
+/** A whole app route string (as remembered or navigated to) → shell destination. */
+export function decodeRouteString(path: string): DecodedRoute {
+  const url = new URL(path, ROUTE_PARSE_BASE);
+  return decodeRoutePath(url.pathname, url.hash, url.search);
+}
+
 /** Query-param alias used by dedicated project windows. */
 export function scopedProjectIdFromSearch(search: string): string | null {
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
