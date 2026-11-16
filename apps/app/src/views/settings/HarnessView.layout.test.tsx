@@ -66,6 +66,21 @@ function View({ initial = {} as AppConfig, update = vi.fn(async () => undefined)
 }
 
 describe('Harness setup layout', () => {
+  it('persists a CLI default independently and clears an unavailable CLI default', async () => {
+    const update = vi.fn(async () => undefined);
+    const view = render(<View initial={{ defaultThreadProviderId: 'custom' } as AppConfig} update={update} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Default for CLI agents' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Codex', exact: true }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ defaultHarness: 'codex' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Default for CLI agents' }).textContent).toContain('Codex'));
+    expect(state.registeredProps.config.defaultThreadProviderId).toBe('custom');
+    view.unmount();
+    render(<View initial={{ defaultHarness: 'pi', defaultThreadProviderId: 'custom' } as AppConfig} update={update} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear default' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ defaultHarness: undefined }));
+    expect(state.registeredProps.config.defaultThreadProviderId).toBe('custom');
+  });
+
   it('refreshes installation evidence from the registered harness center', async () => {
     render(<View />);
     await waitFor(() => expect(state.registeredProps.hostId).toBe('local'));

@@ -4,6 +4,18 @@ import type { WorkspaceResolutionFailure } from "@zana-ai/zcc-host-daemon-contra
 import { describe, expect, it } from "vitest";
 import * as contract from "../src/index.js";
 import { peerLinkSchema } from "../src/api/hosts.js";
+
+describe('project thread-default request validation', () => {
+  it('accepts trimmed provider IDs and an explicit inheritance reset as standalone patches', () => {
+    expect(contract.updateProjectRequestSchema.parse({ defaultThreadProviderId: ' custom ' })).toEqual({ defaultThreadProviderId: 'custom' });
+    expect(contract.updateProjectRequestSchema.parse({ defaultThreadProviderId: null })).toEqual({ defaultThreadProviderId: null });
+    expect(contract.updateProjectRequestSchema.parse({ name: 'Renamed' })).toEqual({ name: 'Renamed' });
+    expect(contract.updateProjectRequestSchema.parse({ remotePath: '/checkout' })).toEqual({ remotePath: '/checkout' });
+  });
+  it.each([{}, { defaultThreadProviderId: undefined }, { defaultThreadProviderId: '' }, { defaultThreadProviderId: 'x'.repeat(257) }, { defaultThreadProviderId: 'bad\nkey' }, { defaultThreadProviderId: false }])('rejects an invalid or empty patch %j', patch => {
+    expect(contract.updateProjectRequestSchema.safeParse(patch).success).toBe(false);
+  });
+});
 import {
   TERMINAL_COLS_MAX,
   TERMINAL_DATA_MAX_BASE64_LENGTH,
