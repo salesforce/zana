@@ -34,6 +34,7 @@ export interface ApplicationTabView {
 /** Presentation and common tab commands are independent of the content type. */
 export function ApplicationTabBar({
   tabs,
+  leading,
   onSelect,
   onClose,
   onMove,
@@ -42,6 +43,7 @@ export function ApplicationTabBar({
   locationKey
 }: {
   tabs: ApplicationTabView[];
+  leading?: ReactNode;
   onSelect(id: string): void;
   onClose(ids: string[]): void;
   onMove(id: string, targetId: string): void;
@@ -120,6 +122,7 @@ export function ApplicationTabBar({
   );
   return (
     <div className="titlebar-threads" data-testid="application-tabs">
+      {leading && <div className="titlebar-tabs-project">{leading}</div>}
       <div
         className="titlebar-threads-strip"
         role="tablist"

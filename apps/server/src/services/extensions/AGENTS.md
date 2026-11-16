@@ -83,10 +83,10 @@ When changing: Run both bundled-bin unit test and live E2E for authoring-loop ch
 
 ## Plugin modals and full-window overlays
 
-Rule: Portal any full-window overlay (modal backdrop, dialog, popover) to `document.body`; never render `position: fixed; inset: 0` in place.
+Rule: Portal any full-window overlay (modal backdrop, dialog, popover) to `document.body`. An overlay rendered in place must carry `aria-modal="true"` (or the `.modal-backdrop` / `.palette-backdrop` class) so the shell lifts its panel above the chrome.
 
-Why: Plugin panels mount inside `.split-workspace` (`z-index: 0`, a stacking context). An in-place backdrop is trapped in it, so the sidebar and titlebar paint above it and stay undimmed regardless of its `z-index`. The host doesn't expose ReactDOM to disk bundles; see `plugins/design-docs/src/app/portal.ts`. Body-portaled content loses panel-scoped CSS variables, so add the overlay root to that plugin's token selector.
+Why: Plugin panels mount inside `.split-workspace` (`z-index: 0`, a stacking context). An unmarked in-place backdrop is trapped in it, so the sidebar and titlebar paint above it and stay undimmed regardless of its `z-index`. The `.shell-main > :has(...)` rule in `apps/app/src/styles/global.css` raises the panel only while it holds one of those markers. The host doesn't expose ReactDOM to disk bundles; see `plugins/design-docs/src/app/portal.ts`. Body-portaled content loses panel-scoped CSS variables, so add the overlay root to that plugin's token selector.
 
-Guard: `apps/app/src/__tests__/plugin-fullscreen-overlay-portal.guard.test.ts` fails a plugin that styles a full-window fixed overlay but has no portal helper.
+Guard: `apps/app/src/__tests__/plugin-fullscreen-overlay-portal.guard.test.ts` scans every plugin folder, per file, for CSS rules, style objects and Tailwind `fixed inset-0` overlays that neither portal nor carry a marker. It also pins the marker list to the `global.css` rule.
 
-When changing: A plugin-level check, not per-file; verify the dim covers the sidebar and titlebar in the built app.
+When changing: Keep the guard's markers and the `global.css` lift rule in sync; verify the dim covers the sidebar and titlebar in the built app. Rebuild a plugin's committed bundle (`app.js`) after editing its source.

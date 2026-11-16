@@ -316,7 +316,7 @@ describe('ThreadCommandComposer submit path', () => {
   it('shows a sending spinner and freezes the editor while submit is in flight', () => {
     const source = readSourceText(new URL('../ThreadCommandComposer.tsx', import.meta.url));
     const field = readSourceText(new URL('../composer/use-composer-prompt-field.ts', import.meta.url));
-    expect(source).toContain('Loader2');
+    expect(source).toContain('ZanaSpinner');
     expect(source).toContain('is-sending');
     expect(source).toContain("'Sending'");
     expect(source).toContain('aria-busy={busy}');

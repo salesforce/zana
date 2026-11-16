@@ -42,8 +42,10 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-async function installSpawner() {
+async function installSpawner(defaultThreadProviderId: string | null = null) {
   const dataDir = tempDir(), pluginRoot = tempDir(), bundledRoot = tempDir();
+  writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, defaultHarness: 'claude', defaultThreadProviderId }));
+  writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [{ id: 'p1', name: 'Project', path: pluginRoot }] }));
   writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({ name: 'spawner', version: '0.1.0',
     engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
     zcc: { name: 'Spawner', description: 'Spawns threads', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
@@ -56,11 +58,34 @@ async function installSpawner() {
   return plugins;
 }
 
-it('spawns on the default provider when the plugin names none', async () => {
+it('keeps the compatibility fallback when no thread default is configured', async () => {
   const plugins = await installSpawner();
   state.providers = [{ id: 'first', unavailableReason: 'not installed' }, { id: 'second' }];
   await expect(plugins.callRpc('spawner', 'spawn', { projectId: 'p1', prompt: 'hi' })).resolves.toEqual({ id: 'spawned-1' });
   expect(state.created).toEqual([expect.objectContaining({ providerId: 'second' })]);
+});
+
+it('resolves independent global and project thread defaults through the plugin service', async () => {
+  const plugins = await installSpawner('second');
+  state.providers = [{ id: 'first' }, { id: 'second' }];
+  const args = { projectId: 'p1', prompt: 'hi' };
+  await plugins.callRpc('spawner', 'spawn', args);
+  await server!.ctx.projects.update('p1', { defaultThreadProviderId: 'first' });
+  await plugins.callRpc('spawner', 'spawn', args);
+  await server!.ctx.projects.update('p1', { defaultThreadProviderId: null });
+  await plugins.callRpc('spawner', 'spawn', args);
+  expect(state.created.map(row => row.providerId)).toEqual(['second', 'first', 'second']);
+  expect(server!.ctx.config.getConfig().defaultHarness).toBe('claude');
+});
+
+it.each([{ providers: [] }, { providers: [{ id: 'saved', unavailableReason: 'not installed' }] }])('rejects an unavailable saved default instead of switching providers (%j)', async ({ providers }) => {
+  const plugins = await installSpawner('saved');
+  state.providers = [{ id: 'other' }, ...providers];
+  await expect(plugins.callRpc('spawner', 'spawn', { projectId: 'p1', prompt: 'hi' }))
+    .rejects.toThrow(/thread default is unavailable/);
+  expect(state.created).toEqual([]);
+  await plugins.callRpc('spawner', 'spawn', { projectId: 'p1', prompt: 'hi', providerId: 'other' });
+  expect(state.created).toEqual([expect.objectContaining({ providerId: 'other' })]);
 });
 
 it('keeps an explicit provider and rejects unknown ones', async () => {

@@ -1,11 +1,14 @@
 import type { ReactNode } from 'react';
-import { AlertTriangle, Bot, FolderX, Inbox, Monitor, Unplug } from 'lucide-react';
+import { FairyScene, type FairySceneKind } from './fairy/FairyScenes.js';
 
-export type PaneEmptyArt = 'ended' | 'missing' | 'agents' | 'error' | 'inbox' | 'loading' | 'desktop';
+export type PaneEmptyArt = FairySceneKind;
+
+const STATUS_ARTS = new Set<PaneEmptyArt>(['conversation', 'first-turn', 'plugin']);
 
 /**
- * Centered full-pane empty / gone / crash layout. Arts are CSS-only
- * (`prefers-reduced-motion` disables pulse and blink).
+ * Centered full-pane empty / gone / crash / loading layout. Each art is a
+ * small CSS-only fairy scene; `prefers-reduced-motion` shows its final frame.
+ * Loading arts announce themselves as a polite status.
  */
 export function PaneEmptyState({
   art,
@@ -24,61 +27,13 @@ export function PaneEmptyState({
 }) {
   const rootClass = className ? `pane-empty ${className}` : 'pane-empty';
   return (
-    <div className={rootClass} data-testid={testId} data-art={art} role={art === 'loading' ? 'status' : undefined}>
+    <div className={rootClass} data-testid={testId} data-art={art} role={STATUS_ARTS.has(art) ? 'status' : undefined}>
       <div className="pane-empty-art" aria-hidden="true">
-        <PaneEmptyArtVisual art={art} />
+        <FairyScene kind={art} />
       </div>
       <h2 className="pane-empty-title">{title}</h2>
       {hint ? <p className="pane-empty-hint">{hint}</p> : null}
       {children}
     </div>
-  );
-}
-
-function PaneEmptyArtVisual({ art }: { art: PaneEmptyArt }) {
-  if (art === 'loading') {
-    return (
-      <>
-        <div className="pane-empty-term pane-empty-term--loading">
-          <div className="pane-empty-term-bar">
-            <span /><span /><span />
-          </div>
-          <div className="pane-empty-loading-lines">
-            <span /><span /><span />
-          </div>
-        </div>
-        <span className="pane-empty-well pane-empty-well--loading">
-          <Bot size={22} strokeWidth={1.75} />
-        </span>
-      </>
-    );
-  }
-
-  if (art === 'ended' || art === 'desktop') {
-    const Icon = art === 'desktop' ? Monitor : Unplug;
-    return (
-      <>
-        <div className="pane-empty-term">
-          <div className="pane-empty-term-bar">
-            <span /><span /><span />
-          </div>
-          <div className="pane-empty-term-body">
-            <span className="pane-empty-prompt">$</span>
-            <span className="pane-empty-caret" />
-          </div>
-        </div>
-        <span className={`pane-empty-well pane-empty-well--${art}`}>
-          <Icon size={22} strokeWidth={1.75} />
-        </span>
-      </>
-    );
-  }
-
-  const Icon =
-    art === 'missing' ? FolderX : art === 'agents' ? Bot : art === 'inbox' ? Inbox : AlertTriangle;
-  return (
-    <span className={`pane-empty-well pane-empty-well--${art}`}>
-      <Icon size={22} strokeWidth={1.75} />
-    </span>
   );
 }

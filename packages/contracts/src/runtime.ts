@@ -705,7 +705,7 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-settings-set'),
     pluginId: z.string().min(1).max(128),
-    values: z.record(z.string(), z.union([z.string(), z.boolean(), z.null()])).optional()
+    values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional()
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-cli-contributions')
@@ -890,6 +890,7 @@ export const PluginAppSnapshotSchema = z.object({
   description: z.string().max(4096),
   icon: z.string().min(1).max(256),
   enabled: z.boolean(),
+  hasSettings: z.boolean().optional(),
   provenance: z.enum(['builtin', 'direct', 'catalog']),
   sourceKind: z.enum(['builtin', 'path', 'git', 'npm']).optional(),
   sourceRecovery: z.object({ canLocate: z.boolean(), canSwitchOfficial: z.boolean() }).strict().optional(),

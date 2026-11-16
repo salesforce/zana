@@ -1,3 +1,4 @@
+import { defaultGitPluginChanged } from './plugin-process.js';
 import { readCatalogIcon } from './catalog-icon.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
 import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
@@ -109,7 +110,6 @@ import {
   selectBuiltinSkillDirectoryRoots,
   writeInjectedSkillRootManifest
 } from './injected-skill-roots.js';
-import { applyBundledPosthogApiKey } from '../bundled-posthog-api-key.js';
 import type {
   PluginAgentConfigureContext,
   PluginAgentToolContext,
@@ -314,6 +314,8 @@ export interface PluginToolPolicyReadiness {
 }
 
 export interface PluginUiSnapshot {
+  /** Undefined while the runtime is unavailable. */
+  hasSettings?: boolean;
   id: string;
   name: string;
   description: string;
@@ -367,6 +369,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     status: row.status,
     statusDetail: row.statusDetail,
     appUrl: row.appUrl,
+    ...(row.hasSettings !== undefined ? { hasSettings: row.hasSettings } : {}),
     ...(row.sourceRecovery ? { sourceRecovery: row.sourceRecovery } : {}),
     ...(row.updateCheck ? { updateCheck: row.updateCheck } : {}),
     ...(row.updatePolicy ? { updatePolicy: row.updatePolicy } : {}),
@@ -635,7 +638,6 @@ function resolveBundledDir(bundledRoot: string, name: string): string {
 
 export function createPluginService(opts: PluginServiceOptions): PluginService {
   const developmentEnabled = () => opts.getAppConfig?.().pluginDevelopmentEnabled ?? opts.watchBuiltinPluginSources === true;
-  applyBundledPosthogApiKey();
   const store: PluginStore = createPluginStore({ file: pluginStorePath(opts.dataDir) });
   const uninstalled = createPluginUninstalledStore({ file: pluginUninstalledPath(opts.dataDir) });
   const marketplaces: MarketplaceStore = createMarketplaceStore({
@@ -1983,6 +1985,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (result.code !== 0) throw new Error(pluginGitFailure(result.stderr, 'Git source is unavailable'));
       return result.stdout;
     },
+    async gitContentChanged(intent, installedCommit, candidateCommit) {
+      return defaultGitPluginChanged(intent.url, intent.subdir!, installedCommit, candidateCommit, sourceCommands.signal);
+    },
     async gitManifest(intent, commit) {
       const cloned = await cloneGitTree(intent.url, `commit:${commit}`, intent.subdir);
       try {
@@ -2575,6 +2580,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         status: row.status === 'running' && !live.get(row.id)?.handle ? 'degraded' : row.status,
         appEntry: row.appEntry,
         appUrl: live.get(row.id)?.handle ? appUrlFor(row) : null,
+        hasSettings: live.get(row.id)?.handle?.hasSettings,
         npmResolvedVersion: row.npmResolvedVersion,
         gitResolvedCommit: row.gitResolvedCommit,
         source: row.source,
@@ -3419,12 +3425,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async refreshMarketplace(source) {
       const parsed = parseMarketplaceSource(source);
       const display = marketplaceSourceDisplay(parsed);
+      const refresh = marketplaces.beginRefresh(display);
+      if (!refresh) throw new Error(`Unknown marketplace: ${display}`);
       try {
         const materialized = await materializeMarketplaceSource(parsed, fetchJson, { includePacks: true });
-        return marketplaces.refresh(marketplaceSourceDisplay(materialized.source), materialized.index, materialized);
+        return await refresh.complete(materialized.index, materialized);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const row = await marketplaces.recordRefreshError(display, message);
+        const row = await refresh.fail(message);
         if (!row) throw error;
         return row;
       }
@@ -3630,6 +3638,7 @@ export function listBundledPluginCatalog(
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .map((entry) => entry.name);
     for (const name of names) {
+      if (isRetiredFirstPartyPluginId(name)) continue;
       const dir = join(bundledRoot, name);
       const pkgPath = join(dir, 'package.json');
       if (!existsSync(pkgPath)) continue;
@@ -3684,6 +3693,9 @@ export async function installBundledPlugin(
   opts: { dataDir?: string; bundledRoot?: string } = {}
 ): Promise<{ ok: true; value: { id: string } } | { ok: false; code: string; message: string } | null> {
   if (!isPluginId(id)) return null;
+  if (isRetiredFirstPartyPluginId(id)) {
+    return { ok: false, code: 'NOT_FOUND', message: `Plugin "${id}" is retired` };
+  }
   const bundledRoot = opts.bundledRoot ?? defaultBundledRoot();
   const dataDir = opts.dataDir ?? defaultPluginDataDir();
   const dir = join(bundledRoot, id);

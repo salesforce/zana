@@ -83,12 +83,14 @@ export type BoundsWindow = {
   isMaximized(): boolean;
   isNormal(): boolean;
   isFullScreen(): boolean;
+  maximize(): void;
   unmaximize(): void;
   setBounds(bounds: WindowBounds): void;
   getNormalBounds(): WindowBounds;
 };
 
 export type BoundsStateController = {
+  restore(state: Pick<RestoredWindowState, 'bounds' | 'maximized'>): void;
   scheduleBounds(): void;
   beginFullscreenTransition(): void;
   endFullscreenTransition(): void;
@@ -101,6 +103,8 @@ export function createBoundsStateController(options: {
   win: BoundsWindow;
   initialBounds?: AppConfig['windowBounds'];
   initialMaximized?: boolean;
+  /** Ignore native startup events until ready-to-show applies the saved state. */
+  restorePending?: boolean;
   write: (state: Pick<AppConfig, 'windowBounds' | 'windowMaximized'>) => void;
   delayMs?: number;
 }): BoundsStateController {
@@ -110,14 +114,15 @@ export function createBoundsStateController(options: {
   let boundsDirty = false;
   let maximizedDirty = false;
   let fullscreenTransition = false;
-  let maximized = options.initialMaximized === true || options.win.isMaximized();
+  let restoring = options.restorePending === true;
+  let maximized = options.initialMaximized ?? options.win.isMaximized();
 
   const flush = () => {
     if (timer) {
       clearTimeout(timer);
       timer = null;
     }
-    if (options.win.isDestroyed() || (!boundsDirty && !maximizedDirty)) return;
+    if (restoring || options.win.isDestroyed() || (!boundsDirty && !maximizedDirty)) return;
     if (pendingBounds) {
       bounds = pendingBounds;
       pendingBounds = undefined;
@@ -130,6 +135,7 @@ export function createBoundsStateController(options: {
   const scheduleBounds = () => {
     if (
       options.win.isDestroyed() ||
+      restoring ||
       fullscreenTransition ||
       options.win.isMinimized() ||
       maximized ||
@@ -143,8 +149,32 @@ export function createBoundsStateController(options: {
   };
 
   return {
+    restore(state) {
+      if (options.win.isDestroyed() || options.win.isFullScreen()) {
+        restoring = false;
+        return;
+      }
+      // These calls emit resize/unmaximize/maximize themselves. They restore
+      // persisted intent; they must not be mistaken for new user choices.
+      restoring = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      bounds = state.bounds;
+      pendingBounds = undefined;
+      boundsDirty = false;
+      maximizedDirty = false;
+      maximized = state.maximized;
+      try {
+        options.win.unmaximize();
+        options.win.setBounds(state.bounds);
+        if (state.maximized) options.win.maximize();
+      } finally {
+        restoring = false;
+      }
+    },
     scheduleBounds,
     beginFullscreenTransition() {
+      if (restoring) return;
       if (!options.win.isDestroyed()) {
         bounds = options.win.getNormalBounds();
         pendingBounds = undefined;
@@ -160,6 +190,7 @@ export function createBoundsStateController(options: {
       fullscreenTransition = false;
     },
     setMaximized(value) {
+      if (restoring) return;
       maximized = value;
       maximizedDirty = true;
       if (value) {
@@ -170,6 +201,7 @@ export function createBoundsStateController(options: {
       flush();
     },
     flushForClose() {
+      if (restoring) return;
       if (!options.win.isDestroyed() && options.win.isFullScreen()) {
         maximized = false;
         maximizedDirty = true;

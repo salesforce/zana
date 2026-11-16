@@ -139,3 +139,20 @@ it('opens squad details from the open event and ignores incomplete event details
   window.dispatchEvent(new CustomEvent('zana:open-squad-details', { detail: { projectId: 'p1', executionId: 'j1' } }));
   expect((await screen.findByTestId('execution')).textContent).toBe('p1:j1');
 });
+it('shows the fairy spinner on Close idle while agents are closing', async () => {
+  fixtures.view = 'board'; fixtures.slots = []; fixtures.executions = [];
+  useAgentStatus.setState({ byId: { a1: 'idle' }, since: {} });
+  let release!: () => void;
+  const closeIdleAgents = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+  useData.setState({ closeIdleAgents } as any);
+  const { container } = render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
+  const button = await screen.findByRole('button', { name: 'Close 1 idle agents' });
+  expect(button.querySelector('.fairy-spinner')).toBeNull();
+  fireEvent.click(button);
+  const dialog = container.ownerDocument.querySelector('.modal, [role="dialog"]') as HTMLElement;
+  fireEvent.click([...dialog.querySelectorAll('button.btn.primary')].at(-1)!);
+  const busy = await screen.findByRole('button', { name: 'Closing 1 idle agents' });
+  expect(busy.querySelector('svg.fairy-spinner')).toBeTruthy();
+  release();
+  await screen.findByRole('button', { name: 'Close 1 idle agents' });
+});

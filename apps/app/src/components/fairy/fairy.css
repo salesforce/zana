@@ -1,0 +1,682 @@
+/* The Zana fairy mark and the small scenes it plays in empty, loading and
+   error panes. CSS-only; every scene settles on a readable final frame under
+   prefers-reduced-motion. Scene geometry is in px inside a fixed stage. */
+
+.fairy {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  width: 44px;
+  height: 44px;
+}
+
+.fairy-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 6px 10px rgba(23, 38, 65, 0.28));
+}
+
+.fairy-wing { transform-origin: 32px 36px; }
+.fairy-star { transform-origin: 55px 11px; }
+
+.fairy--flying .fairy-art { animation: fairy-hover 2.4s ease-in-out infinite; }
+.fairy--flying .fairy-wing--left { animation: fairy-flap-left 0.5s ease-in-out infinite; }
+.fairy--flying .fairy-wing--right { animation: fairy-flap-right 0.5s ease-in-out infinite; }
+
+.fairy--resting .fairy-art { animation: fairy-breathe 3.6s ease-in-out infinite; }
+.fairy--resting .fairy-wing--left { transform: rotate(-10deg) scaleX(0.72); }
+.fairy--resting .fairy-wing--right { transform: rotate(10deg) scaleX(0.72); }
+.fairy--resting .fairy-star { fill: #8c95a6; }
+
+.fairy--still { position: relative; flex: none; }
+.fairy--still .fairy-art { filter: none; }
+
+@keyframes fairy-hover { 0%, 100% { transform: translateY(2px); } 50% { transform: translateY(-4px); } }
+@keyframes fairy-breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(1px) scale(0.97); } }
+@keyframes fairy-flap-left { 0%, 100% { transform: rotate(0deg) scaleX(1); } 50% { transform: rotate(8deg) scaleX(0.82); } }
+@keyframes fairy-flap-right { 0%, 100% { transform: rotate(0deg) scaleX(1); } 50% { transform: rotate(-8deg) scaleX(0.82); } }
+@keyframes fairy-twinkle { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.6) rotate(25deg); } }
+@keyframes fairy-pulse { 0%, 100% { opacity: 0.3; transform: scale(0.94); } 50% { opacity: 0.9; transform: scale(1.06); } }
+@keyframes fairy-blink { 50% { opacity: 0; } }
+
+/* Small list empty state: a still fairy whose dimmed star glints now and then. */
+.fairy-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+.fairy-empty > .fairy { width: 30px; height: 30px; }
+.fairy-empty .fairy-star { fill: #8c95a6; animation: fairy-tiny-star 3s ease-in-out infinite; }
+.fairy-empty-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fairy-empty-title { color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.fairy-empty-hint { color: var(--text-muted); font-size: 12px; }
+@keyframes fairy-tiny-star {
+  0%, 70%, 100% { fill: #8c95a6; transform: none; }
+  80% { fill: #ffdb9e; transform: scale(1.5) rotate(20deg); }
+  90% { fill: #ffdb9e; transform: none; }
+}
+
+/* ===== Scene stage ===== */
+.fairy-scene {
+  position: relative;
+  width: 240px;
+  height: 150px;
+  flex: none;
+}
+
+.fairy-bubble {
+  display: block;
+  height: 20px;
+  width: 84%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.fairy-bubble--user {
+  align-self: flex-end;
+  width: 58%;
+  border-color: color-mix(in srgb, var(--accent-blue) 32%, var(--border));
+  background: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-panel));
+}
+
+.fairy-win-bar {
+  position: relative;
+  height: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.fairy-win-bar span {
+  position: absolute;
+  top: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.fairy-win-bar span:nth-child(1) { left: 6px; }
+.fairy-win-bar span:nth-child(2) { left: 14px; }
+.fairy-win-bar span:nth-child(3) { left: 22px; }
+
+/* ===== Conversation loading: the fairy taps each bubble of the thread into place ===== */
+.fairy-scene--conversation { width: 228px; height: 140px; }
+
+.fairy-conv-thread {
+  position: absolute;
+  inset: 16px 0 16px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.fairy-conv-thread .fairy-bubble { opacity: 0; animation: 4.2s ease-out infinite; }
+.fairy-conv-thread .fairy-bubble:nth-child(1) { animation-name: fairy-conv-bubble-1; }
+.fairy-conv-thread .fairy-bubble:nth-child(2) { animation-name: fairy-conv-bubble-2; }
+.fairy-conv-thread .fairy-bubble:nth-child(3) { animation-name: fairy-conv-bubble-3; width: 64%; }
+.fairy-conv-thread .fairy-bubble:nth-child(4) { animation-name: fairy-conv-bubble-4; width: 44%; }
+
+.fairy-scene--conversation > .fairy {
+  transform: translate(6px, 48px);
+  animation: fairy-conv-flight 4.2s cubic-bezier(0.3, 0.7, 0.3, 1) infinite;
+}
+.fairy-scene--conversation .fairy-star { animation: fairy-conv-star 4.2s ease-in-out infinite; }
+
+/* Each stop puts the wand star (38px, 8px in the fairy) on a bubble's left edge.
+   Bubble centres are 26/55/84/113px; lefts are 131 (user), 60, 60, 154 (user). */
+@keyframes fairy-conv-flight {
+  0%, 2% { transform: translate(6px, 48px); }
+  10%, 16% { transform: translate(95px, 18px); }
+  26%, 34% { transform: translate(24px, 47px); }
+  44%, 52% { transform: translate(24px, 76px); }
+  62%, 72% { transform: translate(118px, 105px); }
+  88%, 100% { transform: translate(6px, 48px); }
+}
+@keyframes fairy-conv-star {
+  0%, 10%, 16%, 26%, 34%, 44%, 52%, 62%, 70%, 100% { transform: scale(1) rotate(0deg); }
+  13%, 30%, 48%, 66% { transform: scale(1.6) rotate(25deg); }
+}
+@keyframes fairy-conv-bubble-1 {
+  0%, 12% { opacity: 0; transform: translateY(6px) scale(0.94); box-shadow: none; }
+  16% { opacity: 1; transform: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-gold) 35%, transparent); }
+  24%, 86% { opacity: 1; transform: none; box-shadow: none; }
+  96%, 100% { opacity: 0; transform: none; }
+}
+@keyframes fairy-conv-bubble-2 {
+  0%, 29% { opacity: 0; transform: translateY(6px) scale(0.94); box-shadow: none; }
+  33% { opacity: 1; transform: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-gold) 35%, transparent); }
+  41%, 86% { opacity: 1; transform: none; box-shadow: none; }
+  96%, 100% { opacity: 0; transform: none; }
+}
+@keyframes fairy-conv-bubble-3 {
+  0%, 47% { opacity: 0; transform: translateY(6px) scale(0.94); box-shadow: none; }
+  51% { opacity: 1; transform: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-gold) 35%, transparent); }
+  59%, 86% { opacity: 1; transform: none; box-shadow: none; }
+  96%, 100% { opacity: 0; transform: none; }
+}
+@keyframes fairy-conv-bubble-4 {
+  0%, 65% { opacity: 0; transform: translateY(6px) scale(0.94); box-shadow: none; }
+  69% { opacity: 1; transform: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-gold) 35%, transparent); }
+  77%, 86% { opacity: 1; transform: none; box-shadow: none; }
+  96%, 100% { opacity: 0; transform: none; }
+}
+
+/* ===== Waiting for the first turn: the fairy waits beside the agent's typing dots ===== */
+.fairy-scene .fairy-first-user { position: absolute; right: 8px; top: 24px; width: 120px; }
+.fairy-first-agent {
+  position: absolute;
+  left: 66px;
+  top: 62px;
+  width: 92px;
+  height: 34px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px 14px 14px 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+.fairy-first-agent span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  opacity: 0.35;
+  animation: fairy-dot 1.2s ease-in-out infinite;
+}
+.fairy-first-agent span:nth-child(2) { animation-delay: 0.15s; }
+.fairy-first-agent span:nth-child(3) { animation-delay: 0.3s; }
+.fairy-scene--first-turn > .fairy { left: 12px; top: 58px; }
+.fairy-scene--first-turn .fairy-star { animation: fairy-twinkle 1.2s ease-in-out infinite; }
+@keyframes fairy-dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.35; } 30% { transform: translateY(-5px); opacity: 1; } }
+
+/* ===== Empty inbox: a letter flies into the envelope and a badge pops ===== */
+.fairy-scene--inbox > .fairy { left: 16px; top: 48px; }
+.fairy-scene--inbox .fairy-star { animation: fairy-twinkle 4s ease-in-out infinite; }
+.fairy-inbox-envelope {
+  position: absolute;
+  left: 112px;
+  top: 54px;
+  width: 100px;
+  height: 66px;
+  overflow: visible;
+  animation: fairy-inbox-bump 4s ease-in-out infinite;
+}
+.fairy-inbox-envelope rect { fill: var(--bg-panel); stroke: var(--border); stroke-width: 1.5; }
+.fairy-inbox-envelope path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent-blue) 45%, var(--border));
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.fairy-inbox-letter {
+  position: absolute;
+  left: 50px;
+  top: 20px;
+  width: 38px;
+  height: 26px;
+  padding: 6px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, var(--border));
+  background: var(--bg-elevated);
+  box-shadow: 0 4px 10px rgba(30, 41, 80, 0.12);
+  opacity: 0;
+  animation: fairy-inbox-letter 4s cubic-bezier(0.4, 0.1, 0.3, 1) infinite;
+}
+.fairy-inbox-letter span {
+  display: block;
+  height: 3px;
+  margin-bottom: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent-blue) 35%, var(--bg-elevated));
+}
+.fairy-inbox-letter span:nth-child(2) { width: 70%; }
+.fairy-inbox-badge {
+  position: absolute;
+  left: 200px;
+  top: 44px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-gold);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  transform: scale(0);
+  animation: fairy-inbox-badge 4s ease-in-out infinite;
+}
+@keyframes fairy-inbox-letter {
+  0%, 4% { opacity: 0; transform: translate(0, 6px) rotate(-14deg) scale(0.7); }
+  14% { opacity: 1; transform: translate(6px, -6px) rotate(-10deg) scale(1); }
+  50% { opacity: 1; transform: translate(92px, 30px) rotate(4deg) scale(0.95); }
+  60% { opacity: 0; transform: translate(102px, 52px) rotate(0deg) scale(0.6); }
+  100% { opacity: 0; transform: translate(102px, 52px) scale(0.6); }
+}
+@keyframes fairy-inbox-bump { 0%, 56%, 74%, 100% { transform: none; } 62% { transform: translateY(3px) scaleY(0.96); } 68% { transform: translateY(-2px); } }
+@keyframes fairy-inbox-badge { 0%, 58% { transform: scale(0); } 66% { transform: scale(1.25); } 72%, 88% { transform: scale(1); } 96%, 100% { transform: scale(0); } }
+
+/* ===== No agents: the fairy draws an agent card that fills in and goes live ===== */
+.fairy-agents-card { position: absolute; left: 78px; top: 18px; width: 140px; height: 112px; overflow: visible; }
+.fairy-agents-outline {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent-blue) 55%, var(--border));
+  stroke-width: 1.6;
+  stroke-dasharray: 440;
+  stroke-dashoffset: 440;
+  animation: fairy-agents-draw 4.4s ease-in-out infinite;
+}
+.fairy-agents-inner { opacity: 0; animation: fairy-agents-fill 4.4s ease-in-out infinite; }
+.fairy-agents-inner circle { fill: color-mix(in srgb, var(--accent-blue) 18%, var(--bg-elevated)); }
+.fairy-agents-inner rect { fill: color-mix(in srgb, var(--accent-blue) 22%, var(--bg-elevated)); }
+.fairy-agents-inner .fairy-agents-live { fill: var(--success); animation: fairy-pulse 1s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.fairy-scene--agents > .fairy { transform: translate(12px, 64px); animation: fairy-agents-path 4.4s ease-in-out infinite; }
+.fairy-scene--agents .fairy-star { animation: fairy-twinkle 0.55s ease-in-out infinite; }
+@keyframes fairy-agents-draw { 0%, 4% { stroke-dashoffset: 440; opacity: 1; } 44%, 84% { stroke-dashoffset: 0; opacity: 1; } 96%, 100% { stroke-dashoffset: 0; opacity: 0; } }
+@keyframes fairy-agents-fill { 0%, 42% { opacity: 0; transform: translateY(4px); } 52%, 84% { opacity: 1; transform: none; } 96%, 100% { opacity: 0; } }
+@keyframes fairy-agents-path {
+  0% { transform: translate(14px, 72px); }
+  14% { transform: translate(44px, 4px); }
+  28% { transform: translate(150px, 8px); }
+  44% { transform: translate(150px, 96px); }
+  60%, 84% { transform: translate(12px, 64px); }
+  100% { transform: translate(14px, 72px); }
+}
+
+/* ===== No saved reports: the fairy taps a report and a bookmark ribbon drops ===== */
+.fairy-saved-doc {
+  position: absolute;
+  left: 76px;
+  top: 22px;
+  width: 96px;
+  height: 116px;
+  padding: 18px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  box-shadow: 0 8px 18px rgba(30, 41, 80, 0.08);
+}
+.fairy-saved-doc span {
+  display: block;
+  height: 5px;
+  margin-bottom: 8px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-blue) 22%, var(--bg-elevated));
+}
+.fairy-saved-doc span:nth-child(1) { width: 60%; height: 7px; background: color-mix(in srgb, var(--accent-blue) 40%, var(--bg-elevated)); }
+.fairy-saved-doc span:nth-child(3) { width: 80%; }
+.fairy-saved-doc span:nth-child(5) { width: 55%; }
+.fairy-saved-ribbon {
+  position: absolute;
+  left: 146px;
+  top: 22px;
+  width: 16px;
+  height: 34px;
+  background: linear-gradient(var(--accent-gold), color-mix(in srgb, var(--accent-gold) 70%, #fff));
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+  transform-origin: 50% 0;
+  transform: scaleY(0);
+  animation: fairy-saved-ribbon 4.4s cubic-bezier(0.3, 1.5, 0.5, 1) infinite;
+}
+.fairy-scene--saved > .fairy { width: 38px; height: 38px; transform: translate(192px, 56px); animation: fairy-saved-flight 4.4s ease-in-out infinite; }
+.fairy-scene--saved .fairy-star { animation: fairy-saved-star 4.4s ease-in-out infinite; }
+@keyframes fairy-saved-flight {
+  0%, 6% { transform: translate(196px, 70px); }
+  24%, 32% { transform: translate(128px, -4px); }
+  50%, 86% { transform: translate(192px, 56px); }
+  100% { transform: translate(196px, 70px); }
+}
+@keyframes fairy-saved-star { 0%, 24%, 34%, 100% { transform: none; } 28% { transform: scale(1.9) rotate(30deg); } }
+@keyframes fairy-saved-ribbon { 0%, 27% { transform: scaleY(0); } 40%, 84% { transform: scaleY(1); } 94%, 100% { transform: scaleY(0); } }
+
+/* ===== Renderer crashed: spark, shake, puff, and the star comes back on ===== */
+.fairy-scene--error > .fairy { left: 98px; top: 38px; width: 50px; height: 50px; }
+.fairy-scene--error .fairy-art { animation: fairy-error-shake 4.6s ease-in-out infinite; }
+.fairy-scene--error .fairy-star { animation: fairy-error-star 4.6s ease-in-out infinite; }
+.fairy-error-puff {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  opacity: 0;
+  animation: fairy-error-puff 4.6s ease-out infinite;
+}
+.fairy-error-puff:nth-child(1) { left: 82px; top: 74px; }
+.fairy-error-puff:nth-child(2) { left: 140px; top: 70px; animation-delay: 0.06s; }
+.fairy-error-puff:nth-child(3) { left: 112px; top: 92px; animation-delay: 0.12s; }
+.fairy-error-puff:nth-child(4) { left: 96px; top: 40px; width: 14px; height: 14px; animation-delay: 0.09s; }
+.fairy-error-bolt {
+  position: absolute;
+  left: 146px;
+  top: 26px;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  animation: fairy-error-bolt 4.6s ease-out infinite;
+}
+@keyframes fairy-error-shake {
+  0%, 100% { transform: none; }
+  3% { transform: translateX(-4px) rotate(-7deg); }
+  6% { transform: translateX(4px) rotate(6deg); }
+  9% { transform: translateX(-3px) rotate(-4deg); }
+  12% { transform: translateX(2px) rotate(2deg); }
+  15%, 40% { transform: translateY(5px) scale(0.96); }
+  52% { transform: translateY(-6px); }
+  64% { transform: translateY(1px); }
+  76% { transform: translateY(-3px); }
+  88% { transform: translateY(1px); }
+}
+@keyframes fairy-error-star {
+  0%, 2% { fill: #ffdb9e; transform: none; }
+  6%, 30% { fill: #8c95a6; transform: scale(0.8); }
+  33% { fill: #ffdb9e; transform: scale(1.2); }
+  36% { fill: #8c95a6; transform: scale(0.8); }
+  40% { fill: #ffdb9e; transform: scale(1.8) rotate(30deg); }
+  50%, 100% { fill: #ffdb9e; transform: none; }
+}
+@keyframes fairy-error-puff { 0%, 4% { opacity: 0; transform: scale(0.2); } 10% { opacity: 0.9; } 30%, 100% { opacity: 0; transform: scale(1.6) translateY(-10px); } }
+@keyframes fairy-error-bolt { 0%, 2% { opacity: 0; transform: scale(0.5); } 6% { opacity: 1; transform: scale(1.1); } 20%, 100% { opacity: 0; transform: scale(1); } }
+
+/* ===== Session ended: the fairy rests on the closed terminal ===== */
+.fairy-ended-term {
+  position: absolute;
+  left: 38px;
+  top: 40px;
+  width: 160px;
+  height: 92px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.fairy-ended-term .fairy-win-bar { height: 22px; }
+.fairy-ended-term .fairy-win-bar span { top: 7px; width: 7px; height: 7px; }
+.fairy-ended-term .fairy-win-bar span:nth-child(1) { left: 9px; }
+.fairy-ended-term .fairy-win-bar span:nth-child(2) { left: 20px; }
+.fairy-ended-term .fairy-win-bar span:nth-child(3) { left: 31px; }
+.fairy-ended-prompt {
+  padding: 10px 12px;
+  color: var(--text-muted);
+  font: 12px/1.5 ui-monospace, Menlo, monospace;
+  text-align: left;
+}
+.fairy-ended-prompt b {
+  display: inline-block;
+  width: 8px;
+  height: 13px;
+  vertical-align: -2px;
+  background: var(--text-muted);
+  animation: fairy-ended-dim 3.6s ease-in-out infinite;
+}
+.fairy-scene--ended > .fairy { left: 152px; top: 6px; width: 40px; height: 40px; }
+.fairy-ended-z {
+  position: absolute;
+  left: 186px;
+  top: 4px;
+  color: var(--accent-blue);
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0;
+  animation: fairy-ended-z 3.6s ease-out infinite;
+}
+.fairy-ended-z:nth-of-type(2) { font-size: 10px; animation-delay: 1.2s; }
+.fairy-ended-z:nth-of-type(3) { font-size: 14px; animation-delay: 2.4s; }
+@keyframes fairy-ended-dim { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.12; } }
+@keyframes fairy-ended-z { 0% { opacity: 0; transform: translate(0, 6px); } 25% { opacity: 0.9; } 100% { opacity: 0; transform: translate(14px, -22px); } }
+
+/* ===== Not found: the fairy's star sweeps an empty folder like a flashlight ===== */
+.fairy-missing-folder { position: absolute; left: 64px; top: 62px; width: 116px; height: 82px; overflow: visible; }
+.fairy-missing-folder path {
+  fill: color-mix(in srgb, var(--bg-panel) 70%, transparent);
+  stroke: var(--border);
+  stroke-width: 1.6;
+  stroke-dasharray: 6 5;
+}
+.fairy-missing-folder text {
+  fill: var(--text-muted);
+  font: 700 26px -apple-system, BlinkMacSystemFont, sans-serif;
+  opacity: 0.2;
+  animation: fairy-missing-question 3.2s ease-in-out infinite;
+}
+.fairy-scene--missing > .fairy { left: 98px; top: 0; width: 40px; height: 40px; z-index: 2; }
+.fairy-missing-beam {
+  position: absolute;
+  left: 62px;
+  top: 8px;
+  z-index: 1;
+  width: 120px;
+  height: 130px;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  background: linear-gradient(to bottom, rgba(255, 219, 158, 0.45), rgba(255, 219, 158, 0) 92%);
+  mix-blend-mode: screen;
+  transform-origin: 50% 0;
+  animation: fairy-missing-sweep 3.2s ease-in-out infinite alternate;
+}
+:root[data-theme='light'] .fairy-missing-beam {
+  background: linear-gradient(to bottom, rgba(255, 219, 158, 0.75), rgba(255, 219, 158, 0) 92%);
+  mix-blend-mode: multiply;
+}
+@keyframes fairy-missing-sweep { 0% { transform: rotate(-28deg); } 100% { transform: rotate(28deg); } }
+@keyframes fairy-missing-question { 0%, 40%, 100% { opacity: 0.2; } 50% { opacity: 0.75; } }
+
+/* ===== Open in its own window: the fairy hops over, trailing dust ===== */
+.fairy-win {
+  position: absolute;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+.fairy-window-from { left: 4px; top: 54px; width: 88px; height: 66px; opacity: 0.65; }
+.fairy-window-from .fairy-window-hole { position: absolute; inset: 22px 12px 10px; border: 1.5px dashed var(--border); border-radius: 6px; }
+.fairy-window-to {
+  left: 136px;
+  top: 36px;
+  width: 100px;
+  height: 80px;
+  border-color: color-mix(in srgb, var(--accent-blue) 50%, var(--border));
+  animation: fairy-window-glow 4s ease-in-out infinite;
+}
+.fairy-window-rows { padding: 10px; }
+.fairy-window-rows span {
+  display: block;
+  height: 5px;
+  margin-bottom: 7px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-blue) 25%, var(--bg-elevated));
+  opacity: 0;
+  animation: fairy-window-rows 4s ease-out infinite;
+}
+.fairy-window-rows span:nth-child(2) { width: 70%; animation-delay: 0.1s; }
+.fairy-window-rows span:nth-child(3) { width: 84%; animation-delay: 0.2s; }
+.fairy-scene--window > .fairy,
+.fairy-window-dust {
+  offset-path: path('M48 88 Q110 -8 186 72');
+  offset-rotate: 0deg;
+  offset-anchor: 50% 50%;
+}
+.fairy-scene--window > .fairy { width: 36px; height: 36px; animation: fairy-window-hop 4s cubic-bezier(0.45, 0.05, 0.4, 1) infinite; }
+.fairy-window-dust {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffdb9e;
+  box-shadow: 0 0 6px #ffcf7a;
+  opacity: 0;
+  animation: fairy-window-dust 4s cubic-bezier(0.45, 0.05, 0.4, 1) infinite;
+}
+.fairy-window-dust:nth-of-type(2) { width: 5px; height: 5px; animation-delay: 0.07s; }
+.fairy-window-dust:nth-of-type(3) { width: 4px; height: 4px; animation-delay: 0.14s; }
+.fairy-window-dust:nth-of-type(4) { width: 3px; height: 3px; animation-delay: 0.21s; }
+@keyframes fairy-window-hop {
+  0%, 10% { offset-distance: 0%; opacity: 0; transform: scale(0.6); }
+  16% { opacity: 1; transform: none; }
+  50% { offset-distance: 100%; opacity: 1; }
+  84% { offset-distance: 100%; opacity: 1; transform: none; }
+  94%, 100% { offset-distance: 100%; opacity: 0; transform: scale(0.6); }
+}
+@keyframes fairy-window-dust { 0%, 14% { offset-distance: 0%; opacity: 0; } 18%, 48% { opacity: 0.9; } 50%, 100% { offset-distance: 100%; opacity: 0; } }
+@keyframes fairy-window-glow { 0%, 46%, 70%, 100% { box-shadow: none; } 54% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-blue) 22%, transparent); } }
+@keyframes fairy-window-rows { 0%, 52% { opacity: 0; transform: translateX(-6px); } 60%, 90% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+
+/* ===== Desktop only: the fairy jumps from the phone to the laptop ===== */
+.fairy-mobile-phone {
+  position: absolute;
+  left: 14px;
+  top: 46px;
+  width: 46px;
+  height: 82px;
+  border: 1.6px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.fairy-mobile-phone::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  width: 14px;
+  height: 3px;
+  margin-left: -7px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.fairy-mobile-phone span { position: absolute; inset: 18px 10px 22px; border: 1.5px dashed var(--border); border-radius: 4px; }
+.fairy-mobile-laptop {
+  position: absolute;
+  left: 124px;
+  top: 44px;
+  width: 108px;
+  height: 70px;
+  overflow: hidden;
+  border: 1.6px solid color-mix(in srgb, var(--accent-blue) 45%, var(--border));
+  border-radius: 8px 8px 2px 2px;
+  background: #0f172a;
+}
+.fairy-mobile-base { position: absolute; left: 112px; top: 114px; width: 132px; height: 8px; border-radius: 0 0 8px 8px; background: var(--border); }
+.fairy-mobile-prompt {
+  padding: 10px;
+  color: #7cb2ff;
+  font: 11px/1.5 ui-monospace, Menlo, monospace;
+  text-align: left;
+  opacity: 0;
+  animation: fairy-mobile-wake 4.2s ease-out infinite;
+}
+.fairy-mobile-prompt b {
+  display: inline-block;
+  width: 7px;
+  height: 11px;
+  vertical-align: -1px;
+  background: #ffdb9e;
+  animation: fairy-blink 1s steps(1) infinite;
+}
+.fairy-scene--mobile > .fairy {
+  width: 34px;
+  height: 34px;
+  offset-path: path('M37 70 Q100 -14 178 60');
+  offset-rotate: 0deg;
+  offset-anchor: 50% 50%;
+  animation: fairy-mobile-hop 4.2s cubic-bezier(0.45, 0.05, 0.4, 1) infinite;
+}
+@keyframes fairy-mobile-hop {
+  0%, 12% { offset-distance: 0%; }
+  50%, 86% { offset-distance: 100%; opacity: 1; }
+  94% { offset-distance: 100%; opacity: 0; }
+  96% { offset-distance: 0%; opacity: 0; }
+  100% { offset-distance: 0%; opacity: 1; }
+}
+@keyframes fairy-mobile-wake { 0%, 48% { opacity: 0; } 56%, 88% { opacity: 1; } 96%, 100% { opacity: 0; } }
+
+/* ===== Plugin view loading: plugin tiles snap into the fairy ===== */
+.fairy-scene--plugin > .fairy { left: 98px; top: 52px; }
+.fairy-scene--plugin .fairy-art { animation: fairy-plugin-snap 3.6s ease-out infinite; }
+.fairy-plugin-tile {
+  position: absolute;
+  left: 108px;
+  top: 62px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, var(--border));
+  background: var(--bg-elevated);
+  color: var(--accent-blue);
+  box-shadow: 0 4px 10px rgba(30, 41, 80, 0.12);
+  opacity: 0;
+  animation: fairy-plugin-tile 3.6s cubic-bezier(0.5, 0, 0.3, 1) infinite;
+}
+.fairy-plugin-tile:nth-child(1) { --fairy-x: -92px; --fairy-y: -42px; }
+.fairy-plugin-tile:nth-child(2) { --fairy-x: 92px; --fairy-y: -46px; animation-delay: 0.12s; }
+.fairy-plugin-tile:nth-child(3) {
+  --fairy-x: -84px;
+  --fairy-y: 50px;
+  animation-delay: 0.24s;
+  border-color: transparent;
+  background: linear-gradient(135deg, #ff7a59, #d63c6b);
+  color: #fff;
+}
+.fairy-plugin-tile:nth-child(4) { --fairy-x: 88px; --fairy-y: 46px; animation-delay: 0.36s; }
+.fairy-plugin-ring {
+  position: absolute;
+  left: 98px;
+  top: 52px;
+  width: 44px;
+  height: 44px;
+  border: 2px solid var(--accent-blue);
+  border-radius: 13px;
+  opacity: 0;
+  animation: fairy-plugin-ring 3.6s ease-out infinite;
+}
+@keyframes fairy-plugin-tile {
+  0% { opacity: 0; transform: translate(calc(var(--fairy-x) * 1.3), calc(var(--fairy-y) * 1.3)) scale(0.6); }
+  14%, 44% { opacity: 1; transform: translate(var(--fairy-x), var(--fairy-y)) rotate(0deg); }
+  60% { opacity: 0; transform: translate(0, 0) scale(0.3) rotate(90deg); }
+  100% { opacity: 0; transform: translate(0, 0) scale(0.3); }
+}
+@keyframes fairy-plugin-ring { 0%, 62% { opacity: 0; transform: scale(1); } 66% { opacity: 0.7; } 90%, 100% { opacity: 0; transform: scale(2.1); } }
+@keyframes fairy-plugin-snap { 0%, 60%, 80%, 100% { transform: scale(1); } 66% { transform: scale(1.15); } }
+
+/* ===== Wing pinwheel spinner ===== */
+.fairy-spinner {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+  animation: fairy-spin 1.1s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
+}
+.fairy-spinner path { fill: currentColor; }
+.fairy-spinner circle { fill: #ffdb9e; }
+@keyframes fairy-spin { to { transform: rotate(360deg); } }
+
+/* Reduced motion: no movement; each scene shows its finished frame. The
+   spinner still turns (it reports progress) but slowly. */
+@media (prefers-reduced-motion: reduce) {
+  .fairy,
+  .fairy *,
+  .fairy-scene *,
+  .fairy-empty * {
+    animation: none !important;
+  }
+  .fairy-spinner { animation-duration: 3s; }
+  .fairy-conv-thread .fairy-bubble,
+  .fairy-agents-inner,
+  .fairy-window-rows span,
+  .fairy-mobile-prompt { opacity: 1; }
+  .fairy-agents-outline { stroke-dashoffset: 0; }
+  .fairy-saved-ribbon,
+  .fairy-inbox-badge { transform: none; }
+  .fairy-scene--window > .fairy,
+  .fairy-scene--mobile > .fairy { offset-distance: 100%; }
+}

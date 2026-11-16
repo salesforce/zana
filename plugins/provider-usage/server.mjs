@@ -1,0 +1,7 @@
+import { createRequire as __createRequire } from "node:module";
+import { dirname as __pathDirname } from "node:path";
+import { fileURLToPath as __fileURLToPath } from "node:url";
+const require = __createRequire(import.meta.url);
+var __filename = __fileURLToPath(import.meta.url);
+var __dirname = __pathDirname(__filename);
+async function m(s){let i=await s.storage.kv.get("readings")??[],o=null;async function p(){let[g,u]=await Promise.all([s.sdk.hosts.list(),s.sdk.providers.list()]),n=g.slice(0,100).flatMap(t=>u.slice(0,30).map(e=>({host:t,provider:e}))),d=[],h=0;return await Promise.all(Array.from({length:Math.min(3,n.length)},async()=>{for(;;){let t=n[h++];if(!t)return;let{host:e,provider:r}=t,l=i.find(a=>a.hostId===e.id&&a.providerId===r.id);try{let a=await s.sdk.providers.usage({hostId:e.id,providerId:r.id});a.supported&&d.push({hostId:e.id,hostName:e.name,providerId:r.id,providerName:r.displayName??r.id,updatedAt:Date.now(),result:a})}catch{l?d.push({...l,error:"Could not refresh. Showing the last reading."}):d.push({hostId:e.id,hostName:e.name,providerId:r.id,providerName:r.displayName??r.id,updatedAt:0,result:{supported:!1},error:"Machine or provider unavailable"})}}})),i=d.sort((t,e)=>t.hostName.localeCompare(e.hostName)||t.providerName.localeCompare(e.providerName)),await s.storage.kv.set("readings",i),i}s.rpc.method("snapshot",()=>i),s.rpc.method("refresh",()=>(o||(o=p().finally(()=>{o=null})),o))}export{m as default};

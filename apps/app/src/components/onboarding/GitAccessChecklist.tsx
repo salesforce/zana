@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Copy, ExternalLink, Loader2, RefreshCw, X } from 'lucide-react';
+import { Check, Copy, ExternalLink, RefreshCw, X } from 'lucide-react';
 import {
   gitAccessStatusSchema, gitSignInStateSchema,
   type GitAccessStatus, type GitSignInState, type OnboardingProfile
@@ -8,6 +8,7 @@ import {
 import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { copyText } from '../../lib/copy-text.js';
 import { explainGitCloneError } from '../../lib/git-clone-error.js';
+import { ZanaSpinner } from '../fairy/ZanaSpinner.js';
 
 type Row = 'idle' | 'run' | 'ok' | 'bad';
 type Auth = 'idle' | 'run' | 'need' | 'code' | 'finishing' | 'ok' | 'nogh' | 'expired' | 'failed';
@@ -148,7 +149,7 @@ export function GitAccessChecklist({ profile, connect, footerTarget, onBusyChang
     failed: detail ?? 'Sign-in did not complete.'
   };
   const footerButton = <button type="button" className="settings-btn primary" disabled={busy || auth === 'code'} onClick={() => { void runChecks(); }}>
-    {busy ? <><Loader2 size={14} /> Checking access…</> : <><RefreshCw size={14} /> {network === 'idle' && access === 'idle' && auth === 'idle' ? 'Check access and continue' : 'Retry access check'}</>}
+    {busy ? <><ZanaSpinner size={14} /> Checking access…</> : <><RefreshCw size={14} /> {network === 'idle' && access === 'idle' && auth === 'idle' ? 'Check access and continue' : 'Retry access check'}</>}
   </button>;
 
   return <>

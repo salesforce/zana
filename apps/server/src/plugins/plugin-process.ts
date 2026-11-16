@@ -98,3 +98,29 @@ export async function defaultFetchJson(url: string): Promise<unknown> {
 export function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
+
+/** Compare tracked build inputs without checking out or executing the repository. */
+export async function defaultGitPluginChanged(
+  url: string, subdir: string, installedCommit: string, candidateCommit: string, signal?: AbortSignal
+): Promise<boolean> {
+  if (![installedCommit, candidateCommit].every(value => /^[a-f0-9]{40}$/i.test(value)) ||
+      !subdir || subdir.startsWith('-') || subdir.includes('\\') || subdir.split('/').some(part => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid scoped Git comparison');
+  }
+  const directory = mkdtempSync(join(tmpdir(), 'zcc-plugin-trees-'));
+  try {
+    const initialized = await run('git', ['init', '--bare', directory], tmpdir(), { signal });
+    if (initialized.code !== 0) throw new Error('Git comparison initialization failed');
+    for (const commit of [installedCommit, candidateCommit]) {
+      const fetched = await runPluginGitCommand(['fetch', '--depth=1', '--filter=blob:none', '--no-tags', '--', url, commit], directory, url, { signal });
+      if (fetched.code !== 0) throw new Error('Git comparison commit unavailable');
+    }
+    // Monorepo shared build inputs can alter the installed artifact too.
+    const compared = await run('git', ['diff-tree', '--quiet', '-r', installedCommit, candidateCommit, '--', `:(literal)${subdir}`,
+      'package.json', 'pnpm-lock.yaml', 'package-lock.json', 'pnpm-workspace.yaml', 'packages', 'scripts', 'tsconfig.json'], directory, { signal });
+    if (compared.code > 1) throw new Error('Git comparison failed');
+    return compared.code !== 0;
+  } finally {
+    await removePluginTemporaryDirectory(directory);
+  }
+}

@@ -25,6 +25,7 @@ describe('Config pages are searchable (values, options, synonyms)', () => {
     expect(top('ctrl+v')).toContain('terminal.ctrl-v-paste');
     expect(top('copy on select')).toContain('terminal.copy-on-select');
     expect(top('copyonselect')).toContain('terminal.copy-on-select');
+    expect(top('copy themselves OSC 52')).toContain('terminal.copy-on-select');
     expect(top('shift insert')).toContain('terminal.ctrl-v-paste');
     expect(top('pagers')).toContain('terminal.wheel-scroll');
     expect(top('dracula')).toContain('terminal.theme');

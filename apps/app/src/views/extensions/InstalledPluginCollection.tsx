@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import './installed-plugin-collection.css';
 import { ArrowDownAZ, ArrowUpAZ, CheckCircle2, ChevronRight, Search } from 'lucide-react';
 import { PluginAttention } from './PluginAttention.js';
@@ -16,6 +16,9 @@ const STATUS_FILTERS: { id: InstalledStatusFilter; label: string }[] = [
   { id: 'all', label: 'All' }, { id: 'enabled', label: 'Enabled' }, { id: 'disabled', label: 'Disabled' }
 ];
 
+const collectionMemory = new Map<boolean, { query: string; source: string; capability: string; issuesOnly: boolean; status: InstalledStatusFilter; sortDir: 'asc' | 'desc'; updatesOnly: boolean; agentsExpanded: boolean; scrollTop: number }>();
+export function clearInstalledCollectionMemory() { collectionMemory.clear(); }
+
 export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerActions, packs, mobileHeader, selectedId, defaultUpdates = false }: {
   rows: HubRow[];
   onOpen: (id: string) => void;
@@ -26,14 +29,27 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
   selectedId?: string | null;
   defaultUpdates?: boolean;
 }) {
-  const [query, setQuery] = useState('');
-  const [source, setSource] = useState('all');
-  const [capability, setCapability] = useState('all');
-  const [issuesOnly, setIssuesOnly] = useState(false);
-  const [status, setStatus] = useState<InstalledStatusFilter>('all');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const [updatesOnly, setUpdatesOnly] = useState(defaultUpdates);
-  const [agentsExpanded, setAgentsExpanded] = useState(false);
+  const remembered = useRef(collectionMemory.get(defaultUpdates));
+  const [query, setQuery] = useState(remembered.current?.query ?? '');
+  const [source, setSource] = useState(remembered.current?.source ?? 'all');
+  const [capability, setCapability] = useState(remembered.current?.capability ?? 'all');
+  const [issuesOnly, setIssuesOnly] = useState(remembered.current?.issuesOnly ?? false);
+  const [status, setStatus] = useState<InstalledStatusFilter>(remembered.current?.status ?? 'all');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(remembered.current?.sortDir ?? 'asc');
+  const [updatesOnly, setUpdatesOnly] = useState(remembered.current?.updatesOnly ?? defaultUpdates);
+  const [agentsExpanded, setAgentsExpanded] = useState(remembered.current?.agentsExpanded ?? false);
+  const scroller = useRef<HTMLDivElement>(null);
+  const restored = useRef(false);
+  useLayoutEffect(() => {
+    if (rows.length && scroller.current && !restored.current) {
+      scroller.current.scrollTop = remembered.current?.scrollTop ?? 0;
+      restored.current = true;
+    }
+  }, [rows]);
+  useEffect(() => {
+    collectionMemory.set(defaultUpdates, { query, source, capability, issuesOnly, status, sortDir, updatesOnly, agentsExpanded,
+      scrollTop: collectionMemory.get(defaultUpdates)?.scrollTop ?? 0 });
+  }, [defaultUpdates, query, source, capability, issuesOnly, status, sortDir, updatesOnly, agentsExpanded]);
   const agentsId = useId();
   const sources = [...new Set(rows.map(installedSource))].sort();
   const selectedSource = sources.includes(source) ? source : 'all';
@@ -103,7 +119,9 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
         </button>
       </div>
       <div className="ext-plugin-workbench">
-      <div className="ext-installed-scroller ext-plugin-collection-main">
+      <div className="ext-installed-scroller ext-plugin-collection-main" ref={scroller} onScroll={event => {
+        const saved = collectionMemory.get(defaultUpdates); if (saved) saved.scrollTop = event.currentTarget.scrollTop;
+      }}>
         {!updatesOnly ? packs : null}
         <div hidden={updatesOnly}><PluginAttention rows={rows} issuesOnly={issuesOnly} onReview={() => {
             setIssuesOnly(!issuesOnly); setQuery(''); setStatus('all'); setSource('all'); setCapability('all');

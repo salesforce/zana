@@ -13,14 +13,20 @@ import { SetupPagesHost } from './SetupPagesHost.js';
 import { ApplicationTabs } from '../ApplicationTabs.js';
 import { SetupFrame, useSetupBusy } from './SetupFrame.js';
 import { useSetupNavigation } from './useSetupNavigation.js';
+import { useRouteSync } from '../../hooks/useRouteSync.js';
 import { setupPath, useSetupPages, type SetupRequest } from './setup-pages.js';
 import { useApplicationTabs } from '../../lib/application-tabs.js';
-vi.mock('../../lib/windowScope.js', () => ({ getScopedProjectId: () => null }));
+vi.mock('../../lib/windowScope.js', () => ({
+  getScopedProjectId: () => h.scope,
+  isScopedWindow: () => h.scope !== null
+}));
 vi.mock('../../thread-store.js', () => ({
   useThreads: Object.assign((fn: any) => fn({ threads: [] }), { getState: () => ({ load: async () => {} }) }),
   onThreadArchived: () => () => {}
 }));
 const h = vi.hoisted(() => ({
+  scope: null as string | null,
+  ui: {} as any,
   toast: vi.fn(),
   add: vi.fn(async () => ({ id: 'new' })),
   done: undefined as undefined | ((p: { id: string }) => void),
@@ -30,11 +36,14 @@ vi.mock('../../store.js', () => ({
   useData: Object.assign((fn: any) => fn({ projects: [] }), {
     getState: () => ({ addProjectByPath: h.add })
   }),
-  useUi: { getState: () => ({ pushToast: h.toast }) }
+  useUi: {
+    getState: () => ({ ...h.ui, pushToast: h.toast, selectProject: (id: string) => { h.ui.selectedProjectId = id; } }),
+    setState: (patch: any) => { Object.assign(h.ui, patch); }
+  }
 }));
 vi.mock('../../lib/product-client.js', () => ({
   product: {
-    config: { get: async () => ({ lastProjectId: null }) },
+    config: { get: async () => ({ lastProjectId: null }), set: async () => {} },
     projects: {
       pickDirectory: async () => '/picked',
       cloneRoot: async () => '/projects'
@@ -99,13 +108,15 @@ function Controls() {
     <>
       <button onClick={() => go('/threads/t')}>Conversation</button>
       <button onClick={() => open(request)}>New setup</button>
-      <output data-testid="path">{location.pathname}</output>
+      <output data-testid="path">{location.pathname}{location.search}</output>
     </>
   );
 }
-function mount(path = '/') {
+function RouteSync() { useRouteSync(); return null; }
+function mount(path = '/', sync = false) {
   return render(
     <MemoryRouter initialEntries={[path]}>
+      {sync && <RouteSync />}
       <Controls />
       <div role="tablist">
         <ApplicationTabs includeThreads={false} />
@@ -115,12 +126,30 @@ function mount(path = '/') {
   );
 }
 beforeEach(() => {
+  h.scope = null;
+  h.ui = { nav: 'projects', focusedProjectId: 'p1', selectedProjectId: 'p1', projectView: {} };
   useApplicationTabs.setState({ open: [], closed: [], initializedScope: undefined });
   sessionStorage.clear();
   useSetupPages.setState({ pages: [] });
   h.toast.mockClear();
 });
 afterEach(cleanup);
+it('keeps a scoped draft open and resumable through the real route synchronization effect', async () => {
+  h.scope = 'p1';
+  mount('/projects/p1', true);
+  fireEvent.click(screen.getByText('New setup'));
+  const expected = `${setupPath('project:mac:open')}?projectId=p1`;
+  await waitFor(() => expect(screen.getByTestId('path').textContent).toBe(expected));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Draft path' }), { target: { value: '/retained' } });
+  fireEvent.click(screen.getByText('Conversation'));
+  await waitFor(() => expect(screen.getByTestId('path').textContent).toBe('/projects/p1/threads/t?projectId=p1'));
+  fireEvent.click(screen.getByRole('tab', { name: 'Add folder · This Mac' }));
+  await waitFor(() => expect(screen.getByTestId('path').textContent).toBe(expected));
+  expect((screen.getByRole('textbox', { name: 'Draft path' }) as HTMLInputElement).value).toBe('/retained');
+  fireEvent.click(screen.getByText('Cancel'));
+  expect(screen.getByTestId('path').textContent).toBe('/projects/p1');
+  expect(useSetupPages.getState().pages).toHaveLength(0);
+});
 it('opens a normal page, preserves its input across tab switches and finishes without an overlay', async () => {
   mount();
   fireEvent.click(screen.getByText('New setup'));

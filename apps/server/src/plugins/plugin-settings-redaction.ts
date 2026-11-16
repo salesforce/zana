@@ -1,6 +1,7 @@
 /**
- * Drop every `secret: true` value from a plugin settings snapshot, keeping the
- * descriptors. Callers that only need labels and non-secret values (Settings
+ * Drop every `secret: true` value and descriptor default from a plugin settings
+ * snapshot, keeping public metadata. A default can itself be a credential.
+ * Callers that only need labels and non-secret values (Settings
  * search) ask for this so stored secrets never cross to the renderer just to be
  * discarded there (Rule 1: the renderer is untrusted).
  *
@@ -12,10 +13,15 @@ export function withoutSecretValues<T extends { descriptors: Record<string, obje
   snapshot: T
 ): T {
   const values = { ...snapshot.values };
+  const descriptors = { ...snapshot.descriptors };
   for (const [key, descriptor] of Object.entries(snapshot.descriptors)) {
-    if ((descriptor as { secret?: unknown }).secret === true) delete values[key];
+    if ((descriptor as { secret?: unknown }).secret !== true) continue;
+    delete values[key];
+    const publicDescriptor = { ...descriptor };
+    delete (publicDescriptor as { default?: unknown }).default;
+    descriptors[key] = publicDescriptor;
   }
-  return { ...snapshot, values };
+  return { ...snapshot, descriptors, values };
 }
 
 /** The renderer-supplied read options, narrowed: only a literal `true` asks for redaction. */

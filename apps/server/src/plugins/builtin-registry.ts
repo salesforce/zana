@@ -134,13 +134,6 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Developer tools'
   },
   {
-    name: 'posthog-analytics',
-    pluginId: 'posthog-analytics',
-    autoInstall: true,
-    defaultEnabled: true,
-    category: 'Host access'
-  },
-  {
     name: 'google-analytics',
     pluginId: 'google-analytics',
     autoInstall: true,
@@ -158,6 +151,7 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
 
 /** Bundled but store-only until `zcc plugin install <name>`. */
 export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
+  { name:'provider-usage', pluginId:'provider-usage', autoInstall:false, defaultEnabled:true, category:'Agent interaction' },
   { name: 'prompt-library', pluginId: 'prompt-library', autoInstall: false, defaultEnabled: true, category: 'Context & knowledge' },
   {
     name: 'provider-afcode',
@@ -290,6 +284,7 @@ export function bundledPluginByName(name: string): BundledPluginDefinition | und
 export const RETIRED_FIRST_PARTY_PLUGIN_IDS = [
   'browsercode',
   'consensus',
+  'posthog-analytics',
   'slack',
   'zana',
   'zana-hub'

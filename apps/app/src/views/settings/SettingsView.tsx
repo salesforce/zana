@@ -144,6 +144,7 @@ export function SettingsView() {
     try {
       const next = await product.config.set(patch);
       setConfig(next);
+      if ('defaultThreadProviderId' in patch) useData.setState({ defaultThreadProviderId: next.defaultThreadProviderId ?? null });
       if (typeof patch.fontSize === 'number') useData.getState().setFontSize(patch.fontSize);
       if (typeof patch.terminalTheme === 'string') {
         useData.getState().setTerminalTheme(patch.terminalTheme);

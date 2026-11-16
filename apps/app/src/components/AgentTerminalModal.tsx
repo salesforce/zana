@@ -1,6 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, FileText, Sparkles, AppWindow, Loader2, RefreshCw } from 'lucide-react';
+import { X, FileText, Sparkles, AppWindow, RefreshCw } from 'lucide-react';
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
@@ -20,6 +20,7 @@ import { isReport } from '@zana-ai/zcc-domain/feed-categories';
 import { StencilLines } from './ui/Skeleton.js';
 import { InspectorResizeHandles } from './InspectorResizeHandles.js';
 import { useInspectorWindow } from './useInspectorWindow.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /**
  * Agent-inspector modal: a peek at one agent's LIVE terminal plus its metadata,
@@ -410,7 +411,7 @@ function CatchUpSummaryCard({
         aria-haspopup="dialog"
       >
         {pending ? (
-          <Loader2 size={11} className="spin" />
+          <ZanaSpinner size={11} className="spin" />
         ) : (
           <Sparkles size={11} />
         )}

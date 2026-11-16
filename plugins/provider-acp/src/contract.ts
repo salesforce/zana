@@ -5,10 +5,12 @@ import {
   type AcpAgentProbe,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge/acp";
 import { z } from "zod";
+import { providerUsageResultSchema } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 
 export type AcpProbeResult = AcpAgentProbe;
 
 export const acpHostContract = defineRpcContract({
+  providerUsage: { input: z.object({}).strict(), output: providerUsageResultSchema },
   probeAgent: {
     input: z
       .object({

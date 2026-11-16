@@ -27,6 +27,8 @@ import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { StencilForm } from '@/components/ui/Skeleton';
 import { sortHarnessDisplayRows } from '@/lib/harness-display-order';
 import { HarnessRoutingEditor, applyHarnessRoutingPatch, type HarnessRoutingPatch } from './HarnessRoutingEditor.js';
+import { useRegisteredThreadProviders } from '../../hooks/useRegisteredThreadProviders.js';
+import { ThreadProviderDefaultField } from './ThreadProviderDefaultField.js';
 
 const USE_DEFAULT = { id: '', label: 'Use default' } as const;
 const CODEX_UI = providerUiSchema('codex');
@@ -614,6 +616,8 @@ export function ProjectHarnessSettings({
   onSaved: () => void;
 }) {
   const updateProject = useData((s) => s.updateProject);
+  const globalThreadDefault = useData((s) => s.defaultThreadProviderId);
+  const threadProviders = useRegisteredThreadProviders();
   const pushToast = useUi((s) => s.pushToast);
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[] | null>(null);
   const [settingsState, setSettingsState] = useState<{ projectId: string; value: ProjectSettings } | null>(null);
@@ -730,12 +734,24 @@ export function ProjectHarnessSettings({
       title="AI harnesses"
       help="Project settings apply after Global defaults and before Persona and Agent choices: Global → Project → Persona → Agent. Later choices take priority when a setting cannot be combined."
     >
+      <ThreadProviderDefaultField
+        searchId="project.default-thread-provider"
+        help="Overrides the global thread default for new threads in this project."
+        value={project.defaultThreadProviderId}
+        providers={threadProviders.providers}
+        loading={threadProviders.loading}
+        inherit={threadProviders.providers.find(row => row.id === globalThreadDefault)?.displayName ?? globalThreadDefault ?? 'Choose in Settings'}
+        onChange={async defaultThreadProviderId => {
+          await updateProject(project.id, { defaultThreadProviderId }, { throwOnError: true });
+          onSaved();
+        }}
+      />
       <HarnessRoutingEditor
         descriptors={descriptors ?? []}
         value={settings?.harnessRouting}
         onChange={saveRouting}
         loading={descriptors === null || !settingsReady}
-        defaultHarness={{ value: current, onChange: save }}
+        defaultHarness={{ value: current, onChange: save, label: 'Default for CLI agents' }}
         notice={settingsError ? <ProjectSettingsError message={settingsError} /> : null}
         renderLaunchExtras={(descriptor) => {
           if (!settings) return null;

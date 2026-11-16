@@ -21,11 +21,12 @@ vi.mock('../../store.js', () => ({
   useTeams: (selector: (s: { teams: unknown[] }) => unknown) => selector({ teams: state.teams })
 }));
 
-type ComposerStub = { composerProjectId?: string; onComposerProjectIdChange?: (id: string) => void };
+type ComposerStub = { composerProjectId?: string; onComposerProjectIdChange?: (id: string) => void; onCreated?: (value: never) => void };
 function stub(name: string) {
   return (props: ComposerStub) => (
     <div data-testid={name} data-project={props.composerProjectId ?? ''}>
       <button type="button" onClick={() => props.onComposerProjectIdChange?.('picked')}>{`pick-${name}`}</button>
+      <button type="button" onClick={() => props.onCreated?.('created' as never)}>{`create-${name}`}</button>
     </div>
   );
 }
@@ -49,6 +50,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('HomeAgentComposer rendering', () => {
+  it('reports successful launches through the matching panel handoff callback', () => {
+    const onCreated = vi.fn();
+    const onAgentCreated = vi.fn();
+    render(<HomeAgentComposer allowLegacyAgent project={project('a')} onCreated={onCreated} onAgentCreated={onAgentCreated} />);
+    fireEvent.click(screen.getByRole('button', { name: 'create-thread' }));
+    expect(onCreated).toHaveBeenCalledWith('created');
+    expect(onAgentCreated).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'CLI Agent' }));
+    fireEvent.click(screen.getByRole('button', { name: 'create-legacy' }));
+    expect(onAgentCreated).toHaveBeenCalledWith('created');
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
   it('renders only the Modern composer, with no switcher, unless the legacy agent is allowed', () => {
     render(<HomeAgentComposer project={project('a')} />);
     expect(screen.getByTestId('thread').getAttribute('data-project')).toBe('a');

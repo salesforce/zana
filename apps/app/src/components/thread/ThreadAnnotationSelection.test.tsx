@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { createRef } from 'react';
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -11,7 +10,7 @@ import {
 import { afterEach, expect, it, vi } from 'vitest';
 import { ThreadAnnotationSelection } from './ThreadAnnotationSelection.js';
 import { readThreadAnnotation } from './thread-annotation-selection.js';
-import { registerThreadContextTarget } from '../../plugins/thread-context-target.js';
+import { registerThreadContextTarget, registerThreadContextControls } from '../../plugins/thread-context-target.js';
 afterEach(() => {
   cleanup();
   document.body.innerHTML = '';
@@ -53,103 +52,125 @@ it('confines a snapshot to a single prose message and rejects controls or invali
   expect(readThreadAnnotation(root, 'thread', selection)).toBeNull();
   expect(readThreadAnnotation(root, 'thread', null)).toBeNull();
 });
-it('annotates with shortcuts, retains failed insertions and sends only to the owning thread', async () => {
-  const { root } = fixture();
-  const ref = createRef<HTMLElement>();
-  ref.current = root;
-  const insert = vi.fn().mockReturnValue(false);
-  const dispose = registerThreadContextTarget('thread', insert);
-  const view = render(
-    <ThreadAnnotationSelection rootRef={ref} threadId="thread" />,
-  );
-  try {
-    await select();
-    fireEvent.click(screen.getByRole('button', { name: 'Annotate' }));
-    expect(document.activeElement).toBe(
-      screen.getByRole('textbox', { name: 'Your change' }),
-    );
-    expect(
-      (
-        screen.getByRole('button', {
-          name: 'Add to composer',
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Remove this' }));
-    fireEvent.keyDown(screen.getByRole('textbox'), {
-      key: 'Enter',
-      ctrlKey: true,
-    });
-    expect(screen.getByRole('alert').textContent).toContain('unavailable');
-    insert.mockReturnValue(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Keep this' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add to composer' }));
-    expect(insert).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        comment: 'Keep this as proposed.',
-        text: 'Original introduction',
-      }),
-    );
-    expect(screen.queryByRole('dialog')).toBeNull();
-  } finally {
-    view.unmount();
-    dispose();
-  }
-});
-it('adds a bare quote, dismisses on scrolling and cancels annotation with Escape', async () => {
-  const { root, range, selection } = fixture();
+it('asks about a source snapshot and focuses only the owning composer without opening a dialog', async () => {
+  const { root, selection } = fixture();
   const ref = createRef<HTMLElement>();
   ref.current = root;
   const insert = vi.fn().mockReturnValue(true);
+  const other = vi.fn();
+  const input = document.createElement('textarea');
+  document.body.append(input);
+  const focus = vi.fn(() => input.focus());
   const dispose = registerThreadContextTarget('thread', insert);
-  const view = render(
-    <ThreadAnnotationSelection rootRef={ref} threadId="thread" />,
-  );
+  const disposeOther = registerThreadContextTarget('other', other);
+  const disposeControls = registerThreadContextControls('thread', { update: () => false, focus });
+  render(<ThreadAnnotationSelection rootRef={ref} threadId="thread" />);
   try {
     await select();
-    fireEvent.scroll(window);
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    const button = screen.getByRole('button', { name: 'Ask Zana' });
+    expect(fireEvent.pointerDown(button)).toBe(false);
+    expect(selection.toString()).toBe('Original introduction');
+    fireEvent.click(button);
+    expect(insert).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      text: 'Original introduction',
+      source: { kind: 'thread', threadId: 'thread', messageId: 'reply', sourceSeqEnd: 8 },
+    }));
+    expect(insert.mock.calls[0]![0].comment).toBeUndefined();
+    expect(other).not.toHaveBeenCalled();
+    expect(focus).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(input);
+    expect(selection.isCollapsed).toBe(true);
     expect(screen.queryByRole('toolbar')).toBeNull();
-    await select();
-    fireEvent.click(screen.getByRole('button', { name: 'Annotate' }));
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
-    selection.addRange(range);
-    await select();
-    fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
-    expect(insert.mock.calls[0]?.[0].comment).toBeUndefined();
   } finally {
-    view.unmount();
-    dispose();
+    dispose(); disposeOther(); disposeControls();
   }
 });
-it('supports keyboard focus cycling, explicit cancellation and changing threads', async () => {
+
+it('keeps the passage available when insertion fails and allows retry', async () => {
+  const { root, selection } = fixture();
+  const ref = createRef<HTMLElement>();
+  ref.current = root;
+  const insert = vi.fn().mockReturnValue(false);
+  const focus = vi.fn();
+  const dispose = registerThreadContextTarget('thread', insert);
+  const disposeControls = registerThreadContextControls('thread', { update: () => false, focus });
+  render(<ThreadAnnotationSelection rootRef={ref} threadId="thread" />);
+  try {
+    await select();
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Zana' }));
+    expect(screen.getByRole('alert').textContent).toContain('unavailable or full');
+    expect(selection.toString()).toBe('Original introduction');
+    expect(focus).not.toHaveBeenCalled();
+    insert.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Zana' }));
+    expect(insert).toHaveBeenCalledTimes(2);
+    expect(focus).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('alert')).toBeNull();
+  } finally { dispose(); disposeControls(); }
+});
+
+it('dismisses on scroll, resize and Escape and cancels pending selection reads', async () => {
   const { root } = fixture();
   const ref = createRef<HTMLElement>();
   ref.current = root;
-  const view = render(
-    <ThreadAnnotationSelection rootRef={ref} threadId="first" />,
-  );
-  await select();
-  fireEvent.click(screen.getByRole('button', { name: 'Annotate' }));
-  const input = screen.getByRole('textbox');
-  fireEvent.change(input, { target: { value: 'Shorten' } });
-  fireEvent.keyDown(input, { key: 'Tab', shiftKey: true });
-  expect(document.activeElement).toBe(
-    screen.getByRole('button', { name: 'Add to composer' }),
-  );
-  fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
-  expect(document.activeElement).toBe(input);
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  expect(screen.queryByRole('dialog')).toBeNull();
-  await select();
-  fireEvent.click(screen.getByRole('button', { name: 'Annotate' }));
-  view.rerender(<ThreadAnnotationSelection rootRef={ref} threadId="second" />);
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  await select();
-  fireEvent.click(screen.getByRole('button', { name: 'Annotate' }));
-  fireEvent.mouseDown(screen.getByRole('dialog').parentElement!);
-  expect(screen.queryByRole('dialog')).toBeNull();
-  await select();
-  fireEvent.keyDown(document, { key: 'Escape' });
+  const view = render(<ThreadAnnotationSelection rootRef={ref} threadId="thread" />);
+  for (const dismiss of [() => fireEvent.scroll(window), () => fireEvent.resize(window), () => fireEvent.keyDown(document, { key: 'Escape' })]) {
+    await select();
+    fireEvent.keyDown(document, { key: 'Shift' });
+    expect(screen.getByRole('toolbar')).toBeTruthy();
+    dismiss();
+    expect(screen.queryByRole('toolbar')).toBeNull();
+  }
+  fireEvent(document, new Event('selectionchange'));
+  fireEvent.scroll(window);
+  await new Promise(resolve => requestAnimationFrame(resolve));
   expect(screen.queryByRole('toolbar')).toBeNull();
+  await select();
+  view.unmount();
+  fireEvent(document, new Event('selectionchange'));
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  expect(screen.queryByRole('toolbar')).toBeNull();
+});
+
+it('resets errors and snapshots on thread changes and handles a missing root', async () => {
+  const { root } = fixture();
+  const ref = createRef<HTMLElement>();
+  ref.current = root;
+  const view = render(<ThreadAnnotationSelection rootRef={ref} threadId="first" />);
+  await select();
+  fireEvent.click(screen.getByRole('button', { name: 'Ask Zana' }));
+  expect(screen.getByRole('alert')).toBeTruthy();
+  view.rerender(<ThreadAnnotationSelection rootRef={ref} threadId="second" />);
+  expect(screen.queryByRole('toolbar')).toBeNull();
+  await select();
+  expect(screen.queryByRole('alert')).toBeNull();
+  fireEvent.scroll(window);
+  ref.current = null;
+  fireEvent(document, new Event('selectionchange'));
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  expect(screen.queryByRole('toolbar')).toBeNull();
+  ref.current = root;
+  await select();
+  window.getSelection()?.removeAllRanges();
+  fireEvent(document, new Event('selectionchange'));
+  await waitFor(() => expect(screen.queryByRole('toolbar')).toBeNull());
+});
+
+it('keeps the action inside viewport edges', async () => {
+  const { root, range } = fixture();
+  const ref = createRef<HTMLElement>();
+  ref.current = root;
+  range.getBoundingClientRect = () => ({ left: -50, top: 0 }) as DOMRect;
+  render(<ThreadAnnotationSelection rootRef={ref} threadId="thread" />);
+  await select();
+  expect(screen.getByRole('toolbar').style.left).toBe('8px');
+  expect(screen.getByRole('toolbar').style.top).toBe('8px');
+  range.getBoundingClientRect = () => ({ left: 10000, top: 10000 }) as DOMRect;
+  await select();
+  await waitFor(() => {
+    expect(screen.getByRole('toolbar').style.left).toBe(`${window.innerWidth - 128}px`);
+    expect(screen.getByRole('toolbar').style.top).toBe(`${window.innerHeight - 48}px`);
+  });
 });

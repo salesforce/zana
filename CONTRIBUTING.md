@@ -17,13 +17,14 @@ and issue reports are welcome.
 ## Development
 
 1. Fork the repository and create a focused branch from `main`.
-2. Install dependencies with `npm install`.
+2. Use the pnpm version in `package.json` and install dependencies with
+   `pnpm install --frozen-lockfile`. The pnpm workspace applies the repository's
+   dependency security patches; `pnpm-lock.yaml` is the canonical lockfile.
 3. Make the smallest change that solves the problem and add or update tests.
 4. Run the relevant checks:
 
    ```bash
-   npm run typecheck
-   npm test
+   pnpm verify:fast
    ```
 
    Electron E2E changes can also use the optional Linux CI reproduction described

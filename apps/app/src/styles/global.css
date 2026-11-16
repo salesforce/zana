@@ -940,8 +940,9 @@ button.statusbar-update {
   overflow: visible;
   position: relative;
   /* Lift above the content track so the handle on the column edge stays
-     grabbable. Overlays (modals, palettes) must portal to document.body — a
-     descendant z-index cannot paint above this stacking context. */
+     grabbable. A content track holding an open modal is lifted above this
+     (see `.shell-main > :has(...)`); overlays opened from the sidebar itself
+     must still portal to document.body. */
   z-index: 1;
 }
 
@@ -5227,6 +5228,20 @@ body.resizing-col webview {
 
 .shell-main {
   display: contents;
+}
+
+/* Modals rendered in place inside a routed panel (core or plugin) live in that
+ * panel's stacking context: `.split-workspace` (z-index 0), `.inbox-view` and
+ * `.aurora-host` (isolation: isolate). The sidebar (`z-index: 1`) and the
+ * title-bar trigger overlay (`z-index: 50`) then paint over a full-window
+ * `position: fixed` backdrop no matter how high its own z-index is, leaving the
+ * left rail bright and clickable. While a panel holds an open modal, lift its
+ * whole content track above that chrome so every in-place modal dims and
+ * blocks the window, without each dialog having to portal to document.body.
+ * Stays below toasts and title-bar popovers (z-index ≥ 100). */
+.shell-main > :has(:is([aria-modal='true'], .modal-backdrop, .palette-backdrop)),
+.shell-main > .project-slot > :has(:is([aria-modal='true'], .modal-backdrop, .palette-backdrop)) {
+  z-index: 60;
 }
 
 .project-slot {
@@ -11372,6 +11387,10 @@ button.statusbar-item {
   text-align: center;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.palette-empty > .fairy-empty {
+  justify-content: center;
 }
 
 /* Shell-grid placement for EVERY mounted extension panel. The host owns this so
@@ -35621,146 +35640,6 @@ body.split-frame-guard webview {
   margin-bottom: 4px;
 }
 
-.pane-empty-term {
-  width: 168px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-panel);
-  overflow: hidden;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg-base) 35%, transparent);
-}
-
-.pane-empty-term-bar {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-elevated) 70%, var(--bg-panel));
-}
-
-.pane-empty-term-bar span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  opacity: 0.45;
-}
-
-.pane-empty-term-bar span:nth-child(1) { background: #ff5f57; opacity: 0.7; }
-.pane-empty-term-bar span:nth-child(2) { background: #febc2e; opacity: 0.7; }
-.pane-empty-term-bar span:nth-child(3) { background: #28c840; opacity: 0.7; }
-
-.pane-empty-term-body {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 56px;
-  padding: 0 14px;
-  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.pane-empty-prompt {
-  color: var(--text-dim);
-  font-weight: 600;
-}
-
-.pane-empty-caret {
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  border-radius: 1px;
-  background: var(--accent-blue);
-  animation: pane-empty-blink 1s step-end infinite;
-}
-
-.pane-empty-well {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--bg-base) 28%, transparent);
-}
-
-.pane-empty-well::before {
-  content: '';
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
-  animation: pane-empty-pulse 2.4s ease-in-out infinite;
-  pointer-events: none;
-}
-
-.pane-empty-well--ended,
-.pane-empty-well--desktop {
-  margin-top: -14px;
-}
-
-.pane-empty-well--desktop {
-  color: var(--accent-blue);
-}
-
-.pane-empty-term--loading {
-  transform: rotate(-3deg);
-}
-
-.pane-empty-loading-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding: 18px 18px 26px;
-}
-
-.pane-empty-loading-lines span {
-  height: 6px;
-  width: 80%;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--accent-blue) 25%, var(--bg-elevated));
-  animation: pane-empty-loading-line 1.8s ease-in-out infinite;
-}
-
-.pane-empty-loading-lines span:nth-child(2) {
-  width: 60%;
-  animation-delay: 150ms;
-}
-
-.pane-empty-loading-lines span:nth-child(3) {
-  width: 70%;
-  animation-delay: 300ms;
-}
-
-.pane-empty-well--loading {
-  margin-top: -18px;
-  color: var(--accent-blue);
-}
-
-@keyframes pane-empty-loading-line {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
-}
-
-.pane-empty-well--error {
-  color: var(--danger);
-}
-
-.pane-empty-well--error::before {
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-}
-
-.pane-empty-well--inbox {
-  color: var(--accent-blue);
-}
-
 .pane-empty-title {
   margin: 0;
   font-size: 15px;
@@ -35799,31 +35678,9 @@ body.split-frame-guard webview {
   to { opacity: 1; transform: none; }
 }
 
-@keyframes pane-empty-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-@keyframes pane-empty-pulse {
-  0%, 100% { opacity: 0.25; transform: scale(0.92); }
-  50% { opacity: 0.85; transform: scale(1.08); }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .pane-empty {
     animation: none;
-  }
-  .pane-empty-caret {
-    animation: none;
-    opacity: 1;
-  }
-  .pane-empty-loading-lines span {
-    animation: none;
-  }
-  .pane-empty-well::before {
-    animation: none;
-    opacity: 0.4;
-    transform: none;
   }
 }
 
@@ -42896,3 +42753,10 @@ body.split-frame-guard webview {
 .team-composer-plan-status { margin-top: 4px; font-weight: 600; color: var(--success); }
 .team-composer-plan-status.thread-command-error { color: var(--danger); }
 .team-composer-plan-other { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+.thread-default-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}

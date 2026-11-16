@@ -26,14 +26,15 @@ describe('ExtensionsView plugin catalogue', () => {
     expect(view).not.toContain('PluginSettingsSections');
   });
 
-  it('mounts plugin settings sections on the plugin detail page', () => {
-        expect(hub).toContain('PluginSettingsSections');
-        expect(hub).toContain('<PluginSettingsSections pluginId={module.id} />');
-        expect(hub).toContain('<PluginSettingsForm snap={settingsSnap}');
-        expect(hub).toContain('PluginHubIncludes');
-        expect(hub).toContain('id="plugin-configure"');
-        expect(hub).toContain('ext-plugin-section--config');
-        expect(hub).toContain('ext-plugin-detail-stack');
+  it('links management to the dedicated Settings page with a single settings implementation', () => {
+    const settings = readSourceText(new URL('../settings/PluginSettingsView.tsx', import.meta.url));
+    expect(hub).not.toContain('<PluginSettingsSections');
+    expect(hub).not.toContain('<PluginSettingsForm');
+    expect(hub).toContain('getPluginSettingsRoutePath(module.id)');
+    expect(settings).toContain('<PluginSettingsSections pluginId={module.id} />');
+    expect(settings).toContain('<PluginSettingsForm');
+    expect(settings).toContain('id="plugin-configure"');
+    expect(hub).toContain('PluginHubIncludes');
   });
 
   it('pins the grid to the panel and lifts hub content above it', () => {

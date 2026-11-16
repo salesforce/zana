@@ -25,7 +25,7 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   inbox: ['views/settings/InboxSettingsView.tsx'],
   browser: ['components/settings/BrowserSettingsSection.tsx', 'components/settings/BrowserImportDialog.tsx'],
   terminal: ['views/settings/TerminalSettingsView.tsx'],
-  harness: ['views/settings/HarnessView.tsx', 'views/settings/RegisteredHarnesses.tsx', 'views/settings/ModelRefreshControl.tsx', 'views/settings/ProviderCliUpdateHint.tsx'],
+  harness: ['views/settings/HarnessView.tsx', 'views/settings/MachineEnvironmentSettings.tsx', 'views/settings/RegisteredHarnesses.tsx', 'views/settings/ThreadProviderDefaultField.tsx', 'views/settings/ModelRefreshControl.tsx', 'views/settings/ProviderCliUpdateHint.tsx'],
   editor: ['views/settings/EditorView.tsx'],
   prompts: ['views/settings/PromptsView.tsx'],
   machines: [
@@ -50,6 +50,7 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   about: ['views/settings/AboutView.tsx'],
   project: [
     'views/settings/ProjectSettingsView.tsx',
+    'views/settings/ThreadProviderDefaultField.tsx',
     'views/settings/HarnessRoutingEditor.tsx',
     'views/settings/ProjectSourcesSettings.tsx',
     'components/settings/ScopeControl.tsx',

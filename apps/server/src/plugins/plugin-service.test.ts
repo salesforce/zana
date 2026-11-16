@@ -127,6 +127,20 @@ function writeLegacyExtension(dir: string, id: string): string {
 }
 
 describe('PluginService', () => {
+  it('projects settings declarations without reading values and clears them when the runtime stops', async () => {
+    const pluginDir = writePlugin(join(root(), 'settings-metadata'), 'settings-metadata', `export default api => { api.settings.define({ token: { type: 'string', label: 'Token', secret: true } }); };`);
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(pluginDir);
+    expect(toPluginAppSnapshot(service.snapshot()[0])).toHaveProperty('hasSettings', true);
+    expect(toPluginAppSnapshot(service.snapshot()[0])).not.toHaveProperty('values');
+    await service.disable('settings-metadata');
+    expect(toPluginAppSnapshot(service.snapshot()[0])).not.toHaveProperty('hasSettings');
+    await service.enable('settings-metadata');
+    expect(toPluginAppSnapshot(service.snapshot()[0])).toHaveProperty('hasSettings', true);
+    writeFileSync(join(pluginDir, 'server.mjs'), 'export default () => {};');
+    await service.reload('settings-metadata');
+    expect(toPluginAppSnapshot(service.snapshot()[0])).toHaveProperty('hasSettings', false);
+  });
   it('preserves coding-agent display grouping for disabled installs without exposing manifest extras', async () => {
     const dir = writePlugin(join(root(), 'custom-agent'), 'custom-agent', undefined, {
       extra: { threadProvider: true, privateSetting: '/private/plugin/path' }
@@ -1058,6 +1072,66 @@ describe('PluginService', () => {
     }
   });
 
+  it.each([
+    ['manual', false, false], ['automatic', false, false],
+    ['manual', true, false], ['automatic', true, false],
+    ['manual', false, true], ['automatic', false, true],
+    ['manual', true, true], ['automatic', true, true]
+  ] as const)('discards %s refresh after removal (re-add: %s, failure: %s)', async (mode, readd, fail) => {
+    const dataDir = root();
+    const source = 'https://example.test/removed.json';
+    const clock = Date.now();
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(clock);
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fetching = new Promise<void>(resolve => { started = resolve; });
+    let block = false;
+    const index = { schemaVersion: 1, name: 'original', displayName: 'Original', plugins: [] };
+    marketplaceMaterializer.resolve = async parsed => {
+      const inFlight = block;
+      if (inFlight) {
+        started();
+        await gate;
+        if (fail) throw new Error('Old refresh failed');
+      }
+      return { source: parsed, index: { ...index, schemaVersion: 1, displayName: inFlight ? 'Original' : 'Replacement' } };
+    };
+    const service = createPluginService({
+      dataDir, bundledRoot: root(), now: () => clock + 48 * 60 * 60 * 1000
+    });
+    try {
+      await service.addMarketplace(source);
+      block = true;
+      // Attach the rejection handler before releasing the request.
+      const pending = (mode === 'manual' ? service.refreshMarketplace(source) : service.checkUpdates())
+        .then(value => ({ value }), error => ({ error }));
+      await fetching;
+      expect(await service.removeMarketplace(source)).toBe(true);
+      block = false;
+      if (readd) await service.addMarketplace(source);
+      const before = service.listMarketplaces();
+      release();
+      const result = await pending;
+      if (mode === 'manual') expect(result).toMatchObject({
+        error: expect.objectContaining({ message: fail ? 'Old refresh failed' : 'Marketplace was removed or replaced during refresh' })
+      });
+      expect(service.listMarketplaces()).toEqual(before);
+      const persisted = JSON.parse(readFileSync(join(dataDir, 'plugins', 'marketplaces.json'), 'utf8'));
+      expect(persisted.catalogs).toEqual(JSON.parse(JSON.stringify(before)));
+    } finally {
+      release();
+      dateNow.mockRestore();
+    }
+  });
+
+  it('refuses a refresh of an unregistered marketplace before fetching', async () => {
+    const fetchJson = vi.fn();
+    const service = createPluginService({ dataDir: root(), bundledRoot: root(), fetchJson });
+    await expect(service.refreshMarketplace('https://example.test/missing.json')).rejects.toThrow(/Unknown marketplace/);
+    expect(fetchJson).not.toHaveBeenCalled();
+  });
+
   it('installs a catalog git plugin from subdir and refuses an escaping subdir', async () => {
     const dataDir = root();
     const service = createPluginService({
@@ -1941,9 +2015,7 @@ describe('listBundledPluginCatalog', () => {
     expect(out.find((entry) => entry.id === 'docs')?.overview).toContain('## What you get');
     expect(out.find(entry => entry.id === 'provider-codex')?.iconUrl).toMatch(/^data:image\/svg\+xml;base64,/);
     expect(out.find(entry => entry.id === 'slack-bridge-2ff2')?.iconUrl).toMatch(/^data:image\/png;base64,/);
-    expect(out.find((entry) => entry.id === 'posthog-analytics')?.description).toBe(
-      'Anonymous usage analytics. Never sends prompts or replies.'
-    );
+    expect(out.map(entry => entry.id)).not.toContain('posthog-analytics');
     expect(out.map(entry => entry.id)).not.toContain('salesforce');
     expect(out.find((entry) => entry.id === 'tasks')?.category).toBe('Workflow management');
     expect(out.map((entry) => entry.id)).toEqual(
@@ -2126,6 +2198,14 @@ describe('installBundledPlugin', () => {
 
   it('returns null when the id is not a plugin package in the bundled root', async () => {
     expect(await installBundledPlugin('echo', { dataDir: root(), bundledRoot: root() })).toBeNull();
+  });
+
+  it('rejects a retired plugin even when its old bundled package is still present', async () => {
+    const bundled = root();
+    writePlugin(join(bundled, 'posthog-analytics'), 'posthog-analytics');
+    expect(listBundledPluginCatalog(bundled)).toEqual([]);
+    expect(await installBundledPlugin('posthog-analytics', { dataDir: root(), bundledRoot: bundled }))
+      .toEqual({ ok: false, code: 'NOT_FOUND', message: 'Plugin "posthog-analytics" is retired' });
   });
 
   it('installs a bundled plugin and is idempotent once installed', async () => {

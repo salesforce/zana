@@ -124,7 +124,7 @@ export function PluginViewApp({ target }: { target: PluginViewSurfaceTarget }) {
       {closeState.pending ? <div role="status" style={{ padding: '8px 16px' }}>Finishing your workspace before closing…</div> : null}
       <main className="plugin-view-body">
         {state.kind === 'loading' ? (
-          <PaneEmptyState art="loading" title="Loading…" testId="plugin-view-loading" />
+          <PaneEmptyState art="plugin" title="Loading…" testId="plugin-view-loading" />
         ) : state.kind === 'missing-project' ? (
           <PaneEmptyState art="missing" title="Project not found" hint="This project is no longer available." testId="plugin-view-missing">
             <button type="button" className="btn" onClick={closeWindow}>Close window</button>

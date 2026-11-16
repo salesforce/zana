@@ -36,7 +36,7 @@ test('Google Analytics auto-installs, tracks visible use, disconnects, and respe
       const rows = await window.cc.pluginApps.list();
       return rows.filter(row => ['google-analytics', 'posthog-analytics'].includes(row.id))
         .map(row => `${row.id}:${row.enabled}:${row.status}`).sort();
-    })).toEqual(['google-analytics:true:running', 'posthog-analytics:true:running']);
+    })).toEqual(['google-analytics:true:running']);
     await expect.poll(() => events().map(event => event.name)).toContain('app_open');
     await expect.poll(() => events().filter(event => event.name === 'page_view').length).toBeGreaterThan(0);
     const clientId = captures[0].body.client_id;

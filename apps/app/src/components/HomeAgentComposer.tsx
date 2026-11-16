@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { ThreadCommandComposer, type ThreadCommandComposerProps } from './ThreadCommandComposer.js';
 import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
 import { TeamComposer } from './TeamComposer.js';
@@ -19,6 +20,7 @@ export interface HomeAgentComposerProps extends ThreadCommandComposerProps {
   /** Offer CLI Agent and Squad alongside Modern on New Chat surfaces. */
   allowLegacyAgent?: boolean;
   draftScope?: string;
+  onAgentCreated?: (session: TerminalSession) => void;
 }
 
 /** Dashboard wrapper only — thread detail must not inherit this spacing. */
@@ -32,7 +34,7 @@ export function HomeAgentComposer({
   return <ComposerDraftProvider sessionKey={sessionKey}><HomeComposerContent allowLegacyAgent={allowLegacyAgent} project={project} {...props} /></ComposerDraftProvider>;
 }
 
-function HomeComposerContent({ allowLegacyAgent = false, project, ...props }: HomeAgentComposerProps) {
+function HomeComposerContent({ allowLegacyAgent = false, project, onAgentCreated, ...props }: HomeAgentComposerProps) {
   const session = useComposerSession();
   const walkthroughHomeMode = useUi((s) => s.walkthroughHomeMode);
   const teams = useTeams(useShallow((s) => s.teams));
@@ -69,6 +71,7 @@ function HomeComposerContent({ allowLegacyAgent = false, project, ...props }: Ho
         )}
         {allowLegacyAgent && kind === 'agent' ? (
           <LegacyAgentHomeComposer
+            onCreated={onAgentCreated}
             project={project}
             initialText={props.initialText}
             composerProjectId={composerProjectId}

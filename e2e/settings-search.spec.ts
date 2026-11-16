@@ -230,8 +230,10 @@ test('plugin-defined settings are searchable, land on #plugin-configure and neve
       configure: JSON.stringify(await window.cc.pluginApps.getSettings(secretId))
     }), SECRET_ID);
     expect(reads.search).not.toContain(VALUES.secret.secretValue);
+    expect(reads.search).not.toContain(VALUES.secret.secretDefault);
     expect(reads.search).toContain('accessPhrase');
     expect(reads.configure).toContain(VALUES.secret.secretValue);
+    expect(reads.configure).toContain(VALUES.secret.secretDefault);
 
     const search = await openSettings(win);
     await search.fill('quokka');
@@ -239,7 +241,7 @@ test('plugin-defined settings are searchable, land on #plugin-configure and neve
     await expect(hit).toBeVisible({ timeout: 15_000 });
     await captureElectronScreenshot(app.electron, win, testInfo.outputPath('10-plugin-result.png'));
     await hit.click();
-    await expect(win).toHaveURL(new RegExp(`${NORMAL_ID}\\?view=installed.*#plugin-configure`));
+    await expect(win).toHaveURL(new RegExp(`/settings/plugins/${NORMAL_ID}\\?area=configuration.*#plugin-configure`));
     // The installed plugin page itself, not the Browse detail ("Plugin not found."):
     await expect(win.locator('#plugin-configure')).toBeVisible({ timeout: 15_000 });
     await expect(win.getByText('Plugin not found.')).toHaveCount(0);

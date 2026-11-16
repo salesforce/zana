@@ -1,9 +1,41 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { test, expect } from './fixtures/app.js';
+import { test, expect, isAppRendererUrl } from './fixtures/app.js';
+import type { Page } from '@playwright/test';
 import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true } });
+
+test('a dedicated project window retains setup URLs and normalizes their scope', async ({ app, home }) => {
+  const path = join(home, 'scoped-project');
+  mkdirSync(path);
+  const projectId = await app.window.evaluate(async path => {
+    const added = await window.cc.projects.add(path);
+    if (!added.ok) throw new Error(added.message);
+    await window.cc.windows.openProject(added.value.id);
+    return added.value.id;
+  }, path);
+  let scoped: Page | undefined;
+  await expect.poll(() => {
+    scoped = app.electron.windows().find(page => page !== app.window && isAppRendererUrl(page.url()));
+    return Boolean(scoped);
+  }).toBe(true);
+  const page = scoped!;
+  await expect(page.getByTestId('project-nav-agents')).toBeVisible();
+  // Drafts are window-local; a directly opened URL renders the stale-draft
+  // recovery page. The scope guard must retain it rather than bounce home.
+  for (const search of ['', '?projectId=other']) {
+    await page.evaluate(path => {
+      history.pushState({}, '', path);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, `/setup/project%3Alocal%3Aopen${search}`);
+    await expect(page.getByRole('heading', { name: 'This setup is no longer open', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/setup/[^?]+\\?projectId=${projectId}$`));
+  }
+  await page.locator('.setup-pages-breadcrumb').getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}(?:\\?[^#]*)?$`));
+  await expect(page.getByTestId('project-nav-agents')).toBeVisible();
+});
 
 test('machine menus open nonmodal setup pages and retain drafts across navigation', async ({ app, home }, testInfo) => {
   const page = app.window;

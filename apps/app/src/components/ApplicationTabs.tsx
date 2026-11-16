@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import type { Project } from '@zana-ai/zcc-domain/product';
 import {
   FolderPlus,
-  LoaderCircle,
   MessageSquareText,
   Server,
   TriangleAlert
@@ -29,6 +29,7 @@ import {
 } from '../lib/application-tabs.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 import { ProjectDot } from './listpane/ProjectDot.js';
+import { TitlebarProjectButton } from './TitlebarProjectButton.js';
 import { copyTextOrFail } from '../lib/copy-text.js';
 import { product } from '../lib/product-client.js';
 import { withRunningProcessWarning } from '../lib/thread-running-processes.js';
@@ -37,12 +38,15 @@ import {
   ApplicationTabBar,
   type ApplicationTabView
 } from './ApplicationTabBar.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /** Content adapters supply identity, live metadata and lifecycle rules to one tab shell. */
 export function ApplicationTabs({
-  includeThreads = true
+  includeThreads = true,
+  project
 }: {
   includeThreads?: boolean;
+  project?: Project | null;
 }) {
   const route = useRouteState();
   const location = useLocation();
@@ -160,7 +164,7 @@ export function ApplicationTabs({
             ? 'Setup is in progress'
             : 'Close setup and discard its draft',
           icon: page.busy ? (
-            <LoaderCircle size={13} className="spin" />
+            <ZanaSpinner size={13} className="spin" />
           ) : page.request.kind === 'machine' ? (
             <Server size={13} />
           ) : (
@@ -194,7 +198,7 @@ export function ApplicationTabs({
         : status === 'Needs you'
           ? MessageSquareText
           : status === 'Working'
-            ? LoaderCircle
+            ? ZanaSpinner
             : null;
     const unread = !active && (thread.maxSeq ?? 0) > (thread.lastReadSeq ?? 0);
     const title = thread.title || 'Untitled thread';
@@ -295,6 +299,7 @@ export function ApplicationTabs({
   return (
     <ApplicationTabBar
       tabs={views}
+      leading={project ? <TitlebarProjectButton key={project.id} project={project} /> : undefined}
       onSelect={select}
       onClose={close}
       onMove={(id, to) => useApplicationTabs.getState().moveTab(id, to)}

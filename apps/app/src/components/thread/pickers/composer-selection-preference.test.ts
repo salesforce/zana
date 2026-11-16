@@ -25,6 +25,12 @@ function installLocalStorage(): void {
 }
 
 describe('composer selection preference', () => {
+  it('remembers thread model preferences without changing the CLI harness history', () => {
+    rememberComposerSelection({ providerId: 'codex', model: 'cli-model' });
+    rememberComposerSelection({ providerId: 'claude-code', model: 'thread-model', rememberProvider: false });
+    expect(rememberedProviderId()).toBe('codex');
+    expect(rememberedSelectionFor('claude-code')?.model).toBe('thread-model');
+  });
   beforeEach(() => {
     installLocalStorage();
     __clearComposerSelectionForTest();

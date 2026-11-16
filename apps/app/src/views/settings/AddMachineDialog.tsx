@@ -1,6 +1,6 @@
 import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import { product, requestPreferredJoinCode } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
@@ -26,6 +26,7 @@ import {
   REMOTE_MACHINE_CONNECTION_HINT,
   type PairingSshHostOption
 } from './machine-pairing.js';
+import { ZanaSpinner } from '../../components/fairy/ZanaSpinner.js';
 
 interface AddMachineDialogProps {
   open: boolean;
@@ -254,7 +255,7 @@ export function AddMachineDialogView({
         </p>
       ) : (
         <p className="add-machine-status">
-          <Loader2 size={16} className="add-machine-spin" aria-hidden="true" />
+          <ZanaSpinner size={16} className="add-machine-spin" aria-hidden="true" />
           Creating a join code…
         </p>
       )}
@@ -421,7 +422,7 @@ export function AddMachineDialogView({
           </>
         ) : (connectMode ? !connectBusy : pairingUnavailable) ? null : (
           <>
-            <Loader2 size={16} className="add-machine-spin" aria-hidden="true" />
+            <ZanaSpinner size={16} className="add-machine-spin" aria-hidden="true" />
             <span>Waiting for the machine to connect…</span>
           </>
         )}

@@ -12,6 +12,7 @@ import {
   ensureProcessPath,
   launchedPathOverrides,
   LOGIN_SHELL_BASE_PATH,
+  loginShellPath,
   loginShellProbePath,
   nodePrefixBinDirs,
   stripInheritedClaudeSession,
@@ -484,5 +485,74 @@ describe('ensureInteractiveTerminalEnv', () => {
     ensureInteractiveTerminalEnv(env);
     expect(env.FORCE_COLOR).toBe('3');
     expect(env.COLORTERM).toBe('truecolor');
+  });
+});
+
+describe('loginShellPath shell lookup', () => {
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', realPlatform);
+    vi.restoreAllMocks();
+    for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  function fakeShell(loginPath: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-login-shell-'));
+    chmodSync(dir, 0o700);
+    tmpDirs.push(dir);
+    const shell = join(dir, 'fake-shell');
+    writeFileSync(shell, `#!/bin/sh
+printf '__ZCC_PATH_START__${loginPath}__ZCC_PATH_END__'
+`, { mode: 0o700 });
+    return shell;
+  }
+
+  it.skipIf(process.platform === 'win32')('probes the passwd login shell when SHELL is set but missing', () => {
+    const shell = fakeShell('/from/login/shell');
+    expect(loginShellPath({ env: { SHELL: '/missing/zsh' }, loginShell: () => shell })).toBe('/from/login/shell');
+  }, 15_000);
+
+  it.skipIf(process.platform === 'win32')('probes the passwd login shell when SHELL is unset', () => {
+    const shell = fakeShell('/unset/shell/path');
+    expect(loginShellPath({ env: {}, loginShell: () => shell })).toBe('/unset/shell/path');
+  }, 15_000);
+
+  it.skipIf(process.platform === 'win32')('falls back to /bin/sh when nothing else exists', () => {
+    const ran: string[] = [];
+    const out = loginShellPath({
+      env: { SHELL: '/missing/zsh' },
+      loginShell: () => null,
+      isExecutable: (path) => {
+        ran.push(path);
+        return path === '/bin/sh';
+      }
+    });
+    expect(ran).toEqual(['/missing/zsh', '/bin/bash', '/bin/sh']);
+    // The real /bin/sh ran the probe and printed a PATH.
+    expect(out).toEqual(expect.any(String));
+  }, 15_000);
+
+  it('returns null with a clear warning when no shell exists, without spawning', () => {
+    Object.defineProperty(process, 'platform', { ...realPlatform, value: 'linux' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(loginShellPath({ env: {}, loginShell: () => null, isExecutable: () => false })).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[env] login-shell PATH probe skipped: No usable shell found. Tried /bin/bash, /bin/sh. ' +
+        'Set SHELL to an installed shell, or set the terminal shell in Settings.'
+    );
+  });
+
+  it('rethrows an unexpected lookup error', () => {
+    Object.defineProperty(process, 'platform', { ...realPlatform, value: 'linux' });
+    expect(() => loginShellPath({ env: {}, loginShell: () => { throw new Error('boom'); } })).toThrow('boom');
+  });
+
+  it('stays off on Windows without looking for a shell', () => {
+    Object.defineProperty(process, 'platform', { ...realPlatform, value: 'win32' });
+    const isExecutable = vi.fn(() => true);
+    expect(loginShellPath({ env: { SHELL: '/bin/bash' }, isExecutable })).toBeNull();
+    expect(isExecutable).not.toHaveBeenCalled();
   });
 });

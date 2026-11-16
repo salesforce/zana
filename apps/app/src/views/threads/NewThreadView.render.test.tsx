@@ -3,12 +3,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
 
 const composer = vi.hoisted(() => ({ props: null as null | Record<string, unknown> }));
 const store = vi.hoisted(() => ({ projects: [{ id: 'p1', name: 'One' }, { id: 'p2', name: 'Two' }] }));
 
 vi.mock('@/store', () => ({ useData: (selector: (s: typeof store) => unknown) => selector(store) }));
 vi.mock('@/components/AuroraGrid', () => ({ AuroraGrid: () => null }));
+vi.mock('./NewChatPanelLayout.js', () => ({ NewChatPanelLayout: ({ children }: { children: (handlers: object) => ReactNode }) => children({ onCreated: () => undefined, onAgentCreated: () => undefined }) }));
 vi.mock('@/components/HomeAgentComposer', () => ({
   HomeAgentComposer: (props: Record<string, unknown>) => { composer.props = props; return <div data-testid="composer" />; }
 }));

@@ -606,7 +606,12 @@ export interface PluginSdkLibrary {
   write(args: PluginSdkLibraryWriteArgs): Promise<{ ok: true; sha256?: string } | { ok: false; message: string }>;
 }
 
+export type PluginProviderUsageResult = { supported: false } | { supported: true; usage:
+  { status: 'ok'; accountEmail: string | null; planLabel: string | null; windows: Array<{label: string; usedPercent: number; resetsAt: string | null}> } |
+  {status: 'not_installed' | 'unauthenticated' | 'expired'} | {status: 'error'; message: string} };
+
 export interface PluginSdkProviders {
+  usage(args: { providerId: string; hostId: string }): Promise<PluginProviderUsageResult>;
   list(args?: { environmentId?: string }): Promise<PluginSdkProviderInfo[]>;
   models(args: { environmentId?: string; hostId?: string; providerId: string }): Promise<PluginSdkModelCatalog>;
 }
@@ -1177,6 +1182,8 @@ export interface PluginProviderDeclaration {
   experimental_visibility?: PluginProviderVisibility;
   experimental_bridgeOptions?: Readonly<Record<string, JsonValue>>;
   maintenance?: PluginProviderMaintenance;
+  /** Provider-owned, host-scoped subscription usage. No credentials leave the host. */
+  usage?: (hostId: string) => Promise<PluginProviderUsageResult>;
   strings?: PluginProviderStrings;
   serviceTiers?: readonly PluginProviderOptionDescriptor[];
   reasoningLevels?: readonly PluginProviderOptionDescriptor[];

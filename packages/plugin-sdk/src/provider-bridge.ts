@@ -1,3 +1,4 @@
+export { providerUsageResultSchema } from '@zana-ai/zcc-provider-bridge-protocol';
 /**
  * `@zana-ai/zcc-plugin-sdk/provider-bridge` — the published authoring surface for a provider
  * bridge.

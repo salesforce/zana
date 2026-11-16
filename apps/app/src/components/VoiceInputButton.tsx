@@ -1,10 +1,11 @@
 import { product } from '../lib/product-client.js';
 import { useState, useRef, useEffect } from 'react';
-import { Mic, Loader2 } from 'lucide-react';
+import { Mic } from 'lucide-react';
 import { useUi } from '../store.js';
 import type { AutoGrowTextareaHandle } from './ui/CommandComposer.js';
 import { voiceStartBlockReason } from './thread/voice/voice-helpers.js';
 import { useVoiceAvailability, useVoiceStatus } from './thread/voice/voice-status-store.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 interface Props {
   value: string;
@@ -239,7 +240,7 @@ export function VoiceInputButton({ value, onChange, className, textareaRef, icon
   };
 
   const icon = transcribing ? (
-    <Loader2 size={13} className="voice-input-spin" aria-hidden="true" />
+    <ZanaSpinner size={13} className="voice-input-spin" aria-hidden="true" />
   ) : recording ? (
     <span className="voice-wave" aria-hidden="true">
       {Array.from({ length: WAVE_BARS }, (_, i) => (

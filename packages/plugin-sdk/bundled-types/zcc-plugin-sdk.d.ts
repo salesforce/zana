@@ -5,7 +5,7 @@
  */
 
 declare module '@zana-ai/zcc-plugin-sdk' {
-  export type { ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
+  export type { PluginProviderUsageResult, ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
 
   export type { PluginSdk, PluginSdkInbox, PluginSdkInboxEntry, PluginSdkInboxSearchArgs, PluginSdkInboxSearchResult, PluginSdkInboxReport, PluginSdkAssistant } from '@zana-ai/zcc-plugin-sdk/server';
   export type { PluginNotificationSoundProviderRegistration, PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
@@ -193,6 +193,7 @@ export interface PluginProviderOptionsContext {
 }
 
 export interface PluginProviderDeclaration {
+  usage?: (hostId: string) => Promise<PluginProviderUsageResult>;
   id: string;
   displayName: string;
   family?: string;
@@ -455,6 +456,10 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     | { action: 'allow' }
     | { action: 'deny'; reason: string }
     | { action: 'ask'; prompt: string; timeoutMs?: number };
+  export type PluginProviderUsageResult = { supported: false } | { supported: true; usage:
+    { status: 'ok'; accountEmail: string | null; planLabel: string | null; windows: Array<{label: string; usedPercent: number; resetsAt: string | null}> } |
+    {status: 'not_installed' | 'unauthenticated' | 'expired'} | {status: 'error'; message: string} };
+
 
   export interface PluginHooks {
     /** One message-dispatch admission handler per plugin. */
@@ -821,6 +826,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         write(args: { hostId?: string; path: string; rootPath?: string; content: string; contentEncoding?: 'utf8' | 'base64'; createParents?: boolean }): Promise<void>;
       };
       providers: {
+        usage(args: {providerId: string; hostId: string}): Promise<PluginProviderUsageResult>;
         list(args?: { environmentId?: string }): Promise<Array<{
           id: string;
           available: boolean;

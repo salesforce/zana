@@ -68,7 +68,7 @@ describe('ProjectHarnessSettings', () => {
     const project = { id: 'p1', name: 'Project', path: '/tmp/project' } as Project;
     const html = renderToStaticMarkup(<ProjectHarnessSettings project={project} onOpen={() => {}} onSaved={() => {}} />);
     expect(html).toContain('AI harnesses');
-    expect(html).toContain('Default harness');
+    expect(html).toContain('Default for CLI agents');
     expect(html).toContain('opener-list');
     expect(html).not.toContain('Worktree isolation');
     expect(html).not.toContain('Harness launch overrides');

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
@@ -7,7 +7,9 @@ import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapt
 import { HarnessView } from './HarnessView.js';
 import { resetThreadModelCatalog } from '../../components/thread/pickers/thread-model-catalog.js';
 
-vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: (props: unknown) => { state.registeredProps = props; return null; } }));
+vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: vi.fn(async () => ({ hostId: 'local', revision: 'fixture', variables: [] })) }));
+
+vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: (props: { cliDefault?: ReactNode }) => { state.registeredProps = props; return props.cliDefault ?? null; } }));
 
 const state = vi.hoisted(() => ({
   registeredProps: null as any,
@@ -64,6 +66,21 @@ function View({ initial = {} as AppConfig, update = vi.fn(async () => undefined)
 }
 
 describe('Harness setup layout', () => {
+  it('persists a CLI default independently and clears an unavailable CLI default', async () => {
+    const update = vi.fn(async () => undefined);
+    const view = render(<View initial={{ defaultThreadProviderId: 'custom' } as AppConfig} update={update} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Default for CLI agents' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Codex', exact: true }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ defaultHarness: 'codex' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Default for CLI agents' }).textContent).toContain('Codex'));
+    expect(state.registeredProps.config.defaultThreadProviderId).toBe('custom');
+    view.unmount();
+    render(<View initial={{ defaultHarness: 'pi', defaultThreadProviderId: 'custom' } as AppConfig} update={update} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear default' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ defaultHarness: undefined }));
+    expect(state.registeredProps.config.defaultThreadProviderId).toBe('custom');
+  });
+
   it('refreshes installation evidence from the registered harness center', async () => {
     render(<View />);
     await waitFor(() => expect(state.registeredProps.hostId).toBe('local'));
@@ -92,17 +109,18 @@ describe('Harness setup layout', () => {
     const names = [...screen.getByTestId('harness-status-list').querySelectorAll('.opener-row-name')].map((el) => el.textContent);
     expect(names).toEqual(['Claude Code', 'Codex', 'Pi', 'Pi']);
     expect(state.rows.map((row) => row.family)).toEqual(['pi', 'codex', 'claude', 'opencode']);
-    fireEvent.click(await screen.findByRole('button', { name: 'Default harness' }));
-    const options = (await screen.findAllByRole('option')).map((el) => el.textContent ?? '');
+    fireEvent.click(await screen.findByRole('button', { name: 'Default for CLI agents' }));
+    const picker = await screen.findByRole('listbox');
+    const options = within(picker).getAllByRole('option').map((el) => el.textContent ?? '');
     expect(options.map((text) => text.replace(' (not installed)', '').trim())).toEqual(['Claude Code', 'Codex', 'Pi', 'Pi']);
   });
 
-  it('leads with installation, gives the machine context, and persists the enable switch immediately', async () => {
+  it('places API keys before installation, gives the machine context, and persists the enable switch immediately', async () => {
     const update = vi.fn(async () => undefined);
     const { container } = render(<View update={update} />);
     await waitFor(() => expect(screen.getByText('2 installed · 2 enabled')).toBeTruthy());
     const headings = [...container.querySelectorAll('.harness-settings > section > h3')].map((el) => el.textContent);
-    expect(headings).toEqual(['Installed harnesses', 'Model lists', 'Session settings']);
+    expect(headings).toEqual(['API keys and environment', 'Installed harnesses', 'Model lists', 'Session settings']);
     expect(screen.getByText('This machine · Studio Mac')).toBeTruthy();
     const status = within(screen.getByTestId('harness-status-list'));
     expect(status.getByText('Always on')).toBeTruthy();
@@ -179,7 +197,7 @@ describe('Harness setup layout', () => {
     state.anchor = 'harness-legacy';
     const update = vi.fn(async () => undefined);
     render(<View update={update} />);
-    await screen.findByRole('button', { name: 'Default harness' });
+    await screen.findByRole('button', { name: 'Default for CLI agents' });
     fireEvent.click(screen.getByRole('button', { name: 'Advanced settings for Claude Code' }));
     const instructions = screen.getByRole('group', { name: 'Instructions' });
     const prompt = within(instructions).getByRole('textbox', { name: 'Append system prompt' });
@@ -214,14 +232,14 @@ describe('Harness setup layout', () => {
   it('explains disabled or missing harnesses and keeps their connection setting editable', async () => {
     state.anchor = 'harness-legacy';
     render(<View initial={{ harnessPiEnabled: false } as AppConfig} />);
-    await screen.findByRole('button', { name: 'Default harness' });
+    await screen.findByRole('button', { name: 'Default for CLI agents' });
     fireEvent.click(screen.getByRole('button', { name: 'Advanced settings for Pi' }));
     expect(screen.getByText('Enable this harness above to edit its launch defaults.')).toBeTruthy();
     expect((screen.getByRole('group', { name: 'Provider & reasoning' }) as HTMLFieldSetElement).disabled).toBe(true);
     expect((screen.getByRole('textbox', { name: 'Pi binary' }) as HTMLInputElement).disabled).toBe(false);
     cleanup();
     render(<View initial={{ harnessPiEnabled: true } as AppConfig} />);
-    await screen.findByRole('button', { name: 'Default harness' });
+    await screen.findByRole('button', { name: 'Default for CLI agents' });
     fireEvent.click(screen.getByRole('button', { name: 'Advanced settings for Pi' }));
     expect(screen.getByText(/Install this harness above/)).toBeTruthy();
     expect((screen.getByRole('group', { name: 'Provider & reasoning' }) as HTMLFieldSetElement).disabled).toBe(true);

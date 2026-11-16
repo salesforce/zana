@@ -1,0 +1,10 @@
+.ext-plugin-settings-areas { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+.ext-plugin-settings-areas button { padding: 9px 13px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-panel); color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.ext-plugin-settings-areas button[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel)); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); color: var(--accent); }
+.settings-panel--plugin .settings-inner--plugin { max-width: 1200px; }
+.settings-panel--plugin .settings-header { gap: 16px; flex-wrap: wrap; }
+.settings-panel--plugin .settings-header > .settings-btn { flex-shrink: 0; }
+.settings-panel--plugin .ext-plugin-section--config { max-width: 880px; margin-inline: auto; }
+.settings-panel--plugin .ext-plugin-settings-areas { margin-bottom: 24px; }
+.settings-panel--plugin [hidden] { display: none !important; }
+.settings-plugin-icon { width: 16px; height: 16px; flex: 0 0 16px; }

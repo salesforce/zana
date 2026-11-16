@@ -25,6 +25,7 @@ export function createRuntimeManager(options: {
   dataDir?: string;
   loadConfig?: Parameters<typeof createAgentRuntimeAdapter>[0]['loadConfig'];
   createRuntime?: CreateAgentRuntimeFn;
+  getEnvironmentRevision?: Parameters<typeof createAgentRuntimeAdapter>[0]['getEnvironmentRevision'];
   bridgeBundleDir?: string;
   getRemoteDefaultPath?: Parameters<typeof createAgentRuntimeAdapter>[0]['getRemoteDefaultPath'];
   onInteractiveRequest?: Parameters<typeof createAgentRuntimeAdapter>[0]['onInteractiveRequest'];

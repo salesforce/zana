@@ -7,6 +7,8 @@
   min-width: 0;
 }
 .titlebar-threads-strip { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.titlebar-tabs-project { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: min(30%, 260px); padding-right: 10px; margin-right: 5px; border-right: 1px solid var(--border); }
+.titlebar-tabs-project > .titlebar-project { min-width: 0; max-width: 100%; font-size: 12px; font-weight: 600; }
 .titlebar-threads-strip::-webkit-scrollbar { display: none; }
 .titlebar-thread { -webkit-app-region: no-drag; position: relative; display: flex; flex: 0 0 190px; min-width: 0; height: calc(var(--titlebar-h) - 8px); border: 1px solid transparent; border-radius: 7px; }
 .titlebar-thread:hover { background: var(--bg-hover); }

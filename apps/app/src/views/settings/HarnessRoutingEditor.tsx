@@ -73,6 +73,7 @@ export interface HarnessRoutingEditorProps {
   loading?: boolean;
   /** Optional default-harness picker rendered above the rows. */
   defaultHarness?: {
+    label?: string;
     value: string;
     onChange(adapterId: string): void;
   };
@@ -130,12 +131,12 @@ export function HarnessRoutingEditor({
   return (
     <>
       {defaultHarness && (
-        <Field label="Default harness" searchId="project.default-harness">
+        <Field label={defaultHarness.label ?? 'Default harness'} searchId="project.default-harness">
           {loading ? (
             <Skeleton width="180px" height="28px" />
           ) : (
             <PopoverPicklist
-              ariaLabel="Default harness"
+              ariaLabel={defaultHarness.label ?? 'Default harness'}
               value={defaultHarness.value}
               onChange={defaultHarness.onChange}
               options={[

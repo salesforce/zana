@@ -85,10 +85,19 @@ export const entries: readonly SettingsSearchEntry[] = [
     kind: 'subsection'
   },
   {
+    id: 'project.default-thread-provider',
+    section: 'project',
+    anchor: 'project-harnesses',
+    label: 'Default for threads',
+    help: 'Override the global thread harness for this project, or inherit the global default.',
+    keywords: ['thread', 'default', 'harness', 'provider', 'global'],
+    kind: 'setting'
+  },
+  {
     id: 'project.default-harness',
     section: 'project',
     anchor: 'project-harnesses',
-    label: 'Default harness',
+    label: 'Default for CLI agents',
     options: ['Use global default'],
     keywords: ['default agent cli', 'launch default', 'provider', 'claude', 'codex', 'cursor'],
     kind: 'setting'

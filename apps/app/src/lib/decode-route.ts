@@ -23,6 +23,7 @@ import {
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
+  SETTINGS_PLUGIN_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
   NEW_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
@@ -174,6 +175,9 @@ export function decodeRoutePath(pathname: string, hash = '', search = ''): Decod
       settingsTab: pathname === SETTINGS_PROJECT_ALIAS_ROUTE_PATH ? 'project' : 'global',
       settingsAnchor: anchor
     };
+  }
+  if (matchPath(SETTINGS_PLUGIN_ROUTE_PATH, pathname)) {
+    return { ...DEFAULT_DECODED, nav: 'settings', settingsTab: 'plugins', settingsAnchor: anchor };
   }
   const settingsSection = matchPath(SETTINGS_SECTION_ROUTE_PATH, pathname);
   if (settingsSection) {
@@ -389,6 +393,15 @@ export function decodeRoutePath(pathname: string, hash = '', search = ''): Decod
   return { ...DEFAULT_DECODED, settingsAnchor: anchor };
 }
 
+/** Base for parsing an app route string (path + query + hash) with `URL`. */
+const ROUTE_PARSE_BASE = 'http://zcc.local';
+
+/** A whole app route string (as remembered or navigated to) → shell destination. */
+export function decodeRouteString(path: string): DecodedRoute {
+  const url = new URL(path, ROUTE_PARSE_BASE);
+  return decodeRoutePath(url.pathname, url.hash, url.search);
+}
+
 /** Query-param alias used by dedicated project windows. */
 export function scopedProjectIdFromSearch(search: string): string | null {
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
@@ -399,7 +412,8 @@ export function scopedProjectIdFromSearch(search: string): string | null {
 /**
  * Where a project-locked window must sit. Returns null when the URL is already
  * on `/projects/:lockId` (settings or workspace). A global `/threads/:id` click
- * is rewritten onto that project's thread route; any other path — including a
+ * is rewritten onto that project's thread route. Setup pages keep the window's
+ * project query; any other path — including a
  * query-less `/inbox` after a full document load — is replaced back onto the
  * project home, keeping `?projectId=`.
  */
@@ -414,6 +428,11 @@ export function scopedWindowLockReplace(
   );
   params.set('projectId', lockId);
   const search = `?${params.toString()}`;
+  if (decoded.nav === 'setup') {
+    return scopedProjectIdFromSearch(location.search) === lockId
+      ? null
+      : { pathname: location.pathname, search, hash: location.hash };
+  }
   // Keep the conversation when a rail click used the global `/threads/:id`
   // shape — bouncing to the project home made those clicks look dead.
   if (decoded.threadId) {
