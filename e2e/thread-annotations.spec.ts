@@ -57,15 +57,7 @@ test('Ask Zana attaches a selected reply, focuses the composer and preserves ann
   await detail
     .locator('[data-thread-annotation-prose] p')
     .first()
-    .evaluate((el) => {
-      const r = document.createRange();
-      r.setStart(el.firstChild!, 0);
-      r.setEnd(el.firstChild!, el.firstChild!.textContent!.length);
-      const s = window.getSelection()!;
-      s.removeAllRanges();
-      s.addRange(r);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
+    .click({ clickCount: 3 });
   await app.window
     .getByRole('button', { name: 'Ask Zana', exact: true })
     .click();
