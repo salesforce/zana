@@ -889,6 +889,14 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (invalid) return fail('INVALID', invalid);
         const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions);
         if (!prepared.ok) return prepared;
+        // A Must fix cannot run unattended. Refuse before launching so no "needs correction" card reaches the Inbox;
+        // the agent asks the user, and "as it is" goes through review mode where the Must fix stays visible.
+        const nowDecision = buildSquadPlanDecision(prepared.value.planFindings ?? []);
+        if (nowDecision) {
+          // acceptFindings is ignored here: a Must fix never starts now, so the agent must ask the user and use review mode.
+          return fail('NEEDS_DECISION',
+            `${formatSquadPlanDecision(nowDecision)} This plan cannot start now, so do not stop here: ask the user now. The "${nowDecision.asIsLabel}" answer means calling squad_launch with mode 'review' and acceptFindings: true (not mode 'now').`);
+        }
         let approval: LaunchApproval;
         try {
           approval = await launchNow.launchApproval(prepared.value.team.id, route.projectId);

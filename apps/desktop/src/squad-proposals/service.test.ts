@@ -796,6 +796,20 @@ describe('launchSquadNow', () => {
     nothingStarted();
   });
 
+  it('asks for a decision on a Must fix, and points "as it is" at review mode, without starting or posting a card', async () => {
+    planFindingsDep = async () => ({ findings: [
+      { stepId: 'u1', requirement: 'required-role', severity: 'blocking', candidateSlots: [], suggestion: '' }
+    ], bindings: [] });
+    const svcNow = build().service;
+    const asked = await svcNow.launchSquadNow(route, input as never);
+    expect(asked).toMatchObject({ ok: false, code: 'NEEDS_DECISION' });
+    expect(!asked.ok && asked.message).toContain('Prepare the launch as it is');
+    const accepted = await svcNow.launchSquadNow(route, { ...input, acceptFindings: true } as never);
+    expect(accepted).toMatchObject({ ok: false, code: 'NEEDS_DECISION' });
+    expect(!accepted.ok && accepted.message).toContain("mode 'review'");
+    nothingStarted();
+  });
+
   it('starts the Squad owned by the calling conversation, with its sources issued to that session', async () => {
     const r = await now({ title: '  Mine ', summary: ' S ' });
     expect(r).toEqual({ ok: true, value: {

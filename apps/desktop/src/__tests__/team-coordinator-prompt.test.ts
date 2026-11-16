@@ -63,6 +63,8 @@ describe('jobCoordinatorPrompt — Flow B/C (plan needed, coordinator authors th
   it('without sources: derive from the goal (no source-read instruction)', () => {
     const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false });
     expect(prompt).toContain('Derive bounded generic work units from the goal');
+    expect(prompt).toContain('A short or general goal is still a goal');
+    expect(prompt).not.toContain('speculative plan');
     expect(prompt).not.toContain('execution.source.list');
     expect(prompt).toContain('`execution.plan.register` EXACTLY ONCE');
   });

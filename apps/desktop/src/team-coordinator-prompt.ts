@@ -67,7 +67,7 @@ function fileHandoffKickoffLines(input: { planFilePath: string; sourceFilePath?:
     `- No structured work units are registered yet.${
       input.hasSources && input.sourceFilePath
         ? ` The execution source requirements are mirrored to \`${input.sourceFilePath}\` — read that file with your file-read tool to gather requirements. Do NOT call \`execution.source.list\` or \`execution.source.read\`.`
-        : ' Derive bounded generic work units from the goal and available context; if that context cannot support a bounded plan, fail clearly without writing a speculative plan.'
+        : ' Derive bounded generic work units from the goal and available context. A short or general goal is still a goal: write a plan of one to three units for it and do not ask the operator questions first. Only when the goal is empty or has no actionable meaning at all, fail clearly without writing a plan.'
     }`,
     `- Write your COMPLETE portable-executable plan to \`${input.planFilePath}\` with your file-write tool: one H3 \`id: Title <!-- executable-step -->\` heading per work unit, each carrying the fixed label bullets (Depends on, Execution class (exactly Routine, Standard, or Expert; no other value), Mode, Read scope, Write scope, Excludes, Work, Verification, On failure, Outputs / handoff). Every mutating unit needs a non-empty Write scope and Verification.`,
     '- Add `Completion criteria: check:<name>` between Verification and On failure only for known registered names; multiple references are comma-separated without duplicates. Check names match `[A-Za-z_][A-Za-z0-9_-]*` and are at most 100 characters. Never invent names or use completion prose; otherwise omit the Completion criteria label. Set `On failure: fail run`.',
@@ -124,7 +124,7 @@ function legacyMcpKickoffLines(hasSources: boolean): string[] {
     `- No structured work units are registered yet.${hasSources ? ' Execution sources are attached (see metadata below).' : ''}`,
     ...(hasSources
       ? ['- Call `execution.source.list`, read each source fully with bounded `execution.source.read` pages, then derive bounded generic work units.']
-      : ['- Derive bounded generic work units from the goal and available context; if that context cannot support a bounded plan, fail clearly without registering a speculative plan.']),
+      : ['- Derive bounded generic work units from the goal and available context. A short or general goal is still a goal: register a plan of one to three units for it and do not ask the operator questions first. Only when the goal is empty or has no actionable meaning at all, fail clearly without registering a plan.']),
     '- Call `execution.plan.register` EXACTLY ONCE with the work DAG. The host AUTOMATICALLY dispatches ready units the instant the plan registers, and the engine re-dispatches as work completes. Do NOT call `execution.work.dispatch_ready`, and do NOT assign units yourself (no `execution.work.assign`, no per-unit `agent_send`). Never assign work to the orchestrator slot.',
     '- After you register the plan, end this turn and remain idle. Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
     ...KICKOFF_DENIALS

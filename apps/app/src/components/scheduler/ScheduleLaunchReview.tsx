@@ -23,21 +23,27 @@ export function ScheduleLaunchReview({ task, onConfirm, onCancel }: {
   }, [task]);
   const current = review?.task === task ? review : null;
   return (
-    <div role="dialog" aria-label="Review scheduled squad launch" className="scheduler-form-field">
-      <h3>Review scheduled squad launch</h3>
-      <p>{task.name}. Each run revalidates the plan, squad and target.</p>
-      {current?.error ? <p role="alert">{current.error}</p> : current?.resolved ? (
-        <>
-          {current.preview?.location ? <p>Location: {current.preview.location.kind === 'new-worktree'
-            ? `New worktree from ${current.preview.location.baseBranch}; path assigned at launch`
-            : `${current.preview.branch ?? 'HEAD'} - ${current.preview.path}`}</p> : null}
-          <SquadResolvedLaunchDetails resolved={current.resolved} />
-        </>
-      ) : <p>Resolving launch settings…</p>}
-      <button type="button" onClick={onCancel}>Cancel</button>
-      <button type="button" disabled={!current?.resolved || !current?.preview?.previewToken} onClick={() => {
-        if (current?.preview?.previewToken) onConfirm(current.preview.previewToken);
-      }}>Launch schedule</button>
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div role="dialog" aria-modal="true" aria-label="Review scheduled squad launch" className="modal scheduler-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header"><h3>Review scheduled squad launch</h3></div>
+        <div className="modal-body">
+          <p>{task.name}. Each run revalidates the plan, squad and target.</p>
+          {current?.error ? <p role="alert" className="modal-error">{current.error}</p> : current?.resolved ? (
+            <>
+              {current.preview?.location ? <p>Location: {current.preview.location.kind === 'new-worktree'
+                ? `New worktree from ${current.preview.location.baseBranch}; path assigned at launch`
+                : `${current.preview.branch ?? 'HEAD'} - ${current.preview.path}`}</p> : null}
+              <SquadResolvedLaunchDetails resolved={current.resolved} />
+            </>
+          ) : <p>Resolving launch settings…</p>}
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="settings-btn" onClick={onCancel}>Cancel</button>
+          <button type="button" className="settings-btn" disabled={!current?.resolved || !current?.preview?.previewToken} onClick={() => {
+            if (current?.preview?.previewToken) onConfirm(current.preview.previewToken);
+          }}>Launch schedule</button>
+        </div>
+      </div>
     </div>
   );
 }
