@@ -39,9 +39,10 @@ const view = () => <MemoryRouter><InboxDetail visible /><Location /></MemoryRout
 /** Typing re-renders Send as enabled; clicking before that commit hits a disabled button and sends nothing. */
 async function sendReply(input: HTMLElement, value: string) {
   fireEvent.change(input, { target: { value } });
-  const send = screen.getByRole('button', { name: 'Send', exact: true });
-  await waitFor(() => expect(send.hasAttribute('disabled')).toBe(false));
-  fireEvent.click(send);
+  // Re-query each attempt so a replaced node can't leave the wait on a detached button.
+  const sendButton = () => screen.getByRole('button', { name: 'Send', exact: true });
+  await waitFor(() => expect(sendButton().hasAttribute('disabled')).toBe(false));
+  fireEvent.click(sendButton());
 }
 beforeEach(() => {
   inboxThreadCache.clear();
