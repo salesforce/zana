@@ -1,6 +1,6 @@
 # Thread annotations and browser annotation plugins
 
-Select text within one assistant reply and choose **Annotate**. Add a short change, or choose **Keep this** / **Remove this**. **Add quote** attaches the passage without a comment. The composer holds a compact reference: inspect it to edit the comment, convert it to text, remove it, or return to its source message. Multiple references can be sent together. Sent history records the original passage and comment, independently of subsequent source or draft edits.
+Select text within one assistant reply and choose **Ask Zana**. The passage attaches directly to the owning composer and the input receives focus, ready for a follow-up question. Nothing is sent until you submit your message. The composer holds a compact reference: inspect it to edit the comment, convert it to text, remove it, or return to its source message. Multiple references can be sent together. Sent history records the original passage and comment, independently of subsequent source or draft edits.
 
 Thread sources carry a thread id, message id and source sequence. The shared context parser validates sources and comment limits, and exact serialized offsets guard sent-message badge rendering. A reference is a snapshot, never an instruction to fetch a path. Count and aggregate text limits also include comments.
 

@@ -50,7 +50,7 @@ async function waitForCompletion(app: AppHandle, threadId: string) {
     .toBe('idle');
 }
 
-test('selected reply becomes an editable composer annotation and persists in sent history', async ({
+test('Ask Zana attaches a selected reply, focuses the composer and preserves annotations in sent history', async ({
   app,
 }) => {
   const { detail, threadId } = await openThread(app);
@@ -67,14 +67,15 @@ test('selected reply becomes an editable composer annotation and persists in sen
       document.dispatchEvent(new Event('selectionchange'));
     });
   await app.window
-    .getByRole('button', { name: 'Annotate', exact: true })
+    .getByRole('button', { name: 'Ask Zana', exact: true })
     .click();
-  await app.window
-    .getByRole('textbox', { name: 'Your change', exact: true })
-    .fill('Replace this introduction with a chat example.');
-  await app.window
-    .getByRole('button', { name: 'Add to composer', exact: true })
-    .click();
+  const input = detail.getByTestId('thread-command-input');
+  await expect(input).toBeFocused();
+  await expect(
+    app.window.getByRole('toolbar', { name: 'Selected passage' }),
+  ).toHaveCount(0);
+  await expect(app.window.getByRole('dialog')).toHaveCount(0);
+  await input.pressSequentially('Can you explain this?');
   const inspect = detail.getByRole('button', {
     name: 'Inspect Response to: Initial turn',
   });
