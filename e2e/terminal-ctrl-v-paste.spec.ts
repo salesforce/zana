@@ -15,6 +15,9 @@
  * through the initial config. macOS keeps xterm's `^V` (⌘V pastes), so skip it.
  * On Windows the steps drive Git Bash (`ZCC_E2E_BASH`, see terminal-lines.ts),
  * and output is matched as whole plain lines because ConPTY repaints them.
+ * The bracketed-paste step syncs on an OSC 52 clipboard write, so the spec
+ * turns OSC 52 writes on explicitly (`terminalClipboardWriteEnabled`) rather
+ * than relying on the default.
  */
 import { test, expect } from './fixtures/app.js';
 import type { Locator, Page } from '@playwright/test';
@@ -23,7 +26,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { hasLine, plainLines, windowsBash, windowsBashConfig, windowsBashSkipReason } from './fixtures/terminal-lines.js';
 
-test.use({ e2e: true, initialConfig: { tmuxScope: 'off', terminalCtrlVPasteEnabled: true, ...windowsBashConfig } });
+test.use({ e2e: true, initialConfig: { tmuxScope: 'off', terminalCtrlVPasteEnabled: true, terminalClipboardWriteEnabled: true, ...windowsBashConfig } });
 test.skip(process.platform === 'darwin', 'macOS pastes with ⌘V; Ctrl+V stays ^V there');
 test.skip(process.platform === 'win32' && !windowsBash, windowsBashSkipReason);
 
@@ -127,10 +130,10 @@ async function checkBracketedPaste(page: Page, shell: Shell, projectDir: string,
  * value by the time that resolves. ^V makes readline insert the next key
  * literally (the `x`); Ctrl+C then clears the line.
  *
- * Readline can drop input written while it handles SIGINT (Git Bash on
- * Windows drops the whole next line), so resend the probe until its output
- * line appears. The output (`AFTER_OFF_45`) differs from the typed text, so
- * only a probe that ran counts.
+ * The probe's output (`AFTER_OFF_45`) differs from the typed text, so only a
+ * probe that ran counts. Git Bash on Windows drops the line typed while
+ * readline handles SIGINT, so there the probe is resent until it runs.
+ * Elsewhere it is sent once: a dropped line is a real failure.
  */
 async function checkCtrlVOff(page: Page, shell: Shell, clipboard: Clipboard) {
   await page.evaluate(() => window.cc.config.set({ terminalCtrlVPasteEnabled: false }));
@@ -139,11 +142,16 @@ async function checkCtrlVOff(page: Page, shell: Shell, clipboard: Clipboard) {
   await page.keyboard.press('Control+V');
   await page.keyboard.press('x');
   await page.keyboard.press('Control+C');
-  await expect.poll(async () => {
-    if (hasLine(await shell.backlog(), 'AFTER_OFF_45')) return true;
+  if (process.platform === 'win32') {
+    await expect.poll(async () => {
+      if (hasLine(await shell.backlog(), 'AFTER_OFF_45')) return true;
+      await shell.run('echo AFTER_OFF_$((40+5))');
+      return false;
+    }, { timeout: 15_000, intervals: [1_000] }).toBe(true);
+  } else {
     await shell.run('echo AFTER_OFF_$((40+5))');
-    return false;
-  }, { timeout: 15_000, intervals: [1_000] }).toBe(true);
+    await shell.waitForLine('AFTER_OFF_45');
+  }
   const text = plainLines(await shell.backlog()).join('\n');
   expect(text).not.toContain('OFF_$((40+4))');
   expect(text).not.toContain('OFF_44_DONE');
