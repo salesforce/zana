@@ -19,7 +19,7 @@ import {
   resetPluginSettingsCache,
   type DeepLinkedSettingsEntry
 } from '../providers/plugins';
-import { PLUGIN_SETTING_WAIT_MS, revealPluginSetting } from '../../../views/extensions/ExtensionsHub';
+import { PLUGIN_SETTING_WAIT_MS, revealPluginSetting } from '../../../plugins/reveal-plugin-setting';
 
 const SECRET_DUMMY = 'hunter2-fixture-dummy-0000';
 const app = (id: string, name: string, enabled = true): PluginAppEntry => ({ id, name, enabled } as PluginAppEntry);
@@ -57,7 +57,8 @@ describe('plugin settings provider', () => {
     const relay = entries.find((e) => e.id === 'plugin.p1.relay')!;
     expect(relay).toMatchObject({ label: 'Relay endpoint', help: 'Quokka gateway address.', section: 'Plugins › Fixture One' });
     const relayUrl = new URL(relay.href, 'http://h');
-    expect(relayUrl.searchParams.get('view')).toBe('installed');
+    expect(relayUrl.pathname).toBe('/settings/plugins/p1');
+    expect(relayUrl.searchParams.get('area')).toBe('configuration');
     expect(relayUrl.searchParams.get(PLUGIN_SETTING_PARAM)).toBe('relay'); // the descriptor key, not the label
     expect(relay.href.endsWith('#plugin-configure')).toBe(true);
     expect(relay.value?.(config)).toBe('https://relay.test/quokka');
@@ -132,7 +133,7 @@ describe('plugin settings provider', () => {
     const entries = pluginSettingsSearchProvider(config) as DeepLinkedSettingsEntry[];
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ id: 'plugin.p9.section.s', label: 'Custom panel', help: 'Panel text', section: 'Plugins › p9' });
-    expect(entries[0].href.endsWith('#plugin-configure')).toBe(true);
+    expect(entries[0].href).toBe('/settings/plugins/p9?area=plugin');
     slots.sections = [{ pluginId: 'p9', id: 's', description: 'Only text' }];
     expect((pluginSettingsSearchProvider(config)[0]).label).toBe('p9');
   });
@@ -169,11 +170,12 @@ describe('plugin settings provider', () => {
     expect(getSettingsSearchSourcesVersion()).toBeGreaterThan(v0);
   });
 
-  it('builds a deep link to the INSTALLED plugin page (Browse only knows catalogue entries)', () => {
+  it('builds a canonical Settings deep link with an encoded field key', () => {
     const href = pluginSettingHref('x y', 'A&B');
     expect(href).toContain('/x%20y?');
     const url = new URL(href, 'http://h');
-    expect(url.searchParams.get('view')).toBe('installed');
+    expect(url.pathname).toBe('/settings/plugins/x%20y');
+    expect(url.searchParams.get('area')).toBe('configuration');
     expect(url.searchParams.get(PLUGIN_SETTING_PARAM)).toBe('A&B');
     expect(url.hash).toBe('#plugin-configure');
   });

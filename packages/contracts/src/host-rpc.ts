@@ -100,7 +100,8 @@ import {
 // provider bridges route native tool calls through the host daemon's fail-closed
 // tool/policy/decide relay (/internal/hosts/native-tool-policy). A pre-51 daemon answers
 // that request as unsupported, so the bridge denies every tool; the bump makes it self-update.
-export const HOST_RPC_PROTOCOL_VERSION = 51;
+// 52: machine-local encrypted environment settings and secret-free status.
+export const HOST_RPC_PROTOCOL_VERSION = 52;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -140,6 +141,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'plugin.host.cancel',
   'plugin.host.dispose',
   'host.environment.replace',
+  'host.environment.settings',
+  'host.environment.save',
   'peer.forward',
   'peer.control',
   'terminal.start',
@@ -1035,6 +1038,26 @@ export const HostEnvironmentReplaceResultSchema = z.object({
 }).strict();
 export type HostEnvironmentReplaceResult = z.infer<typeof HostEnvironmentReplaceResultSchema>;
 
+/** Owner-managed values stay on the selected machine; reads never return values. */
+export const MachineEnvironmentNameSchema = HostEnvironmentEntrySchema.shape.name
+  .refine((name) => /^[A-Z_][A-Z0-9_]*$/.test(name), { message: 'Use uppercase environment variable names' });
+export const MachineEnvironmentSaveSchema = z.object({
+  name: MachineEnvironmentNameSchema,
+  value: HostEnvironmentEntrySchema.shape.value.nullable(),
+  expectedRevision: z.string().min(1).max(64),
+}).strict().refine((entry) => entry.value === null || HostEnvironmentEntrySchema.safeParse({ name: entry.name, value: entry.value }).success, { message: 'Value is not allowed for this variable' });
+export const MachineEnvironmentSettingsSchema = z.object({
+  revision: z.string().min(1).max(64),
+  variables: z.array(z.object({
+    name: MachineEnvironmentNameSchema,
+    overriddenByEnvironment: z.boolean(),
+  }).strip()).max(HOST_ENVIRONMENT_MAX_ENTRIES),
+}).strip();
+export type MachineEnvironmentSettings = z.infer<typeof MachineEnvironmentSettingsSchema>;
+export type MachineEnvironmentSave = z.infer<typeof MachineEnvironmentSaveSchema>;
+const MachineEnvironmentSettingsCommandSchema = z.object({ type: z.literal('host.environment.settings') }).strict();
+const MachineEnvironmentSaveCommandSchema = MachineEnvironmentSaveSchema.safeExtend({ type: z.literal('host.environment.save') }).strict();
+
 export const PeerRequestEnvelopeSchema = z.object({
   protocolVersion: z.literal(2),
   pairId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
@@ -1102,6 +1125,7 @@ export const HostRpcCommandSchema = z.union([
   z.object({ type: z.literal('host.git_history'), root: PathSchema, limit: z.number().int().min(1).max(100) }).strict(),
   PluginHostCallCommandSchema, PluginHostCancelCommandSchema, PluginHostDisposeCommandSchema,
   HostEnvironmentReplaceCommandSchema,
+  MachineEnvironmentSettingsCommandSchema, MachineEnvironmentSaveCommandSchema,
   PeerForwardCommandSchema, PeerControlCommandSchema,
   HostGitFileCommandSchema,
   ProviderStatusCommandSchema,
@@ -1702,6 +1726,8 @@ export const HostRpcResultSchemaByType = {
   'plugin.host.cancel': z.object({ cancelled: z.boolean() }).strict(),
   'plugin.host.dispose': z.object({ disposed: z.boolean() }).strict(),
   'host.environment.replace': HostEnvironmentReplaceResultSchema,
+  'host.environment.settings': MachineEnvironmentSettingsSchema,
+  'host.environment.save': MachineEnvironmentSettingsSchema,
   'peer.forward': z.object({ status: z.number().int().min(100).max(599), body: z.string().max(8 * 1024 * 1024) }).strict(),
   'peer.control': z.object({ status: z.number().int().min(100).max(599), body: z.string().max(PEER_CONTROL_MAX_BYTES) }).strict(),
   'terminal.start': TerminalStartResultSchema,

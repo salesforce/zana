@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { Check, Loader2, X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { startWaveform } from './waveform.js';
+import { ZanaSpinner } from '../../fairy/ZanaSpinner.js';
 
 export function VoiceRecordingBar({
   state,
@@ -48,7 +49,7 @@ export function VoiceRecordingBar({
         disabled={isTranscribing}
         onClick={onConfirm}
       >
-        {isTranscribing ? <Loader2 size={14} className="voice-input-spin" /> : <Check size={14} />}
+        {isTranscribing ? <ZanaSpinner size={14} className="voice-input-spin" /> : <Check size={14} />}
       </button>
     </div>
   );

@@ -79,6 +79,7 @@ const emptyComponents: Record<string, string[]> = {
   '@/views/SplitWorkspaceRoute': ['SplitWorkspaceRoute'],
   './components/ProjectScopedNav.js': ['ProjectScopedNav'],
   '@/views/settings/SettingsView': ['SettingsView'],
+  '@/views/settings/PluginSettingsView': ['PluginSettingsView'],
   '@/views/extensions/ExtensionsView': ['ExtensionsView'],
   '@/views/follow-ups/FollowUpsView': ['FollowUpsView'],
   '@/views/suggestions/SuggestionsView': ['SuggestionsView'],
@@ -339,4 +340,15 @@ it('opens the video library from mobile navigation and closes the drawer', async
   expect(fixtures.drawer).toHaveBeenCalledWith(false);
   expect(useHelpVideos.getState().openId).toBe('guided-start');
   act(() => useHelpVideos.getState().close());
+});
+
+it.each([
+  ['/settings/plugins/sample', '/settings/plugins/sample'],
+  ['/extensions/plugins/sample?view=installed&setting=token#plugin-configure', '/settings/plugins/sample?setting=token&area=configuration'],
+  ['/extensions/plugins/sample?view=installed&setup=connect#plugin-configure', '/settings/plugins/sample?setup=connect&area=plugin'],
+  ['/extensions/plugins/sample?view=installed', '/extensions/plugins/sample?view=installed']
+])('routes plugin settings and preserves management URLs: %s', async (url, expected) => {
+  fixtures.nav = 'home'; fixtures.compact = false;
+  render(<MemoryRouter initialEntries={[url]}><App /></MemoryRouter>);
+  expect((await screen.findByTestId('location')).textContent).toBe(expected);
 });

@@ -86,5 +86,6 @@ export function harnessLoginStatus(
       return { state: 'unverified', loginCommand: login.loginCommand };
     }
   }
-  return { state: 'signed_in', loginCommand: login.loginCommand };
+  // A catalog can be static or cached. Only provider health can confirm credentials.
+  return { state: 'unverified', loginCommand: login.loginCommand };
 }

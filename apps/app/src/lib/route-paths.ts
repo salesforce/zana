@@ -15,6 +15,7 @@ export const GOALS_ROUTE_PATH = '/goals';
 
 export const SETTINGS_ROUTE_PATH = '/settings';
 export const SETTINGS_SECTION_ROUTE_PATH = '/settings/:section';
+export const SETTINGS_PLUGIN_ROUTE_PATH = '/settings/plugins/:pluginId';
 export const SETTINGS_PROJECT_ALIAS_ROUTE_PATH = '/settings/project';
 
 export const TOOLS_ROUTE_PATH = '/extensions';
@@ -195,6 +196,23 @@ export function getSettingsRoutePath(section?: string, anchor?: string): string 
   return `${base}#${encodeURIComponent(anchor)}`;
 }
 
+/** Canonical plugin configuration destination, independent of the management hub. */
+export function getPluginSettingsRoutePath(pluginId: string, params: Record<string, string> = {}): string {
+  const query = new URLSearchParams(params).toString();
+  return `/settings/plugins/${encodeURIComponent(pluginId)}${query ? `?${query}` : ''}`;
+}
+
+/** Saved Configure/setup links remain valid. Keep plugin-owned query parameters. */
+export function legacyPluginSettingsRoute(location: { pathname: string; search: string; hash: string }): string | null {
+  const match = matchPath(TOOLS_PLUGIN_DETAIL_ROUTE_PATH, location.pathname);
+  const params = new URLSearchParams(location.search);
+  if (!match?.params.pluginId || (location.hash !== '#plugin-configure' && !params.has('setting'))) return null;
+  params.delete('view');
+  if (!params.has('area')) params.set('area', params.has('setting') || !params.has('setup') ? 'configuration' : 'plugin');
+  const target = getPluginSettingsRoutePath(decodeRouteParam(match.params.pluginId));
+  return `${target}?${params.toString()}${location.hash}`;
+}
+
 export function getProjectSettingsRoutePath(projectId: string): string {
   return `/projects/${encodeURIComponent(projectId)}/settings`;
 }
@@ -367,6 +385,7 @@ const baseRoutePatterns: readonly string[] = [
   GOALS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
+  SETTINGS_PLUGIN_ROUTE_PATH,
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   TOOLS_ROUTE_PATH,
   TOOLS_PLUGINS_ROUTE_PATH,

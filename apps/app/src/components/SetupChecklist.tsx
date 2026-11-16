@@ -4,7 +4,6 @@ import {
   PackageCheck,
   CheckCircle2,
   XCircle,
-  Loader2,
   AlertTriangle,
   Download,
   Copy,
@@ -14,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useSetup, useUi } from '../store.js';
 import type { DependencyState } from '@zana-ai/zcc-domain/product';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /**
  * First-run setup checklist — the visible half of the dependency doctor
@@ -37,7 +37,7 @@ function PhaseIcon({ dep }: { dep: DependencyState }) {
       return <CheckCircle2 size={17} className="setup-row-icon setup-row-icon--ok" aria-label="installed" />;
     case 'installing':
     case 'checking':
-      return <Loader2 size={17} className="setup-row-icon setup-row-icon--spin" aria-label="working" />;
+      return <ZanaSpinner size={17} className="setup-row-icon setup-row-icon--spin" aria-label="working" />;
     case 'failed':
       return <XCircle size={17} className="setup-row-icon setup-row-icon--err" aria-label="failed" />;
     case 'missing':
@@ -159,7 +159,7 @@ function SetupChecklist({ onClose }: Props) {
         <ul className="setup-list">
           {items.length === 0 ? (
             <li className="setup-empty">
-              <Loader2 size={15} className="setup-row-icon--spin" /> Checking your setup…
+              <ZanaSpinner size={15} className="setup-row-icon--spin" /> Checking your setup…
             </li>
           ) : (
             items.map((dep) => (
@@ -199,7 +199,7 @@ function SetupChecklist({ onClose }: Props) {
                 >
                   {status.busy ? (
                     <>
-                      <Loader2 size={14} className="setup-row-icon--spin" /> Installing…
+                      <ZanaSpinner size={14} className="setup-row-icon--spin" /> Installing…
                     </>
                   ) : (
                     <>

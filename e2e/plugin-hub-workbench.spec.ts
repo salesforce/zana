@@ -1,5 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createServer } from 'node:net';
+import { chromium } from '@playwright/test';
+import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
@@ -15,7 +18,7 @@ test('Plugin detail pages preserve management, settings areas, list state, and n
       zcc: { name: broken ? 'Hub broken' : 'Hub example', description: broken ? 'Description survives runtime failures' : 'A realistic plugin for managing work', branding: { icon: 'Puzzle' }, server: './server.mjs', ...(!broken ? { app: './app.js' } : {}) } }));
     writeFileSync(join(rootDir, 'server.mjs'), broken ? `export default async api => { throw Error('Fixture runtime unavailable'); };` :
       `export default async api => {
-        api.settings.define({name:{type:'string',label:'Display name'},
+        api.settings.define({name:{type:'string',label:'Display name'},budget:{type:'number',label:'Retry budget'},
           ...Object.fromEntries(Array.from({length:10},(_,i)=>['client'+i,{type:'string',label:'Service '+i+' OAuth client ID',
             description:'Preconfigured for internal single sign-on. Override only for a custom registration. Callback: http://localhost:3000/callback/service-'+i}]))});
         api.rpc.method('ping',()=> 'ready');
@@ -47,29 +50,24 @@ test('Plugin detail pages preserve management, settings areas, list state, and n
     const page = win.getByRole('region', { name: 'Installed plugin' });
     await expect(page).toBeVisible();
     await expect(row).toBeHidden();
-    await page.getByRole('tab', { name: 'Settings', exact: true }).click();
-    const body = page.locator('.ext-plugin-detail-page-body');
-    const tabs = page.getByRole('tablist', { name: 'Plugin detail sections' });
-    const areas = page.getByRole('navigation', { name: 'Plugin settings areas' });
-    await expect(page.getByText('Connected accounts and tools')).toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Display name' })).toBeHidden();
+    await page.getByRole('link', { name: 'Settings →' }).click();
+    await expect(win).toHaveURL(/\/settings\/plugins\/hub-example$/);
+    const settings = win.locator('.settings-panel--plugin');
+    const areas = settings.getByRole('navigation', { name: 'Plugin settings areas' });
+    await expect(win.getByTestId('settings-plugin-hub-example')).toHaveAttribute('aria-current', 'page');
+    await expect(win.getByTestId('settings-plugin-hub-broken')).toHaveCount(0);
+    await expect(settings.getByText('Connected accounts and tools')).toBeVisible();
+    await expect(settings.getByRole('textbox', { name: 'Display name' })).toBeHidden();
     await areas.getByRole('button', { name: 'Configuration', exact: true }).click();
-    await expect(page.getByText('Connected accounts and tools')).toBeHidden();
-    await expect(tabs).toBeInViewport();
-    expect(await body.evaluate(el => el.scrollTop)).toBe(0);
-    await expect(win.getByRole('separator', { name: 'Resize plugin details' })).toHaveCount(0);
-    const fieldRow = page.locator('[data-plugin-setting-key="client0"]');
+    await expect(settings.getByText('Connected accounts and tools')).toBeHidden();
+    const fieldRow = settings.locator('[data-plugin-setting-key="client0"]');
     expect((await fieldRow.locator('.plugin-setting-desc').boundingBox())!.height).toBeLessThan(100);
-    await body.evaluate(el => { el.scrollTop = el.scrollHeight; });
-    await expect(tabs).toBeInViewport();
-    const bodyBox = (await body.boundingBox())!;
-    expect((await tabs.boundingBox())!.y).toBeGreaterThanOrEqual(bodyBox.y - 1);
-    await tabs.getByRole('tab', { name: 'Installation', exact: true }).click();
-    await tabs.getByRole('tab', { name: 'Settings', exact: true }).click();
-    expect(await body.evaluate(el => el.scrollTop)).toBe(0);
-    await page.getByRole('textbox', { name: 'Display name' }).fill('Saved through the page');
-    await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+    await settings.getByRole('spinbutton', { name: 'Retry budget' }).fill('7');
+    await settings.getByRole('textbox', { name: 'Display name' }).fill('Saved through the page');
+    await settings.getByRole('link', { name: 'Plugin details' }).click();
+    await expect(page).toBeVisible();
     await expect.poll(() => win.evaluate(() => window.cc.pluginApps.getSettings('hub-example').then(snap => snap.values.name))).toBe('Saved through the page');
+    await expect.poll(() => win.evaluate(() => window.cc.pluginApps.getSettings('hub-example').then(snap => snap.values.budget))).toBe(7);
     await page.getByRole('button', { name: 'Reload', exact: true }).click();
     await expect.poll(() => win.evaluate(() => window.cc.pluginApps.callRpc('hub-example', 'ping'))).toBe('ready');
     await page.getByRole('button', { name: 'Back to Plugins' }).click();
@@ -88,19 +86,48 @@ test('Plugin detail pages preserve management, settings areas, list state, and n
     const hubBox = (await win.locator('.ext-hub-shell').boundingBox())!;
     expect(pageBox.width).toBeGreaterThan(hubBox.width * .9);
     await navigate('/extensions/plugins/hub-example?view=installed&setting=client9#plugin-configure');
-    await expect(page.locator('[data-plugin-setting-key="client9"]')).toHaveClass(/settings-search-flash/);
-    await expect(page.getByRole('textbox', { name: 'Service 9 OAuth client ID' })).toBeFocused();
-    await expect(tabs).toBeInViewport();
-    await captureElectronScreenshot(handle.electron, win, testInfo.outputPath('plugins-page-wide.png'));
-    // The native window has a 900px minimum width; exercise the supported desktop range.
+    await expect(win).toHaveURL(/\/settings\/plugins\/hub-example\?setting=client9&area=configuration#plugin-configure$/);
+    await expect(settings.locator('[data-plugin-setting-key="client9"]')).toHaveClass(/settings-search-flash/);
+    await expect(settings.getByRole('textbox', { name: 'Service 9 OAuth client ID' })).toBeFocused();
+    await captureElectronScreenshot(handle.electron, win, testInfo.outputPath('plugin-settings-wide.png'));
     for (const width of [1100, 900]) {
       await win.setViewportSize({ width, height: 900 });
-      await expect(page).toBeVisible();
-      expect(await win.locator('.extensions-panel').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-      expect(await page.locator('.ext-plugin-detail-page-body').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-      await expect(page.getByRole('heading', { name: 'Hub example', exact: true })).toHaveCSS('text-transform', 'none');
-      await captureElectronScreenshot(handle.electron, win, testInfo.outputPath(`plugins-page-${width}.png`));
+      await expect(settings).toBeVisible();
+      expect(await settings.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await captureElectronScreenshot(handle.electron, win, testInfo.outputPath(`plugin-settings-${width}.png`));
     }
+    await navigate('/extensions/plugins/hub-example?view=installed&setup=connect#plugin-configure');
+    await expect(win).toHaveURL(/setup=connect&area=plugin#plugin-configure$/);
+    await expect(settings.getByText('Connected accounts and tools')).toBeVisible();
+    // The browser transport and phone drawer use the same selected-plugin page.
+    const reservation = createServer();
+    await new Promise<void>(done => reservation.listen(0, '127.0.0.1', done));
+    const port = (reservation.address() as { port: number }).port;
+    await new Promise<void>(done => reservation.close(() => done()));
+    const serverUrl = `http://127.0.0.1:${port}`;
+    const gateway = await startMobileGateway({ upstream: new URL(win.url()).origin, publicUrl: serverUrl, port });
+    const browser = await chromium.launch();
+    try {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+      const pair = await context.request.post(`${serverUrl}/_mobile/pair`, { data: { code: gateway.pair().code, label: 'Plugin settings test' } });
+      const credential = await pair.json();
+      expect((await context.request.post(`${serverUrl}/_mobile/session`, { headers: { authorization: `Bearer ${credential.credential}` } })).ok()).toBe(true);
+      const phone = await context.newPage();
+      await phone.goto(`${serverUrl}/settings/plugins/hub-example?area=configuration`);
+      const phoneSettings = phone.locator('.settings-panel--plugin');
+      await expect(phoneSettings.getByRole('spinbutton', { name: 'Retry budget' })).toHaveValue('7');
+      await phoneSettings.getByRole('spinbutton', { name: 'Retry budget' }).fill('8');
+      await phoneSettings.getByRole('heading', { name: 'Hub example', exact: true }).click();
+      await expect.poll(() => phone.evaluate(() => fetch('/api/v1/plugin-apps/hub-example/settings').then(response => response.json()).then(snap => snap.values.budget))).toBe(8);
+      expect(await phoneSettings.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await phone.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
+      const drawer = phone.getByRole('dialog', { name: 'Navigation', exact: true });
+      await drawer.getByTestId('settings-plugin-hub-example').click();
+      await expect(drawer).toBeHidden();
+      await expect(phoneSettings.getByText('Connected accounts and tools')).toBeVisible();
+      await phone.screenshot({ path: testInfo.outputPath('plugin-settings-phone.png') });
+    } finally { await browser.close(); await gateway.close(); }
+    await settings.getByRole('link', { name: 'Plugin details' }).click();
     await page.getByRole('button', { name: 'Back to Plugins' }).click();
     await expect(row).toBeVisible();
     await win.setViewportSize({ width: 1640, height: 1000 });
@@ -175,5 +202,8 @@ test('Plugin detail pages preserve management, settings areas, list state, and n
     await expect(row).toHaveCount(0);
     await expect(page).toHaveCount(0);
     expect(await win.evaluate(async () => (await window.cc.pluginApps.list()).some(row => row.id === 'hub-example'))).toBe(false);
+    await navigate('/settings/plugins/hub-example');
+    await expect(settings.getByText('This plugin is no longer installed.')).toBeVisible();
+    await expect(win.getByTestId('settings-plugin-hub-example')).toHaveCount(0);
   } finally { await closeApp(handle.electron); }
 });

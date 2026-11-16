@@ -23,6 +23,24 @@ afterEach(() => {
 });
 
 describe('createProjectStore', () => {
+  it('migrates old pinned defaults and persists independent, validated thread overrides', async () => {
+    const home = makeDir();
+    const projectsFile = join(home, 'projects.json');
+    writeFileSync(projectsFile, JSON.stringify({ version: 1, projects: [
+      { id: 'old', name: 'Old', path: home, launchDefault: { kind: 'exact-profile', adapterId: 'codex' } },
+      { id: 'inherit', name: 'Inherit', path: home },
+      { id: 'explicit', name: 'Explicit', path: home, defaultThreadProviderId: 'custom' }
+    ] }));
+    const store = createProjectStore({ projectsFile });
+    expect(store.list().map(project => project.defaultThreadProviderId)).toEqual(['codex', undefined, 'custom']);
+    await store.update('old', { name: 'Renamed', defaultThreadProviderId: ' new-provider ' });
+    expect(createProjectStore({ projectsFile }).list()[0]).toMatchObject({ name: 'Renamed', defaultThreadProviderId: 'new-provider', launchDefault: { adapterId: 'codex' } });
+    await store.update('old', { defaultThreadProviderId: null });
+    expect(createProjectStore({ projectsFile }).list()[0].defaultThreadProviderId).toBeNull();
+    for (const invalid of [false, '', 'x'.repeat(257), 'bad\nkey', undefined]) {
+      await expect(store.update('old', { defaultThreadProviderId: invalid as never })).rejects.toThrow('invalid thread default');
+    }
+  });
   it('persists icons across reloads and concurrent updates, and rejects invalid icons', async () => {
     const home = makeDir();
     const options = { projectsFile: join(home, '.zcc', 'projects.json') };

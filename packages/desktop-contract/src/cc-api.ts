@@ -341,6 +341,7 @@ export interface CcApi {
         icon?: Project['icon'];
         defaultAgents?: string[];
         defaultPersonas?: string[];
+        defaultThreadProviderId?: Project['defaultThreadProviderId'];
         favorite?: boolean;
         /**
          * Remote (SSH) projects only: the start directory the terminal `cd`s into

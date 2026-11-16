@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import { RegisteredHarnesses } from './RegisteredHarnesses.js';
 const state = vi.hoisted(() => ({ inventory: {} as any, snapshot: {} as any, ensure: vi.fn(), ensureProvider: vi.fn(), reload: vi.fn(), refresh: vi.fn(), refreshStatus: vi.fn(), catalog: null as any }));
+vi.mock('./ProviderAuthentication.js', () => ({ ProviderAuthentication: ({ name, onReady }: { name: string; onReady: () => void }) => <button onClick={onReady}>Finish {name} sign-in</button> }));
 vi.mock('../../hooks/useRegisteredThreadProviders.js', () => ({ useRegisteredThreadProviders: () => state.inventory }));
 vi.mock('../../components/thread/pickers/ProviderIcon.js', () => ({ ProviderIcon: () => <span>icon</span> }));
 vi.mock('../../components/thread/pickers/thread-model-catalog.js', () => ({ threadModelCatalogForHost: () => state.catalog ?? ({ subscribe: () => () => {}, getSnapshot: () => state.snapshot, ensure: state.ensure, ensureProvider: state.ensureProvider, reload: state.reload, refresh: state.refresh }) }));
@@ -23,11 +24,23 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe('RegisteredHarnesses', () => {
+  it('sets an arbitrary registered thread provider without changing the CLI default', async () => {
+    state.inventory.providers = [{ id: 'plugin-custom', displayName: 'Custom', pluginId: 'owner' }];
+    state.snapshot.byProvider['plugin-custom'] = entry();
+    const update = vi.fn(async () => {});
+    render(<View config={{ defaultHarness: 'claude' }} update={update} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Set as thread default' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ defaultThreadProviderId: 'plugin-custom' }, { throwOnError: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Default for threads' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Custom' }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    expect(update.mock.calls[1]).toEqual([{ defaultThreadProviderId: 'plugin-custom' }, { throwOnError: true }]);
+  });
   it('shows registered providers and links to their actual plugin without seeded rows', () => {
-    render(<View config={{ defaultHarness: 'codex' }} />);
+    render(<View config={{ defaultThreadProviderId: 'codex' }} />);
     expect(screen.getByText('Actual Mac · 1 registered')).toBeTruthy();
     expect(screen.getByText('Agent 1.2.3')).toBeTruthy();
-    expect(screen.getByText('Default for new agents')).toBeTruthy();
+    expect(screen.getByText('Thread default')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'From Provider owner' }).getAttribute('href')).toBe('/extensions/plugins/owner?view=installed');
     expect(screen.getByRole('link', { name: 'Add harness' }).getAttribute('href')).toBe('/extensions/plugins/browse');
     expect(screen.queryByText('Claude Code')).toBeNull();
@@ -52,29 +65,33 @@ describe('RegisteredHarnesses', () => {
     view.rerender(<View status={[{ ...probe, installed: false }]} />);
     expect(screen.getByText('Command-line agent not installed')).toBeTruthy();
   });
-  it('persists the existing launch default, with pending and failure states', async () => {
+  it('persists the thread default, with pending and failure states', async () => {
     let reject!: (reason: Error) => void;
     const update = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
     render(<View update={update} />);
-    const button = screen.getByRole('button', { name: 'Use for new agents' });
+    const button = screen.getByRole('button', { name: 'Set as thread default' });
     fireEvent.click(button);
-    expect(update).toHaveBeenCalledWith({ defaultHarness: 'codex' }, { throwOnError: true });
+    expect(update).toHaveBeenCalledWith({ defaultThreadProviderId: 'codex' }, { throwOnError: true });
     expect((button as HTMLButtonElement).disabled).toBe(true);
     reject(new Error('save failed'));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not save Codex'));
-    expect(screen.queryByText('Default for new agents')).toBeNull();
+    expect(screen.queryByText('Thread default')).toBeNull();
     expect((button as HTMLButtonElement).disabled).toBe(false);
   });
-  it('retains default badges from persisted configuration and blocks disabled CLI defaults', async () => {
+  it('retains persisted badges and allows a thread default when its CLI agent is disabled', async () => {
     const update = vi.fn(async () => {});
     const view = render(<View update={update} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Use for new agents' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Set as thread default' }));
     await waitFor(() => expect(update).toHaveBeenCalledOnce());
-    view.rerender(<View update={update} config={{ defaultHarness: 'codex' }} />);
+    view.rerender(<View update={update} config={{ defaultThreadProviderId: 'codex' }} />);
     expect((screen.getByRole('button', { name: 'Default' }) as HTMLButtonElement).disabled).toBe(true);
-    view.rerender(<View config={{ harnessCodexEnabled: false }} />);
+    view.rerender(<View update={update} config={{ harnessCodexEnabled: false }} />);
     expect(screen.getByText('CLI disabled')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Use for new agents' }) as HTMLButtonElement).disabled).toBe(true);
+    const threadDefaultButton = screen.getByRole('button', { name: 'Set as thread default' }) as HTMLButtonElement;
+    expect(threadDefaultButton.disabled).toBe(false);
+    fireEvent.click(threadDefaultButton);
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    expect(update.mock.calls[1]).toEqual([{ defaultThreadProviderId: 'codex' }, { throwOnError: true }]);
   });
   it('browses bounded models, expands on request, reloads the same provider, and closes', () => {
     state.snapshot.byProvider.codex.models = Array.from({ length: 51 }, (_, i) => model(i));
@@ -139,8 +156,14 @@ it('marks retained models stale when the real catalog roster refresh fails', asy
     fireEvent.click(screen.getByRole('button', { name: 'Refresh harnesses' }));
     await screen.findByText('Previously loaded models · Could not check provider availability: Host offline');
     expect(screen.queryByText('1 model available')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Use for new agents' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Set as thread default' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Browse Codex models' }));
     expect(screen.getByText('Model 0')).toBeTruthy();
   } finally { view.unmount(); catalogModule.resetThreadModelCatalog(); }
+});
+
+it('refreshes the selected machine provider catalogue when native sign-in becomes ready', () => {
+  render(<View />);
+  fireEvent.click(screen.getByRole('button', { name: 'Finish Codex sign-in' }));
+  expect(state.refresh).toHaveBeenCalledWith('codex');
 });

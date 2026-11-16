@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
+  pluginRows: [] as any[],
   dismiss: null as (() => void) | null,
   pluginList: vi.fn(async () => []),
   ui: {
@@ -18,6 +19,7 @@ const h = vi.hoisted(() => ({
   snapshotEnabled: [] as boolean[]
 }));
 
+vi.mock('@/plugins/plugin-settings-index', () => ({ usePluginSettingsIndex: () => ({ configurable: h.pluginRows, error: '' }) }));
 vi.mock('../../store.js', () => ({
   useUi: (select: (state: typeof h.ui) => unknown) => select(h.ui),
   // Same shape as the zustand store: runtime providers read and subscribe to it.
@@ -71,6 +73,7 @@ it('opens another Zana from the Settings menu and search without mixing it into 
 });
 
 beforeEach(() => {
+  h.pluginRows = [];
   h.dismiss = null;
   h.ui.settingsTab = 'global';
   h.ui.selectedProjectId = 'selected';
@@ -333,4 +336,16 @@ describe('SettingsPane Peers navigation', () => {
     expect(screen.getByTestId('settings-nav-peers')).toBeTruthy();
     expect(screen.getByTestId('settings-nav-machines')).toBeTruthy();
   });
+});
+
+it('offers configurable plugins in a separate group and dismisses compact navigation on selection', async () => {
+  h.dismiss = vi.fn();
+  h.pluginRows = [{ module: { id: 'custom', title: 'Custom settings', icon: 'Puzzle' }, plugin: null, entry: null }];
+  mount();
+  const link = screen.getByRole('link', { name: 'Custom settings' });
+  expect(link.getAttribute('href')).toBe('/settings/plugins/custom');
+  fireEvent.click(link);
+  expect(screen.getByTestId('location').textContent).toBe('/settings/plugins/custom');
+  expect(link.getAttribute('aria-current')).toBe('page');
+  expect(h.dismiss).toHaveBeenCalledOnce();
 });

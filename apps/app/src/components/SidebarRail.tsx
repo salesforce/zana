@@ -22,7 +22,7 @@ import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
-import { getPluginDetailRoutePath } from '../lib/route-paths.js';
+import { getPluginSettingsRoutePath } from '../lib/route-paths.js';
 import { appNavigate } from '../lib/app-navigate.js';
 import { SidebarResizer } from './SidebarResizer.js';
 import {
@@ -317,7 +317,7 @@ export function SidebarRail({
               onClick={() => {
                 void action.run({
                   openSettings() {
-                    appNavigate(getPluginDetailRoutePath(action.pluginId, { view: 'installed' }));
+                    appNavigate(getPluginSettingsRoutePath(action.pluginId));
                   },
                   toPluginPanel(path, options) {
                     return appNavigate(hrefForPluginNavPanel(action.pluginId, path, options?.subPath), {

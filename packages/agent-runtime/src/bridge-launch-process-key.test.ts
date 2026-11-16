@@ -66,4 +66,10 @@ describe("bridgeLaunchProcessKey", () => {
     expect(bridgeLaunchProcessKey(declared)).toBe(bridgeLaunchProcessKey({ ...declared, envPassthrough: ["ZCC_FIRST", "ZCC_SECOND"] }));
     expect(bridgeLaunchProcessKey(base)).toBe(bridgeLaunchProcessKey({ ...base, envPassthrough: undefined }));
   });
+  it('separates new machine environment generations without changing unconfigured launches', () => {
+    const first = { ...base, environmentRevision: 'first' };
+    expect(bridgeLaunchProcessKey(first)).not.toBe(bridgeLaunchProcessKey(base));
+    expect(bridgeLaunchProcessKey(first)).not.toBe(bridgeLaunchProcessKey({ ...base, environmentRevision: 'second' }));
+    expect(bridgeLaunchProcessKey({ ...base, environmentRevision: undefined })).toBe(bridgeLaunchProcessKey(base));
+  });
 });

@@ -34,9 +34,9 @@ it.each([
   expect(screen.getByRole('heading').textContent).toBe('CLI Agents aren’t supported on mobile yet');
   expect(screen.getByText(/Open this agent in the desktop app/)).toBeTruthy();
   const notice = screen.getByTestId('cli-agent-mobile-unsupported');
-  expect(notice.getAttribute('data-art')).toBe('desktop');
+  expect(notice.getAttribute('data-art')).toBe('mobile');
   expect(notice.querySelector('.pane-empty-art')?.getAttribute('aria-hidden')).toBe('true');
-  expect(notice.querySelector('.lucide-monitor')).toBeTruthy();
+  expect(notice.querySelector('[data-scene="mobile"] .fairy-mobile-laptop')).toBeTruthy();
   expect(screen.queryByRole('status')).toBeNull();
 });
 

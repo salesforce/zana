@@ -28,6 +28,7 @@ import { favoritePaletteKeys } from './palette/favoriteItems.js';
 import { paneCommandsAvailable } from '../lib/split-layout/paneCommands.js';
 import { platformShortcut } from '../lib/platformShortcut.js';
 import { FileIcon } from './FileIcon.js';
+import { FairyEmpty } from './fairy/ZanaSpinner.js';
 
 interface Props {
   onClose: () => void;
@@ -606,7 +607,7 @@ function renderFileRows(
   chooseFile: (f: WalkedFile) => void
 ) {
   if (files === null) return <div className="palette-empty">Indexing project files…</div>;
-  if (fileRows.length === 0) return <div className="palette-empty">No matching files</div>;
+  if (fileRows.length === 0) return <div className="palette-empty"><FairyEmpty title="No matching files" /></div>;
   return fileRows.map((r, i) => (
     <button
       key={r.file.path}
@@ -663,7 +664,7 @@ function renderLaunchRows(
   if (hosts === null && launchRows.length === 0) {
     return <StencilList label="Loading hosts" className="palette-empty" />;
   }
-  if (launchRows.length === 0) return <div className="palette-empty">No matching project or host</div>;
+  if (launchRows.length === 0) return <div className="palette-empty"><FairyEmpty title="No matching project or host" /></div>;
   return launchRows.map((r, i) => {
     const t = r.target;
     const label = launchTargetLabel(t);
@@ -701,8 +702,8 @@ function renderSlashRows(
   runSlash: (cmd: SlashCommand, inActiveTab: boolean) => void
 ) {
   if (!hasProject) return <div className="palette-empty">Select a project to run slash commands</div>;
-  if (slashCommands.length === 0) return <div className="palette-empty">No slash commands found</div>;
-  if (slashRows.length === 0) return <div className="palette-empty">No matching commands</div>;
+  if (slashCommands.length === 0) return <div className="palette-empty"><FairyEmpty title="No slash commands found" /></div>;
+  if (slashRows.length === 0) return <div className="palette-empty"><FairyEmpty title="No matching commands" /></div>;
   return slashRows.map((r, i) => (
     <button
       key={r.cmd.id}
@@ -735,13 +736,15 @@ function renderCommandRows(
 ) {
   if (rows.length === 0) return (
     <div className="palette-empty">
-      <div className="command-palette-empty-title">{scope === 'favorites'
-        ? (query.trim() ? 'No favorites match your search' : 'No favorites yet')
-        : 'No results found'}</div>
-      <div className="command-palette-empty-help">{scope === 'favorites' && !query.trim()
-        ? 'Star a project or follow a thread or CLI agent to find it here.'
-        : scope === 'all' ? 'Try a thread title, project name, or command.'
-          : 'Try another search or choose All to search every category.'}</div>
+      <FairyEmpty
+        title={scope === 'favorites'
+          ? (query.trim() ? 'No favorites match your search' : 'No favorites yet')
+          : 'No results found'}
+        hint={scope === 'favorites' && !query.trim()
+          ? 'Star a project or follow a thread or CLI agent to find it here.'
+          : scope === 'all' ? 'Try a thread title, project name, or command.'
+            : 'Try another search or choose All to search every category.'}
+      />
     </div>
   );
 

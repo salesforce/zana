@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 vi.mock('@/modules', () => ({ useMergedModules: () => [] }));
 vi.mock('@/modules/ModulePanelHost', () => ({ getHost: vi.fn() }));
 vi.mock('@/plugins/plugin-app-loader', () => ({ reconcilePluginApps: vi.fn() }));
 vi.mock('@/plugins/PluginDefinedSettings', () => ({
   PluginSettingsForm: () => (
-    <section id="plugin-configure" tabIndex={-1}>
+    <section>
       <div data-plugin-setting-key="relay"><input aria-label="Relay" /></div>
       <div data-plugin-setting-key="mode"><input aria-label="Mode" /></div>
     </section>
@@ -25,6 +25,7 @@ vi.mock('../../lib/product-client.js', () => ({ product: {
 } }));
 import { useUi } from '@/store';
 import { InstalledView } from './ExtensionsHub.js';
+import { PluginSettingsView } from '../settings/PluginSettingsView';
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -32,7 +33,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-const open = (url: string) => render(<MemoryRouter initialEntries={[url]}><InstalledView /></MemoryRouter>);
+const open = (url: string) => render(<MemoryRouter initialEntries={[url]}><Routes><Route path="/extensions/plugins/:pluginId" element={<InstalledView />} /><Route path="/settings/plugins/:pluginId" element={<PluginSettingsView />} /></Routes></MemoryRouter>);
 
 it('reveals the ?setting row when the plugin page opens on #plugin-configure', async () => {
   open('/extensions/plugins/test?setting=relay#plugin-configure');
@@ -52,9 +53,8 @@ it('focuses configuration without scrolling the page tabs away', async () => {
   expect(document.querySelector('.settings-search-flash')).toBeNull();
 });
 
-it('does nothing without the #plugin-configure hash', async () => {
-  open('/extensions/plugins/test?setting=relay');
-  await waitFor(() => expect(document.querySelector('[aria-label="Relay"]')).toBeTruthy());
-  expect(screen.queryByRole('textbox', { name: 'Relay' })).toBeNull();
-  expect(document.querySelector('.settings-search-flash')).toBeNull();
+it('leaves an ordinary installed detail URL in the management hub', async () => {
+  open('/extensions/plugins/test?view=installed');
+  await screen.findByRole('region', { name: 'Installed plugin' });
+  expect(screen.queryByLabelText('Relay')).toBeNull();
 });

@@ -2,10 +2,9 @@ import type { HarnessFamily } from '@zana-ai/zcc-domain/product';
 import { canonicalThreadProviderId } from './thread-provider-catalog.js';
 
 /**
- * The provider a plugin-spawned thread runs on when the plugin names none:
- * Settings' default harness, the same choice the composer preselects. Only then
- * the first usable registered provider, so the result never hinges on plugin
- * registration order alone.
+ * Compatibility fallback for older callers with no explicit thread default:
+ * the legacy harness default, then the first usable registration. Configured
+ * thread defaults are resolved separately and must never silently fall back.
  */
 export function defaultSpawnProviderId(
   providers: ReadonlyArray<{ id: string; unavailableReason?: string }>,

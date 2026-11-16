@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, ArrowRight, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, RefreshCw } from 'lucide-react';
 import type { OnboardingProfile, OnboardingProgress } from '@zana-ai/zcc-domain/onboarding';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import type { PluginPackInstallation } from '@zana-ai/zcc-domain';
 import { product } from '../../lib/product-client.js';
 import { appNavigate } from '../../lib/app-navigate.js';
-import { getPluginDetailRoutePath, TOOLS_PLUGIN_BROWSE_ROUTE_PATH, TOOLS_PLUGINS_ROUTE_PATH } from '../../lib/route-paths.js';
+import { getPluginSettingsRoutePath, TOOLS_PLUGIN_BROWSE_ROUTE_PATH, TOOLS_PLUGINS_ROUTE_PATH } from '../../lib/route-paths.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { isScopedWindow } from '../../lib/windowScope.js';
 import { useDialogFocusTrap } from '../../hooks/useDialogFocusTrap.js';
@@ -16,6 +16,7 @@ import { PluginPacksCollection } from '../../views/extensions/PluginPacksCollect
 import { GitAccessChecklist } from './GitAccessChecklist.js';
 import { loadOnboarding, openOnboarding, saveOnboarding, useOnboarding } from './onboarding-store.js';
 import './onboarding.css';
+import { ZanaSpinner } from '../fairy/ZanaSpinner.js';
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -140,7 +141,7 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
   };
   const openPlugin = (id: string) => {
     useOnboarding.setState({ open: false });
-    appNavigate(`${getPluginDetailRoutePath(id, { view: 'installed' })}#plugin-configure`);
+    appNavigate(getPluginSettingsRoutePath(id));
   };
   const complete = (openTools = false) => void run(async () => {
     await persist({ ...progress, step: 'complete' });
@@ -210,7 +211,7 @@ export function Onboarding({ profile }: { profile: OnboardingProfile }) {
           : <button type="button" className="settings-btn" disabled={locked} onClick={() => choose('undecided')}><ArrowLeft size={14} /> Change setup choice</button>}
         {!general && step === 'marketplace' && gitAuth ? <div ref={setAccessFooter} className="onboarding-finish-actions" /> : null}
         {!general && step === 'marketplace' && !gitAuth ? <div className="onboarding-finish-actions">
-          <button type="button" className="settings-btn primary" disabled={locked} onClick={connectMarketplace}>{busy ? <><Loader2 size={14} /> Checking access…</> : <><RefreshCw size={14} /> {error ? 'Retry access check' : 'Check access and continue'}</>}</button>
+          <button type="button" className="settings-btn primary" disabled={locked} onClick={connectMarketplace}>{busy ? <><ZanaSpinner size={14} /> Checking access…</> : <><RefreshCw size={14} /> {error ? 'Retry access check' : 'Check access and continue'}</>}</button>
         </div> : null}
         {step === 'bundles' ? <div ref={setBundleFooter} className="onboarding-bundle-actions" /> : null}
         {general || step === 'connections' ? <div className="onboarding-finish-actions">

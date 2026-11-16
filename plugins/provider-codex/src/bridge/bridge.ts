@@ -97,6 +97,7 @@ import {
   type CodexAppServerRequestResponder,
 } from "./app-server-connection.js";
 import {
+  codexAccountReadSchema,
   getCodexProviderHealth,
   getCodexProviderInstallationRun,
   getCodexProviderInstallationStatus,
@@ -2079,7 +2080,20 @@ async function handleRequest(
       await handleModelList(request.id);
       break;
     case "provider/health":
-      sendResult(request.id, await getCodexProviderHealth());
+      sendResult(request.id, await getCodexProviderHealth(async () => {
+        const connection = spawnChildConnection({
+          recordThreadId: null, onNotification: () => {}, onExit: () => {},
+          onRequest: (_method, _params, responder) => responder.error(BRIDGE_JSON_RPC_ERRORS.METHOD_NOT_FOUND, 'Readiness checks do not serve requests'),
+        });
+        maintenanceConnections.add(connection);
+        try {
+          await connection.request({ method: 'initialize', params: CODEX_INITIALIZE_PARAMS, resultSchema: z.unknown(), timeoutMs: 3_000 });
+          return await connection.request({ method: 'account/read', params: { refreshToken: false }, resultSchema: codexAccountReadSchema, timeoutMs: 3_000 });
+        } finally {
+          maintenanceConnections.delete(connection);
+          await connection.kill();
+        }
+      }));
       break;
     case "provider/usage":
       sendResult(request.id, await getCodexProviderUsage());

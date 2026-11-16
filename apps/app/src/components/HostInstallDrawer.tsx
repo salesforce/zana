@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, HardDrive, Loader2, X } from 'lucide-react';
+import { Copy, HardDrive, X } from 'lucide-react';
 import { copyText } from '../lib/copy-text.js';
 import { lastHostInstallRepairTarget, retryLastHostInstall } from '../lib/host-install-run.js';
 import { HostRepairAgentAction } from './HostRepairAgentAction.js';
@@ -13,6 +13,8 @@ import {
 } from '../lib/host-install-drawer.js';
 import { useUi } from '../store.js';
 import './quick-access-panel.css';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
+import { ZanaFairy } from './fairy/ZanaFairy.js';
 
 /**
  * Compact quick access panel for live host-daemon Install/Fix logs, styled like
@@ -62,7 +64,7 @@ export function HostInstallDrawerView({
       }}>
       <header className="quick-access-header">
         {busy ? (
-          <Loader2 size={16} className="host-install-drawer-icon thread-command-send-spin" aria-hidden="true" />
+          <ZanaSpinner size={16} className="host-install-drawer-icon thread-command-send-spin" aria-hidden="true" />
         ) : (
           <HardDrive size={16} className="host-install-drawer-icon" aria-hidden="true" />
         )}
@@ -106,7 +108,7 @@ export function HostInstallDrawerView({
 
         {hasStages && !showLog ? null : logs.length === 0 && !error ? (
           <div className="quick-access-empty">
-            <span className="quick-access-empty-icon"><HardDrive size={22} aria-hidden="true" /></span>
+            <span className="quick-access-empty-icon quick-access-empty-icon--fairy"><ZanaFairy mood="still" /></span>
             <h3>Waiting for install output</h3>
             <p>SSH progress and the remote daemon log will show up here.</p>
           </div>

@@ -13,6 +13,7 @@ import { PluginHostManager } from './plugin-host-manager.js';
 import { hostFsWatcher } from './workspace-fs-watch.js';
 import { createCommandRuntime, type CommandRuntime } from './command-dispatch.js';
 import { MachineEnvironment } from './machine-environment.js';
+import { SavedMachineEnvironment } from './saved-machine-environment.js';
 import { handleHostRpcRequest } from './command-router.js';
 import { loadHostAppConfig, resolveZccDataDir } from './host-config.js';
 import { e2eIdleReapOverrides } from './e2e-idle-reap.js';
@@ -85,6 +86,7 @@ export function startEnrolledHostConnection(options: {
   let desktopBrowserBroker: DesktopBrowserBroker | null = null;
   // Server-pushed environment lives in this process only; it is dropped whenever the session ends.
   let machineEnvironment: MachineEnvironment | undefined = options.runtime?.machineEnvironment;
+  let savedEnvironment: SavedMachineEnvironment | undefined = options.runtime?.savedEnvironment;
   const sink: EventSink = createEventSink({
     isSessionOpen: () => socket?.connected === true,
     onPressure: paused => enrolledPty?.setOutputPaused(paused),
@@ -158,6 +160,7 @@ export function startEnrolledHostConnection(options: {
   const runtime = options.runtime ?? (() => {
     const loadConfig = () => loadHostAppConfig(options.dataDir);
     adapter = createRuntimeManager({
+      getEnvironmentRevision: () => savedEnvironment?.revision,
       ...e2eIdleReapOverrides(),
       emit: (event) => sink.emit(event),
       dataDir: options.dataDir,
@@ -213,6 +216,7 @@ export function startEnrolledHostConnection(options: {
       emit: (event) => runtime.emit(event)
     });
     machineEnvironment = new MachineEnvironment();
+    savedEnvironment = new SavedMachineEnvironment(options.dataDir ?? resolveZccDataDir());
     return createCommandRuntime({
       dataDir: options.dataDir,
       resolveLocalPeerApp: options.resolveLocalPeerApp ?? (options.localPeerAppDataDir
@@ -220,6 +224,7 @@ export function startEnrolledHostConnection(options: {
         : undefined),
       pluginHosts,
       machineEnvironment,
+      savedEnvironment,
       emit: (event) => sink.emit(event),
       loadConfig,
       startWork: (input) => adapter!.startWork(input),
@@ -256,6 +261,11 @@ export function startEnrolledHostConnection(options: {
       providerHealth: (input) => adapter!.providerHealth(input)
     });
   })();
+  // Finish loading before readiness is acknowledged; corruption leaves ambient
+  // gateway configuration available and makes only this settings surface unavailable.
+  const savedEnvironmentReady = options.runtime ? Promise.resolve() : savedEnvironment!.initialize().catch(() => {
+    console.warn('[environment] Saved environment could not be loaded; existing machine configuration is preserved.');
+  });
   runtime.emit = (event: HostEventEnvelope) => {
     if (event.kind === 'terminal.exited' && event.terminalId) runtime.terminals.delete(event.terminalId);
     sink.emit(event);
@@ -296,6 +306,7 @@ export function startEnrolledHostConnection(options: {
       : adapter?.getRuntimeSnapshot?.() ?? { threads: [], loadedEnvironments: [] },
     onTerminated: () => { void stopConnection().catch(() => undefined); },
     onHello: async hello => {
+      await savedEnvironmentReady;
       if (options.expectedRemoteInstanceId !== undefined && hello.productInstanceId !== options.expectedRemoteInstanceId) {
         void stopConnection().catch(() => undefined);
         return;
@@ -370,6 +381,8 @@ export function startEnrolledHostConnection(options: {
     machineEnvironment?.clear();
     options.onConnectionChange?.(false);
     socket?.close();
+    await savedEnvironmentReady;
+    await savedEnvironment?.clear();
     previewTunnel.close();
     runtime.peerSsh?.close?.();
     await peerControl.whenIdle();

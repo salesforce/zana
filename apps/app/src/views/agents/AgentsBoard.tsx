@@ -2,7 +2,7 @@ import { PluginAgentsView } from '@/plugins/PluginAgentsView';
 import { agentsViewKey, projectAgentsView, fleetKey, executionKey } from '@/plugins/agents-view-model';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bot, Moon, Plus, Puzzle, Search, X, Loader2 } from 'lucide-react';
+import { Bot, Moon, Plus, Puzzle, Search, X } from 'lucide-react';
 import type { ExecutionBoardProjection, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   useData,
@@ -45,6 +45,7 @@ import { PaneEmptyState } from '@/components/PaneEmptyState';
 import { MobilePageHeader } from '@/components/MobilePageHeader';
 import { hasDesktopBridge } from '@/lib/app-surface';
 import { takePendingSquadDetailsTarget } from '@/lib/squad-details-target';
+import { ZanaSpinner } from '../../components/fairy/ZanaSpinner.js';
 
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
@@ -361,7 +362,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             : "Close every idle agent that isn't waiting on a question or starred (working and blocked agents are left running)"
         }
       >
-        {busyAction === 'close' ? <Loader2 size={14} className="gus-spin" /> : <Moon size={14} />}
+        {busyAction === 'close' ? <ZanaSpinner size={14} className="gus-spin" /> : <Moon size={14} />}
         <span className="agents-board-btn-label">
           {busyAction === 'close' ? 'Closing' : 'Close'}
         </span>

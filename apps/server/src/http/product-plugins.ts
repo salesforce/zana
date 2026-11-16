@@ -1,4 +1,5 @@
 import { bridgeLaunchForProvider, getThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import { resolveThreadProviderDefault } from '@zana-ai/zcc-domain/launch-provider';
 import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
 import { join } from 'node:path';
 import {
@@ -412,6 +413,10 @@ export function createAttachedProductPluginService(
         harness,
         providers: listThreadProviders(),
         defaultHarness: ctx.config.getConfig().defaultHarness,
+        defaultThreadProviderId: resolveThreadProviderDefault(
+          ctx.toProjects().find(row => row.id === projectId)?.defaultThreadProviderId,
+          ctx.config.getConfig().defaultThreadProviderId
+        ).providerId,
         effectiveDefault: () => pluginEffectiveHarnessDefault(
           ctx,
           { pluginId, projectId, ...(hostId ? { hostId } : {}) },

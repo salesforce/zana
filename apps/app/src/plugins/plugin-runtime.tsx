@@ -18,7 +18,7 @@ import { callPluginRpc, getPluginSettings } from '@zana-ai/zcc-plugin-sdk/app';
 import { MarkdownContent } from '../components/MarkdownContent.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
-  getPluginDetailRoutePath,
+  getPluginSettingsRoutePath,
   getProjectRoutePath,
   getThreadRoutePath,
   NEW_THREAD_ROUTE_PATH
@@ -391,5 +391,5 @@ export function installPluginRuntime(): void {
 export { setActiveComposerApi } from './plugin-composer-api.js';
 
 export function openPluginSettings(pluginId: string): void {
-  appNavigate(getPluginDetailRoutePath(pluginId, { view: 'installed' }));
+  appNavigate(getPluginSettingsRoutePath(pluginId));
 }

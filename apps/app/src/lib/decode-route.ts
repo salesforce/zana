@@ -23,6 +23,7 @@ import {
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
+  SETTINGS_PLUGIN_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
   NEW_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
@@ -174,6 +175,9 @@ export function decodeRoutePath(pathname: string, hash = '', search = ''): Decod
       settingsTab: pathname === SETTINGS_PROJECT_ALIAS_ROUTE_PATH ? 'project' : 'global',
       settingsAnchor: anchor
     };
+  }
+  if (matchPath(SETTINGS_PLUGIN_ROUTE_PATH, pathname)) {
+    return { ...DEFAULT_DECODED, nav: 'settings', settingsTab: 'plugins', settingsAnchor: anchor };
   }
   const settingsSection = matchPath(SETTINGS_SECTION_ROUTE_PATH, pathname);
   if (settingsSection) {
@@ -387,6 +391,15 @@ export function decodeRoutePath(pathname: string, hash = '', search = ''): Decod
   }
 
   return { ...DEFAULT_DECODED, settingsAnchor: anchor };
+}
+
+/** Base for parsing an app route string (path + query + hash) with `URL`. */
+const ROUTE_PARSE_BASE = 'http://zcc.local';
+
+/** A whole app route string (as remembered or navigated to) → shell destination. */
+export function decodeRouteString(path: string): DecodedRoute {
+  const url = new URL(path, ROUTE_PARSE_BASE);
+  return decodeRoutePath(url.pathname, url.hash, url.search);
 }
 
 /** Query-param alias used by dedicated project windows. */

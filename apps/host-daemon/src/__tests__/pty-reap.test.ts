@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 
 // Fake IPty (same shape as pty-live-cap.test.ts) so we can spawn "sessions"
 // without launching real subprocesses. Each carries a controllable `pid`; the
@@ -167,6 +167,9 @@ describe('PtyManager.reapDeadSessions', () => {
   });
 
   it('asks a scheduled supervisor to stop with SIGTERM', () => {
+    // POSIX contract: the scheduled supervisor and process groups are POSIX-only.
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+    onTestFinished(() => platform.mockRestore());
     const mgr = new PtyManager();
     const session = makeSession(mgr, true);
     mgr.close(session.id);
@@ -176,6 +179,9 @@ describe('PtyManager.reapDeadSessions', () => {
   });
 
   it('closes a plain agent by signalling its process group and PTY handle', () => {
+    // POSIX contract: the scheduled supervisor and process groups are POSIX-only.
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+    onTestFinished(() => platform.mockRestore());
     const mgr = new PtyManager();
     const session = makeSession(mgr, false);
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);

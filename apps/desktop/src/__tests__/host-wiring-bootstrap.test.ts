@@ -492,6 +492,11 @@ describe('host bootstrap wiring', () => {
     expect(shell).toBeDefined();
     expect(items.find((i) => i.id === 'companion-enter')).toMatchObject({ visible: false, enabled: false });
     expect(() => ctx().syncCompanionMenu()).not.toThrow();
+    // Off macOS, View > Zoom In answers plain Ctrl+=, not the zoomIn role's Ctrl+Plus (Shift+=).
+    if (process.platform !== 'darwin') {
+      expect(items.some((i) => i.role === 'zoomIn' || i.role === 'zoomOut')).toBe(false);
+      expect(items.find((i) => i.label === 'Zoom In' && i.visible !== false)).toMatchObject({ accelerator: 'CmdOrCtrl+=' });
+    }
   });
 
   it('launches terminals through authorize, revalidate and spawn', async () => {

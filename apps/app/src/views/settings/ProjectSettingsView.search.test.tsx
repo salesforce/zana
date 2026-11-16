@@ -21,6 +21,7 @@ vi.mock('@/store', () => ({
   useData: (select: (value: unknown) => unknown) => select({ updateProject: mocks.updateProject }),
   useUi: (select: (value: unknown) => unknown) => select({ pushToast: vi.fn() })
 }));
+vi.mock('../../hooks/useRegisteredThreadProviders.js', () => ({ useRegisteredThreadProviders: () => ({ providers: [{ id: 'thread-custom', displayName: 'Custom thread harness', pluginId: 'custom' }], loading: false }) }));
 vi.mock('../../lib/app-surface.js', () => ({ hasDesktopBridge: () => true }));
 vi.mock('./ProjectSourcesSettings.js', () => ({ ProjectSourcesSettings: () => <div data-settings-target="project.checkouts" /> }));
 vi.mock('../../lib/product-client.js', () => ({
@@ -87,6 +88,19 @@ async function openRow(container: HTMLElement, label: string, tab?: string) {
 }
 
 describe('ProjectSettingsView settings-search targets', () => {
+  it('saves a separate thread override and can return to the global thread default', async () => {
+    mocks.updateProject.mockClear();
+    const view = render(<ProjectSettingsView project={local} onOpen={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Default for threads' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Custom thread harness' }));
+    await waitFor(() => expect(mocks.updateProject).toHaveBeenCalledWith(local.id, { defaultThreadProviderId: 'thread-custom' }, { throwOnError: true }));
+    view.rerender(<ProjectSettingsView project={{ ...local, defaultThreadProviderId: 'thread-custom' }} onOpen={vi.fn()} onSaved={vi.fn()} />);
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Default for threads' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Default for threads' }));
+    fireEvent.click(screen.getByRole('option', { name: /Use global/ }));
+    await waitFor(() => expect(mocks.updateProject).toHaveBeenLastCalledWith(local.id, { defaultThreadProviderId: null }, { throwOnError: true }));
+  });
+
   it('orders project harness cards alphabetically by label', async () => {
     mocks.descriptors.mockResolvedValue([base('pi', 'Pi'), base('opencode', 'OpenCode'), base('codex', 'Codex'), base('claude', 'Claude Code'), base('cursor', 'Pi')]);
     render(<ProjectSettingsView project={local} onOpen={vi.fn()} onSaved={vi.fn()} />);
@@ -95,7 +109,7 @@ describe('ProjectSettingsView settings-search targets', () => {
       .getAllByRole('button', { name: /^Project settings for / })
       .map((b) => b.getAttribute('aria-label')?.replace('Project settings for ', ''));
     expect(labels).toEqual(['Claude Code', 'Codex', 'OpenCode', 'Pi', 'Pi']);
-    fireEvent.click(screen.getByRole('button', { name: 'Default harness' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Default for CLI agents' }));
     const options = (await screen.findAllByRole('option')).map((el) => el.textContent?.trim());
     expect(options).toEqual(['Use global default', 'Claude Code', 'Codex', 'OpenCode', 'Pi', 'Pi']);
   });

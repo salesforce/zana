@@ -5,6 +5,7 @@ import type { Project, WalkedFile } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store.js';
 import { fuzzyMatchPaths } from '../lib/fuzzy.js';
 import { highlightMatches } from './palette/highlight.js';
+import { FairyEmpty } from './fairy/ZanaSpinner.js';
 
 interface Props {
   project: Project;
@@ -198,7 +199,7 @@ export function QuickOpen({ project, onClose }: Props) {
           {files === null ? (
             <div className="palette-empty">Indexing project files…</div>
           ) : results.length === 0 ? (
-            <div className="palette-empty">No matches</div>
+            <div className="palette-empty"><FairyEmpty title="No matches" hint="Try part of a file name or path." /></div>
           ) : (
             results.map((r, i) => (
               <button

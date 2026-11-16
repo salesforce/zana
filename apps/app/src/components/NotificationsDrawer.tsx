@@ -6,6 +6,7 @@ import { classifyEntry, FEED_CATEGORIES, type FeedCategoryId } from '@zana-ai/zc
 import { inboxPrimaryTitle, inboxSecondaryLine } from '../lib/inboxPresentation.js';
 import { focusInboxEntry } from '../lib/inboxNavigation.js';
 import { QuickAccessPanel } from './QuickAccessPanel.js';
+import { ZanaFairy } from './fairy/ZanaFairy.js';
 
 /**
  * Quick-glance list of unread Inbox entries in the shared right panel —
@@ -113,7 +114,7 @@ export function NotificationsDrawer() {
       onViewAll={goToInbox}>
       {total === 0 ? (
         <div className="quick-access-empty">
-          <span className="quick-access-empty-icon"><Bell size={22} aria-hidden="true" /></span>
+          <span className="quick-access-empty-icon quick-access-empty-icon--fairy"><ZanaFairy mood="still" /></span>
           <h3>You&rsquo;re all caught up</h3>
           <p>New questions and updates will appear here.</p>
         </div>

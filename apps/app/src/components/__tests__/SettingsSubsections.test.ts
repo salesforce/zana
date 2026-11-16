@@ -231,7 +231,7 @@ describe('Settings subsection navigation', () => {
     expect(railSections.some((s) => s.id.startsWith('ext') || s.id.startsWith('plugin'))).toBe(false);
   });
 
-  it('mounts plugin settings sections on the plugin detail page, not Global', () => {
+  it('keeps plugin settings on their own Settings page, outside Global', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../views/settings/GlobalView.tsx', import.meta.url)),
       'utf8'
@@ -249,7 +249,7 @@ describe('Settings subsection navigation', () => {
     expect(SETTINGS_SECTIONS.map((section) => section.id)).not.toContain('plugins');
   });
 
-  it('keeps Plugins, Skills, and MCP off Settings — they live on the Extensions workspace', () => {
+  it('keeps the Plugins, Skills and MCP catalogues out of the static Settings roster', () => {
     const ids = SETTINGS_SECTIONS.map((section) => section.id);
     expect(ids).not.toContain('extensions');
     expect(ids).not.toContain('skills');

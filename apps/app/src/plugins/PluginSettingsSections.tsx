@@ -3,7 +3,7 @@ import { listSettingsSections, subscribePluginSlots } from './plugin-slots.js';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 
 /**
- * Plugin `settingsSection` slot mounts on that plugin's hub Configure page
+ * Plugin `settingsSection` slot mounts on that plugin's Settings page
  * alongside the host `settings.define` form.
  */
 export function PluginSettingsSections({ pluginId }: { pluginId: string }) {

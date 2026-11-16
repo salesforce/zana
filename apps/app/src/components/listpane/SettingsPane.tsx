@@ -1,11 +1,14 @@
 import { ArrowLeft, FolderCog, Search, X } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState, useId, useSyncExternalStore } from 'react';
 import { useData, useUi } from '../../store.js';
 import { SETTINGS_SECTIONS, SETTINGS_GROUPS, visibleSettingsSections } from '@/views/settings/settings-navigation';
 import { SidebarResizer } from '../SidebarResizer.js';
 import { useAppSettingsRouteMemory } from '../../hooks/useAppSettingsRouteMemory.js';
-import { getSettingsTabRoutePath } from '../../lib/route-paths.js';
+import { decodeRouteParam, getPluginSettingsRoutePath, getSettingsTabRoutePath, SETTINGS_PLUGIN_ROUTE_PATH } from '../../lib/route-paths.js';
+import { usePluginSettingsIndex } from '@/plugins/plugin-settings-index';
+import { PluginBrandIcon } from '@/views/extensions/PluginBrandIcon';
+import { installedIconUrl } from '@/views/extensions/installed-collection';
 import { searchSettings, type SettingsSearchHit, type SettingsSnippet } from '../../lib/settings-search/index.js';
 import { openSettingsHit } from '../../lib/settings-search/links.js';
 import { getSettingsSearchSourcesVersion, subscribeSettingsSearchSources } from '../../lib/settings-search/registry.js';
@@ -21,7 +24,8 @@ import { useMobileNavDismiss } from '../mobile-nav-context.js';
  * navigates to `/settings/:section` (project settings live at
  * `/projects/:id/settings`). Scope (Global vs a single project) is chosen in the
  * content header's scope control (see `ScopeControl` in SettingsPanel.tsx),
- * NOT here. Plugins / Skills / MCP live on the top-level Extensions workspace.
+ * NOT here. Plugin configuration gets a dynamic group; plugin installation,
+ * Skills and MCP management remain in the top-level Plugins hub.
  *
  * `SETTINGS_SECTIONS` is the shared source of truth for labels/icons/descs.
  */
@@ -153,6 +157,11 @@ function SettingsSearchResults({
 
 export function SettingsPane() {
   const dismissMobileNav = useMobileNavDismiss();
+  const pluginIndex = usePluginSettingsIndex();
+  const location = useLocation();
+  const activePluginRef = useRef<HTMLAnchorElement>(null);
+  const selectedPlugin = decodeRouteParam(matchPath(SETTINGS_PLUGIN_ROUTE_PATH, location.pathname)?.params.pluginId ?? '');
+  useEffect(() => { if (selectedPlugin) activePluginRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [selectedPlugin, pluginIndex.configurable]);
   const settingsTab = useUi((s) => s.settingsTab);
   const setSettingsAnchor = useUi((s) => s.setSettingsAnchor);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
@@ -302,6 +311,18 @@ export function SettingsPane() {
                 {group.sections.map(renderRow)}
               </div>
             ))}
+            {pluginIndex.configurable.length > 0 ? <div className="settings-group" role="group" aria-label="Plugins">
+              <div className="settings-group-label">Plugins</div>
+              {pluginIndex.configurable.map(row => <Link key={row.module.id} to={getPluginSettingsRoutePath(row.module.id)}
+                ref={selectedPlugin === row.module.id ? activePluginRef : undefined}
+                data-testid={`settings-plugin-${row.module.id}`} className={`settings-section-item ${selectedPlugin === row.module.id ? 'active' : ''}`}
+                aria-current={selectedPlugin === row.module.id ? 'page' : undefined}
+                onClick={() => { setSettingsAnchor(null); dismissMobileNav?.(); }}>
+                <PluginBrandIcon src={installedIconUrl(row)} icon={row.module.icon} size={16} />
+                <span className="settings-section-copy"><span className="settings-section-label">{row.module.title}</span></span>
+              </Link>)}
+            </div> : null}
+            {pluginIndex.error ? <p className="settings-help" role="status">{pluginIndex.error}</p> : null}
       </nav>
       )}
       <SidebarResizer />

@@ -46,7 +46,6 @@ const ALLOW_LIST: readonly { file: string; count: number; reason: string }[] = [
   { file: 'plugins/keep-awake/host.mjs', count: 1, reason: 'macOS caffeinate only' },
   { file: 'plugins/provider-acp/src/bridge/cursor-maintenance.ts', count: 1, reason: 'macOS security keychain lookup, returns early elsewhere' },
   { file: 'packages/provider-bridge-acp/src/bridge/provider-maintenance.ts', count: 1, reason: 'macOS security keychain lookup, returns early elsewhere' },
-  { file: 'plugins/provider-claude-code/src/bridge/provider-maintenance.ts', count: 1, reason: 'macOS security keychain lookup, returns early elsewhere' },
 ];
 
 const CHILD_PROCESS_NAMES = new Set(['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'fork']);

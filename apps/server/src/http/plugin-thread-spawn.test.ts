@@ -11,6 +11,14 @@ const ok = (family: 'claude' | 'codex' | 'pi', profile: string): EffectiveHarnes
 });
 
 describe('resolvePluginSpawnProvider', () => {
+  it('uses an explicit thread default independently of the legacy CLI default', async () => {
+    await expect(resolvePluginSpawnProvider({ providers, defaultHarness: 'claude', defaultThreadProviderId: 'fake', effectiveDefault: vi.fn() }))
+      .resolves.toEqual({ providerId: 'fake' });
+  });
+  it.each(['missing', 'codex'])('blocks an unavailable thread default (%s) without switching harness', async defaultThreadProviderId => {
+    await expect(resolvePluginSpawnProvider({ providers: [{ id: 'fake' }, { id: 'codex', unavailableReason: 'offline' }], defaultThreadProviderId, effectiveDefault: vi.fn() }))
+      .rejects.toThrow('thread default is unavailable');
+  });
   it('lets an explicit providerId win without resolving the project default', async () => {
     const effectiveDefault = vi.fn(async () => ok('claude', 'claude'));
     await expect(resolvePluginSpawnProvider({ providerId: 'codex', harness: 'project-default', providers, effectiveDefault }))
