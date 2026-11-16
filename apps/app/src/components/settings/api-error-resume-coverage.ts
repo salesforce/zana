@@ -13,9 +13,12 @@ export const API_ERROR_RESUME_HELP =
   "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors.";
 
 export const API_ERROR_RESUME_NONE_COVERED =
-  'None of your installed agents can report API errors yet, so this setting has no effect.';
+  'None of the agents installed on this machine can report API errors yet. Agents on other hosts may still be covered.';
 
-/** Summarise which installed and enabled agents API-error resume covers; labels come from the descriptors. */
+/**
+ * Summarise which agents installed and enabled on this machine API-error resume covers; labels come from the descriptors.
+ * Information only: sessions may run on other hosts, so the result never disables the setting.
+ */
 export function apiErrorResumeCoverage(descriptors: readonly HarnessAdapterDescriptor[] | null | undefined): ApiErrorResumeCoverage {
   const known = (descriptors ?? []).filter(
     (d) => d.availability.installed && d.availability.enabled && d.agentDefaultEligible && d.apiErrorResume !== undefined
@@ -30,6 +33,6 @@ export function apiErrorResumeCoverage(descriptors: readonly HarnessAdapterDescr
 export function apiErrorResumeCoverageLine(coverage: ApiErrorResumeCoverage): string | null {
   if (coverage.kind === 'unknown') return null;
   if (coverage.kind === 'none') return API_ERROR_RESUME_NONE_COVERED;
-  const works = `Works with: ${coverage.covered.join(', ')}.`;
+  const works = `On this machine, works with: ${coverage.covered.join(', ')}.`;
   return coverage.uncovered.length ? `${works} Not available yet: ${coverage.uncovered.join(', ')}.` : works;
 }

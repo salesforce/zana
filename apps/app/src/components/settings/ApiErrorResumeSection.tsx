@@ -362,8 +362,7 @@ export function ApiErrorResumeSection({
   const draft = (patch: Partial<ApiErrorResumeConfig>) =>
     onConfigDraft({ ...config, apiErrorResume: { ...current, ...patch } });
   const rules = useResumeRules(current, save, () => base().rules);
-  const coverage = apiErrorResumeCoverage(useHarnessDescriptors());
-  const coverageLine = apiErrorResumeCoverageLine(coverage);
+  const coverageLine = apiErrorResumeCoverageLine(apiErrorResumeCoverage(useHarnessDescriptors()));
 
   return (
     <Section
@@ -377,8 +376,6 @@ export function ApiErrorResumeSection({
         label="Resume after matching API errors"
         searchId="agents.api-error-resume"
         checked={current.enabled}
-        // An enabled setting always stays switchable off.
-        disabled={!current.enabled && coverage.kind === 'none'}
         onChange={(enabled) => void save({ enabled })}
       />
       {saveFailed && (

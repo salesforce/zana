@@ -21,9 +21,9 @@ const claude = descriptor('claude', 'Claude Code', { apiErrorResume: 'supported'
 const codex = descriptor('codex', 'Codex', { apiErrorResume: 'unsupported' });
 const opencode = descriptor('opencode', 'OpenCode', { apiErrorResume: 'unsupported' });
 const NEUTRAL_HELP = "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors.";
-const NONE_LINE = 'None of your installed agents can report API errors yet, so this setting has no effect.';
+const NONE_LINE = 'None of the agents installed on this machine can report API errors yet. Agents on other hosts may still be covered.';
 const toggle = () => screen.getByRole('switch', { name: 'Resume after matching API errors' }) as HTMLInputElement;
-const coverageLines = () => screen.queryAllByText(/^(Works with:|None of your installed agents)/);
+const coverageLines = () => screen.queryAllByText(/^(On this machine, works with:|None of the agents installed)/);
 
 const base = { version: 1, theme: 'system', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null } as AppConfig;
 const rule = (o: object = {}) => ({ id: 'a', match: 'overloaded', matchMode: 'contains', message: 'continue', delaySeconds: 20, enabled: true, ...o });
@@ -442,7 +442,7 @@ describe('ApiErrorResumeSection coverage', () => {
   it('REQ-5: names covered and uncovered installed agents and keeps the checkbox working', async () => {
     descriptorsMock.mockResolvedValue([claude, codex]);
     const { onUpdate } = setup(base);
-    await waitFor(() => expect(screen.getByText('Works with: Claude Code. Not available yet: Codex.')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('On this machine, works with: Claude Code. Not available yet: Codex.')).toBeTruthy());
     expect(toggle().disabled).toBe(false);
     fireEvent.click(toggle());
     expect(onUpdate).toHaveBeenCalledTimes(1);
@@ -451,11 +451,11 @@ describe('ApiErrorResumeSection coverage', () => {
   it('REQ-5: lists every uncovered agent in descriptor order and omits the second sentence when none are uncovered', async () => {
     descriptorsMock.mockResolvedValue([claude, codex, opencode]);
     setup(base);
-    await waitFor(() => expect(screen.getByText('Works with: Claude Code. Not available yet: Codex, OpenCode.')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('On this machine, works with: Claude Code. Not available yet: Codex, OpenCode.')).toBeTruthy());
     cleanup();
     descriptorsMock.mockResolvedValue([claude]);
     setup(base);
-    await waitFor(() => expect(screen.getByText('Works with: Claude Code.')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('On this machine, works with: Claude Code.')).toBeTruthy());
   });
 
   it('REQ-5: ignores harnesses that are not installed, not agent-capable or without a declared support', async () => {
@@ -466,19 +466,19 @@ describe('ApiErrorResumeSection coverage', () => {
       descriptor('grok', 'Grok')
     ]);
     setup(base);
-    await waitFor(() => expect(screen.getByText('Works with: Claude Code. Not available yet: Codex.')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('On this machine, works with: Claude Code. Not available yet: Codex.')).toBeTruthy());
   });
 
-  it('REQ-6: with only uncovered agents installed and the setting off, says so and disables the checkbox', async () => {
+  it('REQ-6: with only uncovered agents on this machine, says so and keeps the checkbox working (other hosts may be covered)', async () => {
     descriptorsMock.mockResolvedValue([codex, opencode]);
     const { onUpdate } = setup(base);
     await waitFor(() => expect(screen.getByText(NONE_LINE)).toBeTruthy());
-    expect(toggle().disabled).toBe(true);
+    expect(toggle().disabled).toBe(false);
     fireEvent.click(toggle());
-    expect(onUpdate).not.toHaveBeenCalled();
+    expect(onUpdate).toHaveBeenCalledWith({ apiErrorResume: expect.objectContaining({ enabled: true }) }, THROW);
   });
 
-  it('REQ-6: with the setting on, the checkbox stays enabled so it can be turned off', async () => {
+  it('REQ-6: with the setting on, the checkbox can be turned off', async () => {
     descriptorsMock.mockResolvedValue([codex]);
     const { onUpdate } = setup(on());
     await waitFor(() => expect(screen.getByText(NONE_LINE)).toBeTruthy());

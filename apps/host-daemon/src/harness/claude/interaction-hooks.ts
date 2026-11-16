@@ -1,4 +1,4 @@
-import { API_ERROR_RETRYABLE_KINDS } from '@zcc/harness-sdk';
+import { isRetryableApiErrorKind } from '@zcc/harness-sdk';
 import type { HarnessInteractionEvent } from '@zcc/harness-sdk';
 
 const MAX_ERROR = 64;
@@ -9,14 +9,12 @@ function record(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null;
 }
 
-// Claude reports a known kind for every StopFailure, so kinds outside the shared list are not retryable here.
-const TEMPORARY_KINDS: ReadonlySet<string> = new Set(API_ERROR_RETRYABLE_KINDS);
 // A LiteLLM-style proxy that could not reach its upstream provider reports invalid_request; that is temporary.
 const PROXY_UPSTREAM_TEXT = /LLM Provider NOT provided|Provider \S+ not found/i;
 
 /** `details` is the API's own error text only, never the model's reply, which could quote anything. */
 export function isRetryableApiError(error: string, details: string): boolean {
-  if (TEMPORARY_KINDS.has(error)) return true;
+  if (isRetryableApiErrorKind(error)) return true;
   return error === 'invalid_request' && PROXY_UPSTREAM_TEXT.test(details);
 }
 

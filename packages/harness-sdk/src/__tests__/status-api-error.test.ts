@@ -15,7 +15,7 @@ describe('shared API-error vocabulary', () => {
     expect(isRetryableApiErrorKind(kind)).toBe(false);
   });
 
-  it.each(['something_new', '', 'Rate_Limit'])('keeps the unrecognised kind %j retryable', (kind) => {
-    expect(isRetryableApiErrorKind(kind)).toBe(true);
+  it.each(['something_new', '', 'Rate_Limit'])('treats the unrecognised kind %j as not retryable', (kind) => {
+    expect(isRetryableApiErrorKind(kind)).toBe(false);
   });
 });

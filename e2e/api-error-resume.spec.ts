@@ -176,7 +176,7 @@ test('Settings → Agents adds a suggested rule and checks an error against it',
     const installed = descriptors.filter((d) => d.agentDefaultEligible && d.availability.installed && d.availability.enabled && d.apiErrorResume);
     const claude = installed.find((d) => d.id === 'claude');
     if (claude) {
-      await expect(win.getByText(/^Works with: .*Claude Code/)).toBeVisible({ timeout: 15_000 });
+      await expect(win.getByText(/^On this machine, works with: .*Claude Code/)).toBeVisible({ timeout: 15_000 });
     } else {
       testInfo.annotations.push({ type: 'skipped-assertion', description: 'No Claude Code in the E2E home descriptors: coverage line check skipped' });
     }
