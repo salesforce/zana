@@ -38,32 +38,29 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('catalog.inflight.has(providerId)');
     expect(source).toContain('hostCatalog.getSnapshot');
     expect(source).toContain('reconcileReasoningLevel');
-    expect(source).toContain('if (catalog.providers.length === 0) return');
     expect(source).toContain('rememberComposerSelection');
-    expect(source).toContain('rememberedProviderId');
+    expect(source).not.toContain('rememberedProviderId');
     expect(source).toContain('rememberedSelectionFor');
     expect(source).toContain('setProviderIdState(next)');
     expect(source).toContain('fallbackModelsForProvider');
     expect(source).toContain('availableModelsToPickerOptions');
     expect(source).toContain('fallbackMoreModelsForProvider');
     expect(source).toContain('composerProvidersFromCatalog');
-    expect(source).toContain('snapNewThreadProviderId');
     expect(source).toContain('input.preferredProviderId');
     expect(source).toContain('rosterReady');
     expect(source).toContain('registeredProviderIds');
     expect(source).toContain('input.threadId || input.lockedProviderId');
-    expect(source).not.toContain('catalog.providers[0]');
     expect(source).toContain('visibleComposerReasoningLevels');
     expect(source).toContain('modelIsLoading: loading');
     expect(source).toContain('modelLoadError');
     expect(source).not.toContain('AgentLauncher');
     expect(source).not.toContain('list_models');
-    expect(source).toContain('rememberComposerSelection({ providerId, model: value, reasoningLevel })');
+    expect(source).toContain('rememberComposerSelection({ providerId, model: value, reasoningLevel, rememberProvider: false })');
     expect(source).toContain('const persistSelection = !input.threadId');
     expect(source).toContain('preferredComposerModel');
     expect(source).toContain('defaultOfferedComposerModel');
     expect(source).toContain('persistRemembered: persistSelection');
-    expect(source).toContain('rememberComposerSelection({ providerId, model: nextModel, reasoningLevel })');
+    expect(source).toContain('rememberComposerSelection({ providerId, model: nextModel, reasoningLevel, rememberProvider: false })');
     expect(source).not.toContain('if (restored.model)');
   });
 
@@ -99,6 +96,120 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('hasAcpMode ? savedAcpMode : input.initialAcpMode ?? undefined');
     expect(source).toContain('if (!hasAcpMode) setAcpModeState(input.initialAcpMode ?? undefined);');
     expect(source).toContain('}, [input.initialAcpMode, hasAcpMode]);');
+  });
+});
+
+describe('explicit new-thread defaults', () => {
+  afterEach(() => { cleanup(); resetThreadModelCatalog(); localStorage.clear(); });
+  const roster = ['codex', 'claude-code', 'plugin-provider'];
+  function catalog() {
+    resetThreadModelCatalog(async query => ({
+      providers: roster.map(id => ({ id, displayName: id, available: true, capabilities: { permissionModes: ['full'] } })),
+      models: [{ id: 'm', model: `${query?.providerId ?? 'codex'}-model`, displayName: 'Model', isDefault: true, supportedReasoningEfforts: [], defaultReasoningEffort: 'medium' }],
+      selectedOnlyModels: [], modelLoadError: null
+    }) as never);
+  }
+  it('uses the explicit default even when the last-used provider is still offered', async () => {
+    catalog();
+    localStorage.setItem('zcc.composer.selection', JSON.stringify({ providerId: 'codex', byProvider: {} }));
+    const view = renderHook(() => useThreadComposerOptions({ preferredProviderId: 'claude-code' }));
+    await waitFor(() => expect(view.result.current.rosterReady).toBe(true));
+    expect(view.result.current.providerId).toBe('claude-code');
+    expect(JSON.parse(localStorage.getItem('zcc.composer.selection')!).providerId).toBe('codex');
+  });
+  it('adopts late global/project defaults while the composer is untouched', async () => {
+    catalog();
+    const view = renderHook(({ preferred }) => useThreadComposerOptions({ preferredProviderId: preferred }), { initialProps: { preferred: undefined as string | undefined } });
+    await waitFor(() => expect(view.result.current.providerId).toBe('codex'));
+    view.rerender({ preferred: 'plugin-provider' });
+    await waitFor(() => expect(view.result.current.providerId).toBe('plugin-provider'));
+    expect(view.result.current.providerSelectionSource).toBe('default');
+  });
+  it('preserves a one-off choice through navigation without changing the next composer', async () => {
+    catalog();
+    const session = new ComposerSession();
+    const view = renderHook(({ preferred }) => useThreadComposerOptions({ session, preferredProviderId: preferred }), { initialProps: { preferred: 'claude-code' } });
+    act(() => view.result.current.setProviderId('codex'));
+    view.rerender({ preferred: 'plugin-provider' });
+    expect(view.result.current.providerId).toBe('codex');
+    view.unmount();
+    const restored = renderHook(() => useThreadComposerOptions({ session, preferredProviderId: 'plugin-provider' }));
+    expect(restored.result.current.providerId).toBe('codex');
+    const fresh = renderHook(() => useThreadComposerOptions({ preferredProviderId: 'plugin-provider' }));
+    expect(fresh.result.current.providerId).toBe('plugin-provider');
+    act(() => restored.result.current.useDefaultProvider());
+    expect(restored.result.current.providerId).toBe('plugin-provider');
+    expect(restored.result.current.providerSelectionSource).toBe('default');
+  });
+  it('freezes the draft harness when typing starts, and restores it after navigation', async () => {
+    catalog();
+    const session = new ComposerSession();
+    const view = renderHook(({ preferred }) => useThreadComposerOptions({ session, preferredProviderId: preferred }), { initialProps: { preferred: 'codex' } });
+    act(() => session.setContent({ document: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Draft' }] }] } }));
+    view.rerender({ preferred: 'claude-code' });
+    expect(view.result.current.providerId).toBe('codex');
+    expect(view.result.current.providerSelectionSource).toBe('draft');
+    view.unmount();
+    const restored = renderHook(() => useThreadComposerOptions({ session, preferredProviderId: 'plugin-provider' }));
+    expect(restored.result.current.providerId).toBe('codex');
+    act(() => restored.result.current.useDefaultProvider());
+    expect(restored.result.current.providerId).toBe('plugin-provider');
+    act(() => {
+      session.clearIfRevision(session.getSnapshot().revision);
+      restored.result.current.resetForNewThread();
+    });
+    expect(session.getSnapshot().settings).not.toHaveProperty('modern.draftProvider');
+    expect(restored.result.current.providerSelectionSource).toBe('default');
+  });
+  it('resets one-off provider/model/role choices only after a successful new-thread send', async () => {
+    catalog();
+    const session = new ComposerSession();
+    const view = renderHook(() => useThreadComposerOptions({ session, preferredProviderId: 'claude-code' }));
+    act(() => { view.result.current.setProviderId('codex'); });
+    act(() => { view.result.current.setModel('chosen'); view.result.current.setReasoningLevel('high'); view.result.current.setAcpMode('review'); });
+    act(() => view.result.current.resetForNewThread());
+    await waitFor(() => expect(view.result.current.providerId).toBe('claude-code'));
+    expect(session.getSnapshot().settings).not.toHaveProperty('modern.provider');
+    expect(session.getSnapshot().settings).not.toHaveProperty('modern.model');
+    expect(session.getSnapshot().settings).not.toHaveProperty('modern.reasoning');
+    expect(session.getSnapshot().settings).not.toHaveProperty('modern.acpMode');
+  });
+  it('drops an erased draft seed before starting a new draft with a different default', () => {
+    catalog();
+    const session = new ComposerSession();
+    const view = renderHook(({ preferred }) => useThreadComposerOptions({ session, preferredProviderId: preferred }), { initialProps: { preferred: 'codex' } });
+    const document = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Draft' }] }] };
+    act(() => session.setContent({ document }));
+    act(() => session.clearIfRevision(session.getSnapshot().revision));
+    view.rerender({ preferred: 'claude-code' });
+    act(() => session.setContent({ document }));
+    expect(view.result.current.providerId).toBe('claude-code');
+    expect(session.getSnapshot().settings['modern.draftProvider']).toBe('claude-code');
+  });
+  it('keeps unavailable defaults selected and blocks instead of falling back', async () => {
+    catalog();
+    const view = renderHook(() => useThreadComposerOptions({ preferredProviderId: 'removed-provider' }));
+    await waitFor(() => expect(view.result.current.selectionError).toMatch(/harness is unavailable/));
+    expect(view.result.current.providerId).toBe('removed-provider');
+    expect(view.result.current.provider?.id).toBe('removed-provider');
+    act(() => view.result.current.setProviderId('codex'));
+    await waitFor(() => expect(view.result.current.selectionError).toBeNull());
+  });
+  it('does not clear a newer harness choice when an earlier send finishes', () => {
+    catalog();
+    const session = new ComposerSession();
+    const view = renderHook(() => useThreadComposerOptions({ session, preferredProviderId: 'claude-code' }));
+    const finishEarlierSend = view.result.current.resetForNewThread;
+    act(() => view.result.current.setProviderId('codex'));
+    act(() => finishEarlierSend());
+    expect(view.result.current.providerId).toBe('codex');
+    expect(session.getSnapshot().settings['modern.provider']).toBe('codex');
+  });
+  it('keeps an existing thread locked despite changes to defaults', async () => {
+    catalog();
+    const view = renderHook(({ preferred }) => useThreadComposerOptions({ threadId: 'existing', lockedProviderId: 'codex', preferredProviderId: preferred }), { initialProps: { preferred: 'claude-code' } });
+    view.rerender({ preferred: 'plugin-provider' });
+    expect(view.result.current.providerId).toBe('codex');
   });
 });
 

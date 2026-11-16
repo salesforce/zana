@@ -51,7 +51,8 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { fallbackProviderOption, isOfferedModernProvider } from './thread/pickers/fallback-models.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
-import { preferredThreadProviderId } from './legacy-agent-home.js';
+import { resolveThreadProviderDefault } from '@zana-ai/zcc-domain/launch-provider';
+import { ThreadDefaultHint } from './thread/ThreadDefaultHint.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { VoiceMicButton } from './thread/voice/VoiceMicButton.js';
@@ -203,7 +204,8 @@ function ThreadComposerContent({
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
   // Beside a project's plugin page, the project and its run target are fixed.
   const fixedRunTarget = Boolean(pluginPanel && pinnedProject);
-  const defaultHarness = useData((s) => s.defaultHarness);
+  const defaultThreadProviderId = useData((s) => s.defaultThreadProviderId);
+  const threadDefault = resolveThreadProviderDefault(selectedProject?.defaultThreadProviderId, defaultThreadProviderId);
   const hosts = useHosts();
   const threads = useThreads((s) => s.threads);
   const currentThread = threadId ? threads.find((row) => row.id === threadId) : undefined;
@@ -224,10 +226,7 @@ function ThreadComposerContent({
     initialAcpMode: executionModeRequested ?? initialAcpMode,
     preferredProviderId: threadId || lockedProviderId
       ? undefined
-      : preferredThreadProviderId({
-          launchDefault: selectedProject?.launchDefault,
-          defaultHarness
-        }),
+      : threadDefault.providerId,
     hostId: catalogHostId,
     projectId: currentThread?.projectId ?? selectedProject?.id,
     hostPending: !catalogHostId && hosts.length === 0
@@ -355,10 +354,7 @@ function ThreadComposerContent({
   const permissionOptions = permissionModeOptionsFor(
     options.provider?.permissionModes ?? ['accept-edits', 'full']
   );
-  const resolvedProviderId = threadId
-    ? options.providerId
-    : options.providers.find((row) => row.id === 'fake')?.id
-      ?? (options.providers.some((row) => row.id === options.providerId) ? options.providerId : options.providers[0]?.id);
+  const resolvedProviderId = options.providerId;
   const providerCliHostId = currentThread?.hostId ?? (selectedProject?.remote ? selectedProject.hostId : hostId ?? selectedProject?.hostId);
   const providerCli = useComposerProviderCli({
     enabled: !threadId,
@@ -664,7 +660,7 @@ function ThreadComposerContent({
             if (navigateOnCreate) navigate(getThreadRoutePath(created.value.id, route.isProjectFocused ? route.focusedProjectId : undefined));
           }
         }
-        field.clearIfRevision(revision);
+        if (field.clearIfRevision(revision) && !threadId) options.resetForNewThread();
       if (threadId) notifyThreadSubmitted(threadId);
       } catch (error) {
         // The capture retains audio and the frozen submission for Retry.
@@ -805,7 +801,7 @@ function ThreadComposerContent({
         return;
       }
       upsertThread(created.value);
-      field.clearIfRevision(revision);
+      if (field.clearIfRevision(revision)) options.resetForNewThread();
       if (currentVoiceOwner.current !== voiceOwner) return;
       onCreated?.(created.value.id);
       if (navigateOnCreate) {
@@ -841,6 +837,9 @@ function ThreadComposerContent({
     options.acpMode,
     options.rosterReady,
     options.providers,
+    options.resetForNewThread,
+    options.selectionError,
+    options.registeredProviderIds,
     permissionMode,
     pinnedProject,
     pluginPanel,
@@ -886,7 +885,7 @@ function ThreadComposerContent({
       }
       aria-busy={busy}
       data-testid="thread-command-send"
-      disabled={busy || (!terminalIntent && (sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked || !canSend))}
+      disabled={busy || (!terminalIntent && (sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked || Boolean(options.selectionError) || !canSend))}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => void submit()}
     >
@@ -984,6 +983,14 @@ function ThreadComposerContent({
         </div>
       ) : null}
       {options.selectionError && !error ? <p className="thread-command-error" role="status">{options.selectionError}</p> : null}
+      {!threadId && !lockedProviderId ? <ThreadDefaultHint
+        providerId={options.providerId}
+        defaultProviderId={threadDefault.providerId}
+        source={threadDefault.source}
+        selectionSource={options.providerSelectionSource}
+        onUseDefault={options.useDefaultProvider}
+        unavailable={Boolean(options.selectionError) || !options.registeredProviderIds.includes(options.providerId)}
+      /> : null}
       {permissionSelectionError && !error ? <p className="thread-command-error" role="status">{permissionSelectionError}</p> : null}
       {composerModeError && !error ? <p className="thread-command-error" role="status">{composerModeError}</p> : null}
       {providerCli.error ? (

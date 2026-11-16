@@ -4,10 +4,19 @@ import { dirname } from 'node:path';
 import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig, type PluginHarnessOverrideV1 } from '@zana-ai/zcc-domain/product';
 import { DEFAULT_TERMINAL_THEME } from '@zana-ai/zcc-domain/terminal-themes';
 import { defaultShellSetting, type DefaultShellSettingOptions } from '@zana-ai/zcc-process-utils';
+import { threadProviderIdForHarnessFamily } from '@zana-ai/zcc-domain/launch-provider';
 import { atomicDurableWrite, DurableWriteConflictError } from '../../durable-store.js';
 import { PLUGIN_HARNESS_ROUTING_KEY, pluginHarnessRoutingOf, type PluginHarnessRoutingMap } from './plugin-harness-routing-map.js';
 
 export { DurableWriteConflictError };
+
+/** Migrate once; later CLI-default changes must not change the thread default. */
+export function ensureThreadProviderDefault(config: AppConfig): AppConfig {
+  return config.defaultThreadProviderId !== undefined ? config : {
+    ...config,
+    defaultThreadProviderId: threadProviderIdForHarnessFamily(config.defaultHarness ?? 'claude')
+  };
+}
 
 export interface ConfigSnapshot {
   config: AppConfig;
@@ -167,9 +176,9 @@ export function createConfigStore(
     config.claudeBinary ? config : { ...config, claudeBinary: fallback().claudeBinary };
 
   const hydrate = (raw: Partial<AppConfig>): AppConfig =>
-    ensureComposerLaunchSurfaces(
+    ensureThreadProviderDefault(ensureComposerLaunchSurfaces(
       withDefaultBinary(deps.projectConfigCompatibility(withFallback(deps.normalizeConfig(raw))))
-    );
+    ));
 
   const applyOptionalResets = (next: AppConfig, patch: Partial<AppConfig>, normalizedPatch: Partial<AppConfig>): AppConfig => {
     const optionalHarnessKeys = [
@@ -201,8 +210,9 @@ export function createConfigStore(
       const disk = readJsonRaw<Partial<AppConfig>>({});
       const stored = deps.normalizeConfig(disk.value);
       const merged = withDefaultBinary(deps.projectConfigCompatibility(withFallback(stored)));
-      const healed = ensureComposerLaunchSurfaces(merged);
-      if (disk.hash !== null && composerLaunchSurfacesDiffer(merged, healed)) {
+      const healed = ensureThreadProviderDefault(ensureComposerLaunchSurfaces(merged));
+      if (disk.hash !== null && (composerLaunchSurfacesDiffer(merged, healed)
+        || merged.defaultThreadProviderId !== healed.defaultThreadProviderId)) {
         try {
           writeConfig(deps.canonicalConfigForWrite(healed), disk);
         } catch {

@@ -716,6 +716,23 @@ describe('project color assignment', () => {
   // updateProject is the untrusted-renderer boundary (rule 1): unlike backfill,
   // which preserves whatever is already on disk, it must reject any color that
   // isn't a known palette member before it reaches projects.json / the DOM.
+  it('migrates a pinned thread default once and validates independent project overrides', () => {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(projectsFile, JSON.stringify({ version: 1, projects: [
+      { id: 'old', name: 'Old', path: h.home, launchDefault: { kind: 'exact-profile', adapterId: 'codex' } },
+      { id: 'inherit', name: 'Inherit', path: h.home }
+    ] }));
+    expect(store.listProjects().map(row => row.defaultThreadProviderId)).toEqual(['codex', null]);
+    expect(readJson(projectsFile).projects[0].defaultThreadProviderId).toBe('codex');
+    store.updateProject('old', { launchDefault: { schemaVersion: 1, kind: 'use-global' } });
+    expect(store.listProjects()[0].defaultThreadProviderId).toBe('codex');
+    expect(store.updateProject('old', { defaultThreadProviderId: ' custom-provider ' })?.defaultThreadProviderId).toBe('custom-provider');
+    expect(store.updateProject('old', { defaultThreadProviderId: null })?.defaultThreadProviderId).toBeNull();
+    expect(store.listProjects()[0].defaultThreadProviderId).toBeNull();
+    expect(() => store.updateProject('old', { defaultThreadProviderId: 'bad\nkey' })).toThrow('invalid thread default');
+    expect(() => store.updateProject('old', { defaultThreadProviderId: 7 as never })).toThrow('invalid thread default');
+  });
+
   it('updateProject persists validated icons without changing the color', () => {
     const dir = join(h.home, 'icon-project');
     mkdirSync(dir, { recursive: true });

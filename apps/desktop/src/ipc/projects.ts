@@ -183,6 +183,7 @@ export function registerProjectsIpc(): void {
         defaultAgents?: string[];
         defaultPersonas?: string[];
         launchDefault?: Project['launchDefault'];
+        defaultThreadProviderId?: Project['defaultThreadProviderId'];
         favorite?: boolean;
         remotePath?: string;
       }
@@ -190,6 +191,7 @@ export function registerProjectsIpc(): void {
       const usesLegacyFields = patch.defaultAgents !== undefined
         || patch.defaultPersonas !== undefined
         || patch.launchDefault !== undefined
+        || patch.defaultThreadProviderId !== undefined
         || patch.favorite !== undefined
         || patch.remotePath !== undefined;
       if (!ctx.runtimeSupervisor || usesLegacyFields || (patch.name === undefined && patch.color === undefined && patch.icon === undefined)) {

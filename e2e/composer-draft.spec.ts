@@ -46,7 +46,7 @@ test('Composer settings default to Auto and persist a Full access opt-in for bot
   writeFileSync(binary, '#!/bin/sh\nprintf "2.1.220 (Claude Code)\\n"\n');
   chmodSync(binary, 0o755);
   await window.evaluate(async (claudeBinary) => {
-    await window.cc.config.set({ claudeBinary, defaultHarness: 'claude' });
+    await window.cc.config.set({ claudeBinary, defaultHarness: 'claude', defaultThreadProviderId: 'claude-code' });
     await window.cc.harness.verify();
   }, binary);
   await dismissConsentOverlays(window);

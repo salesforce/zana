@@ -3,6 +3,7 @@ import { normalizeAgentSoundVolume, normalizeNotificationSoundProvider } from '@
 import { isAgentsViewId, PROJECT_EXPANDED_CAP } from '@zana-ai/zcc-domain/product';
 import { onboardingProgressSchema } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
+import { normalizeThreadProviderDefault, threadProviderIdForHarnessFamily } from '@zana-ai/zcc-domain/launch-provider';
 import { isNotificationLevel, isOwnNotificationLevel, isProjectIcon } from '@zana-ai/zcc-domain';
 import { app } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync, renameSync, rmSync } from 'node:fs';
@@ -695,6 +696,8 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     }).slice(0, 100);
   }
   if (isSelectableHarness(input.defaultHarness)) normalized.defaultHarness = input.defaultHarness;
+  const threadDefault = normalizeThreadProviderDefault(input.defaultThreadProviderId);
+  if (threadDefault !== undefined) normalized.defaultThreadProviderId = threadDefault;
   if (input.theme === 'dark' || input.theme === 'light' || input.theme === 'system') {
     normalized.theme = input.theme;
   }
@@ -1550,8 +1553,14 @@ export const store = {
     if (projects.some((project) => project.remote)) this.ensureScratchRoot();
     let mutated = false;
     const next = projects.map((project) => {
-      const healed = ensureRemoteProjectLocalDirRecord(project);
+      let healed = ensureRemoteProjectLocalDirRecord(project);
       if (healed.path !== project.path) mutated = true;
+      if (healed.defaultThreadProviderId === undefined) {
+        const legacy = healed.launchDefault?.kind === 'exact-profile'
+          ? threadProviderIdForHarnessFamily(healed.launchDefault.adapterId) : null;
+        healed = { ...healed, defaultThreadProviderId: legacy };
+        mutated = true;
+      }
       return healed;
     });
     if (mutated) writeProjects(next);
@@ -1880,7 +1889,7 @@ export const store = {
   },
   updateProject(
     id: string,
-    patch: Partial<Pick<Project, 'name' | 'color' | 'icon' | 'defaultAgents' | 'defaultPersonas' | 'launchDefault' | 'favorite'>> & {
+    patch: Partial<Pick<Project, 'name' | 'color' | 'icon' | 'defaultAgents' | 'defaultPersonas' | 'launchDefault' | 'defaultThreadProviderId' | 'favorite'>> & {
       remotePath?: string;
     }
   ): Project | null {
@@ -1896,6 +1905,11 @@ export const store = {
     // value — a hand-crafted hex, a control-char string — is dropped from the
     // patch so it can never reach projects.json or the DOM.
     const safePatch = { ...rest };
+    if ('defaultThreadProviderId' in safePatch) {
+      const value = normalizeThreadProviderDefault(safePatch.defaultThreadProviderId);
+      if (value === undefined) throw new Error('invalid thread default provider');
+      safePatch.defaultThreadProviderId = value;
+    }
     if (safePatch.icon !== undefined && !isProjectIcon(safePatch.icon)) {
       throw new Error('unsupported project icon');
     }

@@ -246,6 +246,8 @@ export interface Project {
   defaultPersonas?: string[];
   /** Canonical project launch selection. Legacy default arrays are projected only while absent. */
   launchDefault?: ProjectLaunchDefault;
+  /** Thread provider override. null inherits the global thread default. */
+  defaultThreadProviderId?: string | null;
   /** Reserved for future templates work; no logic yet. */
   template?: string;
   /**
@@ -1902,8 +1904,10 @@ export interface AppConfig {
   terminalTheme?: TerminalThemeId;
   shell: string;
   claudeBinary: string;
-  /** Optional global agent-harness default. Absent preserves Claude compatibility fallback. */
+  /** Optional global CLI-agent harness default. Absent preserves Claude compatibility fallback. */
   defaultHarness?: HarnessFamily;
+  /** Explicit default for new threads, independent of the CLI-agent default. */
+  defaultThreadProviderId?: string | null;
   /** Structured global model defaults, keyed by owning harness. */
   harnessRouting?: HarnessModelRoutingV1;
   /** User-declared provider models merged over live discovery (bounded and main-validated). */

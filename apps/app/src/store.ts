@@ -818,6 +818,7 @@ export type ExplorerMinimapPatch = ExplorerMinimapConfig;
 function mirroredConfigFlags(config: AppConfig) {
   return {
     defaultHarness: config.defaultHarness ?? null,
+    defaultThreadProviderId: config.defaultThreadProviderId ?? null,
     fontSize: config.fontSize,
     // Mirror AppConfig.theme so the xterm palette (which paints to a canvas and
     // can't read the CSS `data-theme` cascade) tracks light/dark like every
@@ -1657,6 +1658,7 @@ export interface ClosedTab {
 interface DataState {
   /** Main-owned global default; null keeps Claude compatibility fallback. */
   defaultHarness: AppConfig['defaultHarness'] | null;
+  defaultThreadProviderId: string | null;
   /** True once the first main config read completed. */
   configLoaded: boolean;
   projects: Project[];
@@ -1940,9 +1942,11 @@ interface DataState {
       defaultAgents?: string[];
       defaultPersonas?: string[];
       launchDefault?: Project['launchDefault'];
+      defaultThreadProviderId?: Project['defaultThreadProviderId'];
       favorite?: boolean;
       remotePath?: string;
-    }
+    },
+    options?: { throwOnError?: boolean }
   ) => Promise<void>;
   reorderProjects: (orderedIds: string[]) => Promise<void>;
   removeProject: (id: string) => Promise<void>;
@@ -2292,6 +2296,7 @@ export const useData = create<DataState>((set, get) => ({
   suggestionsEnabled: false,
   structuredQuestionsEnabled: true,
   defaultHarness: null,
+  defaultThreadProviderId: null,
   configLoaded: false,
   closingFollowupIds: new Set<string>(),
   harnessCursorEnabled: false,
@@ -3424,10 +3429,13 @@ export const useData = create<DataState>((set, get) => ({
     }
   },
 
-  async updateProject(id, patch) {
+  async updateProject(id, patch, options) {
     try {
       const updated = await product.projects.update(id, patch);
-      if (!updated) return;
+      if (!updated) {
+        if (options?.throwOnError) throw new Error('Project no longer exists');
+        return;
+      }
       // Preserve the in-memory lastActiveAt (and sortIndex). Disk may have a
       // newer lastActiveAt from an earlier `touch`, but adopting it here would
       // re-sort the sidebar mid-session — same reason selectProject doesn't.
@@ -3440,6 +3448,7 @@ export const useData = create<DataState>((set, get) => ({
       }));
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to update project'));
+      if (options?.throwOnError) throw err;
     }
   },
 

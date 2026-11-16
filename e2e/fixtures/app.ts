@@ -231,7 +231,10 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     }));
     launchEntry = manifestDir;
   }
-  writeAppConfig(home, opts.initialConfig, opts.allowLiveClaude);
+  writeAppConfig(home, {
+    ...(opts.env?.ZCC_FAKE_PROVIDER === '1' ? { defaultThreadProviderId: 'fake' } : {}),
+    ...opts.initialConfig
+  }, opts.allowLiveClaude);
   const preserveHome = opts.env?.ZCC_E2E_PRESERVE_HOME === '1';
   const dataDir = join(home, '.zcc');
   mkdirSync(dataDir, { recursive: true });

@@ -461,6 +461,13 @@ describe('normalizeConfig — auto-close-idle flags', () => {
 });
 
 describe('harness settings containers', () => {
+  it('persists thread providers independently and retains an unavailable provider id', () => {
+    expect(normalizeConfig({ defaultThreadProviderId: ' custom-provider ' }).defaultThreadProviderId).toBe('custom-provider');
+    expect(normalizeConfig({ defaultThreadProviderId: 123 as never })).not.toHaveProperty('defaultThreadProviderId');
+    store.setConfig({ defaultThreadProviderId: 'removed-plugin' });
+    store.setConfig({ defaultHarness: 'claude', harnessCodexEnabled: false });
+    expect(store.getConfig().defaultThreadProviderId).toBe('removed-plugin');
+  });
   it('accepts only boolean native agent discovery settings', () => {
     expect(normalizeConfig({ nativeAgentDiscoveryEnabled: true }).nativeAgentDiscoveryEnabled).toBe(true);
     expect(normalizeConfig({ nativeAgentDiscoveryEnabled: false }).nativeAgentDiscoveryEnabled).toBe(false);

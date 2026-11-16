@@ -167,6 +167,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     fields: [
       "updateProjectRequestSchema.name",
       "updateProjectRequestSchema.remotePath",
+      "updateProjectRequestSchema.defaultThreadProviderId",
       "updateProjectSourceRequestSchema.isDefault",
       "updateProjectSourceRequestSchema.path",
     ],

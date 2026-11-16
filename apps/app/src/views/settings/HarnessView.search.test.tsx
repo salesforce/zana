@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
@@ -8,7 +8,7 @@ import { HarnessView } from './HarnessView.js';
 import { RevealContext, type RevealState } from '../../lib/settings-search/reveal.js';
 import { resetThreadModelCatalog } from '../../components/thread/pickers/thread-model-catalog.js';
 
-vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: () => null }));
+vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: ({ cliDefault }: { cliDefault?: ReactNode }) => cliDefault ?? null }));
 
 const state = vi.hoisted(() => ({
   rows: [] as HarnessVerifyResult[],
@@ -93,7 +93,7 @@ describe('HarnessView settings-search targets', () => {
   it('persists tool allow/deny chips added from the revealed Claude row', async () => {
     const update = vi.fn(async () => undefined);
     render(<View update={update} reveal={{ target: 'harness.claude.allowed-tools', reveal: null }} />);
-    await screen.findByRole('button', { name: 'Default harness' });
+    await screen.findByRole('button', { name: 'Default for CLI agents' });
     for (const [label, key, value] of [['Allowed tools', 'claudeAllowedTools', 'Bash(git:*)'], ['Denied tools', 'claudeDeniedTools', 'Bash(rm:*)']]) {
       const input = await screen.findByRole('textbox', { name: `Add ${label}` });
       fireEvent.change(input, { target: { value } });
@@ -106,7 +106,7 @@ describe('HarnessView settings-search targets', () => {
     const update = vi.fn(async () => undefined);
     const initial = { claudeAddDirs: ['/repo'], claudeAllowedTools: ['Read'] } as AppConfig;
     render(<View update={update} initial={initial} reveal={{ target: 'harness.claude.add-dirs', reveal: null }} />);
-    await screen.findByRole('button', { name: 'Default harness' });
+    await screen.findByRole('button', { name: 'Default for CLI agents' });
     fireEvent.click(await screen.findByRole('button', { name: 'Remove /repo' }));
     expect(update).toHaveBeenCalledWith({ claudeAddDirs: undefined });
     fireEvent.click(screen.getByRole('button', { name: 'Remove Read' }));
