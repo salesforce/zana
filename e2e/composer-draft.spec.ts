@@ -34,7 +34,10 @@ for (const surface of ['home', 'dialog'] as const) {
     await squad.fill('Edited in Squad');
     await modes.getByRole('button', { name: 'CLI Agent', exact: true }).click();
     await expect(cli).toHaveText('Edited in Squad');
-    await cli.fill('');
+    // Exercise the editor's deletion transaction; an empty fill can bypass it on Linux.
+    await cli.press('ControlOrMeta+A');
+    await cli.press('Backspace');
+    await expect(cli).toHaveText('');
     await modes.getByRole('button', { name: 'Modern', exact: true }).click();
     await expect(modern).toHaveText('');
   });
