@@ -304,6 +304,11 @@ export async function resolveRuntimeBridgeLaunch(args: {
   return toRuntimeBridgeLaunch(args.launch, dataDir, artifactPath);
 }
 
+/** The runtime's error for a thread whose provider session is already gone. */
+function isMissingProviderSession(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('No provider associated with thread');
+}
+
 function isInFlightRetryEvent(event: ThreadEvent): boolean {
   if (event.type === 'provider/error') return event.willRetry === true;
   if (event.type === 'system/error') return event.reconnectAttempt !== undefined;
@@ -379,6 +384,10 @@ export function createAgentRuntimeAdapter(options: {
     return false;
   };
   const submitByThread = new Map<string, Promise<void>>();
+  // A start or resume still constructing its provider session. A stop that
+  // lands meanwhile cannot release a session the runtime does not know yet,
+  // so it is recorded here and carried out when the construction settles.
+  const pendingStarts = new Map<string, { stopRequested: boolean }>();
   const createRuntime = options.createRuntime
     ?? (fakeProviderEnabled() ? createFakeAgentRuntime : createAgentRuntime);
   const bridgeBundleDir = options.bridgeBundleDir ?? packedBridgeBundleDir();
@@ -526,6 +535,45 @@ export function createAgentRuntimeAdapter(options: {
     return runtime;
   }
 
+  async function constructSession<T>(threadId: string, run: () => Promise<T>): Promise<T> {
+    const pending = { stopRequested: false };
+    pendingStarts.set(threadId, pending);
+    try {
+      const result = await run();
+      if (pending.stopRequested) {
+        await releaseStoppedThread(threadId);
+        throw new HostCommandError('thread_stopped', 'thread was stopped while it was starting');
+      }
+      return result;
+    } catch (error) {
+      if (pending.stopRequested && !(error instanceof HostCommandError && error.code === 'thread_stopped')) {
+        await releaseStoppedThread(threadId);
+      }
+      throw error;
+    } finally {
+      if (pendingStarts.get(threadId) === pending) pendingStarts.delete(threadId);
+    }
+  }
+
+  async function releaseStoppedThread(threadId: string): Promise<void> {
+    const location = threadLocation.get(threadId);
+    if (location) {
+      try {
+        // Releases the provider session, and with it a thread-scoped process.
+        await runtimeFor(location.environmentId, location.cwd).stopThread({ threadId });
+      } catch (error) {
+        // A failed construction already dropped its session; anything else
+        // keeps the bookkeeping so a later stop can retry the release.
+        if (!isMissingProviderSession(error)) {
+          console.warn(`[host-daemon] could not release stopped thread ${threadId}:`, error);
+          return;
+        }
+      }
+    }
+    threadLocation.delete(threadId);
+    remoteProxyByThread.delete(threadId);
+  }
+
   function runtimeForThread(threadId: string): AgentRuntime {
     const location = threadLocation.get(threadId);
     if (!location) {
@@ -608,7 +656,7 @@ export function createAgentRuntimeAdapter(options: {
       }
       const startMcp = personaScopedMcp(input.providerOptions, isIsolatedAutomatedStart(input));
       try {
-        const result = await runtime.startThread({
+        const result = await constructSession(input.threadId, async () => runtime.startThread({
           skillRoots: await skillSnapshots.capture(runtime, skillSelectionForStart(input)),
           environmentId: input.environmentId,
           threadId: input.threadId,
@@ -644,7 +692,7 @@ export function createAgentRuntimeAdapter(options: {
             instructions: input.instructions,
             mcpServers: startMcp.mcpServers
           })
-        });
+        }));
         const location = threadLocation.get(input.threadId);
         if (location?.status === 'active') location.status = 'idle';
         return {
@@ -697,7 +745,7 @@ export function createAgentRuntimeAdapter(options: {
       threadLocation.set(input.threadId, { environmentId: input.environmentId, projectId: input.projectId, cwd: input.cwd, status: 'active' });
       const resumeMcp = personaScopedMcp(input.providerOptions, input.sessionKind === 'automated');
       try {
-        const result = await runtime.resumeThread({
+        const result = await constructSession(input.threadId, async () => runtime.resumeThread({
           skillRoots: await skillSnapshots.capture(runtime, automatedSkillSelection(input)),
           environmentId: input.environmentId,
           threadId: input.threadId,
@@ -725,7 +773,7 @@ export function createAgentRuntimeAdapter(options: {
             mcpServers: resumeMcp.mcpServers
           }),
           ...(input.requireNativeLoad === true ? { requireNativeLoad: true as const } : {})
-        });
+        }));
         const location = threadLocation.get(input.threadId);
         if (location?.status === 'active') location.status = 'idle';
         return {
@@ -745,6 +793,12 @@ export function createAgentRuntimeAdapter(options: {
       /* Follow-up turns use submitTurn, not raw PTY writes. */
     },
     async stopWork(input) {
+      const pending = pendingStarts.get(input.threadId);
+      if (pending) {
+        // The start owns the release; it runs as soon as construction settles.
+        pending.stopRequested = true;
+        return;
+      }
       const runtime = runtimeForThread(input.threadId);
       await runtime.stopThread({ threadId: input.threadId });
       threadLocation.delete(input.threadId);

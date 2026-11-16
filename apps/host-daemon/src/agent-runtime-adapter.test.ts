@@ -183,6 +183,91 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it.each(['start', 'resume'] as const)('releases the provider session when a stop lands while the %s is still constructing it', async method => {
+    // Live suites stop a thread milliseconds after spawning it. The runtime
+    // does not know the thread until construction registers it, so a stop
+    // forwarded immediately fails and the session it was meant to end lives on.
+    const threadId = randomUUID(), environmentId = randomUUID();
+    let finish!: (value: { providerThreadId: string }) => void;
+    let runtime!: ReturnType<typeof createAgentRuntimeWithAdapters>;
+    let constructed = false;
+    const stopped: boolean[] = [];
+    const adapter = createAgentRuntimeAdapter({ dataDir: cwd, emit: () => {}, createRuntime: options => {
+      runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+      vi.spyOn(runtime, method === 'start' ? 'startThread' : 'resumeThread').mockImplementation(
+        () => new Promise(resolve => { finish = value => { constructed = true; resolve(value); }; })
+      );
+      vi.spyOn(runtime, 'stopThread').mockImplementation(async () => {
+        if (!constructed) throw new Error(`No provider associated with thread "${threadId}"`);
+        stopped.push(true);
+        return { providerCheckpointId: null };
+      });
+      return runtime;
+    } });
+    const input = { threadId, environmentId, projectId: 'fixture', providerId: 'fake', input: [], providerThreadId: 'provider-thread', cwd };
+    const constructing = method === 'start' ? adapter.startWork(input) : adapter.resumeWork(input);
+    const settled = constructing.then(() => 'resolved', (error: Error) => error.message);
+    try {
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      await expect(adapter.stopWork({ threadId })).resolves.toBeUndefined();
+      expect(stopped).toEqual([]);
+      finish({ providerThreadId: 'provider-thread' });
+      await expect(settled).resolves.toBe('thread was stopped while it was starting');
+      expect(stopped).toEqual([true]);
+      expect(adapter.getRuntimeSnapshot!().threads).toEqual([]);
+    } finally { adapter.dispose(); }
+  });
+
+  it('releases a stopped-while-starting thread whose construction then fails', async () => {
+    const threadId = randomUUID();
+    let fail!: (error: Error) => void;
+    const stopThread = vi.fn(async () => { throw new Error(`No provider associated with thread "${threadId}"`); });
+    const adapter = createAgentRuntimeAdapter({ dataDir: cwd, emit: () => {}, createRuntime: options => {
+      const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+      vi.spyOn(runtime, 'startThread').mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+      vi.spyOn(runtime, 'stopThread').mockImplementation(stopThread);
+      return runtime;
+    } });
+    const starting = adapter.startWork({ threadId, environmentId: randomUUID(), projectId: 'fixture', providerId: 'fake', input: [], cwd });
+    const settled = starting.then(() => 'resolved', (error: Error) => error.message);
+    try {
+      await vi.waitFor(() => expect(fail).toBeTypeOf('function'));
+      await adapter.stopWork({ threadId });
+      fail(new Error('launch failed'));
+      await expect(settled).resolves.toBe('launch failed');
+      expect(stopThread).toHaveBeenCalledTimes(1);
+      expect(adapter.getRuntimeSnapshot!().threads).toEqual([]);
+    } finally { adapter.dispose(); }
+  });
+
+  it('logs a failed release of a stopped-while-starting thread and keeps it for a retry', async () => {
+    const threadId = randomUUID();
+    let finish!: (value: { providerThreadId: string }) => void;
+    const stopThread = vi.fn()
+      .mockRejectedValueOnce(new Error('provider did not answer'))
+      .mockResolvedValue({ providerCheckpointId: null });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const adapter = createAgentRuntimeAdapter({ dataDir: cwd, emit: () => {}, createRuntime: options => {
+      const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+      vi.spyOn(runtime, 'startThread').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      vi.spyOn(runtime, 'stopThread').mockImplementation(stopThread);
+      return runtime;
+    } });
+    const starting = adapter.startWork({ threadId, environmentId: randomUUID(), projectId: 'fixture', providerId: 'fake', input: [], cwd });
+    const settled = starting.then(() => 'resolved', (error: Error) => error.message);
+    try {
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      await adapter.stopWork({ threadId });
+      finish({ providerThreadId: 'provider-thread' });
+      await expect(settled).resolves.toBe('thread was stopped while it was starting');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(`could not release stopped thread ${threadId}`), expect.any(Error));
+      expect(adapter.getRuntimeSnapshot!().threads.map(thread => thread.threadId)).toEqual([threadId]);
+      await adapter.stopWork({ threadId });
+      expect(stopThread).toHaveBeenCalledTimes(2);
+      expect(adapter.getRuntimeSnapshot!().threads).toEqual([]);
+    } finally { adapter.dispose(); warn.mockRestore(); }
+  });
+
   it('uses an empty catalog for an unattended start', async () => {
     const root = join(cwd, 'skills-generated', 'demo');
     mkdirSync(root, { recursive: true });

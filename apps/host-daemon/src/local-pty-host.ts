@@ -18,7 +18,8 @@ export function createLocalPtyTerminalManager(emit: (event: TerminalHostEvent) =
         name: 'xterm-256color'
       });
       return {
-        pid: handle.pid,
+        // node-pty on Windows reports 0 until ConPTY connects; read it at close time.
+        get pid() { return handle.pid; },
         onData: (listener) => { handle.onData(listener); },
         onExit: (listener) => { handle.onExit((event) => listener({ exitCode: event.exitCode, signal: event.signal })); },
         write: (data) => handle.write(data),
