@@ -5,6 +5,13 @@ import { posix } from 'node:path';
 /** Shells tried, in order, after `SHELL` and the login shell. */
 export const DEFAULT_SHELL_FALLBACKS: readonly string[] = ['/bin/bash', '/bin/sh'];
 
+/**
+ * Executables that refuse a login and exit at once. Service accounts get them
+ * as their passwd shell (and sometimes as SHELL); they exist and are
+ * executable, but a terminal using one closes immediately.
+ */
+export const NON_INTERACTIVE_SHELLS: readonly string[] = ['nologin', 'false', 'true'];
+
 /** Value used when no shell exists at all, so a config still loads. */
 export const LAST_RESORT_SHELL = '/bin/sh';
 
@@ -47,7 +54,8 @@ function isExecutableFile(path: string): boolean {
 /**
  * The first POSIX shell that exists: `SHELL` if executable, then the user's
  * login shell (`os.userInfo().shell`), then `/bin/bash`, then `/bin/sh`.
- * Relative candidates are skipped. On macOS this keeps zsh, through `SHELL` or
+ * Relative candidates, and login blockers such as `/usr/sbin/nologin` or
+ * `/bin/false` ({@link NON_INTERACTIVE_SHELLS}), are skipped. On macOS this keeps zsh, through `SHELL` or
  * the login shell. Throws {@link NoShellFoundError} when none exists.
  */
 export function resolveDefaultShell(probe: ShellProbe = {}): string {
@@ -59,7 +67,9 @@ export function resolveDefaultShell(probe: ShellProbe = {}): string {
     const candidate = raw?.trim();
     if (!candidate || tried.includes(candidate)) continue;
     tried.push(candidate);
-    if (posix.isAbsolute(candidate) && executable(candidate)) return candidate;
+    if (!posix.isAbsolute(candidate)) continue;
+    if (NON_INTERACTIVE_SHELLS.includes(posix.basename(candidate))) continue;
+    if (executable(candidate)) return candidate;
   }
   throw new NoShellFoundError(tried);
 }

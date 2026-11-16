@@ -17,7 +17,10 @@ const FALLBACK: Omit<AppConfig, 'shell'> = {
 const WINDOWS_FALLBACK_SHELL = '/bin/zsh';
 let fallbackShell: string | undefined;
 
-/** The host's default `shell` when config.json has none. Resolved once per process. */
+/**
+ * The host's default `shell` when config.json has none. Resolved on first
+ * need, then once per process, so a saved shell triggers no lookup or log.
+ */
 export function hostFallbackShell(probe?: Omit<DefaultShellSettingOptions, 'windows'>): string {
   if (probe) return defaultShellSetting({ windows: WINDOWS_FALLBACK_SHELL, ...probe });
   return (fallbackShell ??= defaultShellSetting({ windows: WINDOWS_FALLBACK_SHELL }));
@@ -59,7 +62,12 @@ export function loadHostAppConfig(dataDir?: string, env: NodeJS.ProcessEnv = pro
     const file = hostConfigPath(resolveHostConfigDir(dataDir, env));
     if (!existsSync(file)) return { ...FALLBACK, shell: hostFallbackShell() };
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<AppConfig>;
-    return projectConfigCompatibility({ ...FALLBACK, shell: hostFallbackShell(), ...parsed, version: 1 });
+    return projectConfigCompatibility({
+      ...FALLBACK,
+      ...parsed,
+      shell: parsed.shell ?? hostFallbackShell(),
+      version: 1
+    });
   } catch {
     return { ...FALLBACK, shell: hostFallbackShell() };
   }

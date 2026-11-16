@@ -84,6 +84,11 @@ describe('host default shell', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('No usable shell found. Tried /bin/bash, /bin/sh.'));
   });
 
+  it('skips a nologin passwd shell (service accounts) and falls back to /bin/bash', () => {
+    expect(hostFallbackShell({ platform: 'linux', env: {}, loginShell: () => '/usr/sbin/nologin', isExecutable: only('/usr/sbin/nologin', '/bin/bash', '/bin/sh') }))
+      .toBe('/bin/bash');
+  });
+
   it('keeps the previous /bin/zsh value on Windows', () => {
     expect(hostFallbackShell({ platform: 'win32', env: { SHELL: '/bin/bash' }, isExecutable: () => true })).toBe('/bin/zsh');
   });
@@ -100,5 +105,27 @@ describe('host default shell', () => {
     writeFileSync(join(dataDir, 'config.json'), '{broken');
     expect(loadHostAppConfig(dataDir).shell).toBe(expected);
     if (process.platform === 'win32') expect(expected).toBe('/bin/zsh');
+  });
+
+  it('loadHostAppConfig does no shell lookup when config.json saves a shell', async () => {
+    vi.resetModules();
+    const defaultShellSetting = vi.fn(() => '/bin/sh');
+    vi.doMock('@zana-ai/zcc-process-utils', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@zana-ai/zcc-process-utils')>()),
+      defaultShellSetting
+    }));
+    try {
+      const fresh = await import('./host-config.js');
+      const dataDir = mkdtempSync(join(tmpdir(), 'zcc-host-saved-shell-'));
+      writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ shell: '/opt/custom/sh' }));
+      expect(fresh.loadHostAppConfig(dataDir).shell).toBe('/opt/custom/sh');
+      expect(defaultShellSetting).not.toHaveBeenCalled();
+      writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ claudeBinary: 'claude' }));
+      expect(fresh.loadHostAppConfig(dataDir).shell).toBe('/bin/sh');
+      expect(defaultShellSetting).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock('@zana-ai/zcc-process-utils');
+      vi.resetModules();
+    }
   });
 });

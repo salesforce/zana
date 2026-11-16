@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   defaultShellSetting,
   LAST_RESORT_SHELL,
+  NON_INTERACTIVE_SHELLS,
   NoShellFoundError,
   resolveDefaultShell
 } from './default-shell.js';
@@ -59,6 +60,32 @@ describe('resolveDefaultShell', () => {
       loginShell: () => null,
       isExecutable: only('/bin/sh')
     })).toBe('/bin/sh');
+  });
+
+  it.each(['/usr/sbin/nologin', '/sbin/nologin', '/bin/false', '/usr/bin/false', '/bin/true'])(
+    'skips the login-blocking passwd shell %s and falls back to /bin/bash',
+    (blocker) => {
+      const isExecutable = vi.fn(only(blocker, '/bin/bash', '/bin/sh'));
+      expect(resolveDefaultShell({ env: {}, loginShell: () => blocker, isExecutable })).toBe('/bin/bash');
+      expect(isExecutable).not.toHaveBeenCalledWith(blocker);
+    }
+  );
+
+  it('skips a SHELL pointing at nologin or false too', () => {
+    expect(resolveDefaultShell({
+      env: { SHELL: '/usr/sbin/nologin' },
+      loginShell: () => '/bin/false',
+      isExecutable: only('/usr/sbin/nologin', '/bin/false', '/bin/sh')
+    })).toBe('/bin/sh');
+  });
+
+  it('names a skipped login blocker in the not-found error', () => {
+    expect(() => resolveDefaultShell({
+      env: {},
+      loginShell: () => '/usr/sbin/nologin',
+      isExecutable: only('/usr/sbin/nologin')
+    })).toThrow('Tried /usr/sbin/nologin, /bin/bash, /bin/sh.');
+    expect(NON_INTERACTIVE_SHELLS).toEqual(['nologin', 'false', 'true']);
   });
 
   it('ignores relative and blank candidates', () => {

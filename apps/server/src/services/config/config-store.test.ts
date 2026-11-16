@@ -364,6 +364,13 @@ describe('createConfigStore plugin harness routing', () => {
         .toBe('/bin/zsh');
     });
 
+    it('skips a nologin or false passwd shell or SHELL and falls back to /bin/bash', () => {
+      expect(storeWith({ platform: 'linux', env: {}, loginShell: () => '/usr/sbin/nologin', isExecutable: only('/usr/sbin/nologin', '/bin/bash') }).getConfig().shell)
+        .toBe('/bin/bash');
+      expect(storeWith({ platform: 'linux', env: { SHELL: '/bin/false' }, loginShell: () => null, isExecutable: only('/bin/false', '/bin/bash') }).getConfig().shell)
+        .toBe('/bin/bash');
+    });
+
     it('falls back to /bin/bash, then /bin/sh', () => {
       expect(storeWith({ platform: 'linux', env: {}, loginShell: () => null, isExecutable: only('/bin/bash', '/bin/sh') }).getConfig().shell).toBe('/bin/bash');
       expect(storeWith({ platform: 'linux', env: {}, loginShell: () => null, isExecutable: only('/bin/sh') }).getConfig().shell).toBe('/bin/sh');
@@ -394,8 +401,20 @@ describe('createConfigStore plugin harness routing', () => {
       store.getConfig();
       store.getConfig();
       expect(isExecutable).toHaveBeenCalledTimes(2);
-      expect(storeWith({ platform: 'linux', env: {}, isExecutable: () => false, warn: vi.fn() }, { shell: '/opt/custom/sh' }).getConfig().shell)
-        .toBe('/opt/custom/sh');
+    });
+
+    it('does no lookup and logs nothing when config.json saves a shell', () => {
+      const isExecutable = vi.fn(() => false);
+      const loginShell = vi.fn(() => null);
+      const warn = vi.fn();
+      const store = storeWith({ platform: 'linux', env: {}, loginShell, isExecutable, warn }, { shell: '/opt/custom/sh' });
+      expect(store.getConfig().shell).toBe('/opt/custom/sh');
+      expect(store.snapshot().config.shell).toBe('/opt/custom/sh');
+      expect(store.setConfig({ fontSize: 14 }).shell).toBe('/opt/custom/sh');
+      expect(store.replaceConfig(store.getConfig(), store.snapshot().hash).shell).toBe('/opt/custom/sh');
+      expect(isExecutable).not.toHaveBeenCalled();
+      expect(loginShell).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
     });
   });
 });

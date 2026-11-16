@@ -117,16 +117,16 @@ export function createConfigStore(
     writeRaw(withPluginHarnessRouting(config, pluginHarnessRoutingOf(disk.value)), disk.hash);
   };
 
-  // Resolved once per store: the lookup stats files, and fallback() runs on every read.
+  // Looked up only when config.json saves no shell, then once per store:
+  // the lookup stats files and logs when no shell exists.
   let defaultShell: string | undefined;
   const fallbackShell = (): string =>
     (defaultShell ??= defaultShellSetting({ windows: process.env.SHELL || '/bin/zsh', ...deps.shellProbe }));
 
-  const fallback = (): AppConfig => ({
+  const fallback = (): Omit<AppConfig, 'shell'> => ({
     version: 1,
     theme: 'dark',
     terminalTheme: DEFAULT_TERMINAL_THEME,
-    shell: fallbackShell(),
     claudeBinary: 'claude',
     fontSize: 13,
     lastProjectId: null,
@@ -154,13 +154,21 @@ export function createConfigStore(
     executionPlanStartupGraceMs: 300_000
   });
 
+  /** Defaults under `stored`; the default shell is resolved only when none is stored. */
+  const withFallback = (stored: Partial<AppConfig>): AppConfig => ({
+    ...fallback(),
+    ...stored,
+    shell: stored.shell ?? fallbackShell(),
+    version: 1
+  });
+
   // A cleared (undefined) claudeBinary must resolve to the default, not to nothing.
   const withDefaultBinary = (config: AppConfig): AppConfig =>
     config.claudeBinary ? config : { ...config, claudeBinary: fallback().claudeBinary };
 
   const hydrate = (raw: Partial<AppConfig>): AppConfig =>
     ensureComposerLaunchSurfaces(
-      withDefaultBinary(deps.projectConfigCompatibility({ ...fallback(), ...deps.normalizeConfig(raw), version: 1 }))
+      withDefaultBinary(deps.projectConfigCompatibility(withFallback(deps.normalizeConfig(raw))))
     );
 
   const applyOptionalResets = (next: AppConfig, patch: Partial<AppConfig>, normalizedPatch: Partial<AppConfig>): AppConfig => {
@@ -192,7 +200,7 @@ export function createConfigStore(
     getConfig(): AppConfig {
       const disk = readJsonRaw<Partial<AppConfig>>({});
       const stored = deps.normalizeConfig(disk.value);
-      const merged = withDefaultBinary(deps.projectConfigCompatibility({ ...fallback(), ...stored, version: 1 }));
+      const merged = withDefaultBinary(deps.projectConfigCompatibility(withFallback(stored)));
       const healed = ensureComposerLaunchSurfaces(merged);
       if (disk.hash !== null && composerLaunchSurfacesDiffer(merged, healed)) {
         try {
@@ -209,7 +217,8 @@ export function createConfigStore(
     },
     replaceConfig(next: AppConfig, expectedHash: string | null): AppConfig {
       const normalized = ensureComposerLaunchSurfaces(withDefaultBinary({
-        ...hydrate({}),
+        // Pass the shell through so a supplied shell skips the default lookup.
+        ...hydrate({ shell: next.shell }),
         ...deps.normalizeConfig(next),
         version: 1 as const
       }));
