@@ -225,6 +225,8 @@ a new Squad instead.
 - [Choose a Squad](/docs/squads-catalogue/) — the five built-in Squads, what
   each is for, and what each costs.
 - [Launch a Squad](/docs/squads-launch/) — every way to start a run.
+- [Squad plans](/docs/squads-plans/) — write a plan, pick roles, and fix a
+  rejected plan.
 - [Watch a Squad run](/docs/squads-watch/) — the board, Squad details, and the
   Inbox.
 - [Personas and custom Squads](/docs/squads-customize/) — build your own

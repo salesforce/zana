@@ -60,6 +60,8 @@
     "live:memory": "pnpm --filter @zana-ai/zcc-control live:memory",
     "rebuild": "node scripts/ensure-node-pty-helper.mjs --electron && node scripts/ensure-better-sqlite3.mjs",
     "rebuild:electron": "node scripts/ensure-node-pty-helper.mjs --electron && node scripts/ensure-better-sqlite3.mjs --electron",
+    "squad-cheat-sheet": "tsx scripts/generate-squad-cheat-sheet.ts",
+    "test:squad-cheat-sheet": "vitest run scripts/squad-cheat-sheet.guard.test.ts",
     "check:release-notes": "node scripts/check-release-notes.mjs",
     "clean:dist": "node scripts/clean-dist.mjs",
     "dist": "pnpm --filter @zana-ai/zcc-desktop package",

@@ -68,6 +68,18 @@ function isExtensionSource(source: Team['source']): boolean {
   return !!source && typeof source === 'object' && 'extensionId' in source;
 }
 
+export const SLOT_ROLES_HINT =
+  'No roles on this slot, so a plan that asks for a role cannot pick it. Add roles in the Squad definition, or ask an agent to use register_teams.';
+
+/** True when a slot has neither routing roles (its own, else its persona's) nor a label. */
+export function slotNeedsRolesHint(
+  slot: { roles?: string[]; label?: string },
+  persona: Pick<Persona, 'roles'> | undefined
+): boolean {
+  const roles = slot.roles ?? persona?.roles;
+  return (roles?.length ?? 0) === 0 && !slot.label?.trim();
+}
+
 function totalTabs(slots: TeamSlot[]): number {
   return slots.reduce((sum, s) => sum + Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)), 0);
 }
@@ -212,6 +224,7 @@ function TeamDetail({
                   )}
                   {!isOrch && slot.startOnDemand === true && <span className="scheduler-pill">Starts when needed</span>}
                   {!isOrch && slot.freshContextPerUnit === true && <span className="scheduler-pill">Fresh session per unit</span>}
+                  {slotNeedsRolesHint(slot, p) && <span className="settings-help team-slot-roles-hint" role="note">{SLOT_ROLES_HINT}</span>}
                 </li>
               );
             })}
@@ -275,6 +288,8 @@ interface SlotDraft {
   startOnDemand: boolean;
   /** Close this seat's session after each unit and start a new one for the next (#579). */
   freshContextPerUnit: boolean;
+  /** Routing tags authored outside the editor; carried through so a save never drops them. */
+  roles?: string[];
 }
 
 interface TeamDraft {
@@ -302,7 +317,8 @@ function draftForTeam(team: Team | null): TeamDraft {
     quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, slot.quantity ?? 1)),
     label: slot.label ?? '',
     startOnDemand: slot.startOnDemand === true,
-    freshContextPerUnit: slot.freshContextPerUnit === true
+    freshContextPerUnit: slot.freshContextPerUnit === true,
+    ...(slot.roles !== undefined ? { roles: slot.roles } : {})
   }));
   // Keep a standalone orchestrator in the draft, matching what the form renders and saves.
   if (orchestratorPersonaId && !slots.some((slot) => slot.personaId === orchestratorPersonaId)) {
@@ -495,6 +511,7 @@ function TeamForm({
         personaId: s.personaId.trim(),
         quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity || 1)),
         ...(s.label.trim() ? { label: s.label.trim() } : {}),
+        ...(s.roles !== undefined ? { roles: s.roles } : {}),
         // On-demand seats need the engine of a plan-driven CLI squad; never store the flag otherwise.
         ...(s.startOnDemand && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {}),
         // A fresh session per unit needs the same plan-driven CLI squad; never store the flag otherwise.
@@ -717,6 +734,9 @@ function TeamForm({
                         aria-label="Tab count"
                       />
                     </span>
+                    {slotNeedsRolesHint({ roles: slot.roles, label: slot.label }, personaById.get(slot.personaId)) && (
+                      <p className="settings-help team-slot-roles-hint" role="note">{SLOT_ROLES_HINT}</p>
+                    )}
                     {transport !== 'MODERN' && orchestratorPersonaId !== slot.personaId && (
                       <label className="team-slot-on-demand">
                         <input

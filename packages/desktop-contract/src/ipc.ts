@@ -825,6 +825,8 @@ export const IPC = {
     startJob: 'teams:startJob',
     preview: 'teams:preview',
     reviewProposal: 'teams:reviewProposal',
+    recheckProposalPlan: 'teams:recheckProposalPlan',
+    messageProposer: 'teams:messageProposer',
     launchAutonomous: 'teams:launchAutonomous',
     stopAutonomous: 'teams:stopAutonomous',
     exportBundle: 'teams:exportBundle',

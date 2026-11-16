@@ -15,7 +15,7 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import type { Project, SquadTransport, Team, TeamSlot } from '@zana-ai/zcc-domain/product';
+import { normalizeRoles, type Project, type SquadTransport, type Team, type TeamSlot } from '@zana-ai/zcc-domain/product';
 import { isLaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
@@ -76,6 +76,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
     if (!s || typeof s !== 'object') continue;
     const slot = s as Partial<TeamSlot>;
     if (typeof slot.personaId !== 'string' || !slot.personaId.trim()) continue;
+    const roles = normalizeRoles(slot.roles);
     const q = typeof slot.quantity === 'number' && Number.isFinite(slot.quantity)
       ? Math.max(1, Math.min(TEAM_SLOT_MAX, Math.floor(slot.quantity)))
       : 1;
@@ -85,6 +86,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
       ...(typeof slot.label === 'string' && slot.label.trim()
         ? { label: slot.label.trim() }
         : {}),
+      ...(roles ? { roles } : {}),
       ...(slot.startOnDemand === true ? { startOnDemand: true } : {}),
       ...(slot.freshContextPerUnit === true ? { freshContextPerUnit: true } : {})
     });
@@ -133,8 +135,8 @@ const BUILTIN: Team[] = [
     orchestratorPersonaId: 'builtin:orchestrator',
     slots: [
       { personaId: 'builtin:orchestrator', quantity: 1 },
-      { personaId: 'builtin:software-engineer', quantity: 1 },
-      { personaId: 'builtin:reviewer', quantity: 1 }
+      { personaId: 'builtin:software-engineer', quantity: 1, roles: ['engineer'] },
+      { personaId: 'builtin:reviewer', quantity: 1, roles: ['reviewer'] }
     ],
     initialPrompt:
       'You are the orchestrator for this on-demand review team. Delegate a focused review, gather findings, and report only actionable results.'
@@ -145,7 +147,7 @@ const BUILTIN: Team[] = [
     icon: 'Search',
     description: 'Coordinator (medium) and two low-capacity investigators for code, requirements, and prior-art research.',
     orchestratorPersonaId: 'builtin:orchestrator',
-    slots: [{ personaId: 'builtin:squad-worker-low', quantity: 2, label: 'Investigator' }],
+    slots: [{ personaId: 'builtin:squad-worker-low', quantity: 2, label: 'Investigator', roles: ['researcher'] }],
     initialPrompt: 'Coordinate bounded research. Produce evidence, options, and unresolved questions before proposing implementation.'
   },
   {
@@ -155,8 +157,8 @@ const BUILTIN: Team[] = [
     description: 'Coordinator (medium), a high-capacity designer, and a high-capacity challenger for technical design.',
     orchestratorPersonaId: 'builtin:orchestrator',
     slots: [
-      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Designer' },
-      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Challenger' }
+      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Designer', roles: ['designer'] },
+      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Challenger', roles: ['challenger'] }
     ],
     initialPrompt: 'Coordinate design work. Produce a minimal technical plan with decisions, boundaries, and verification criteria.'
   },
@@ -168,10 +170,10 @@ const BUILTIN: Team[] = [
     orchestratorPersonaId: 'builtin:orchestrator',
     routingEnforced: true,
     slots: [
-      { personaId: 'builtin:squad-worker-low', quantity: 1, label: 'Evidence collector' },
-      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Root-cause investigator' }
+      { personaId: 'builtin:squad-worker-low', quantity: 1, label: 'Evidence collector', roles: ['evidence-collector'] },
+      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Root-cause investigator', roles: ['root-cause-investigator'] }
     ],
-    initialPrompt: 'Coordinate debugging. Every unit must set routing with version: 1, requiredRole, and minimumLevel matching builtin:squad-worker-low/low or builtin:squad-worker-high/high. Do not set estimatedContextBytes, capabilities, or modalities. Let dispatch assign work; do not call assign.'
+    initialPrompt: 'Coordinate debugging. Plan authoring rules and the roster come from the host; let dispatch assign work.'
   },
   {
     id: 'builtin:delivery-squad',
@@ -181,10 +183,10 @@ const BUILTIN: Team[] = [
     orchestratorPersonaId: 'builtin:orchestrator',
     routingEnforced: true,
     slots: [
-      { personaId: 'builtin:squad-worker-medium', quantity: 2, label: 'Engineer' },
-      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Reviewer' }
+      { personaId: 'builtin:squad-worker-medium', quantity: 2, label: 'Engineer', roles: ['engineer'] },
+      { personaId: 'builtin:squad-worker-high', quantity: 1, label: 'Reviewer', roles: ['reviewer'] }
     ],
-    initialPrompt: 'Coordinate delivery. Every unit must set routing with version: 1, requiredRole, and minimumLevel matching builtin:squad-worker-medium/medium or builtin:squad-worker-high/high. Do not set estimatedContextBytes, capabilities, or modalities. Let dispatch assign work; do not call assign.'
+    initialPrompt: 'Coordinate delivery. Plan authoring rules and the roster come from the host; let dispatch assign work.'
   }
 ];
 
@@ -246,6 +248,20 @@ function parseTeam(content: string): Team | null {
   }
 }
 
+/** A persona id cannot impersonate another slot's label or routing tag. */
+function teamRoleCollisions(team: Team, personaRoles?: (personaId: string) => string[] | undefined): string[] {
+  const collisions = new Set<string>();
+  for (const [index, slot] of team.slots.entries()) {
+    const personaId = slot.personaId.trim().toLowerCase();
+    for (const [otherIndex, other] of team.slots.entries()) {
+      if (index === otherIndex) continue;
+      const names = [other.label, ...(other.roles ?? personaRoles?.(other.personaId) ?? [])];
+      if (names.some((name) => name?.trim().toLowerCase() === personaId)) collisions.add(personaId);
+    }
+  }
+  return [...collisions];
+}
+
 function readTeamFile(path: string): Team | null {
   try { return parseTeam(readFileSync(path, 'utf8')); } catch { return null; }
 }
@@ -289,6 +305,13 @@ export class TeamStore extends EventEmitter {
     super();
     this.projectsRef = projectsRef;
     this.registry = registry;
+  }
+
+  private personaRoles?: (personaId: string) => string[] | undefined;
+
+  /** Lets save/load collision checks see persona-level default roles. */
+  setPersonaRoleLookup(lookup: (personaId: string) => string[] | undefined) {
+    this.personaRoles = lookup;
   }
 
   start() {
@@ -352,6 +375,8 @@ export class TeamStore extends EventEmitter {
     for (const t of BUILTIN) merged.set(t.id, { ...t, source: 'builtin' });
     const userDir = userTeamsDir();
     for (const t of listInDir(userDir, 'user')) {
+      const collisions = teamRoleCollisions(t, this.personaRoles);
+      if (collisions.length) console.warn(`[team-store] team ${t.id} has persona id/role collisions: ${collisions.join(', ')}`);
       merged.set(t.id, t);
       if (t.launchApproval === 'review') reviewRequired.add(t.id);
     }
@@ -361,6 +386,8 @@ export class TeamStore extends EventEmitter {
         const source = entry.source;
         for (const record of source.records) {
           const value = parseTeam(record);
+          const collisions = value ? teamRoleCollisions(value, this.personaRoles) : [];
+          if (collisions.length) console.warn(`[team-store] team ${value!.id} has persona id/role collisions: ${collisions.join(', ')}`);
           if (value) merged.set(value.id, { ...value, source: { projectId: source.projectId, projectName: source.projectName } });
           if (value?.launchApproval === 'review') reviewRequired.add(value.id);
         }
@@ -370,7 +397,9 @@ export class TeamStore extends EventEmitter {
       const projectDir = projectTeamsDir(project);
       if (canonicalDir(projectDir) === canonicalUserDir) continue;
       const projectSource: Team['source'] = { projectId: project.id, projectName: project.name };
-      for (const t of listInDir(projectDir, projectSource)) {
+        for (const t of listInDir(projectDir, projectSource)) {
+        const collisions = teamRoleCollisions(t, this.personaRoles);
+        if (collisions.length) console.warn(`[team-store] team ${t.id} has persona id/role collisions: ${collisions.join(', ')}`);
         merged.set(t.id, t);
         if (t.launchApproval === 'review') reviewRequired.add(t.id);
       }
@@ -413,6 +442,8 @@ export class TeamStore extends EventEmitter {
 
     const team = sanitizeTeam({ slots: [], ...input, id });
     if (!team) throw new Error('invalid team: missing name/slots or invalid field');
+    const collisions = teamRoleCollisions(team, this.personaRoles);
+    if (collisions.length) throw new Error(`invalid team: persona id collides with another slot role: ${collisions.join(', ')}`);
 
     writeJsonAtomic(join(dir, fileNameForId(team.id)), team);
     // One default at a time: a newly flagged team un-flags every other user team.

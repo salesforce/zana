@@ -753,10 +753,16 @@ describe('host bootstrap wiring', () => {
     const admission = await o.admissionInput(project.id, request);
     expect(admission).toMatchObject({ slotCount: 2, maxSlots: 32, sourceBytes: 12 });
     expect(admission.slotRoutes).toHaveLength(2);
-    // Advisory (a worker slot has no level): explicit false keeps ROUTE_ELIGIBILITY non-required.
-    expect(admission.enforceRouting).toBe(false);
+    // Per-slot admission: the slot with no level is exempt from the level check only; the known-level slot keeps it.
+    expect(admission.enforceRouting).toBe(true);
+    expect(admission.levelExemptSlotIds).toEqual(['s2']);
+    // No worker slot has a known level: level enforcement degrades to advisory, with nothing to exempt.
+    const unknownOnly = await o.admissionInput(project.id, { ...request, resolvedModels: [{ slotId: 's2', provider: 'x', model: 'y' }] });
+    expect(unknownOnly.enforceRouting).toBe(false);
+    expect(unknownOnly.levelExemptSlotIds).toBeUndefined();
     const leveled = await o.admissionInput(project.id, { ...request, resolvedModels: [{ slotId: 's1', personaId: 'pa', provider: 'claude', model: 'sonnet', level: 'high' }] });
     expect(leveled.enforceRouting).toBe(true);
+    expect(leveled.levelExemptSlotIds).toBeUndefined();
     const enforcedTeams = vi.mocked(c.teams.list).getMockImplementation()!;
     vi.mocked(c.teams.list).mockReturnValue([{ id: 't1', routingEnforced: false, slots: [{ personaId: 'pa' }], orchestratorPersonaId: 'po' }]);
     expect((await o.admissionInput(project.id, { ...request, resolvedModels: [{ slotId: 's1', personaId: 'pa', provider: 'claude', model: 'sonnet', level: 'high' }] })).enforceRouting).toBe(false);
@@ -790,10 +796,30 @@ describe('host bootstrap wiring', () => {
     ];
     routingRecord.resolvedModels = [{ slotId: 'worker-1', provider: 'test', model: 'model', level: 'medium' }];
     expect(o.routingEnforcementEnabled(routingRecord)).toBe(true);
+    // Legacy runs: a policy recorded without the per-requirement flags is read like no policy (old derivation from the live Squad).
+    expect(o.routingEnforcementEnabled({ ...routingRecord, routingPolicy: { version: 1, hardRequirements: true } })).toBe(true);
+    expect(o.routingEnforcementRequested({ ...routingRecord, routingPolicy: { version: 1, hardRequirements: true } })).toBe(true);
+    // A recorded flag wins over the live Squad.
+    expect(o.routingEnforcementEnabled({ ...routingRecord, routingPolicy: { version: 1, hardRequirements: true, requested: false, levelEnforced: false } })).toBe(false);
     await o.onTerminal({ id: 'routing-test' });
     routingRecord.resolvedModels = [];
     expect(o.routingEnforcementEnabled(routingRecord)).toBe(false);
     expect(o.routingEnforcementRequested(routingRecord)).toBe(true);
+    // The launch records the gate result; dispatch then reads it, not the live Squad.
+    const policy = o.resolveRoutingPolicy(project.id, { teamId: 't1', slots: [{ initialTask: 'a' }] },
+      [{ slotId: '0:pa:0', level: 'medium' }]);
+    // Team t1 expands to pa, pb, pc workers: pb and pc have no known level.
+    expect(policy).toEqual({ version: 1, hardRequirements: true, requested: true, levelEnforced: true, degradedSlots: [{ slotId: '1:pb:0', why: 'level-unknown' }, { slotId: '2:pc:0', why: 'level-unknown' }] });
+    const recorded = { ...routingRecord, routingPolicy: policy };
+    expect(o.routingEnforcementEnabled(recorded)).toBe(true);
+    expect(o.routingEnforcementRequested(recorded)).toBe(true);
+    const liveTeams = vi.mocked(c.teams.list).getMockImplementation()!;
+    vi.mocked(c.teams.list).mockReturnValue([{ id: 't1', routingEnforced: false, slots: [{ personaId: 'pa' }], orchestratorPersonaId: 'po' }]);
+    expect(o.routingEnforcementEnabled(recorded)).toBe(true);
+    expect(o.routingEnforcementRequested(recorded)).toBe(true);
+    expect(o.resolveRoutingPolicy(project.id, { teamId: 't1', slots: [{ initialTask: 'a' }] }, [{ slotId: '0:pa:0', level: 'medium' }]))
+      .toEqual({ version: 1, hardRequirements: true, requested: false, levelEnforced: false });
+    vi.mocked(c.teams.list).mockImplementation(liveTeams);
     expect(typeof o.claimRecoveryObserveEnabled()).toBe('boolean');
     expect(typeof o.claimRecoveryEnforceEnabled()).toBe('boolean');
     expect(typeof o.planStartupGraceMs()).toBe('number');
@@ -1089,6 +1115,48 @@ describe('host bootstrap wiring', () => {
     await o.cleanup(project.path, 'e');
     o.logError('ctx', new Error('boom'));
     registerPlan.mockRestore();
+  });
+
+  it('judges a coordinator-authored plan against the live Squad and tolerates a missing Squad', async () => {
+    const c = ctx();
+    const o = h.handoffOpts;
+    const unit = { id: 'a', title: 'A', task: 't', dependencies: [], routing: { version: 1, requiredRole: 'ghost-role' } };
+    const get = vi.spyOn(c.executionStore, 'getInProject');
+    vi.spyOn(c.teams, 'list').mockReturnValue([{ id: 'tj', name: 'Judge', routingEnforced: true, slots: [{ personaId: 'pa' }], orchestratorPersonaId: 'po' }]);
+    vi.spyOn(c.personas, 'list').mockReturnValue([
+      { id: 'pa', name: 'A', baseProfile: 'claude' }, { id: 'po', name: 'O', baseProfile: 'claude' }
+    ]);
+    try {
+      const sess = { slotId: 's', executionId: 'ej', projectId: project.id, sessionId: 'sess' };
+      get.mockResolvedValue({ teamId: 'tj', coordinationMode: 'freeform' } as never);
+      const verdict = await o.judgeAuthored(sess, [unit]);
+      expect(verdict).toMatchObject({ reason: expect.stringContaining('does not fit this Squad') });
+      // A Squad deleted since launch yields no judgement instead of throwing.
+      get.mockResolvedValue({ teamId: 'gone', coordinationMode: 'freeform' } as never);
+      expect(await o.judgeAuthored(sess, [unit])).toBeUndefined();
+      // A provided (non-freeform) plan is never judged here.
+      get.mockResolvedValue({ teamId: 'tj', coordinationMode: 'structured' } as never);
+      expect(await o.judgeAuthored(sess, [unit])).toBeUndefined();
+    } finally {
+      get.mockRestore();
+      vi.mocked(c.teams.list).mockRestore();
+      vi.mocked(c.personas.list).mockRestore();
+    }
+  });
+
+  it('serves Squad summaries with roster projection to the control plane team.list op', () => {
+    const c = ctx();
+    vi.spyOn(c.teams, 'list').mockReturnValue([{ id: 'tl', name: 'T', slots: [{ personaId: 'pa' }], orchestratorPersonaId: 'po' }]);
+    vi.spyOn(c.personas, 'list').mockReturnValue([{ id: 'pa', name: 'Alpha', baseProfile: 'claude' }]);
+    try {
+      const summaries = h.controlPlaneDeps.listTeams();
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toMatchObject({ id: 'tl', name: 'T' });
+      expect(JSON.stringify(summaries)).not.toContain('initialPrompt');
+    } finally {
+      vi.mocked(c.teams.list).mockRestore();
+      vi.mocked(c.personas.list).mockRestore();
+    }
   });
 
   it('ignores unrelated goal evaluator and follow-up dependency edges', async () => {

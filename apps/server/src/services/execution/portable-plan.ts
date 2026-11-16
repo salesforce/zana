@@ -10,8 +10,25 @@ import { RETRY_CEILING } from './retry-feedback.js';
  * portable execution plans: each machine-executable step is an H3 heading
  * carrying an `<!-- executable-step -->` marker, whose text is
  * `<stable-kebab-id>: <Title>`, followed by fixed bullet labels
- * (Depends on, Execution class, Required role, Mode, Read scope, Write scope, Excludes, Work,
- * Verification, Completion criteria, Stop conditions, Outputs / handoff).
+ * (Depends on, Execution class, Required role, Prefer role, Not same worker as, Mode,
+ * Read scope, Write scope, Excludes, Work, Verification, Completion criteria,
+ * Stop conditions, Outputs / handoff, Requires, On failure, Loop).
+ *
+ * Routing labels: `Required role: a, b` is a hard AND list kept verbatim in
+ * `routing.requiredRole` (split on commas at match time only). `Prefer role: a, b`
+ * is a soft ranking list (`routing.preferRoles`). `Not same worker as: step-a`
+ * is a hard anti-affinity list (`routing.excludeSameWorkerAs`); every reference
+ * must be a dependency ancestor. `Execution class` is a floor. `## Launch` may
+ * carry `Squad: <id>` (an advisory declaration returned as `declaredSquad`).
+ * These fields are omitted when absent, so the launch digest of a plan that
+ * uses none of them is unchanged.
+ *
+ * Intake: an explicit ```squad-plan fenced block is the plan, taken verbatim.
+ * Otherwise formatting deviations (Stop conditions, free-text Completion
+ * criteria, a bare tier name as Execution class, nested near-miss labels of
+ * non-safety labels, steps without the `executable-step` marker under
+ * `## Execution Plan`) are normalized and reported as warnings, never rejected.
+ * Substantive defects and near-misses of safety-bearing labels still reject.
  *
  * This is intentionally a raw structural parser only: it maps recognised labels
  * onto `ExecutionWorkUnitInput` and leaves DAG/cycle/completeness validation to
@@ -32,7 +49,20 @@ export interface PortablePlanIdRename {
   to: string;
 }
 
+/** Bump when parser output for the same text can change. Stored on offer records, never mixed into the launch digest. */
+export const PARSER_VERSION = 1;
+
+/** `repair`: formatting fixed, no semantic change. `warning`: kept, reader should look. `blocking`: unsafe or incomplete. */
+export interface PortablePlanFinding {
+  severity: 'repair' | 'warning' | 'blocking';
+  requirement: 'format' | 'plan' | 'tier' | 'not-same-worker' | 'squad';
+  stepId?: string;
+  message: string;
+}
+
 export interface LaunchDeclarations {
+  /** Advisory `Squad: <id>`; an explicit launch target wins. Not part of the launch options. */
+  declaredSquad?: string;
   worktree?: boolean;
   onComplete?: 'leave' | 'merge' | 'delete';
   push?: boolean;
@@ -57,11 +87,14 @@ export type LaunchSectionParse = { ok: true; launch: LaunchDeclarations } | { ok
  * registered ids. Both are omitted when empty.
  */
 export type PortablePlanParse =
-  | { ok: true; units: PortablePlanWorkUnitInput[]; launch?: LaunchDeclarations; normalizations?: string[]; idRenames?: PortablePlanIdRename[] }
-  | { ok: false; reason: string };
+  | {
+    ok: true; parserVersion: number; units: PortablePlanWorkUnitInput[]; launch?: LaunchDeclarations; declaredSquad?: string;
+    normalizations?: string[]; idRenames?: PortablePlanIdRename[]; findings?: PortablePlanFinding[];
+  }
+  | { ok: false; reason: string; parserVersion: number; findings: PortablePlanFinding[] };
 
 type StepParse =
-  | { ok: true; unit: PortablePlanWorkUnitInput; rawId: string; normalizations: string[] }
+  | { ok: true; unit: PortablePlanWorkUnitInput; rawId: string; normalizations: string[]; warnings: string[] }
   | { ok: false; reason: string };
 
 const STEP_MARKER = /<!--\s*executable-step\s*-->/i;
@@ -216,8 +249,14 @@ function parseRequires(
 const KNOWN_LABELS = [
   'depends on', 'execution class', 'required role', 'mode', 'read scope', 'write scope', 'excludes', 'work',
   'verification', 'completion criteria', 'stop conditions', 'outputs / handoff', 'requires',
-  'on failure', 'maxiterations', 'noprogresslimit', 'loop'
+  'on failure', 'maxiterations', 'noprogresslimit', 'loop', 'prefer role', 'not same worker as'
 ] as const;
+
+/** Labels that change what runs or who runs it; a near-miss of one is never demoted to Work text. */
+const SAFETY_LABELS: ReadonlySet<string> = new Set([
+  'depends on', 'execution class', 'required role', 'mode', 'read scope', 'write scope', 'excludes', 'requires',
+  'on failure', 'loop', 'not same worker as', 'maxiterations', 'noprogresslimit'
+]);
 
 /** `<unit-id> until PASS, max <N>` (N in LOOP_MIN_ROUNDS..LOOP_MAX_ROUNDS); a trailing sentence period is tolerated like other label values. */
 const LOOP_GRAMMAR = new RegExp(`^\\s*([a-z0-9][a-z0-9-]*)\\s+until\\s+PASS,\\s*max\\s+([${LOOP_MIN_ROUNDS}-${LOOP_MAX_ROUNDS}])\\s*\\.?\\s*$`, 'i');
@@ -261,15 +300,96 @@ interface PlanStepBlock {
 
 /**
  * Whether text contains a heading the portable-plan parser will treat as an
- * executable step. Keep invalid-plan callers on this grammar so they cannot
+ * executable step (marked, or marker-less under `## Execution Plan` when no step
+ * is marked). Keep invalid-plan callers on this grammar so they cannot
  * silently fall back to inferred planning for marker spelling variants.
  */
 export function hasPortablePlanStep(text: string): boolean {
-  return text.split(/\r?\n/).some(isPortablePlanStepLine);
+  const extracted = extractSquadPlan(text);
+  const lines = (extracted.ok ? extracted.text : text).split(/\r?\n/);
+  if (lines.some(isPortablePlanStepLine)) return true;
+  const found = collectBlocks(lines, markerlessStarts(lines));
+  return !found.ok || found.blocks.length > 0;
 }
 
 function isPortablePlanStepLine(line: string): boolean {
   return HEADING.test(line) && STEP_MARKER.test(line);
+}
+
+const SQUAD_PLAN_OPEN = /^\s*(```|~~~)\s*squad-plan\s*$/i;
+
+/** The body of the first explicit ```squad-plan fenced block, taken verbatim; the text itself when there is none. */
+function extractSquadPlan(text: string): { ok: true; text: string; blocks: number } | Failure {
+  const lines = text.split(/\r?\n/);
+  let delimiter: string | undefined;
+  let inner: string[] = [];
+  let first: string[] | undefined;
+  let blocks = 0;
+  for (const line of lines) {
+    if (delimiter === undefined) {
+      const open = SQUAD_PLAN_OPEN.exec(line);
+      if (open) { delimiter = open[1]; inner = []; }
+    } else if (line.trim() === delimiter) {
+      blocks += 1;
+      first ??= inner;
+      delimiter = undefined;
+    } else {
+      inner.push(line);
+    }
+  }
+  if (delimiter !== undefined) return { ok: false, reason: 'squad-plan block is not closed (missing closing code fence)' };
+  return { ok: true, text: first ? first.join('\n') : text, blocks };
+}
+
+/** Line indexes of `id: Title` H3 headings under `## Execution Plan`, outside code fences. */
+function markerlessStarts(lines: readonly string[]): Set<number> {
+  const starts = new Set<number>();
+  const fence = new FenceTracker();
+  let inPlan = false;
+  lines.forEach((line, index) => {
+    const wasOpen = fence.open;
+    if (fence.step(line) || wasOpen) return;
+    const section = /^\s*(#{1,2})\s+(.*?)\s*$/.exec(line);
+    if (section) {
+      inPlan = section[1] === '##' && stripInlineComment(section[2]).toLowerCase() === 'execution plan';
+      return;
+    }
+    const heading = HEADING.exec(line);
+    if (inPlan && heading && /^[A-Za-z0-9][A-Za-z0-9_-]*\s*:\s*\S/.test(stripInlineComment(heading[1]))) starts.add(index);
+  });
+  return starts;
+}
+
+type BlockCollection = { ok: true; blocks: PlanStepBlock[] } | Failure;
+
+/** Step blocks starting at the given heading lines; a block ends at the next heading outside a code fence. */
+function collectBlocks(lines: readonly string[], starts: ReadonlySet<number> | undefined): BlockCollection {
+  const blocks: PlanStepBlock[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const headingMatch = HEADING.exec(lines[i]);
+    if (!headingMatch || !(starts ? starts.has(i) : isPortablePlanStepLine(lines[i]))) continue;
+    const body: string[] = [];
+    let j = i + 1;
+    // Track fenced-code state while collecting so a `#`-prefixed line INSIDE a
+    // code block (e.g. a shell/BUILD comment) is not mistaken for the next
+    // heading. Without this the step block truncates mid-fence and drops every
+    // label after the code (Verification, Completion criteria, ...), which then
+    // fails DAG completeness even though the plan is well-formed.
+    const fence = new FenceTracker();
+    for (; j < lines.length; j += 1) {
+      const inFence = fence.step(lines[j]);
+      if (!inFence && SECTION_BREAK.test(lines[j])) break;
+      body.push(lines[j]);
+    }
+    // A marker-less candidate counts only when it carries a Work label.
+    const isStep = !starts || parseStepLabels(body).some(([key]) => key === 'work' || nearMissLabel(key) === 'work');
+    if (isStep && fence.open) {
+      return { ok: false, reason: `step contains an unterminated code fence: ${stripInlineComment(headingMatch[1])}` };
+    }
+    if (isStep) blocks.push({ heading: headingMatch[1], body });
+    i = j - 1;
+  }
+  return { ok: true, blocks };
 }
 
 interface StepLabel {
@@ -327,17 +447,25 @@ function parseStepLabels(body: string[]): Array<[string, StepLabel]> {
 function canonicalizeLabels(
   rawLabels: Array<[string, StepLabel]>,
   id: string,
-  normalizations: string[]
-): { ok: true; labels: Map<string, string> } | { ok: false; reason: string } {
+  normalizations: string[],
+  warnings: string[]
+): { ok: true; labels: Map<string, string>; context: string[] } | { ok: false; reason: string } {
   const labels = new Map<string, string>();
   const sources = new Map<string, string>();
+  const context: string[] = [];
   for (const [key, { value, atLabelIndent }] of rawLabels) {
     const intended = nearMissLabel(key);
     if (isLoopKey(key) && !atLabelIndent) {
       return { ok: false, reason: `step ${id} has a nested Loop label (${LOOP_EXPECTED})` };
     }
     if (intended && !atLabelIndent) {
-      return { ok: false, reason: `step ${id} has unrecognised label "${key}" (did you mean "${intended}"?)` };
+      if (SAFETY_LABELS.has(intended)) {
+        return { ok: false, reason: `step ${id} has unrecognised label "${key}" (did you mean "${intended}"?)` };
+      }
+      // A nested near-miss of a non-safety label keeps its text as Work context.
+      if (value.trim()) context.push(`${key.toLowerCase()}: ${value.trim()}`);
+      warnings.push(`step ${id} nested label "${key}" kept as Work text`);
+      continue;
     }
     const canonical = intended ?? key;
     const prior = sources.get(canonical);
@@ -348,7 +476,7 @@ function canonicalizeLabels(
     labels.set(canonical, value);
     if (intended) normalizations.push(`step ${id} label "${key}" treated as "${intended}"`);
   }
-  return { ok: true, labels };
+  return { ok: true, labels, context };
 }
 
 type Failure = { ok: false; reason: string };
@@ -405,6 +533,12 @@ export function parseLaunchSection(text: string): LaunchSectionParse {
         if (value !== 'push') return { ok: false, reason: 'Launch Capabilities admits only push' };
         launch.push = true;
         break;
+      case 'squad': {
+        const squad = stripBackticks(value);
+        if (!squad || squad.length > 256 || /[\r\n]/.test(squad)) return { ok: false, reason: 'Launch Squad must be one Squad id' };
+        launch.declaredSquad = squad;
+        break;
+      }
       case 'check':
       case 'checks': {
         const parsed = parseCheckReferences(value, 'Launch checks');
@@ -474,54 +608,95 @@ function parseDependencies(value: string | undefined, id: string, normalizations
   });
 }
 
+const TIER_NAME: Record<'low' | 'medium' | 'high', string> = { low: 'Routine', medium: 'Standard', high: 'Expert' };
+
 /** The routing level an `Execution class` pins; an unknown class fails rather than silently routing at any level. */
-function parseExecutionClass(value: string | undefined, id: string): { ok: true; minimumLevel?: 'low' | 'medium' | 'high' } | Failure {
+function parseExecutionClass(
+  value: string | undefined,
+  id: string
+): { ok: true; minimumLevel?: 'low' | 'medium' | 'high'; warning?: string } | Failure {
   // Coordinators write sentence-style values (`Routine.`); only the first line
   // names the class, so continuation prose beneath it cannot fail the lookup.
   const raw = stripSentencePeriod((value ?? '').split('\n')[0]);
   const executionClass = raw.toLowerCase();
   if (!executionClass) return { ok: true };
-  const builtinWorkerLevel = /^builtin:squad-worker-(low|medium|high)$/.exec(executionClass)?.[1] as 'low' | 'medium' | 'high' | undefined;
-  if (!Object.hasOwn(EXECUTION_CLASS_LEVEL, executionClass) && !builtinWorkerLevel) {
+  if (Object.hasOwn(EXECUTION_CLASS_LEVEL, executionClass)) return { ok: true, minimumLevel: EXECUTION_CLASS_LEVEL[executionClass] };
+  const tier = /^(?:builtin:squad-worker-)?(low|medium|high)$/.exec(executionClass)?.[1] as 'low' | 'medium' | 'high' | undefined;
+  if (!tier) {
     return { ok: false, reason: `step ${id}: could not pin minimumLevel for execution class "${raw}" (expected Routine, Standard, or Expert)` };
   }
-  return { ok: true, minimumLevel: builtinWorkerLevel ?? EXECUTION_CLASS_LEVEL[executionClass] };
+  return {
+    ok: true,
+    minimumLevel: tier,
+    warning: `step ${id} Execution class "${raw}" read as ${TIER_NAME[tier]} (a minimum tier; use Routine, Standard, or Expert)`
+  };
 }
 
 /** Map one executable-step block onto a work unit, or explain why it is invalid. */
 function parseStep(block: PlanStepBlock): StepParse {
   const normalizations: string[] = [];
+  const warnings: string[] = [];
   const heading = parseStepHeading(block.heading, normalizations);
   if (!heading.ok) return heading;
   const { rawId, id, title } = heading;
 
-  const canonical = canonicalizeLabels(parseStepLabels(block.body), id, normalizations);
+  const canonical = canonicalizeLabels(parseStepLabels(block.body), id, normalizations, warnings);
   if (!canonical.ok) return canonical;
   const labels = canonical.labels;
 
-  const task = labels.get('work');
-  if (!task) return { ok: false, reason: `step ${id} missing Work` };
+  const baseTask = labels.get('work');
+  if (!baseTask) return { ok: false, reason: `step ${id} missing Work` };
   const dependencies = parseDependencies(labels.get('depends on'), id, normalizations);
   const executionClass = parseExecutionClass(labels.get('execution class'), id);
   if (!executionClass.ok) return executionClass;
+  if (executionClass.warning) warnings.push(executionClass.warning);
   const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
   if (!parsedRequires.ok) return parsedRequires;
   const failure = parseFailurePolicy(labels, id);
   if (!failure.ok) return failure;
-  if (labels.has('stop conditions')) {
-    return { ok: false, reason: `step ${id} Stop conditions is not executable; use On failure: fail run or retry <step> up to N with feedback, with maxIterations/noProgressLimit caps` };
+  const extraWork = [...canonical.context];
+  const stopConditions = labels.get('stop conditions')?.trim();
+  if (stopConditions) {
+    extraWork.push(`Stop conditions (guidance, not enforced): ${stopConditions}`);
+    warnings.push(`step ${id} Stop conditions kept as guidance in Work; they are not enforced (use On failure)`);
   }
-  const completion = labels.get('completion criteria');
-  const parsedChecks = completion === undefined ? undefined : parseCheckReferences(completion, `step ${id} Completion criteria`);
-  if (parsedChecks && !parsedChecks.ok) return parsedChecks;
+  const task = extraWork.length ? `${baseTask}\n\n${extraWork.join('\n\n')}` : baseTask;
+  const completion = parseCompletion(labels.get('completion criteria'), id);
+  if (!completion.ok) return completion;
+  if (completion.freeText) warnings.push(`step ${id} Completion criteria is free text; moved into Verification (not a deterministic check)`);
   const parsedLoop = parseLoopLabel(labels.get('loop'), id);
   if (!parsedLoop.ok) return parsedLoop;
-  return { ok: true, rawId, normalizations, unit: {
-    ...buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires),
+  const preferRoles = parseList(labels.get('prefer role') ?? '');
+  const excluded = parseList(labels.get('not same worker as') ?? '').map((reference) => normalizeStepId(reference) || reference);
+  return { ok: true, rawId, normalizations, warnings, unit: {
+    ...buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires, {
+      verification: completion.freeText ? [completion.freeText] : undefined,
+      preferRoles: preferRoles.length ? [...new Set(preferRoles)] : undefined,
+      excludeSameWorkerAs: excluded.length ? [...new Set(excluded)] : undefined
+    }),
     ...(failure.onFailure ? { onFailure: failure.onFailure } : {}),
-    ...(parsedChecks?.ok ? { checks: parsedChecks.checks } : {}),
+    ...(completion.checks ? { checks: completion.checks } : {}),
     ...(parsedLoop.loop ? { loop: parsedLoop.loop } : {})
   } };
+}
+
+/**
+ * A pure comma list of `check:<name>` entries stays deterministic (duplicates are
+ * still rejected). Anything else is prose: it moves into Verification. An empty
+ * value or "None" is dropped.
+ */
+function parseCompletion(
+  value: string | undefined,
+  id: string
+): { ok: true; checks?: string[]; freeText?: string } | Failure {
+  const text = value?.trim();
+  if (!text || /^none\.?$/i.test(stripBackticks(text))) return { ok: true };
+  const items = text.split(',').map((item) => item.trim());
+  if (items.every((item) => /^check:[A-Za-z_][A-Za-z0-9_-]*$/.test(item))) {
+    const parsed = parseCheckReferences(text, `step ${id} Completion criteria`);
+    return parsed.ok ? { ok: true, checks: parsed.checks } : parsed;
+  }
+  return { ok: true, freeText: `Completion criteria: ${text}` };
 }
 
 /** Parse a `Loop:` label value (`<unit-id> until PASS, max <N>`); an absent label gives no loop (#583). */
@@ -539,10 +714,12 @@ function buildWorkUnit(
   dependencies: string[],
   labels: Map<string, string>,
   minimumLevel: 'low' | 'medium' | 'high' | undefined,
-  requires: ExecutionWorkUnitInput['requires'] | undefined
+  requires: ExecutionWorkUnitInput['requires'] | undefined,
+  extra: { verification?: string[]; preferRoles?: string[]; excludeSameWorkerAs?: string[] } = {}
 ): ExecutionWorkUnitInput {
   const files = parseList(labels.get('write scope') ?? 'None');
   const verificationText = labels.get('verification');
+  const verification = [...(verificationText ? [verificationText] : []), ...(extra.verification ?? [])];
   const readOnly = /read[-\s]?only/i.test(labels.get('mode') ?? '');
   const requiredRole = stripBackticks(labels.get('required role') ?? '');
   return {
@@ -551,49 +728,100 @@ function buildWorkUnit(
     task,
     dependencies,
     ...(files.length ? { files } : {}),
-    ...(verificationText ? { verification: [verificationText] } : {}),
+    ...(verification.length ? { verification } : {}),
     ...(readOnly ? { readOnly: true } : {}),
-    ...(minimumLevel || requiredRole
-      ? { routing: { version: 1, ...(minimumLevel ? { minimumLevel } : {}), ...(requiredRole ? { requiredRole } : {}) } }
+    ...(minimumLevel || requiredRole || extra.preferRoles || extra.excludeSameWorkerAs
+      ? {
+        routing: {
+          version: 1,
+          ...(minimumLevel ? { minimumLevel } : {}),
+          ...(requiredRole ? { requiredRole } : {}),
+          ...(extra.preferRoles ? { preferRoles: extra.preferRoles } : {}),
+          ...(extra.excludeSameWorkerAs ? { excludeSameWorkerAs: extra.excludeSameWorkerAs } : {})
+        }
+      }
       : {}),
     ...(requires ? { requires } : {})
   };
 }
 
+/** Every transitive dependency of `id`, tolerating cycles and dangling references. */
+function ancestorsOf(id: string, dependenciesById: ReadonlyMap<string, readonly string[]>): Set<string> {
+  const seen = new Set<string>();
+  const stack = [...(dependenciesById.get(id) ?? [])];
+  while (stack.length) {
+    const next = stack.pop() as string;
+    if (seen.has(next)) continue;
+    seen.add(next);
+    stack.push(...(dependenciesById.get(next) ?? []));
+  }
+  return seen;
+}
+
+function checkNotSameWorker(units: readonly PortablePlanWorkUnitInput[]): Failure | undefined {
+  const dependenciesById = new Map(units.map((unit) => [unit.id, unit.dependencies]));
+  for (const unit of units) {
+    const excluded = unit.routing?.excludeSameWorkerAs;
+    if (!excluded?.length) continue;
+    const ancestors = ancestorsOf(unit.id, dependenciesById);
+    for (const reference of excluded) {
+      if (ancestors.has(reference)) continue;
+      const known = dependenciesById.has(reference);
+      return {
+        ok: false,
+        reason: `step ${unit.id} Not same worker as "${reference}" ${known ? 'is not a step it depends on (directly or through other steps)' : 'names a step that does not exist'}; list only earlier steps in its Depends on chain`
+      };
+    }
+  }
+  return undefined;
+}
+
+function withFailureMeta(failure: { ok: false; reason: string }): Extract<PortablePlanParse, { ok: false }> {
+  return { ...failure, parserVersion: PARSER_VERSION, findings: [{ severity: 'blocking', requirement: 'plan', message: failure.reason }] };
+}
+
 export function parsePortablePlan(text: string): PortablePlanParse {
-  if (typeof text !== 'string' || !text.trim()) return { ok: false, reason: 'empty plan text' };
+  const result = parsePlanDocument(text);
+  return result.ok ? result : withFailureMeta(result);
+}
+
+type DocumentParse = Extract<PortablePlanParse, { ok: true }> | Failure;
+
+function parsePlanDocument(raw: string): DocumentParse {
+  if (typeof raw !== 'string' || !raw.trim()) return { ok: false, reason: 'empty plan text' };
+  const extracted = extractSquadPlan(raw);
+  if (!extracted.ok) return extracted;
+  const text = extracted.text;
   const parsedLaunch = parseLaunchSection(text);
   if (!parsedLaunch.ok) return parsedLaunch;
   const lines = text.split(/\r?\n/);
 
-  // Collect (headingLine, bodyLines) blocks for every executable-step H3.
-  const blocks: Array<{ heading: string; body: string[] }> = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    const headingMatch = HEADING.exec(lines[i]);
-    if (!headingMatch || !isPortablePlanStepLine(lines[i])) continue;
-    const body: string[] = [];
-    let j = i + 1;
-    // Track fenced-code state while collecting so a `#`-prefixed line INSIDE a
-    // code block (e.g. a shell/BUILD comment) is not mistaken for the next
-    // heading. Without this the step block truncates mid-fence and drops every
-    // label after the code (Verification, Completion criteria, …), which then
-    // fails DAG completeness even though the plan is well-formed.
-    const fence = new FenceTracker();
-    for (; j < lines.length; j += 1) {
-      const inFence = fence.step(lines[j]);
-      if (!inFence && SECTION_BREAK.test(lines[j])) break;
-      body.push(lines[j]);
-    }
-    if (fence.open) {
-      return { ok: false, reason: `step contains an unterminated code fence: ${stripInlineComment(headingMatch[1])}` };
-    }
-    blocks.push({ heading: headingMatch[1], body });
-    i = j - 1;
+  const documentNotes: PortablePlanFinding[] = [];
+  if (extracted.blocks > 1) {
+    documentNotes.push({ severity: 'warning', requirement: 'format', message: `${extracted.blocks} squad-plan blocks were found; only the first was used` });
   }
+  // Collect (headingLine, bodyLines) blocks for every executable-step H3.
+  let collected = collectBlocks(lines, undefined);
+  if (!collected.ok) return collected;
+  let markerless = 0;
+  if (!collected.blocks.length) {
+    collected = collectBlocks(lines, markerlessStarts(lines));
+    if (!collected.ok) return collected;
+    markerless = collected.blocks.length;
+    if (markerless) {
+      documentNotes.push({
+        severity: 'warning',
+        requirement: 'format',
+        message: `${markerless} step${markerless === 1 ? '' : 's'} had no <!-- executable-step --> marker and ${markerless === 1 ? 'was' : 'were'} read from the Execution Plan section`
+      });
+    }
+  }
+  const blocks = collected.blocks;
   if (!blocks.length) return { ok: false, reason: 'no executable steps found' };
 
   const units: PortablePlanWorkUnitInput[] = [];
   const normalizations: string[] = [];
+  const findings: PortablePlanFinding[] = [];
   const idRenames: PortablePlanIdRename[] = [];
   const rawIdById = new Map<string, string>();
   for (const block of blocks) {
@@ -608,7 +836,11 @@ export function parsePortablePlan(text: string): PortablePlanParse {
     }
     rawIdById.set(id, parsed.rawId);
     units.push(parsed.unit);
-    normalizations.push(...parsed.normalizations);
+    normalizations.push(...parsed.normalizations, ...parsed.warnings);
+    findings.push(
+      ...parsed.normalizations.map((message): PortablePlanFinding => ({ severity: 'repair', requirement: 'format', stepId: id, message })),
+      ...parsed.warnings.map((message): PortablePlanFinding => ({ severity: 'warning', requirement: message.includes('Execution class') ? 'tier' : 'format', stepId: id, message }))
+    );
     if (parsed.rawId !== id) idRenames.push({ from: parsed.rawId, to: id });
   }
 
@@ -617,12 +849,20 @@ export function parsePortablePlan(text: string): PortablePlanParse {
       return { ok: false, reason: `step ${unit.id} On failure references unknown step "${unit.onFailure.stepId}"` };
     }
   }
+  const anti = checkNotSameWorker(units);
+  if (anti) return anti;
 
+  normalizations.push(...documentNotes.map((note) => note.message));
+  findings.push(...documentNotes);
+  const { declaredSquad, ...launch } = parsedLaunch.launch;
   return {
     ok: true,
+    parserVersion: PARSER_VERSION,
     units,
-    ...(Object.keys(parsedLaunch.launch).length ? { launch: parsedLaunch.launch } : {}),
+    ...(Object.keys(launch).length ? { launch } : {}),
+    ...(declaredSquad ? { declaredSquad } : {}),
     ...(normalizations.length ? { normalizations } : {}),
-    ...(idRenames.length ? { idRenames } : {})
+    ...(idRenames.length ? { idRenames } : {}),
+    ...(findings.length ? { findings } : {})
   };
 }

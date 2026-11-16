@@ -1078,3 +1078,51 @@ describe('local Composer runs (no reportTo, no proposal)', () => {
     expect(owned.deps.markReported).toHaveBeenCalledWith('e1', 1);
   });
 });
+
+describe('sendToConversation', () => {
+  it('queues text to a live PTY', async () => {
+    const { deps, notifier } = setup();
+    await expect(notifier.sendToConversation({ kind: 'pty', id: 's1' }, 'p1', 'hello')).resolves.toEqual({ ok: true });
+    expect(deps.ptyLive).toHaveBeenCalledWith('s1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('hello'));
+  });
+
+  it('reports gone for a PTY that is not live', async () => {
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false) });
+    await expect(notifier.sendToConversation({ kind: 'pty', id: 's1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'gone' });
+    expect(deps.reply).not.toHaveBeenCalled();
+  });
+
+  it('queues a turn into a live thread', async () => {
+    const { deps, notifier } = setup();
+    await expect(notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: true });
+    expect(deps.queueThreadTurn).toHaveBeenCalledWith('t1', 'p1', 'hi');
+  });
+
+  it('reports gone for a thread that is not live', async () => {
+    const { deps, notifier } = setup({ threadLive: vi.fn(async () => false) });
+    await expect(notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'gone' });
+    expect(deps.queueThreadTurn).not.toHaveBeenCalled();
+  });
+
+  it('passes through the queue refusal reason, defaulting to not-queued', async () => {
+    const a = setup({ queueThreadTurn: vi.fn(async () => ({ ok: false, reason: 'x' })) });
+    await expect(a.notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'x' });
+    const b = setup({ queueThreadTurn: vi.fn(async () => ({ ok: false })) });
+    await expect(b.notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'not-queued' });
+  });
+
+  it('reports failed and logs when a dep throws', async () => {
+    const { deps, notifier } = setup({ queueThreadTurn: vi.fn(async () => { throw new Error('boom'); }) });
+    await expect(notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'failed' });
+    expect(deps.log).toHaveBeenCalled();
+  });
+
+  it('is unavailable after dispose', async () => {
+    const { deps, notifier } = setup();
+    notifier.dispose();
+    await expect(notifier.sendToConversation({ kind: 'pty', id: 's1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    expect(deps.ptyLive).not.toHaveBeenCalled();
+  });
+});

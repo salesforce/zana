@@ -115,4 +115,19 @@ describe('execution phase 5 contracts', () => {
     base.routingDecisions![0].candidates[0].status = 'FAIL';
     expect(evaluateRouteFit(base, 1)).toMatchObject({ fit: 'underpowered' });
   });
+
+  it('treats a no-route blocker as an unsatisfied route even when every candidate passed', () => {
+    const base = {
+      assembledResult: { outcome: 'success' },
+      usageObservations: [observation()],
+      workUnits: [{ id: 'u', title: 'U', task: 'u', dependencies: [], state: 'COMPLETED', attempt: 1, assignedSlotId: 's', routing: { version: 1, minimumLevel: 'low' }, history: [] }],
+      resolvedModels: [{ slotId: 's', provider: 'p', model: 'm', level: 'high' }],
+      routingDecisions: [
+        { workUnitId: 'u', attempt: 1, policyVersion: 1, observedStateVersion: 1, pricingCatalogId: 'p', pricingCatalogVersion: 1, recommendedSlotId: 's', candidates: [{ slotId: 's', status: 'PASS', reasons: [] }] },
+        { workUnitId: 'u', attempt: 2, policyVersion: 1, observedStateVersion: 2, pricingCatalogId: 'p', pricingCatalogVersion: 1, recommendedSlotId: 's', candidates: [{ slotId: 's', status: 'PASS', reasons: [] }] }
+      ],
+      blockers: [{ noRoute: true }]
+    } as unknown as ExecutionRecord;
+    expect(evaluateRouteFit(base, 1)).toMatchObject({ fit: 'underpowered', reason: 'Declared routing could not satisfy execution.' });
+  });
 });

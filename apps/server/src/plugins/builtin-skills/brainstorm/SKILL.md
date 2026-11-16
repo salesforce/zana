@@ -75,6 +75,7 @@ launch and the user presses Launch, so nothing starts without that click.
 |---|---|---|
 | "build it with X", "prepare a launch for X", "propose X for this plan", "set up X to build this" | Review first | `squad_plan_check` → `list_teams` → `squad_launch` with `mode: 'review'`; tell the user to open the "Squad launch ready" Inbox card |
 | "run this with X now", "start X on this now", "launch X immediately, no review", "skip the Inbox and run it with X" | Start now | `squad_launch` with `mode: 'now'` (you own the run; a `[Squad report]` tells you when it ends or needs an answer) |
+| "write a plan for X and have a Squad build it", "plan this, then launch it", a plan that exists only in a Design Docs doc or in this conversation | Author, then review first | Read `references/plan-authoring.md`, then `list_teams` → `squad_plan_check` (with and without `teamId`) → `squad_launch` with `mode: 'review'` and the plan as an attachment |
 | Anything else, or unclear | Review first | Same as row 1 |
 
 Start now only when the user's message explicitly asks to start immediately. Do not
@@ -99,8 +100,16 @@ The steps below are the review-first path.
 1. Use the design and plan files you already wrote or read in this conversation,
    wherever they are: this project, your home folder (a doc vault, `~/.zcc/library`)
    or the clone root. Do not copy them; pass their exact paths. Text that is not on disk can be passed by value as `attachments: [{ name, text }]`.
-2. Check the plan with `squad_plan_check` (`{ path }` of the plan file). Fix it
-   until it passes.
+2. Check the plan with `squad_plan_check` (`{ path }` of the plan file). A plan
+   you wrote: fix it until it passes. A plan the user gave you or owns: never edit
+   it silently and never stop with a bare report. If it has a Must fix,
+   `squad_plan_check` returns a `decision` (and `squad_launch` refuses with
+   NEEDS_DECISION carrying the same text): ask the user once with the
+   ask-user-question tool, using the decision's question and exactly its options
+   (the tool adds a free-text answer). Apply a chosen fix to a copy and pass that
+   copy. For "Prepare the launch as it is", or when the user already said so, call
+   `squad_launch` with `acceptFindings: true` on the original: the card and
+   composer show the Must fix and block Launch.
 3. Call `list_teams` and pick the Squad the user names. When its `canInferPlan`
    is false, propose with `planning: 'provided'`. Then re-run
    `squad_plan_check` with `{ path, teamId }`: a `tierFit` result is advisory (it

@@ -325,7 +325,7 @@ describe('jobCoordinatorPrompt - tier roster (advisory)', () => {
     const text = render(tiered);
     expect(text).toContain('Worker tiers (cheaper tiers cost less per unit; tiering is advisory):\n- Light, slot `0:low:0`: low (running)\n- Heavy, slot `1:high:0`: high (starts when needed)');
     expect(text).toContain('lowest sufficient Execution class (Routine, Standard, or Expert)');
-    expect(text.slice(text.indexOf('Worker tiers'), text.indexOf('Kickoff'))).toMatchInlineSnapshot(`
+    expect(text.slice(text.indexOf('Worker tiers'), text.indexOf('Squad roster'))).toMatchInlineSnapshot(`
       "Worker tiers (cheaper tiers cost less per unit; tiering is advisory):
       - Light, slot \`0:low:0\`: low (running)
       - Heavy, slot \`1:high:0\`: high (starts when needed)

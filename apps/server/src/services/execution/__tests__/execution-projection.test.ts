@@ -179,6 +179,18 @@ describe('projectExecutionProjection', () => {
     expect(verify).not.toHaveProperty('result'); // verify has no stored result
   });
 
+  it('exposes the latest chosen worker and reason from routing decisions, and omits them when none', () => {
+    const input = record();
+    input.routingDecisions = [
+      { workUnitId: 'build', attempt: 1, policyVersion: 1, chosenSlotId: 'slot-old', chosenReason: 'first' },
+      { workUnitId: 'build', attempt: 2, policyVersion: 1, chosenSlotId: 'slot-b', chosenReason: 'cheapest qualified' },
+      { workUnitId: 'verify', attempt: 1, policyVersion: 1 }
+    ] as ExecutionRecord['routingDecisions'];
+    const assignments = projectExecutionProjection([input], [])[0].work!.assignments;
+    expect(assignments.find((a) => a.workUnitId === 'build')).toMatchObject({ chosenSlotId: 'slot-b', chosenReason: 'cheapest qualified' });
+    expect(assignments.find((a) => a.workUnitId === 'verify')).not.toHaveProperty('chosenSlotId');
+  });
+
   it('exposes claim liveness timestamps on an assignment and omits them when unclaimed', () => {
     const input = record();
     input.workUnits = [

@@ -61,6 +61,8 @@ const workUnitSchema = z.strictObject({
     requiredModalities: z.array(z.string().min(1).max(2048)).max(100).optional(),
     estimatedContextBytes: z.number().int().min(0).max(8 * 1024 * 1024).optional(),
     requiredRole: z.string().min(1).max(2048).optional(), preferredRole: z.string().min(1).max(2048).optional(),
+    preferRoles: z.array(z.string().min(1).max(2048)).max(100).optional(),
+    excludeSameWorkerAs: z.array(z.string().min(1).max(2048)).max(100).optional(),
     hardSlotId: z.string().min(1).max(2048).optional()
   }).optional(),
   output: z.unknown().refine(validOutputDeclaration, { message: 'invalid bounded output declaration' }).optional(),

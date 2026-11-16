@@ -495,4 +495,22 @@ export function registerExecutionBoardIpc(): void {
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'Squad launch review unavailable' })
   );
+
+  // Re-read the proposal's plan files and message the proposing conversation. The renderer supplies only the id;
+  // main re-checks project scope and builds any message text itself.
+  for (const [channel, run, unavailable] of [
+    [IPC.teams.recheckProposalPlan, (id: string, allow: (projectId: string) => boolean) => squadProposals.recheck(id, allow), 'Plan re-check unavailable'],
+    [IPC.teams.messageProposer, (id: string, allow: (projectId: string) => boolean) => squadProposals.messageProposer(id, allow), 'Messaging the conversation is unavailable']
+  ] as const) {
+    safeHandleFromWindow<[string], { ok: boolean; [key: string]: unknown }>(
+      channel,
+      async (win, proposalId) => {
+        if (typeof proposalId !== 'string' || !proposalId) {
+          return { ok: false, code: 'INVALID', message: 'proposal id is required' };
+        }
+        return run(proposalId, (projectId: string) => isExecutionProjectAllowed({ kind: 'window', window: win }, projectId));
+      },
+      () => ({ ok: false, code: 'UNAVAILABLE', message: unavailable })
+    );
+  }
 }

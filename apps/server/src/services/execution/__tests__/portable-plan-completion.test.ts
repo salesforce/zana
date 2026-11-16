@@ -12,18 +12,29 @@ describe('portable plan deterministic completion', () => {
     expect(parsePortablePlan(text)).toEqual(parsePortablePlan(text));
   });
 
-  it.each(['File exists.', '', 'check:', 'check:2bad', 'check:a, prose', 'check:a,', ',check:a', 'check:a.b', 'check:a\n  More prose', 'check:a, check:a'])('rejects free-text or malformed Completion criteria: %s', (value) => {
+  it.each(['File exists.', 'check:', 'check:2bad', 'check:a, prose', 'check:a,', ',check:a', 'check:a.b', 'check:a\n  More prose'])('moves free-text or malformed Completion criteria into Verification: %s', (value) => {
     const parsed = parsePortablePlan(plan(`- **Completion criteria:** ${value}`));
-    expect(parsed).toMatchObject({ ok: false, reason: expect.stringContaining('check:') });
+    expect(parsed).toMatchObject({ ok: true, units: [{ verification: [`Completion criteria: ${value.trim()}`] }], findings: [{ severity: 'warning' }] });
+    if (parsed.ok) expect(parsed.units[0].checks).toBeUndefined();
   });
 
-  it.each(['', 'None', 'check:tests', 'Cannot write.'])('always rejects Stop conditions: %s with actionable retry diagnostic', (value) => {
+  it('drops an empty Completion criteria and still rejects duplicate check names', () => {
+    expect(parsePortablePlan(plan('- **Completion criteria:** '))).toMatchObject({ ok: true, units: [{ task: 'Inspect changes.' }] });
+    expect(parsePortablePlan(plan('- **Completion criteria:** check:a, check:a'))).toMatchObject({ ok: false, reason: expect.stringContaining('duplicate') });
+  });
+
+  it.each(['check:tests', 'Cannot write.'])('keeps Stop conditions as non-enforced guidance in Work: %s', (value) => {
     const parsed = parsePortablePlan(plan(`- Stop conditions: ${value}`));
-    expect(parsed).toMatchObject({ ok: false, reason: expect.stringContaining('On failure:') });
+    expect(parsed).toMatchObject({ ok: true, units: [{ task: `Inspect changes.\n\nStop conditions (guidance, not enforced): ${value}` }] });
   });
 
-  it('rejects near-miss free-text completion instead of ignoring it', () => {
-    expect(parsePortablePlan(plan('- Completion criterion: prose'))).toMatchObject({ ok: false, reason: expect.stringContaining('check:<name>') });
+  it.each(['', 'None'])('drops or keeps empty-ish Stop conditions %s', (value) => {
+    const parsed = parsePortablePlan(plan(`- Stop conditions: ${value}`));
+    expect(parsed.ok).toBe(true);
+  });
+
+  it('folds a near-miss completion label and keeps its prose as Verification', () => {
+    expect(parsePortablePlan(plan('- Completion criterion: prose'))).toMatchObject({ ok: true, units: [{ verification: ['Completion criteria: prose'] }] });
   });
 
   it('rejects duplicate completion declarations instead of silently taking last', () => {

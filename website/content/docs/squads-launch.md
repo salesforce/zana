@@ -8,7 +8,7 @@ New to Squads? Start with [Your first Squad](/docs/squads-start/). To follow a r
 
 Every path asks how the Squad gets its plan. The labels are the same everywhere.
 
-- **Plan provided in goal.** The goal, or a file you attach, contains the plan. The host registers it and dispatches work before the Orchestrator starts. This is the path to learn first.
+- **Plan provided in goal.** The goal, or a file you attach, contains the plan (see [Squad plans](/docs/squads-plans/)). The host registers it and dispatches work before the Orchestrator starts. This is the path to learn first.
 - **Infer plan from goal.** The Orchestrator writes the plan from your goal. See [Customizing a Squad](/docs/squads-customize/) for how it works.
 
 Where the choice appears:

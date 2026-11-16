@@ -240,6 +240,13 @@ it('exposes Squad proposal review through its dedicated teams IPC channel', asyn
 
   await api.teams.reviewProposal('proposal-1');
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.teams.reviewProposal, 'proposal-1');
+
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({ ok: true });
+  await api.teams.recheckProposalPlan('proposal-1');
+  await api.teams.messageProposer('proposal-1');
+  expect(electron.invoke).toHaveBeenNthCalledWith(1, IPC.teams.recheckProposalPlan, 'proposal-1');
+  expect(electron.invoke).toHaveBeenNthCalledWith(2, IPC.teams.messageProposer, 'proposal-1');
 });
 
 it('answers a pending interaction through main IPC by thread or by session, never the server', async () => {

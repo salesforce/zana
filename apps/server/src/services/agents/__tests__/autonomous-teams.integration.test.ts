@@ -152,6 +152,7 @@ vi.mock('@zana-ai/zcc-server/services/agents/team-store', async (importOriginal)
       start() {}
       stop() {}
       rebindProjects() {}
+      setPersonaRoleLookup() {}
     }
   };
 });

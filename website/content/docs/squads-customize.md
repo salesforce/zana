@@ -6,7 +6,8 @@ build your own Squad, tune how a Squad launches, or write a plan by hand.
 
 New to Squads? Start with [Start using Squads](/docs/squads-start/). To pick a
 built-in Squad, see [Choose a Squad](/docs/squads-catalogue/). For the ways to
-start one, see [Ways to start a Squad](/docs/squads-launch/). For the board,
+start one, see [Ways to start a Squad](/docs/squads-launch/). To write a plan,
+see [Squad plans](/docs/squads-plans/). For the board,
 Squad details, and the Inbox, see [Watching a Squad](/docs/squads-watch/).
 
 ---
@@ -332,130 +333,7 @@ The editor has no Default Squad field. Use the row menu on the Squads page:
 
 ## Writing a plan
 
-With **Plan provided in goal**, you give the Squad the steps. Zana reads them
-before the run starts, so the plan is checked up front and the workers start
-right away.
-
-Put the plan in the goal, or attach it as a source if it is long. The goal is
-limited to 2,048 characters. If it is too long, Zana says: "The goal is too
-long for a Squad (N of 2,048 characters). Move details into an attached plan or
-source."
-
-### The format
-
-Each step is a level-3 heading (`###`) that ends with the marker
-`<!-- executable-step -->`. The heading text is `id: Title`, where the id is a
-short lowercase name such as `investigate-a`. Under each heading, write the
-fields as a bulleted list with bold labels.
-
-```markdown
-### investigate-a: Investigate topic A <!-- executable-step -->
-
-- **Depends on:** None
-- **Execution class:** Routine
-- **Mode:** Read-only
-- **Write scope:** None
-- **Work:** Research topic A. Record findings with sources.
-- **Verification:** Every finding cites a source.
-```
-
-The labels Zana understands are: **Depends on**, **Execution class**,
-**Required role**, **Mode**, **Read scope**, **Write scope**, **Excludes**,
-**Work**, **Verification**, **Completion criteria**, **On failure**,
-**Outputs / handoff**, and **Requires**.
-
-### The rules
-
-- Every step needs an id and a title in the heading, separated by a colon.
-- Every step needs a **Work** field.
-- Every step needs a **Verification** field.
-- A step that changes files needs a **Write scope**: a list of paths inside
-  the Project, separated by commas. Absolute paths are refused. A step whose
-  **Mode** says read-only does not need one.
-- **Depends on** lists the ids of other steps, separated by commas, or
-  `None`. Every id it names must exist. Steps cannot depend on each other in a
-  circle.
-- Step ids must be unique.
-- A plan has between 1 and 100 steps.
-- **Execution class** is `Routine`, `Standard`, or `Expert`. They ask for the
-  Low, Medium, and High tier. Anything else is refused.
-- **Required role** matches a Squad slot's `personaId` or `label`. For example,
-  the Delivery Squad's `Reviewer` label can route to its
-  `builtin:squad-worker-high` slot.
-- **Requires** looks like `Skills: a, b; MCP servers: c`, or `None`.
-  It checks that named Skills and MCP servers exist before workers start. It is
-  not a capability or command list.
-- **Verification** is worker instruction, not a command Zana executes. Use a
-  named check for deterministic verification.
-- **Completion criteria** accepts only comma-separated `check:<name>`
-  references. Free text, including an empty value, is rejected. **Stop
-  conditions** is always rejected; use **On failure** for deterministic failure
-  handling.
-- **On failure** is `fail run` or `retry <step> up to N with feedback`. Omit it
-  for default `fail run`. `maxIterations` is capped at 100; repeated structured
-  failure output is a stall.
-- A **Work** field can run over several lines and can hold code blocks. A
-  code block must be closed.
-- The Work text of one step can be up to 16,384 characters.
-
-### What Zana fixes for you
-
-Some small mistakes have one clear fix, so Zana repairs them and tells you:
-
-- An id that is not lowercase with hyphens (for example `U1` or `Home Step`)
-  becomes `u1` or `home-step`. The same repair applies in **Depends on**.
-- A label with a near-miss spelling (for example `Depend on`) is read as the
-  label it was close to.
-- A trailing full stop on a value, such as `Routine.`, is ignored.
-
-If Zana cannot fix a plan without guessing what you meant, the run waits
-before any work starts. The Inbox shows **Plan correction required** with
-"Problem with the supplied plan: <reason>" and a proposed corrected plan. You
-can **Approve** (when a corrected plan exists), **Request changes**, or
-**Cancel**. Cancel ends that run, and Squad details then shows a disabled
-**Resume existing Squad** with the note "Cancelled at plan correction. Start a
-new Squad to try again." Start a new Squad to try again.
-
-### A complete example
-
-This plan is the one used in [Start using Squads](/docs/squads-start/). It has
-two investigations that can run side by side and one report that waits for both.
-
-```markdown
-# Research Plan
-
-## Execution Plan
-
-### investigate-a: Investigate topic A <!-- executable-step -->
-
-- **Depends on:** None
-- **Execution class:** Routine
-- **Mode:** Read-only
-- **Write scope:** None
-- **Work:** Research topic A using read-only inspection. Do not edit files. Record findings with sources and open questions.
-- **Verification:** Every finding cites a file or source.
-
-### investigate-b: Investigate topic B <!-- executable-step -->
-
-- **Depends on:** None
-- **Execution class:** Routine
-- **Mode:** Read-only
-- **Write scope:** None
-- **Work:** Research topic B using read-only inspection. Do not edit files. Record findings with sources and open questions.
-- **Verification:** Every finding cites a file or source.
-
-### report: Write the research report <!-- executable-step -->
-
-- **Depends on:** `investigate-a`, `investigate-b`
-- **Execution class:** Routine
-- **Mode:** Read-only
-- **Write scope:** None
-- **Work:** Combine both investigators' findings into one Markdown report with sections Summary, Findings (with sources), and Open questions. Return the full report as your completion result. Do not edit project files.
-- **Verification:** The completion result covers both topics and every finding cites a source.
-```
-
-Read the result in **Assembled result** in Squad details. A person still reviews
-it.
+With **Plan provided in goal**, you give the Squad the steps. The format, every field, how workers are chosen, a cheat sheet for the built-in Squads, and the messages Zana shows when it rejects a plan are on [Squad plans](/docs/squads-plans/).
 
 ### Outputs, handoff, and named checks
 

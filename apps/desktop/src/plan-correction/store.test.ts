@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openExecutionDatabase, type ExecutionDatabase } from '@zana-ai/zcc-db';
@@ -67,6 +67,34 @@ describe('plan correction store', () => {
       await expect(restarted.listCancelled()).resolves.toEqual([
         expect.objectContaining({ executionId: 'exec-1', status: 'cancelled' })
       ]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('persists a parser version', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zana-plan-correction-'));
+    try {
+      const store = createPlanCorrectionStore({ filePath: join(directory, 'corrections.json') });
+      await store.put({ ...record, parserVersion: 1 });
+      await expect(store.get(record.executionId)).resolves.toMatchObject({ parserVersion: 1 });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('loads a record written before parserVersion existed and leaves it unstamped', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zana-plan-correction-'));
+    try {
+      const filePath = join(directory, 'corrections.json');
+      const store = createPlanCorrectionStore({ filePath });
+      await store.put({ ...record, parserVersion: 1 });
+      const raw = JSON.parse(await readFile(filePath, 'utf8'));
+      for (const row of raw.records) delete row.parserVersion;
+      await writeFile(filePath, JSON.stringify(raw));
+      const restarted = await createPlanCorrectionStore({ filePath }).get(record.executionId);
+      expect(restarted).toMatchObject({ executionId: record.executionId });
+      expect(restarted?.parserVersion).toBeUndefined();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

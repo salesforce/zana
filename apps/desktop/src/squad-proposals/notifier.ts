@@ -47,6 +47,11 @@ export interface SquadProposalNotifier {
    * the Inbox result before marking the run reported.
    */
   replayUnreported(): Promise<void>;
+  /**
+   * Hand a message to a live conversation (the one that proposed a Squad launch). Unlike a report it is not
+   * retried or replayed: a gone conversation or a refused turn is returned so the caller can tell the user.
+   */
+  sendToConversation(target: { kind: 'pty' | 'thread'; id: string }, projectId: string, text: string): Promise<{ ok: boolean; reason?: string }>;
 }
 
 export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): SquadProposalNotifier {
@@ -356,6 +361,23 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
       localClaimed.clear();
       seenBlockers.clear();
     },
-    replayUnreported
+    replayUnreported,
+    async sendToConversation(target, projectId, text) {
+      if (disposed) return { ok: false, reason: 'unavailable' };
+      try {
+        if (target.kind === 'pty') {
+          if (!deps.ptyLive(target.id)) return { ok: false, reason: 'gone' };
+          // Queued like a report: it waits for the agent to be idle instead of typing over a draft.
+          ptyQueue.enqueue(target.id, { text, settle: () => undefined });
+          return { ok: true };
+        }
+        if (!(await deps.threadLive(target.id, projectId))) return { ok: false, reason: 'gone' };
+        const result = await deps.queueThreadTurn(target.id, projectId, text);
+        return result.ok ? { ok: true } : { ok: false, reason: result.reason ?? 'not-queued' };
+      } catch (error) {
+        safeLog(`squad proposal message to ${target.id} failed`, error);
+        return { ok: false, reason: 'failed' };
+      }
+    }
   };
 }

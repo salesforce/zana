@@ -127,3 +127,28 @@ describe('the service passes the routing enforcement flag to kickoff recovery', 
     expect(blocker!.question).toContain('the only worker slot that can take it (engineer:0)');
   }));
 });
+
+describe('delivery re-checks hard requirements in every mode', () => {
+  const record = (policy: boolean, roles: string[]) => ({
+    projectId: 'project-1',
+    ...(policy ? { routingPolicy: { version: 1 as const, hardRequirements: true } } : {}),
+    workUnits: [routedUnit],
+    resolvedModels: [{ slotId: 'w1', personaId: 'p', provider: 'anthropic', model: 'm', roles }],
+    authorizationContext: { slots: [{ slotId: 'w1', personaId: 'p', authorizationIdDigest: 'd' }] }
+  });
+  const verdict = (rec: unknown) => fixtureless((service) => (service as unknown as { assignmentVerdict: (...a: unknown[]) => unknown })
+    .assignmentVerdict(rec, { slotId: 'w1', workUnitId: 'a' }, [{ slotId: 'w1', projectId: 'project-1', sessionId: 's1', process: 'running' }]));
+  function fixtureless<T>(run: (service: SquadExecutionService) => T): T {
+    const store = createExecutionStore({ filePath: join(tmpdir(), `zcc-verdict-${Math.random()}.json`), id: () => 'x', now: () => 1 });
+    const service = new SquadExecutionService({ store, artifacts: {} as never, now: () => 1, logError: vi.fn() } as never);
+    try { return run(service); } finally { service.dispose(); }
+  }
+
+  it('releases an assignment whose slot lacks the required role, even with the gate off', () => {
+    expect(verdict(record(true, ['reviewer']))).toBe('release');
+  });
+  it('delivers when the slot has the role, or when the run records no hard requirements', () => {
+    expect(verdict(record(true, ['engineer']))).toEqual({ sessionId: 's1' });
+    expect(verdict(record(false, ['reviewer']))).toEqual({ sessionId: 's1' });
+  });
+});

@@ -1,4 +1,5 @@
-import type { Persona, Team, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { toTeamSummary, type Persona, type Team, type TeamLaunchRequestInput, type TeamSummary } from '@zana-ai/zcc-domain/product';
+import { sanitizeRosterText, type SquadPlanFinding } from '@zana-ai/zcc-domain/squad-proposal';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import type { PlanAuthoringTransport } from '@zana-ai/zcc-domain/squad-proposal';
@@ -160,6 +161,56 @@ export function rosterWithTiers(roster: readonly RosterEntry[], routes: readonly
   });
 }
 
+
+/** The routing labels a plan step may carry, with the meaning shown to the coordinator. Drift-tested against the parser. */
+export const SQUAD_PLAN_ROUTING_LABELS = {
+  requiredRole: 'Required role',
+  preferRole: 'Prefer role',
+  notSameWorkerAs: 'Not same worker as'
+} as const;
+
+const ROSTER_SLOT_CAP = 20;
+
+/**
+ * Roster block for plan authoring. Generated from the same {@link TeamSummary} projection that
+ * `list_teams` returns (`toTeamSummary`), so there is no hand-maintained copy of a Squad's roles.
+ */
+export function rosterBlock(summary: Pick<TeamSummary, 'slots'>): string {
+  const rows = summary.slots.slice(0, ROSTER_SLOT_CAP).map((slot) => {
+    const name = sanitizeRosterText(slot.label) || sanitizeRosterText(slot.personaId) || 'unnamed';
+    const roles = (slot.roles ?? []).map((role) => sanitizeRosterText(role)).filter(Boolean).join(', ') || 'none';
+    return `- ${name} — persona \`${sanitizeRosterText(slot.personaId) || 'unknown'}\`, tier ${sanitizeRosterText(slot.level, 20) || 'unknown'}, roles: ${roles}`;
+  });
+  if (summary.slots.length > ROSTER_SLOT_CAP) rows.push(`- …and ${summary.slots.length - ROSTER_SLOT_CAP} more slot(s).`);
+  return ['Squad roster (the only valid role names; a role matches a slot persona id, label, or role tag, ignoring case):', ...(rows.length ? rows : ['- No slots.'])].join('\n');
+}
+
+/** Grammar for the routing labels, generated from {@link SQUAD_PLAN_ROUTING_LABELS}. */
+export function routingGrammarBlock(options: { enforced?: boolean } = {}): string {
+  const { requiredRole, preferRole, notSameWorkerAs } = SQUAD_PLAN_ROUTING_LABELS;
+  return [
+    'Routing labels (optional bullets on a step, same bullet style as the other labels):',
+    `- \`${requiredRole}: a, b\` — hard. A comma-separated list; the step runs only on a slot matching EVERY item. Use only names from the roster above. An unknown name makes the plan fail the check.`,
+    `- \`${preferRole}: a, b\` — soft. Among eligible slots, the one matching most items is chosen first.`,
+    `- \`${notSameWorkerAs}: step-a, step-b\` — hard. Each reference must be a step this step depends on (directly or through others); it never runs on a slot that ran them.`,
+    ...(options.enforced ? [`- This Squad enforces routing: give every step a \`${requiredRole}\` from the roster and an Execution class its tier can meet. Do not set estimatedContextBytes, capabilities, or modalities.`] : []),
+    'Let dispatch assign work; do not call assign.'
+  ].join('\n');
+}
+
+/**
+ * The single automatic correction round for an inferred plan: tells the coordinator which steps the
+ * shared check rejected. A second failure goes to the Plan correction card instead of another round.
+ */
+export function inferredPlanCorrectionMessage(findings: readonly SquadPlanFinding[], summary: Pick<TeamSummary, 'slots'>): string {
+  const blocking = findings.filter((finding) => finding.severity === 'blocking').slice(0, 20);
+  return [
+    'Your plan failed the Squad check. Fix these steps once and write the plan again; if it still fails the operator is asked.',
+    ...blocking.map((finding) => `- ${finding.stepId ? `Step \`${finding.stepId}\`` : 'Plan'} (${finding.requirement}): ${finding.suggestion || finding.detail || 'fix the step'}`),
+    rosterBlock(summary)
+  ].join('\n');
+}
+
 /**
  * Advisory tier roster plus the cost rule. Empty when no seat has a known tier, so a
  * Team without tier facts gets a byte-identical prompt.
@@ -181,6 +232,8 @@ export function jobCoordinatorPrompt(input: {
   executionId?: string;
   job: NonNullable<TeamLaunchRequestInput['jobContext']>;
   roster: Array<RosterEntry>;
+  /** Resolves a persona's tier and default roles for the generated roster block; without it only slot facts are listed. */
+  personaById?: (id: string) => Pick<Persona, 'modelLevel' | 'roles'> | undefined;
   /**
    * Host-computed plan readiness. TRUE when the durable record already carries a
    * valid seeded work DAG (Flow A: good plan provided). The host dispatches those
@@ -245,6 +298,7 @@ export function jobCoordinatorPrompt(input: {
   ].filter(Boolean).join('\n\n');
   const tierBlock = tierRosterBlock(input.roster);
   const hasSources = sources.length > 0;
+  const authoringBlock = input.planReady ? '' : [rosterBlock(toTeamSummary(input.team, input.personaById)), routingGrammarBlock({ enforced: input.team.routingEnforced === true })].join('\n\n');
   // One of four kickoff arms, keyed on host-computed plan readiness then on
   // whether a plan-file handoff path was provided. Each arm is a named helper; the
   // emitted line set is byte-identical to the prior inline ternary.
@@ -262,6 +316,7 @@ export function jobCoordinatorPrompt(input: {
     `Workers are already running:\n${rosterLines.join('\n') || (waiting.length ? '- No workers are running yet.' : '- No workers.')}`,
     ...(waitingBlock ? [waitingBlock] : []),
     ...(tierBlock ? [tierBlock] : []),
+    ...(authoringBlock ? [authoringBlock] : []),
     ...(input.recoveryResume ? [
       'Recovery resume: this coordinator reopened its trusted native session for this same execution slot.',
       // A planless run has no retained plan to resume: a plan this session
@@ -290,6 +345,7 @@ export function jobCoordinatorPrompt(input: {
       '- Preserve source-declared execution semantics in generic work units: dependency ids become `dependencies`; bounded work becomes `task`; mutating paths become `files`; read-only work sets `readOnly: true`; checks become `verification`. Every mutating unit needs non-empty `files` before registration.',
       '- Workers must close each unit with `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`.',
       '- Scheduling is host-managed: a pre-registered plan is already dispatched, and registering a plan auto-dispatches its ready units. Do NOT call `execution.work.dispatch_ready` yourself; the engine assigns and re-dispatches ready units to workers. End the turn and remain parked after any authoring. Do not relay assignments or routine results with `agent_send`. Never let workers independently execute the whole goal.',
+      '- If a step has no qualified worker, the engine blocks it and wakes you with a `blockerId`. The plan is immutable and no reply can run the step on a non-matching worker: answer with `execution.work.answer` to skip the step, or stop the run so the plan can be fixed. If you do not answer, it goes to the human.',
       '- Record meaningful progress and outcomes with `execution.event`. Route human-required questions through `execution.work.block`, never event-only blockers or AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.',
       '- Report outcomes through unit results: workers put the outcome in the `result` of `execution.work.complete`. Ordinary unit results are not artifacts; no artifact tools are available to this cohort.',
        '- On an explicit wake notification, resolve or escalate only that human blocker, semantic conflict, or policy escalation. Do not resume routine coordination. A `SEMANTIC_CONFLICT` wake that names a work unit and a `blockerId=<id>` is a worker asking YOU to decide one plan/spec detail so it can finish: make the decision from the goal and available context and answer it with `execution.work.answer` (that blockerId + your concrete answer) — the worker resumes automatically, so this is how you make a thin plan executable rather than stalling it. Reserve human escalation (leave it, or raise it yourself) for a genuine human-only decision or credential. Never call `execution.work.answer` on a human blocker: it is denied, so tell the owner to answer the Inbox card named in the denial or the blocker notice.',

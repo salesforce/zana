@@ -12,8 +12,11 @@
  * The coordinator is the deterministic fake from `makeJobTeamCoordinatorBinary`
  * (`plan-correction` / `plan-correction-silent`); no model is called.
  *
- * "Plan provided in goal" with prose that contains no plan steps at all takes the
- * same parked path (never a silent coordinator repair).
+ * "Plan provided in goal" with prose that contains no plan steps at all, launched
+ * ATTENDED on a Squad whose orchestrator can plan, falls back to infer-plan with the
+ * prose as the goal (no correction card). Unattended launches (schedules, triggers)
+ * keep the card for such prose and never infer; that case is covered in
+ * job-team-plan-correction-schedule.spec.ts.
  *
  * Not covered here on purpose: "a valid provided plan bypasses correction" is
  * already asserted by job-team-launch-ui.spec.ts (provided portable plan seeds
@@ -47,7 +50,7 @@ interface Setup {
   agent: ReturnType<typeof makeJobTeamCoordinatorBinary>;
 }
 
-async function setup(window: Page, scenario: 'plan-correction' | 'plan-correction-silent'): Promise<Setup> {
+async function setup(window: Page, scenario: 'plan-correction' | 'plan-correction-silent' | 'success'): Promise<Setup> {
   const agent = makeJobTeamCoordinatorBinary({ scenario });
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-plan-correction-'));
   writeFileSync(join(projectDir, 'plan.md'), DEFECTIVE_PLAN);
@@ -167,7 +170,7 @@ test('defective provided plan parks, is corrected by the coordinator, approved, 
     expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
     expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
 
-    await choose(window, 'Request changes');
+    await choose(window, 'Ask the agent to revise');
 
     // The coordinator is woken with the corrected-plan path and writes a valid plan.
     const correctedRel = `.zana/execution-plan-corrected-${executionId}.md`;
@@ -177,7 +180,7 @@ test('defective provided plan parks, is corrected by the coordinator, approved, 
     // Card 2: reviewable corrected plan with Approve.
     await openCorrectionCard(window, 'Review the proposed corrected plan');
     expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
-    await choose(window, 'Approve');
+    await choose(window, 'Use the corrected plan');
 
     await expect.poll(async () => (await readExecution(window, s!.projectId, executionId))?.state, {
       timeout: 60_000, intervals: [1_000]
@@ -199,13 +202,13 @@ test('coordinator that never writes the corrected plan stalls, and Cancel stops 
     const executionId = await launchProvidedPlan(window, s);
 
     await openCorrectionCard(window, 'Plan requires revisions to proceed');
-    await choose(window, 'Request changes');
+    await choose(window, 'Ask the agent to revise');
 
     // Two idle edges with no artifact -> stalled card.
     await openCorrectionCard(window, 'finished its turn without writing a corrected plan');
     expect(existsSync(join(s.projectDir, '.zana', `execution-plan-corrected-${executionId}.md`))).toBe(false);
     expect(coordinatorLog(s.projectDir)).toContain('plan-correction wake received');
-    await choose(window, 'Cancel');
+    await choose(window, 'Cancel the run');
 
     await expect.poll(() => readExecution(window, s!.projectId, executionId), { timeout: 60_000, intervals: [1_000] })
       .toMatchObject({ state: 'STOPPED', timeoutReason: 'plan-correction-cancelled' });
@@ -217,28 +220,33 @@ test('coordinator that never writes the corrected plan stalls, and Cancel stops 
   }
 });
 
-test('provided goal that is prose with no plan steps parks for correction, is corrected, approved, and completes', async ({ app }) => {
+test('attended provided goal that is prose with no plan steps falls back to infer-plan with no correction card', async ({ app }) => {
   const { window } = app;
   let s: Setup | null = null;
+  const prose = 'Write the output file for this project.';
   try {
-    s = await setup(window, 'plan-correction');
-    const executionId = await launchProvidedPlan(window, s, 'Write the output file for this project.');
+    s = await setup(window, 'success');
+    const executionId = await launchProvidedPlan(window, s, prose);
 
-    // Parked: no coordinator-driven repair, nothing registered or dispatched.
-    await openCorrectionCard(window, 'Plan requires revisions to proceed');
-    expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
-    expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
-    expect(coordinatorLog(s.projectDir)).not.toContain('wrote corrected plan');
+    // Infer-plan hand-off: the prose is the goal and the coordinator (not a correction card) plans.
+    await expect.poll(() => coordinatorLog(s!.projectDir), { timeout: 30_000, intervals: [500] }).toContain('plan registered');
+    const objective = await window.evaluate(async (input) =>
+      (await window.cc.executionBoard.listProject(input.projectId)).executions.find((e) => e.executionId === input.executionId)?.objective ?? '',
+    { projectId: s.projectId, executionId });
+    expect(objective).toContain(prose);
 
-    await choose(window, 'Request changes');
-    await openCorrectionCard(window, 'Review the proposed corrected plan');
-    expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
-    await choose(window, 'Approve');
-
-    await expect.poll(async () => (await readExecution(window, s!.projectId, executionId))?.state, {
+    // The canned 'success' plan raises a coordinator question mid-run (needs a human answer), so
+    // assert through the hand-off: the coordinator's plan was registered and work dispatched.
+    await expect.poll(async () => (await readExecution(window, s!.projectId, executionId))?.workTotal ?? 0, {
       timeout: 60_000, intervals: [1_000]
-    }).toBe('COMPLETED');
-    expect(readFileSync(join(s.projectDir, 'output.txt'), 'utf8')).toContain('output ready');
+    }).toBeGreaterThan(0);
+    await expect.poll(() => coordinatorLog(s!.projectDir), { timeout: 30_000, intervals: [500] }).toContain('assigned');
+
+    // No parked-for-correction card was ever raised.
+    await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+    await expect(window.locator('.inbox-row').filter({ hasText: 'Plan correction required' })).toHaveCount(0);
+    await expect(window.locator('.inbox-question').filter({ hasText: 'Plan requires revisions to proceed' })).toHaveCount(0);
+    expect(coordinatorLog(s.projectDir)).not.toContain('plan-correction wake');
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n${s ? coordinatorLog(s.projectDir) : ''}`);
   } finally {

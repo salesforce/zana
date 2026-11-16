@@ -102,6 +102,13 @@ describe('execution failure output and retry', () => {
   it('propagates trusted slot label into routing snapshot', () => {
     expect(slotRouteSnapshot({ slotId: 's', personaId: 'opaque' }, { slotId: 's', provider: 'p', label: 'Reviewer' })).toMatchObject({ label: 'Reviewer' });
   });
+  it('prefers frozen effective roles over mutable slot roles', () => {
+    expect(slotRouteSnapshot({ slotId: 's', personaId: 'opaque', roles: ['worker'] }, { slotId: 's', provider: 'p', roles: ['reviewer'] }))
+      .toMatchObject({ roles: ['reviewer'] });
+  });
+  it('normalizes roles in the route snapshot', () => {
+    expect(slotRouteSnapshot({ slotId: 's', personaId: 'o' }, { slotId: 's', provider: 'p', roles: [' Reviewer '] }).roles).toEqual(['reviewer']);
+  });
   it('bounds iterations, canonicalizes stall evidence, and serializes feedback as data', () => {
     expect(capIterations()).toBe(10);
     expect(capIterations(1000)).toBe(100);

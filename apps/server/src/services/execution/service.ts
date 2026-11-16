@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, unitSlotEligibility, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
@@ -329,6 +329,8 @@ export interface ExecutionServiceDeps {
   /** Reject retained-worktree resume while a normal follow-up agent owns it. */
   mayResumeRetainedWorktree?: (executionId: string) => boolean;
   onTerminal?: (record: ExecutionRecord) => Promise<void> | void;
+  /** The gate result recorded on a new run at launch (`routingPolicy`); dispatch then reads the record, never the live Squad. */
+  resolveRoutingPolicy?: (projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'slots'>, resolvedModels: readonly ResolvedModelSnapshotV1[]) => ExecutionRoutingPolicyV1 | undefined;
   routingEnforcementEnabled?: (record: ExecutionRecord) => boolean;
   /** True when routing was requested, even if current facts cannot enforce it yet. */
   routingEnforcementRequested?: (record: ExecutionRecord) => boolean;
@@ -816,6 +818,7 @@ export class ExecutionService {
     let claim;
     try {
       const reviewedSquadWorktreeBase = await this.deps.resolveReviewedSquadWorktreeBase?.(projectId, request);
+      const routingPolicy = this.deps.resolveRoutingPolicy?.(projectId, request, resolvedModels);
       claim = await this.deps.store.claim({
         callerPrincipalId, projectId, teamId: request.teamId, launchKind: request.launchKind ?? 'team',
         ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), jobTitle, summary,
@@ -830,6 +833,7 @@ export class ExecutionService {
         request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective, ...(request.checks === undefined && request.planLaunch?.checks === undefined ? {} : { checks: request.checks ?? request.planLaunch?.checks }), ...(request.worktree === undefined ? {} : { worktree: request.worktree }), ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }), ...(request.target === undefined ? {} : { target: request.target }), completionInboxNotice: request.completionInboxNotice === true },
         ...(request.workUnits ? { workUnits: request.workUnits } : {}),
         resolvedModels,
+        ...(routingPolicy ? { routingPolicy } : {}),
         requestDigest: launchDigest({ callerPrincipalId, projectId, request: { ...withoutDefaultLaunchKind(resolvedRequest), jobTitle, summary } })
       });
     } catch (error) {
@@ -1765,8 +1769,9 @@ export class ExecutionService {
     }
     try {
       const routed = await this.refreshRouteFacts(record);
-      const { record: updated, assignments } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true, ...await this.deferredDispatchOpts(routed) });
+      const { record: updated, assignments, noRouteBlockerIds } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true, ...await this.deferredDispatchOpts(routed) });
       await this.pushAssignments(updated, assignments);
+      await this.announceNoRoute(updated, noRouteBlockerIds);
       await this.maybeAutoFinalize(updated.id);
       return { ok: true as const, value: updated };
     } catch (error) {
@@ -2100,13 +2105,27 @@ export class ExecutionService {
       if (!existing) return;
       if (existing.resourceBlock || this.checkUsageBudget(existing)) return;
       const routed = await this.refreshRouteFacts(existing);
-      const { record, assignments } = await this.deps.store.dispatchReady(routed.id, {
+      const { record, assignments, noRouteBlockerIds } = await this.deps.store.dispatchReady(routed.id, {
         ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.(routed) === true,
         ...await this.deferredDispatchOpts(routed)
       });
       await this.pushAssignments(record, assignments);
+      await this.announceNoRoute(record, noRouteBlockerIds);
       if (this.deps.routingEnforcementEnabled?.(record) === true) await this.maybeAutoFinalize(record.id);
     } catch { /* best-effort */ }
+  }
+
+  /**
+   * Runtime escalation, first hop: wake the coordinator for each engine-raised no-route blocker. The
+   * second hop (human + Inbox notice) is {@link escalateStaleCoordinatorBlockers}, which also fires at once
+   * when no coordinator exists. Wake failures are logged inside wakeCoordinator and never fail dispatch.
+   */
+  private async announceNoRoute(record: ExecutionRecord, blockerIds: readonly string[]): Promise<void> {
+    for (const blockerId of blockerIds) {
+      const blocker = record.blockers?.find((candidate) => candidate.id === blockerId);
+      if (!blocker) continue;
+      await this.wakeCoordinator(record, { cause: 'SEMANTIC_CONFLICT', message: `SEMANTIC_CONFLICT: work unit ${blocker.workUnitId} has no qualified worker (blockerId=${blocker.id}). ${blocker.question} Answer with execution.work.answer to skip it, or stop the run and fix the plan. A reply never runs the step on a non-matching worker.`, workUnitId: blocker.workUnitId, stateOrClaimGeneration: blocker.id });
+    }
   }
 
   private async budgetAdmission(executionId: string) {
@@ -2236,7 +2255,9 @@ export class ExecutionService {
     const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
     const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
     if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization
-      && unitSlotEligibility(unit, authorization, model).status !== 'PASS') return 'release';
+      && unitSlotEligibility(unit, authorization, model, undefined, levelCheckSkipped(record, authorization.slotId)).status !== 'PASS') return 'release';
+    // A hard requirement is re-checked at delivery in every mode, so a roster edit or a coordinator assignment cannot route around it.
+    if (unit && authorization && assignmentRequirementFailures(record, unit, authorization).hardFailures.length) return 'release';
     return { sessionId: worker.sessionId };
   }
 
@@ -3720,6 +3741,18 @@ export class ExecutionService {
   }
 
   private async enqueueOwnedBlocker(record: ExecutionRecord, expectedStateVersion: number, blocker: NonNullable<ExecutionRecord['blockers']>[number], clientRequestId: string, text: string, resume: boolean) {
+    if (blocker.noRoute) {
+      // No worker owns this blocker, so there is nothing to deliver: the reply ends the step directly.
+      try {
+        const value = await this.deps.store.resolveNoRouteBlocker(record.id, expectedStateVersion, blocker.id, text);
+        this.syncParkedHolds(record.id);
+        await this.cascadeDispatch(record.id);
+        return { ok: true as const, pending: false as const, notified: false, value, resumeRequested: resume };
+      } catch (error) {
+        if (error instanceof Error && error.message === 'stale execution state') return { ok: false as const, code: 'CONFLICT', message: error.message, current: await this.deps.store.get(record.id) };
+        return { ok: false as const, code: 'INVALID', message: error instanceof Error ? error.message : String(error) };
+      }
+    }
     let enqueued: Awaited<ReturnType<ExecutionServiceDeps['store']['enqueueBlockerDelivery']>>;
     try {
       enqueued = await this.deps.store.enqueueBlockerDelivery(record.id, expectedStateVersion, {

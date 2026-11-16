@@ -240,6 +240,13 @@ describe('gateInvalidProvidedPlan', () => {
     expect(comments).toContain('bad');
     expect(comments).toContain('freeform');
   });
+  it('does not double the full stop when the reason already ends with one', async () => {
+    const d = mk();
+    await gateInvalidProvidedPlan(d, { ...args, unattended: true, planError: 'Step home asks for a role this Squad does not have.  ' });
+    const comments = (d.inboxStore.append.mock.calls[0] as unknown as [{ comments: string }])[0].comments;
+    expect(comments).toContain('does not have. Put a complete plan');
+    expect(comments).not.toContain('..');
+  });
   it('trigger-driven unattended launch keeps the run-trigger-again copy', async () => {
     const d = mk();
     await gateInvalidProvidedPlan(d, { ...args, unattended: true, viaTrigger: true });

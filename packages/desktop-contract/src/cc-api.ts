@@ -2107,6 +2107,17 @@ export interface CcApi {
       | { ok: true; value: SquadLaunchPrefill }
       | { ok: false; code: SquadProposalErrorCode; message: string }
     >;
+    /** Re-read a pending proposal's plan files and return fresh plan findings. Desktop window only. */
+    recheckProposalPlan(
+      proposalId: string
+    ): Promise<
+      | { ok: true; value: Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount'> }
+      | { ok: false; code: SquadProposalErrorCode; message: string }
+    >;
+    /** Send the plan's current Must fix problems to the conversation that proposed the launch. Main builds the text. */
+    messageProposer(
+      proposalId: string
+    ): Promise<{ ok: true; value: { delivered: true } } | { ok: false; code: SquadProposalErrorCode; message: string }>;
     /**
      * Launch a team as an AUTONOMOUS run into a project: opens orchestrator +
      * worker tabs, the orchestrator seeded with `goal`, and a main-side
