@@ -23,7 +23,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'harness',
     anchor: 'harness-registered',
     label: 'Your AI harnesses',
-    help: 'Provided by your installed plugins. Choose a harness in the composer, or set your default for new agents.',
+    help: 'Provided by your installed plugins. Choose a harness in the composer, or set your thread default.',
     keywords: ['provider plugins', 'registered harnesses', 'models', 'default for new agents'],
     kind: 'subsection'
   },
@@ -55,10 +55,29 @@ export const entries: readonly SettingsSearchEntry[] = [
     kind: 'subsection'
   },
   {
+    id: 'harness.defaults',
+    section: 'harness',
+    anchor: 'harness-defaults',
+    label: 'Defaults',
+    help: 'Choose separate harnesses for new threads and CLI agents. Projects can override either default.',
+    keywords: ['thread', 'cli agent', 'default', 'provider'],
+    kind: 'subsection'
+  },
+  {
+    id: 'harness.default-thread-provider',
+    section: 'harness',
+    anchor: 'harness-defaults',
+    label: 'Default for threads',
+    help: 'Choose the global harness for new threads. One-off composer choices do not change this default.',
+    keywords: ['thread', 'default', 'harness', 'provider', 'global'],
+    kind: 'setting',
+    value: (s) => text(s.config as never, 'defaultThreadProviderId') ?? ''
+  },
+  {
     id: 'harness.default-harness',
     section: 'harness',
-    anchor: 'harness-legacy',
-    label: 'Default harness',
+    anchor: 'harness-defaults',
+    label: 'Default for CLI agents',
     help: 'Used when a new CLI agent has no explicit harness or pinned Persona.',
     keywords: ['default agent', 'cli agent', 'harness'],
     kind: 'setting',

@@ -1,4 +1,6 @@
 import { isProjectIcon, type ProjectIcon } from '@zana-ai/zcc-domain';
+import { normalizeThreadProviderDefault, threadProviderIdForHarnessFamily } from '@zana-ai/zcc-domain/launch-provider';
+import type { ProjectLaunchDefault } from '@zana-ai/zcc-domain/product';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
@@ -31,9 +33,11 @@ export interface ProjectRecord {
   hostId?: string;
   quickAgent?: boolean;
   remote?: unknown;
+  launchDefault?: ProjectLaunchDefault;
+  defaultThreadProviderId?: string | null;
 }
 
-export type ProjectMutationPatch = Partial<Pick<ProjectRecord, 'name' | 'color' | 'icon' | 'category'>> & {
+export type ProjectMutationPatch = Partial<Pick<ProjectRecord, 'name' | 'color' | 'icon' | 'category' | 'defaultThreadProviderId'>> & {
   remotePath?: string;
 };
 
@@ -179,6 +183,11 @@ function canonicalStoredLocalPath(project: ProjectRecord): string | null {
 
 function sanitizeProjectPatch(patch: ProjectMutationPatch): ProjectMutationPatch {
   const safePatch: ProjectMutationPatch = {};
+  if ('defaultThreadProviderId' in patch) {
+    const value = normalizeThreadProviderDefault(patch.defaultThreadProviderId);
+    if (value === undefined) throw new Error('invalid thread default provider');
+    safePatch.defaultThreadProviderId = value;
+  }
   if (patch.icon !== undefined) {
     if (!isProjectIcon(patch.icon)) throw new Error('unsupported project icon');
     safePatch.icon = patch.icon;
@@ -256,8 +265,12 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
         : Array.isArray((raw as { projects?: unknown })?.projects)
           ? ((raw as { projects: ProjectRecord[] }).projects)
           : [];
+      const migrated = projects.map(project => project.defaultThreadProviderId !== undefined || project.launchDefault?.kind !== 'exact-profile' ? project : {
+        ...project,
+        defaultThreadProviderId: threadProviderIdForHarnessFamily(project.launchDefault.adapterId)
+      });
       const hash = createHash('sha256').update(bytes).digest('hex');
-      return { file: { version: PROJECTS_SCHEMA_VERSION, projects }, hash };
+      return { file: { version: PROJECTS_SCHEMA_VERSION, projects: migrated }, hash };
     } catch {
       return { file: { version: PROJECTS_SCHEMA_VERSION, projects: [] }, hash: null };
     }

@@ -27,6 +27,8 @@ export type ThreadModelCatalogSnapshot = {
   /** Warm rows inherited from another project on the same host; not authoritative yet. */
   provisionalProviders: ReadonlySet<string>;
   rosterError?: string | null;
+  /** A successful roster for this exact host/project, rather than inherited rows. */
+  rosterReady?: boolean;
 };
 
 type ExecutionOptionsBody = Awaited<ReturnType<typeof product.threads.executionOptions>>;
@@ -155,7 +157,8 @@ function createCatalog(
       provisionalProviders: new Set(inherited),
       hostId: catalogHostId,
       projectId: catalogProjectId,
-      rosterError
+      rosterError,
+      rosterReady: initialized
     };
   }
 

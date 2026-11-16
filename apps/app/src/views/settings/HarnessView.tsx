@@ -1093,7 +1093,57 @@ export function HarnessView({
   return (
     <div className="harness-settings">
     <MachineEnvironmentSettings />
-    <RegisteredHarnesses config={config} status={status} hostId={thisMachineId} hostName={thisMachine?.name} onUpdate={onUpdate} onRefreshStatus={() => runCheck(false)} checkingStatus={checking} />
+    <RegisteredHarnesses config={config} status={status} hostId={thisMachineId} hostName={thisMachine?.name} onUpdate={onUpdate} onRefreshStatus={() => runCheck(false)} checkingStatus={checking} cliDefault={<>
+        <div className="harness-default-card">
+          <Field
+            searchId="harness.default-harness"
+            label="Default for CLI agents"
+            layout="row"
+            help="Used when a new CLI agent has no explicit harness or pinned Persona."
+          >
+            {descriptors === null ? (
+              <Skeleton width="180px" height="28px" />
+            ) : (
+              <PopoverPicklist
+                value={config.defaultHarness ?? 'claude'}
+                ariaLabel="Default for CLI agents"
+                onChange={(nextHarness) => {
+                  const defaultHarness = nextHarness as AppConfig['defaultHarness'];
+                  onConfigDraft({ ...config, defaultHarness });
+                  void onUpdate({ defaultHarness });
+                }}
+                options={defaultHarnessOptions.map((descriptor) => ({
+                  value: descriptor.id,
+                  label: `${descriptor.label}${descriptor.availability.installed ? '' : ' (not installed)'}`,
+                  disabled: (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
+                    (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] === false)
+                }))}
+              />
+            )}
+          </Field>
+          <div className="harness-inheritance" aria-label="Settings priority">
+            <span>Settings apply in order</span>
+            <ol>{['Global', 'Project', 'Persona', 'Agent'].map((level) => <li key={level}>{level}</li>)}</ol>
+            <span>Later choices take priority.</span>
+          </div>
+        </div>
+        {defaultUnavailable && (
+          <p className="settings-help" role="alert">
+            {unavailableDefaultMessage(config.defaultHarness!)}
+            {' '}
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={() => {
+                onConfigDraft({ ...config, defaultHarness: undefined });
+                void onUpdate({ defaultHarness: undefined });
+              }}
+            >
+              Clear default
+            </button>
+          </p>
+        )}
+    </>} />
     <Section
       searchId="harness.installed-harnesses"
       anchorId="harness-status"
@@ -1209,55 +1259,6 @@ export function HarnessView({
           Set defaults for agents running in a terminal. Project, Persona, and
           Agent settings can override these defaults.
         </p>
-        <div className="harness-default-card">
-          <Field
-            searchId="harness.default-harness"
-            label="Default harness"
-            layout="row"
-            help="Used when a new CLI agent has no explicit harness or pinned Persona."
-          >
-            {descriptors === null ? (
-              <Skeleton width="180px" height="28px" />
-            ) : (
-              <PopoverPicklist
-                value={config.defaultHarness ?? 'claude'}
-                ariaLabel="Default harness"
-                onChange={(nextHarness) => {
-                  const defaultHarness = nextHarness as AppConfig['defaultHarness'];
-                  onConfigDraft({ ...config, defaultHarness });
-                  void onUpdate({ defaultHarness });
-                }}
-                options={defaultHarnessOptions.map((descriptor) => ({
-                  value: descriptor.id,
-                  label: `${descriptor.label}${descriptor.availability.installed ? '' : ' (not installed)'}`,
-                  disabled: (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
-                    (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] === false)
-                }))}
-              />
-            )}
-          </Field>
-          <div className="harness-inheritance" aria-label="Settings priority">
-            <span>Settings apply in order</span>
-            <ol>{['Global', 'Project', 'Persona', 'Agent'].map((level) => <li key={level}>{level}</li>)}</ol>
-            <span>Later choices take priority.</span>
-          </div>
-        </div>
-        {defaultUnavailable && (
-          <p className="settings-help" role="alert">
-            {unavailableDefaultMessage(config.defaultHarness!)}
-            {' '}
-            <button
-              type="button"
-              className="settings-btn"
-              onClick={() => {
-                onConfigDraft({ ...config, defaultHarness: undefined });
-                void onUpdate({ defaultHarness: undefined });
-              }}
-            >
-              Clear default
-            </button>
-          </p>
-        )}
         <div className="opener-list" data-testid="harness-legacy-list">
           {settingsRows}
         </div>

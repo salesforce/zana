@@ -7,6 +7,23 @@ import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domai
 import { createConfigStore } from '@zana-ai/zcc-server';
 
 describe('createConfigStore', () => {
+  it('migrates the old harness default once and keeps thread and CLI defaults independent', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-thread-default-'));
+    const configFile = join(homeDir, 'config.json');
+    writeFileSync(configFile, JSON.stringify({ defaultHarness: 'codex' }));
+    const config = createConfigStore({ homeDir, configFile }, {
+      normalizeConfig: input => input, projectConfigCompatibility: input => input,
+      canonicalConfigForWrite: input => input, harnessEnabled: () => true
+    });
+    expect(config.getConfig().defaultThreadProviderId).toBe('codex');
+    expect(JSON.parse(readFileSync(configFile, 'utf8')).defaultThreadProviderId).toBe('codex');
+    expect(config.setConfig({ defaultHarness: 'claude' }).defaultThreadProviderId).toBe('codex');
+    expect(config.setConfig({ defaultThreadProviderId: 'plugin-provider' }).defaultHarness).toBe('claude');
+    expect(config.setConfig({ harnessCodexEnabled: false }).defaultThreadProviderId).toBe('plugin-provider');
+    expect(config.snapshot().config.defaultThreadProviderId).toBe('plugin-provider');
+    const snapshot = config.snapshot();
+    expect(config.replaceConfig(snapshot.config, snapshot.hash).defaultThreadProviderId).toBe('plugin-provider');
+  });
   it('enables reviewed communication by default and owns the generation across set and replace', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'zcc-peer-config-'));
     const configFile = join(homeDir, 'config.json');

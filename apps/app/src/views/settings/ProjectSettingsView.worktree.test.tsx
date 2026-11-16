@@ -14,6 +14,7 @@ vi.mock('@/store', () => ({
   useData: (select: (value: unknown) => unknown) => select({ updateProject: vi.fn() }),
   useUi: (select: (value: unknown) => unknown) => select({ pushToast: mocks.pushToast })
 }));
+vi.mock('../../hooks/useRegisteredThreadProviders.js', () => ({ useRegisteredThreadProviders: () => ({ providers: [], loading: false }) }));
 vi.mock('../../lib/app-surface.js', () => ({ hasDesktopBridge: () => true }));
 vi.mock('../../lib/product-client.js', () => ({
   product: {

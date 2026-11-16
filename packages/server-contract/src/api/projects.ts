@@ -257,10 +257,11 @@ export const updateProjectRequestSchema = z
   .object({
     name: z.string().min(1),
     remotePath: z.string().max(256),
+    defaultThreadProviderId: z.string().trim().min(1).max(256).regex(/^[^\u0000-\u001f\u007f]+$/u).nullable(),
   })
   .partial()
   .refine(
-    (value) => value.name !== undefined || value.remotePath !== undefined,
+    (value) => value.name !== undefined || value.remotePath !== undefined || value.defaultThreadProviderId !== undefined,
     "At least one field must be provided",
   );
 export type UpdateProjectRequest = z.infer<typeof updateProjectRequestSchema>;

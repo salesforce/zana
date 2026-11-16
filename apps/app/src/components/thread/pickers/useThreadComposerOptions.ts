@@ -9,22 +9,21 @@ import { availableModelsToPickerOptions, type ModelPickerOption, type PickerOpti
 import { REASONING_LABELS, visibleComposerReasoningLevels } from './reasoning-labels.js';
 import {
   composerProvidersFromCatalog,
+  fallbackProviderOption,
   fallbackModelsForProvider,
   fallbackMoreModelsForProvider,
-  snapNewThreadProviderId,
   type ThreadComposerProviderOption
 } from './fallback-models.js';
 import {
   defaultOfferedComposerModel,
   preferredComposerModel,
   rememberComposerSelection,
-  rememberedProviderId,
   rememberedSelectionFor
 } from './composer-selection-preference.js';
 import { threadModelCatalogForHost } from './thread-model-catalog.js';
 import { nextAcpModeSelection } from './acp-mode-selection.js';
 import { useComposerSession, useComposerSetting } from '../../composer/ComposerDraft.js';
-import type { ComposerSession } from '../../composer/composer-session.js';
+import { isEmptyComposerDocument, type ComposerSession } from '../../composer/composer-session.js';
 
 export type { ThreadComposerProviderOption };
 
@@ -68,49 +67,56 @@ export function useThreadComposerOptions(input: {
 }) {
   const fallbackSession = useComposerSession();
   const session = input.session ?? fallbackSession;
-  const [savedProvider, saveProvider, hasProvider] = useComposerSetting<string | undefined>(session, 'modern.provider', undefined);
+  const [savedProvider, saveProvider, hasProvider, clearProvider] = useComposerSetting<string | undefined>(session, 'modern.provider', undefined);
+  const [draftProvider, saveDraftProvider, , clearDraftProvider] = useComposerSetting<string | undefined>(session, 'modern.draftProvider', undefined);
+  const draft = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
+  const hasContent = !isEmptyComposerDocument(draft.document) || draft.images.length > 0 || draft.attachments.length > 0;
+  const initialProvider = input.lockedProviderId ?? savedProvider ?? (hasContent ? draftProvider : undefined) ?? input.preferredProviderId ?? 'claude-code';
   const [savedModel, saveModel, hasModel, clearModel] = useComposerSetting<string | undefined>(session, 'modern.model', undefined);
   const [savedReasoning, saveReasoning, hasReasoning, clearReasoning] = useComposerSetting<ReasoningLevel | undefined>(session, 'modern.reasoning', undefined);
   const [savedAcpMode, saveAcpMode, hasAcpMode, clearAcpMode] = useComposerSetting<string | undefined>(session, 'modern.acpMode', undefined);
   const hostCatalog = threadModelCatalogForHost(input.hostId, input.projectId);
   const catalog = useSyncExternalStore(hostCatalog.subscribe, hostCatalog.getSnapshot, hostCatalog.getSnapshot);
   const [providerId, setProviderIdState] = useState(
-    () => input.lockedProviderId ?? savedProvider ?? rememberedProviderId() ?? 'claude-code'
+    () => initialProvider
   );
   const [model, setModelState] = useState(() => {
     if (hasModel) return savedModel ?? '';
     if (input.initialModel) return input.initialModel;
-    const provider = input.lockedProviderId ?? savedProvider ?? rememberedProviderId() ?? 'claude-code';
-    return restoreProviderSelection(provider).model;
+    return restoreProviderSelection(initialProvider).model;
   });
   const [reasoningLevel, setReasoningLevelState] = useState<ReasoningLevel>(() => {
     if (hasReasoning) return savedReasoning ?? 'medium';
     if (input.initialReasoningLevel) {
       return asReasoningLevel(input.initialReasoningLevel, 'medium');
     }
-    const provider = input.lockedProviderId ?? savedProvider ?? rememberedProviderId() ?? 'claude-code';
-    return restoreProviderSelection(provider).reasoningLevel;
+    return restoreProviderSelection(initialProvider).reasoningLevel;
   });
   const [acpMode, setAcpModeState] = useState<string | undefined>(() => hasAcpMode ? savedAcpMode : input.initialAcpMode ?? undefined);
-  const setAcpMode = useCallback((value: string | undefined) => { saveAcpMode(value); setAcpModeState(value); }, [saveAcpMode]);
+  const setAcpMode = useCallback((value: string | undefined) => {
+    if (!input.threadId) saveProvider(providerId);
+    saveAcpMode(value); setAcpModeState(value);
+  }, [input.threadId, providerId, saveProvider, saveAcpMode]);
   const appliedRequestedAcpModeRef = useRef<string | undefined>(undefined);
   const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
+    if (!input.threadId) saveProvider(providerId);
     saveModel(value);
     setModelState(value);
-    rememberComposerSelection({ providerId, model: value, reasoningLevel });
-  }, [providerId, reasoningLevel, saveModel]);
+    rememberComposerSelection({ providerId, model: value, reasoningLevel, rememberProvider: false });
+  }, [input.threadId, providerId, reasoningLevel, saveModel, saveProvider]);
 
   const setReasoningLevel = useCallback((value: ReasoningLevel) => {
+    if (!input.threadId) saveProvider(providerId);
     saveReasoning(value);
     setReasoningLevelState(value);
-    rememberComposerSelection({ providerId, model, reasoningLevel: value });
-  }, [model, providerId, saveReasoning]);
+    rememberComposerSelection({ providerId, model, reasoningLevel: value, rememberProvider: false });
+  }, [input.threadId, model, providerId, saveReasoning, saveProvider]);
 
   const setProviderId = useCallback((value: string) => {
     if (value === providerId) return;
-    rememberComposerSelection({ providerId, model, reasoningLevel });
+    rememberComposerSelection({ providerId, model, reasoningLevel, rememberProvider: false });
     setProviderIdState(value);
     saveProvider(value);
     const restored = restoreProviderSelection(value);
@@ -125,7 +131,8 @@ export function useThreadComposerOptions(input: {
     rememberComposerSelection({
       providerId: value,
       model: restored.model,
-      reasoningLevel: restored.reasoningLevel
+      reasoningLevel: restored.reasoningLevel,
+      rememberProvider: false
     });
   }, [model, providerId, reasoningLevel, saveProvider, clearModel, clearReasoning, clearAcpMode]);
 
@@ -224,24 +231,43 @@ export function useThreadComposerOptions(input: {
   }, [hasAcpMode, input.threadId, acpMode, acpModeOptions, cached?.acpMode?.currentValue, input.initialAcpMode]);
 
   useEffect(() => {
-    if (input.threadId || input.lockedProviderId || hasProvider) return;
-    if (catalog.providers.length === 0) return;
-    const next = snapNewThreadProviderId(
-      catalog.providers.map((row) => row.id),
-      providerId,
-      input.preferredProviderId
-    );
-    if (!next) return;
+    if (input.threadId || input.lockedProviderId) return;
+    if (hasContent && !draftProvider) saveDraftProvider(providerId);
+    if (!hasContent && draftProvider) clearDraftProvider();
+    // An explicit choice or unsent draft belongs to this composer alone.
+    const next = savedProvider ?? (hasContent ? draftProvider ?? providerId : undefined)
+      ?? input.preferredProviderId ?? catalog.providers[0]?.id ?? 'claude-code';
+    if (next === providerId) return;
     setProviderIdState(next);
     const restored = restoreProviderSelection(next);
     setModelState(restored.model);
     setReasoningLevelState(restored.reasoningLevel);
-    rememberComposerSelection({
-      providerId: next,
-      model: restored.model,
-      reasoningLevel: restored.reasoningLevel
-    });
-  }, [hasProvider, input.threadId, input.lockedProviderId, input.preferredProviderId, catalog.providers, providerId]);
+    setAcpModeState(undefined);
+  }, [session, hasContent, draftProvider, saveDraftProvider, clearDraftProvider, savedProvider, input.threadId, input.lockedProviderId, input.preferredProviderId, catalog.providers, providerId]);
+
+  const useDefaultProvider = useCallback(() => {
+    clearProvider();
+    clearDraftProvider();
+    clearModel();
+    clearReasoning();
+    clearAcpMode();
+    const next = input.preferredProviderId ?? catalog.providers[0]?.id ?? 'claude-code';
+    if (hasContent) saveDraftProvider(next);
+    setProviderIdState(next);
+    const restored = restoreProviderSelection(next);
+    setModelState(restored.model);
+    setReasoningLevelState(restored.reasoningLevel);
+    setAcpModeState(undefined);
+  }, [clearProvider, clearDraftProvider, clearModel, clearReasoning, clearAcpMode, input.preferredProviderId, catalog.providers, hasContent, saveDraftProvider]);
+
+  const resetForNewThread = useCallback(() => {
+    // A pending send owns its submitted choices, not a later pick for the next draft.
+    const current = session.getSnapshot().settings;
+    if (current['modern.provider'] !== savedProvider || current['modern.model'] !== savedModel
+      || current['modern.reasoning'] !== savedReasoning || current['modern.acpMode'] !== savedAcpMode) return;
+    clearProvider(); clearDraftProvider(); clearModel(); clearReasoning(); clearAcpMode();
+    setAcpModeState(undefined);
+  }, [session, savedProvider, savedModel, savedReasoning, savedAcpMode, clearProvider, clearDraftProvider, clearModel, clearReasoning, clearAcpMode]);
 
   const activeModel = useMemo(
     () => {
@@ -270,7 +296,7 @@ export function useThreadComposerOptions(input: {
     });
     if (!nextModel) return;
     if (nextModel !== model) setModelState(nextModel);
-    rememberComposerSelection({ providerId, model: nextModel, reasoningLevel });
+    rememberComposerSelection({ providerId, model: nextModel, reasoningLevel, rememberProvider: false });
   }, [hasModel, settling, model, models, moreModels, persistSelection, providerId, reasoningLevel]);
 
   // Reasoning reconciles independently: an explicitly picked model must still
@@ -294,6 +320,9 @@ export function useThreadComposerOptions(input: {
     value: row.id,
     label: row.displayName
   }));
+  if (!providerOptions.some(row => row.value === providerId)) {
+    providerOptions.push({ value: providerId, label: `${fallbackProviderOption(providerId).displayName} (unavailable)` });
+  }
   const modelOptions: ModelPickerOption[] = availableModelsToPickerOptions(models);
   const moreModelOptions: ModelPickerOption[] = availableModelsToPickerOptions(moreModels);
   const reasoningOptions: PickerOption<ReasoningLevel>[] = visibleComposerReasoningLevels(
@@ -302,8 +331,12 @@ export function useThreadComposerOptions(input: {
     value: level,
     label: REASONING_LABELS[level]
   }));
-  const provider = providers.find((row) => row.id === providerId) ?? providers[0];
-  const selectionError = settling || !cached
+  const provider = useMemo(() => providers.find((row) => row.id === providerId) ?? fallbackProviderOption(providerId), [providers, providerId]);
+  const providerUnavailable = !input.threadId && !input.hostPending && !settling && (modelLoadError === 'provider_unavailable'
+    || (catalog.rosterReady && !catalog.rosterError && !registeredProviderIds.includes(providerId)));
+  const selectionError = providerUnavailable
+    ? 'The selected harness is unavailable on this machine. Choose an available harness or change the thread default in Settings.'
+    : settling || !cached
     ? null
     : hasModel && model && !models.concat(moreModels).some(row => row.model === model)
       ? 'The saved model is unavailable. Choose an available model before sending.'
@@ -318,6 +351,9 @@ export function useThreadComposerOptions(input: {
     provider,
     providerId,
     setProviderId,
+    useDefaultProvider,
+    resetForNewThread,
+    providerSelectionSource: hasProvider ? 'choice' as const : hasContent && draftProvider ? 'draft' as const : 'default' as const,
     providerOptions,
     rosterReady,
     registeredProviderIds,

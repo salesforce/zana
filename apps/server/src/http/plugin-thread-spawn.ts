@@ -4,9 +4,9 @@
  * Precedence: explicit `providerId` (unknown id rejects) → `harness:
  * 'project-default'` (the project's effective AI harness, the same Global →
  * Project resolution a new agent launch uses; rejects when none is usable) →
- * legacy first-registered provider. The legacy fallback is kept only for
- * callers that set neither field, so older plugins keep working; it is NOT
- * used once a caller opts into `harness`.
+ * resolved project/global thread default. Callers with no configured thread
+ * default retain the legacy compatibility fallback. Explicit provider/harness
+ * requests are never replaced by a different default.
  */
 import type {
   EffectiveHarnessDefaultResult,
@@ -49,8 +49,10 @@ export async function resolvePluginSpawnProvider(input: {
   providerId?: string;
   harness?: 'project-default';
   providers: readonly Pick<ThreadProviderRecord, 'id' | 'unavailableReason'>[];
-  /** Settings' default harness; steers the legacy fallback toward the composer's preselected provider. */
+  /** Compatibility fallback for older callers with no thread default. */
   defaultHarness?: HarnessFamily | null;
+  /** Resolved project/global thread default. Unavailable defaults must block. */
+  defaultThreadProviderId?: string | null;
   /** Lazily resolves the project's effective harness; only called for `harness`. */
   effectiveDefault(): Promise<EffectiveHarnessDefaultResult>;
 }): Promise<PluginSpawnProviderResolution> {
@@ -77,6 +79,13 @@ export async function resolvePluginSpawnProvider(input: {
     }
     const harness = { family: result.family, profile: result.profile };
     return result.profile.endsWith('-yolo') ? { providerId, permissionMode: 'full', harness } : { providerId, harness };
+  }
+  if (input.defaultThreadProviderId) {
+    const selected = input.providers.find(row => row.id === input.defaultThreadProviderId);
+    if (!selected || selected.unavailableReason) {
+      throw new PluginSpawnHarnessError('The thread default is unavailable.', 'Choose another default for threads in Settings → AI Harness.');
+    }
+    return { providerId: selected.id };
   }
   const first = defaultSpawnProviderId(input.providers, input.defaultHarness);
   if (!first) throw new Error('no thread provider is registered');

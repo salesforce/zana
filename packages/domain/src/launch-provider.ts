@@ -232,6 +232,24 @@ export function threadProviderIdForHarnessFamily(family: string): string | null 
     : null;
 }
 
+/** Provider ids are opaque registration keys; saving one does not authorize a launch. */
+export function normalizeThreadProviderDefault(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  const id = value.trim();
+  return id.length > 0 && id.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(id) ? id : undefined;
+}
+
+/** Resolve only explicit defaults. Draft and existing-thread choices belong to the composer. */
+export function resolveThreadProviderDefault(
+  projectProviderId: string | null | undefined,
+  globalProviderId: string | null | undefined
+): { providerId: string | null; source: 'project' | 'global' } {
+  return projectProviderId
+    ? { providerId: projectProviderId, source: 'project' }
+    : { providerId: globalProviderId ?? null, source: 'global' };
+}
+
 /** Harness family a thread provider id runs, or `null` (e.g. `fake`, `shell`). */
 export function harnessFamilyForThreadProviderId(providerId: string): HarnessFamily | null {
   for (const [family, id] of Object.entries(THREAD_PROVIDER_ID_BY_HARNESS_FAMILY) as Array<[HarnessFamily, string]>) {
