@@ -30,6 +30,12 @@ const PLUGIN_ROOT = dirname(fileURLToPath(import.meta.url));
 
 
 export default function plugin(zcc: ZccPluginApi): void {
+  let autoConverge = false;
+  const settings = zcc.settings.define({ autoConverge: { type: 'boolean', label: 'Automatically settle safe peer changes',
+    description: 'Reconcile identical copies and non-overlapping edits without asking. Overlapping edits still require review.', default: false } });
+  let settingChanged = false;
+  settings.onChange(values => { settingChanged = true; autoConverge = values.autoConverge === true; });
+  void settings.get().then(values => { if (!settingChanged) autoConverge = values.autoConverge === true; }).catch((error: unknown) => zcc.log.warn(`design docs settings load failed; automatic settling stays off: ${String(error).slice(0, 160)}`));
   let syncStore!: DesignDocSyncStore;
   let peerSync: DesignDocPeerService | undefined;
   const database = zcc.storage.database();
@@ -68,7 +74,7 @@ export default function plugin(zcc: ZccPluginApi): void {
     }
   });
   void store.seedBuiltinTemplates(zcc.storage.kv).catch((error: unknown) => zcc.log.warn(`design docs template seed failed: ${String(error)}`));
-  syncStore = new DesignDocSyncStore(guarded);
+  syncStore = new DesignDocSyncStore(guarded, { autoConverge: () => autoConverge });
   const sdkPeers = zcc.sdk.peers;
   const fenceDatabase: PluginDatabase = {
     ...database,

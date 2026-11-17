@@ -120,9 +120,8 @@ describe('peers view', () => {
     fireEvent.click(open);
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Peers' }).getAttribute('aria-current')).toBe('page');
-    const peers = screen.getByRole('region', { name: 'Database sync peers' });
-    expect(within(peers).queryByRole('link', { name: /Not listed/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'AI Harness' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('region', { name: 'AI Harness' })).toBeTruthy();
     expect(screen.queryByText('Payments API')).toBeNull();
     expect(screen.queryByRole('button', { name: 'New' })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -136,8 +135,8 @@ describe('peers view', () => {
     const peerReads = harness.rpcCalls.filter((call) => call.method === 'peerStatus').length;
     fireEvent.click(back);
     expect(await screen.findByText('Payments API')).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Database sync peers' })).toBeNull();
-    // Leaving the Peers view re-reads the group, which may have changed there.
+    expect(screen.queryByRole('region', { name: 'AI Harness' })).toBeNull();
+    // Leaving settings re-reads the group, which may have changed there.
     await waitFor(() => expect(harness.rpcCalls.filter((call) => call.method === 'peerStatus').length).toBe(peerReads + 1));
   });
 
@@ -147,24 +146,28 @@ describe('peers view', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
     expect(screen.getByText('Manage Design Docs sync, agents and publishing preferences.')).toBeTruthy();
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect([...nav.querySelectorAll('.dd-nav-group-label')].map((el) => el.textContent)).toEqual(['SYNC', 'AGENTS']);
-    expect([...nav.querySelectorAll('button')].map((el) => el.textContent)).toEqual(['Peers', 'Agent']);
+    expect([...nav.querySelectorAll('.dd-nav-group-label')].map((el) => el.textContent)).toEqual(['Configuration', 'Remote']);
+    expect([...nav.querySelectorAll('button')].map((el) => el.textContent)).toEqual(['AI Harness', 'Peers']);
     expect(nav.querySelectorAll('button svg')).toHaveLength(2);
-    // Default section: only Peers renders, under its own heading and description.
-    expect(screen.getByRole('heading', { name: 'Peers' })).toBeTruthy();
-    expect(screen.getByRole('region', { name: 'Database sync peers' })).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Agent harness' })).toBeNull();
-    fireEvent.click(within(nav).getByRole('button', { name: 'Agent' }));
+    expect(within(nav).getByRole('button', { name: 'AI Harness' }).querySelector('[data-testid="dd-settings-icon-agent"]')).toBeTruthy();
+    expect(within(nav).getByRole('button', { name: 'Peers' }).querySelector('[data-testid="dd-settings-icon-peers"]')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'AI Harness' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'AI Harness' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Database sync peers' })).toBeNull();
-    expect(screen.getByRole('heading', { name: 'Agent harness' })).toBeTruthy();
+    expect(screen.queryByText('SYNC')).toBeNull();
+    expect(screen.queryByText('AGENTS')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Agent' })).toBeNull();
+    fireEvent.click(within(nav).getByRole('button', { name: 'Peers' }));
+    expect(screen.queryByRole('region', { name: 'AI Harness' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Peers' })).toBeTruthy();
   });
 
-  it('falls back to Peers when the remembered section no longer exists', async () => {
+  it('falls back to AI Harness when the remembered section no longer exists', async () => {
     localStorage.setItem('zcc.design-docs.settings-tab', JSON.stringify('bogus'));
     const harness = createHarness();
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
-    expect(screen.getByRole('button', { name: 'Peers' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('button', { name: 'AI Harness' }).getAttribute('aria-current')).toBe('page');
   });
 
   it('keeps project tab header actions in the Peers view', async () => {
@@ -431,6 +434,17 @@ describe('creating docs', () => {
     ]);
     expect(harness.toasts.at(-1)!.message).toContain('An agent is drafting “Offline sync”');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New design doc' })).toBeNull());
+  });
+
+  it('shows the all-docs total on its own line under the header, and nothing when the list shows every doc', async () => {
+    const harness = createHarness();
+    seed(harness.store, { title: 'Active one', projectId: null });
+    seed(harness.store, { title: 'Old one', projectId: null, status: 'archived' });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    const line = await screen.findByText(/1 of 2 docs/);
+    expect(line.closest('.dd-list-total')).not.toBeNull();
+    expect(line.closest('.dd-list-head')).toBeNull();
+    expect(screen.queryByRole('button', { name: /unmapped/ })).toBeNull();
   });
 
   it('creates a global doc without drafting when there is no project to run in', async () => {

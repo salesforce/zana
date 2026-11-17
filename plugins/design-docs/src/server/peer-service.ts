@@ -2,13 +2,15 @@ import type { PluginPeerRequest, PluginSdkPeers, ZccPluginApi } from '@zana-ai/z
 import { negotiateProtocol, validateAppliedReceipt, validateHandshake, validateSessionOffer, validateAncestryPage,
   validateTransfer, validateChunk, validateReceiptQuery, transferQuery, validateMissing, validateManualConsent,
   type PeerHandshake, type PeerSessionOffer, type PeerSessionExpectation, type PeerTransfer } from './peer-protocol.js';
-import { DesignDocSyncStore, delivered, isOfflineSyncError, type DocSyncStatus, type FrozenSyncIntent } from './sync-store.js';
+import { DesignDocSyncStore, delivered, classifyDelivery, type DocSyncStatus, type FrozenSyncIntent } from './sync-store.js';
+import { CONSENT_REQUIRED_ERROR, boundSyncError, deliveryReasonCode } from '../shared/sync-classify.js';
+import type { PeerDiagnostics, SyncQueueEntry, CompareResult } from '../shared/sync-diagnostics.js';
 
 /** What one sync pass did. `blocked` is the legacy total of everything not delivered. */
 export interface SyncSummary { attempted: number; synced: number; blocked: number; waiting: number; needsChoice: number; failed: number }
 import { MAX_PEER_CHUNK_BYTES, MAX_PEER_WINDOW_CHUNKS, PEER_CALL_TIMEOUT_MS, PEER_COMPACTION_BATCH, PEER_MIN_PROTOCOL_VERSION, PEER_PENDING_TICK_MS, PEER_PROTOCOL_VERSION } from '../shared/peer-limits.js';
-import { PeerProtocolError, type PeerAppliedReceipt } from '../shared/peer-contract.js';
-import type { DocActor, PeerResolutionChoice } from '../shared/contract.js';
+import { PeerProtocolError, ManualConsentRequiredError, CONSENT_REQUIRED_STAGE, type PeerAppliedReceipt } from '../shared/peer-contract.js';
+import type { DocActor, PeerConflictChoices, PeerResolutionChoice } from '../shared/contract.js';
 
 type ReceiverFence = Pick<PluginPeerRequest, 'signal' | 'scope' | 'grantEpoch' | 'commitSync'>;
 
@@ -20,6 +22,7 @@ export class DesignDocPeerService {
   private scheduleDelivery: (() => void) | null = null;
   private peers: PluginSdkPeers | null = null;
   private lastWarning = '';
+  private lastSummary = '';
 
   constructor(private readonly sync: DesignDocSyncStore, private readonly changed: (docId: string) => void = () => {}) {}
 
@@ -93,7 +96,7 @@ export class DesignDocPeerService {
   /** Background failures stay non-fatal but leave a bounded, deduplicated trace. */
   private warnOnce(operation: string, error: unknown): void {
     if (this.abort.signal.aborted) return;
-    const text = `${operation}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300);
+    const text = boundSyncError(`${operation}: ${error instanceof Error ? error.message : String(error)}`);
     if (text === this.lastWarning) return;
     this.lastWarning = text;
     console.warn(`[design-docs] ${text}`);
@@ -117,7 +120,7 @@ export class DesignDocPeerService {
   conflicts(docId: string, cursor?: string) { return this.sync.conflicts(docId, cursor); }
   conflictReview(docId: string, remoteHead: string) { return this.sync.conflictReview(docId, remoteHead); }
   conflictFile(docId: string, remoteHead: string, path: string) { return this.sync.conflictFile(docId, remoteHead, path); }
-  resolveConflict(input: { docId: string; expectedHead: string; remoteHead: string; choice: PeerResolutionChoice }, actor: DocActor): string {
+  resolveConflict(input: { docId: string; expectedHead: string; remoteHead: string; choice?: PeerResolutionChoice; choices?: PeerConflictChoices }, actor: DocActor): string {
     const head = this.sync.resolveConflict(input, actor);
     this.changed(input.docId);
     return head;
@@ -133,28 +136,44 @@ export class DesignDocPeerService {
   /** Read-only per-doc sync state for the UI. */
   docSyncStatuses(docId?: string): DocSyncStatus[] { return this.sync.docSyncStatuses(docId); }
 
+  /** Queued deliveries with their stored errors, per doc and computer (R1, R8). */
+  queuedDeliveries(docId?: string, limit?: number): SyncQueueEntry[] { return this.sync.queuedDeliveries(docId, limit); }
+
+  /** Per computer: queue depth, oldest queued time, last errors. */
+  peerDiagnostics(): PeerDiagnostics[] { return this.sync.peerDiagnostics(); }
+
+  /** Salted content hashes per doc, for diffing two computers' output; null when sync is not set up. */
+  compareDocs(offset?: number, limit?: number): CompareResult | null { return this.sync.compareDocs(offset, limit); }
+
   /** User invocation authorizes a database-wide persisted snapshot, never buffers. */
   async syncNow(peers: PluginSdkPeers): Promise<SyncSummary> {
     this.requireGroup();
     this.sync.prepareManual();
+    this.sync.retryBlockedIntents();
     const local = this.requireGroup();
     let awaiting = 0;
     for (const member of this.sync.members(local.repoId).filter((member) => member.replicaId !== local.replicaId)) {
       if (this.sync.isRetiringReplica(local.repoId, local.replicaId)) break;
-      const consent = this.sync.manualConsent(member.replicaId);
-      if (!consent) continue;
+      // Every waiting session, oldest first: each earlier Sync now left one behind, and the one naming a new draft sits last.
+      const consents = this.sync.waitingManualConsents(member.replicaId);
+      if (!consents.length) continue;
+      let unanswered = false;
       try {
         const grants = (await peers.list({ signal: this.abort.signal })).filter((grant) => grant.id === member.machineId && grant.scope === local.repoId && grant.connected);
         if (grants.length !== 1) throw new PeerProtocolError('invalid', 'manual peer unavailable');
-        // Manual consent packets stay at the oldest supported version; they carry no ancestry.
-        const body = { ...this.handshakeFor(member.replicaId, grants[0]!.grantEpoch, PEER_MIN_PROTOCOL_VERSION), ...consent };
         const options = { scope: local.repoId, signal: this.abort.signal, timeoutMs: PEER_CALL_TIMEOUT_MS };
-        const reply = await peers.call(member.machineId, 'manual', body, options) as { accepted?: unknown; manualId?: unknown };
-        if (reply?.accepted !== true || reply.manualId !== consent.manualId) { awaiting++; continue; }
-        await this.completeManualAck(peers, body, member.machineId);
-        this.requireCurrentHandshake(body, member.machineId);
-        await peers.call(member.machineId, 'manual-deliver', body, options);
-      } catch (error) { awaiting++; this.warnOnce(`manual sync with ${member.machineId} awaiting`, error); }
+        for (const consent of consents) {
+          // Manual consent packets stay at the oldest supported version; they carry no ancestry.
+          const body = { ...this.handshakeFor(member.replicaId, grants[0]!.grantEpoch, PEER_MIN_PROTOCOL_VERSION), ...consent };
+          const reply = await peers.call(member.machineId, 'manual', body, options) as { accepted?: unknown; manualId?: unknown };
+          if (reply?.accepted !== true || reply.manualId !== consent.manualId) { unanswered = true; this.sync.noteManualAnswer(member.replicaId, 'not-accepted'); continue; }
+          this.sync.noteManualAnswer(member.replicaId, 'accepted');
+          await this.completeManualAck(peers, body, member.machineId);
+          this.requireCurrentHandshake(body, member.machineId);
+          await peers.call(member.machineId, 'manual-deliver', body, options);
+        }
+        if (unanswered) awaiting++;
+      } catch (error) { awaiting++; this.sync.noteManualAnswer(member.replicaId, 'error'); this.warnOnce(`manual sync with ${member.machineId} awaiting`, error); }
     }
     const result = await this.deliverPending(peers);
     return { ...result, blocked: result.blocked + awaiting, waiting: result.waiting + awaiting };
@@ -169,6 +188,7 @@ export class DesignDocPeerService {
 
   private async deliver(peers: PluginSdkPeers): Promise<SyncSummary> {
     const local = this.requireGroup();
+    this.sync.sweepAutoSettlements();
     let attempted = 0, synced = 0, blocked = 0, waiting = 0, needsChoice = 0, failed = 0;
     // Retry explicit frozen manual consent after restart/reconnect, never recapture drafts.
     for (const consent of this.sync.manualConsents()) {
@@ -181,6 +201,7 @@ export class DesignDocPeerService {
         const body = { ...this.handshakeFor(member.replicaId, grants[0]!.grantEpoch, PEER_MIN_PROTOCOL_VERSION), manualId: consent.manualId, heads: consent.heads };
         const reply = await peers.call(member.machineId, 'manual', body,
           { scope: local.repoId, timeoutMs: PEER_CALL_TIMEOUT_MS, signal: this.abort.signal }) as { accepted?: unknown; manualId?: unknown };
+        this.sync.noteManualAnswer(member.replicaId, reply?.accepted === true && reply.manualId === consent.manualId ? 'accepted' : 'not-accepted');
         if (reply?.accepted === true && reply.manualId === consent.manualId) {
           await this.completeManualAck(peers, body, member.machineId);
         }
@@ -217,7 +238,9 @@ export class DesignDocPeerService {
               await peers.call(member.machineId, 'ancestry', page, options);
             }
             this.requireCurrentHandshake(transfer, member.machineId);
-            await peers.call(member.machineId, 'transfer', transfer, options);
+            const staged = await peers.call(member.machineId, 'transfer', transfer, options) as { stage?: unknown } | null;
+            // The other computer holds this draft back until its own user also chooses Sync now; hold it and say so.
+            if (staged?.stage === CONSENT_REQUIRED_STAGE) throw new PeerProtocolError('invalid', CONSENT_REQUIRED_ERROR);
             const maximumWindows = Math.ceil(transfer.blobs.reduce((sum, blob) => sum + Math.ceil(blob.bytes / MAX_PEER_CHUNK_BYTES), 0) / MAX_PEER_WINDOW_CHUNKS) + 1;
             for (let window = 0; window < maximumWindows; window++) {
               this.requireCurrentHandshake(transfer, member.machineId);
@@ -250,18 +273,31 @@ export class DesignDocPeerService {
         if (delivered(applied.stage)) synced++;
         else {
           blocked++;
-          if (applied.stage === 'conflict') needsChoice++; else waiting++;
-          this.sync.deferIntent(intent, applied.stage);
+          const contentState = this.sync.docSyncStatuses(intent.docId)[0]?.state;
+          if (applied.stage === 'conflict' && contentState === 'needs-choice') needsChoice++; else waiting++;
+          this.logDeferred(intent, applied.stage, this.sync.deferIntent(intent, applied.stage));
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'peer delivery failed';
         blocked++;
-        if (isOfflineSyncError(message)) waiting++; else failed++;
-        this.sync.deferIntent(intent, message);
+        if (classifyDelivery(message) === 'waiting') waiting++; else failed++;
+        this.logDeferred(intent, message, this.sync.deferIntent(intent, message));
       }
     }
     if (synced > 0) this.compactAfterSync();
+    const settled = this.sync.takeSettlementCounts();
+    if (Object.keys(settled).length) console.info(`[design-docs] automatic settlement: ${Object.entries(settled).map(([rule, count]) => `${rule} ${count}`).join(', ')}`);
+    // One summary line per pass that had work; per-delivery lines are debug (see logDeferred).
+    const summary = `sync pass: attempted ${attempted}, synced ${synced}, waiting ${waiting}, needs-choice ${needsChoice}, failed ${failed}`;
+    if (attempted > 0 && summary !== this.lastSummary) console.info(`[design-docs] ${summary}`);
+    this.lastSummary = attempted > 0 ? summary : '';
     return { attempted, synced, blocked, waiting, needsChoice, failed };
+  }
+
+  /** Debug trace of one deferred delivery: ids and a fixed reason code only, never the error text or file names. */
+  private logDeferred(intent: FrozenSyncIntent, reason: string, attempts: number): void {
+    const peer = this.sync.members(intent.repoId).find((member) => member.replicaId === intent.memberReplicaId)?.machineId ?? 'unknown';
+    console.debug(`[design-docs] delivery deferred doc=${intent.docId} peer=${peer} direction=out reason=${deliveryReasonCode(reason)} attempts=${attempts}`);
   }
 
   /**
@@ -330,7 +366,16 @@ export class DesignDocPeerService {
         this.requireFence(fence);
         this.requireRosterPeer(expected.repoId, expected.remoteReplicaId, peerId);
         validateHandshake(transfer, this.expectation(expected.remoteReplicaId, fence.grantEpoch));
-        this.sync.stageTransfer(transfer);
+        try { this.sync.stageTransfer(transfer); }
+        catch (error) {
+          // A private draft before both computers consented is an answer, not a fault: returning it commits normally, so the
+          // pair's grant lease stays up (a throw here would abort it and reach the sender as an offline-looking 409).
+          if (error instanceof ManualConsentRequiredError) {
+            this.sync.noteConsentRefusal(expected.remoteReplicaId, error.docId ?? 'unknown');
+            return { stage: CONSENT_REQUIRED_STAGE };
+          }
+          throw error;
+        }
         return { stage: 'received', scopeHash: transfer.scopeHash };
       });
       this.requireCurrentRequest(transfer, peerId, fence);

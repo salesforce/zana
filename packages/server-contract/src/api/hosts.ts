@@ -124,7 +124,23 @@ export const peerLinkSchema = z.object({
   uses: z.array(peerLinkUseSchema).max(32),
 });
 export type PeerLink = z.infer<typeof peerLinkSchema>;
-export const peerLinkListResponseSchema = z.object({ links: z.array(peerLinkSchema) });
+/** Connection facts behind a link's state, keyed by peer. For the Peers "Copy diagnostics" text; never keys, codes, ports or routes. */
+export const peerLinkDiagnosticSchema = z.object({
+  peerInstanceId: z.string().min(1),
+  peerName: z.string().max(200).optional(),
+  role: z.string().max(32),
+  phase: z.string().max(32),
+  side: z.enum(["server", "client"]),
+  state: z.string().max(32),
+  reason: z.string().max(64).optional(),
+  paused: z.boolean(),
+  forwarderBlocked: z.string().max(200).nullable(),
+  tunnel: z.object({ up: z.boolean(), downForMs: z.number().nonnegative().nullable(), failure: z.string().max(64).optional() }).nullable(),
+  session: z.object({ connected: z.boolean(), downForMs: z.number().nonnegative().nullable(), openForMs: z.number().nonnegative().nullable() }).nullable(),
+  retries: z.number().int().nonnegative(),
+});
+export type PeerLinkDiagnostic = z.infer<typeof peerLinkDiagnosticSchema>;
+export const peerLinkListResponseSchema = z.object({ links: z.array(peerLinkSchema), diagnostics: z.array(peerLinkDiagnosticSchema).max(64).optional() });
 export type PeerLinkListResponse = z.infer<typeof peerLinkListResponseSchema>;
 /** Optional `scope` narrows removal to one use; without it every scope of the plugin is removed. */
 export const removePeerLinkUseQuerySchema = z.object({ scope: z.string().min(1).max(256).optional() }).strict();

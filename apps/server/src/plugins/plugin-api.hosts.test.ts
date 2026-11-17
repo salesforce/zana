@@ -216,6 +216,26 @@ it.each([
   await expect(handle.api.sdk.peers.call('app-b', 'handshake', {})).resolves.toEqual({ accepted: true });
 });
 
+it.each([
+  ['{"ok":false,"error":"durable projection does not match frozen payload"}', 'durable projection does not match frozen payload'],
+  ['{"ok":false,"code":"peer-request-cancelled"}', 'peer-request-cancelled'],
+  ['{"ok":false,"code":"token=secret"}', undefined],
+  [JSON.stringify({ error: 'Authorization: Bearer abc token="private value" secret=hush https://user:pass@example.test/path?private=1' }), '[REDACTED]'],
+  [JSON.stringify({ error: 'token="private value" secret=hush https://user:pass@example.test/path?private=1' }), '?[REDACTED]'],
+  [JSON.stringify({ error: 'Authorization: Basic abc' }), '[REDACTED]'],
+  [JSON.stringify({ error: 'x'.repeat(400) }), 'x'.repeat(300)],
+  ['', undefined], ['plain secret text', undefined], ['null', undefined], ['{"error":42}', undefined], ['{"error":{"message":"conflict"}}', 'conflict']
+])('preserves only bounded safe peer rejection reason (%s)', async (body, reason) => {
+  const { handle, call, pair } = await fixture();
+  await pair('host-b'); call.mockResolvedValueOnce({ status: 409, body });
+  const error = await handle.api.sdk.peers.call('app-b', 'apply', {}).catch(error => error);
+  expect(error.message).toContain('peer request failed: 409');
+  if (reason) expect(error.message).toContain(reason);
+  else expect(error.message).toBe('peer request failed: 409');
+  expect(error.message).not.toMatch(/abc|private value|hush|user:pass|private=1/);
+  expect(error.message.length).toBeLessThanOrEqual('peer request failed: 409: '.length + 300);
+});
+
 it('rejects invalid requests before HostHub and validates private handler registrations', async () => {
   const { handle, bare, call, pair, a, grant } = await fixture();
   await pair('host-b');

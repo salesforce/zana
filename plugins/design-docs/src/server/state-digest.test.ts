@@ -6,6 +6,17 @@ import { createTestDatabase } from './test-db.js';
 const USER = { kind: 'user', label: 'You', threadId: null } as const;
 
 describe('convergence-stable state digest', () => {
+  it('compares metadata, including status, without considering project mapping', () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const doc = store.create({ title: 'Metadata', template: 'blank' }, USER);
+    const read = () => createStateDigest(store, { localRepository: () => ({ repoId: 'r' }), head: () => null })();
+    const before = read();
+    store.update(doc.id, { status: 'archived' }, USER);
+    expect(read()).not.toBe(before);
+    const archived = read();
+    store.update(doc.id, { projectId: 'another-project' }, USER);
+    expect(read()).toBe(archived);
+  });
   it('is null before a local repository exists', () => {
     expect(createStateDigest({ list: () => [], readAllFiles: () => [] }, { localRepository: () => null, head: () => null })()).toBeNull();
   });

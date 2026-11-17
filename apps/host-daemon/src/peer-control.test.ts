@@ -52,7 +52,7 @@ it('reads the enrollment token under Windows-reported modes but still rejects a 
   f.paths.length = 0;
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   await expect(f.peer.forward(f.command)).rejects.toMatchObject({ code: 'peer_control_failed' });
-  expect(console.warn).toHaveBeenCalledWith('[peer-control] forward failed: unsafe local app token');
+  expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('operation=forward branch=registration reason=unsafe local app token'));
   expect(f.paths).toEqual([]);
 });
 
@@ -194,5 +194,56 @@ it('logs the cause of a sanitized control failure without leaking it to the call
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const failure = f.peer.forward({ ...f.command, packet: { ...f.command.packet, senderId: randomUUID() } });
   await expect(failure).rejects.toMatchObject({ code: 'peer_control_failed', message: 'peer control unavailable or not authorized' });
-  expect(warn).toHaveBeenCalledWith(expect.stringContaining('[peer-control] forward failed: peer control destination mismatch'));
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('operation=forward branch=destination reason=peer control destination mismatch'));
+});
+
+it('rate limits 100 equivalent forward failures per peer and reports suppression when the window closes', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const invalid = { ...f.command, packet: { ...f.command.packet, senderId: randomUUID() } };
+  for (let index = 0; index < 100; index++) await expect(f.peer.forward(invalid)).rejects.toMatchObject({ code: 'peer_control_failed' });
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenLastCalledWith(expect.stringContaining(`peer=${f.remoteId} operation=forward branch=destination reason=peer control destination mismatch`));
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(warn).toHaveBeenCalledTimes(2);
+  expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('suppressed=99'));
+});
+
+it('keeps forward failure warnings distinct by branch and reason', async () => {
+  const f = await fixture();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  await expect(f.peer.forward({ ...f.command, packet: { ...f.command.packet, senderId: randomUUID() } })).rejects.toThrow();
+  await chmod(join(f.dir, 'host-enroll.token'), 0o644);
+  await expect(f.peer.forward(f.command)).rejects.toThrow();
+  expect(warn).toHaveBeenCalledTimes(2);
+  expect(warn.mock.calls.map(([message]) => message)).toEqual([
+    expect.stringContaining('branch=destination reason=peer control destination mismatch'),
+    expect.stringContaining('branch=registration reason=unsafe local app token')
+  ]);
+});
+
+it('names the resolver condition in the daemon log: target-is-remote, no-local-target, link-not-capable', async () => {
+  const f = await fixture();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  // The local app resolves to the same instance as the remote: forwarding to it would loop.
+  await f.peer.hello(f.localId, 'execution');
+  await expect(f.peer.forward(f.command)).rejects.toMatchObject({ code: 'peer_control_failed' });
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('branch=target reason=peer control local destination unavailable: target-is-remote'));
+  // No local app registered at all.
+  const empty = await realpath(await mkdtemp(join(tmpdir(), 'peer-control-empty-')));
+  cleanup.push(() => rm(empty, { recursive: true, force: true }));
+  const lonely = new PeerControlForwarder({ localAppDataDir: empty, hostId: f.hostId, hostKey: 'x'.repeat(32) });
+  cleanup.push(() => lonely.close());
+  await lonely.hello(f.remoteId, 'execution');
+  warn.mockClear();
+  await expect(lonely.forward(f.command)).rejects.toMatchObject({ code: 'peer_control_failed' });
+  expect(warn).toHaveBeenCalledWith(expect.stringMatching(/branch=target reason=.*(no-local-target|unavailable)/));
+  // A forward-only link that was not pinned never carries control.
+  const unpinned = new PeerControlForwarder({ localAppDataDir: f.dir, hostId: f.hostId, hostKey: 'x'.repeat(32) });
+  cleanup.push(() => unpinned.close());
+  await unpinned.hello(f.remoteId, 'peer.forward');
+  warn.mockClear();
+  await expect(unpinned.forward(f.command)).rejects.toMatchObject({ code: 'peer_control_failed' });
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('link-not-capable'));
 });

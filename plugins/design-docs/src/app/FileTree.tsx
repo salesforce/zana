@@ -213,6 +213,7 @@ function FileRow({
         open={menu}
         onClose={() => setMenu(false)}
         className="dd-menu"
+        fixed
         anchor={<IconButton icon={MoreHorizontal} label={`Actions for ${file.path}`} size={13} active={menu} onClick={() => {
           if (!menu) menuSnapshot.current = { doc, file };
           setMenu(!menu);

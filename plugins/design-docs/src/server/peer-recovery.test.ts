@@ -366,7 +366,8 @@ describe('peer review regressions', () => {
     const receipt = await c.service.receiveTransfer('apply', 'app-b', transferQuery(transfer), fence());
     b.sync.acceptTransferReceipt(newest, transfer, receipt as never);
     expect(b.sync.readyIntents('repo')).toEqual([]);
-    expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_receipts').get()).toEqual({ n: 1 });
+    // Proven ancestor possession also closes the earlier pending intent and records its synced receipt.
+    expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_receipts').get()).toEqual({ n: 2 });
     expect(c.sync.readyIntents('repo')).toEqual([]);
     expect(await b.service.deliverPending(peers)).toEqual({ attempted: 0, synced: 0, blocked: 0, waiting: 0, needsChoice: 0, failed: 0 });
   });

@@ -10,7 +10,8 @@ import { EnrolledPeerChannels } from './enrolled-peer-channels.js';
 import { InvitationError } from './peer-invitation.js';
 import { BootstrapRejection } from './peer-link-bootstrap.js';
 import {
-  LINK_LINE_TTL_MS, PEER_LINK_BOOTSTRAP_SKEW_MS, PEER_LINK_PRE_CONSENT_MAX_MS, PEER_LINK_ROTATION_MS, PEER_OFFLINE_AFTER_MS, PEER_RELINK_ACCEPT_INTERVAL_MS, PEER_RELINK_AFTER_MS, PeerLinks
+  LINK_LINE_TTL_MS, PEER_LINK_BOOTSTRAP_SKEW_MS, PEER_LINK_PRE_CONSENT_MAX_MS, PEER_LINK_ROTATION_MS, PEER_OFFLINE_AFTER_MS, PEER_RELINK_ACCEPT_INTERVAL_MS, PEER_RELINK_AFTER_MS, PeerLinks,
+  forwarderFailureText,
 } from './peer-links.js';
 import type { AuthorizedKeyInput, AuthorizedKeyKind, OpenTunnelInput, PeerSshEndpoint, SshReason } from './peer-ssh-contract.js';
 
@@ -1013,6 +1014,16 @@ describe('bootstrap line expiry', () => {
   });
 });
 
+describe('forwarderFailureText', () => {
+  it('never carries addresses, ports or paths', () => {
+    expect(forwarderFailureText(Object.assign(new Error('listen EADDRINUSE: address already in use 127.0.0.1:58021'), { code: 'EADDRINUSE' }))).toBe('EADDRINUSE');
+    const text = forwarderFailureText(new Error('bind failed on 10.1.2.3:8781 and host.local:9000 via /Users/x/.zcc/sock port 58021'));
+    expect(text).not.toMatch(/10\.1\.2\.3|8781|9000|58021|\/Users/);
+    expect(forwarderFailureText('nope')).toBe('acquire failed');
+    expect(forwarderFailureText(new Error('   '))).toBe('acquire failed');
+  });
+});
+
 describe('forwarder port fails closed', () => {
   it('blocks a linked inviter link whose F moved: ssh-down, lines removed, connector not reopened', async () => {
     const f = await fixture(), first = f.make();
@@ -1021,8 +1032,14 @@ describe('forwarder port fails closed', () => {
     first.dispose(); await first.whenIdle();
     f.ssh.fail.port = F + 7; // a squatter holds the old F; the lease would hand out another
     f.connector.connect.mockClear(); f.held.clear();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const second = f.make();
     await second.start();
+    // The reason is logged: an ssh-down link otherwise gives no hint that the forwarder port was taken or moved.
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[zcc\] peer link [0-9a-f-]{8} forwarder blocked: /));
+    warn.mockRestore();
+    // Same reason is retrievable for the Peers "Copy diagnostics" report.
+    expect(second.diagnostics()).toEqual([expect.objectContaining({ phase: 'linked', state: 'disconnected', reason: 'ssh-down', forwarderBlocked: expect.any(String) })]);
     expect(f.lines.has(`${ctx.id}:link`)).toBe(false);
     expect(f.lines.has(`${ctx.id}:bootstrap`)).toBe(false);
     expect(f.held.has(ctx.id)).toBe(false);
@@ -1451,5 +1468,21 @@ describe('core connection (no plugin, no scope)', () => {
     for (let index = 0; index < 16; index++) await (links as any).insert(row(index));
     await expect((links as any).insert(row(16))).rejects.toMatchObject({ code: 'capacity' });
     await expect((links as any).insert(row(17))).rejects.toMatchObject({ code: 'capacity' });
+  });
+});
+
+describe('PeerLinks.diagnostics', () => {
+  it('is empty before any link exists', async () => {
+    const f = await fixture();
+    expect(f.make().diagnostics()).toEqual([]);
+  });
+
+  it('describes a linked link: connected state, no forwarder block, session facts, no secrets', async () => {
+    const f = await fixture(), links = f.make();
+    await f.inviterLinked(links);
+    const [entry] = links.diagnostics();
+    expect(entry).toMatchObject({ phase: 'linked', forwarderBlocked: null, paused: false, retries: expect.any(Number) });
+    expect(entry!.session === null || typeof entry!.session.connected === 'boolean').toBe(true);
+    expect(JSON.stringify(entry)).not.toMatch(/key|code|secret|token/i);
   });
 });

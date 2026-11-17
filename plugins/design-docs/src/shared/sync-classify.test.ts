@@ -1,0 +1,79 @@
+import { describe, expect, it } from 'vitest';
+import { boundSyncError, CONSENT_REQUIRED_ERROR, classifyDelivery, deliveryReasonCode, diagnoseFault, isOfflineSyncError, isStageToken, MAX_SYNC_ERROR_LENGTH } from './sync-classify.js';
+
+describe('classifyDelivery', () => {
+  it('is waiting for no error, stage tokens and offline errors; failed for anything else', () => {
+    for (const message of [null, undefined, '', 'conflict', 'received', 'blocked', 'peer grant unavailable', 'request timed out', 'ECONNRESET']) {
+      expect(classifyDelivery(message)).toBe('waiting');
+    }
+    for (const message of ['receiver rejected it', 'peer request failed: 400', 'peer request failed: 401: peer-auth-failed', 'peer request failed: 403']) {
+      expect(classifyDelivery(message)).toBe('failed');
+    }
+  });
+  it('treats a receiver-cancelled 409, 408 and 429 as waiting; other 409s and 5xx stay failed', () => {
+    for (const message of ['peer request failed: 409: peer-request-cancelled', 'peer request failed: 408', 'peer request failed: 429: slow-down']) {
+      expect(isOfflineSyncError(message)).toBe(true);
+      expect(classifyDelivery(message)).toBe('waiting');
+    }
+    for (const message of ['peer request failed: 409', 'peer request failed: 409: nope', 'peer request failed: 500: boom', 'peer request failed: 4290']) {
+      expect(isOfflineSyncError(message)).toBe(false);
+    }
+  });
+  it('agrees with isOfflineSyncError and isStageToken', () => {
+    expect(isOfflineSyncError('not connected')).toBe(true);
+    expect(isStageToken('merged')).toBe(true);
+    expect(isStageToken('merged soon')).toBe(false);
+    expect(isStageToken(null)).toBe(false);
+  });
+});
+
+describe('diagnoseFault', () => {
+  it('names a revoked or changed pairing, and a missing grant, and nothing else', () => {
+    expect(diagnoseFault('peer enrollment changed or revoked')).toMatchObject({ code: 'enrollment' });
+    expect(diagnoseFault('peer enrollment changed')).toMatchObject({ code: 'enrollment' });
+    expect(diagnoseFault('peer grant unavailable')).toMatchObject({ code: 'grant' });
+    expect(diagnoseFault('peer request failed: 409')).toBeNull();
+    expect(diagnoseFault(null)).toBeNull();
+    expect(diagnoseFault('')).toBeNull();
+  });
+  it('enrollment advice says restart may clear it, else pair again; grant advice says Sync Now retries', () => {
+    expect(diagnoseFault('peer enrollment changed or revoked')!.hint).toMatch(/after Zana restarts.*pair the two computers again/);
+    expect(diagnoseFault('peer grant unavailable')!.hint).toMatch(/Sync Now retries/);
+  });
+});
+
+describe('boundSyncError credentials', () => {
+  it('redacts quoted values containing spaces and URL userinfo', () => {
+    const text = boundSyncError('failed password="private value" secret=\'two words\' at https://user:pass@example.test/x');
+    expect(text).not.toMatch(/private value|two words|user:pass|pass@/);
+    expect(text).toContain('https://[redacted]@example.test');
+  });
+});
+
+describe('boundSyncError', () => {
+  it('redacts credentials and query strings', () => {
+    const text = boundSyncError('failed https://h/x?token=SECRET&a=1 Authorization: Bearer abc123456789 password=hunter2 {"api_key":"KEY999"}');
+    expect(text).not.toMatch(/SECRET|abc123456789|hunter2|KEY999|a=1/);
+    expect(text).toContain('[redacted]');
+  });
+  it('collapses whitespace and truncates at the limit', () => {
+    expect(boundSyncError('a \n\n b')).toBe('a b');
+    const long = boundSyncError('y'.repeat(1000));
+    expect(long.length).toBe(MAX_SYNC_ERROR_LENGTH);
+    expect(long.endsWith('…')).toBe(true);
+    expect(boundSyncError('short')).toBe('short');
+  });
+});
+
+describe('consent-required delivery', () => {
+  it('is waiting, not failed, with a fixed reason code and a Sync-now hint', () => {
+    expect(classifyDelivery(CONSENT_REQUIRED_ERROR)).toBe('waiting');
+    expect(isOfflineSyncError(CONSENT_REQUIRED_ERROR)).toBe(true);
+    expect(deliveryReasonCode(CONSENT_REQUIRED_ERROR)).toBe('needs-consent');
+    expect(diagnoseFault(CONSENT_REQUIRED_ERROR)).toMatchObject({ code: 'consent', hint: expect.stringContaining('Sync now') });
+  });
+  it('does not capture an unrelated error that merely mentions consent', () => {
+    expect(classifyDelivery('invalid manual consent packet')).toBe('failed');
+    expect(diagnoseFault('invalid manual consent packet')).toBeNull();
+  });
+});

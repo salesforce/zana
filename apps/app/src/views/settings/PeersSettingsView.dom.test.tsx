@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({ activity: vi.fn(), list: vi.fn(), removeUse: vi.fn(), removeLink: vi.fn(), disconnect: vi.fn(), reconnect: vi.fn(), repair: vi.fn(), leftovers: vi.fn(), forgetLeftover: vi.fn() }));
 const conn = vi.hoisted(() => ({ list: vi.fn(), cancel: vi.fn(), checkRemoteLogin: vi.fn(), create: vi.fn(), join: vi.fn(), approve: vi.fn(), deny: vi.fn() }));
+const copy = vi.hoisted(() => ({ text: vi.fn(async (_t: string) => {}) }));
+vi.mock('../../lib/copy-text.js', () => ({ copyText: copy.text }));
 const hostsEvents = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
 vi.mock('../../lib/product-client.js', () => ({ peerLinks: api, peerConnections: conn, product: {
   pluginApps: { list: vi.fn(async () => []), onChanged: () => () => {} },
@@ -407,4 +409,36 @@ describe('PeersSettingsView', () => {
     }
   });
 
+});
+
+describe('Copy diagnostics', () => {
+  it('copies link and connection facts without secrets', async () => {
+    api.list.mockResolvedValue({ links: [link({ connected: false })], diagnostics: [{ peerInstanceId: 'p1', role: 'inviter', phase: 'linked', side: 'server', state: 'disconnected', reason: 'ssh-down', paused: false, forwarderBlocked: 'lease moved', tunnel: { up: false, downForMs: 120000, failure: 'refused' }, session: null, retries: 2 }] });
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy diagnostics' }));
+    await waitFor(() => expect(copy.text).toHaveBeenCalled());
+    const text = copy.text.mock.calls[0]![0];
+    expect(text).toContain('BLOCKED: lease moved');
+    expect(text).toContain('disconnected (ssh-down)');
+    expect(text).toContain('down 2m; failure refused');
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
+  });
+  it('says so when no live detail exists and reports copy failure', async () => {
+    copy.text.mockRejectedValueOnce(new Error('x'));
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy diagnostics' }));
+    await waitFor(() => expect(screen.getByText('Could not copy diagnostics.')).toBeTruthy());
+  });
+  it('reverts the Copied label after a moment and copies an empty report before links load', async () => {
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy diagnostics' }));
+    await screen.findByRole('button', { name: 'Copied' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copy diagnostics' })).toBeTruthy(), { timeout: 4000 });
+    cleanup();
+    api.list.mockReturnValue(new Promise(() => {}));
+    copy.text.mockClear();
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy diagnostics' }));
+    await waitFor(() => expect(copy.text).toHaveBeenCalled());
+  });
 });

@@ -4,7 +4,7 @@
  * and doc while open.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Bot, Settings as SettingsIcon, Users, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Bot, Link2, Settings as SettingsIcon, type LucideIcon } from 'lucide-react';
 import type { HarnessRoutingEditorPatch, HarnessRoutingEditorRowCopy } from '@zana-ai/zcc-plugin-sdk/app';
 import { experimental_HarnessRoutingEditor as HarnessRoutingEditor } from '@zana-ai/zcc-plugin-sdk/app';
 import { errorMessage, toast, useApi, type DesignDocsApi, type HarnessRouting, type HarnessScope, type PeerStatus } from './api.js';
@@ -24,26 +24,26 @@ interface SettingsSection {
 /** Left-rail groups, mirroring the PR Monitor settings shell. */
 const NAV_GROUPS: Array<{ label: string; sections: SettingsSection[] }> = [
   {
-    label: 'SYNC',
+    label: 'Configuration',
     sections: [
       {
-        id: 'peers',
-        label: 'Peers',
-        icon: Users,
-        title: 'Peers',
-        description: 'Choose which connected computers Design Docs syncs with.'
+        id: 'agent',
+        label: 'AI Harness',
+        icon: Bot,
+        title: 'AI Harness',
+        description: 'Choose which AI harness Design Docs agents run on, per scope.'
       }
     ]
   },
   {
-    label: 'AGENTS',
+    label: 'Remote',
     sections: [
       {
-        id: 'agent',
-        label: 'Agent',
-        icon: Bot,
-        title: 'Agent harness',
-        description: 'Which AI harness Design Docs agents run on, per scope.'
+        id: 'peers',
+        label: 'Peers',
+        icon: Link2,
+        title: 'Peers',
+        description: 'Choose which connected computers Design Docs syncs with.'
       }
     ]
   }
@@ -90,7 +90,7 @@ export function SettingsToggle({ open, onToggle }: { open: boolean; onToggle(): 
  * reading column. Collapses the rail to a row of tabs at narrow widths.
  */
 export function SettingsView({ peer, onBack, headerActions }: { peer: PeerStatus | null; onBack(): void; headerActions?: ReactNode }) {
-  const [stored, setSection] = usePersistentState<SettingsTab>('settings-tab', 'peers');
+  const [stored, setSection] = usePersistentState<SettingsTab>('settings-tab', 'agent');
   const section = SECTIONS.find((entry) => entry.id === stored) ?? SECTIONS[0]!;
   return (
     <div className="dd-peers-view dd-settings-view">
@@ -121,7 +121,7 @@ export function SettingsView({ peer, onBack, headerActions }: { peer: PeerStatus
                     aria-current={on ? 'page' : undefined}
                     onClick={() => setSection(entry.id)}
                   >
-                    <Icon size={15} aria-hidden />
+                    <Icon size={15} aria-hidden data-testid={`dd-settings-icon-${entry.id}`} />
                     <span>{entry.label}</span>
                   </button>
                 );
@@ -135,8 +135,8 @@ export function SettingsView({ peer, onBack, headerActions }: { peer: PeerStatus
               <h3>{section.title}</h3>
               <p className="dd-muted">{section.description}</p>
             </div>
-            {section.id === 'peers' ? <PeerSettings />
-              : <AgentSettings />}
+            {section.id === 'agent' ? <AgentSettings />
+              : <PeerSettings />}
           </div>
         </div>
       </div>
@@ -315,7 +315,7 @@ export function AgentSettings() {
   };
 
   return (
-    <section className="dd-agent-settings" aria-label="Agent harness">
+    <section className="dd-agent-settings" aria-label="AI Harness">
       <p className="dd-muted dd-agent-intro">
         Choose the AI harness, model and execution state Design Docs agents (Create &amp; draft, Ask agent and Publish) use. A
         project&apos;s choice wins over Default. Where neither is set, agents follow Zana&apos;s AI harness settings for the

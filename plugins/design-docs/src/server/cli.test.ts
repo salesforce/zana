@@ -172,7 +172,12 @@ describe('zcc design-docs', () => {
     const deps: CliDeps = { store: new DesignDocStore(createTestDatabase()), changed: vi.fn(),
       caller: async () => ({ actor: { kind: 'user', label: 'CLI', threadId: null }, projectId: null, files: null }),
       readLocalFile: vi.fn(), pairing: pairing as never,
-      peers: {} as never, peerSync: { syncNow: vi.fn(async () => ({ attempted: 1, synced: 0, blocked: 1 })) } as never };
+      peers: {} as never, peerSync: { syncNow: vi.fn(async () => ({ attempted: 1, synced: 0, blocked: 1 })),
+        queuedDeliveries: vi.fn(() => []),
+        docSyncStatuses: vi.fn(() => [
+          { docId: 'd1', state: 'failed', computers: 1, lastError: 'receiver rejected it', lastErrorAt: 7 },
+          { docId: 'd2', state: 'up-to-date', computers: 0, lastError: null, lastErrorAt: null },
+          { docId: 'd3', state: 'waiting', computers: 1, lastError: null, lastErrorAt: null }]) } as never };
     const ctx = { pluginId: 'design-docs', argv: [] };
     for (const argv of [['peers', '--json'], ['enable', 'app'], ['retry-introductions']]) {
       expect(JSON.parse((await runCli(deps, argv, ctx)).stdout!)).toEqual(status);
@@ -183,7 +188,10 @@ describe('zcc design-docs', () => {
     expect(await runCli(deps, ['revoke-peer'], ctx)).toMatchObject({ exitCode: 2 });
     expect(await runCli(deps, ['remove-peer', 'replica'], ctx)).toMatchObject({ exitCode: 1, stderr: 'SDK peers.revoke unavailable\n' });
     expect(await runCli(deps, ['enable'], ctx)).toMatchObject({ exitCode: 2 });
-    expect(JSON.parse((await runCli(deps, ['sync'], ctx)).stdout!)).toMatchObject({ attempted: 1, synced: 0, blocked: 1 });
+    expect(JSON.parse((await runCli(deps, ['sync'], ctx)).stdout!)).toMatchObject({
+      attempted: 1, synced: 0, blocked: 1,
+      docs: [{ docId: 'd1', state: 'failed', computers: 1, lastError: 'receiver rejected it', lastErrorAt: 7 }, { docId: 'd3', state: 'waiting', lastError: null }]
+    });
     delete deps.pairing; delete deps.peerSync;
     expect(await runCli(deps, ['peers'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('unavailable') });
     expect(await runCli(deps, ['sync'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('unavailable') });
@@ -240,6 +248,7 @@ describe('zcc design-docs', () => {
     expect((await run(['list'])).stdout).toContain('"Billing v2"');
     expect((await run(['list', '--all-projects', '--query', 'shared'])).stdout).toContain('"Shared conventions"');
     const listed = JSON.parse((await run(['list', '--json'])).stdout!) as Array<{ id: string }>;
+    expect(Array.isArray(listed)).toBe(true);
     expect(listed.map((entry) => entry.id)).toContain(doc.id);
 
     expect((await run(['show', doc.slug])).stdout).toContain('## Entry file');
@@ -251,6 +260,30 @@ describe('zcc design-docs', () => {
     expect(exported.stdout).toContain('path="README.md"');
     const json = JSON.parse((await run(['export', doc.id, '--json'])).stdout!) as { files: Array<{ content: string }> };
     expect(json.files.every((file) => typeof file.content === 'string')).toBe(true);
+  });
+
+  it('pages list output and keeps JSON stdout script-safe', async () => {
+    const { run, store } = setup();
+    const actor = { kind: 'user' as const, label: 'CLI', threadId: null };
+    for (let index = 0; index < 120; index += 1) {
+      store.create({ title: `Document ${String(index).padStart(3, '0')}`, projectId: 'p1', template: 'blank' }, actor);
+    }
+
+    const json = await run(['list', '--json', '--offset', '20', '--limit', '25']);
+    // --json stays a bare array (as before pagination existed); truncation is on stderr only, so stdout stays parseable.
+    expect(json.stderr).toBe('showing 25 of 120\n');
+    const page = JSON.parse(json.stdout!) as unknown[];
+    expect(page).toHaveLength(25);
+
+    const capped = await run(['list', '--json', '--limit', '1000']);
+    expect(JSON.parse(capped.stdout!)).toHaveLength(120);
+    expect(capped.stderr).toBeUndefined();
+
+    const plain = await run(['list', '--offset', '100', '--limit', '50']);
+    expect(plain.stdout).toContain('Design docs for this project');
+    expect(plain.stderr).toBe('showing 20 of 120\n');
+    await expect(run(['list', '--offset', '-1'])).resolves.toMatchObject({ exitCode: 2, stderr: expect.stringContaining('--offset must be an integer at least 0') });
+    await expect(run(['list', '--limit', '0'])).resolves.toMatchObject({ exitCode: 2, stderr: expect.stringContaining('--limit must be an integer greater than 0') });
   });
 
   it('writes from --content or a local --file, edits, moves and removes files', async () => {

@@ -1,15 +1,20 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Check, ChevronDown, ChevronUp, Globe, Hash, MoreHorizontal, Plus, X } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Check, ChevronDown, ChevronUp, Globe, Hash, MoreHorizontal, Pencil, Plus, X } from 'lucide-react';
 import { DOC_STATUSES, type DesignDocDetail, type DocStatus } from '../shared/contract.js';
-import { useDocActions } from './DocActions.js';
+import { RenameStaleNotice, useDocActions, useTitleRename } from './DocActions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TAG_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { errorMessage, toast, useApi, type ProjectInfo, type UpdateArgs } from './api.js';
 import { ActorLabel, IconButton, MenuItem, Popover, StatusPill, TimeAgo } from './ui.js';
 import { ProjectMark } from './ProjectMark.js';
 import { PeerConflictView } from './PeerConflictView.js';
-import { SYNC_STATE_HELP, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
+import { effectiveSyncState, SYNC_STATE_HELP, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
+import { usePeerSync } from './PeerSettings.js';
 
-/** Text that reads as text until clicked, then edits in place (Enter saves, Escape cancels). */
+/**
+ * Text that reads as text until clicked, then edits in place (Enter saves, Escape cancels, blur saves a
+ * changed non-empty value). `editing` / `onEditingChange` make the mode controllable so menus and shortcuts can
+ * start an edit; `required` turns an empty Enter into a visible error instead of a silent no-op.
+ */
 export function EditableText({
   value,
   placeholder,
@@ -17,6 +22,9 @@ export function EditableText({
   multiline = false,
   className = '',
   label,
+  required = false,
+  editing: controlledEditing,
+  onEditingChange,
   onSave
 }: {
   value: string;
@@ -25,22 +33,53 @@ export function EditableText({
   multiline?: boolean;
   className?: string;
   label: string;
+  required?: boolean;
+  editing?: boolean;
+  onEditingChange?(editing: boolean): void;
   onSave(next: string): Promise<void> | void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [innerEditing, setInnerEditing] = useState(false);
+  const editing = controlledEditing ?? innerEditing;
+  const setEditing = (next: boolean) => {
+    if (controlledEditing === undefined) setInnerEditing(next);
+    onEditingChange?.(next);
+  };
   const [draft, setDraft] = useState(value);
+  const [error, setError] = useState(false);
   const done = useRef(false);
   const saveStarted = useRef(onSave);
+  const input = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
+  const errorId = useId();
 
   useEffect(() => {
     if (!editing) setDraft(value);
   }, [value, editing]);
 
-  const finish = async (save: boolean) => {
+  // Every way of entering edit mode (click, menu, F2) starts a fresh edit with the text selected.
+  useEffect(() => {
+    if (!editing) return;
+    done.current = false;
+    saveStarted.current = onSave;
+    setError(false);
+    input.current?.focus();
+    input.current?.select();
+    // onSave is captured on purpose: a save belongs to the doc the edit started on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+
+  const finish = async (save: boolean, viaBlur = false) => {
     if (done.current) return;
+    const next = draft.trim();
+    if (save && required && !next) {
+      // Enter on an empty value stays in edit mode with a message; leaving the field just cancels.
+      if (viaBlur) save = false;
+      else {
+        setError(true);
+        return;
+      }
+    }
     done.current = true;
     setEditing(false);
-    const next = draft.trim();
     if (save && next !== value.trim()) {
       try {
         await saveStarted.current(next);
@@ -68,23 +107,34 @@ export function EditableText({
       value: draft,
       maxLength,
       'aria-label': label,
+      'aria-invalid': error || undefined,
+      'aria-describedby': error ? errorId : undefined,
+      ref: input,
       autoFocus: true,
-      onChange: (event: { target: { value: string } }) => setDraft(event.target.value),
+      onChange: (event: { target: { value: string } }) => {
+        setDraft(event.target.value);
+        setError(false);
+      },
       onKeyDown,
-      onBlur: () => void finish(true)
+      onBlur: () => void finish(true, true)
     };
-    return multiline ? <textarea {...shared} rows={2} placeholder={placeholder} /> : <input {...shared} placeholder={placeholder} />;
+    const field = multiline ? <textarea {...shared} rows={2} placeholder={placeholder} /> : <input {...shared} placeholder={placeholder} />;
+    if (!error) return field;
+    return (
+      <span className="dd-editable-wrap">
+        {field}
+        <span id={errorId} className="dd-field-error" role="alert">
+          {label} can’t be empty
+        </span>
+      </span>
+    );
   }
   return (
     <button
       type="button"
       className={`dd-editable ${className}${value ? '' : ' dd-editable-empty'}`}
       title={`Edit ${label.toLowerCase()}`}
-      onClick={() => {
-        done.current = false;
-        saveStarted.current = onSave;
-        setEditing(true);
-      }}
+      onClick={() => setEditing(true)}
     >
       {value || placeholder}
     </button>
@@ -183,10 +233,21 @@ function StatusMenu({ status, onChange }: { status: DocStatus; onChange(status: 
 
 /** Sync state of this doc against the other computers; renders nothing when sync is not set up. */
 function SyncLine({ docId, refreshKey, onResolve }: { docId: string; refreshKey: unknown; onResolve(): void }) {
+  const api = useApi();
   const status = useDocSyncStatuses(refreshKey, docId).get(docId);
+  const peerSync = usePeerSync();
   const [open, setOpen] = useState(false);
-  if (!status) return null;
-  const { state } = status;
+  const [drafts, setDrafts] = useState<number | null>(null);
+  const state = status ? effectiveSyncState(status) : null;
+  const unsent = open && state === 'unsent';
+  // Sync Now is database-wide: count the drafts it would send so the button says what it does.
+  useEffect(() => {
+    if (!unsent) return;
+    let alive = true;
+    api.docSyncStatuses().then((rows) => { if (alive) setDrafts(rows.filter((row) => row.state === 'unsent').length); }, () => { if (alive) setDrafts(null); });
+    return () => { alive = false; };
+  }, [api, unsent]);
+  if (!status || !state) return null;
   return (
     <Popover
       open={open}
@@ -202,6 +263,16 @@ function SyncLine({ docId, refreshKey, onResolve }: { docId: string; refreshKey:
       <div className="dd-sync-help-body" role="dialog" aria-label="Sync status">
         <strong>{SYNC_STATE_LABEL[state]}</strong>
         <p>{SYNC_STATE_HELP[state]}</p>
+        {status.lastError && (state === 'failed' || state === 'waiting') ? (
+          <p className="dd-sync-error">Last error: <code>{status.lastError}</code>{status.lastErrorAt ? <> (<TimeAgo at={status.lastErrorAt} now={Date.now()} />)</> : null}</p>
+        ) : null}
+        {status.differences?.length ? <p>Differs on: {status.differences.join(', ')}</p> : null}
+        {state === 'unsent' ? (
+          <>
+            <button type="button" className="btn primary" disabled={peerSync.syncing} onClick={peerSync.sync}>Sync all docs now</button>
+            {drafts ? <p>Sends {drafts} draft{drafts === 1 ? '' : 's'} from this computer.</p> : null}
+          </>
+        ) : null}
         {state === 'needs-choice' ? <button type="button" className="btn primary" onClick={() => { setOpen(false); onResolve(); }}>Choose a version</button> : null}
       </div>
     </Popover>
@@ -215,6 +286,7 @@ export function DocHeader({
   collapsible = false,
   actions,
   onDeleted,
+  onOpenHistory,
   template = false
 }: {
   doc: DesignDocDetail;
@@ -225,12 +297,16 @@ export function DocHeader({
   /** Primary actions (Ask agent) rendered at the right of the title row. */
   actions?: ReactNode;
   onDeleted(): void;
+  /** Show this doc's history (the conflict dialog offers it after a resolution). */
+  onOpenHistory?: () => void;
   template?: boolean;
 }) {
   const api = useApi();
   const [menu, setMenu] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [conflicts, setConflicts] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const rename = useTitleRename(template ? 'template' : 'doc');
   const menuDoc = useRef(doc);
   const docActions = useDocActions(projects);
   const project = doc.projectId ? projects.find((entry) => entry.id === doc.projectId) : null;
@@ -245,6 +321,20 @@ export function DocHeader({
     }
   };
 
+  const startRename = () => setRenaming(true);
+  // F2 renames the open doc, except while typing somewhere (the title input itself included).
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'F2' || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      event.preventDefault();
+      setRenaming(true);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   const collapsed = compact || (collapsible && !expanded);
   return (
     <header className={`dd-doc-header${compact || collapsible ? ' dd-doc-header-compact' : ''}`}>
@@ -255,8 +345,19 @@ export function DocHeader({
           value={doc.title}
           placeholder="Untitled design doc"
           maxLength={MAX_TITLE_LENGTH}
-          onSave={(title) => (title ? update({ title }) : undefined)}
+          required
+          editing={renaming}
+          onEditingChange={setRenaming}
+          onSave={async (title) => {
+            // The save belongs to the doc the edit started on; the toast or stale choice explains a refusal.
+            if ((await rename.save(doc, title)) !== 'saved') throw new Error('rename not saved');
+          }}
         />
+        {renaming ? null : (
+          <span className="dd-rename-pencil">
+            <IconButton icon={Pencil} label="Rename" hint="Rename (F2)" onClick={startRename} />
+          </span>
+        )}
         <span className="dd-spacer" />
         {actions}
         {template ? null : <button type="button" className="btn" onClick={() => setConflicts(true)}>Peer conflicts</button>}
@@ -269,9 +370,12 @@ export function DocHeader({
             setMenu(!menu);
           }} />}
         >
-          {docActions.items(menu ? menuDoc.current : doc, () => setMenu(false), onDeleted)}
+          {docActions.items(menu ? menuDoc.current : doc, () => setMenu(false), onDeleted, undefined, startRename)}
         </Popover>}
       </div>
+      {rename.stale && rename.stale.id === doc.id ? (
+        <RenameStaleNotice stale={rename.stale} onKeepMine={() => void rename.keepMine()} onUseTheirs={rename.useTheirs} />
+      ) : null}
       {collapsed ? null : (
         <EditableText
           className="dd-doc-summary"
@@ -311,7 +415,7 @@ export function DocHeader({
         ) : null}
       </div>
       {template ? null : docActions.dialogs}
-      {template ? null : conflicts ? <PeerConflictView key={doc.id} docId={doc.id} onClose={() => setConflicts(false)} /> : null}
+      {template ? null : conflicts ? <PeerConflictView key={doc.id} docId={doc.id} onClose={() => setConflicts(false)} onOpenHistory={onOpenHistory ? () => { setConflicts(false); onOpenHistory(); } : undefined} /> : null}
     </header>
   );
 }
