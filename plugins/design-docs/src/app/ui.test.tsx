@@ -182,3 +182,42 @@ it('opens a context menu near the top left as asked, and leaves focus that moved
   expect(document.activeElement).toBe(elsewhere);
   elsewhere.remove();
 });
+
+it('fixed popovers stay inside the window: clamped left, flipped above near the bottom, closed on scroll', () => {
+  const box = (left: number, top: number, width: number, height: number) =>
+    ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+  let anchor = box(200, 80, 30, 20), size = { width: 400, height: 150 };
+  const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    return this.classList.contains('dd-pop-anchor') ? anchor : box(0, 0, size.width, size.height);
+  });
+  const onClose = vi.fn();
+  const show = () => render(<Popover open fixed onClose={onClose} anchor={<button>Menu anchor</button>}><button>Inside</button></Popover>);
+  const panel = () => screen.getByRole('dialog') as HTMLElement;
+  const innerWidth = window.innerWidth;
+
+  // Wider than the room to its left: pinned to the window edge instead of cut off.
+  let view = show();
+  expect(panel().className).toContain('dd-pop-fixed');
+  expect(panel().style.left).toBe('4px');
+  expect(panel().style.top).toBe('104px');
+  view.unmount();
+
+  // Room on the left: right edge lines up with the anchor.
+  anchor = box(innerWidth - 300, 80, 30, 20);
+  size = { width: 200, height: 150 };
+  view = show();
+  expect(panel().style.left).toBe(`${innerWidth - 300 + 30 - 200}px`);
+  view.unmount();
+
+  // No room below: opens above the anchor.
+  anchor = box(200, window.innerHeight - 40, 30, 20);
+  view = show();
+  expect(panel().style.top).toBe(`${window.innerHeight - 40 - 4 - 150}px`);
+
+  // Scrolling elsewhere closes it; scrolling inside it does not.
+  fireEvent.scroll(panel());
+  expect(onClose).not.toHaveBeenCalled();
+  fireEvent.scroll(document.body);
+  expect(onClose).toHaveBeenCalledTimes(1);
+  spy.mockRestore();
+});
