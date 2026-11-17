@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SquadExecutionService } from '../service.js';
-import { boundReason, createExecutionStore, MAX_FAILURE_REASON, type ExecutionRecord } from '../store.js';
+import { boundReason, createExecutionStore, joinFailedSlotReasons, MAX_FAILURE_REASON, type ExecutionRecord } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 import { executionBoardProjection } from '../projection.js';
 
@@ -126,6 +126,65 @@ describe('store.warning (REQ-11, REQ-20)', () => {
     expect(after.state).toBe('RUNNING');
     const { events } = await store.events('session-1', 'project-1', record.id);
     expect(events.some((event) => event.severity === 'warning' && event.summary.includes('slot-2'))).toBe(true);
+  }));
+});
+
+describe('joinFailedSlotReasons (REQ-2, REQ-3)', () => {
+  const long = (slotId: string) => ({ slotId, reason: `${slotId} `.repeat(300) });
+  it('always fits the budget, keeping every slot id visible and counting what it dropped', () => {
+    const joined = joinFailedSlotReasons([long('slot-1'), long('slot-2'), long('slot-3'), long('slot-4'), long('slot-5')], 600);
+    expect(joined.length).toBeLessThanOrEqual(600);
+    expect(joined).toContain('slot-1: ');
+    expect(joined).toMatch(/\+\d+ more$/);
+  });
+  it('cuts a first entry that alone exceeds the budget and counts the rest', () => {
+    const joined = joinFailedSlotReasons([long('slot-1'), long('slot-2')], 100);
+    expect(joined.length).toBeLessThanOrEqual(100);
+    expect(joined).toMatch(/\+1 more$/);
+    expect(joinFailedSlotReasons([{ slotId: 1, reason: 2 }, {}])).toBe('unknown slot: unknown reason; unknown slot: unknown reason');
+  });
+  it('joins short reasons verbatim with no suffix', () => {
+    expect(joinFailedSlotReasons([{ slotId: 'a', reason: 'x' }, { slotId: 'b', reason: 'y' }])).toBe('a: x; b: y');
+  });
+  it('keeps the default result within the store cap for two 1200-char reasons', () => {
+    const joined = joinFailedSlotReasons([{ slotId: 's1', reason: 'a'.repeat(1200) }, { slotId: 's2', reason: 'b'.repeat(1200) }]);
+    expect(joined.length).toBeLessThanOrEqual(MAX_FAILURE_REASON);
+    expect(joined).toContain('s2: ');
+  });
+});
+
+describe('oversized failed-slot reasons (REQ-2, REQ-11)', () => {
+  const huge = [{ slotId: 'slot-2', personaId: 'qa', reason: 'a'.repeat(1200) }, { slotId: 'slot-3', personaId: 'qa', reason: 'b'.repeat(1200) }];
+  it('fails a structured run with its real reasons instead of an invalid-summary error', async () => fixture(async (filePath) => {
+    const d = deps(filePath, { launchTeam: async () => launchedWith(huge) });
+    const service = new SquadExecutionService(d);
+    await service.start('session-1', 'project-1', { ...request, coordinationMode: 'structured' } as never);
+    const record = await (d as unknown as { store: ReturnType<typeof createExecutionStore> }).store.get('execution-1');
+    expect(record?.state).toBe('FAILED');
+    expect(record?.failureReason).toContain('slot-2: aaa');
+    expect(record?.failureReason).not.toContain('invalid execution event summary');
+    service.dispose();
+  }));
+  it('records the freeform launch warning instead of losing it', async () => fixture(async (filePath) => {
+    const d = deps(filePath, { launchTeam: async () => launchedWith(huge) });
+    const service = new SquadExecutionService(d);
+    await service.start('session-1', 'project-1', { ...request, coordinationMode: 'freeform' } as never);
+    const store = (d as unknown as { store: ReturnType<typeof createExecutionStore> }).store;
+    const { events } = await store.events('session-1', 'project-1', 'execution-1');
+    const warning = events.find((event) => event.severity === 'warning' && event.summary.startsWith('Launch continued'));
+    expect(warning?.summary).toContain('slot-2: aaa');
+    service.dispose();
+  }));
+  it('fails the same oversized slots at reconcile for a structured run', async () => fixture(async (filePath) => {
+    let lifecycle: unknown = { workers: [{ slotId: 'slot-1', sessionId: 's1', projectId: 'project-1', process: 'running' }] };
+    const d = deps(filePath, { launchTeam: async () => launchedWith([]), getTeamLaunch: async () => lifecycle });
+    const service = new SquadExecutionService(d);
+    await service.start('session-1', 'project-1', { ...request, coordinationMode: 'structured' } as never);
+    lifecycle = { workers: [{ slotId: 'slot-1', sessionId: 's1', projectId: 'project-1', process: 'running' }], launchResult: { failedSlots: huge } };
+    const record = await service.status('session-1', 'project-1', 'execution-1');
+    expect(record).toMatchObject({ state: 'FAILED' });
+    expect((record as ExecutionRecord).failureReason).toContain('slot-2: aaa');
+    service.dispose();
   }));
 });
 

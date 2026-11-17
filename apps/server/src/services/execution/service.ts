@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { boundReason, EXECUTION_RETENTION_MS, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { boundReason, joinFailedSlotReasons, MAX_FAILURE_REASON, EXECUTION_RETENTION_MS, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
@@ -1029,11 +1029,11 @@ export class ExecutionService {
     failed: ReadonlyArray<{ slotId: string; reason: string }>
   ): Promise<ExecutionRecord> {
     if (!failed.length) return record;
-    const details = failed.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ');
-    if (record.coordinationMode === 'structured') return this.failRun(record, details);
+    if (record.coordinationMode === 'structured') return this.failRun(record, joinFailedSlotReasons(failed));
     try {
+      const prefix = `Launch continued without ${failed.length} failed slot(s): `;
       const warned = await this.deps.store.warning(record.id, {
-        kind: 'launch-warning', summary: `Launch continued without ${failed.length} failed slot(s): ${details}`
+        kind: 'launch-warning', summary: `${prefix}${joinFailedSlotReasons(failed, MAX_FAILURE_REASON - prefix.length)}`
       });
       return { ...record, stateVersion: warned.stateVersion };
     } catch (error) {
@@ -3979,16 +3979,7 @@ export class ExecutionService {
     }
     // A freeform run continues past a failed slot with its launch warning (REQ-11); every other mode keeps failing.
     if (record.coordinationMode !== 'freeform' && lifecycle.launchResult?.failedSlots?.length) {
-      const details = lifecycle.launchResult.failedSlots
-        .map((slot) => {
-          if (!slot || typeof slot !== 'object') return '';
-          const value = slot as { slotId?: unknown; reason?: unknown };
-          const slotId = typeof value.slotId === 'string' ? value.slotId : 'unknown slot';
-          const reason = typeof value.reason === 'string' ? value.reason : 'unknown reason';
-          return `${slotId}: ${reason}`;
-        })
-        .filter(Boolean)
-        .join('; ');
+      const details = joinFailedSlotReasons(lifecycle.launchResult.failedSlots as Array<{ slotId?: unknown; reason?: unknown }>);
       return this.transitionOrCurrent(record, 'FAILED', 'error', details || 'One or more Team slots failed to launch');
     }
     if (lifecycle.outcome?.status === 'completed' && lifecycle.outcome.result?.ok === false) {

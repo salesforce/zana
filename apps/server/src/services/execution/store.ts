@@ -790,6 +790,36 @@ export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
   return cleaned.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
 }
 
+const MAX_SLOT_REASON = 500;
+
+/**
+ * Joins failed-slot reasons into one string that always fits `max` (the store rejects longer summaries):
+ * each reason is bounded, entries stop once the next does not fit, and the rest are counted as "+N more".
+ */
+export function joinFailedSlotReasons(
+  slots: ReadonlyArray<{ slotId?: unknown; reason?: unknown }>,
+  max = MAX_FAILURE_REASON
+): string {
+  const entries = slots.map((slot) => {
+    const slotId = typeof slot?.slotId === 'string' && slot.slotId ? boundReason(slot.slotId, 128) : 'unknown slot';
+    const reason = typeof slot?.reason === 'string' && slot.reason ? boundReason(slot.reason, MAX_SLOT_REASON) : 'unknown reason';
+    return `${slotId}: ${reason}`;
+  });
+  const more = (count: number) => (count > 0 ? `; +${count} more` : '');
+  let joined = '';
+  for (let index = 0; index < entries.length; index += 1) {
+    const next = joined ? `${joined}; ${entries[index]}` : entries[index];
+    if (next.length + more(entries.length - index - 1).length > max) {
+      if (joined) return `${joined}${more(entries.length - index)}`;
+      // Even the first entry does not fit: cut it (on a code point) and count the others.
+      const cut = Array.from(entries[0]).slice(0, Math.max(0, max - more(entries.length - 1).length)).join('');
+      return `${cut}${more(entries.length - 1)}`;
+    }
+    joined = next;
+  }
+  return joined;
+}
+
 // POSIX (/a/b) and Windows (C:\a\b) absolute paths; reduced to the last segment so no home or project path leaks.
 // Also UNC (\\server\share), a path glued to a colon (exit 1:/x), and a space inside a directory name (/a b/c).
 const ABSOLUTE_PATH = /(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|(?<![\w.:/-])\/|(?<=:)\/(?!\/))(?:[^\s"'`<>|;,()]|[ ](?=[^\s"'`<>|;,()/\\]*[\\/]))*/g;
