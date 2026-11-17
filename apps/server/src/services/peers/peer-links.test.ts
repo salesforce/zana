@@ -1027,6 +1027,8 @@ describe('forwarder port fails closed', () => {
     // The reason is logged: an ssh-down link otherwise gives no hint that the forwarder port was taken or moved.
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[zcc\] peer link [0-9a-f-]{8} forwarder blocked: /));
     warn.mockRestore();
+    // Same reason is retrievable for the Peers "Copy diagnostics" report.
+    expect(second.diagnostics()).toEqual([expect.objectContaining({ phase: 'linked', state: 'disconnected', reason: 'ssh-down', forwarderBlocked: expect.any(String) })]);
     expect(f.lines.has(`${ctx.id}:link`)).toBe(false);
     expect(f.lines.has(`${ctx.id}:bootstrap`)).toBe(false);
     expect(f.held.has(ctx.id)).toBe(false);

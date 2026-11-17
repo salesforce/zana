@@ -76,7 +76,8 @@ export function listPeerLinks(ctx: LinkCtx): PeerLinkListResponse {
     }
     ctx.peerLinkNotes.retainOnly(live);
   }
-  return { links: hosts.map((host) => toPeerLink(host, ctx, connected)) };
+  const diagnostics = ctx.peerLinks?.diagnostics();
+  return { links: hosts.map((host) => toPeerLink(host, ctx, connected)), ...(diagnostics?.length ? { diagnostics } : {}) };
 }
 
 export type PeerLinkRemoval =
