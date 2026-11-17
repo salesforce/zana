@@ -57,7 +57,7 @@ describe('formatSquadPlanFindingProblem for a lint Check (REQ-7, D1)', () => {
     expect(block).not.toContain('Launch is still allowed');
   });
   it('A3: says what a failure policy changes', () => {
-    expect(formatSquadPlanSkipImpact(['b'], 5, 'retry')).toBe('If this step still fails after its retries, these steps will not run: b');
-    expect(formatSquadPlanSkipImpact(['b', 'c'], 1, 'fail-run')).toBe('If this step fails, the whole run stops and these steps will not run: b and 1 more');
+    expect(formatSquadPlanSkipImpact(['b'], 5, 'retry')).toBe('If this step fails and a retry does not fix it, these steps will not run: b');
+    expect(formatSquadPlanSkipImpact(['b', 'c'], 1, 'fail-run')).toBe('If this step fails, these steps will not run: b and 1 more, and the run will end as failed');
   });
 });

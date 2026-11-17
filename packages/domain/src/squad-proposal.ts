@@ -336,8 +336,8 @@ export interface SquadPlanBinding {
 export function formatSquadPlanSkipImpact(stepIds: readonly string[], shown = 5, policy?: SquadPlanBinding['failurePolicy']): string {
   const rest = stepIds.length - shown;
   const names = `${stepIds.slice(0, shown).join(', ')}${rest > 0 ? ` and ${rest} more` : ''}`;
-  if (policy === 'retry') return `If this step still fails after its retries, these steps will not run: ${names}`;
-  if (policy === 'fail-run') return `If this step fails, the whole run stops and these steps will not run: ${names}`;
+  if (policy === 'retry') return `If this step fails and a retry does not fix it, these steps will not run: ${names}`;
+  if (policy === 'fail-run') return `If this step fails, these steps will not run: ${names}, and the run will end as failed`;
   return `If this step fails, these steps will not run: ${names}`;
 }
 

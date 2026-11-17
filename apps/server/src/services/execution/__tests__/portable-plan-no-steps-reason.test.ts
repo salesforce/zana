@@ -16,6 +16,17 @@ describe('no-steps explanation (REQ-5)', () => {
     expect(messages('   \n')).toMatch(/empty/i);
     expect(messages('   \n')).toMatch(/\b(add|paste|write)\b/i);
   });
+  it('F5: the empty and no-headings advice names the step marker, and a plan written as advised parses to a step', () => {
+    for (const text of ['   \n', 'just some prose, no headings\n']) {
+      const said = messages(text);
+      expect(said).toMatch(/<!-- executable-step -->/);
+      expect(said).toMatch(/## Execution Plan/);
+    }
+    const advised = '### a: One <!-- executable-step -->\n- **Work:** do it\n- **Depends on:** None\n- **Write scope:** `a.txt`\n- **Verification:** ok\n';
+    const parsed = parsePortablePlan(advised);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.units.length).toBeGreaterThanOrEqual(1);
+  });
   it('F1: a plan with Work lines but no step marker is told to add the marker or an Execution Plan heading', () => {
     const text = '### a: One\n- **Work:** do it\n- **Depends on:** None\n- **Write scope:** `a.txt`\n- **Verification:** ok\n';
     const said = messages(text);
