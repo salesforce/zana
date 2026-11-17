@@ -56,7 +56,7 @@ describe('lintPlan width Check (REQ-1, D4, D5)', () => {
     const [finding, ...rest] = widthFindings(chain(4), 2);
     expect(rest).toEqual([]);
     expect(finding).toMatchObject({ requirement: 'plan', severity: 'warning', candidateSlots: [], suggestion: '' });
-    expect(finding.detail).toMatch(/^Only 1 steps? can run at the same time, but this Squad has 2 workers\. The others will wait\.$/);
+    expect(finding.detail).toMatch(/^Only 1 step can run at the same time, but this Squad has 2 workers\. The others will wait\.$/);
   });
   it('warns for the near-serial 16-step plan checked against 2 worker slots', () => {
     const [finding] = widthFindings(chain(16), 2);
@@ -154,5 +154,17 @@ describe('lintPlan mechanical contradictions (REQ-4, D7)', () => {
   it('does not crash on a cycle or unknown dependency', () => {
     expect(() => lint([u('a', ['b'], ['x']), u('b', ['a'], ['x'])])).not.toThrow();
     expect(() => lint([u('a', ['ghost'], ['x']), u('b', [], ['x'])])).not.toThrow();
+  });
+});
+
+describe('correctness obligations (QA, CodeNod OBL-001, OBL-002)', () => {
+  it('OBL-001: a very long reverse-ordered dependency chain does not throw out of lint (REQ-2)', () => {
+    const n = 30000;
+    const units = Array.from({ length: n }, (_, i) => u(`s${i}`, i < n - 1 ? [`s${i + 1}`] : [], [`f${i}.ts`]));
+    expect(() => lintPlan({ units, workerCount: 2 })).not.toThrow();
+  });
+  it('OBL-002: a UI package path alone is not a mixed contract-and-UI step (REQ-3)', () => {
+    const found = lintPlan({ units: [u('a', [], ['packages/ui/Button.tsx'])], workerCount: undefined });
+    expect(found.filter((f) => f.stepId === 'a')).toEqual([]);
   });
 });

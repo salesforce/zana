@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capSquadPlanFindings, formatSquadPlanFinding, formatSquadPlanSkipImpact, SQUAD_PLAN_FINDING_CAP, type SquadPlanFinding } from './squad-proposal.js';
+import { capSquadPlanFindings, formatSquadPlanFinding, formatSquadPlanFindingProblem, formatSquadPlanSkipImpact, SQUAD_PLAN_FINDING_CAP, type SquadPlanFinding } from './squad-proposal.js';
 
 const lintWarning = (stepId: string | undefined, detail: string): SquadPlanFinding => ({
   ...(stepId ? { stepId } : {}), requirement: 'plan', severity: 'warning', candidateSlots: [], suggestion: '', detail
@@ -46,5 +46,14 @@ describe('finding cap (REQ-7)', () => {
     expect(capped.findings).toHaveLength(50);
     expect(capped.hidden).toBe(11);
     expect(capped.findings[0].severity).toBe('blocking');
+  });
+});
+
+describe('formatSquadPlanFindingProblem for a lint Check (REQ-7, D1)', () => {
+  it('says launch is still allowed for a plan warning, and not for a blocking plan finding', () => {
+    const warn = formatSquadPlanFindingProblem(lintWarning('a', 'it changes two things.'));
+    expect(warn).toContain('Launch is still allowed');
+    const block = formatSquadPlanFindingProblem({ ...lintWarning('a', 'it is broken.'), severity: 'blocking' });
+    expect(block).not.toContain('Launch is still allowed');
   });
 });
