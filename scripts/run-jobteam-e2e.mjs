@@ -18,5 +18,6 @@ process.exitCode = await main([
   'e2e/job-team-streaming-worker-no-reclaim.spec.ts',
   'e2e/job-team-flow-activity-indicator.spec.ts',
   'e2e/squad-routing-control.spec.ts',
+  'e2e/squad-worker-issues-1.spec.ts',
   ...process.argv.slice(2)
 ]);

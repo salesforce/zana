@@ -20,7 +20,7 @@
  * they must be the byte-exact sequence `extractLastOscTitle` parses. This is the
  * load-bearing detail; a wrong byte yields a title the classifier ignores.
  */
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -267,7 +267,7 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent' | 'no-route';
+export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent' | 'no-route' | 'worker-exit-1' | 'worker-ignores-close' | `spawn-throw-slot-${number}`;
 
 /** The behavior gates the generated coordinator script keys its behavior off. */
 interface JobTeamScenarioFlags {
@@ -283,6 +283,17 @@ interface JobTeamScenarioFlags {
   apiErrorRestart: boolean;
   apiErrorPermanent: boolean;
   noRoute: boolean;
+  workerExit1: boolean;
+  ignoresClose: boolean;
+  /** 1-based worker ordinal whose process dies at boot (a seat that fails to exec), or null. */
+  spawnThrowSlot: number | null;
+}
+
+const SPAWN_THROW_SLOT = /^spawn-throw-slot-(\d+)$/;
+
+function spawnThrowSlotOf(scenario?: JobTeamScenario): number | null {
+  const match = scenario ? SPAWN_THROW_SLOT.exec(scenario) : null;
+  return match ? Number(match[1]) : null;
 }
 
 /** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
@@ -299,7 +310,10 @@ function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags 
     apiErrorNudge: scenario === 'api-error-nudge',
     apiErrorRestart: scenario === 'api-error-restart',
     apiErrorPermanent: scenario === 'api-error-permanent',
-    noRoute: scenario === 'no-route'
+    noRoute: scenario === 'no-route',
+    workerExit1: scenario === 'worker-exit-1',
+    ignoresClose: scenario === 'worker-ignores-close',
+    spawnThrowSlot: spawnThrowSlotOf(scenario)
   };
 }
 
@@ -421,6 +435,13 @@ const API_ERROR_PERMANENT = ${JSON.stringify(flags.apiErrorPermanent)};
 // coordinator blocker and wakes this coordinator, which logs the wake and EXITS without answering, so the
 // stale-blocker sweep escalates to the human (Inbox). A worker never receives the step.
 const NO_ROUTE = ${JSON.stringify(flags.noRoute)};
+// Squad worker failure scenarios. The slot id in the worker prompt is <row>:<persona>:<index> (0-based);
+// SPAWN_THROW_SLOT is the 1-based worker ordinal whose process dies at boot like a binary that fails to exec.
+const WORKER_EXIT_1 = ${JSON.stringify(flags.workerExit1)};
+const IGNORES_CLOSE = ${JSON.stringify(flags.ignoresClose)};
+const SPAWN_THROW_SLOT = ${JSON.stringify(flags.spawnThrowSlot)};
+const SLOT_MATCH = PROMPT.match(new RegExp('slot ' + BT + '[0-9]+:[^:' + BT + ']*:([0-9]+)' + BT));
+const WORKER_ORDINAL = SLOT_MATCH ? Number(SLOT_MATCH[1]) + 1 : null;
 // Optional execution.start idle deadline (ms); null = engine default. Used by the blocked-wait E2E.
 const DEADLINE_MS = ${JSON.stringify(deadlineMs ?? null)};
 const APIERR = API_ERROR_NUDGE || API_ERROR_RESTART || API_ERROR_PERMANENT;
@@ -1123,6 +1144,23 @@ async function apiErrorWorker() {
 }
 
 async function worker() {
+  if (SPAWN_THROW_SLOT !== null && WORKER_ORDINAL === SPAWN_THROW_SLOT) {
+    log('spawn-throw: worker ' + WORKER_ORDINAL + ' exiting 127 before any MCP call');
+    process.exit(127);
+  }
+  if (WORKER_EXIT_1) {
+    log('worker-exit-1: exiting 1 shortly after boot');
+    setTimeout(function () { process.exit(1); }, 1500);
+    await new Promise(function () {});
+  }
+  if (IGNORES_CLOSE) {
+    // Survives every close request: signals are swallowed and stdin end is ignored.
+    ['SIGTERM', 'SIGHUP', 'SIGINT'].forEach(function (sig) { process.on(sig, function () { log('ignored ' + sig); }); });
+    process.stdin.resume();
+    setIdle();
+    log('worker-ignores-close: holding');
+    await new Promise(function () {});
+  }
   if (HANDOFF) return handoffWorker();
   if (APIERR) return apiErrorWorker();
   if (STALLED || CHURN) return stalledWorker();
@@ -1252,6 +1290,15 @@ async function worker() {
   } catch (e) { log('fatal', String((e && e.stack) || e)); await hold(); }
 })();
 `;
+}
+
+/** Write a persona file into an isolated HOME's `~/.zcc/personas` (for dropped-persona scenarios). */
+export function writePersonaFile(home: string, name: string, body: string): string {
+  const dir = join(home, '.zcc', 'personas');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, name);
+  writeFileSync(file, body);
+  return file;
 }
 
 export function makeJobTeamCoordinatorBinary(options: { scenario?: JobTeamScenario; deadlineMs?: number } = {}): FakeAgentBinary {
