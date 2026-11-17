@@ -59,6 +59,168 @@ describe("Claude Code provider maintenance", () => {
     });
   });
 
+  it("updates an npm global install with npm install -g", () => {
+    const run = __testing.buildProviderInstallationRun(
+      {
+        ...missingInstallationStatus(),
+        installed: true,
+        executablePath: "C:/npm/claude.cmd",
+        installSource: "npmGlobal",
+        currentVersion: "2.0.0",
+        latestVersion: "2.1.0",
+        needsUpdate: true,
+        installAction: {
+          kind: "update",
+          label: "Update",
+          command: "npm install -g @anthropic-ai/claude-code@latest",
+        },
+      },
+      "update",
+    );
+    expect(run).toMatchObject({
+      available: true,
+      command: {
+        command: process.platform === "win32" ? "npm.cmd" : "npm",
+        args: ["install", "-g", "@anthropic-ai/claude-code@latest"],
+        displayCommand: `${process.platform === "win32" ? "npm.cmd" : "npm"} install -g @anthropic-ai/claude-code@latest`,
+      },
+      verification: { kind: "version_at_least", version: "2.1.0" },
+    });
+  });
+
+  it("updates an npm global install on the stable channel with @stable", () => {
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const displayCommand = `${npm} install -g @anthropic-ai/claude-code@stable`;
+    const run = __testing.buildProviderInstallationRun(
+      {
+        ...missingInstallationStatus(),
+        installed: true,
+        executablePath: "C:/npm/claude.cmd",
+        installSource: "npmGlobal",
+        currentVersion: "2.0.0",
+        latestVersion: "2.1.0",
+        needsUpdate: true,
+        installAction: {
+          kind: "update",
+          label: "Update",
+          command: displayCommand,
+        },
+      },
+      "update",
+      "stable",
+    );
+    expect(run).toMatchObject({
+      available: true,
+      command: {
+        command: npm,
+        args: ["install", "-g", "@anthropic-ai/claude-code@stable"],
+        displayCommand,
+      },
+      verification: { kind: "version_at_least", version: "2.1.0" },
+    });
+  });
+
+  it("falls back to @latest when the auto-update channel is unknown", () => {
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const run = __testing.buildProviderInstallationRun(
+      {
+        ...missingInstallationStatus(),
+        installed: true,
+        executablePath: "C:/npm/claude.cmd",
+        installSource: "npmGlobal",
+        currentVersion: "2.0.0",
+        latestVersion: "2.1.0",
+        needsUpdate: true,
+        installAction: {
+          kind: "update",
+          label: "Update",
+          command: `${npm} install -g @anthropic-ai/claude-code@latest`,
+        },
+      },
+      "update",
+      null,
+    );
+    expect(run.available && run.command.args).toEqual([
+      "install",
+      "-g",
+      "@anthropic-ai/claude-code@latest",
+    ]);
+    expect(run.available && run.command.displayCommand).toBe(
+      `${npm} install -g @anthropic-ai/claude-code@latest`,
+    );
+  });
+
+  it("uses the same npm update command for display and execution on Windows", () => {
+    for (const channel of ["latest", "stable", null] as const) {
+      const tag = channel === "stable" ? "stable" : "latest";
+      const execution = __testing.claudeUpdateExecution("npmGlobal", channel, "win32");
+      const displayCommand = `npm.cmd install -g @anthropic-ai/claude-code@${tag}`;
+      expect(execution.displayCommand).toBe(displayCommand);
+      const run = __testing.buildProviderInstallationRun(
+        {
+          ...missingInstallationStatus(),
+          installed: true,
+          executablePath: "C:/npm/claude.cmd",
+          installSource: "npmGlobal",
+          currentVersion: "2.0.0",
+          latestVersion: "2.1.0",
+          needsUpdate: true,
+          installAction: {
+            kind: "update",
+            label: "Update",
+            command: execution.displayCommand,
+          },
+        },
+        "update",
+        channel,
+        "win32",
+      );
+      expect(run).toMatchObject({
+        available: true,
+        command: execution,
+      });
+      expect(run.available && run.command.displayCommand).toBe(
+        execution.displayCommand,
+      );
+    }
+  });
+
+  it("keeps claude update for npmGlobal installs on non-Windows platforms", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const execution = __testing.claudeUpdateExecution("npmGlobal", "latest", platform);
+      expect(execution).toMatchObject({
+        command: "claude",
+        args: ["update"],
+        displayCommand: "claude update",
+      });
+    }
+  });
+
+  it("keeps claude update for a native install", () => {
+    const run = __testing.buildProviderInstallationRun(
+      {
+        ...missingInstallationStatus(),
+        installed: true,
+        executablePath: "/Users/me/.local/bin/claude",
+        installSource: "external",
+        currentVersion: "2.0.0",
+        latestVersion: "2.1.0",
+        needsUpdate: true,
+        installAction: {
+          kind: "update",
+          label: "Update",
+          command: "claude update",
+        },
+      },
+      "update",
+    );
+    expect(run).toMatchObject({
+      available: true,
+      command: { args: ["update"] },
+    });
+    expect(run.available && run.command.command).not.toMatch(/^npm(\.cmd)?$/u);
+  });
+
   it("keeps the native installer plan private behind the run method", () => {
     const run = __testing.buildProviderInstallationRun(
       missingInstallationStatus(),

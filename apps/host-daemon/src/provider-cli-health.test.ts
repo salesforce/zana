@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -101,6 +102,29 @@ function successfulCloseSpawner(): ProviderCliInstallProcessSpawner {
             stdout.end();
             stderr.end();
             listener(0, null);
+          });
+        }
+      };
+    }
+  };
+}
+
+function failingCloseSpawner(exitCode: number, stderrOutput: string): ProviderCliInstallProcessSpawner {
+  return {
+    spawn() {
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      return {
+        stdout,
+        stderr,
+        kill() { return true; },
+        onError() {},
+        onClose(listener) {
+          queueMicrotask(() => {
+            stderr.write(stderrOutput);
+            stdout.end();
+            stderr.end();
+            listener(exitCode, null);
           });
         }
       };
@@ -344,6 +368,208 @@ describe('provider CLI health', () => {
     })).rejects.toBeInstanceOf(ProviderCliInstallInProgressError);
     releaseSecond?.();
     await first;
+  });
+
+  it('sets Claude Code npmPackageName so npm install can run', () => {
+    expect(getProviderCliDefinition('claudeCode').npmPackageName).toBe('@anthropic-ai/claude-code');
+  });
+
+  it('updates a Windows global npm Claude Code install with npm.cmd', async () => {
+    const prefix = path.join(path.sep, 'npm-global');
+    const executable = path.join(prefix, 'claude.cmd');
+    const packageJson = path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code', 'package.json');
+    let version = '2.0.0';
+    const runner = new FakeProviderCliCommandRunner((args) => {
+      const key = commandKey(args);
+      if (key.startsWith('where ')) return { stdout: `${executable}\n` };
+      if (key.includes('--version')) return { stdout: `${version}\n` };
+      if (key.includes('doctor')) return { stdout: 'Running: npm-global\nAuto-update channel: latest\n' };
+      if (key.includes('dist-tags')) return { stdout: '{"latest":"2.1.0","stable":"2.1.0"}\n' };
+      if (key.includes('prefix -g')) return { stdout: `${prefix}\n` };
+      if (key.includes('list -g')) {
+        return { stdout: JSON.stringify({ dependencies: { '@anthropic-ai/claude-code': { version } } }) };
+      }
+      return {};
+    });
+    const fs = isolatedFs({ pathExists: (candidate) => candidate === packageJson });
+    const status = await inspectProviderCli({
+      definition: getProviderCliDefinition('claudeCode'),
+      runner,
+      nodePlatform: 'win32',
+      ...fs
+    });
+    expect(status.installSource).toBe('npmGlobal');
+    expect(status.needsUpdate).toBe(true);
+    expect(status.installAction).toMatchObject({
+      kind: 'update',
+      command: 'npm.cmd install -g @anthropic-ai/claude-code@latest'
+    });
+
+    let launched: { command: string; args: string[] } | undefined;
+    const result = await runProviderCliInstall({
+      provider: 'claudeCode',
+      actionKind: 'update',
+      nodePlatform: 'win32',
+      runner,
+      ...fs,
+      installProcessSpawner: {
+        spawn(spawnArgs) {
+          launched = spawnArgs;
+          version = '2.1.0';
+          return successfulCloseSpawner().spawn(spawnArgs);
+        }
+      }
+    });
+    expect(launched).toMatchObject({
+      command: 'npm.cmd',
+      args: ['install', '-g', '@anthropic-ai/claude-code@latest']
+    });
+    expect(result.events[0]).toMatchObject({
+      type: 'started',
+      command: 'npm.cmd install -g @anthropic-ai/claude-code@latest'
+    });
+    expect(result.events.at(-1)).toMatchObject({ type: 'completed', success: true });
+  });
+
+  it('keeps a Windows npm global Claude Code install on the stable channel', async () => {
+    const prefix = path.join(path.sep, 'npm-global');
+    const executable = path.join(prefix, 'claude.cmd');
+    const packageJson = path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code', 'package.json');
+    let version = '2.0.0';
+    const runner = new FakeProviderCliCommandRunner((args) => {
+      const key = commandKey(args);
+      if (key.startsWith('where ')) return { stdout: `${executable}\n` };
+      if (key.includes('--version')) return { stdout: `${version}\n` };
+      if (key.includes('doctor')) return { stdout: 'Running: npm-global\nAuto-update channel: stable\n' };
+      if (key.includes('dist-tags')) return { stdout: '{"latest":"2.2.0","stable":"2.1.0"}\n' };
+      if (key.includes('prefix -g')) return { stdout: `${prefix}\n` };
+      if (key.includes('list -g')) {
+        return { stdout: JSON.stringify({ dependencies: { '@anthropic-ai/claude-code': { version } } }) };
+      }
+      return {};
+    });
+    const fs = isolatedFs({ pathExists: (candidate) => candidate === packageJson });
+    const status = await inspectProviderCli({
+      definition: getProviderCliDefinition('claudeCode'),
+      runner,
+      nodePlatform: 'win32',
+      ...fs
+    });
+    expect(status.latestVersion).toBe('2.1.0');
+    expect(status.needsUpdate).toBe(true);
+    expect(status.installAction).toMatchObject({
+      kind: 'update',
+      command: 'npm.cmd install -g @anthropic-ai/claude-code@stable'
+    });
+
+    let launched: { command: string; args: string[] } | undefined;
+    const result = await runProviderCliInstall({
+      provider: 'claudeCode',
+      actionKind: 'update',
+      nodePlatform: 'win32',
+      runner,
+      ...fs,
+      installProcessSpawner: {
+        spawn(spawnArgs) {
+          launched = spawnArgs;
+          version = '2.1.0';
+          return successfulCloseSpawner().spawn(spawnArgs);
+        }
+      }
+    });
+    expect(launched).toMatchObject({
+      command: 'npm.cmd',
+      args: ['install', '-g', '@anthropic-ai/claude-code@stable']
+    });
+    expect(result.events[0]).toMatchObject({
+      type: 'started',
+      command: status.installAction?.command
+    });
+    expect(result.events.at(-1)).toMatchObject({ type: 'completed', success: true });
+  });
+
+  it('keeps claude update for a native Windows install', async () => {
+    const executable = path.join(path.sep, 'Users', 'me', '.local', 'bin', 'claude.exe');
+    const runner = new FakeProviderCliCommandRunner((args) => {
+      const key = commandKey(args);
+      if (key.startsWith('where ')) return { stdout: `${executable}\n` };
+      if (key.includes('--version')) return { stdout: '2.0.0\n' };
+      if (key.includes('doctor')) return { stdout: 'Running: native\nAuto-update channel: latest\n' };
+      if (key.includes('dist-tags')) return { stdout: '{"latest":"2.1.0","stable":"2.1.0"}\n' };
+      if (key.includes('prefix -g')) return { stdout: `${path.join(path.sep, 'npm-global')}\n` };
+      if (key.includes('list -g')) return { stdout: '{}\n' };
+      return {};
+    });
+    const status = await inspectProviderCli({
+      definition: getProviderCliDefinition('claudeCode'),
+      runner,
+      nodePlatform: 'win32',
+      ...isolatedFs()
+    });
+    expect(status.installSource).toBe('external');
+    expect(status.installAction).toMatchObject({ kind: 'update', command: 'claude update' });
+  });
+
+  it('keeps claude update for npm global Claude Code on non-Windows platforms', async () => {
+    const prefix = path.join(path.sep, 'npm-global');
+    const executable = path.join(prefix, 'bin', 'claude');
+    const packageJson = path.join(prefix, 'lib', 'node_modules', '@anthropic-ai', 'claude-code', 'package.json');
+    const runner = new FakeProviderCliCommandRunner((args) => {
+      const key = commandKey(args);
+      if (key.startsWith('which ')) return { stdout: `${executable}\n` };
+      if (key.includes('--version')) return { stdout: '2.0.0\n' };
+      if (key.includes('doctor')) return { stdout: 'Running: npm-global\nAuto-update channel: latest\n' };
+      if (key.includes('dist-tags')) return { stdout: '{"latest":"2.1.0","stable":"2.1.0"}\n' };
+      if (key.includes('prefix -g')) return { stdout: `${prefix}\n` };
+      if (key.includes('list -g')) {
+        return { stdout: JSON.stringify({ dependencies: { '@anthropic-ai/claude-code': { version: '2.0.0' } } }) };
+      }
+      return {};
+    });
+    const fs = isolatedFs({ pathExists: (candidate) => candidate === packageJson });
+    const status = await inspectProviderCli({
+      definition: getProviderCliDefinition('claudeCode'),
+      runner,
+      nodePlatform: 'darwin',
+      ...fs
+    });
+    expect(status.installSource).toBe('npmGlobal');
+    expect(status.needsUpdate).toBe(true);
+    expect(status.installAction).toMatchObject({
+      kind: 'update',
+      command: 'claude update'
+    });
+  });
+
+  it('maps EBUSY / EPERM on Windows update failure to a locked-process error message', async () => {
+    const prefix = path.join(path.sep, 'npm-global');
+    const executable = path.join(prefix, 'claude.cmd');
+    const packageJson = path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code', 'package.json');
+    const runner = new FakeProviderCliCommandRunner((args) => {
+      const key = commandKey(args);
+      if (key.startsWith('where ')) return { stdout: `${executable}\n` };
+      if (key.includes('--version')) return { stdout: '2.0.0\n' };
+      if (key.includes('doctor')) return { stdout: 'Running: npm-global\nAuto-update channel: latest\n' };
+      if (key.includes('dist-tags')) return { stdout: '{"latest":"2.1.0","stable":"2.1.0"}\n' };
+      if (key.includes('prefix -g')) return { stdout: `${prefix}\n` };
+      if (key.includes('list -g')) {
+        return { stdout: JSON.stringify({ dependencies: { '@anthropic-ai/claude-code': { version: '2.0.0' } } }) };
+      }
+      return {};
+    });
+    const fs = isolatedFs({ pathExists: (candidate) => candidate === packageJson });
+    const result = await runProviderCliInstall({
+      provider: 'claudeCode',
+      actionKind: 'update',
+      nodePlatform: 'win32',
+      runner,
+      ...fs,
+      installProcessSpawner: failingCloseSpawner(1, 'npm ERR! code EBUSY\nnpm ERR! resource busy or locked, copyfile claude.exe')
+    });
+    expect(result.events.some((event) =>
+      event.type === 'error' && event.message.includes('EBUSY/EPERM')
+    )).toBe(true);
+    expect(result.events.at(-1)).toMatchObject({ type: 'completed', success: false });
   });
 
   it('runs the CLI self-update on the PATH binary', () => {
