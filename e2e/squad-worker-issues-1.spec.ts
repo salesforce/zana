@@ -89,7 +89,7 @@ test('a CLI launch with a bad plan shows the plan error, not the generic preview
     const zcc = cliRunner(app.window, home, run.projectDir);
     const result = await zcc(['team', 'launch', '--team', 'swi-team', '--project', run.projectId, '--mode', 'structured', '--goal', 'just prose, no executable steps']);
     expect(result.code).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/plan/i);
+    expect(`${result.stdout}${result.stderr}`).toContain('no executable steps found');
     expect(`${result.stdout}${result.stderr}`).not.toContain(GENERIC_PREVIEW);
     expect(`${result.stdout}${result.stderr}`).not.toContain(run.projectDir);
   } finally { await run.cleanup(); agent.cleanup(); }
