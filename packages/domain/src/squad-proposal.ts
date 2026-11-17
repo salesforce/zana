@@ -326,6 +326,14 @@ export interface SquadPlanBinding {
   personaId?: string;
   /** Why no slot is bound (the step has no qualifying worker slot). */
   unbound?: true;
+  /** Steps that will not run if this step fails (transitive dependents, in plan order); absent when none. */
+  skipsIfFailed?: string[];
+}
+
+/** One line for the launch card: "If this step fails, these steps will not run: a, b and N more". */
+export function formatSquadPlanSkipImpact(stepIds: readonly string[], shown = 5): string {
+  void stepIds; void shown;
+  throw new Error('not implemented: formatSquadPlanSkipImpact');
 }
 
 export interface SquadPlanCheckSummary {
