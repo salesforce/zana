@@ -14,6 +14,8 @@ const ensureQuickAgent = vi.fn(async () => ({ ok: false as const, code: 'no-op',
 const startJob = vi.fn();
 const uploadToRemote = vi.fn();
 const pushToast = vi.fn();
+const recheckProposalPlan = vi.fn();
+const messageProposer = vi.fn();
 const loadProjects = vi.fn(async () => undefined);
 const fieldOpts = vi.fn();
 const voiceState = vi.hoisted(() => ({ state: 'idle' as 'idle' | 'recording' | 'transcribing' }));
@@ -22,7 +24,7 @@ vi.mock('../../lib/product-client.js', () => ({
   product: {
     executionSources: { pick: (...args: unknown[]) => pick(...args) },
     projects: { ensureQuickAgent: (...args: unknown[]) => ensureQuickAgent(...args) },
-    teams: { startJob: (...args: unknown[]) => startJob(...args), preview: async () => ({ ok: true, value: { resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p1' }, path: '/repo', branch: 'main' } }) },
+    teams: { startJob: (...args: unknown[]) => startJob(...args), recheckProposalPlan: (...args: unknown[]) => recheckProposalPlan(...args), messageProposer: (...args: unknown[]) => messageProposer(...args), preview: async () => ({ ok: true, value: { resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p1' }, path: '/repo', branch: 'main' } }) },
     fs: {
       uploadToRemote: (...args: unknown[]) => uploadToRemote(...args),
       uploadProjectAttachmentToRemote: vi.fn()
@@ -213,6 +215,37 @@ describe('TeamComposer prefill', () => {
     expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByTestId('team-command-send'));
     expect(startJob).not.toHaveBeenCalled();
+  });
+
+  const mustFixPrefill: SquadLaunchPrefill = { ...prefill, planSummary: '1 Must fix before this can launch', planFindings: [
+    { stepId: 'a', requirement: 'required-role', severity: 'blocking', candidateSlots: [], suggestion: '' }
+  ] };
+
+  it('turns Launch on after a re-check clears the Must fix, and keeps the re-check for this proposal only', async () => {
+    recheckProposalPlan.mockResolvedValueOnce({ ok: true, value: { planSummary: 'Plan checked', planFindings: [], planStepCount: 4 } });
+    const view = render(<TeamComposer prefill={mustFixPrefill} />);
+    await waitFor(() => expect(screen.getByTestId('project-picker-stub').getAttribute('data-value')).toBe('p2'));
+    expect(screen.getByTestId('team-command-send').getAttribute('aria-label')).toContain('Fix the plan first');
+    fireEvent.click(screen.getByTestId('plan-recheck'));
+    await waitFor(() => expect(screen.getByTestId('plan-action-status').textContent).toContain('nothing left to fix'));
+    expect(recheckProposalPlan).toHaveBeenCalledWith('prop-1');
+    expect(screen.getByTestId('team-command-send').getAttribute('aria-label')).not.toContain('Fix the plan first');
+    // A different proposal ignores the earlier re-check and shows its own Must fix.
+    view.rerender(<TeamComposer prefill={{ ...mustFixPrefill, proposalId: 'prop-2' }} />);
+    expect(screen.getByTestId('team-command-send').getAttribute('aria-label')).toContain('Fix the plan first');
+  });
+
+  it('toasts and closes after the fix request reaches the proposer', async () => {
+    messageProposer.mockResolvedValue({ ok: true, value: undefined });
+    const onClose = vi.fn();
+    const view = render(<TeamComposer prefill={mustFixPrefill} onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('plan-send-fix'));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(pushToast).toHaveBeenCalledWith(expect.stringContaining('Sent to Design chat.'));
+    view.unmount();
+    render(<TeamComposer prefill={{ ...mustFixPrefill, proposerTitle: undefined }} />);
+    fireEvent.click(screen.getByTestId('plan-send-fix'));
+    await waitFor(() => expect(pushToast).toHaveBeenCalledWith(expect.stringContaining('Sent to the conversation.')));
   });
 
   it('uses the singular for a one-step plan', () => {
