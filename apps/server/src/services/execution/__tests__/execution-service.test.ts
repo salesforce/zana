@@ -557,7 +557,7 @@ describe('execution admission', () => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const cancelTeamLaunch = vi.fn()
       .mockResolvedValueOnce({ ok: false, code: 'CANCEL_FAILED', message: 'temporary teardown failure' })
-      .mockResolvedValueOnce({ ok: true, value: { canceledSessionIds: ['coordinator-1'], pendingSessionIds: [] } });
+      .mockResolvedValue({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } });
     const onTerminal = vi.fn();
     const service = new SquadExecutionService(deps(filePath, { store, cancelTeamLaunch, onTerminal }));
     const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });

@@ -5,8 +5,7 @@ import { join } from 'node:path';
 import { boundReason, createExecutionStore } from '../store.js';
 
 // QA obligations from CodeNod correctness Gate 1 (OBL-004, OBL-013). Tests marked it.fails assert the
-// REQUIRED behaviour and currently fail on the branch: they document Q-findings (see .zana/reviews/qa-1.md)
-// and must be flipped to plain `it` when the product fix lands.
+// REQUIRED behaviour; the Q-findings (see .zana/reviews/qa-1.md) are fixed and these are plain `it`.
 
 const storeRequest = {
   callerPrincipalId: 'session-1', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Ship feature',
@@ -24,13 +23,19 @@ describe('boundReason path sanitization (REQ-3, OBL-013)', () => {
     expect(boundReason('open:/home/alice/private/token.txt')).not.toContain('/home/alice');
   });
 
-  it.fails('Q-1: reduces a Windows UNC path', () => {
+  it('R-1: reduces a path after a digit and colon, and one with spaces in a directory name', () => {
+    expect(boundReason('exit 1:/Users/alice/private/w.js')).not.toContain('alice');
+    expect(boundReason('read /Users/a b/private/c.js failed')).toBe('read c.js failed');
+    expect(boundReason('see https://example.com/docs')).toContain('example.com');
+  });
+
+  it('Q-1: reduces a Windows UNC path', () => {
     expect(boundReason('read \\\\server\\private\\token.txt failed')).not.toContain('private');
   });
 });
 
 describe('warning events keep their kind (REQ-11, REQ-20, OBL-004)', () => {
-  it.fails('Q-3: launch-warning and worker-warning stay distinguishable in the durable event stream', async () => {
+  it('Q-3: launch-warning and worker-warning stay distinguishable in the durable event stream', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zcc-swi-qa-'));
     try {
       const store = createExecutionStore({ filePath: join(dir, 'executions.json'), id: () => 'execution-1' });

@@ -532,7 +532,11 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
-  /** Durable marker that a run's teardown has begun, so a restart does not re-launch its seats. */
+  /**
+   * Durable marker that a run's teardown has begun. It closes the window before cancel fences the
+   * record: deferred spawns, Modern reserve/ack and restart reconciliation all honour it. It stays
+   * on the record (it is redundant once `state` leaves 'active' and is never cleared separately).
+   */
   async function markClosing(recordId: string): Promise<boolean> {
     const safeRecordId = boundedString(recordId, 'record id');
     return runExclusive(async () => {
@@ -545,11 +549,6 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       persist(snapshot.state, snapshot.hash);
       return true;
     });
-  }
-
-  /** Whether the run's closing marker is set. */
-  function isClosing(recordId: string): boolean {
-    return readState().state.records.find((candidate) => candidate.id === recordId)?.closing === true;
   }
 
   /** A seat nobody can start any more (no spawner after a restart): fail it once so its units are not re-offered. */
@@ -811,7 +810,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const snapshot = readState();
       const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
-      if (!record || !worker || record.state !== 'active' || record.outcome.status !== 'in-progress') return undefined;
+      if (!record || !worker || record.state !== 'active' || record.closing === true || record.outcome.status !== 'in-progress') return undefined;
       if (worker.transport !== 'MODERN' || terminalProcesses.has(worker.process)) return undefined;
       if (worker.bindingState !== 'RESERVED') {
         return { record: clone(record), worker: clone(worker), generation: worker.generation!, threadId: worker.threadId!, mayCreate: false };
@@ -860,7 +859,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const snapshot = readState();
       const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
-      if (!record || !worker || record.state !== 'active'
+      if (!record || !worker || record.state !== 'active' || record.closing === true
         || worker.transport !== 'MODERN' || worker.generation !== generation || worker.threadId !== safeThreadId
         || terminalProcesses.has(worker.process)) return false;
       if (worker.bindingState === 'BOUND') return true;
@@ -966,7 +965,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
           if (worker.sessionId !== undefined && recoveredSessionIds.has(worker.sessionId)) continue;
           if (isClaimedDeferredWorker(worker)) {
             // Mid-start at the crash: back to waiting while the run is live; on a run being canceled it is finished.
-            worker.process = record.state === 'active' ? 'authorized' : 'canceled';
+            worker.process = record.state === 'active' && record.closing !== true ? 'authorized' : 'canceled';
             if (worker.process === 'canceled') worker.capacityReleased = true;
             changed = true;
             continue;
@@ -1077,7 +1076,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
-  return { claim, complete, markClosing, isClosing, setLaunchResult, addWorker, addDeferredWorker, neverStartedSlotsSync, claimDeferredSpawn, reopenDeferredSpawn, failDeferredSeat, bindDeferredWorker, detachWorkerForRecycle, recordUnitDelivered, updateWorker, workerMaySpawn, claimWorkerRunning,
+  return { claim, complete, markClosing, setLaunchResult, addWorker, addDeferredWorker, neverStartedSlotsSync, claimDeferredSpawn, reopenDeferredSpawn, failDeferredSeat, bindDeferredWorker, detachWorkerForRecycle, recordUnitDelivered, updateWorker, workerMaySpawn, claimWorkerRunning,
     reserveModernWorker, acknowledgeModernWorker, markModernWorkerUncertain, modernWorkerMayClose, reconcileModernWorkers,
     fenceCancel: cancel, cancel, reconcileStartup, list, get, findRequest, findModernWorkerBinding };
 }
@@ -1234,8 +1233,12 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
           if (terminalProcesses.has(worker.process)) continue;
           if (worker.sessionId === undefined) continue;
           if (retainOrchestrator && worker.sessionId === orchestratorSessionId) continue;
-          if (closeRequested.has(worker.sessionId)) continue;
           const isModern = (worker.transport ?? 'CLI') === 'MODERN';
+          if (closeRequested.has(worker.sessionId)) {
+            // A CLI session told to close that is still live survived the close: report it as pending.
+            if (!isModern && opts.isLiveSession(worker.sessionId) === true) pendingSessionIds.push(worker.sessionId);
+            continue;
+          }
           if (isModern) {
             if (!worker.threadId || worker.generation === undefined
               || !await opts.store.modernWorkerMayClose(record.id, worker.slotId, worker.generation, worker.threadId)) {

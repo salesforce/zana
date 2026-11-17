@@ -106,7 +106,84 @@ describe('Cancel verifies the stop (REQ-14)', () => {
   }));
 });
 
+describe('failed-run teardown order and launch settling (A1, A7, R-2, A6)', () => {
+  const failedSlot = { slotId: 'slot-2', personaId: 'qa', reason: 'spawn failed' };
+
+  it('A1: fails a structured run even when a member bumped the state version during launch', async () => fixture(async (filePath) => {
+    const d = deps(filePath);
+    const store = (d as unknown as { store: ReturnType<typeof createExecutionStore> }).store;
+    const launchTeam = async () => {
+      const current = (await store.get('execution-1'))!;
+      await store.event(current.id, current.stateVersion, 'info', 'member progress');
+      return { ok: true, value: { failedSlots: [failedSlot] } };
+    };
+    const service = new SquadExecutionService({ ...d, launchTeam } as never);
+    await service.start('session-1', 'project-1', { ...request, coordinationMode: 'structured' } as never);
+    expect(await store.get('execution-1')).toMatchObject({ state: 'FAILED', failureReason: expect.stringContaining('slot-2') });
+    service.dispose();
+  }));
+
+  it('A7: closes the sessions before the FAILED write', async () => fixture(async (filePath) => {
+    const d = deps(filePath, { launchTeam: async () => { throw new Error('tail exploded'); } });
+    const store = (d as unknown as { store: ReturnType<typeof createExecutionStore> }).store;
+    const stateAtClose: string[] = [];
+    const cancelTeamLaunch = vi.fn(async () => {
+      stateAtClose.push((await store.get('execution-1'))!.state);
+      return { ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } };
+    });
+    const service = new SquadExecutionService({ ...d, cancelTeamLaunch } as never);
+    await service.start('session-1', 'project-1', request);
+    expect(stateAtClose).toEqual(['STARTING']);
+    expect((await store.get('execution-1'))?.state).toBe('FAILED');
+    service.dispose();
+  }));
+
+  it('R-2: a session that will not die does not delay the FAILED transition', async () => fixture(async (filePath) => {
+    const sleep = vi.fn(async () => undefined);
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: ['worker-1'] } }));
+    const service = new SquadExecutionService(deps(filePath, { launchTeam: async () => { throw new Error('boom'); }, cancelTeamLaunch, sleep }));
+    await service.start('session-1', 'project-1', request);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(cancelTeamLaunch).toHaveBeenCalledTimes(1);
+    service.dispose();
+  }));
+
+  it('A6: a freeform run continues when the launch warning cannot be written', async () => fixture(async (filePath) => {
+    const d = deps(filePath, { launchTeam: async () => ({ ok: true, value: { failedSlots: [failedSlot] } }), logError: vi.fn() });
+    const store = (d as unknown as { store: ReturnType<typeof createExecutionStore> }).store;
+    store.warning = async () => { throw new Error('disk full'); };
+    const service = new SquadExecutionService(d);
+    await expect(service.start('session-1', 'project-1', { ...request, coordinationMode: 'freeform' } as never))
+      .resolves.toMatchObject({ ok: true, value: { state: 'RUNNING' } });
+    service.dispose();
+  }));
+
+  it('R-3: forgets a run\'s worker warnings once the run is terminal', async () => fixture(async (filePath) => {
+    const service = new SquadExecutionService(deps(filePath, { launchTeam: async () => { throw new Error('boom'); } }));
+    const warned = (service as unknown as { warnedWorkers: Set<string> }).warnedWorkers;
+    warned.add('execution-1:slot-1:exit');
+    warned.add('execution-9:slot-1:exit');
+    await service.start('session-1', 'project-1', request);
+    expect([...warned]).toEqual(['execution-9:slot-1:exit']);
+    service.dispose();
+  }));
+});
+
 describe('Cancel waits for sessions that are still closing (REQ-14)', () => {
+  it('A2: reports CANCEL_INCOMPLETE when a session told to close is still live on the second look', async () => fixture(async (filePath) => {
+    let calls = 0;
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: {
+      canceledSessionIds: ++calls === 1 ? ['worker-1'] : [], pendingSessionIds: calls === 1 ? [] : ['worker-1']
+    } }));
+    let clock = 0;
+    const service = new SquadExecutionService(deps(filePath, { cancelTeamLaunch, sleep: async () => undefined, monotonicNow: () => (clock += 3_000) }));
+    await service.start('session-1', 'project-1', request);
+    const record = await service.status('session-1', 'project-1', 'execution-1');
+    await expect(service.stop('session-1', 'project-1', 'execution-1', record!.stateVersion))
+      .resolves.toMatchObject({ ok: false, code: 'CANCEL_INCOMPLETE' });
+    service.dispose();
+  }));
+
   it('succeeds when a pending session stops within the bounded wait', async () => fixture(async (filePath) => {
     let calls = 0;
     const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: ++calls < 3 ? ['worker-1'] : [] } }));
@@ -136,18 +213,18 @@ describe('durable closing marker (REQ-15)', () => {
     return { store, id: claim.record.id, filePath };
   }
 
-  it('markClosing returns true once and false after, and isClosing reflects it', async () => {
+  it('markClosing returns true once and false after, and the record carries it', async () => {
     const { store, id } = await openRun();
-    expect(store.isClosing(id)).toBe(false);
+    expect((await store.get(id))?.closing).toBeUndefined();
     expect(await store.markClosing(id)).toBe(true);
-    expect(store.isClosing(id)).toBe(true);
+    expect((await store.get(id))?.closing).toBe(true);
     expect(await store.markClosing(id)).toBe(false);
   });
 
   it('persists the closing marker across a reload', async () => {
     const { store, id, filePath } = await openRun();
     await store.markClosing(id);
-    expect(createTeamLifecycleStore({ filePath }).isClosing(id)).toBe(true);
+    expect((await createTeamLifecycleStore({ filePath }).get(id))?.closing).toBe(true);
   });
 
   it('refuses a late spawn commit on a closing run', async () => {

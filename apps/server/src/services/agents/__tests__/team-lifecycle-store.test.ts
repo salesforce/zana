@@ -650,7 +650,7 @@ describe('team lifecycle integration', () => {
     const released: string[] = [];
     const integration = createTeamLifecycleIntegration({
       store,
-      isLiveSession: () => true,
+      isLiveSession: (sessionId) => !closed.includes(sessionId),
       closeSession: async (sessionId) => { closed.push(sessionId); return true; },
       releaseCapacity: (authorizationId) => released.push(authorizationId)
     });
@@ -1007,6 +1007,48 @@ describe('team lifecycle integration', () => {
     await integration.cancelTeamLaunch('principal-modern', 'request-1');
     await integration.cancelTeamLaunch('principal-modern', 'request-1');
     expect(released).toEqual(['authorization-1']);
+  }));
+
+  it('refuses a Modern reserve and acknowledge once the run is marked closing', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const claimed = await store.claim(modernClaimInput());
+    const reservation = await store.reserveModernWorker(claimed.record.id, 'slot-1');
+    await store.markClosing(claimed.record.id);
+    expect(await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, reservation!.threadId)).toBe(false);
+    const other = createTeamLifecycleStore({ filePath: `${filePath}.2`, id: () => 'record-2' });
+    const second = await other.claim(modernClaimInput());
+    await other.markClosing(second.record.id);
+    expect(await other.reserveModernWorker(second.record.id, 'slot-1')).toBeUndefined();
+  }));
+
+  it('reports a CLI session that survives its close request as pending on the next cancel', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const claimed = await store.claim(claimInput('principal-cli'));
+    await markClaimedWorkerRunning(store, claimed.record.id);
+    await store.complete(claimed.record.id, completedResult());
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => true, closeSession: async () => true, releaseCapacity: () => undefined
+    });
+    integration.track((await store.get(claimed.record.id))!);
+    const first = await integration.cancelTeamLaunch('principal-cli', 'request-1');
+    expect(first).toMatchObject({ ok: true, canceledSessionIds: ['session-1'], pendingSessionIds: [] });
+    const second = await integration.cancelTeamLaunch('principal-cli', 'request-1');
+    expect(second).toMatchObject({ ok: true, canceledSessionIds: [], pendingSessionIds: ['session-1'] });
+  }));
+
+  it('does not list a closed CLI session that has stopped as pending', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const claimed = await store.claim(claimInput('principal-cli'));
+    await markClaimedWorkerRunning(store, claimed.record.id);
+    await store.complete(claimed.record.id, completedResult());
+    let live = true;
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => live, closeSession: async () => true, releaseCapacity: () => undefined
+    });
+    integration.track((await store.get(claimed.record.id))!);
+    await integration.cancelTeamLaunch('principal-cli', 'request-1');
+    live = false;
+    expect(await integration.cancelTeamLaunch('principal-cli', 'request-1')).toMatchObject({ pendingSessionIds: [] });
   }));
 
   it('returns caller-scoped lifecycle state and records task outcome once', async () => fixture(async (filePath) => {

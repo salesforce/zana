@@ -404,6 +404,8 @@ export interface ExecutionServiceDeps {
   monotonicNow?: () => number;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
+  /** Pause between Cancel verification polls; tests inject an instant one. */
+  sleep?: (ms: number) => Promise<void>;
   clearTimer?: (timer: NodeJS.Timeout) => void;
   /**
    * E2E-only transient dispatch fault injector. When it returns `true` for an
@@ -692,6 +694,8 @@ const MAX_PLAN_CORRECTION_STOP_ATTEMPTS = 5;
 /** How long Cancel waits for sessions that are still closing, and how often it re-checks. */
 const CANCEL_VERIFY_WAIT_MS = 5_000;
 const CANCEL_VERIFY_POLL_MS = 250;
+/** Upper bound on remembered worker warnings; the oldest are forgotten first (a repeat warning is harmless). */
+const MAX_WARNED_WORKERS = 500;
 
 export class ExecutionService {
   private runCheckCompletions = new Map<string, { controller: AbortController; pending: Promise<readonly string[]> }>();
@@ -891,7 +895,7 @@ export class ExecutionService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.failLaunch(record, `Resume grant setup failed: ${message}`);
+      await this.failRun(record, `Resume grant setup failed: ${message}`);
       this.endStarting(claim.record.id);
       return { ok: false, code: 'EXECUTION_STORE_ERROR', message };
     }
@@ -998,7 +1002,7 @@ export class ExecutionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-      const current = await this.failLaunch(record, `Team launch error: ${message}`);
+      const current = await this.failRun(record, `Team launch error: ${message}`);
       return current.state === 'FAILED'
         ? { ok: false, code: message === 'TARGET_UNAVAILABLE' ? 'TARGET_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message }
         : { ok: false, code: 'TEAM_LAUNCH_STATE_CONFLICT', message: `Team launch failed while execution is ${current.state.toLowerCase()}` };
@@ -1014,11 +1018,17 @@ export class ExecutionService {
   ): Promise<ExecutionRecord> {
     if (!failed.length) return record;
     const details = failed.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ');
-    if (record.coordinationMode === 'structured') return this.transitionOrCurrent(record, 'FAILED', 'error', details);
-    const warned = await this.deps.store.warning(record.id, {
-      kind: 'launch-warning', summary: `Launch continued without ${failed.length} failed slot(s): ${details}`
-    });
-    return { ...record, stateVersion: warned.stateVersion };
+    if (record.coordinationMode === 'structured') return this.failRun(record, details);
+    try {
+      const warned = await this.deps.store.warning(record.id, {
+        kind: 'launch-warning', summary: `Launch continued without ${failed.length} failed slot(s): ${details}`
+      });
+      return { ...record, stateVersion: warned.stateVersion };
+    } catch (error) {
+      // The warning is advisory: failing to record it must not fail a run whose other seats started.
+      this.deps.logError?.(`Recording the launch warning for run ${record.id} failed`, error);
+      return (await this.deps.store.get(record.id)) ?? record;
+    }
   }
 
   private async resolveAdmissionInput(projectId: string, request: ExecutionRequestV1): Promise<TeamAdmissionInput> {
@@ -1336,6 +1346,7 @@ export class ExecutionService {
     const key = `${record.id}:${slotId}:${cause}`;
     if (this.warnedWorkers.has(key)) return;
     this.warnedWorkers.add(key);
+    if (this.warnedWorkers.size > MAX_WARNED_WORKERS) this.warnedWorkers.delete(this.warnedWorkers.values().next().value as string);
     try {
       const summary = boundReason(text);
       await this.deps.store.warning(record.id, { kind: 'worker-warning', slotId, summary });
@@ -2925,7 +2936,7 @@ export class ExecutionService {
       });
       if (!launched.ok) {
         await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-        const failed = await this.failLaunch(current, launched.message ?? 'Team launch failed');
+        const failed = await this.failRun(current, launched.message ?? 'Team launch failed');
         return { ok: false as const, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed', value: failed };
       }
       if (retainedRecovery?.mode === 'fresh-plan') {
@@ -2944,7 +2955,7 @@ export class ExecutionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-      return { ok: false as const, code: message === 'WORKTREE_UNAVAILABLE' || message === 'TARGET_UNAVAILABLE' ? message : 'TEAM_LAUNCH_FAILED', message, value: await this.failLaunch(retry, `Team retry launch error: ${message}`) };
+      return { ok: false as const, code: message === 'WORKTREE_UNAVAILABLE' || message === 'TARGET_UNAVAILABLE' ? message : 'TEAM_LAUNCH_FAILED', message, value: await this.failRun(retry, `Team retry launch error: ${message}`) };
     } finally {
       if (!retainedRecovery) this.endStarting(record.id);
     }
@@ -3994,10 +4005,11 @@ export class ExecutionService {
     summary: string
   ): Promise<ExecutionRecord> {
     try {
+      // Close the sessions before the FAILED write (D4/D5), so a crash in between leaves no live workers
+      // behind a terminal run. Closing is idempotent, so a stale loser closing again is harmless.
+      if (state === 'FAILED') await this.cleanupFailedRun(record);
       const updated = await this.deps.store.transition(record.id, record.stateVersion, state, severity, summary);
       if (isResumeGrantTerminal(updated.state)) await this.cleanupTerminal(updated);
-      // Only the caller whose write moved the run to FAILED closes its sessions; a stale loser skips it.
-      if (updated.state === 'FAILED') await this.cleanupFailedRun(updated);
       return updated;
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
@@ -4069,10 +4081,17 @@ export class ExecutionService {
     const cancel = () => opts
       ? this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId, opts)
       : this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    const pause = () => (this.deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); })))(CANCEL_VERIFY_POLL_MS);
+    const clock = this.deps.monotonicNow ?? (() => performance.now());
     let canceled = await cancel();
-    const deadline = Date.now() + CANCEL_VERIFY_WAIT_MS;
-    while (canceled.ok && (canceled.value?.pendingSessionIds.length ?? 0) > 0 && Date.now() < deadline) {
-      await new Promise<void>((resolve) => setTimeout(resolve, CANCEL_VERIFY_POLL_MS));
+    // A session told to close is only proven gone by a second look; one that survives comes back pending.
+    if (canceled.ok && (canceled.value?.canceledSessionIds.length ?? 0) > 0 && (canceled.value?.pendingSessionIds.length ?? 0) === 0) {
+      await pause();
+      canceled = await cancel();
+    }
+    const deadline = clock() + CANCEL_VERIFY_WAIT_MS;
+    while (canceled.ok && (canceled.value?.pendingSessionIds.length ?? 0) > 0 && clock() < deadline) {
+      await pause();
       canceled = await cancel();
     }
     if (canceled.ok && (canceled.value?.pendingSessionIds.length ?? 0) > 0) {
@@ -4087,21 +4106,27 @@ export class ExecutionService {
    */
   private async cleanupFailedRun(record: ExecutionRecord): Promise<void> {
     try {
-      const canceled = await this.cancelVerified(record);
+      // One close request, no verification wait: a stuck session must not hold up the FAILED transition.
+      const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
       if (!canceled.ok && canceled.code !== 'NOT_FOUND') this.deps.logError?.(`Closing sessions of failed run ${record.id}: ${canceled.code}`, canceled.message);
     } catch (error) {
       this.deps.logError?.(`Closing sessions of failed run ${record.id} failed`, error);
     }
   }
 
-  private async failLaunch(record: ExecutionRecord, summary: string): Promise<ExecutionRecord> {
+  /**
+   * Fail a launching or running run: close its sessions first, then write FAILED, retrying a stale
+   * version (members bump it while a launch is in flight) so the transition is not silently lost.
+   */
+  private async failRun(record: ExecutionRecord, summary: string): Promise<ExecutionRecord> {
+    if (record.state !== 'STARTING' && record.state !== 'RUNNING') return record;
+    await this.cleanupFailedRun(record);
     let current = record;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       if (current.state !== 'STARTING' && current.state !== 'RUNNING') return current;
       try {
         const failed = await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', summary);
         await this.cleanupTerminal(failed);
-        await this.cleanupFailedRun(failed);
         return failed;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
@@ -4120,7 +4145,7 @@ export class ExecutionService {
     summary: string
   ): Promise<ExecutionRecord> {
     return recovery
-      ? this.failLaunch(record, summary)
+      ? this.failRun(record, summary)
       : this.transitionOrCurrent(record, 'BLOCKED', 'warning', summary);
   }
 
@@ -4142,6 +4167,7 @@ export class ExecutionService {
     this.deadlineWatchdog.remove(record.id);
     this.planReadinessWatchdog.remove(record.id);
     this.syncParkedHolds(record.id, { restore: true });
+    for (const key of this.warnedWorkers) if (key.startsWith(`${record.id}:`)) this.warnedWorkers.delete(key);
     try {
       await this.deps.resumeGrants?.revoke(record.id, record.projectId);
     } catch {

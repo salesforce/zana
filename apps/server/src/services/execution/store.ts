@@ -694,6 +694,8 @@ export interface ExecutionEvent {
   slotId?: string;
   producerRole?: 'worker' | 'orchestrator';
   eventType?: 'progress' | 'blocker' | 'failure' | 'outcome';
+  /** Which kind of run warning this event records (see ExecutionRunWarning). */
+  warningKind?: 'launch-warning' | 'worker-warning';
   attention?: boolean;
   progress?: { completed: number; total: number };
   references?: Array<{ label: string; uri: string }>;
@@ -786,7 +788,8 @@ export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
 }
 
 // POSIX (/a/b) and Windows (C:\a\b) absolute paths; reduced to the last segment so no home or project path leaks.
-const ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|(?<![\w.:/-])\/)[^\s"'`<>|;,()]*/g;
+// Also UNC (\\server\share), a path glued to a colon (exit 1:/x), and a space inside a directory name (/a b/c).
+const ABSOLUTE_PATH = /(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|(?<![\w.:/-])\/|(?<=:)\/(?!\/))(?:[^\s"'`<>|;,()]|[ ](?=[^\s"'`<>|;,()/\\]*[\\/]))*/g;
 // eslint-disable-next-line no-control-regex -- stripping control characters is the point
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
 const MAX_WORK_UNITS = 100;
@@ -1568,6 +1571,7 @@ function validEvent(value: unknown): value is ExecutionEvent {
     && (event.slotId === undefined || validString(event.slotId))
     && (event.producerRole === undefined || event.producerRole === 'worker' || event.producerRole === 'orchestrator')
     && (event.eventType === undefined || event.eventType === 'progress' || event.eventType === 'blocker' || event.eventType === 'failure' || event.eventType === 'outcome')
+    && (event.warningKind === undefined || event.warningKind === 'launch-warning' || event.warningKind === 'worker-warning')
     && (event.attention === undefined || typeof event.attention === 'boolean')
     && (event.progress === undefined || validProgress(event.progress))
     && (event.references === undefined || Array.isArray(event.references) && event.references.length <= 20 && event.references.every(validReference))
@@ -2372,7 +2376,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.updatedAt = timestamp;
       const detail = warning.detail ? boundReason(warning.detail) : '';
       append(snapshot.state, record, record.state, 'warning', boundReason(string(warning.summary, 'warning summary')), timestamp,
-        { kind: 'event', eventType: 'failure', ...(warning.slotId ? { slotId: boundReason(warning.slotId, 128) } : {}), ...(detail ? { detail } : {}) });
+        { kind: 'event', eventType: 'failure', warningKind: warning.kind, ...(warning.slotId ? { slotId: boundReason(warning.slotId, 128) } : {}), ...(detail ? { detail } : {}) });
       persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
@@ -4579,7 +4583,7 @@ function append(
   severity: ExecutionEvent['severity'],
   summary: string,
   createdAt: number,
-  metadata: Pick<ExecutionEvent, 'kind' | 'fromState' | 'toState' | 'slotId' | 'eventType' | 'detail'> = {}
+  metadata: Pick<ExecutionEvent, 'kind' | 'fromState' | 'toState' | 'slotId' | 'eventType' | 'warningKind' | 'detail'> = {}
 ): void {
   const sequence = (record.lastEventSequence ?? nextSequence(state, record.id) - 1) + 1;
   record.lastEventSequence = sequence;
