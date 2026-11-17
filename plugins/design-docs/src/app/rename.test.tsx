@@ -212,7 +212,7 @@ describe('header rename entry points', () => {
 
 describe('list row rename', () => {
   const rowButton = (title: string) => screen.getByText(title, { selector: '.dd-doc-row-title' }).closest('button')!;
-  const rowInput = () => screen.getByRole('textbox', { name: 'Rename design doc' }) as HTMLInputElement;
+  const rowInput = () => screen.getByRole('textbox', { name: /^Rename / }) as HTMLInputElement;
 
   async function startRowRename(harness: Harness, title: string) {
     await screen.findByText(title, { selector: '.dd-doc-row-title' });
@@ -238,9 +238,26 @@ describe('list row rename', () => {
     fireEvent.keyDown(rowInput(), { key: 'Enter' });
     await waitFor(() => expect(harness.store.summary(doc.id).title).toBe('Payments v2'));
     await screen.findByText('Payments v2', { selector: '.dd-doc-row-title' });
-    expect(screen.queryByRole('textbox', { name: 'Rename design doc' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: /^Rename / })).toBeNull();
     expect(screen.queryByTitle('Edit title')).toBeNull();
     expect(updates(harness)).toEqual([{ doc: doc.id, title: 'Payments v2', expectedHead: doc.head }]);
+  });
+
+  it('hands focus back to the row when the editor closes, by Escape and by save', async () => {
+    const harness = createHarness();
+    const doc = makeDoc(harness, 'Payments API');
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    await startRowRename(harness, 'Payments API');
+    expect(rowInput().getAttribute('aria-label')).toBe('Rename Payments API');
+    fireEvent.keyDown(rowInput(), { key: 'Escape' });
+    await waitFor(() => expect(document.activeElement).toBe(rowButton('Payments API')));
+    expect((document.activeElement as HTMLElement).dataset.docId).toBe(doc.id);
+
+    await startRowRename(harness, 'Payments API');
+    fireEvent.change(rowInput(), { target: { value: 'Payments v3' } });
+    fireEvent.keyDown(rowInput(), { key: 'Enter' });
+    await screen.findByText('Payments v3', { selector: '.dd-doc-row-title' });
+    await waitFor(() => expect(document.activeElement).toBe(rowButton('Payments v3')));
   });
 
   it('Escape and an unchanged blur cancel; a changed blur saves; an empty blur cancels', async () => {
@@ -250,17 +267,17 @@ describe('list row rename', () => {
     await startRowRename(harness, 'Payments API');
     fireEvent.change(rowInput(), { target: { value: 'Typed' } });
     fireEvent.keyDown(rowInput(), { key: 'Escape' });
-    expect(screen.queryByRole('textbox', { name: 'Rename design doc' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: /^Rename / })).toBeNull();
     expect(rowButton('Payments API')).toBeTruthy();
 
     await startRowRename(harness, 'Payments API');
     fireEvent.blur(rowInput());
-    expect(screen.queryByRole('textbox', { name: 'Rename design doc' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: /^Rename / })).toBeNull();
 
     await startRowRename(harness, 'Payments API');
     fireEvent.change(rowInput(), { target: { value: '' } });
     fireEvent.blur(rowInput());
-    expect(screen.queryByRole('textbox', { name: 'Rename design doc' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: /^Rename / })).toBeNull();
     expect(updates(harness)).toEqual([]);
 
     await startRowRename(harness, 'Payments API');
@@ -326,7 +343,7 @@ describe('list row rename', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
     await waitFor(() => expect(calls).toHaveLength(2));
     expect(calls[1]).toMatchObject({ title: 'Mine' });
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename design doc' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /^Rename / })).toBeNull());
   });
 
   it('Use theirs closes the editor without writing', async () => {
@@ -338,7 +355,7 @@ describe('list row rename', () => {
     fireEvent.change(rowInput(), { target: { value: 'Mine' } });
     fireEvent.keyDown(rowInput(), { key: 'Enter' });
     fireEvent.click(await screen.findByRole('button', { name: 'Use theirs' }));
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename design doc' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /^Rename / })).toBeNull());
     expect(harness.store.summary(doc.id).title).toBe('Theirs');
   });
 
@@ -350,7 +367,7 @@ describe('list row rename', () => {
     fireEvent.change(rowInput(), { target: { value: 'Nope' } });
     fireEvent.keyDown(rowInput(), { key: 'Enter' });
     await waitFor(() => expect(harness.toasts).toHaveLength(1));
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename design doc' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /^Rename / })).toBeNull());
     expect(rowButton('Payments API')).toBeTruthy();
   });
 });

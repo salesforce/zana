@@ -8,7 +8,8 @@ export const MAX_SYNC_ERROR_LENGTH = 300;
 
 /** A failed delivery that only means the other computer was not reachable; it is retried on its own. */
 export function isOfflineSyncError(message: string): boolean {
-  return /unavailable|timed? ?out|not connected|disconnect|ECONN|ENOTFOUND|EHOSTUNREACH|authorization changed/i.test(message);
+  // The receiver cancelling a request (its 30s cap, grant lease change, dropped socket) or asking us to slow down clears on its own.
+  return /unavailable|timed? ?out|not connected|disconnect|ECONN|ENOTFOUND|EHOSTUNREACH|authorization changed|^peer request failed: (?:408|429|409: peer-request-cancelled)\b/i.test(message);
 }
 
 /** Receipt stages stored as the "reason" when the other computer answered but did not finish: not errors. */

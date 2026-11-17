@@ -221,8 +221,8 @@ export function useTitleRename(kind: DocKind = 'doc') {
 
 export function RenameStaleNotice({ stale, onKeepMine, onUseTheirs }: { stale: RenameStale; onKeepMine(): void; onUseTheirs(): void }) {
   return (
-    <div className="dd-rename-stale" role="alert">
-      <span>
+    <div className="dd-rename-stale" role="group" aria-label="Title conflict">
+      <span role="alert">
         Title changed on another computer to <strong>{stale.theirs}</strong>
       </span>
       <button type="button" className="btn" onClick={onKeepMine}>

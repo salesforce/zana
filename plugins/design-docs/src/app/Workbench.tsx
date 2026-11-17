@@ -171,7 +171,7 @@ function RowRename({
         className="dd-editable-input dd-doc-row-input"
         value={draft}
         maxLength={MAX_TITLE_LENGTH}
-        aria-label="Rename design doc"
+        aria-label={`Rename ${doc.title}`}
         aria-invalid={error || undefined}
         aria-describedby={error ? errorId : undefined}
         onChange={(event) => {
@@ -236,6 +236,7 @@ function DocRow({
   return (
     <button
       type="button"
+      data-doc-id={doc.id}
       className={`dd-doc-row${active ? ' on' : ''}${alternative ? ' dd-doc-row-alt' : ''}${menuOpen ? ' dd-doc-row-menu' : ''}`}
       title={rowTooltip(doc)}
       onClick={onSelect}
@@ -359,6 +360,18 @@ function DocList({
   const docActions = useDocActions(projects);
   const titleRename = useTitleRename();
   const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null);
+  // Closing the inline editor unmounts the focused input; hand focus back to that doc's row so keyboard users keep their place.
+  const refocusId = useRef<string | null>(null);
+  const endRename = (id: string) => {
+    refocusId.current = id;
+    setRenaming(null);
+  };
+  useEffect(() => {
+    if (renaming || !refocusId.current) return;
+    const id = refocusId.current;
+    refocusId.current = null;
+    Array.from(document.querySelectorAll<HTMLElement>('[data-doc-id]')).find((el) => el.dataset.docId === id)?.focus();
+  }, [renaming]);
   const debounced = useDebounced(query.trim(), 200);
   const now = useNow();
   const docs = useDocs({ ...(projectId ? { projectId } : showProjects ? { excludeUnassigned: true } : {}), ...(debounced ? { query: debounced } : {}), status });
@@ -444,19 +457,19 @@ function DocList({
             onDraft={(draft) => setRenaming({ id: doc.id, draft })}
             onCancel={() => {
               titleRename.useTheirs();
-              setRenaming(null);
+              endRename(doc.id);
             }}
             onCommit={async () => {
               // A stale head keeps the row open for the Keep yours / Use theirs choice; anything else closes it.
-              if ((await titleRename.save(doc, renaming.draft.trim())) !== 'stale') setRenaming(null);
+              if ((await titleRename.save(doc, renaming.draft.trim())) !== 'stale') endRename(doc.id);
             }}
             onKeepMine={() => {
               void titleRename.keepMine();
-              setRenaming(null);
+              endRename(doc.id);
             }}
             onUseTheirs={() => {
               titleRename.useTheirs();
-              setRenaming(null);
+              endRename(doc.id);
             }}
           />
         ) : undefined

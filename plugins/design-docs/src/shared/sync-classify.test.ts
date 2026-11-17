@@ -6,8 +6,17 @@ describe('classifyDelivery', () => {
     for (const message of [null, undefined, '', 'conflict', 'received', 'blocked', 'peer grant unavailable', 'request timed out', 'ECONNRESET']) {
       expect(classifyDelivery(message)).toBe('waiting');
     }
-    for (const message of ['receiver rejected it', 'peer request failed: 409', 'peer request failed: 500: boom']) {
+    for (const message of ['receiver rejected it', 'peer request failed: 400', 'peer request failed: 401: peer-auth-failed', 'peer request failed: 403']) {
       expect(classifyDelivery(message)).toBe('failed');
+    }
+  });
+  it('treats a receiver-cancelled 409, 408 and 429 as waiting; other 409s and 5xx stay failed', () => {
+    for (const message of ['peer request failed: 409: peer-request-cancelled', 'peer request failed: 408', 'peer request failed: 429: slow-down']) {
+      expect(isOfflineSyncError(message)).toBe(true);
+      expect(classifyDelivery(message)).toBe('waiting');
+    }
+    for (const message of ['peer request failed: 409', 'peer request failed: 409: nope', 'peer request failed: 500: boom', 'peer request failed: 4290']) {
+      expect(isOfflineSyncError(message)).toBe(false);
     }
   });
   it('agrees with isOfflineSyncError and isStageToken', () => {

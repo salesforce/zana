@@ -41,6 +41,8 @@ describe('SyncDiagnosticsPanel', () => {
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(expect.stringContaining('Name app-2')));
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(api.syncDiagnostics).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('diagnostics-status').textContent).toBe('Diagnostics up to date'));
+    expect(screen.getByTestId('diagnostics-status').getAttribute('role')).toBe('status');
   });
   it('shows the likely cause, in the panel and in the copied text, and nothing for an older server', async () => {
     const fault = { code: 'enrollment' as const, hint: 'Pairing with this computer was changed or revoked.' };

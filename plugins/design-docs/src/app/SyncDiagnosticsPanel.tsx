@@ -25,8 +25,9 @@ export function SyncDiagnosticsPanel({ nameOf }: { nameOf(peerId: string): strin
   const api = useApi();
   const [data, setData] = useState<SyncDiagnostics | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshed, setRefreshed] = useState(false);
   const load = useCallback(() => {
-    api.syncDiagnostics().then((value) => { setData(value); setError(null); }, (failure) => setError(errorMessage(failure)));
+    api.syncDiagnostics().then((value) => { setData(value); setError(null); setRefreshed(true); }, (failure) => setError(errorMessage(failure)));
   }, [api]);
   useEffect(() => { load(); }, [load]);
   // Diagnostics are an aid: a failed read is shown as a quiet note, never as the page's error banner.
@@ -55,8 +56,9 @@ export function SyncDiagnosticsPanel({ nameOf }: { nameOf(peerId: string): strin
       ))}
       <div className="dd-actions">
         <button type="button" className="btn" onClick={copy}>Copy diagnostics</button>
-        <button type="button" className="btn" onClick={load}>Refresh</button>
+        <button type="button" className="btn" onClick={() => { setRefreshed(false); load(); }}>Refresh</button>
       </div>
+      <p className="dd-peers-hint" role="status" data-testid="diagnostics-status">{refreshed ? 'Diagnostics up to date' : 'Refreshing diagnostics…'}</p>
     </section>
   );
 }
