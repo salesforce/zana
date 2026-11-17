@@ -1021,8 +1021,12 @@ describe('forwarder port fails closed', () => {
     first.dispose(); await first.whenIdle();
     f.ssh.fail.port = F + 7; // a squatter holds the old F; the lease would hand out another
     f.connector.connect.mockClear(); f.held.clear();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const second = f.make();
     await second.start();
+    // The reason is logged: an ssh-down link otherwise gives no hint that the forwarder port was taken or moved.
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[zcc\] peer link [0-9a-f-]{8} forwarder blocked: /));
+    warn.mockRestore();
     expect(f.lines.has(`${ctx.id}:link`)).toBe(false);
     expect(f.lines.has(`${ctx.id}:bootstrap`)).toBe(false);
     expect(f.held.has(ctx.id)).toBe(false);

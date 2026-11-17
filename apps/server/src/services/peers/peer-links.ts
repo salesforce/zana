@@ -1400,7 +1400,9 @@ export class PeerLinks implements PeerLinksControlPort {
     try {
       const port = await ssh.forwarder.acquire(rec.invitationId);
       if (port !== rec.ssh.targetPort) { await ssh.forwarder.release(rec.invitationId).catch(() => undefined); throw new Error('forwarder port moved'); }
-    } catch {
+    } catch (error) {
+      // Silent before: the link then reads `ssh-down` with no trace of why (port held by another Zana, lease lost, port moved).
+      console.warn(`[zcc] peer link ${rec.invitationId.slice(0, 8)} forwarder blocked: ${error instanceof Error ? error.message.slice(0, 160) : 'acquire failed'}`);
       await this.blockForwarder(rec);
       return false;
     }
