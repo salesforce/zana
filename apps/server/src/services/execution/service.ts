@@ -966,6 +966,7 @@ export class ExecutionService {
       });
       if (!launched.ok) {
         await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
+        await this.closeLaunchSessions(record);
         await this.transitionOrCurrent(record, 'FAILED', 'error', launched.message ?? 'Team launch failed');
         return { ok: false, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed' };
       }
@@ -984,6 +985,7 @@ export class ExecutionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
+      await this.closeLaunchSessions(record);
       const current = await this.failLaunch(record, `Team launch error: ${message}`);
       return current.state === 'FAILED'
         ? { ok: false, code: message === 'TARGET_UNAVAILABLE' ? 'TARGET_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message }
@@ -3996,6 +3998,18 @@ export class ExecutionService {
     } finally {
       release();
       if (this.usageTails.get(key) === tail) this.usageTails.delete(key);
+    }
+  }
+
+  /**
+   * Close the sessions a failed launch already started, scoped to this run's own launch request
+   * (never another run's). Best-effort: a cancel failure must not mask the launch error.
+   */
+  private async closeLaunchSessions(record: ExecutionRecord): Promise<void> {
+    try {
+      await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    } catch (error) {
+      this.deps.logError?.(`Closing sessions of failed launch ${record.id} failed`, error);
     }
   }
 

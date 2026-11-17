@@ -168,7 +168,7 @@ import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { boundReason, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
@@ -6230,6 +6230,21 @@ async function dispatchSeededPlanKickoff(args: {
   }
 }
 
+/** Joined launch message for failed slots: each reason is already bounded; the whole stays within one reason's limit. */
+function failedSlotsMessage(failedSlots: readonly TeamFailedWorkerSlot[]): string {
+  return boundReason(failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; '));
+}
+
+/** Test-only fault injection (ZCC_TEST_FAIL_LAUNCH_COMPLETE=1); the NODE_ENV guard lets production builds drop it. */
+function launchTailFaultInjected(): boolean {
+  return process.env.NODE_ENV !== 'production' && process.env.ZCC_TEST_FAIL_LAUNCH_COMPLETE === '1';
+}
+
+/** Close exactly the sessions this launch started. Each close is independent so one failure leaves the rest closing. */
+async function closeStartedSessionsById(sessionIds: readonly string[]): Promise<void> {
+  await Promise.allSettled(sessionIds.map((sessionId) => terminateSession(sessionId)));
+}
+
 export async function launchTeam(
   teamId: string,
   projectId?: string,
@@ -6811,7 +6826,9 @@ export async function launchTeam(
         return { ok: false, code: reservation ? 'UNCERTAIN' : 'DENIED', message: error instanceof Error ? error.message : String(error) };
       } finally { releaseColdStart(); }
     }
-    const result = await launchAuthorizedTerminal(
+    let result: Result<{ id: string }>;
+    try {
+    result = await launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
        { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...SQUAD_SEAT_MARKER, ...spawnExtras },
@@ -6846,6 +6863,10 @@ export async function launchTeam(
           claimRunning: () => teamLifecycle.claimWorkerRunning(claim.record.id, slotId)
         }
     ).finally(releaseColdStart);
+    } catch (error) {
+      // A spawn that throws is one failed slot, not an aborted launch that orphans the other workers.
+      result = { ok: false, code: 'SPAWN_FAILED', message: boundReason(error instanceof Error ? error.message : String(error)) };
+    }
     if (durableIdentity) {
       try {
         if (result.ok) {
@@ -6924,7 +6945,7 @@ export async function launchTeam(
      if (bindingFailure) {
        const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
        if (authorizationId) launchAuthorization.revoke(authorizationId);
-       failedSlots.push({ slotId, personaId, reason: bindingFailure });
+       failedSlots.push({ slotId, personaId, reason: boundReason(bindingFailure) });
        continue;
      }
       const repeatIndex = Number(slotId.slice(slotId.lastIndexOf(':') + 1));
@@ -6957,7 +6978,7 @@ export async function launchTeam(
          const authorizationId = launchAuthorizationBySession.get(res.value.id)!;
          workers.push({ sessionId: res.value.id, cohortId, slotId, personaId, projectId: targetProjectId, authorizationId });
        } else {
-         failedSlots.push({ slotId, personaId, reason: res.message });
+         failedSlots.push({ slotId, personaId, reason: boundReason(res.message) });
        }
   }
 
@@ -7049,7 +7070,7 @@ export async function launchTeam(
     if (bindingFailure) {
       const authorizationId = structured?.slots.find((slot) => slot.slotId === orchestratorSlotId)?.authorizationId;
       if (authorizationId) launchAuthorization.revoke(authorizationId);
-      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: bindingFailure });
+      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: boundReason(bindingFailure) });
     } else {
     const titlePrompt = structured?.jobContext?.objective?.trim() || goal?.trim() || null;
     const res = await launchSlot({ slotId: orchestratorSlotId, personaId: orchestratorId!, role: 'orchestrator' },
@@ -7096,27 +7117,37 @@ export async function launchTeam(
         });
       }
     } else {
-      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: res.message });
+      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: boundReason(res.message) });
     }
     }
   }
 
   const result: LaunchTeamResult = { launchRequestId, launched, cohortId, workers, failedSlots, orchestratorSessionId, workerSessionIds };
-  if (durableCoordination && !orchestratorSessionId) {
+  let operationResult: Result<LaunchTeamResult>;
+  try {
+    if (durableCoordination && !orchestratorSessionId) {
+      releaseRunSeats(claim.record.id);
+      await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+    }
+    operationResult = durableCoordination && !orchestratorSessionId
+      ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlotsMessage(failedSlots) || 'Team coordinator failed to launch' }
+      : launched === 0 && structured
+      ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlotsMessage(failedSlots) || 'team launched no workers' }
+      : { ok: true, value: result };
+    if (!operationResult.ok) {
+      revokeRequestAuthorizations();
+    }
+    if (launchTailFaultInjected()) throw new Error('injected launch tail failure');
+    await teamLifecycle.complete(claim.record.id, operationResult, result);
+    const lifecycleRecord = await teamLifecycle.get(claim.record.id);
+    if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
+  } catch (error) {
+    // Close by session id: the lifecycle write that just failed may fail again, so it cannot be the closer.
     releaseRunSeats(claim.record.id);
-    await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
-  }
-  const operationResult: Result<LaunchTeamResult> = durableCoordination && !orchestratorSessionId
-    ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || 'Team coordinator failed to launch' }
-    : launched === 0 && structured
-    ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || 'team launched no workers' }
-    : { ok: true, value: result };
-  if (!operationResult.ok) {
     revokeRequestAuthorizations();
+    await closeStartedSessionsById([...workerSessionIds, ...(orchestratorSessionId ? [orchestratorSessionId] : [])]);
+    throw error;
   }
-  await teamLifecycle.complete(claim.record.id, operationResult, result);
-  const lifecycleRecord = await teamLifecycle.get(claim.record.id);
-  if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
   return operationResult;
 
   /** Withdraw the launch approvals still held by seats that never started (run released its spawner). */
