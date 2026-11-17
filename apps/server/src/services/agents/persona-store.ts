@@ -15,6 +15,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { PERSONA_REASONING_LEVELS, BUILTIN_PERSONA_SKILLS, normalizeRoles, sanitizePersonaSkills, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
+import type { PersonaLoadWarning } from '@zana-ai/zcc-domain';
 import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { sanitizeLegacyMcpServers } from './persona-mcp-sanitize.js';
@@ -744,6 +745,11 @@ export class PersonaStore extends EventEmitter {
     }
     this.cache = [...merged.values()];
     this.emit('changed');
+  }
+
+  /** Persona files the last refresh dropped, with the reason each was dropped. */
+  loadWarnings(): PersonaLoadWarning[] {
+    throw new Error('not implemented: loadWarnings');
   }
 
   /** Hook for `store.addProject` / `store.removeProject`. */

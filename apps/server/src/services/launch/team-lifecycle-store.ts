@@ -530,6 +530,18 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
+  /** Durable marker that a run's teardown has begun, so a restart does not re-launch its seats. */
+  async function markClosing(recordId: string): Promise<boolean> {
+    void recordId;
+    throw new Error('not implemented: markClosing');
+  }
+
+  /** Whether the run's closing marker is set. */
+  function isClosing(recordId: string): boolean {
+    void recordId;
+    throw new Error('not implemented: isClosing');
+  }
+
   /** A seat nobody can start any more (no spawner after a restart): fail it once so its units are not re-offered. */
   async function failDeferredSeat(recordId: string, slotId: string, reason: string): Promise<TeamLifecycleRecord | undefined> {
     const safeRecordId = boundedString(recordId, 'record id');
@@ -1055,7 +1067,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
-  return { claim, complete, setLaunchResult, addWorker, addDeferredWorker, neverStartedSlotsSync, claimDeferredSpawn, reopenDeferredSpawn, failDeferredSeat, bindDeferredWorker, detachWorkerForRecycle, recordUnitDelivered, updateWorker, workerMaySpawn, claimWorkerRunning,
+  return { claim, complete, markClosing, isClosing, setLaunchResult, addWorker, addDeferredWorker, neverStartedSlotsSync, claimDeferredSpawn, reopenDeferredSpawn, failDeferredSeat, bindDeferredWorker, detachWorkerForRecycle, recordUnitDelivered, updateWorker, workerMaySpawn, claimWorkerRunning,
     reserveModernWorker, acknowledgeModernWorker, markModernWorkerUncertain, modernWorkerMayClose, reconcileModernWorkers,
     fenceCancel: cancel, cancel, reconcileStartup, list, get, findRequest, findModernWorkerBinding };
 }

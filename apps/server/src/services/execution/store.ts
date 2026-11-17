@@ -451,6 +451,8 @@ export interface ExecutionRecord {
   successorExecutionId?: string;
   recoveryRequestId?: string;
   finalSummary?: string;
+  /** Sanitized, bounded reason a FAILED run failed (see boundReason). */
+  failureReason?: string;
   assembledResult?: ExecutionAssembledResultV1;
   usageObservations?: ExecutionUsageObservationV1[];
   usageBaseline?: ExecutionUsageBaselineV1;
@@ -762,6 +764,22 @@ const MAX_STRING = 2_048;
 // persistence") that the normalizer already accepted.
 const MAX_WORK_UNIT_TASK = 16_384;
 const MAX_FINAL_SUMMARY = 64 * 1024;
+
+export const MAX_FAILURE_REASON = 2048;
+
+/** Structured run warning stored as an event: a launch problem or a worker problem. */
+export interface ExecutionRunWarning {
+  kind: 'launch-warning' | 'worker-warning';
+  summary: string;
+  slotId?: string;
+  detail?: string;
+}
+
+/** Bounds untrusted failure text (no control characters, at most `max` characters). */
+export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
+  void text; void max;
+  throw new Error('not implemented: boundReason');
+}
 const MAX_WORK_UNITS = 100;
 export const MAX_REPORTED_BLOCKER_IDS = 100;
 const MAX_UNIT_LIST = 100;
@@ -2327,6 +2345,11 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
+  }
+
+  async function warning(executionId: string, warning: ExecutionRunWarning): Promise<ExecutionRecord> {
+    void executionId; void warning;
+    throw new Error('not implemented: warning');
   }
 
   async function command(
@@ -4206,7 +4229,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, warning, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 /**
