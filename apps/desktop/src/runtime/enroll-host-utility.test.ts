@@ -38,11 +38,22 @@ it.each(['enroll', 'relaunch'] as const)('bounds a missing %s acknowledgement an
   const child = new Child();
   const result = enrollHostUtility(child, input, type);
   const checked = expect(result).rejects.toThrow(`host ${type} timed out`);
-  await vi.advanceTimersByTimeAsync(20_000);
+  await vi.advanceTimersByTimeAsync(80_000);
   await checked;
   expect(child.listenerCount('message')).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
   child.emit('message', { type: 'enrolled', protocolVersion, hostId });
+});
+
+it('allows credential creation and the full handshake before timing out', async () => {
+  vi.useFakeTimers();
+  const child = new Child();
+  const result = enrollHostUtility(child, input);
+  await vi.advanceTimersByTimeAsync(75_000);
+  expect(child.listenerCount('message')).toBe(1);
+  child.emit('message', { type: 'enrolled', protocolVersion, hostId });
+  await expect(result).resolves.toBe(hostId);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it.each(['enroll', 'relaunch'] as const)('reports an unlabelled %s failure', async type => {
@@ -59,4 +70,13 @@ it.each([new Error('closed'), 'closed'])('cleans up when sending the request fai
   await expect(enrollHostUtility(child, input)).rejects.toThrow();
   expect(child.listenerCount('message')).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
+});
+it('validates server-owned evidence before forwarding it over private IPC', async () => {
+  const child = new Child();
+  await expect(enrollHostUtility(child, { ...input, desktopEnrollment: { serverUrl: input.serverUrl } })).rejects.toThrow();
+  expect(child.postMessage).not.toHaveBeenCalled();
+  const desktopEnrollment = { serverInstanceId: hostId, serverUrl: input.serverUrl, host: null };
+  const result = enrollHostUtility(child, { ...input, desktopEnrollment });
+  expect(child.postMessage).toHaveBeenCalledWith(expect.objectContaining({ desktopEnrollment }));
+  child.emit('message', { type: 'enrolled', protocolVersion, hostId }); await result;
 });

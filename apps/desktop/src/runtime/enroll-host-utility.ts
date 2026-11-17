@@ -1,4 +1,4 @@
-import { SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
+import { DesktopHostEnrollmentSchema, SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
 import { z } from 'zod';
 
 interface EnrollmentChild {
@@ -12,10 +12,12 @@ interface EnrollmentChild {
  * to authorize a product host selection or to classify project ownership. */
 export function enrollHostUtility(
   child: EnrollmentChild,
-  input: { serverUrl: string; token: string; dataDir: string },
+  input: { serverUrl: string; token: string; dataDir: string; desktopEnrollment?: unknown },
   type: 'enroll' | 'relaunch' = 'enroll'
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Only this private utility channel may carry server-owned enrollment evidence.
+    const desktopEnrollment = input.desktopEnrollment === undefined ? undefined : DesktopHostEnrollmentSchema.parse(input.desktopEnrollment);
     let settled = false;
     const finish = (error?: Error, hostId?: string) => {
       if (settled) return;
@@ -27,7 +29,9 @@ export function enrollHostUtility(
     };
     const timer = setTimeout(
       () => finish(new Error(type === 'relaunch' ? 'host relaunch timed out' : 'host enroll timed out')),
-      type === 'relaunch' ? 20_000 : 15_000
+      // A fresh enrollment can take 15s to mint credentials plus a 60s
+      // handshake. Do not retry while that request can still commit.
+      80_000
     );
     const onMessage = (message: unknown) => {
       if (!message || typeof message !== 'object') return;
@@ -46,6 +50,7 @@ export function enrollHostUtility(
     child.on('message', onMessage);
     try {
       child.postMessage({ type, protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, ...input,
+        ...(desktopEnrollment ? { desktopEnrollment } : {}),
         provenance: 'non-tunnel', replaceEnrollment: false,
         path: process.env.PATH, ghBinary: process.env.ZCC_GH_BINARY });
     } catch (error) {

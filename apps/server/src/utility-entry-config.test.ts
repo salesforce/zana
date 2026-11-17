@@ -45,7 +45,8 @@ it('refreshes plugin policy and publishes the owner config through utility-proce
   const descriptor = Object.getOwnPropertyDescriptor(process, 'parentPort');
   Object.defineProperty(process, 'parentPort', { configurable: true, value: parent });
   const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-  h.context = { db: {}, hub: { emit: h.emit, subscribe: () => () => undefined }, config: { getConfig: () => h.config } };
+  h.context = { dataDir: root, productInstanceId: '33333333-3333-4333-8333-333333333333',
+    db: {}, hub: { emit: h.emit, subscribe: () => () => undefined }, config: { getConfig: () => h.config } };
   let id = 0;
   let stopped = false;
   const publish = async (channel: string, args: unknown[] = []) => {
@@ -56,6 +57,8 @@ it('refreshes plugin policy and publishes the owner config through utility-proce
   };
   try {
     await import('./utility-entry.js');
+    parent.emit('message', { data: { type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: 'unavailable-enrollment', deadlineAt: new Date(Date.now() + 20_000).toISOString(), operation: 'desktop-host-enrollment' } });
+    await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'unavailable-enrollment', type: 'error', message: 'Desktop server is unavailable' })));
     parent.emit('message', { data: { type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: 'unavailable-checks', deadlineAt: new Date(Date.now() + 20_000).toISOString(), operation: 'named-checks-get', scope: { kind: 'global' } } });
     await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'unavailable-checks', type: 'error', message: 'named checks storage is unavailable' })));
     await publish('config:onChanged', [{ pluginSafeMode: false }]);
@@ -73,6 +76,9 @@ it('refreshes plugin policy and publishes the owner config through utility-proce
       await vi.waitFor(() => expect(parent.postMessage.mock.calls.some(([reply]) => reply.id === requestId)).toBe(true));
       return parent.postMessage.mock.calls.find(([reply]) => reply.id === requestId)![0];
     };
+    expect(await command('desktop-host-enrollment', {})).toMatchObject({ type: 'result', value: {
+      serverInstanceId: h.context.productInstanceId, serverUrl: 'http://127.0.0.1:0/', host: null
+    } });
     const globalChecks = [{ name: 'test', command: 'printf global' }];
     expect(await command('named-checks-set', { scope: { kind: 'global' }, checks: globalChecks })).toMatchObject({ type: 'result', value: globalChecks });
     expect(await command('named-checks-get', { scope: { kind: 'global' } })).toMatchObject({ type: 'result', value: globalChecks });

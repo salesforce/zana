@@ -24,6 +24,10 @@ vi.mock('electron', () => ({ utilityProcess: { fork: (entry: string, _args: stri
       setImmediate(() => child.emit('message', { type: 'ready', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
         url: 'http://127.0.0.1:8780', hostId: 'host-1', instanceId: 'instance-1' }));
     }
+    if (message.type === 'request' && message.operation === 'desktop-host-enrollment') {
+      setImmediate(() => child.emit('message', { type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id,
+        value: { serverInstanceId: '33333333-3333-4333-8333-333333333333', serverUrl: 'http://127.0.0.1:8780', host: null } }));
+    }
     if (message.type === 'stop') setImmediate(() => child.emit('message', { type: 'stopped', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION }));
   };
   const spawn = () => {

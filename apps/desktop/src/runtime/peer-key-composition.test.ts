@@ -46,6 +46,10 @@ function setup() {
       }));
       if (message.type === 'enroll') queueMicrotask(() => child.emit('message', { type: 'enrolled', protocolVersion, hostId: randomUUID() }));
       if (message.type === 'stop') queueMicrotask(() => child.emit('message', { type: 'stopped', protocolVersion }));
+      if (message.operation === 'desktop-host-enrollment') queueMicrotask(() => child.emit('message', {
+        type: 'result', protocolVersion, id: message.id,
+        value: { serverInstanceId: '33333333-3333-4333-8333-333333333333', serverUrl: 'http://127.0.0.1:40101/', host: null }
+      }));
       if (message.operation === 'named-checks-get' || message.operation === 'named-checks-set') queueMicrotask(() => child.emit('message', { type: 'result', protocolVersion, id: message.id, value: message.checks ?? [{ name: 'test', command: 'printf test' }] }));
     });
     queueMicrotask(() => child.emit('spawn'));
