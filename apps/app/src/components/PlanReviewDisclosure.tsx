@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   formatSquadPlanFinding,
   formatSquadPlanFindingProblem,
+  formatSquadPlanSkipImpact,
   squadFindingSeverityLabel,
   type SquadLaunchPrefill,
   type SquadPlanFinding
@@ -127,7 +128,9 @@ export function PlanReviewDisclosure({ prefill, proposalId, proposerTitle, planF
             {bindings.map((binding) => (
               <tr key={binding.stepId}>
                 <th scope="row">{binding.stepId}</th>
-                <td>{binding.unbound ? 'No member can run this step' : binding.label?.trim() || binding.personaId || 'Chosen when it starts'}</td>
+                <td>{binding.unbound ? 'No member can run this step' : binding.label?.trim() || binding.personaId || 'Chosen when it starts'}
+                  {binding.skipsIfFailed?.length ? <p>{formatSquadPlanSkipImpact(binding.skipsIfFailed)}</p> : null}
+                </td>
               </tr>
             ))}
           </tbody>

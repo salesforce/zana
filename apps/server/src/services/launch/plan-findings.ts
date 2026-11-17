@@ -9,7 +9,7 @@ import {
   type SlotRouteSnapshotV1, type WorkUnitRoutingV1
 } from '../execution/routing-policy.js';
 import type { PortablePlanFinding } from '../execution/portable-plan.js';
-import { lintPlan, type LintUnit } from './plan-lint.js';
+import { lintPlan, skipImpact, type LintUnit } from './plan-lint.js';
 import { antiAffinityResults, type AdmissionCheck, type PlanUnitRouting, type TierFitFinding } from './preflight.js';
 
 export interface PlanFindingUnit extends PlanUnitRouting, Partial<Pick<LintUnit, 'dependencies' | 'files' | 'readOnly'>> {
@@ -91,9 +91,12 @@ function preferRoleFindings(units: readonly PlanUnitRouting[], slotRoutes: reado
 }
 
 /** The slot each step would start on: the shared ranking over slots that pass every hard requirement. */
-export function planBindings(units: readonly PlanUnitRouting[], slotRoutes: readonly SlotRouteSnapshotV1[], levelExempt: ReadonlySet<string> = new Set(), now = Date.now()): SquadPlanBinding[] {
+export function planBindings(units: readonly (PlanUnitRouting & Partial<Pick<LintUnit, 'dependencies'>>)[], slotRoutes: readonly SlotRouteSnapshotV1[], levelExempt: ReadonlySet<string> = new Set(), now = Date.now()): SquadPlanBinding[] {
   const pool = workers(slotRoutes);
+  const impact = skipImpact(units.map((unit) => ({ id: unit.id, dependencies: unit.dependencies ?? [] })));
   return units.map((unit) => {
+    const skips = impact.get(unit.id);
+    const skipField = skips?.length ? { skipsIfFailed: skips } : {};
     const ranked = pool
       .filter((slot) => {
         const routing: WorkUnitRoutingV1 | undefined = unit.routing?.minimumLevel && levelExempt.has(slot.slotId)
@@ -104,8 +107,8 @@ export function planBindings(units: readonly PlanUnitRouting[], slotRoutes: read
       .sort((a, b) => compareCheapestFit(a, b));
     const first = ranked[0]?.slot;
     return first
-      ? { stepId: unit.id, slotId: first.slotId, ...(first.label ? { label: first.label } : {}), personaId: first.personaId }
-      : { stepId: unit.id, unbound: true as const };
+      ? { stepId: unit.id, slotId: first.slotId, ...(first.label ? { label: first.label } : {}), personaId: first.personaId, ...skipField }
+      : { stepId: unit.id, unbound: true as const, ...skipField };
   });
 }
 

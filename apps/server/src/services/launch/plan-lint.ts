@@ -134,6 +134,22 @@ export function lintPlan(input: { units: readonly LintUnit[]; workerCount: numbe
 
 /** For each step, the ids of the steps that will not run if it fails (transitive, in plan order). */
 export function skipImpact(units: readonly LintUnit[]): Map<string, string[]> {
-  void units;
-  throw new Error('not implemented: skipImpact');
+  const dependents = new Map<string, string[]>();
+  for (const unit of units) for (const dep of unit.dependencies) dependents.set(dep, [...(dependents.get(dep) ?? []), unit.id]);
+  const order = new Map(units.map((unit, index) => [unit.id, index]));
+  const out = new Map<string, string[]>();
+  for (const unit of units) {
+    // The engine skips a pending step when any dependency failed or was skipped, whatever its failure policy.
+    const reached = new Set<string>();
+    const queue = [unit.id];
+    for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
+      for (const next of dependents.get(id) ?? []) {
+        if (next === unit.id || reached.has(next)) continue;
+        reached.add(next);
+        queue.push(next);
+      }
+    }
+    if (reached.size) out.set(unit.id, [...reached].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)));
+  }
+  return out;
 }

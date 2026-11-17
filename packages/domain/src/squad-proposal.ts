@@ -332,8 +332,8 @@ export interface SquadPlanBinding {
 
 /** One line for the launch card: "If this step fails, these steps will not run: a, b and N more". */
 export function formatSquadPlanSkipImpact(stepIds: readonly string[], shown = 5): string {
-  void stepIds; void shown;
-  throw new Error('not implemented: formatSquadPlanSkipImpact');
+  const rest = stepIds.length - shown;
+  return `If this step fails, these steps will not run: ${stepIds.slice(0, shown).join(', ')}${rest > 0 ? ` and ${rest} more` : ''}`;
 }
 
 export interface SquadPlanCheckSummary {
