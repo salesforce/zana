@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
+import { precedenceHelp } from '@zana-ai/zcc-domain/setting-precedence';
 import { product } from '../../lib/product-client.js';
 import { AlertTriangle, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, Laptop, MessageSquare, RefreshCw, Search, Terminal, XCircle } from 'lucide-react';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@zana-ai/zcc-domain/product';
@@ -857,7 +858,7 @@ export function HarnessView({
         <TextArgsField
           searchId="harness.claude.extra-args"
           label="Extra args"
-          help="Applied first. If a later Project, Persona, or Agent setting uses the same option, the later setting takes priority."
+          help={precedenceHelp('extraArgs')}
           values={config.claudeExtraArgs ?? []}
           placeholder="--plugin-dir /path/to/plugin"
           onChange={(values) => void onUpdate({ claudeExtraArgs: values.length ? values : undefined })}
@@ -1094,8 +1095,7 @@ export function HarnessView({
     <div className="harness-settings">
     <MachineEnvironmentSettings />
     <RegisteredHarnesses config={config} status={status} hostId={thisMachineId} hostName={thisMachine?.name} onUpdate={onUpdate} onRefreshStatus={() => runCheck(false)} checkingStatus={checking} cliDefault={<>
-        <div className="harness-default-card">
-          <Field
+        <Field
             searchId="harness.default-harness"
             label="Default for CLI agents"
             layout="row"
@@ -1120,13 +1120,7 @@ export function HarnessView({
                 }))}
               />
             )}
-          </Field>
-          <div className="harness-inheritance" aria-label="Settings priority">
-            <span>Settings apply in order</span>
-            <ol>{['Global', 'Project', 'Persona', 'Agent'].map((level) => <li key={level}>{level}</li>)}</ol>
-            <span>Later choices take priority.</span>
-          </div>
-        </div>
+        </Field>
         {defaultUnavailable && (
           <p className="settings-help" role="alert">
             {unavailableDefaultMessage(config.defaultHarness!)}

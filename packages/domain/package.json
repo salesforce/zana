@@ -97,6 +97,11 @@
       "source": "./src/launch-options.ts",
       "default": "./src/launch-options.ts"
     },
+    "./setting-precedence": {
+      "types": "./src/setting-precedence.ts",
+      "source": "./src/setting-precedence.ts",
+      "default": "./src/setting-precedence.ts"
+    },
     "./path-encoding": {
       "types": "./src/path-encoding.ts",
       "source": "./src/path-encoding.ts",

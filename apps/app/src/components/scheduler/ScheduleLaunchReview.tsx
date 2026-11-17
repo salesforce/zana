@@ -31,7 +31,7 @@ export function ScheduleLaunchReview({ task, onConfirm, onCancel }: {
           {current.preview?.location ? <p>Location: {current.preview.location.kind === 'new-worktree'
             ? `New worktree from ${current.preview.location.baseBranch}; path assigned at launch`
             : `${current.preview.branch ?? 'HEAD'} - ${current.preview.path}`}</p> : null}
-          <SquadResolvedLaunchDetails resolved={current.resolved} />
+          <SquadResolvedLaunchDetails resolved={current.resolved} projectId={task.projectId} />
         </>
       ) : <p>Resolving launch settings…</p>}
       <button type="button" onClick={onCancel}>Cancel</button>

@@ -2,6 +2,8 @@ import { ProjectSourcesSettings } from './ProjectSourcesSettings.js';
 import { NamedChecksSettings } from '@/components/settings/NamedChecksSettings';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
+import { precedenceHelp } from '@zana-ai/zcc-domain/setting-precedence';
+import { PrecedenceStrip } from '../../components/PrecedenceStrip.js';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   Project,
@@ -732,8 +734,8 @@ export function ProjectHarnessSettings({
       anchorId="project-harnesses"
       searchId="project.harnesses"
       title="AI harnesses"
-      help="Project settings apply after Global defaults and before Persona and Agent choices: Global → Project → Persona → Agent. Later choices take priority when a setting cannot be combined."
     >
+      <PrecedenceStrip settingKey="harness.target" />
       <ThreadProviderDefaultField
         searchId="project.default-thread-provider"
         help="Overrides the global thread default for new threads in this project."
@@ -1111,7 +1113,7 @@ function ClaudeProjectLaunchFields({
       <TextArgsField
         searchId="project.extra-args"
         label="Extra args"
-        help="Applied after Global args and before Persona and Agent args. Later settings take priority when the same option appears more than once."
+        help={precedenceHelp('extraArgs')}
         values={settings.extraArgs ?? []}
         placeholder="--plugin-dir /path/to/plugin"
         onChange={(vals) => save({ extraArgs: vals.length ? vals : undefined })}

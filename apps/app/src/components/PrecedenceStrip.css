@@ -1,0 +1,54 @@
+.precedence-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle, currentColor);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.precedence-strip ol {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--text-primary);
+}
+
+.precedence-strip li + li::before {
+  content: '›';
+  margin-right: 8px;
+  color: var(--text-muted);
+}
+
+.precedence-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* Persona and Squad launch dialogs: rule below the strip separates it from the harness fields. */
+.persona-precedence,
+.precedence-divided {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle, currentColor);
+}
+
+.persona-precedence .precedence-strip,
+.precedence-divided .precedence-strip {
+  margin-top: 0;
+}
+
+/* Inside a form field (Squad editor) the strip is the last of the field's
+   documentation: no rule, tucked under the help text. */
+.scheduler-form-field .precedence-strip {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: 0;
+}

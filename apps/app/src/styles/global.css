@@ -19802,6 +19802,16 @@ body.resizing-col .explorer-resizer::after {
 .scheduler-checkbox-row input[type='checkbox'] {
   margin-top: 3px;
 }
+/* Checkbox right after the setting title. */
+.scheduler-checkbox-row--end {
+  width: fit-content;
+  justify-content: flex-start;
+  align-items: center;
+}
+.scheduler-checkbox-row--end input[type='checkbox'] {
+  margin-top: 0;
+  flex-shrink: 0;
+}
 
 /* ===== Scheduler compact rows =========================================== */
 

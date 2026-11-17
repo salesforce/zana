@@ -1,6 +1,7 @@
 import type { ProjectSettings } from '@zana-ai/zcc-domain/product';
 import type { SettingsSearchEntry, SettingsValueSnapshot } from '../types';
 import { namedChecksEntries } from '../named-checks';
+import { precedenceHelp } from '@zana-ai/zcc-domain/setting-precedence';
 
 // Project settings (ProjectSettingsView + ProjectSourcesSettings). These rows
 // follow the selected project, so values read `snapshot.project.settings` only.
@@ -80,7 +81,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'project',
     anchor: 'project-harnesses',
     label: 'AI harnesses',
-    help: 'Project settings apply after Global defaults and before Persona and Agent choices: Global → Project → Persona → Agent. Later choices take priority when a setting cannot be combined.',
+    help: precedenceHelp('harness.target'),
     keywords: ['harness', 'claude code', 'codex', 'cursor', 'opencode', 'pi', 'precedence', 'overrides'],
     kind: 'subsection'
   },
@@ -143,7 +144,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'project',
     anchor: 'project-harnesses',
     label: 'Extra args',
-    help: 'Applied after Global args and before Persona and Agent args. Later settings take priority when the same option appears more than once.',
+    help: precedenceHelp('extraArgs'),
     keywords: ['cli flags', 'arguments', 'plugin dir', 'claude'],
     kind: 'setting'
   },

@@ -21,6 +21,7 @@ import {
 } from '@zana-ai/zcc-domain/launch-provider';
 import { useUi, useData } from '../store.js';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
+import { PrecedenceStrip } from './PrecedenceStrip.js';
 import { StencilForm } from './ui/Skeleton.js';
 import { HarnessOptionSelect } from './HarnessOptionSelect.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
@@ -470,10 +471,10 @@ function PersonaDetail({
         </button>
       </header>
       <div className="modal-body persona-detail-body">
-        <p className="settings-help persona-form-hint">
-          Persona settings apply after Global and Project defaults, and before Agent choices: Global → Project → Persona → Agent.
-        </p>
         {persona.description && <p className="persona-detail-desc">{persona.description}</p>}
+        <div className="persona-precedence">
+          <PrecedenceStrip settingKey="harness.target" />
+        </div>
         <dl className="persona-detail-grid">
           <PersonaField label="Harness profile" value={persona.baseProfile ? profileLabel(persona.baseProfile) : 'Use launch harness (neutral)'} />
           {persona.modelLevel && (
@@ -895,9 +896,6 @@ function PersonaForm({
         </button>
       </header>
       <div className="modal-body persona-form-body">
-        <p className="settings-help persona-form-hint">
-          Persona settings apply after Global and Project defaults, and before Agent choices: Global → Project → Persona → Agent. Agent choices take priority when a setting cannot be combined.
-        </p>
         <div className="scheduler-form-field">
           <label htmlFor="persona-name">Name</label>
           <input
@@ -939,6 +937,9 @@ function PersonaForm({
           />
         </div>
 
+        <div className="persona-precedence">
+          <PrecedenceStrip settingKey="harness.target" />
+        </div>
         <div className={`persona-routing-grid persona-routing-grid--${baseProfile ? 'pinned' : 'neutral'}`}>
           <div className="scheduler-form-field">
             <label htmlFor="persona-profile">Harness profile</label>

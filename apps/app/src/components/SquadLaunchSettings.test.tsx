@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
@@ -7,8 +7,10 @@ import type { LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
 const preview = vi.hoisted(() => vi.fn());
 const listProjects = vi.hoisted(() => vi.fn());
 const listWorktrees = vi.hoisted(() => vi.fn());
+const getProjectSettings = vi.hoisted(() => vi.fn());
 vi.mock('../lib/product-client.js', () => ({ product: {
-  teams: { preview: (...args: unknown[]) => preview(...args) }, projects: { list: () => listProjects() }, git: { listWorktrees: (...args: unknown[]) => listWorktrees(...args) }
+  teams: { preview: (...args: unknown[]) => preview(...args) }, projects: { list: () => listProjects() }, git: { listWorktrees: (...args: unknown[]) => listWorktrees(...args) },
+  projectSettings: { get: (...args: unknown[]) => getProjectSettings(...args) }
 } }));
 import { SquadLaunchPolicyFields, SquadLaunchSettings, SquadResolvedLaunchDetails } from './SquadLaunchSettings.js';
 
@@ -20,7 +22,7 @@ function Harness({ initial = {}, valid = vi.fn() }: { initial?: LaunchOptions; v
   return <SquadLaunchSettings teamId="team" projectId="p1" goal="goal" coordinationMode="structured" value={value} onChange={setValue} disabled={false} onValidityChange={valid} />;
 }
 function setup() { listProjects.mockResolvedValue([project]); listWorktrees.mockResolvedValue([]); }
-afterEach(() => { cleanup(); vi.useRealTimers(); preview.mockReset(); listProjects.mockReset(); listWorktrees.mockReset(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); preview.mockReset(); listProjects.mockReset(); listWorktrees.mockReset(); getProjectSettings.mockReset(); });
 
 describe('SquadLaunchSettings', () => {
   it('shows trusted path and every readable resolved setting; preview token stays private', async () => {
@@ -70,11 +72,25 @@ describe('SquadLaunchSettings', () => {
     const { rerender } = render(<SquadLaunchPolicyFields value={{}} onChange={vi.fn()} disabled={false} />);
     expect(screen.getByLabelText('Worktree isolation')).toBeTruthy();
     expect(screen.getAllByRole('option', { name: 'Use default' })).toHaveLength(4);
-    expect(screen.getByText(/Use default follows the plan, then Squad settings, then defaults/)).toBeTruthy();
+    expect(screen.getByTestId('precedence-launch.options').textContent).toMatch(/This launch.*Plan.*Squad.*Built-in default/);
     expect(screen.queryByText(/Inherit resolved/)).toBeNull();
     rerender(<SquadLaunchPolicyFields value={{}} onChange={vi.fn()} disabled={false} includeCheckout />);
     expect(screen.queryByLabelText('Worktree isolation')).toBeNull();
     expect(screen.getAllByRole('option', { name: 'Use default' })).toHaveLength(3);
+  });
+
+  it('in Customize launch puts the strip first, above Checkout, once, and documents Checkout', () => {
+    setup(); preview.mockResolvedValue(response());
+    render(<SquadLaunchSettings teamId="team" projectId="p1" goal="goal" coordinationMode="structured" value={{}} onChange={vi.fn()} disabled={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Customize launch' }));
+    const strip = screen.getByTestId('precedence-launch.options');
+    expect(screen.getAllByTestId('precedence-launch.options')).toHaveLength(1);
+    const checkout = screen.getByLabelText('Checkout');
+    expect(strip.compareDocumentPosition(checkout) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const checkoutStrip = screen.getByTestId('precedence-launch.checkout');
+    expect(checkoutStrip.textContent).toMatch(/This launch.*Plan.*Squad.*Project.*Global/);
+    expect(checkoutStrip.textContent).toMatch(/skips the Squad on-complete setting/);
+    expect(screen.queryByText(/Inherit checkout follows/)).toBeNull();
   });
 
   it('updates every policy selector and supports no checks', () => {
@@ -195,6 +211,33 @@ describe('SquadLaunchSettings', () => {
     expect(screen.getByText('Failure policy')).toBeTruthy();
     expect(screen.getByText(/Fail run/)).toBeTruthy();
     expect(screen.queryByText('failurePolicyDefault')).toBeNull();
+  });
+
+  describe('worktree default origin', () => {
+    const defaulted = { ...resolved, worktree: { value: true, source: 'default' } } as typeof resolved;
+
+    it('says Project default when the Project sets worktree isolation', async () => {
+      getProjectSettings.mockResolvedValue({ worktreeIsolation: false });
+      render(<SquadResolvedLaunchDetails resolved={defaulted} projectId="p1" />);
+      await waitFor(() => expect(screen.getByText('(Project default)')).toBeTruthy());
+    });
+
+    it('says Global default when the Project sets nothing', async () => {
+      getProjectSettings.mockResolvedValue({});
+      render(<SquadResolvedLaunchDetails resolved={defaulted} projectId="p1" />);
+      await waitFor(() => expect(screen.getByText('(Global default)')).toBeTruthy());
+    });
+
+    it('keeps plain Default without a project, on failure, or for non-default sources', async () => {
+      getProjectSettings.mockRejectedValue(new Error('offline'));
+      const { unmount } = render(<SquadResolvedLaunchDetails resolved={defaulted} projectId="p1" />);
+      await waitFor(() => expect(getProjectSettings).toHaveBeenCalled());
+      expect(screen.queryByText(/Project default|Global default/)).toBeNull();
+      unmount();
+      render(<SquadResolvedLaunchDetails resolved={defaulted} />);
+      expect(screen.queryByText(/Project default|Global default/)).toBeNull();
+      expect(getProjectSettings).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('keeps resolved values in launch preview and clears named editing lock on blur', async () => {

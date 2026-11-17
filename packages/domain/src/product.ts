@@ -1731,6 +1731,8 @@ export interface TerminalSession {
 export interface SessionMetadataValue {
   label: string;
   value?: string;
+  /** Which settings layer supplied the value (Agent, Persona, Project, Global or Native default). Absent when unknown. */
+  source?: string;
 }
 
 /**
@@ -5257,7 +5259,7 @@ export interface Team {
   leanWorkers?: boolean;
   /** Transport selected for every squad member. Absent persisted teams remain CLI. */
   transport?: SquadTransport;
-  /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
+  /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the built-in default (infer when the orchestrator can plan). */
   defaultPlanning?: SquadPlanning;
   /** Keep the orchestrator session open after successful Squad completion. */
   retainOrchestrator?: boolean;
@@ -5326,7 +5328,7 @@ export interface TeamSummary {
   /** Number of slot rows (NOT the total tab count — slots may have quantity > 1). */
   slotCount: number;
   source?: PersonaSource;
-  /** Planning mode preselected for this Squad. Absent ⇒ the global default. */
+  /** Planning mode preselected for this Squad. Absent ⇒ the built-in default (infer when the orchestrator can plan). */
   defaultPlanning?: SquadPlanning;
   /** Whether agent-started runs need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;

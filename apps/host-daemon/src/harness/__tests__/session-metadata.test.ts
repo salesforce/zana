@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { providerFor } from '../registry.js';
 import { withLiveModelTargets } from '../launch-provider.js';
-import { launchMetadataSnapshot } from '../session-metadata.js';
+import { launchMetadataSnapshot, metadataSourceLabel } from '../session-metadata.js';
 
 describe('launchMetadataSnapshot', () => {
   it('projects only trusted resolved labels into generic runtime metadata', () => {
@@ -24,9 +24,9 @@ describe('launchMetadataSnapshot', () => {
         label: 'Runtime',
         values: [
           { label: 'Provider', value: 'fixture-provider' },
-          { label: 'Model', value: 'fixture-provider/fixture-model' },
-          { label: 'Role', value: 'Build' },
-          { label: 'Execution', value: 'accept-edits' }
+          { label: 'Model', value: 'fixture-provider/fixture-model', source: 'Agent' },
+          { label: 'Role', value: 'Build', source: 'Agent' },
+          { label: 'Execution', value: 'accept-edits', source: 'Agent' }
         ]
       }]
     });
@@ -86,5 +86,21 @@ describe('launchMetadataSnapshot', () => {
 
     expect(snapshot.sections).toEqual([]);
     expect(JSON.stringify(snapshot)).not.toContain('private');
+  });
+});
+
+describe('metadataSourceLabel', () => {
+  it('maps all three resolver vocabularies to one display label', () => {
+    expect(metadataSourceLabel('per-tab')).toBe('Agent');
+    expect(metadataSourceLabel('Agent')).toBe('Agent');
+    expect(metadataSourceLabel('persona')).toBe('Persona');
+    expect(metadataSourceLabel('Project')).toBe('Project');
+    expect(metadataSourceLabel('global')).toBe('Global');
+    expect(metadataSourceLabel('native-default')).toBe('Native default');
+  });
+
+  it('returns undefined for unknown or missing sources', () => {
+    expect(metadataSourceLabel('bogus')).toBeUndefined();
+    expect(metadataSourceLabel(undefined)).toBeUndefined();
   });
 });

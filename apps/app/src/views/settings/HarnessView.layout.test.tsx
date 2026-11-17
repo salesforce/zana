@@ -226,7 +226,6 @@ describe('Harness setup layout', () => {
       expect(update).toHaveBeenCalledWith({ [key]: [value] });
     }
     expect(within(screen.getByRole('group', { name: 'Connection' })).getByRole('textbox', { name: 'Claude Code binary' })).toBeTruthy();
-    expect(screen.getByLabelText('Settings priority').textContent).toContain('GlobalProjectPersonaAgent');
   });
 
   it('explains disabled or missing harnesses and keeps their connection setting editable', async () => {
