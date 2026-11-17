@@ -194,3 +194,17 @@ describe('buildSquadBlockerReport', () => {
     expect(text).not.toContain('answers go through the Inbox');
   });
 });
+
+// QA obligation OBL-003 (REQ-2): a failure reason must stay visible next to partial output.
+// it.fails documents Q-4 (report.ts prefers finalSummary and drops failureReason); flip to `it` with the fix.
+describe('buildSquadReport failure reason beside a summary (REQ-2)', () => {
+  it('shows the failure reason when a failed run has no summary', () => {
+    const text = buildSquadReport(record({ state: 'FAILED' as never, finalSummary: undefined, failureReason: 'worker exited with code 2' }), {});
+    expect(text).toContain('Failure reason: worker exited with code 2');
+  });
+
+  it.fails('Q-4: shows the failure reason when a failed run also has a partial final summary', () => {
+    const text = buildSquadReport(record({ state: 'FAILED' as never, finalSummary: 'Partial work completed', failureReason: 'worker exited with code 2' }), {});
+    expect(text).toContain('worker exited with code 2');
+  });
+});

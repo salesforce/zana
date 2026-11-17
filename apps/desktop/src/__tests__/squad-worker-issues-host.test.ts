@@ -372,3 +372,22 @@ describe('resolveSquadComposerPreview non-window plan error (REQ-4, REQ-5)', () 
     expect((error as Error).name).not.toBe('SquadPreviewAdmissionError');
   });
 });
+
+// QA obligation OBL-014 (REQ-7): unknown-persona reasons must obey the slot bounds.
+// it.fails documents Q-2 (unknownPersonaReason interpolates the id raw); flip to `it` with the fix.
+describe('unknown-persona failed slot reasons are bounded (REQ-7)', () => {
+  it.fails('Q-2: sanitizes the reason for an unresolved persona id that holds an absolute path', async () => {
+    const badId = `/Users/alice/private/${'p'.repeat(40)}\u0000`;
+    h.personas = [persona('orch'), persona('w1')];
+    h.teams = [{ id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch', slots: [{ personaId: 'w1', quantity: 1 }, { personaId: badId, quantity: 1 }] }];
+    const result = await launchTeam('team1', 'p1', structuredReq({ slots: [{ slotId: '0:w1:0', initialTask: 't' }, { slotId: `1:${badId}:0`, initialTask: 't' }, { slotId: 'orchestrator:orch', initialTask: 't' }] }) as never);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.failedSlots.length).toBeGreaterThan(0);
+    for (const failed of result.value.failedSlots) {
+      expect(failed.reason.length).toBeLessThanOrEqual(2048);
+      expect(failed.reason).not.toContain('/Users/alice');
+      expect(failed.reason).not.toMatch(/\u0000/);
+    }
+  });
+});
