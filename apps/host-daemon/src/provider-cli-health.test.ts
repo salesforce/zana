@@ -109,6 +109,29 @@ function successfulCloseSpawner(): ProviderCliInstallProcessSpawner {
   };
 }
 
+function failingCloseSpawner(exitCode: number, stderrOutput: string): ProviderCliInstallProcessSpawner {
+  return {
+    spawn() {
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      return {
+        stdout,
+        stderr,
+        kill() { return true; },
+        onError() {},
+        onClose(listener) {
+          queueMicrotask(() => {
+            stderr.write(stderrOutput);
+            stdout.end();
+            stderr.end();
+            listener(exitCode, null);
+          });
+        }
+      };
+    }
+  };
+}
+
 function cliInspectBehavior(args: {
   executableName: string;
   executablePath: string | null;
@@ -485,6 +508,68 @@ describe('provider CLI health', () => {
     });
     expect(status.installSource).toBe('external');
     expect(status.installAction).toMatchObject({ kind: 'update', command: 'claude update' });
+  });
+
+  it('keeps claude update for npm global Claude Code on non-Windows platforms', async () => {
+    const prefix = path.join(path.sep, 'npm-global');
+    const executable = path.join(prefix, 'bin', 'claude');
+    const packageJson = path.join(prefix, 'lib', 'node_modules', '@anthropic-ai', 'claude-code', 'package.json');
+    const runner = new FakeProviderCliCommandRunner((args) => {
+      const key = commandKey(args);
+      if (key.startsWith('which ')) return { stdout: `${executable}\n` };
+      if (key.includes('--version')) return { stdout: '2.0.0\n' };
+      if (key.includes('doctor')) return { stdout: 'Running: npm-global\nAuto-update channel: latest\n' };
+      if (key.includes('dist-tags')) return { stdout: '{"latest":"2.1.0","stable":"2.1.0"}\n' };
+      if (key.includes('prefix -g')) return { stdout: `${prefix}\n` };
+      if (key.includes('list -g')) {
+        return { stdout: JSON.stringify({ dependencies: { '@anthropic-ai/claude-code': { version: '2.0.0' } } }) };
+      }
+      return {};
+    });
+    const fs = isolatedFs({ pathExists: (candidate) => candidate === packageJson });
+    const status = await inspectProviderCli({
+      definition: getProviderCliDefinition('claudeCode'),
+      runner,
+      nodePlatform: 'darwin',
+      ...fs
+    });
+    expect(status.installSource).toBe('npmGlobal');
+    expect(status.needsUpdate).toBe(true);
+    expect(status.installAction).toMatchObject({
+      kind: 'update',
+      command: 'claude update'
+    });
+  });
+
+  it('maps EBUSY / EPERM on Windows update failure to a locked-process error message', async () => {
+    const prefix = path.join(path.sep, 'npm-global');
+    const executable = path.join(prefix, 'claude.cmd');
+    const packageJson = path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code', 'package.json');
+    const runner = new FakeProviderCliCommandRunner((args) => {
+      const key = commandKey(args);
+      if (key.startsWith('where ')) return { stdout: `${executable}\n` };
+      if (key.includes('--version')) return { stdout: '2.0.0\n' };
+      if (key.includes('doctor')) return { stdout: 'Running: npm-global\nAuto-update channel: latest\n' };
+      if (key.includes('dist-tags')) return { stdout: '{"latest":"2.1.0","stable":"2.1.0"}\n' };
+      if (key.includes('prefix -g')) return { stdout: `${prefix}\n` };
+      if (key.includes('list -g')) {
+        return { stdout: JSON.stringify({ dependencies: { '@anthropic-ai/claude-code': { version: '2.0.0' } } }) };
+      }
+      return {};
+    });
+    const fs = isolatedFs({ pathExists: (candidate) => candidate === packageJson });
+    const result = await runProviderCliInstall({
+      provider: 'claudeCode',
+      actionKind: 'update',
+      nodePlatform: 'win32',
+      runner,
+      ...fs,
+      installProcessSpawner: failingCloseSpawner(1, 'npm ERR! code EBUSY\nnpm ERR! resource busy or locked, copyfile claude.exe')
+    });
+    expect(result.events.some((event) =>
+      event.type === 'error' && event.message.includes('EBUSY/EPERM')
+    )).toBe(true);
+    expect(result.events.at(-1)).toMatchObject({ type: 'completed', success: false });
   });
 
   it('runs the CLI self-update on the PATH binary', () => {

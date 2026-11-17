@@ -611,11 +611,13 @@ export function resolveProviderCliUpdateCommand(args: {
   updateChannel?: 'latest' | 'stable' | null;
 }): ProviderCliActionCommand {
   // `claude update` probes the registry with a 5s timeout and reports a
-  // firewall failure. Global npm installs update through npm itself, the
-  // same command Codex and Pi use, with `npm.cmd` on Windows.
+  // firewall failure. On Windows, global npm installs update through npm itself
+  // with `npm.cmd`, avoiding registry probe failures and PE image lockouts.
+  // Non-Windows npm installs keep native `claude update`.
   if (
     args.definition.key === 'claudeCode'
     && (args.installSource === 'npmGlobal' || (args.npmPrefix !== null && args.npmPrefix !== undefined))
+    && (args.nodePlatform ?? process.platform) === 'win32'
   ) {
     return npmInstallActionCommand(
       args.definition,
@@ -1240,6 +1242,19 @@ export async function runProviderCliInstall(args: {
     if (closeResult) {
       const alreadyFailed = events.some((event) => event.type === 'error');
       let success = closeResult.exitCode === 0 && !alreadyFailed;
+      if (!success && !alreadyFailed && closeResult.exitCode !== 0 && nodePlatform === 'win32') {
+        const fullOutput = events
+          .filter((event): event is ProviderCliInstallEvent & { type: 'output' } => event.type === 'output')
+          .map((event) => event.text)
+          .join('');
+        if (/\b(?:EBUSY|EPERM)\b/i.test(fullOutput)) {
+          events.push({
+            type: 'error',
+            provider: args.provider,
+            message: 'Claude Code update failed because files are locked by a running session. Close running Claude processes and retry (EBUSY/EPERM).'
+          });
+        }
+      }
       if (success) {
         const after = await inspectProviderCli({
           definition,

@@ -115,8 +115,9 @@ function claudeNpmDistTag(
 function claudeUpdateExecution(
   installSource: ProviderInstallationStatus["installSource"],
   updateChannel: "latest" | "stable" | null = null,
+  nodePlatform: NodeJS.Platform = process.platform,
 ) {
-  if (installSource === "npmGlobal") {
+  if (installSource === "npmGlobal" && nodePlatform === "win32") {
     return npmGlobalInstallCommand(CLAUDE_NPM_PACKAGE, claudeNpmDistTag(updateChannel));
   }
   const command = claudeExecutable();
@@ -243,6 +244,7 @@ function buildClaudeProviderInstallationRun(
   status: ProviderInstallationStatus,
   action: "install" | "update",
   updateChannel: "latest" | "stable" | null = null,
+  nodePlatform: NodeJS.Platform = process.platform,
 ): ProviderInstallationRunResult {
   if (status.installAction?.kind !== action) {
     return {
@@ -253,7 +255,7 @@ function buildClaudeProviderInstallationRun(
   const execution =
     action === "install"
       ? downloadedInstallerCommand(CLAUDE_INSTALL_SCRIPT_URL)
-      : claudeUpdateExecution(status.installSource, updateChannel);
+      : claudeUpdateExecution(status.installSource, updateChannel, nodePlatform);
   return {
     available: true,
     command: execution,

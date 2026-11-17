@@ -156,12 +156,11 @@ describe("Claude Code provider maintenance", () => {
     );
   });
 
-  it("uses the same npm update command for display and execution", () => {
-    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  it("uses the same npm update command for display and execution on Windows", () => {
     for (const channel of ["latest", "stable", null] as const) {
       const tag = channel === "stable" ? "stable" : "latest";
-      const execution = __testing.claudeUpdateExecution("npmGlobal", channel);
-      const displayCommand = `${npm} install -g @anthropic-ai/claude-code@${tag}`;
+      const execution = __testing.claudeUpdateExecution("npmGlobal", channel, "win32");
+      const displayCommand = `npm.cmd install -g @anthropic-ai/claude-code@${tag}`;
       expect(execution.displayCommand).toBe(displayCommand);
       const run = __testing.buildProviderInstallationRun(
         {
@@ -180,6 +179,7 @@ describe("Claude Code provider maintenance", () => {
         },
         "update",
         channel,
+        "win32",
       );
       expect(run).toMatchObject({
         available: true,
@@ -188,6 +188,17 @@ describe("Claude Code provider maintenance", () => {
       expect(run.available && run.command.displayCommand).toBe(
         execution.displayCommand,
       );
+    }
+  });
+
+  it("keeps claude update for npmGlobal installs on non-Windows platforms", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const execution = __testing.claudeUpdateExecution("npmGlobal", "latest", platform);
+      expect(execution).toMatchObject({
+        command: "claude",
+        args: ["update"],
+        displayCommand: "claude update",
+      });
     }
   });
 
