@@ -362,7 +362,7 @@ describe('resolveSquadComposerPreview non-window plan error (REQ-4, REQ-5)', () 
     const error = await resolveSquadComposerPreview(previewInput(), { kind: 'shared-owner' }).then(() => undefined, (e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).name).toBe('SquadPreviewAdmissionError');
-    expect((error as Error).message).toMatch(/plan/i);
+    expect((error as Error).message).toBe('no executable steps found');
     expect((error as Error).message).not.toContain(projectDir);
   });
 

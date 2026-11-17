@@ -87,6 +87,15 @@ describe('resolveSquadPlan', () => {
     expect(result.planError).not.toBe('no executable steps found');
   });
 
+  it('plan errors from the parser and normalizer carry no absolute filesystem path', () => {
+    const texts = ['prose goal', stepWithoutScope, '', '```squad-plan\n### a: A\n'];
+    for (const text of texts) {
+      const error = resolveSquadPlan('provided', [text]).planError;
+      expect(error).toBeTruthy();
+      expect(error).not.toMatch(/(^|[\s"'(])(\/(Users|home|private|var|tmp|etc)\b|[A-Za-z]:\\)/);
+    }
+  });
+
   it('falls back to the first parse failure when no candidate has plan steps', () => {
     expect(resolveSquadPlan('provided', ['prose goal']).planError).toBe('no executable steps found');
   });
