@@ -55,6 +55,18 @@ describe('peer conflict review', () => {
     expect(sync.conflicts(doc.id).remoteHeads).toEqual(['remote-head']);
   });
 
+  it('Open history after resolving closes the dialog and shows the History rail tab', async () => {
+    const { doc, harness } = fixture();
+    harness.render(<DocView docId={doc.id} path="README.md" layout="workbench" onOpenPath={() => {}} onDeleted={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Peer conflicts' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Peer conflicts' });
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Resolve reviewed fork' })).toHaveProperty('disabled', false));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Resolve reviewed fork' }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Open history' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Peer conflicts' })).toBeNull());
+    await waitFor(() => expect(document.querySelector('.dd-rail-tab.on')?.textContent).toContain('History'));
+  });
+
   it('resolves merged candidate through doc header while retaining unsaved editor buffer', async () => {
     const { store, sync, doc, harness } = fixture();
     harness.render(<DocView docId={doc.id} path="README.md" layout="workbench" onOpenPath={() => {}} onDeleted={() => {}} />);

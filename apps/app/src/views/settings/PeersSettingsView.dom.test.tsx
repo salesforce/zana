@@ -429,4 +429,16 @@ describe('Copy diagnostics', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Copy diagnostics' }));
     await waitFor(() => expect(screen.getByText('Could not copy diagnostics.')).toBeTruthy());
   });
+  it('reverts the Copied label after a moment and copies an empty report before links load', async () => {
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy diagnostics' }));
+    await screen.findByRole('button', { name: 'Copied' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copy diagnostics' })).toBeTruthy(), { timeout: 4000 });
+    cleanup();
+    api.list.mockReturnValue(new Promise(() => {}));
+    copy.text.mockClear();
+    render(<PeersSettingsView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy diagnostics' }));
+    await waitFor(() => expect(copy.text).toHaveBeenCalled());
+  });
 });
