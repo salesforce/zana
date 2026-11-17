@@ -31,8 +31,8 @@ it('verifies Electron, Chromium and WebKit when Linux dependency preparation cha
   expect(trust).toBeGreaterThan(0);
   expect(workflow.jobs.e2e.steps[trust].run).toBe('git config --global --add safe.directory "$GITHUB_WORKSPACE"');
   expect(trust).toBeLessThan(workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install dependencies'));
-  const tmux = workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install tmux for native PTY coverage');
-  expect(workflow.jobs.e2e.steps[tmux].run).toBe('apt-get update && apt-get install -y --no-install-recommends tmux');
+  const tmux = workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install tmux for native PTY coverage and an sshd for the peer data-boundary spec');
+  expect(workflow.jobs.e2e.steps[tmux].run).toBe('apt-get update && apt-get install -y --no-install-recommends tmux openssh-server openssh-client');
   expect(tmux).toBeGreaterThan(trust);
   expect(tmux).toBeLessThan(workflow.jobs.e2e.steps.findIndex((step: any) => step.name === 'Install dependencies'));
   const commands = workflow.jobs.e2e.steps.map((step: any) => step.run || '').join('\n');
