@@ -845,7 +845,6 @@ function TeamForm({
             and its branch even with uncommitted or unmerged work, and cannot be undone. Merge
             and Delete only apply to completed runs; failed or stopped runs always keep the worktree.
           </p>
-          <PrecedenceStrip settingKey="launch.options" />
         </div>
 
         <div className="scheduler-form-field">

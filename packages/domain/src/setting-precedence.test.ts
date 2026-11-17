@@ -52,6 +52,8 @@ describe('setting precedence table', () => {
     expect(precedenceHelp('tools.allowedDenied')).toContain('Layers combine.');
     expect(precedenceHelp('claude.permissionMode')).toContain('The last value given wins.');
     expect(precedenceHelp('squad.launchApproval')).toContain('The strictest layer wins.');
+    // `last` rows list layers in emission order, matching their note.
+    expect(precedenceHelp('pi.thinking')).toContain('Layers: Global, Project, Persona, Agent.');
     // Row without a note.
     expect(precedenceHelp('squad.routingEnforced')).toBe(
       'Checked first to last: Squad, then Global. The first layer that sets a value wins.'

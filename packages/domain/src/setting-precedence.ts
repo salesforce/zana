@@ -4,7 +4,9 @@
  * so the in-app prose cannot drift from the code.
  *
  * A setting is listed only if a user can set it at two or more layers through
- * a UI control. Layers are ordered highest priority first.
+ * a UI control. Layers are ordered highest priority first for `first` rows
+ * (the order they are checked) and in emission order, applied first to last,
+ * for `last` rows (the last one wins).
  *
  * This table describes behaviour; it does not drive it. Resolver-backed
  * `first` rows are pinned by contract tests that run each layer through the
@@ -120,7 +122,7 @@ export const SETTING_PRECEDENCE = [
   {
     key: 'pi.thinking',
     label: 'PI thinking level',
-    layers: ['agent', 'persona', 'project', 'global', 'default'],
+    layers: ['global', 'project', 'persona', 'agent'],
     mergeRule: 'last',
     note: 'The last thinking argument on the command line wins: Global, then Project, then Persona, then the tab.',
     evidence: [

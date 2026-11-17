@@ -106,6 +106,8 @@ describe('SquadEditor orchestrator toggle (edit form)', () => {
     for (const key of ['launch.options', 'squad.routingEnforced', 'squad.leanWorkers', 'squad.planning']) {
       expect(html).toContain(`data-testid="precedence-${key}"`);
     }
+    // One launch-options strip for the worktree and on-complete fields, not one each.
+    expect(html.split('data-testid="precedence-launch.options"')).toHaveLength(2);
     // Approval is a floor: a rule line, not an ordered strip.
     expect(html).toContain('data-testid="precedence-squad.launchApproval"');
     expect(html).toContain('The strictest layer wins.');
