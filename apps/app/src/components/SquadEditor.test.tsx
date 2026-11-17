@@ -100,6 +100,18 @@ describe('SquadEditor orchestrator toggle (edit form)', () => {
     expect(html).toContain('Manual assignments are not checked.');
   });
 
+  it('documents precedence under each setting that layers', () => {
+    const html = renderToStaticMarkup(<SquadEditor team={team} mode="edit" onClose={vi.fn()} />);
+
+    for (const key of ['launch.options', 'squad.routingEnforced', 'squad.leanWorkers', 'squad.planning']) {
+      expect(html).toContain(`data-testid="precedence-${key}"`);
+    }
+    // Approval is a floor: a rule line, not an ordered strip.
+    expect(html).toContain('data-testid="precedence-squad.launchApproval"');
+    expect(html).toContain('The strictest layer wins.');
+    expect(html).not.toContain('Use the global default');
+  });
+
   it('exposes a whole-squad transport selector with CLI as the default', () => {
     const html = renderToStaticMarkup(
       <SquadEditor team={team} mode="edit" onClose={vi.fn()} />

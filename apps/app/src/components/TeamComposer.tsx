@@ -682,7 +682,7 @@ export function TeamComposer({
           <button type="button" className="launch-advanced-toggle launch-disclosure-button" aria-expanded={reviewOpen} onClick={() => { setReviewOpen((open) => !open); setCustomizeOpen(false); }}>Review settings</button>
         </div>
         {reviewOpen ? <div className="launch-advanced launch-advanced-card squad-launch-review" aria-label="Reviewed launch settings">
-          {resolved ? <SquadResolvedLaunchDetails resolved={resolved} /> : <p>Launch settings are not available yet.</p>}
+          {resolved ? <SquadResolvedLaunchDetails resolved={resolved} projectId={projectId || undefined} /> : <p>Launch settings are not available yet.</p>}
         </div> : null}
         {customizeOpen ? <div id="squad-customize-launch" className="launch-advanced launch-advanced-card">
         {!reviewedBound ? <SquadLaunchPolicyFields value={effectiveOptions} onChange={setLaunchOptions} disabled={launching} includeCheckout={false} /> : null}

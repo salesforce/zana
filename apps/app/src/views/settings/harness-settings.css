@@ -247,18 +247,6 @@
   color: var(--text-muted);
 }
 
-.harness-default-card {
-  padding: 16px;
-  margin: 0 0 16px;
-  border: 1px solid var(--harness-divider);
-  border-radius: 10px;
-  background: var(--bg-panel);
-}
-
-.harness-default-card > .settings-field {
-  margin: 0;
-}
-
 .harness-settings .settings-field--row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(120px, 220px);
@@ -286,35 +274,6 @@
   grid-row: 2;
   margin: 0;
   align-self: start;
-}
-
-.harness-inheritance {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--harness-divider);
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.harness-inheritance ol {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  color: var(--text-primary);
-}
-
-.harness-inheritance li + li::before {
-  content: '›';
-  margin-right: 8px;
-  color: var(--text-muted);
 }
 
 .harness-settings .harness-cli-options {
