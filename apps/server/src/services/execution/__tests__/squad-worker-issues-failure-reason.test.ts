@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SquadExecutionService } from '../service.js';
+import { failsOnFailedSlot, SquadExecutionService } from '../service.js';
 import { boundReason, createExecutionStore, joinFailedSlotReasons, MAX_FAILURE_REASON, type ExecutionRecord } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 import { executionBoardProjection } from '../projection.js';
@@ -150,6 +150,12 @@ describe('joinFailedSlotReasons (REQ-2, REQ-3)', () => {
     const joined = joinFailedSlotReasons([{ slotId: 's1', reason: 'a'.repeat(1200) }, { slotId: 's2', reason: 'b'.repeat(1200) }]);
     expect(joined.length).toBeLessThanOrEqual(MAX_FAILURE_REASON);
     expect(joined).toContain('s2: ');
+  });
+});
+
+describe('failsOnFailedSlot (REQ-10, REQ-11)', () => {
+  it.each([['structured', true], ['freeform', false], ['job-team', true], ['interactive-team', true], ['autonomous-team', true], [undefined, true]] as const)('%s -> %s', (mode, expected) => {
+    expect(failsOnFailedSlot(mode)).toBe(expected);
   });
 });
 

@@ -472,6 +472,15 @@ function countedRecordId(record: ExecutionRecord, lifecycle: ExtractedLifecycle 
   return worker?.deliveredUnitCount === undefined ? undefined : lifecycle?.recordId;
 }
 
+/**
+ * Whether a failed launch slot fails the run. Only freeform continues with a warning (D1); structured and every
+ * other TeamCoordinationMode (interactive-team, autonomous-team, job-team, or unset) fail, as before this change.
+ * Launch and reconcile both use this so they cannot disagree.
+ */
+export function failsOnFailedSlot(mode: import('@zana-ai/zcc-domain/product').TeamCoordinationMode | undefined): boolean {
+  return mode !== 'freeform';
+}
+
 /** True when a worker's stop was caused by our own teardown (user Stop/Cancel), so it must not raise a worker warning. */
 export function workerStoppedByTeardown(lifecycle: { closing?: boolean; state?: string } | undefined, worker: { process?: string } | undefined): boolean {
   return lifecycle?.closing === true || lifecycle?.state === 'canceled' || worker?.process === 'canceled';
@@ -1023,13 +1032,13 @@ export class ExecutionService {
     }
   }
 
-  /** Structured runs fail at once on a failed slot; freeform runs continue with a launch-warning event. */
+  /** Runs fail at once on a failed slot unless freeform (see failsOnFailedSlot); freeform runs continue with a launch-warning event. */
   private async settleFailedSlots(
     record: ExecutionRecord,
     failed: ReadonlyArray<{ slotId: string; reason: string }>
   ): Promise<ExecutionRecord> {
     if (!failed.length) return record;
-    if (record.coordinationMode === 'structured') return this.failRun(record, joinFailedSlotReasons(failed));
+    if (failsOnFailedSlot(record.coordinationMode)) return this.failRun(record, joinFailedSlotReasons(failed));
     try {
       const prefix = `Launch continued without ${failed.length} failed slot(s): `;
       const warned = await this.deps.store.warning(record.id, {
@@ -3978,7 +3987,7 @@ export class ExecutionService {
       return record;
     }
     // A freeform run continues past a failed slot with its launch warning (REQ-11); every other mode keeps failing.
-    if (record.coordinationMode !== 'freeform' && lifecycle.launchResult?.failedSlots?.length) {
+    if (failsOnFailedSlot(record.coordinationMode) && lifecycle.launchResult?.failedSlots?.length) {
       const details = joinFailedSlotReasons(lifecycle.launchResult.failedSlots as Array<{ slotId?: unknown; reason?: unknown }>);
       return this.transitionOrCurrent(record, 'FAILED', 'error', details || 'One or more Team slots failed to launch');
     }
