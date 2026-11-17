@@ -53,6 +53,19 @@ describe('skipImpact (REQ-10, D8)', () => {
     expect(impact.get('s1')).toEqual(['s2', 's3', 's4', 's5', 's6', 's7']);
     expect(asObject(impact)['s8'] ?? []).toEqual([]);
   });
+  it('A1: failing a loop review skips the dependents of its fix unit, like the engine', () => {
+    const review = { ...u('review', ['impl']), loop: { fixUnitId: 'fix' } } as LintUnit;
+    const impact = skipImpact([u('impl'), review, u('fix', ['review']), u('after', ['fix']), u('later', ['after'])]);
+    expect(impact.get('review')).toEqual(['fix', 'after', 'later']);
+    expect(impact.get('impl')).toEqual(['review', 'fix', 'after', 'later']);
+    const detached = skipImpact([u('impl'), review, u('fix'), u('after', ['fix'])]);
+    expect(detached.get('review')).toEqual(['after']);
+  });
+  it('A2: gives no skip impact above the step cap', () => {
+    const many = Array.from({ length: 201 }, (_, i) => u(`s${i}`, i ? [`s${i - 1}`] : []));
+    expect(skipImpact(many).size).toBe(0);
+    expect(skipImpact(many.slice(0, 200)).get('s0')).toHaveLength(199);
+  });
 });
 
 describe('planBindings skipsIfFailed (REQ-9, REQ-8)', () => {
@@ -81,5 +94,18 @@ describe('planBindings skipsIfFailed (REQ-9, REQ-8)', () => {
   it('keeps an unbound step unbound and still lists its dependents', () => {
     const [a] = planBindings([{ id: 'a', dependencies: [] as string[], routing: { version: 1 as const, requiredRole: 'nobody' } }, { id: 'b', dependencies: ['a'] }], slots);
     expect(a).toMatchObject({ stepId: 'a', unbound: true, skipsIfFailed: ['b'] });
+  });
+  it('A1: carries a loop plan through to the bindings', () => {
+    const [review] = planBindings([{ id: 'review', dependencies: [], loop: { version: 1, until: 'PASS', max: 2, fixUnitId: 'fix' } } as never, { id: 'fix', dependencies: ['review'] }, { id: 'after', dependencies: ['fix'] }], slots);
+    expect(review.skipsIfFailed).toEqual(['fix', 'after']);
+  });
+  it('A3: adds the failure policy only to a step that has dependents and a policy', () => {
+    const [retry, failRun, none, last] = planBindings([
+      { id: 'a', dependencies: [], onFailure: { kind: 'retry' } } as never, { id: 'b', dependencies: ['a'], onFailure: { kind: 'fail-run' } } as never,
+      { id: 'c', dependencies: ['b'] }, { id: 'd', dependencies: ['c'], onFailure: { kind: 'retry' } } as never], slots);
+    expect(retry.failurePolicy).toBe('retry');
+    expect(failRun.failurePolicy).toBe('fail-run');
+    expect(none).not.toHaveProperty('failurePolicy');
+    expect(last).not.toHaveProperty('failurePolicy');
   });
 });

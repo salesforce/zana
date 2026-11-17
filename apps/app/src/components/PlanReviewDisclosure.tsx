@@ -129,7 +129,7 @@ export function PlanReviewDisclosure({ prefill, proposalId, proposerTitle, planF
               <tr key={binding.stepId}>
                 <th scope="row">{binding.stepId}</th>
                 <td>{binding.unbound ? 'No member can run this step' : binding.label?.trim() || binding.personaId || 'Chosen when it starts'}
-                  {binding.skipsIfFailed?.length ? <p>{formatSquadPlanSkipImpact(binding.skipsIfFailed)}</p> : null}
+                  {binding.skipsIfFailed?.length ? <p>{formatSquadPlanSkipImpact(binding.skipsIfFailed, undefined, binding.failurePolicy)}</p> : null}
                 </td>
               </tr>
             ))}

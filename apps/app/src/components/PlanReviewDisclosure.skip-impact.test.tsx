@@ -42,4 +42,8 @@ describe('launch card skip impact (REQ-9, REQ-8)', () => {
     expect(screen.getByTestId('plan-findings-warning').textContent).toContain('Only 1 step can run at the same time');
     expect(screen.getByTestId('plan-findings-warning').textContent).toContain('Launch is still allowed');
   });
+  it('A3: shows the retry wording when the step has a retry policy', () => {
+    render(<PlanReviewDisclosure prefill={{ planSummary: 'x', planBindings: [{ ...bind('a', ['b']), failurePolicy: 'retry' }, bind('b')] }} />);
+    expect(rowOf('a').textContent).toContain('If this step still fails after its retries, these steps will not run: b');
+  });
 });

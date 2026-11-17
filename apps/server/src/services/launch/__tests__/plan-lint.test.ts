@@ -167,4 +167,26 @@ describe('correctness obligations (QA, CodeNod OBL-001, OBL-002)', () => {
     const found = lintPlan({ units: [u('a', [], ['packages/ui/Button.tsx'])], workerCount: undefined });
     expect(found.filter((f) => f.stepId === 'a')).toEqual([]);
   });
+  it('Q1: skips the overlap and width work above the step cap, so no lint path is unbounded', () => {
+    const shared = Array.from({ length: 300 }, (_, i) => u(`s${i}`, [], ['same.ts']));
+    expect(lintPlan({ units: shared, workerCount: 5 }).some((f) => /write/i.test(f.detail ?? ''))).toBe(false);
+    expect(planParallelWidth(shared)).toBeUndefined();
+  });
+  it('Q1: computes the closure of a long chain below the cap without recursion', () => {
+    const units = Array.from({ length: 200 }, (_, i) => u(`s${i}`, i ? [`s${i - 1}`] : [], [`f${i}.ts`]));
+    expect(planParallelWidth(units)).toBe(1);
+  });
+  it('Q2: a UI path with a different contract file is mixed, a single UI-package file is not', () => {
+    const mixed = lintPlan({ units: [u('a', [], ['packages/domain/x.ts', 'apps/app/src/components/Y.tsx'])], workerCount: undefined });
+    expect(mixed.filter((f) => f.stepId === 'a')).toHaveLength(1);
+    expect(lintPlan({ units: [u('a', [], ['apps/app/src/api/x.ts'])], workerCount: undefined })).toEqual([]);
+    expect(lintPlan({ units: [u('a', [], ['packages/ui/Button.tsx', 'apps/server/src/y.ts'])], workerCount: undefined }).some((f) => f.stepId === 'a')).toBe(true);
+  });
+  it('Q3: the same file spelled "./x/y.ts", "x//y.ts" and "x\\y.ts" is one path for the overlap check', () => {
+    const found = lintPlan({ units: [u('a', [], ['./x/y.ts']), u('b', [], ['x\\y.ts']), u('c', [], ['x//y.ts'])], workerCount: undefined });
+    expect(found.filter((f) => /can run at the same time but both write x\/y\.ts/.test(f.detail ?? ''))).toHaveLength(3);
+  });
+  it('F4: a plan with a cycle yields no width and no overlap findings and does not throw', () => {
+    expect(lintPlan({ units: [u('a', ['b'], ['x']), u('b', ['a'], ['x'])], workerCount: 2 })).toEqual([]);
+  });
 });

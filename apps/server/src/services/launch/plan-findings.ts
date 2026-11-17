@@ -12,7 +12,7 @@ import type { PortablePlanFinding } from '../execution/portable-plan.js';
 import { lintPlan, skipImpact, type LintUnit } from './plan-lint.js';
 import { antiAffinityResults, type AdmissionCheck, type PlanUnitRouting, type TierFitFinding } from './preflight.js';
 
-export interface PlanFindingUnit extends PlanUnitRouting, Partial<Pick<LintUnit, 'dependencies' | 'files' | 'readOnly'>> {
+export interface PlanFindingUnit extends PlanUnitRouting, Partial<Pick<LintUnit, 'dependencies' | 'files' | 'readOnly' | 'loop' | 'onFailure'>> {
   requires?: { skills?: readonly string[]; mcpServers?: readonly string[] };
 }
 
@@ -90,13 +90,21 @@ function preferRoleFindings(units: readonly PlanUnitRouting[], slotRoutes: reado
   return out;
 }
 
+const toLintUnit = (unit: Pick<PlanFindingUnit, 'id' | 'dependencies' | 'files' | 'readOnly' | 'loop' | 'onFailure'>): LintUnit => ({
+  id: unit.id, dependencies: unit.dependencies ?? [],
+  ...(unit.files ? { files: unit.files } : {}), ...(unit.readOnly === undefined ? {} : { readOnly: unit.readOnly }),
+  ...(unit.loop ? { loop: { fixUnitId: unit.loop.fixUnitId } } : {}), ...(unit.onFailure ? { onFailure: { kind: unit.onFailure.kind } } : {})
+});
+
 /** The slot each step would start on: the shared ranking over slots that pass every hard requirement. */
-export function planBindings(units: readonly (PlanUnitRouting & Partial<Pick<LintUnit, 'dependencies'>>)[], slotRoutes: readonly SlotRouteSnapshotV1[], levelExempt: ReadonlySet<string> = new Set(), now = Date.now()): SquadPlanBinding[] {
+export function planBindings(units: readonly (PlanUnitRouting & Partial<Pick<LintUnit, 'dependencies' | 'loop' | 'onFailure'>>)[], slotRoutes: readonly SlotRouteSnapshotV1[], levelExempt: ReadonlySet<string> = new Set(), now = Date.now()): SquadPlanBinding[] {
   const pool = workers(slotRoutes);
-  const impact = skipImpact(units.map((unit) => ({ id: unit.id, dependencies: unit.dependencies ?? [] })));
+  const impact = skipImpact(units.map(toLintUnit));
   return units.map((unit) => {
     const skips = impact.get(unit.id);
-    const skipField = skips?.length ? { skipsIfFailed: skips } : {};
+    const policy = unit.onFailure?.kind;
+    const skipField = skips?.length
+      ? { skipsIfFailed: skips, ...(policy === 'retry' || policy === 'fail-run' ? { failurePolicy: policy } : {}) } : {};
     const ranked = pool
       .filter((slot) => {
         const routing: WorkUnitRoutingV1 | undefined = unit.routing?.minimumLevel && levelExempt.has(slot.slotId)
@@ -118,11 +126,6 @@ export function hardFindingCounts(findings: readonly SquadPlanFinding[]): Record
   for (const finding of findings) if (finding.severity === 'blocking') counts[finding.requirement] = (counts[finding.requirement] ?? 0) + 1;
   return counts;
 }
-
-const toLintUnit = (unit: PlanFindingUnit): LintUnit => ({
-  id: unit.id, dependencies: unit.dependencies ?? [],
-  ...(unit.files ? { files: unit.files } : {}), ...(unit.readOnly === undefined ? {} : { readOnly: unit.readOnly })
-});
 
 export function buildPlanFindings(input: PlanFindingInput): SquadPlanFinding[] {
   const now = input.now ?? Date.now();

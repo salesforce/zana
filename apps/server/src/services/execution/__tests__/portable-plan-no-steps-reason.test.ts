@@ -16,14 +16,26 @@ describe('no-steps explanation (REQ-5)', () => {
     expect(messages('   \n')).toMatch(/empty/i);
     expect(messages('   \n')).toMatch(/\b(add|paste|write)\b/i);
   });
-  it('says headings were found but none has a Work field, and what to change', () => {
+  it('F1: a plan with Work lines but no step marker is told to add the marker or an Execution Plan heading', () => {
+    const text = '### a: One\n- **Work:** do it\n- **Depends on:** None\n- **Write scope:** `a.txt`\n- **Verification:** ok\n';
+    const said = messages(text);
+    expect(said).toMatch(/1 step heading/);
+    expect(said).toMatch(/executable-step/);
+    expect(said).toMatch(/## Execution Plan/);
+    expect(said).not.toMatch(/Work/);
+  });
+  it('F1: counts headings in the squad-plan block the parser read, not the rest of the document', () => {
+    const text = '### x: Outside\n### y: Outside too\n\n```squad-plan\n### a: Inside\n- **Work:** w\n```\n';
+    expect(messages(text)).toMatch(/1 step heading,/);
+  });
+  it('says headings were found but are not marked as steps, and what to change', () => {
     const text = '# Plan\n\n### alpha: First thing\n- **Depends on:** None\n\n### beta: Second thing\n- **Depends on:** alpha\n';
     const result = failure(text);
     expect(result.reason).toBe('no executable steps found');
     expect(result.findings.some((f) => f.severity === 'blocking' && f.requirement === 'plan')).toBe(true);
     const text2 = messages(text);
     expect(text2).toMatch(/heading/i);
-    expect(text2).toMatch(/Work/);
+    expect(text2).toMatch(/executable-step/);
     expect(text2).toMatch(/\b(add|give)\b/i);
   });
   it('says there are no step headings at all, and what a step looks like', () => {

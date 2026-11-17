@@ -784,9 +784,12 @@ const STEP_HEADING_SHAPE = /^\s*###\s+[A-Za-z0-9][A-Za-z0-9_-]*\s*:\s*\S/;
 function failureMessage(reason: string, text: string): string {
   if (reason === EMPTY_PLAN_REASON) return `${reason}. The plan is empty: paste or write the plan, with one \`### <id>: <title>\` block per step.`;
   if (reason !== NO_STEPS_REASON) return reason;
-  const headings = text.split(/\r?\n/).filter((line) => STEP_HEADING_SHAPE.test(line)).length;
+  // Count in the text the parser read (the squad-plan block when there is one), not the whole document.
+  // This reason is only returned after extractSquadPlan succeeded, so the extraction cannot fail here.
+  const read = (extractSquadPlan(text) as { text: string }).text;
+  const headings = read.split(/\r?\n/).filter((line) => STEP_HEADING_SHAPE.test(line)).length;
   if (!headings) return `${reason}. The plan has no step headings: write each step as a \`### <id>: <title>\` block with a Work line under it.`;
-  return `${reason}. The plan has ${headings} step heading${headings === 1 ? '' : 's'}, but none has a Work field: add a \`- **Work:** ...\` line under each step.`;
+  return `${reason}. The plan has ${headings} step heading${headings === 1 ? '' : 's'}, but none is marked as a step: add \`<!-- executable-step -->\` at the end of each step heading, or put the steps under a \`## Execution Plan\` heading.`;
 }
 
 function withFailureMeta(failure: { ok: false; reason: string }, text: string): Extract<PortablePlanParse, { ok: false }> {

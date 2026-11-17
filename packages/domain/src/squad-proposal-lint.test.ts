@@ -56,4 +56,8 @@ describe('formatSquadPlanFindingProblem for a lint Check (REQ-7, D1)', () => {
     const block = formatSquadPlanFindingProblem({ ...lintWarning('a', 'it is broken.'), severity: 'blocking' });
     expect(block).not.toContain('Launch is still allowed');
   });
+  it('A3: says what a failure policy changes', () => {
+    expect(formatSquadPlanSkipImpact(['b'], 5, 'retry')).toBe('If this step still fails after its retries, these steps will not run: b');
+    expect(formatSquadPlanSkipImpact(['b', 'c'], 1, 'fail-run')).toBe('If this step fails, the whole run stops and these steps will not run: b and 1 more');
+  });
 });
