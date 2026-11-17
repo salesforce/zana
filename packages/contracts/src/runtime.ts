@@ -27,7 +27,21 @@ export const PRODUCT_EVENT_SNAPSHOT_CHANNELS: ReadonlySet<string> = new Set([
   'config:onChanged', 'scheduler:onChanged', 'scheduler:groups:onChanged', 'scheduler:onTemplatesChanged', 'goals:onChanged',
   'followups:onChanged', 'personas:onChanged', 'teams:onChanged', 'quickPrompts:onChanged', 'extensions:onChanged'
 ]);
-export const SERVER_RUNTIME_PROTOCOL_VERSION = 18;
+// Desktop enrollment now carries server-owned identity evidence over private IPC.
+export const SERVER_RUNTIME_PROTOCOL_VERSION = 19;
+/** Private desktop/server/daemon IPC only. Never expose the registry key hash to a renderer. */
+export const DesktopHostEnrollmentSchema = z.object({
+  serverInstanceId: z.string().uuid(),
+  serverUrl: z.string().url().refine(value => {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'http:' && url.hostname === '127.0.0.1' && url.pathname === '/' &&
+        !url.username && !url.password && !url.search && !url.hash;
+    } catch { return false; }
+  }),
+  host: z.object({ hostId: z.string().uuid(), hostKeyHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict().nullable()
+}).strict();
+export type DesktopHostEnrollment = z.infer<typeof DesktopHostEnrollmentSchema>;
 const ServerRuntimeProtocolVersionSchema = z.literal(SERVER_RUNTIME_PROTOCOL_VERSION);
 const RequestIdSchema = z.string().uuid();
 const DeadlineSchema = z.string().datetime();
@@ -503,6 +517,7 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('library-agent'), request: LibraryAgentRequestSchema }).strict(),
   ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('library-document'), request: LibraryDocumentRequestSchema }).strict(),
   ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('app-version') }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('desktop-host-enrollment') }).strict(),
   ServerRuntimeRequestBaseSchema.extend({ operation: z.literal('projects-list') }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('projects-add'),

@@ -3,6 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node
 import { join } from 'node:path';
 
 export interface HostDaemonAuth {
+  /** Persistent product identity, attested by desktop's private server IPC. */
+  desktopServerId?: string;
   provenance?: 'tunnel' | 'non-tunnel';
   serverUrl?: string;
   enrollmentId?: string;

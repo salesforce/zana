@@ -4,6 +4,15 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { boundarySpecs, changedLines, codeLines, coverageFailures, runVerification, mergeCoverage } from './ci-verification.mjs';
 
+it('checks desktop enrollment recovery when identity, persistence or the startup transport changes', () => {
+  for (const path of ['apps/host-daemon/src/enroll-runtime.ts', 'apps/host-daemon/src/machine-auth.ts',
+    'apps/server/src/desktop-host-enrollment.ts', 'apps/server/src/utility-entry.ts', 'apps/server/src/static-host.ts',
+    'apps/desktop/src/runtime/enroll-host-utility.ts', 'apps/desktop/src/runtime/runtime-supervisor.ts']) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/desktop-enrollment-port-churn.spec.ts', 'e2e/runtime-recovery.spec.ts']));
+  }
+  expect(boundarySpecs(['docs/readme.md'])).not.toContain('e2e/desktop-enrollment-port-churn.spec.ts');
+});
+
 it('checks recovery through the built app whenever its UI, service or distribution changes', () => {
   for (const path of ['apps/app/src/views/settings/DevelopmentView.tsx', 'apps/server/src/plugins/plugin-recovery-runtime.ts', 'apps/server/src/plugins/plugin-service.ts', 'scripts/before-pack-plugins.mjs', '.github/workflows/release.yml']) {
     expect(boundarySpecs([path])).toContain('e2e/development-recovery.spec.ts');

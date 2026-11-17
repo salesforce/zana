@@ -11,6 +11,7 @@ import { disposeHostFsWatcher } from './workspace-fs-watch.js';
 import { connectHostFetch, readConnectHostAccess } from './connect-access.js';
 import { resolveZccDataDir } from './host-config.js';
 import { resolveProjectCatalogueSource } from './project-catalogue.js';
+import { DesktopHostEnrollmentSchema, type DesktopHostEnrollment } from '@zana-ai/zcc-contracts/runtime';
 
 export interface EnrolledHostDaemon {
   hostId: string;
@@ -42,6 +43,7 @@ async function mintCredentials(options: {
   instanceId: string;
   connectCredential?: string;
   provenance?: HostDaemonAuth['provenance'];
+  desktopServerId?: string;
   signal?: AbortSignal;
 }): Promise<HostDaemonAuth> {
   options.signal?.throwIfAborted();
@@ -61,6 +63,7 @@ async function mintCredentials(options: {
     ...(options.connectCredential ? { enrollmentId: createHash('sha256').update(options.token).digest('hex') } : {}),
     hostName: options.hostName ?? detectHostName(),
     serverUrl: options.serverUrl,
+    ...(options.desktopServerId ? { desktopServerId: options.desktopServerId } : {}),
     ...(options.provenance ? { provenance: options.provenance } : {})
   };
 }
@@ -125,14 +128,35 @@ export function sameEnrolledServer(enrolled: string, requested: string, provenan
 
 export function assertEnrollmentSafe(options: {
   dataDir: string; serverUrl: string; hostId?: string; replaceEnrollment?: boolean;
+  /** Evidence from the desktop-owned server's private IPC, never from a network response or CLI. */
+  desktopEnrollment?: DesktopHostEnrollment;
 }): void {
+  const desktop = options.desktopEnrollment === undefined ? undefined : DesktopHostEnrollmentSchema.parse(options.desktopEnrollment);
+  if (desktop && trimUrl(desktop.serverUrl) !== trimUrl(options.serverUrl)) {
+    throw new Error('Desktop enrollment address does not match the running server');
+  }
   const access = readConnectHostAccess(options.dataDir, options.serverUrl);
   if (!options.replaceEnrollment && access && options.hostId && access.hostId !== options.hostId) {
     throw new Error('Machine access host mismatch');
   }
   const existing = readHostAuth(options.dataDir);
   if (!existing || options.replaceEnrollment) return;
-  if (!existing.serverUrl || !sameEnrolledServer(existing.serverUrl, options.serverUrl, existing.provenance)) {
+  if (desktop) {
+    // A loopback address alone says nothing about server ownership. The server
+    // process launched by main must recognize this exact saved host and key.
+    let local = false;
+    try {
+      const previous = new URL(existing.serverUrl ?? '');
+      local = loopbackHost(previous.href) && previous.protocol === 'http:' && previous.pathname === '/' &&
+        !previous.username && !previous.password && !previous.search && !previous.hash;
+    } catch { /* Legacy or foreign addresses cannot establish desktop ownership. */ }
+    if (!local || existing.provenance === 'tunnel' ||
+      (existing.desktopServerId !== undefined && existing.desktopServerId !== desktop.serverInstanceId) ||
+      desktop.host?.hostId !== existing.hostId ||
+      desktop.host.hostKeyHash !== createHash('sha256').update(existing.hostKey).digest('hex')) {
+      throw new Error('Saved machine enrollment does not match this Zana server. Explicitly re-pair this machine to replace its enrollment.');
+    }
+  } else if (!existing.serverUrl || !sameEnrolledServer(existing.serverUrl, options.serverUrl, existing.provenance)) {
     throw new Error('Existing machine enrollment belongs to another server; use --replace-enrollment to re-pair');
   }
   const hostId = options.hostId ?? access?.hostId;
@@ -150,6 +174,7 @@ export async function startEnrolledHostDaemon(options: {
   hostName?: string;
   provenance?: HostDaemonAuth['provenance'];
   replaceEnrollment?: boolean;
+  desktopEnrollment?: DesktopHostEnrollment;
   /** Desktop co-started daemon: replace another holder of this data dir. */
   stealLock?: boolean;
   keepRetryingStartup?: boolean;
@@ -190,13 +215,16 @@ export async function startEnrolledHostDaemon(options: {
           signal: options.signal
         });
         hostId = existing.hostId;
-        // The owner's forwarded port can change between tunnels; reconnects use the stored URL.
-        if (existing.serverUrl !== options.serverUrl) writeHostAuth(options.dataDir, { ...existing, serverUrl: options.serverUrl });
+        // Commit a changed desktop/tunnel address only after the handshake.
+        if (existing.serverUrl !== options.serverUrl || (options.desktopEnrollment && existing.desktopServerId !== options.desktopEnrollment.serverInstanceId)) {
+          pendingAuth = { ...existing, serverUrl: options.serverUrl,
+            ...(options.desktopEnrollment ? { desktopServerId: options.desktopEnrollment.serverInstanceId } : {}) };
+        }
       } catch (error) {
         // Transient connectivity must not consume a join code or rotate a
         // machine key. Only an explicit authentication rejection can re-enroll.
         if (!options.token || !(error instanceof HostAuthenticationError)) throw error;
-        if (loopbackRelaxedMatch) throw new Error('Existing machine enrollment belongs to another server');
+        if (loopbackRelaxedMatch || options.desktopEnrollment) throw new Error('Existing machine enrollment belongs to another server');
         const minted = await mintCredentials({
           dataDir: options.dataDir,
           serverUrl: options.serverUrl,
@@ -236,6 +264,7 @@ export async function startEnrolledHostDaemon(options: {
         hostName: options.hostName,
         instanceId,
         provenance: options.provenance ?? 'non-tunnel',
+        desktopServerId: options.desktopEnrollment?.serverInstanceId,
         signal: options.signal
       });
       pendingAuth = minted;
