@@ -19,7 +19,7 @@ import {
   type PeerOperation,
   type PeerOperationOrigin,
   type PeerReceiptStage,
-  PeerProtocolError,
+  PeerProtocolError, ManualConsentRequiredError,
   validatePeerGroupMembers,
    canonicalJson, canonicalPeerHash, validateDocumentClosure, isDeletionClosure, PEER_DELETE_KIND, PEER_DOCUMENT_KIND, contentEquals, documentContent,
   type PeerDocumentClosure, type PeerVersion, type PeerAppliedReceipt
@@ -1710,7 +1710,7 @@ export class DesignDocSyncStore {
     if (established && this.db.prepare(`SELECT 1 FROM sync_manual_sessions s, json_each(s.heads_json) h
       WHERE s.repo_id = ? AND s.member_replica_id = ? AND s.direction = 'in'
         AND h.key = ? AND h.value = ? LIMIT 1`).get(repoId, member, docId, head)) return;
-    throw new PeerProtocolError('invalid', 'bilateral manual consent missing for frozen head');
+    throw new ManualConsentRequiredError();
   }
 
   private isAncestor(repoId: string, ancestor: string, descendant: string): boolean {

@@ -6,10 +6,13 @@
 /** Longest stored or shown delivery error. */
 export const MAX_SYNC_ERROR_LENGTH = 300;
 
+/** Stored and shown when the other computer is holding a private draft until its own user also chooses Sync now. */
+export const CONSENT_REQUIRED_ERROR = 'peer consent required: the other computer has not chosen Sync now';
+
 /** A failed delivery that only means the other computer was not reachable; it is retried on its own. */
 export function isOfflineSyncError(message: string): boolean {
   // The receiver cancelling a request (its 30s cap, grant lease change, dropped socket) or asking us to slow down clears on its own.
-  return /unavailable|timed? ?out|not connected|disconnect|ECONN|ENOTFOUND|EHOSTUNREACH|authorization changed|^peer request failed: (?:408|429|409: peer-request-cancelled)\b/i.test(message);
+  return /unavailable|timed? ?out|not connected|disconnect|ECONN|ENOTFOUND|EHOSTUNREACH|authorization changed|^peer consent required|^peer request failed: (?:408|429|409: peer-request-cancelled)\b/i.test(message);
 }
 
 /** Receipt stages stored as the "reason" when the other computer answered but did not finish: not errors. */
@@ -37,7 +40,7 @@ export function boundSyncError(message: string): string {
   return clean.length > MAX_SYNC_ERROR_LENGTH ? `${clean.slice(0, MAX_SYNC_ERROR_LENGTH - 1)}…` : clean;
 }
 
-export interface PeerFault { code: 'enrollment' | 'grant'; hint: string }
+export interface PeerFault { code: 'enrollment' | 'grant' | 'consent'; hint: string }
 
 /**
  * The likely cause behind a computer's newest error, with advice. Derived from error text only: the plugin cannot see
@@ -45,6 +48,9 @@ export interface PeerFault { code: 'enrollment' | 'grant'; hint: string }
  */
 export function diagnoseFault(message: string | null | undefined): PeerFault | null {
   if (!message) return null;
+  if (/^peer consent required/i.test(message)) {
+    return { code: 'consent', hint: 'A private draft stays on this computer until both computers agree. Open Design Docs on the other computer and choose Sync now; the draft then sends on its own. Pairing is fine.' };
+  }
   if (/enrollment changed|revoked/i.test(message)) {
     return { code: 'enrollment', hint: 'Pairing with this computer was changed or revoked. The link can still show connected. This can clear on its own after Zana restarts; if Sync Now keeps failing the same way, pair the two computers again.' };
   }
@@ -60,6 +66,7 @@ export function deliveryReasonCode(message: string | null | undefined): string {
   if (isStageToken(message)) return `stage-${message}`;
   // Fixed, more specific codes so a log reader can tell "receiver cancelled the request" and "pairing changed" from plain offline.
   if (/^peer request failed: 409: peer-request-cancelled\b/i.test(message)) return 'peer-cancelled';
+  if (/^peer consent required/i.test(message)) return 'needs-consent';
   if (/enrollment changed|revoked/i.test(message)) return 'enrollment';
   return isOfflineSyncError(message) ? 'offline' : 'error';
 }

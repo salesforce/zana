@@ -155,6 +155,20 @@ export class PeerProtocolError extends Error {
   }
 }
 
+/** Receipt stage a receiver returns, as a normal answer, when a private draft still needs this computer's own consent. */
+export const CONSENT_REQUIRED_STAGE = 'consent-required';
+
+/**
+ * A private draft head arrived before both computers consented. It is a normal "not yet" answer, not a protocol fault:
+ * throwing it out of a commit callback would abort the pair's grant lease and reach the sender as an offline-looking 409.
+ */
+export class ManualConsentRequiredError extends PeerProtocolError {
+  constructor(message = 'bilateral manual consent missing for frozen head') {
+    super('invalid', message);
+    this.name = 'ManualConsentRequiredError';
+  }
+}
+
 /** Stable JSON bytes prevent equivalent objects from creating distinct hashes. */
 export function canonicalPeerHash(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');

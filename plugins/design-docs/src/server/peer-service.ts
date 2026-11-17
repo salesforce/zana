@@ -3,13 +3,13 @@ import { negotiateProtocol, validateAppliedReceipt, validateHandshake, validateS
   validateTransfer, validateChunk, validateReceiptQuery, transferQuery, validateMissing, validateManualConsent,
   type PeerHandshake, type PeerSessionOffer, type PeerSessionExpectation, type PeerTransfer } from './peer-protocol.js';
 import { DesignDocSyncStore, delivered, classifyDelivery, type DocSyncStatus, type FrozenSyncIntent } from './sync-store.js';
-import { boundSyncError, deliveryReasonCode } from '../shared/sync-classify.js';
+import { CONSENT_REQUIRED_ERROR, boundSyncError, deliveryReasonCode } from '../shared/sync-classify.js';
 import type { PeerDiagnostics, SyncQueueEntry, CompareResult } from '../shared/sync-diagnostics.js';
 
 /** What one sync pass did. `blocked` is the legacy total of everything not delivered. */
 export interface SyncSummary { attempted: number; synced: number; blocked: number; waiting: number; needsChoice: number; failed: number }
 import { MAX_PEER_CHUNK_BYTES, MAX_PEER_WINDOW_CHUNKS, PEER_CALL_TIMEOUT_MS, PEER_COMPACTION_BATCH, PEER_MIN_PROTOCOL_VERSION, PEER_PENDING_TICK_MS, PEER_PROTOCOL_VERSION } from '../shared/peer-limits.js';
-import { PeerProtocolError, type PeerAppliedReceipt } from '../shared/peer-contract.js';
+import { PeerProtocolError, ManualConsentRequiredError, CONSENT_REQUIRED_STAGE, type PeerAppliedReceipt } from '../shared/peer-contract.js';
 import type { DocActor, PeerConflictChoices, PeerResolutionChoice } from '../shared/contract.js';
 
 type ReceiverFence = Pick<PluginPeerRequest, 'signal' | 'scope' | 'grantEpoch' | 'commitSync'>;
@@ -231,7 +231,9 @@ export class DesignDocPeerService {
               await peers.call(member.machineId, 'ancestry', page, options);
             }
             this.requireCurrentHandshake(transfer, member.machineId);
-            await peers.call(member.machineId, 'transfer', transfer, options);
+            const staged = await peers.call(member.machineId, 'transfer', transfer, options) as { stage?: unknown } | null;
+            // The other computer holds this draft back until its own user also chooses Sync now; hold it and say so.
+            if (staged?.stage === CONSENT_REQUIRED_STAGE) throw new PeerProtocolError('invalid', CONSENT_REQUIRED_ERROR);
             const maximumWindows = Math.ceil(transfer.blobs.reduce((sum, blob) => sum + Math.ceil(blob.bytes / MAX_PEER_CHUNK_BYTES), 0) / MAX_PEER_WINDOW_CHUNKS) + 1;
             for (let window = 0; window < maximumWindows; window++) {
               this.requireCurrentHandshake(transfer, member.machineId);
@@ -357,7 +359,13 @@ export class DesignDocPeerService {
         this.requireFence(fence);
         this.requireRosterPeer(expected.repoId, expected.remoteReplicaId, peerId);
         validateHandshake(transfer, this.expectation(expected.remoteReplicaId, fence.grantEpoch));
-        this.sync.stageTransfer(transfer);
+        try { this.sync.stageTransfer(transfer); }
+        catch (error) {
+          // A private draft before both computers consented is an answer, not a fault: returning it commits normally, so the
+          // pair's grant lease stays up (a throw here would abort it and reach the sender as an offline-looking 409).
+          if (error instanceof ManualConsentRequiredError) return { stage: CONSENT_REQUIRED_STAGE };
+          throw error;
+        }
         return { stage: 'received', scopeHash: transfer.scopeHash };
       });
       this.requireCurrentRequest(transfer, peerId, fence);

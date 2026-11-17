@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boundSyncError, classifyDelivery, diagnoseFault, isOfflineSyncError, isStageToken, MAX_SYNC_ERROR_LENGTH } from './sync-classify.js';
+import { boundSyncError, CONSENT_REQUIRED_ERROR, classifyDelivery, deliveryReasonCode, diagnoseFault, isOfflineSyncError, isStageToken, MAX_SYNC_ERROR_LENGTH } from './sync-classify.js';
 
 describe('classifyDelivery', () => {
   it('is waiting for no error, stage tokens and offline errors; failed for anything else', () => {
@@ -54,5 +54,18 @@ describe('boundSyncError', () => {
     expect(long.length).toBe(MAX_SYNC_ERROR_LENGTH);
     expect(long.endsWith('…')).toBe(true);
     expect(boundSyncError('short')).toBe('short');
+  });
+});
+
+describe('consent-required delivery', () => {
+  it('is waiting, not failed, with a fixed reason code and a Sync-now hint', () => {
+    expect(classifyDelivery(CONSENT_REQUIRED_ERROR)).toBe('waiting');
+    expect(isOfflineSyncError(CONSENT_REQUIRED_ERROR)).toBe(true);
+    expect(deliveryReasonCode(CONSENT_REQUIRED_ERROR)).toBe('needs-consent');
+    expect(diagnoseFault(CONSENT_REQUIRED_ERROR)).toMatchObject({ code: 'consent', hint: expect.stringContaining('Sync now') });
+  });
+  it('does not capture an unrelated error that merely mentions consent', () => {
+    expect(classifyDelivery('invalid manual consent packet')).toBe('failed');
+    expect(diagnoseFault('invalid manual consent packet')).toBeNull();
   });
 });
