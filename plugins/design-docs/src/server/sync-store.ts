@@ -494,13 +494,19 @@ export class DesignDocSyncStore {
   }
 
 
+  /** Every waiting outbound session for a member, oldest first. Each Sync now adds one; all must reach the peer, not just the oldest. */
+  waitingManualConsents(member: string, limit = 64): Array<{ manualId: string; heads: Record<string, string> }> {
+    const local = this.localRepository()!;
+    return (this.db.prepare(`SELECT session_id, heads_json FROM sync_manual_sessions WHERE repo_id = ? AND member_replica_id = ?
+      AND direction = 'out' AND state = 'waiting' ORDER BY created_at, rowid LIMIT ?`).all(local.repoId, member, limit) as Array<{ session_id: string; heads_json: string }>)
+      .map((row) => ({ manualId: row.session_id, heads: JSON.parse(row.heads_json) }));
+  }
+
   manualConsents(): Array<{ memberReplicaId: string; manualId: string; heads: Record<string, string> }> {
     const local = this.localRepository()!;
     if (this.isRetiringReplica(local.repoId, local.replicaId)) return [];
-    return this.members(local.repoId).flatMap((member) => {
-      const consent = this.manualConsent(member.replicaId);
-      return consent ? [{ memberReplicaId: member.replicaId, ...consent }] : [];
-    });
+    return this.members(local.repoId).flatMap((member) =>
+      this.waitingManualConsents(member.replicaId).map((consent) => ({ memberReplicaId: member.replicaId, ...consent })));
   }
 
   acceptManual(member: string, manualId: string, heads: Record<string, string>): boolean {

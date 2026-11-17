@@ -154,19 +154,24 @@ export class DesignDocPeerService {
     let awaiting = 0;
     for (const member of this.sync.members(local.repoId).filter((member) => member.replicaId !== local.replicaId)) {
       if (this.sync.isRetiringReplica(local.repoId, local.replicaId)) break;
-      const consent = this.sync.manualConsent(member.replicaId);
-      if (!consent) continue;
+      // Every waiting session, oldest first: each earlier Sync now left one behind, and the one naming a new draft sits last.
+      const consents = this.sync.waitingManualConsents(member.replicaId);
+      if (!consents.length) continue;
+      let unanswered = false;
       try {
         const grants = (await peers.list({ signal: this.abort.signal })).filter((grant) => grant.id === member.machineId && grant.scope === local.repoId && grant.connected);
         if (grants.length !== 1) throw new PeerProtocolError('invalid', 'manual peer unavailable');
-        // Manual consent packets stay at the oldest supported version; they carry no ancestry.
-        const body = { ...this.handshakeFor(member.replicaId, grants[0]!.grantEpoch, PEER_MIN_PROTOCOL_VERSION), ...consent };
         const options = { scope: local.repoId, signal: this.abort.signal, timeoutMs: PEER_CALL_TIMEOUT_MS };
-        const reply = await peers.call(member.machineId, 'manual', body, options) as { accepted?: unknown; manualId?: unknown };
-        if (reply?.accepted !== true || reply.manualId !== consent.manualId) { awaiting++; continue; }
-        await this.completeManualAck(peers, body, member.machineId);
-        this.requireCurrentHandshake(body, member.machineId);
-        await peers.call(member.machineId, 'manual-deliver', body, options);
+        for (const consent of consents) {
+          // Manual consent packets stay at the oldest supported version; they carry no ancestry.
+          const body = { ...this.handshakeFor(member.replicaId, grants[0]!.grantEpoch, PEER_MIN_PROTOCOL_VERSION), ...consent };
+          const reply = await peers.call(member.machineId, 'manual', body, options) as { accepted?: unknown; manualId?: unknown };
+          if (reply?.accepted !== true || reply.manualId !== consent.manualId) { unanswered = true; continue; }
+          await this.completeManualAck(peers, body, member.machineId);
+          this.requireCurrentHandshake(body, member.machineId);
+          await peers.call(member.machineId, 'manual-deliver', body, options);
+        }
+        if (unanswered) awaiting++;
       } catch (error) { awaiting++; this.warnOnce(`manual sync with ${member.machineId} awaiting`, error); }
     }
     const result = await this.deliverPending(peers);

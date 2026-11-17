@@ -1069,4 +1069,21 @@ describe('private draft awaiting the other computer\'s consent', () => {
     expect(b.store.find(doc.id)).not.toBeNull();
     info.mockRestore();
   });
+
+  it('delivers a draft written after several earlier Sync now presses once the other computer syncs', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+    a.store.create({ title: 'First draft', template: 'blank' }, user);
+    await a.service.syncNow(transport(a, b));
+    await a.service.syncNow(transport(a, b));
+    const last = a.store.create({ title: 'Third draft', template: 'blank' }, user);
+    await a.service.syncNow(transport(a, b));
+    // Three presses left three waiting sessions; the newest names the new draft and must not sit behind the oldest.
+    expect((a.db.prepare("SELECT COUNT(*) AS n FROM sync_manual_sessions WHERE direction = 'out' AND state = 'waiting'").get() as { n: number }).n).toBeGreaterThan(1);
+    expect(b.store.find(last.id)).toBeNull();
+    b.sync.prepareManual();
+    await a.service.syncNow(transport(a, b));
+    expect(b.store.find(last.id)).not.toBeNull();
+    info.mockRestore();
+  });
 });
