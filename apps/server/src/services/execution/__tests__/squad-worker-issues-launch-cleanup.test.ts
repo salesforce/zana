@@ -72,7 +72,11 @@ describe('failed-run cleanup runs once (REQ-13)', () => {
   it('cancels the launch once when status reads race on a run failed by a failed slot', async () => fixture(async (filePath) => {
     const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
     const launchTeam = async () => ({ ok: true, value: { failedSlots: [{ slotId: 'slot-2', personaId: 'qa', reason: 'spawn failed' }] } });
-    const service = new SquadExecutionService(deps(filePath, { launchTeam, cancelTeamLaunch }));
+    const getTeamLaunch = async () => ({
+      launchResult: { failedSlots: [{ slotId: 'slot-2', personaId: 'qa', reason: 'spawn failed' }] },
+      workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', task: 'unknown', process: 'running' }]
+    });
+    const service = new SquadExecutionService(deps(filePath, { launchTeam, cancelTeamLaunch, getTeamLaunch }));
     await service.start('session-1', 'project-1', { ...request, coordinationMode: 'structured' } as never);
     await Promise.all([1, 2, 3].map(() => service.status('session-1', 'project-1', 'execution-1')));
     expect(cancelTeamLaunch).toHaveBeenCalledTimes(1);
@@ -98,6 +102,20 @@ describe('Cancel verifies the stop (REQ-14)', () => {
     const record = await service.status('session-1', 'project-1', 'execution-1');
     await expect(service.stop('session-1', 'project-1', 'execution-1', record!.stateVersion))
       .resolves.toMatchObject({ ok: true, value: { state: 'STOPPED' } });
+    service.dispose();
+  }));
+});
+
+describe('Cancel waits for sessions that are still closing (REQ-14)', () => {
+  it('succeeds when a pending session stops within the bounded wait', async () => fixture(async (filePath) => {
+    let calls = 0;
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: ++calls < 3 ? ['worker-1'] : [] } }));
+    const service = new SquadExecutionService(deps(filePath, { cancelTeamLaunch }));
+    await service.start('session-1', 'project-1', request);
+    const record = await service.status('session-1', 'project-1', 'execution-1');
+    await expect(service.stop('session-1', 'project-1', 'execution-1', record!.stateVersion))
+      .resolves.toMatchObject({ ok: true, value: { state: 'STOPPED' } });
+    expect(cancelTeamLaunch.mock.calls.length).toBeGreaterThanOrEqual(3);
     service.dispose();
   }));
 });

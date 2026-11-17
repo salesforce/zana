@@ -140,6 +140,8 @@ export interface TeamLifecycleRecord {
     | { status: 'completed'; result: TeamLaunchOperationResult };
   workers: TeamLifecycleWorker[];
   state: 'active' | 'cancel-pending' | 'canceled';
+  /** Set before teardown begins; a spawn that commits after it must close itself. Absent on records written earlier. */
+  closing?: boolean;
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -504,7 +506,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const snapshot = readState();
       const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
-      if (record?.state !== 'active' || !isDeferredWorker(worker)) return false;
+      if (record?.state !== 'active' || record.closing === true || !isDeferredWorker(worker)) return false;
       worker.process = 'spawning';
       record.revision += 1;
       record.updatedAt = now();
@@ -532,14 +534,22 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
 
   /** Durable marker that a run's teardown has begun, so a restart does not re-launch its seats. */
   async function markClosing(recordId: string): Promise<boolean> {
-    void recordId;
-    throw new Error('not implemented: markClosing');
+    const safeRecordId = boundedString(recordId, 'record id');
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      if (!record || record.closing === true) return false;
+      record.closing = true;
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return true;
+    });
   }
 
   /** Whether the run's closing marker is set. */
   function isClosing(recordId: string): boolean {
-    void recordId;
-    throw new Error('not implemented: isClosing');
+    return readState().state.records.find((candidate) => candidate.id === recordId)?.closing === true;
   }
 
   /** A seat nobody can start any more (no spawner after a restart): fail it once so its units are not re-offered. */
@@ -768,7 +778,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     return runExclusive(async () => {
       const record = readState().state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
-      return record?.state === 'active' && worker !== undefined && launchAllowsSpawn(record, worker)
+      return record?.state === 'active' && record.closing !== true && worker !== undefined && launchAllowsSpawn(record, worker)
         && worker.process === 'spawning' && worker.transport !== 'MODERN';
     });
   }
@@ -780,7 +790,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const snapshot = readState();
       const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
-      if (record?.state !== 'active' || !worker || !launchAllowsSpawn(record, worker)
+      if (record?.state !== 'active' || record.closing === true || !worker || !launchAllowsSpawn(record, worker)
         || worker.process !== 'spawning' || worker.transport === 'MODERN') return false;
       worker.process = 'running';
       record.revision += 1;

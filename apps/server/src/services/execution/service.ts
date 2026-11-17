@@ -685,6 +685,10 @@ export function availabilityUnknownFromAdmission(admission: TeamAdmissionResultV
 
 const MAX_PLAN_CORRECTION_STOP_ATTEMPTS = 5;
 
+/** How long Cancel waits for sessions that are still closing, and how often it re-checks. */
+const CANCEL_VERIFY_WAIT_MS = 5_000;
+const CANCEL_VERIFY_POLL_MS = 250;
+
 export class ExecutionService {
   private runCheckCompletions = new Map<string, { controller: AbortController; pending: Promise<readonly string[]> }>();
   private checkCompletions = new Map<string, { executionId: string; workUnitId: string; claimId?: string; claimGeneration?: number; controller: AbortController; running?: Promise<ExecutionCheckResultV1>; pending: ReturnType<ExecutionService['completeWorkChecked']> }>();
@@ -966,7 +970,6 @@ export class ExecutionService {
       });
       if (!launched.ok) {
         await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-        await this.closeLaunchSessions(record);
         await this.transitionOrCurrent(record, 'FAILED', 'error', launched.message ?? 'Team launch failed');
         return { ok: false, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed' };
       }
@@ -985,7 +988,6 @@ export class ExecutionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-      await this.closeLaunchSessions(record);
       const current = await this.failLaunch(record, `Team launch error: ${message}`);
       return current.state === 'FAILED'
         ? { ok: false, code: message === 'TARGET_UNAVAILABLE' ? 'TARGET_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message }
@@ -3270,7 +3272,7 @@ export class ExecutionService {
     // The ledger's cancelled state fences plan registration and resume, but must
     // never fence retries of terminal effects after a crash or transient failure.
     await this.cleanupTerminal(record);
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    const canceled = await this.cancelVerified(record);
     if (!canceled.ok && canceled.code !== 'NOT_FOUND') {
       throw new Error(`${canceled.code ?? 'CANCEL_FAILED'}: ${canceled.message ?? 'Team cancellation failed'}`);
     }
@@ -3286,7 +3288,7 @@ export class ExecutionService {
       // running as orphaned terminal cards.
       const rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
       const lifecycle = extractLifecycleInfo(rawLifecycle);
-      const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      const canceled = await this.cancelVerified(record);
       if (!canceled.ok && canceled.code !== 'NOT_FOUND') {
         return {
           ok: false as const,
@@ -3807,7 +3809,7 @@ export class ExecutionService {
     }
     if (record.state === 'FAILED') {
       if (record.stateVersion !== expectedStateVersion) return { ok: false as const, code: 'CONFLICT', message: 'stale execution state', current: record };
-      const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      const canceled = await this.cancelVerified(record);
       return canceled.ok
         ? { ok: true as const, value: record, canceled: canceled.value }
         : { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
@@ -3817,7 +3819,7 @@ export class ExecutionService {
     const runChecks = this.runCheckCompletions.get(record.id);
     if (runChecks) { runChecks.controller.abort(); await runChecks.pending.catch(() => undefined); }
     for (const check of this.checkCompletions.values()) if (check.executionId === record.id) check.controller.abort();
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, fenced.value.teamLaunchRequestId);
+    const canceled = await this.cancelVerified(fenced.value);
     if (!canceled.ok && canceled.code !== 'NOT_FOUND') return { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
     const stopped = await this.transitionOrCurrent(fenced.value, 'STOPPED', 'info', 'Execution stopped');
     return { ok: true as const, value: stopped, canceled: canceled.value };
@@ -3938,6 +3940,8 @@ export class ExecutionService {
     try {
       const updated = await this.deps.store.transition(record.id, record.stateVersion, state, severity, summary);
       if (isResumeGrantTerminal(updated.state)) await this.cleanupTerminal(updated);
+      // Only the caller whose write moved the run to FAILED closes its sessions; a stale loser skips it.
+      if (updated.state === 'FAILED') await this.cleanupFailedRun(updated);
       return updated;
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
@@ -4002,14 +4006,35 @@ export class ExecutionService {
   }
 
   /**
-   * Close the sessions a failed launch already started, scoped to this run's own launch request
-   * (never another run's). Best-effort: a cancel failure must not mask the launch error.
+   * Cancel a team launch and wait, bounded, for sessions that were still closing.
+   * `ok` is true only when nothing survived the wait; callers map a survivor to CANCEL_INCOMPLETE.
    */
-  private async closeLaunchSessions(record: ExecutionRecord): Promise<void> {
+  private async cancelVerified(record: ExecutionRecord, opts?: { retainOrchestrator?: boolean }) {
+    const cancel = () => opts
+      ? this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId, opts)
+      : this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    let canceled = await cancel();
+    const deadline = Date.now() + CANCEL_VERIFY_WAIT_MS;
+    while (canceled.ok && (canceled.value?.pendingSessionIds.length ?? 0) > 0 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, CANCEL_VERIFY_POLL_MS));
+      canceled = await cancel();
+    }
+    if (canceled.ok && (canceled.value?.pendingSessionIds.length ?? 0) > 0) {
+      return { ok: false as const, code: 'CANCEL_INCOMPLETE', message: `${canceled.value!.pendingSessionIds.length} session(s) did not stop`, value: canceled.value };
+    }
+    return canceled;
+  }
+
+  /**
+   * Close the sessions of a run this caller just moved to FAILED, scoped to the run's own launch
+   * request. Best-effort: a cancel failure must not mask the failure that moved the run.
+   */
+  private async cleanupFailedRun(record: ExecutionRecord): Promise<void> {
     try {
-      await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      const canceled = await this.cancelVerified(record);
+      if (!canceled.ok && canceled.code !== 'NOT_FOUND') this.deps.logError?.(`Closing sessions of failed run ${record.id}: ${canceled.code}`, canceled.message);
     } catch (error) {
-      this.deps.logError?.(`Closing sessions of failed launch ${record.id} failed`, error);
+      this.deps.logError?.(`Closing sessions of failed run ${record.id} failed`, error);
     }
   }
 
@@ -4020,6 +4045,7 @@ export class ExecutionService {
       try {
         const failed = await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', summary);
         await this.cleanupTerminal(failed);
+        await this.cleanupFailedRun(failed);
         return failed;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;

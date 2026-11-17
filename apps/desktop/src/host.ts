@@ -7196,6 +7196,9 @@ export async function cancelTeamLaunch(
   if (!callerPrincipalId.trim() || !launchRequestId.trim()) {
     return { ok: false, code: 'INVALID', message: 'callerPrincipalId and launchRequestId are required' };
   }
+  // Mark the run closing first so a spawn that commits while teardown runs closes itself.
+  const closingRun = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
+  if (closingRun) await teamLifecycle.markClosing(closingRun.id);
   let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   const record = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
   if (record) releaseRunSeats(record.id);
