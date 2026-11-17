@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parsePortablePlan } from '../portable-plan.js';
+import { LAUNCH_ITEM_LIMITS, sha256Hex, validateLaunchItems } from '../launch-items.js';
 
 const failure = (text: string) => {
   const result = parsePortablePlan(text);
@@ -85,5 +86,19 @@ describe('design-doc shaped plan as text (REQ-6, D2)', () => {
     const result = parsePortablePlan(plan);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.units).toHaveLength(45);
+  });
+
+  it('passes the squad_launch attachment checks (item cap, name, size) and then parses, without disk', () => {
+    // The nearest pure helper: squad-proposals/service.ts feeds each attachment through validateLaunchItems
+    // (same module as the path sources) before the plan text is parsed; host.ts is not driven here.
+    const bytes = Buffer.from(plan, 'utf8');
+    expect(bytes.byteLength).toBeGreaterThan(40_000);
+    expect(bytes.byteLength).toBeLessThan(LAUNCH_ITEM_LIMITS.maxItemBytes);
+    const checked = validateLaunchItems([{ kind: 'attachment', name: 'design-doc-plan.md', byteSize: bytes.byteLength, sha256: sha256Hex(bytes) }]);
+    expect(checked.ok).toBe(true);
+    if (checked.ok) expect(checked.kept).toEqual([{ index: 0, name: 'design-doc-plan.md' }]);
+    const parsed = parsePortablePlan(bytes.toString('utf8'));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.units).toHaveLength(45);
   });
 });
