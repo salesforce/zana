@@ -1252,8 +1252,13 @@ export class ExecutionService {
     if (!worker || !DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return;
     const unit = record.workUnits?.find((candidate) => candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId);
     // Only a worker launched with an assignment or claim warns: an idle on-demand seat exiting is normal.
-    if ((unit || worker.onDemand !== true) && (worker.process === 'spawn-failed' || typeof worker.exitCode === 'number' && worker.exitCode !== 0)) {
+    const badExit = worker.process === 'spawn-failed' || typeof worker.exitCode === 'number' && worker.exitCode !== 0;
+    if ((unit || worker.onDemand !== true) && badExit) {
       await this.raiseWorkerWarning(record, slotId, 'exit', `Worker ${slotId} exited (${worker.exitCode ?? worker.process}): ${worker.exitReason ?? 'no reason reported'}`);
+    } else if (unit) {
+      // A tmux-backed local pty reports its client's status (always 0), not the pane command's, so a
+      // crashed worker looks clean. A worker that is gone while it still holds a claim never finished that unit.
+      await this.raiseWorkerWarning(record, slotId, 'exit', `Worker ${slotId} exited while it still held a claimed unit`);
     }
     if (!unit?.claimId || unit.claimGeneration === undefined) return;
     const reclaimed = await this.deps.store.reclaimExpiredClaims(record.id, [{

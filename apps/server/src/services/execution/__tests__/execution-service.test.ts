@@ -1050,10 +1050,20 @@ describe('execution claim recovery', () => {
       expect(onWorkerWarning).toHaveBeenCalledWith(expect.objectContaining({ id: record.id }), expect.objectContaining({ slotId: 'slot-1' }));
     }));
 
-    it('does not warn for a clean exit', async () => fixture(async (filePath) => {
+    it('warns when a worker exits with status 0 (tmux hides the pane status) while it still holds a claimed unit', async () => fixture(async (filePath) => {
       const { store, record } = await claimedRun(filePath, () => 1_000);
       const service = new ExecutionService(deps(filePath, { store, now: () => 1_000, getTeamLaunch: exitedWorker({ exitCode: 0 }) }));
       await service.recoverExitedWorker(record.id, 'slot-1');
+      await service.recoverExitedWorker(record.id, 'slot-1');
+      const warnings = await warningsOf(store);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].summary).toContain('exited while it still held a claimed unit');
+    }));
+
+    it('does not warn for a clean exit of a worker that holds no claim', async () => fixture(async (filePath) => {
+      const { store, record } = await claimedRun(filePath, () => 1_000);
+      const service = new ExecutionService(deps(filePath, { store, now: () => 1_000, getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-9', sessionId: 'w9', projectId: 'project-1', process: 'exited', exitCode: 0 }] }) }));
+      await service.recoverExitedWorker(record.id, 'slot-9');
       expect(await warningsOf(store)).toHaveLength(0);
     }));
 
