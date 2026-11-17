@@ -68,6 +68,9 @@ function isExtensionSource(source: Team['source']): boolean {
   return !!source && typeof source === 'object' && 'extensionId' in source;
 }
 
+/** Warning text for a slot whose persona is not in the live store; matches the CLI launch message. */
+const unknownPersonaMessage = (personaId: string): string => `unknown persona: ${personaId}`;
+
 export const SLOT_ROLES_HINT =
   'No roles on this slot, so a plan that asks for a role cannot pick it. Add roles in the Squad definition, or ask an agent to use register_teams.';
 
@@ -215,7 +218,7 @@ function TeamDetail({
                         <Crown size={11} /> Orchestrator
                       </span>
                     )}
-                    {!p && <span className="team-slot-missing"> · unknown persona</span>}
+                    {!p && <span className="team-slot-missing"> · {unknownPersonaMessage(slot.personaId)}</span>}
                   </span>
                   {!isOrch && (
                     <span className="scheduler-pill">
@@ -734,6 +737,9 @@ function TeamForm({
                         aria-label="Tab count"
                       />
                     </span>
+                    {!known && slot.personaId && (
+                      <p className="settings-help team-slot-roles-hint team-slot-missing" role="alert">{unknownPersonaMessage(slot.personaId)}</p>
+                    )}
                     {slotNeedsRolesHint({ roles: slot.roles, label: slot.label }, personaById.get(slot.personaId)) && (
                       <p className="settings-help team-slot-roles-hint" role="note">{SLOT_ROLES_HINT}</p>
                     )}

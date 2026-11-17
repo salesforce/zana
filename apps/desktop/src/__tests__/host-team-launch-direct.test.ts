@@ -406,13 +406,13 @@ describe('launchTeam legacy (goal) path', () => {
     const result = await launchTeam('team1', 'p1');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.failedSlots.map((s) => s.reason)).toContain('unknown persona');
+      expect(result.value.failedSlots.map((s) => s.reason)).toContain('unknown persona: orch');
       expect(result.value.orchestratorSessionId).toBeUndefined();
     }
     h.personas = [persona('orch'), persona('w2')];
     const second = await launchTeam('team1', 'p1');
     expect(second.ok).toBe(true);
-    if (second.ok) expect(second.value.failedSlots.some((s) => s.slotId === '0:w1:0' && s.reason === 'unknown persona')).toBe(true);
+    if (second.ok) expect(second.value.failedSlots.some((s) => s.slotId === '0:w1:0' && s.reason === 'unknown persona: w1')).toBe(true);
   });
 
   it('surfaces worker and orchestrator spawn failures', async () => {

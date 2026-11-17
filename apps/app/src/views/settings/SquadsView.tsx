@@ -704,6 +704,11 @@ function TeamRow({
                             {personaChip}
                           </span>
                         )}
+                        {!persona && (
+                          <span className="teams-agent-badge team-slot-missing" data-testid="teams-agent-unknown-persona" role="note">
+                            unknown persona: {slot.personaId}
+                          </span>
+                        )}
                         {isOrchestrator && (
                           <span
                             className="teams-agent-badge teams-agent-badge--orch composer-control-tooltip"

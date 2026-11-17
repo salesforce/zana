@@ -16,7 +16,7 @@ vi.mock('@/store', () => ({
         { id: 'user:alpha-10', name: 'Alpha 10', description: 'Ten', source: 'user', slots: [] },
         { id: 'user:accent', name: 'Álpha 1', description: 'Accent', source: 'user', slots: [] },
         { id: 'user:alpha-2', name: 'alpha 2', description: 'Two', source: 'user', slots: [] },
-        { id: 'user:mine', name: 'My squad', description: 'Mine', source: 'user', slots: [{ personaId: 'p1' }], transport: 'MODERN', isDefault: true },
+        { id: 'user:mine', name: 'My squad', description: 'Mine', source: 'user', slots: [{ personaId: 'p1' }, { personaId: 'ghost-1' }], transport: 'MODERN', isDefault: true },
         { id: 'user:tie-z', name: 'Same', description: 'Tie z', source: 'user', slots: [] },
         { id: 'user:tie-a', name: 'Same', description: 'Tie a', source: 'user', slots: [] },
         { id: 'project:a', name: 'Project A', description: 'In scope', source: { projectId: 'project-a', projectName: 'A' }, slots: [] },
@@ -46,6 +46,15 @@ describe('SquadsView settings-search targets', () => {
     const { container } = render(<SquadsView />);
     expect(container.querySelector('li[data-settings-target="squads.squad.builtin:core"]')).not.toBeNull();
     expect(container.querySelector('li[data-settings-target="squads.squad.user:mine"]')).not.toBeNull();
+  });
+});
+
+describe('SquadsView unresolved persona badge (REQ-18)', () => {
+  it('badges only a slot whose persona does not exist', () => {
+    const { container } = render(<SquadsView />);
+    fireEvent.click(container.querySelector('li[data-settings-target="squads.squad.user:mine"] button')!);
+    const badges = screen.getAllByTestId('teams-agent-unknown-persona');
+    expect(badges.map((b) => b.textContent)).toEqual(['unknown persona: ghost-1']);
   });
 });
 

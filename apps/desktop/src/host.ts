@@ -6231,6 +6231,22 @@ async function dispatchSeededPlanKickoff(args: {
 }
 
 /** Joined launch message for failed slots: each reason is already bounded; the whole stays within one reason's limit. */
+/** Shared text for a slot whose persona is missing; the Modern preflight and the editor use the same words. */
+function unknownPersonaReason(personaId: string): string {
+  return `unknown persona: ${personaId}`;
+}
+
+/** CLI transport: a launch whose every worker slot is unresolved would open only the coordinator, so refuse it. */
+function refuseAllUnresolvedWorkers(
+  slots: ReadonlyArray<{ personaId: string; role: 'worker' | 'orchestrator' }>,
+  known: ReadonlyMap<string, unknown> | ReadonlySet<string>
+): { ok: false; code: 'UNKNOWN_PERSONA'; message: string } | undefined {
+  const workers = slots.filter((slot) => slot.role === 'worker');
+  const unresolved = workers.filter((slot) => !known.has(slot.personaId));
+  if (workers.length === 0 || unresolved.length !== workers.length) return undefined;
+  return { ok: false, code: 'UNKNOWN_PERSONA', message: unknownPersonaReason(unresolved[0]!.personaId) };
+}
+
 function failedSlotsMessage(failedSlots: readonly TeamFailedWorkerSlot[]): string {
   return boundReason(failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; '));
 }
@@ -6376,6 +6392,8 @@ export async function launchTeam(
       return { ok: false, code: 'DENIED', message: 'structured slot is missing authorizationId' };
     }
   }
+  const unresolvedRefusal = team.transport === 'MODERN' ? undefined : refuseAllUnresolvedWorkers(expectedSlots, known);
+  if (unresolvedRefusal) return unresolvedRefusal;
   let launchDeadlineAt = structured?.policy?.deadlineMs === undefined
     ? undefined
     : Date.now() + structured.policy.deadlineMs;
@@ -6539,7 +6557,7 @@ export async function launchTeam(
       const projectSettings = await getAuthoritativeProjectSettings(targetProjectId);
       for (const slot of expectedSlots) {
         const persona = personaSnapshot.find(candidate => candidate.id === slot.personaId);
-        if (!persona) throw new Error(`unknown persona: ${slot.personaId}`);
+        if (!persona) throw new Error(unknownPersonaReason(slot.personaId));
         const profile = profileFor(slot.personaId);
         const provider = providerFor(profile);
         const input = { config: currentConfig, projectSettings, persona, profile, extraArgs: [], scope: 'local' as const };
@@ -6938,7 +6956,7 @@ export async function launchTeam(
      if (!known.has(personaId)) {
        const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
        if (authorizationId) launchAuthorization.revoke(authorizationId);
-       failedSlots.push({ slotId, personaId, reason: 'unknown persona' });
+       failedSlots.push({ slotId, personaId, reason: unknownPersonaReason(personaId) });
        continue;
      }
      const bindingFailure = taskBindingFailure(personaId);
@@ -7001,7 +7019,7 @@ export async function launchTeam(
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
   // a declared slot or a standalone persona id, it opens exactly once here.
   if (orchestratorId && !hasOrchestrator) {
-    failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: 'unknown persona' });
+    failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: unknownPersonaReason(orchestratorId) });
   } else if (hasOrchestrator && launched < MAX_TABS_PER_LAUNCH) {
     const orchestratorSlotId = `orchestrator:${orchestratorId}`;
     const orchestratorRecovery = recoveryFor(orchestratorSlotId, 'orchestrator', orchestratorId!);
