@@ -480,12 +480,12 @@ describe('launchTeam', () => {
     if (!res.ok) expect(res.code).toBe('INVALID');
   });
 
-  it('preserves legacy zero-launch compatibility when every unstructured slot persona is unknown', async () => {
+  it('refuses a CLI launch when every unstructured slot persona is unknown (REQ-19)', async () => {
     TEAMS = [
       { id: 'squad', name: 'Squad', slots: [{ personaId: 'ghost-1' }, { personaId: 'ghost-2' }] }
     ];
     const res = await launchTeam('squad', 'p1');
-    expect(res).toMatchObject({ ok: true, value: { launched: 0, workers: [] } });
+    expect(res).toMatchObject({ ok: false, code: 'UNKNOWN_PERSONA', message: 'unknown persona: ghost-1' });
   });
 
   it('caps the total tabs opened by one launch (Rule 5)', async () => {
@@ -1014,7 +1014,7 @@ describe('launchTeam', () => {
     const first = await launchTeam('missing', 'p1', input);
     const replay = await launchTeam('missing', 'p1', input);
     expect(first).toEqual(replay);
-    expect(replay).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
+    expect(replay).toMatchObject({ ok: false, code: 'UNKNOWN_PERSONA' });
   });
 
   it('uses row and repeat indexes for duplicate persona slot identities and tasks', async () => {
@@ -1042,8 +1042,9 @@ describe('launchTeam', () => {
     const res = await launchTeam('invalid-huge', 'p1', {
       callerPrincipalId: 'caller-cap', launchRequestId: 'cap-id', slots
     });
-    expect(res).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
-    if (!res.ok) expect(res.message.split('; ')).toHaveLength(32);
+    // Every slot is unresolved, so the CLI launch is refused up front with one bounded reason (REQ-19).
+    expect(res).toMatchObject({ ok: false, code: 'UNKNOWN_PERSONA' });
+    if (!res.ok) expect(res.message.length).toBeLessThanOrEqual(2048);
   });
 });
 

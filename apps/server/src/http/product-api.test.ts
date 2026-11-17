@@ -78,7 +78,8 @@ describe('product HTTP', () => {
 
     const response = await fetch(`${server.url}api/v1/personas`);
     const body = await response.json() as { personas: unknown[]; warnings: unknown[] };
-    expect(body.personas).toHaveLength(2);
+    // A dropped file is reported as a warning and no longer listed as a persona (REQ-16, REQ-17).
+    expect(body.personas).toEqual([{ id: 'good', name: 'Good' }]);
     expect(body.warnings).toEqual([{ file: 'bad.json', source: 'user', reason: 'bad-permission-mode' }]);
 
     const blocked = await fetch(`${server.url}api/v1/personas`, { headers: { Origin: 'https://evil.example' } });
