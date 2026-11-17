@@ -7079,6 +7079,7 @@ export async function launchTeam(
             recoveryResume: orchestratorRecovery.recoveryResume,
           workUnits: seededWorkUnits,
           transport: planTransport,
+          failedSlots,
           ...(planFilePath ? { planFilePath } : {}),
           ...(sourceFilePath ? { sourceFilePath } : {}),
           ...(planCorrectionPending ? { planCorrectionPending } : {})

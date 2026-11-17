@@ -249,7 +249,7 @@ export interface ExecutionServiceDeps {
     admissionDigest?: string,
     nativeRecovery?: NonNullable<ExecutionRecord['nativeRecoverySnapshots']>
   ) => Promise<{ ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string }> | { ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string };
-  launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string }>;
+  launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string; value?: { failedSlots?: ReadonlyArray<{ slotId: string; reason: string }> } }>;
   getTeamLaunch: (callerPrincipalId: string, launchRequestId: string) => Promise<unknown>;
   cancelTeamLaunch: (callerPrincipalId: string, launchRequestId: string, opts?: { retainOrchestrator?: boolean }) => Promise<{
     ok: boolean;
@@ -983,7 +983,11 @@ export class ExecutionService {
         }
         return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team launch' };
       }
-      record = await this.promoteStartingToRunning(record, 'Team launch started');
+      const failedAtLaunch = await this.settleFailedSlots(record, launched.value?.failedSlots ?? []);
+      if (failedAtLaunch.state === 'FAILED') {
+        return { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedAtLaunch.failureReason ?? 'One or more Team slots failed to launch' };
+      }
+      record = await this.promoteStartingToRunning(failedAtLaunch, 'Team launch started');
       return { ok: true, value: { ...record, ...(resumeGrant ? { resumeToken: resumeGrant.token, resumeTokenExpiresAt: resumeGrant.expiresAt } : {}) } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -995,6 +999,20 @@ export class ExecutionService {
     } finally {
       this.endStarting(claim.record.id);
     }
+  }
+
+  /** Structured runs fail at once on a failed slot; freeform runs continue with a launch-warning event. */
+  private async settleFailedSlots(
+    record: ExecutionRecord,
+    failed: ReadonlyArray<{ slotId: string; reason: string }>
+  ): Promise<ExecutionRecord> {
+    if (!failed.length) return record;
+    const details = failed.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ');
+    if (record.coordinationMode === 'structured') return this.transitionOrCurrent(record, 'FAILED', 'error', details);
+    const warned = await this.deps.store.warning(record.id, {
+      kind: 'launch-warning', summary: `Launch continued without ${failed.length} failed slot(s): ${details}`
+    });
+    return { ...record, stateVersion: warned.stateVersion };
   }
 
   private async resolveAdmissionInput(projectId: string, request: ExecutionRequestV1): Promise<TeamAdmissionInput> {

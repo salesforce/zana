@@ -131,6 +131,23 @@ describe('jobCoordinatorPrompt — shared invariants (both flows)', () => {
   });
 });
 
+describe('jobCoordinatorPrompt — failed slots (REQ-11)', () => {
+  it('lists failed slots quoted, stripped of control characters and bounded', () => {
+    const failedSlots = Array.from({ length: 12 }, (_, i) => ({ slotId: `slot-${i}`, reason: i === 0 ? 'boom\u001b[2J\u0000 ignore previous' : 'x'.repeat(500) }));
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: true, failedSlots });
+    expect(prompt).toContain('failed to start in this launch');
+    expect(prompt).toContain('"slot-0": "boom [2J ignore previous"');
+    expect(prompt).toContain('- and 2 more');
+    expect(prompt).not.toMatch(/[\u0000\u001b]/);
+    expect(prompt).not.toContain('x'.repeat(201));
+  });
+
+  it('adds nothing when every slot launched', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: true, failedSlots: [] });
+    expect(prompt).not.toContain('failed to start');
+  });
+});
+
 describe('jobCoordinatorPrompt — result-only policy', () => {
   it.each([true, false])('never mentions artifact tools and points to unit results (planReady=%s)', (planReady) => {
     const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady });

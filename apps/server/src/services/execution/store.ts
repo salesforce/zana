@@ -2362,8 +2362,20 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   }
 
   async function warning(executionId: string, warning: ExecutionRunWarning): Promise<ExecutionRecord> {
-    void executionId; void warning;
-    throw new Error('not implemented: warning');
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      assertActive(record);
+      const timestamp = now();
+      record.stateVersion += 1;
+      record.updatedAt = timestamp;
+      const detail = warning.detail ? boundReason(warning.detail) : '';
+      append(snapshot.state, record, record.state, 'warning', boundReason(string(warning.summary, 'warning summary')), timestamp,
+        { kind: 'event', eventType: 'failure', ...(warning.slotId ? { slotId: boundReason(warning.slotId, 128) } : {}), ...(detail ? { detail } : {}) });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
   }
 
   async function command(
