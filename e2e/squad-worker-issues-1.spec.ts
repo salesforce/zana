@@ -101,7 +101,7 @@ test.describe('second worker throws', () => {
     try {
       const started = await startJob(app.window, run, 'freeform');
       expect(started.ok).toBe(true);
-      await expect.poll(async () => (await snapshotOf(app.window, run.projectId))?.text ?? '', { timeout: 60_000, intervals: [500] }).toContain('failedSlots');
+      await expect.poll(async () => (await snapshotOf(app.window, run.projectId))?.text ?? '', { timeout: 60_000, intervals: [500] }).toMatch(/launch-warning|failed slot/i);
       const live = await app.window.evaluate(async (id) => (await window.cc.terminals.list(id)).filter((session) => session.status !== 'exited').length, run.projectId);
       expect(live).toBeGreaterThanOrEqual(3); // coordinator + the two workers that did not throw
     } finally { await run.cleanup(); agent.cleanup(); }
