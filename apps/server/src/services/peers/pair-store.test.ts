@@ -346,6 +346,26 @@ describe('Canonical peer auth', () => {
     await f.b.revoke('pair-a');
   });
 
+  it('re-revoking an already revoked pair (startup recovery) does not fail a concurrent transaction as fenced', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let armed = false, revoking: Promise<void> | undefined;
+    // eslint-disable-next-line prefer-const -- the guard needs the store that is created with these options
+    let store: PairStore;
+    const f = await fixture({ validateGrant: async () => () => {
+      // Runs inside the pair mutex: a recovery revoke of an old pair starts while this transaction is still open.
+      if (armed) { armed = false; revoking = store.revoke('pair-a'); }
+      return true;
+    } });
+    store = f.a;
+    await f.pair();
+    await f.a.revoke('pair-a');
+    await f.a.propose({ ...grant, pairId: 'pair-c', proposalId: 'proposal-c' });
+    armed = true;
+    await expect(f.a.list('design-docs')).resolves.toBeDefined();
+    await revoking;
+    expect(warn.mock.calls.flat().join('\n')).not.toContain('post-run guard failed');
+  });
+
   it('fences active streams across instances, persists revoke epoch and requires fresh rejoin proposal', async () => {
     const f = await fixture();
     await f.pair();

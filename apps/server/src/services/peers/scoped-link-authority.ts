@@ -170,6 +170,11 @@ export class ScopedLinkAuthority {
       `reverseHost=${reverse?.hostId ?? 'none'} (paired ${record.reverseHostId})`;
   }
 
+  /** Recovery revokes a live pair for exactly one of these fixed reasons; without the line it is invisible until sends fail. */
+  private noteRecoveryRevoke(pairId: string, reason: string): void {
+    console.warn(`[zcc] peer recovery revoking pair ${pairId}: ${reason}`);
+  }
+
   private usable(hostId: string): boolean {
     try { return this.options.isLinkUsable?.(hostId) ?? true; } catch { return false; }
   }
@@ -671,10 +676,12 @@ export class ScopedLinkAuthority {
       if (this.disposed) throw new Error('scoped link authority disposed');
       if (record.status === 'revoked') { await this.options.pairs.revoke(record.proposal.pairId); continue; }
       // A stopped use revokes at authority level too, so the peer is told (below) and drops its side of the pair.
-      if (!this.approved(record.proposal)) { await this.revoke(record.proposal.pairId); continue; }
+      if (!this.approved(record.proposal)) { this.noteRecoveryRevoke(record.proposal.pairId, 'use-not-approved'); await this.revoke(record.proposal.pairId); continue; }
       const channel = this.options.enrollment(record.proposal.targetHostId), reverse = await this.options.reverseEnrollment(record.proposal.remoteInstanceId);
-      if (!channel || channel.keyHash !== record.channelKeyHash || !linkCapable(channel.capability) ||
-        !reverse || reverse.hostId !== record.reverseHostId || reverse.keyHash !== record.reverseKeyHash || !linkCapable(reverse.capability)) await this.revoke(record.proposal.pairId);
+      const stale = !channel ? 'outgoing-missing' : channel.keyHash !== record.channelKeyHash ? 'outgoing-key-changed' : !linkCapable(channel.capability) ? 'outgoing-capability'
+        : !reverse ? 'reverse-missing' : reverse.hostId !== record.reverseHostId ? 'reverse-host-changed' : reverse.keyHash !== record.reverseKeyHash ? 'reverse-key-changed'
+        : !linkCapable(reverse.capability) ? 'reverse-capability' : null;
+      if (stale) { this.noteRecoveryRevoke(record.proposal.pairId, stale); await this.revoke(record.proposal.pairId); }
     }
     for (const pairId of snapshot.revokedIds) {
       if (this.disposed) throw new Error('scoped link authority disposed');

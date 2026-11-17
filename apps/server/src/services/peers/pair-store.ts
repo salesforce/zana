@@ -214,7 +214,12 @@ export class PairStore {
         this.abortLeases(pairId, 'revoke-saved');
       }, { validate: false, pairId });
       fence.failed.delete(pairId);
-    } catch (error) { fence.failed.add(pairId); throw error; }
+    } catch (error) {
+      fence.failed.add(pairId);
+      // A failed revoke fences the pair until restart; without this line every later send reads as a bare "enrollment changed or revoked".
+      console.warn(`[zcc] peer pair ${pairId} revoke failed, pair fenced: ${(error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 160)}`);
+      throw error;
+    }
     finally {
       const pending = fence.pending.get(pairId)! - 1;
       if (pending) fence.pending.set(pairId, pending); else fence.pending.delete(pairId);
@@ -502,7 +507,11 @@ export class PairStore {
         inRun = false;
         if (validate && this.options?.validateGrant) for (const pair of state.pairs) {
           const guard = guards.get(pair.pairId);
-          if ((pair.status !== 'revoked' && guard && (!guard.current || !guard.current())) || this.isFenced(pair.pairId)) {
+          // An already revoked pair has nothing left to fence: startup recovery re-revokes old pairs on every boot, and that
+          // in-flight fence must not fail this transaction (and so every send that shares the store) as "changed or revoked".
+          if (pair.status === 'revoked') continue;
+          if ((guard && (!guard.current || !guard.current())) || this.isFenced(pair.pairId)) {
+            console.warn(`[zcc] peer pair ${pair.pairId} post-run guard failed: ${this.isFenced(pair.pairId) ? 'fenced by revoke' : 'grant no longer current'}`);
             this.abortLeases(pair.pairId, 'post-run-guard'); throw new Error('peer enrollment changed or revoked');
           }
         }

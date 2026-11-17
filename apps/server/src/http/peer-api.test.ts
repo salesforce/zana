@@ -164,6 +164,17 @@ describe('peer API canonical authorization', () => {
     expect((await peer.send(await peer.packet())).status).toBe(401);
   });
 
+  it('a handler that throws without any cancellation is a 400 rejection and logs its reason', async () => {
+    const peer = await fixture();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    peer.dispatchPeer.mockImplementation(async () => { throw new Error('bilateral manual consent missing'); });
+    expect((await peer.send(await peer.packet())).status).toBe(400);
+    const lines = warn.mock.calls.map(call => String(call[0]));
+    expect(lines.some(line => line.includes('peer request rejected') && line.includes('reason=bilateral manual consent missing'))).toBe(true);
+    expect(lines.some(line => line.includes('peer request cancelled'))).toBe(false);
+    warn.mockRestore();
+  });
+
   it('rejects declared async commits before invoking mutation', async () => {
     const peer = await fixture(), mutate = vi.fn();
     peer.dispatchPeer.mockImplementation(async (_plugin, _method, request) => request.commitSync((async () => mutate()) as never));
