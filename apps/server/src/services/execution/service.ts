@@ -3958,7 +3958,8 @@ export class ExecutionService {
       }
       return record;
     }
-    if (lifecycle.launchResult?.failedSlots?.length) {
+    // A freeform run continues past a failed slot with its launch warning (REQ-11); every other mode keeps failing.
+    if (record.coordinationMode !== 'freeform' && lifecycle.launchResult?.failedSlots?.length) {
       const details = lifecycle.launchResult.failedSlots
         .map((slot) => {
           if (!slot || typeof slot !== 'object') return '';

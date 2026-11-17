@@ -158,6 +158,17 @@ describe('failed-run teardown order and launch settling (A1, A7, R-2, A6)', () =
     service.dispose();
   }));
 
+  it('REQ-11: a status read does not fail a freeform run for a failed slot recorded at launch', async () => fixture(async (filePath) => {
+    const getTeamLaunch = async () => ({
+      launchResult: { failedSlots: [failedSlot] },
+      workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', task: 'unknown', process: 'running' }]
+    });
+    const service = new SquadExecutionService(deps(filePath, { launchTeam: async () => ({ ok: true, value: { failedSlots: [failedSlot] } }), getTeamLaunch }));
+    await service.start('session-1', 'project-1', { ...request, coordinationMode: 'freeform' } as never);
+    await expect(service.status('session-1', 'project-1', 'execution-1')).resolves.toMatchObject({ state: 'RUNNING' });
+    service.dispose();
+  }));
+
   it('R-3: forgets a run\'s worker warnings once the run is terminal', async () => fixture(async (filePath) => {
     const service = new SquadExecutionService(deps(filePath, { launchTeam: async () => { throw new Error('boom'); } }));
     const warned = (service as unknown as { warnedWorkers: Set<string> }).warnedWorkers;
