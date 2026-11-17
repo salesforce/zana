@@ -41,6 +41,7 @@ describe('team wait and status show the failure reason (REQ-2)', () => {
   it('a failed run with a persisted result still prints that result (existing-user path)', async () => {
     const result = await runTeamCommand('wait', ['ex-1'], false, { fetchImpl: router({ 'GET /api/v1/executions/ex-1': { value: { ...failed, result: 'Final text' } } }) });
     expect(result?.stdout).toBe('Final text\n');
+    expect(result?.stderr).toContain('Failure reason: no portable plan steps found');
   });
 
   it('a completed run without a result keeps the old error (existing-user path)', async () => {

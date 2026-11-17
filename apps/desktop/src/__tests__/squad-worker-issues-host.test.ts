@@ -284,6 +284,20 @@ describe('CLI worker spawn throw is contained (REQ-6, REQ-7)', () => {
     }
   });
 
+  it('Q-5: the E2E spawn-fault seam makes the chosen worker spawn throw, and only under an E2E home', async () => {
+    vi.stubEnv('ZCC_TEST_THROW_SPAWN_ORDINAL', '2');
+    try {
+      const plain = await launchTeam('team1', 'p1', structuredReq({ coordinationMode: 'structured', jobContext: { objective: 'obj' } }) as never);
+      expect(plain).toMatchObject({ ok: true, value: { failedSlots: [] } });
+      vi.stubEnv('ZCC_E2E_HOME', '/tmp/e2e-home');
+      const faulted = await launchTeam('team1', 'p1', structuredReq({ coordinationMode: 'structured', jobContext: { objective: 'obj' } }) as never);
+      expect(faulted).toMatchObject({ ok: true, value: { failedSlots: [{ slotId: '0:w1:1', reason: expect.stringContaining('injected spawn failure') }] } });
+    } finally {
+      vi.stubEnv('ZCC_TEST_THROW_SPAWN_ORDINAL', '');
+      vi.stubEnv('ZCC_E2E_HOME', '');
+    }
+  });
+
   it('keeps a launch with no throw unchanged (existing-user path)', async () => {
     const result = await launchTeam('team1', 'p1', structuredReq({ coordinationMode: 'structured', jobContext: { objective: 'obj' } }) as never);
     expect(result).toMatchObject({ ok: true, value: { failedSlots: [] } });
@@ -296,6 +310,7 @@ describe('launchTeam tail throw closes started workers (REQ-8)', () => {
 
   it('closes every started session, leaves none live and rethrows the original error', async () => {
     vi.stubEnv(FAULT, '1');
+    vi.stubEnv('ZCC_E2E_HOME', '/tmp/e2e-home');
     try {
       const outcome = await launchTeam('team1', 'p1', structuredReq({ coordinationMode: 'structured', jobContext: { objective: 'obj' } }) as never)
         .then((value) => ({ value }), (error: unknown) => ({ error }));
@@ -303,6 +318,18 @@ describe('launchTeam tail throw closes started workers (REQ-8)', () => {
       expect('error' in outcome || (outcome.value as { ok: boolean }).ok === false).toBe(true);
       expect(started.length).toBeGreaterThan(0);
       for (const id of [...h.sessions.keys()]) expect(h.closed).toContain(id);
+    } finally {
+      vi.stubEnv(FAULT, '');
+      vi.stubEnv('ZCC_E2E_HOME', '');
+    }
+  });
+
+  it('A4: ignores the fault outside an E2E home, so a production launch cannot be failed from the environment', async () => {
+    vi.stubEnv(FAULT, '1');
+    try {
+      const result = await launchTeam('team1', 'p1', structuredReq({ coordinationMode: 'structured', jobContext: { objective: 'obj' } }) as never);
+      expect(result.ok).toBe(true);
+      expect(h.closed).toEqual([]);
     } finally {
       vi.stubEnv(FAULT, '');
     }
@@ -319,10 +346,12 @@ describe('launchTeam tail throw closes started workers (REQ-8)', () => {
     expect(other.ok).toBe(true);
     const otherSessions = new Set(h.sessions.keys());
     vi.stubEnv('ZCC_TEST_FAIL_LAUNCH_COMPLETE', '1');
+    vi.stubEnv('ZCC_E2E_HOME', '/tmp/e2e-home');
     try {
       await launchTeam('team1', 'p1', structuredReq({ coordinationMode: 'structured', jobContext: { objective: 'obj' } }) as never).catch(() => undefined);
     } finally {
       vi.stubEnv('ZCC_TEST_FAIL_LAUNCH_COMPLETE', '');
+      vi.stubEnv('ZCC_E2E_HOME', '');
     }
     for (const id of otherSessions) expect(h.closed).not.toContain(id);
   });
@@ -374,9 +403,8 @@ describe('resolveSquadComposerPreview non-window plan error (REQ-4, REQ-5)', () 
 });
 
 // QA obligation OBL-014 (REQ-7): unknown-persona reasons must obey the slot bounds.
-// it.fails documents Q-2 (unknownPersonaReason interpolates the id raw); flip to `it` with the fix.
 describe('unknown-persona failed slot reasons are bounded (REQ-7)', () => {
-  it.fails('Q-2: sanitizes the reason for an unresolved persona id that holds an absolute path', async () => {
+  it('Q-2: sanitizes the reason for an unresolved persona id that holds an absolute path', async () => {
     const badId = `/Users/alice/private/${'p'.repeat(40)}\u0000`;
     h.personas = [persona('orch'), persona('w1')];
     h.teams = [{ id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch', slots: [{ personaId: 'w1', quantity: 1 }, { personaId: badId, quantity: 1 }] }];

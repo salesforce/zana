@@ -18,6 +18,15 @@ describe('team preview admission errors (REQ-4)', () => {
     const ops = createTeamProductOps({ ...baseDeps, logError, resolvePreview: async () => { throw new SquadPreviewAdmissionError('plan step 2 depends on a missing step'); } });
     const result = await ops.preview!(input);
     expect(result).toMatchObject({ ok: false, message: 'plan step 2 depends on a missing step' });
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it('A12: bounds and cleans an admission message before it leaves main', async () => {
+    const long = `${'x'.repeat(5000)}\u0000 at /Users/alice/private/plan.md`;
+    const ops = createTeamProductOps({ ...baseDeps, resolvePreview: async () => { throw new SquadPreviewAdmissionError(long); } });
+    const result = await ops.preview!(input);
+    expect(result.ok ? '' : result.message.length).toBeLessThanOrEqual(2048);
+    expect(result.ok ? '' : result.message).not.toMatch(/\u0000/);
   });
 });
 

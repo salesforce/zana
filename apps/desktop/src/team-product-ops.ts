@@ -12,6 +12,7 @@ import {
 } from '@zana-ai/zcc-server/services/execution/projection';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { SquadPreviewAdmissionError } from './squad-proposals/service.js';
+import { boundReason } from '@zana-ai/zcc-server/services/execution/store';
 
 export interface TeamProductOpDeps {
   resolvePreview?(input: ProductTeamLaunchInput): Promise<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>;
@@ -112,7 +113,7 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
       if (!deps.resolvePreview) return { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview unavailable' };
       try { return { ok: true, value: await deps.resolvePreview(input) }; }
       catch (error) {
-        if (error instanceof SquadPreviewAdmissionError) return { ok: false, code: 'INVALID', message: error.message };
+        if (error instanceof SquadPreviewAdmissionError) return { ok: false, code: 'INVALID', message: boundReason(error.message) };
         try { deps.logError?.(`team preview project=${input.projectId} team=${input.teamId}`, error); } catch { /* logging must not affect preview response */ }
         return { ok: false, code: 'INVALID', message: 'Launch preview could not validate the plan or target.' };
       }

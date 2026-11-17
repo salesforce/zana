@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDesktopNativeRecovery, findProposalExecution, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
-  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, teamJobFailureResponse, withProposalLaunch
+  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, stoppedModernWorkers, teamJobFailureResponse, withProposalLaunch
 } from '../team-launch-support.js';
 
 describe('withProposalLaunch', () => {
@@ -325,5 +325,23 @@ describe('runSpawnLifecycle', () => {
   it('wraps in lock when provided', async () => {
     const withSpawnLock = vi.fn(async (fn: () => Promise<number>) => (await fn()) + 10) as never;
     await expect(runSpawnLifecycle({ withSpawnLock }, async () => 1)).resolves.toBe(11);
+  });
+});
+
+describe('stoppedModernWorkers', () => {
+  const worker = (slotId: string, role = 'worker', executionId = 'exec-1') =>
+    ({ worker: { slotId, threadId: `t-${slotId}`, modernContext: { role, executionId } } });
+
+  it('lists only stopped execution workers, not bound ones, coordinators or runs without an execution', () => {
+    const observations = [
+      { slotId: 'a', threadId: 't-a', state: 'terminal' }, { slotId: 'b', threadId: 't-b', state: 'bound' },
+      { slotId: 'c', threadId: 't-c', state: 'terminal' }, { slotId: 'd', threadId: 't-d', state: 'terminal' }
+    ];
+    const entries = [worker('a'), worker('b'), worker('c', 'orchestrator'), worker('d', 'worker', '')];
+    expect(stoppedModernWorkers(entries, observations)).toEqual([{ executionId: 'exec-1', slotId: 'a' }]);
+  });
+
+  it('ignores an observation of a different thread generation', () => {
+    expect(stoppedModernWorkers([worker('a')], [{ slotId: 'a', threadId: 'other', state: 'terminal' }])).toEqual([]);
   });
 });

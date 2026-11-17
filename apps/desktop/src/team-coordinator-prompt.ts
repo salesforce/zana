@@ -329,11 +329,12 @@ export function jobCoordinatorPrompt(input: {
     : input.planFilePath && input.transport !== 'modern'
     ? fileHandoffKickoffLines({ planFilePath: input.planFilePath, sourceFilePath: input.sourceFilePath, hasSources })
     : legacyMcpKickoffLines(hasSources);
+  const failedBlock = failedSlotsBlock(input.failedSlots);
   return [
     `You are coordinator of Team "${input.team.name}"${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Your coordinator identity, execution binding, and worker roster are already host-bound. Do not discover, register, recover, or replace them during normal kickoff.`,
     `Workers are already running:\n${rosterLines.join('\n') || (waiting.length ? '- No workers are running yet.' : '- No workers.')}`,
     ...(waitingBlock ? [waitingBlock] : []),
-    ...(failedSlotsBlock(input.failedSlots) ? [failedSlotsBlock(input.failedSlots)] : []),
+    ...(failedBlock ? [failedBlock] : []),
     ...(tierBlock ? [tierBlock] : []),
     ...(authoringBlock ? [authoringBlock] : []),
     ...(input.recoveryResume ? [

@@ -102,7 +102,7 @@ import { jobCoordinatorPrompt, rosterWithTiers, type RosterEntry } from './team-
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
-  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources
+  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources, stoppedModernWorkers
 } from './team-launch-support.js';
 import { modernRecoverySnapshot } from './team-native-recovery.js';
 import { openExecutionStorage } from './execution-storage.js';
@@ -3405,6 +3405,8 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
         }
       }
       await teamLifecycleIntegration.reconcileModernWorkers(observations);
+      await Promise.all(stoppedModernWorkers(page.slice(offset, offset + 100), observations).map(({ executionId, slotId }) =>
+        squadExecutionService.warnModernWorkerStopped(executionId, slotId).catch((error) => logMainError(`execution modern worker stop ${slotId}`, error))));
     }
   };
   if (records) return run();
@@ -6230,10 +6232,12 @@ async function dispatchSeededPlanKickoff(args: {
   }
 }
 
-/** Joined launch message for failed slots: each reason is already bounded; the whole stays within one reason's limit. */
-/** Shared text for a slot whose persona is missing; the Modern preflight and the editor use the same words. */
+/** Longest persona id echoed into a failed-slot reason. */
+const MAX_PERSONA_ID_IN_REASON = 64;
+
+/** Shared text for a slot whose persona is missing; the id is bounded because it can come from a plan or a file name. */
 function unknownPersonaReason(personaId: string): string {
-  return `unknown persona: ${personaId}`;
+  return `unknown persona: ${boundReason(personaId, MAX_PERSONA_ID_IN_REASON)}`;
 }
 
 /** CLI transport: a launch whose every worker slot is unresolved would open only the coordinator, so refuse it. */
@@ -6247,18 +6251,26 @@ function refuseAllUnresolvedWorkers(
   return { ok: false, code: 'UNKNOWN_PERSONA', message: unknownPersonaReason(unresolved[0]!.personaId) };
 }
 
+/** Joined launch message for failed slots: each reason is already bounded; the whole stays within one reason's limit. */
 function failedSlotsMessage(failedSlots: readonly TeamFailedWorkerSlot[]): string {
   return boundReason(failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; '));
 }
 
-/** Test-only fault injection (ZCC_TEST_FAIL_LAUNCH_COMPLETE=1); the NODE_ENV guard lets production builds drop it. */
+/** Test-only fault injection (ZCC_TEST_FAIL_LAUNCH_COMPLETE=1), honoured only under an E2E temp HOME like the other E2E seams. */
 function launchTailFaultInjected(): boolean {
-  return process.env.NODE_ENV !== 'production' && process.env.ZCC_TEST_FAIL_LAUNCH_COMPLETE === '1';
+  return Boolean(process.env.ZCC_E2E_HOME) && process.env.ZCC_TEST_FAIL_LAUNCH_COMPLETE === '1';
+}
+
+/** Test-only: throws from a worker spawn (ZCC_TEST_THROW_SPAWN_ORDINAL=<1-based worker ordinal>), honoured only under an E2E temp HOME. */
+function injectSpawnFault(slotId: string): void {
+  const ordinal = Number(process.env.ZCC_TEST_THROW_SPAWN_ORDINAL);
+  if (process.env.ZCC_E2E_HOME && Number(slotId.slice(slotId.lastIndexOf(':') + 1)) + 1 === ordinal) throw new Error(`injected spawn failure for ${slotId}`);
 }
 
 /** Close exactly the sessions this launch started. Each close is independent so one failure leaves the rest closing. */
 async function closeStartedSessionsById(sessionIds: readonly string[]): Promise<void> {
-  await Promise.allSettled(sessionIds.map((sessionId) => terminateSession(sessionId)));
+  const settled = await Promise.allSettled(sessionIds.map((sessionId) => terminateSession(sessionId)));
+  settled.forEach((outcome, index) => { if (outcome.status === 'rejected') logMainError(`launch tail close ${sessionIds[index]}`, outcome.reason); });
 }
 
 export async function launchTeam(
@@ -6846,6 +6858,7 @@ export async function launchTeam(
     }
     let result: Result<{ id: string }>;
     try {
+    injectSpawnFault(slotId);
     result = await launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
@@ -6882,6 +6895,7 @@ export async function launchTeam(
         }
     ).finally(releaseColdStart);
     } catch (error) {
+      releaseColdStart(); // idempotent; a throw before the call's own .finally must not leak the cold-start slot
       // A spawn that throws is one failed slot, not an aborted launch that orphans the other workers.
       result = { ok: false, code: 'SPAWN_FAILED', message: boundReason(error instanceof Error ? error.message : String(error)) };
     }
@@ -7165,6 +7179,8 @@ export async function launchTeam(
     releaseRunSeats(claim.record.id);
     revokeRequestAuthorizations();
     await closeStartedSessionsById([...workerSessionIds, ...(orchestratorSessionId ? [orchestratorSessionId] : [])]);
+    // Finish the lifecycle record too, or it stays in progress until a later cancel.
+    await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId).catch((cancelError) => logMainError(`launch tail cancel ${launchRequestId}`, cancelError));
     throw error;
   }
   return operationResult;

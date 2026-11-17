@@ -130,7 +130,9 @@ async function waitForId(
       if (row.result === undefined || row.result === null) {
         return errResult(`terminal execution ${id} has no persisted result payload`);
       }
-      return renderOrJson(json, row.result, typeof row.result === 'string' ? row.result : `${JSON.stringify(row.result, null, 2)}\n`);
+      const rendered = renderOrJson(json, row.result, typeof row.result === 'string' ? row.result : `${JSON.stringify(row.result, null, 2)}\n`);
+      // A failed run with partial output keeps that output on stdout; its failure reason goes beside it on stderr.
+      return row.failureReason ? { ...rendered, stderr: `${rendered.stderr}Failure reason: ${row.failureReason}\n` } : rendered;
     }
     await sleepMs(500, deps);
   }

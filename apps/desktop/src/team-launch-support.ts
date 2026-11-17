@@ -359,3 +359,14 @@ export async function withRenewedSources(
     for (const id of owned) { inFlightSourceIds.delete(id); contestedSourceIds.delete(id); }
   }
 }
+
+/** Modern workers of a reconciled batch that the runtime reports stopped and that belong to an execution (REQ-20). */
+export function stoppedModernWorkers(
+  entries: ReadonlyArray<{ worker: { slotId: string; threadId?: string; modernContext?: { role: string; executionId?: string } } }>,
+  observations: ReadonlyArray<{ slotId: string; threadId: string; state: string }>
+): Array<{ executionId: string; slotId: string }> {
+  const stopped = new Set(observations.filter((observation) => observation.state === 'terminal').map((observation) => `${observation.slotId}\0${observation.threadId}`));
+  return entries.flatMap(({ worker }) => worker.modernContext?.role === 'worker' && worker.modernContext.executionId
+    && stopped.has(`${worker.slotId}\0${worker.threadId}`)
+    ? [{ executionId: worker.modernContext.executionId, slotId: worker.slotId }] : []);
+}
