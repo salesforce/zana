@@ -1470,3 +1470,19 @@ describe('core connection (no plugin, no scope)', () => {
     await expect((links as any).insert(row(17))).rejects.toMatchObject({ code: 'capacity' });
   });
 });
+
+describe('PeerLinks.diagnostics', () => {
+  it('is empty before any link exists', async () => {
+    const f = await fixture();
+    expect(f.make().diagnostics()).toEqual([]);
+  });
+
+  it('describes a linked link: connected state, no forwarder block, session facts, no secrets', async () => {
+    const f = await fixture(), links = f.make();
+    await f.inviterLinked(links);
+    const [entry] = links.diagnostics();
+    expect(entry).toMatchObject({ phase: 'linked', forwarderBlocked: null, paused: false, retries: expect.any(Number) });
+    expect(entry!.session === null || typeof entry!.session.connected === 'boolean').toBe(true);
+    expect(JSON.stringify(entry)).not.toMatch(/key|code|secret|token/i);
+  });
+});
