@@ -108,7 +108,9 @@ async function handleAdmittedPeer(request: IncomingMessage, response: ServerResp
     // Which of the three sources cancelled it: the sender cannot tell, and a lease abort means pairing state moved under a live request.
     if (signal.aborted) {
       const cause = lease.signal.aborted ? 'lease' : disconnected.signal.aborted ? 'disconnect' : 'timeout';
-      console.warn(`[zcc] peer request cancelled plugin=${pluginId} method=${peerMethod} pair=${lease.grant.pairId} cause=${cause} elapsedMs=${Date.now() - startedAt}`);
+      // The error that surfaced with the abort (often the commit failure that aborted the lease, not the abort itself).
+      const surfaced = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 160);
+      console.warn(`[zcc] peer request cancelled plugin=${pluginId} method=${peerMethod} pair=${lease.grant.pairId} cause=${cause} elapsedMs=${Date.now() - startedAt} error=${surfaced}`);
     }
     else {
       // The sender only gets a fixed code. The receiver's own error text is local, so it may be logged (bounded) to say what refused.

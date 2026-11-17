@@ -448,14 +448,16 @@ export class PairStore {
   }
 
   /** `why` is a fixed label for the call site; with pair ids it is what lets a log reader tell which path cancelled a live request. */
-  private abortLeases(pairId: string | undefined, why: string): void {
+  private abortLeases(pairId: string | undefined, why: string, error?: unknown): void {
     const id = resolve(this.directory), active = leases.get(id);
     if (!active) return;
     const aborted = new Set<string>();
     for (const [controller, lease] of active) {
       if (pairId === undefined || lease.pairId === pairId) { controller.abort(); active.delete(controller); aborted.add(lease.pairId); }
     }
-    if (aborted.size) console.warn(`[zcc] peer leases aborted why=${why} scope=${pairId === undefined ? 'all-pairs' : 'pair'} pairs=${[...aborted].join(',')}`);
+    // The error that forced the abort: otherwise a failing commit reaches the sender only as a bare cancellation.
+    const cause = error === undefined ? '' : ` error=${(error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 160)}`;
+    if (aborted.size) console.warn(`[zcc] peer leases aborted why=${why} scope=${pairId === undefined ? 'all-pairs' : 'pair'} pairs=${[...aborted].join(',')}${cause}`);
     if (active.size === 0) leases.delete(id);
   }
 
@@ -518,7 +520,7 @@ export class PairStore {
         return result;
       });
     }
-    catch (error) { this.abortLeases(inRun ? pairId : undefined, inRun ? 'run-failed' : 'transaction-failed-all'); throw error; }
+    catch (error) { this.abortLeases(inRun ? pairId : undefined, inRun ? 'run-failed' : 'transaction-failed-all', error); throw error; }
   }
 
   dispose(): void { this.disposed = true; this.abortLeases(undefined, 'dispose'); this.storage.dispose(); }
