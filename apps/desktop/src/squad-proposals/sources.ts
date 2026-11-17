@@ -66,8 +66,8 @@ type Failure = { ok: false; code: SquadProposalErrorCode; message: string };
 export interface ConfinedSource { source: SquadProposalSource; identity: { dev: number; ino: number } }
 export type Confined = ({ ok: true } & ConfinedSource) | Failure;
 
-/** `<scheme>://...`; a Windows drive (`C:\\`) has no `//`, so it is not matched. */
-const URI_SOURCE = /^[a-z][a-z0-9+.-]*:\/\//i;
+/** `<scheme>://...` with a scheme of two or more characters, so a Windows drive (`C:\\`, `C://`) is a path. */
+const URI_SOURCE = /^[a-z][a-z0-9+.-]+:\/\//i;
 
 const fail = (code: SquadProposalErrorCode, message: string): Failure => ({ ok: false, code, message });
 

@@ -41,3 +41,25 @@ describe('a source written as <scheme>://... (REQ-6, D2)', () => {
     expect(result.ok === false && result.message).not.toMatch(/attachment/i);
   });
 });
+
+describe('what counts as a <scheme>:// source', () => {
+  const missing = async (raw: string) => {
+    const { fs } = makeFs();
+    const scope = (await sourceScope(fs, '/proj', { home: '/home/u' }))!;
+    const absent = { ...fs, realpath: vi.fn(async () => { throw new Error('ENOENT'); }) } as unknown as SquadProposalFs;
+    return confineSource(absent, scope, raw);
+  };
+  it('treats a Windows drive written with forward slashes (C://Users/x/plan.md) as a path, not a scheme', async () => {
+    const result = await missing('C://Users/x/plan.md');
+    expect(result).toMatchObject({ ok: false, code: 'SOURCE_NOT_FILE' });
+    expect(result.ok === false && result.message).not.toMatch(/attachment/i);
+  });
+  it('treats a relative path whose first folder ends in a colon (foo://bar) as a path, not a scheme', async () => {
+    const result = await missing('./foo://bar');
+    expect(result).toMatchObject({ ok: false, code: 'SOURCE_NOT_FILE' });
+  });
+  it('still refuses a two-letter scheme such as ab://x', async () => {
+    const result = await missing('ab://x');
+    expect(result).toMatchObject({ ok: false, code: 'SOURCE_NOT_ALLOWED' });
+  });
+});

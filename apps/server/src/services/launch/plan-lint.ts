@@ -29,6 +29,22 @@ const warning = (detail: string, stepId?: string): SquadPlanFinding => ({
 });
 
 /**
+ * Each step's declared dependencies plus the ones the engine adds: a step that depends on a loop's fix unit also
+ * waits until that loop's review passes (store.ts `dependencySatisfied`), so the review is ordered before it.
+ */
+function effectiveDependencies(units: readonly LintUnit[]): Map<string, string[]> {
+  const reviewOf = new Map(units.filter((unit) => unit.loop).map((unit) => [unit.loop!.fixUnitId, unit.id]));
+  return new Map(units.map((unit) => {
+    const deps = new Set(unit.dependencies);
+    for (const dep of unit.dependencies) {
+      const review = reviewOf.get(dep);
+      if (review !== undefined && review !== unit.id) deps.add(review);
+    }
+    return [unit.id, [...deps]];
+  }));
+}
+
+/**
  * Transitive dependencies of every step (id -> ids it waits for, directly or not), built iteratively in
  * dependency order so a long chain cannot overflow the stack. Undefined for a cycle, a duplicate id or an
  * unknown dependency id: the parser reports those itself.
@@ -36,21 +52,23 @@ const warning = (detail: string, stepId?: string): SquadPlanFinding => ({
 function dependencyClosure(units: readonly LintUnit[]): Map<string, Set<string>> | undefined {
   const byId = new Map(units.map((unit) => [unit.id, unit]));
   if (byId.size !== units.length) return undefined;
+  const depsOf = effectiveDependencies(units);
   const waiting = new Map<string, number>();
   const dependents = new Map<string, string[]>();
   for (const unit of units) {
-    waiting.set(unit.id, unit.dependencies.length);
-    for (const dep of unit.dependencies) {
+    const deps = depsOf.get(unit.id) ?? [];
+    waiting.set(unit.id, deps.length);
+    for (const dep of deps) {
       if (!byId.has(dep)) return undefined;
       const list = dependents.get(dep);
       if (list) list.push(unit.id); else dependents.set(dep, [unit.id]);
     }
   }
   const closure = new Map<string, Set<string>>();
-  const ready = units.filter((unit) => !unit.dependencies.length).map((unit) => unit.id);
+  const ready = units.filter((unit) => !depsOf.get(unit.id)?.length).map((unit) => unit.id);
   for (let id = ready.pop(); id !== undefined; id = ready.pop()) {
     const all = new Set<string>();
-    for (const dep of byId.get(id)?.dependencies ?? []) {
+    for (const dep of depsOf.get(id) ?? []) {
       all.add(dep);
       for (const inherited of closure.get(dep) ?? []) all.add(inherited);
     }

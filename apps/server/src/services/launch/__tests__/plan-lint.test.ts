@@ -190,3 +190,24 @@ describe('correctness obligations (QA, CodeNod OBL-001, OBL-002)', () => {
     expect(lintPlan({ units: [u('a', ['b'], ['x']), u('b', ['a'], ['x'])], workerCount: 2 })).toEqual([]);
   });
 });
+
+describe('loop review holds back the dependents of its fix unit (engine dependencySatisfied)', () => {
+  const review = (id: string, fixUnitId: string, dependencies: string[] = [], files?: string[]): LintUnit => ({
+    ...u(id, dependencies, files), loop: { fixUnitId }
+  });
+  it('does not warn that a review and a dependent of its fix unit overlap, since the dependent waits for the review', () => {
+    const units = [u('F'), review('R', 'F', [], ['a']), u('D', ['F'], ['a'])];
+    expect(lintPlan({ units, workerCount: undefined })).toEqual([]);
+  });
+  it('counts the review as ordered before every dependent of its fix unit when computing width', () => {
+    // Declared edges alone give {R, D, E} = 3; the engine also holds D and E until R passes, so width is 2.
+    expect(planParallelWidth([u('F'), review('R', 'F'), u('D', ['F']), u('E', ['F'])])).toBe(2);
+  });
+  it('adds no edge from a review to itself or to its own fix unit', () => {
+    expect(planParallelWidth([review('R', 'F'), u('F', ['R']), u('D', ['F'])])).toBe(1);
+    expect(planParallelWidth([u('F'), review('R', 'F', ['F'])])).toBe(1);
+  });
+  it('ignores a loop whose fix unit is not in the plan', () => {
+    expect(planParallelWidth([review('R', 'ghost'), u('D')])).toBe(2);
+  });
+});
