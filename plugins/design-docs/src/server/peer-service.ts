@@ -363,7 +363,10 @@ export class DesignDocPeerService {
         catch (error) {
           // A private draft before both computers consented is an answer, not a fault: returning it commits normally, so the
           // pair's grant lease stays up (a throw here would abort it and reach the sender as an offline-looking 409).
-          if (error instanceof ManualConsentRequiredError) return { stage: CONSENT_REQUIRED_STAGE };
+          if (error instanceof ManualConsentRequiredError) {
+            this.sync.noteConsentRefusal(expected.remoteReplicaId, error.docId ?? 'unknown');
+            return { stage: CONSENT_REQUIRED_STAGE };
+          }
           throw error;
         }
         return { stage: 'received', scopeHash: transfer.scopeHash };

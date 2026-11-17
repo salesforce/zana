@@ -14,6 +14,10 @@ export function formatDiagnostics(data: SyncDiagnostics, nameOf: (peerId: string
     lines.push('', `${nameOf(peer.peerId)} (${peer.peerId})`,
       `  queued ${peer.queueDepth} (${peer.queuedDocs} docs): ${peer.failed} failed, ${peer.waiting} waiting` +
       (peer.oldestQueuedAt ? `, oldest ${relativeTime(peer.oldestQueuedAt, now)}` : ''));
+    const c = peer.consent;
+    if (c) lines.push(`  consent: ${c.knownHeads} known heads from it; sessions out waiting ${c.outbound.waiting}/accepted ${c.outbound.accepted}, ` +
+      `in waiting ${c.inbound.waiting}/accepted ${c.inbound.accepted}; refused drafts ${c.refused.count}` +
+      (c.refused.lastAt ? ` (last ${c.refused.lastDocId} ${relativeTime(c.refused.lastAt, now)})` : ''));
     if (peer.fault) lines.push(`  Likely cause (${peer.fault.code}): ${peer.fault.hint}`);
     for (const error of peer.recentErrors) lines.push(`  ${error.docId} x${error.attempts} ${relativeTime(error.at, now)}: ${boundSyncError(error.error)}`);
   }

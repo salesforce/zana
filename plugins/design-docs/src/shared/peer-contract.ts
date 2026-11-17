@@ -163,7 +163,7 @@ export const CONSENT_REQUIRED_STAGE = 'consent-required';
  * throwing it out of a commit callback would abort the pair's grant lease and reach the sender as an offline-looking 409.
  */
 export class ManualConsentRequiredError extends PeerProtocolError {
-  constructor(message = 'bilateral manual consent missing for frozen head') {
+  constructor(readonly docId: string | null = null, message = 'bilateral manual consent missing for frozen head') {
     super('invalid', message);
     this.name = 'ManualConsentRequiredError';
   }

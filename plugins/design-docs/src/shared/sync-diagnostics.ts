@@ -20,6 +20,17 @@ export interface SyncQueueEntry {
   parked: boolean;
 }
 
+/** Manual-consent bookkeeping for one other computer: why a private draft is or is not accepted here. Counts only. */
+export interface PeerConsentState {
+  /** Heads this computer already holds from that computer (0 = first contact, so private drafts stay fully gated). */
+  knownHeads: number;
+  /** Sessions this computer opened toward it (Sync now here) and sessions it opened toward this computer. */
+  outbound: { waiting: number; accepted: number };
+  inbound: { waiting: number; accepted: number };
+  /** Draft transfers this computer refused from it since startup, with the newest doc and time. */
+  refused: { count: number; lastDocId: string | null; lastAt: number | null };
+}
+
 export interface PeerDiagnostics {
   replicaId: string;
   peerId: string;
@@ -32,6 +43,8 @@ export interface PeerDiagnostics {
   recentErrors: Array<{ docId: string; error: string; at: number; attempts: number }>;
   /** Likely cause of the newest error, with advice; null when there is no error or it is not recognised. Optional for older servers. */
   fault?: PeerFault | null;
+  /** Optional for older servers. */
+  consent?: PeerConsentState;
 }
 
 export interface DocCounts {

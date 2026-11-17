@@ -31,7 +31,7 @@ import { createCheckpointHash, createScopeHash, validateAppliedReceipt, validate
 import { MAX_FILES_PER_DOC, MAX_COMMENTS_PER_DOC, MAX_THREAD_LINKS_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
 import type { DocActor, PeerConflictPage, PeerConflictReview, PeerConflictFile, PeerResolutionChoice, PeerConflictChoices, PeerConflictQuestion, PeerConflictSettled } from '../shared/contract.js';
 import { normalizeDocPath } from '../shared/paths.js';
-import type { CompareResult, PeerDiagnostics, SyncQueueEntry } from '../shared/sync-diagnostics.js';
+import type { CompareResult, PeerConsentState, PeerDiagnostics, SyncQueueEntry } from '../shared/sync-diagnostics.js';
 import { boundSyncError, classifyDelivery, diagnoseFault, isOfflineSyncError, isStageToken } from '../shared/sync-classify.js';
 import { mergeDocument, mergeHistory, orderedProjection, utf8Order, type DocumentMergeResult } from './peer-merge.js';
 import { DOC_ONLY, TEMPLATE_ONLY } from './store.js';
@@ -1710,7 +1710,7 @@ export class DesignDocSyncStore {
     if (established && this.db.prepare(`SELECT 1 FROM sync_manual_sessions s, json_each(s.heads_json) h
       WHERE s.repo_id = ? AND s.member_replica_id = ? AND s.direction = 'in'
         AND h.key = ? AND h.value = ? LIMIT 1`).get(repoId, member, docId, head)) return;
-    throw new ManualConsentRequiredError();
+    throw new ManualConsentRequiredError(docId);
   }
 
   private isAncestor(repoId: string, ancestor: string, descendant: string): boolean {
@@ -2132,6 +2132,25 @@ export class DesignDocSyncStore {
     });
   }
 
+  private readonly consentRefusals = new Map<string, { count: number; lastDocId: string; lastAt: number }>();
+
+  /** Remembers (in memory, per start) that a private draft from `member` was refused for missing consent. */
+  noteConsentRefusal(member: string, docId: string): void {
+    const prior = this.consentRefusals.get(member);
+    this.consentRefusals.set(member, { count: (prior?.count ?? 0) + 1, lastDocId: docId, lastAt: this.now() });
+  }
+
+  private consentState(repoId: string, member: string): PeerConsentState {
+    const rows = this.db.prepare(`SELECT direction, state, COUNT(*) AS n FROM sync_manual_sessions
+      WHERE repo_id = ? AND member_replica_id = ? GROUP BY direction, state`).all(repoId, member) as Array<{ direction: string; state: string; n: number }>;
+    const count = (direction: string, state: string) => rows.find((row) => row.direction === direction && row.state === state)?.n ?? 0;
+    const refused = this.consentRefusals.get(member);
+    return { knownHeads: (this.db.prepare('SELECT COUNT(*) AS n FROM sync_peer_known WHERE repo_id = ? AND member_replica_id = ?').get(repoId, member) as { n: number }).n,
+      outbound: { waiting: count('out', 'waiting'), accepted: count('out', 'accepted') },
+      inbound: { waiting: count('in', 'waiting'), accepted: count('in', 'accepted') },
+      refused: { count: refused?.count ?? 0, lastDocId: refused?.lastDocId ?? null, lastAt: refused?.lastAt ?? null } };
+  }
+
   /** Per other computer: queue depth, oldest queued age and the last 20 errors. Read-only. */
   peerDiagnostics(): PeerDiagnostics[] {
     const local = this.localRepository();
@@ -2141,7 +2160,7 @@ export class DesignDocSyncStore {
       const mine = queue.filter((entry) => entry.replicaId === member.replicaId);
       const errors = mine.filter((entry) => entry.lastError).sort((a, b) => (b.lastErrorAt ?? 0) - (a.lastErrorAt ?? 0));
       return { replicaId: member.replicaId, peerId: member.machineId, queueDepth: mine.length,
-        fault: diagnoseFault(errors[0]?.lastError),
+        fault: diagnoseFault(errors[0]?.lastError), consent: this.consentState(local.repoId, member.replicaId),
         queuedDocs: new Set(mine.map((entry) => entry.docId)).size,
         failed: mine.filter((entry) => entry.state === 'failed').length, waiting: mine.filter((entry) => entry.state === 'waiting').length,
         oldestQueuedAt: mine.length ? Math.min(...mine.map((entry) => entry.queuedAt)) : null,

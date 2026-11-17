@@ -1047,6 +1047,9 @@ describe('private draft awaiting the other computer\'s consent', () => {
     const intent = a.sync.readyIntents('repo')[0]!, transfer = a.service.createTransfer(intent, 1);
     await expect(b.service.receiveTransfer('transfer', 'machine-a', transfer, fence())).resolves.toEqual({ stage: 'consent-required' });
     expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_transfers').get()).toEqual({ n: 0 });
+    // The refusal is visible in the receiver's own diagnostics, so no database query is needed to see why.
+    expect(b.sync.peerDiagnostics()[0]!.consent).toMatchObject({ knownHeads: 0, refused: { count: 1, lastDocId: expect.any(String) },
+      inbound: { waiting: 0, accepted: 0 }, outbound: { waiting: 0, accepted: 0 } });
   });
 
   it('sender holds the draft as waiting with a consent hint, then delivers once the other computer chooses Sync now', async () => {

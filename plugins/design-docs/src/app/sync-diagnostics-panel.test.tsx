@@ -25,6 +25,12 @@ describe('formatDiagnostics', () => {
     expect(text).toContain('dd_1 x3');
     expect(text).not.toContain('SECRET123');
   });
+  it('prints consent state so a refused private draft is explained without database access', () => {
+    const consent = { knownHeads: 0, outbound: { waiting: 0, accepted: 0 }, inbound: { waiting: 1, accepted: 2 }, refused: { count: 3, lastDocId: 'dd_9', lastAt: 4000 } };
+    const text = formatDiagnostics({ ...data, peers: [{ ...data.peers[0]!, consent }] }, undefined, 5000);
+    expect(text).toContain('consent: 0 known heads from it; sessions out waiting 0/accepted 0, in waiting 1/accepted 2; refused drafts 3 (last dd_9');
+    expect(formatDiagnostics({ ...data, peers: [{ ...data.peers[0]!, consent: { ...consent, refused: { count: 0, lastDocId: null, lastAt: null } } }] })).toContain('refused drafts 0');
+  });
   it('handles an empty queue and the default name', () => {
     expect(formatDiagnostics({ ...data, peers: [{ ...data.peers[0]!, queueDepth: 0, oldestQueuedAt: null, recentErrors: [] }] })).toContain('queued 0');
   });
