@@ -519,6 +519,18 @@ describe('pair invalidation logging', () => {
     expect(warnings().join('')).not.toMatch(/[a-f0-9]{32}/);
   });
 
+  it('logs a second line with short hash prefixes for a changed reverse key, once, never full hashes', async () => {
+    const { f, current } = await activeGrant();
+    f.channels.set('host-a', { ...f.channels.get('host-a')!, keyHash: hash('rotated') });
+    expect(current()).toBe(false);
+    expect(current()).toBe(false);
+    const lines = (console.warn as unknown as ReturnType<typeof vi.fn>).mock.calls.map(call => String(call[0])).filter(line => line.includes('generations:'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`peer pair ${proposal.pairId} generations:`);
+    expect(lines[0]).toContain(`reverseKey=${hash('rotated').slice(0, 8)} (paired `);
+    expect(lines[0]).not.toMatch(/[a-f0-9]{32}/);
+  });
+
   it.each([['host-b', 'link-not-usable'], ['host-a', 'reverse-link-not-usable']])('names an unusable %s as %s', async (blockedHost, reason) => {
     const { f, current } = await activeGrant(true);
     f.blocked.add(blockedHost);

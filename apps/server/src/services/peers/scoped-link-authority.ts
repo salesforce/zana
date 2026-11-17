@@ -152,12 +152,22 @@ export class ScopedLinkAuthority {
   }
 
   /** Why a pair stopped validating, logged once per pair and reason (cleared when it validates again). Fixed codes and the pair id only. */
-  private noteValidation(pairId: string, reason: GrantInvalidReason | null): void {
+  private noteValidation(pairId: string, reason: GrantInvalidReason | null, detail?: string): void {
     if (reason === null) { this.lastInvalid.delete(pairId); return; }
     if (this.lastInvalid.get(pairId) === reason) return;
     if (this.lastInvalid.size >= 256) this.lastInvalid.clear();
     this.lastInvalid.set(pairId, reason);
     console.warn(`[zcc] peer pair ${pairId} no longer valid: ${reason}`);
+    if (detail) console.warn(`[zcc] peer pair ${pairId} generations: ${detail}`);
+  }
+
+  /** Short key-hash prefixes and host ids for a stale pair: enough to tell which side changed, never key material (hash prefixes only). */
+  private staleDetail(proposal: PairProposal, record: { channelKeyHash: string; reverseKeyHash: string; reverseHostId: string }): string {
+    const short = (hash: string | undefined) => hash ? hash.slice(0, 8) : 'none';
+    const outgoing = this.options.enrollment(proposal.targetHostId), reverse = this.options.currentReverseEnrollment(proposal.remoteInstanceId);
+    return `remote=${proposal.remoteInstanceId} outgoingKey=${short(outgoing?.keyHash)} (paired ${short(record.channelKeyHash)}) ` +
+      `reverseKey=${short(reverse?.keyHash)} (paired ${short(record.reverseKeyHash)}) ` +
+      `reverseHost=${reverse?.hostId ?? 'none'} (paired ${record.reverseHostId})`;
   }
 
   private usable(hostId: string): boolean {
@@ -190,7 +200,12 @@ export class ScopedLinkAuthority {
       : !this.approved(proposal) ? 'use-not-approved'
         : this.staleReason(proposal, record.channelKeyHash, record.reverseKeyHash, record.reverseHostId);
     // Runs synchronously inside the PairStore mutex at commit, so a stopped use fences the very next request.
-    const current = () => { const reason = why(); this.noteValidation(proposal.pairId, reason); return reason === null; };
+    const current = () => {
+      const reason = why();
+      const keyed = reason !== null && /key-changed|host-changed|enrollment-missing/.test(reason);
+      this.noteValidation(proposal.pairId, reason, keyed ? this.staleDetail(proposal, record) : undefined);
+      return reason === null;
+    };
     return current() ? current : null;
   };
 

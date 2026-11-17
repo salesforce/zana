@@ -34,6 +34,11 @@ export class EnrolledPeerChannels {
     try { await this.storage.transaction(async (state, save) => {
       if (channel.remoteInstanceId === state.instanceId) throw new Error('self peer enrollment');
       const previous = state.channels.find(c => c.remoteInstanceId === channel.remoteInstanceId);
+      // Who displaced whom: a changed host id or key hash is what later reads as reverse-host/key-changed on a pair. Hash prefixes only.
+      if (previous && (previous.hostId !== channel.hostId || channelHash(previous) !== channelHash(channel) || previous.capability !== channel.capability)) {
+        console.warn(`[zcc] peer channel for ${channel.remoteInstanceId} replaced: host ${previous.hostId} -> ${channel.hostId}, ` +
+          `key ${channelHash(previous).slice(0, 8)} -> ${channelHash(channel).slice(0, 8)}, capability ${previous.capability} -> ${channel.capability}`);
+      }
       if (previous) state.channels[state.channels.indexOf(previous)] = channel;
       else { if (state.channels.length >= 256) throw new Error('peer channel capacity exceeded'); state.channels.push(channel); }
       await save();
