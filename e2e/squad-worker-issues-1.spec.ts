@@ -9,8 +9,8 @@
  */
 import { test, expect } from './fixtures/app.js';
 import { makeJobTeamCoordinatorBinary, type JobTeamScenario } from './sdk/harness.js';
-import { execFile } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile, execFileSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -48,8 +48,22 @@ async function setup(window: Page, binary: string, opts: { workers: number; team
   };
 }
 
-async function startJob(window: Page, run: Run, mode: 'structured' | 'freeform', teamId = 'swi-team') {
-  return window.evaluate(({ projectId, mode, teamId }) => window.cc.teams.startJob({ teamId, projectId, goal: 'swi acceptance run', coordinationMode: mode }), { projectId: run.projectId, mode, teamId });
+async function startJob(window: Page, run: Run, mode: 'structured' | 'freeform', teamId = 'swi-team', goal = 'swi acceptance run') {
+  return window.evaluate(({ projectId, mode, teamId, goal }) => window.cc.teams.startJob({ teamId, projectId, goal, coordinationMode: mode }), { projectId: run.projectId, mode, teamId, goal });
+}
+
+/** A committed one-step plan in the project, so a structured start is plan-backed instead of falling back to freeform. */
+function writeStructuredPlan(run: Run, home: string): string {
+  const cwd = realpathSync(run.projectDir);
+  const plan = join(cwd, 'plan.md');
+  writeFileSync(join(cwd, 'README.md'), 'Squad worker issues fixture.\n');
+  writeFileSync(plan, ['# SWI plan', '', '### inspect: Inspect <!-- executable-step -->', '- **Work:** Report done after reading README.md.',
+    '- **Depends on:** None', '- **Mode:** read-only', '- **Verification:** README.md exists.', ''].join('\n'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd, env: { ...process.env, HOME: home }, timeout: 15_000 });
+  git('init', '-b', 'main');
+  git('add', 'README.md', 'plan.md');
+  git('-c', 'user.name=SWI E2E', '-c', 'user.email=swi@example.test', 'commit', '-m', 'Fixture setup');
+  return plan;
 }
 
 async function snapshotOf(window: Page, projectId: string): Promise<{ executionId: string; state: string; text: string } | null> {
@@ -129,7 +143,8 @@ test.describe('first worker throws', () => {
     const agent = makeJobTeamCoordinatorBinary();
     const run = await setup(app.window, agent.path, { workers: 2 });
     try {
-      await startJob(app.window, run, 'structured');
+      const plan = writeStructuredPlan(run, home);
+      await startJob(app.window, run, 'structured', 'swi-team', `implement ${plan}`);
       await expect.poll(async () => (await snapshotOf(app.window, run.projectId))?.state, { timeout: 60_000, intervals: [500] }).toBe('FAILED');
       const found = (await snapshotOf(app.window, run.projectId))!;
       const zcc = cliRunner(app.window, home, run.projectDir);
