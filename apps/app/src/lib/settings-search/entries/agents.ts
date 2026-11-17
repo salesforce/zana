@@ -13,6 +13,7 @@ import {
   THREAD_SESSION_RELEASE_DEFAULTS,
   threadSessionReleaseLabel
 } from '@zana-ai/zcc-domain/product';
+import { API_ERROR_RESUME_HELP } from '../../../components/settings/api-error-resume-coverage';
 import type { SettingsSearchEntry } from '../types';
 
 // Agents settings page (AgentsSettingsView + AgentGuidanceSettings). Ids match
@@ -419,7 +420,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'agents',
     anchor: 'api-error-resume',
     label: 'Resume after API errors',
-    help: "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Works with Claude Code sessions: CLI Agent tabs, Squad engineers and scheduled runs.",
+    help: API_ERROR_RESUME_HELP,
     keywords: ['api error', 'continue', 'retry', 'overloaded', 'provider not found', 'connection lost', 'stopfailure'],
     kind: 'subsection',
   },

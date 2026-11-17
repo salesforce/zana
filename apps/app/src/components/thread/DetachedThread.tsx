@@ -22,7 +22,7 @@ export function DetachedThread({ threadId, projectId }: { threadId: string; proj
   const target = projectId ? { threadId, projectId } : { threadId };
   return (
     <div className="plugin-tab-detached" data-testid="thread-detached">
-      <PaneEmptyState art="desktop" title="This agent is open in its own window" hint="Work there, or bring the agent back to this window.">
+      <PaneEmptyState art="window" title="This agent is open in its own window" hint="Work there, or bring the agent back to this window.">
         <div className="plugin-tab-detached-actions">
           <button type="button" className="btn primary" onClick={() => void openThreadViewWindow(target)} data-testid="thread-detached-focus">
             <ExternalLink size={14} aria-hidden="true" />

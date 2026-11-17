@@ -9,7 +9,7 @@ export function CliAgentSurface({ children }: { children: ReactNode }) {
     return (
       <PaneEmptyState
         testId="cli-agent-mobile-unsupported"
-        art="desktop"
+        art="mobile"
         title="CLI Agents aren’t supported on mobile yet"
         hint="Open this agent in the desktop app to view its terminal and continue working."
       />

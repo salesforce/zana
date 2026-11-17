@@ -350,4 +350,27 @@ describe('project-focus navigation contract', () => {
     expect(useData.getState().lastProjectId).toBe('proj-last');
     expect(mockConfig.set).toHaveBeenCalledWith({ lastProjectId: 'proj-last' });
   });
+
+  it('setProjectExpanded and toggleProjectExpanded persist projectExpanded to config', async () => {
+    vi.useFakeTimers();
+    globalThis.window.setTimeout = globalThis.setTimeout.bind(globalThis);
+    globalThis.window.clearTimeout = globalThis.clearTimeout.bind(globalThis);
+    try {
+      const { useUi } = await import('../store.js');
+
+      useUi.getState().setProjectExpanded('proj-1', false);
+      expect(useUi.getState().projectExpanded['proj-1']).toBe(false);
+      vi.advanceTimersByTime(200);
+      expect(mockConfig.set).toHaveBeenCalledWith({ projectExpanded: { 'proj-1': false } });
+
+      mockConfig.set.mockClear();
+      useUi.getState().toggleProjectExpanded('proj-1');
+      expect(useUi.getState().projectExpanded['proj-1']).toBe(true);
+      vi.advanceTimersByTime(200);
+      expect(mockConfig.set).toHaveBeenCalledWith({ projectExpanded: { 'proj-1': true } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
 });

@@ -104,3 +104,7 @@
 @keyframes quick-access-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .quick-access-panel.quick-access-panel { animation: none; } }
 @media (hover: none) { .quick-access-remove { opacity: 1; } }
+.quick-access-empty-icon--fairy { border: 0; }
+.quick-access-empty-icon--fairy .fairy { width: 40px; height: 40px; }
+.quick-access-empty-icon--fairy .fairy-star { fill: #8c95a6; animation: fairy-tiny-star 3s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .quick-access-empty-icon--fairy .fairy-star { animation: none; } }

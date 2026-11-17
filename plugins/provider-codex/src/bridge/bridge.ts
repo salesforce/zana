@@ -91,11 +91,13 @@ import {
 import {
   createCodexAppServerConnection,
   CodexAppServerExitedError,
+  CodexAppServerRpcError,
   type CodexAppServerConnection,
   type CodexAppServerExitInfo,
   type CodexAppServerRequestResponder,
 } from "./app-server-connection.js";
 import {
+  codexAccountReadSchema,
   getCodexProviderHealth,
   getCodexProviderInstallationRun,
   getCodexProviderInstallationStatus,
@@ -1775,6 +1777,14 @@ async function handleTurnStart(
   }
 }
 
+const CODEX_STALE_STEER_MESSAGE_PATTERN = /^(?:no active turn to steer|expected active turn id `[^`]+` but found `[^`]+`)$/;
+
+function rejectStaleSteer(id: string | number, message: string): void {
+  sendError(id, BRIDGE_JSON_RPC_ERRORS.NO_ACTIVE_TURN, message, {
+    recovery: { kind: "staleTurn", message, retryable: false },
+  });
+}
+
 async function handleTurnSteer(
   id: string | number,
   params: TurnSteerParamsShape,
@@ -1802,7 +1812,10 @@ async function handleTurnSteer(
       options: decoded.sessionOptions,
     });
     if (!isDeepStrictEqual(session.turnPermissionSettings, permissionSettings)) {
-      if (!session.openCodexTurnIds.has(params.expectedTurnId)) throw new Error("The turn to steer is no longer active");
+      if (!session.openCodexTurnIds.has(params.expectedTurnId)) {
+        rejectStaleSteer(id, "The turn to steer is no longer active");
+        return;
+      }
       await session.connection.request({
         method: "turn/interrupt",
         params: { threadId: session.codexThreadId, turnId: params.expectedTurnId },
@@ -1834,6 +1847,10 @@ async function handleTurnSteer(
     ]);
     sendResult(id, { threadId: params.threadId });
   } catch (error) {
+    if (error instanceof CodexAppServerRpcError && error.code === -32600 && CODEX_STALE_STEER_MESSAGE_PATTERN.test(error.message)) {
+      rejectStaleSteer(id, error.message);
+      return;
+    }
     rejectWithCodexError(id, error);
   }
 }
@@ -2063,7 +2080,20 @@ async function handleRequest(
       await handleModelList(request.id);
       break;
     case "provider/health":
-      sendResult(request.id, await getCodexProviderHealth());
+      sendResult(request.id, await getCodexProviderHealth(async () => {
+        const connection = spawnChildConnection({
+          recordThreadId: null, onNotification: () => {}, onExit: () => {},
+          onRequest: (_method, _params, responder) => responder.error(BRIDGE_JSON_RPC_ERRORS.METHOD_NOT_FOUND, 'Readiness checks do not serve requests'),
+        });
+        maintenanceConnections.add(connection);
+        try {
+          await connection.request({ method: 'initialize', params: CODEX_INITIALIZE_PARAMS, resultSchema: z.unknown(), timeoutMs: 3_000 });
+          return await connection.request({ method: 'account/read', params: { refreshToken: false }, resultSchema: codexAccountReadSchema, timeoutMs: 3_000 });
+        } finally {
+          maintenanceConnections.delete(connection);
+          await connection.kill();
+        }
+      }));
       break;
     case "provider/usage":
       sendResult(request.id, await getCodexProviderUsage());

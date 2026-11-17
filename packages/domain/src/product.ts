@@ -246,6 +246,8 @@ export interface Project {
   defaultPersonas?: string[];
   /** Canonical project launch selection. Legacy default arrays are projected only while absent. */
   launchDefault?: ProjectLaunchDefault;
+  /** Thread provider override. null inherits the global thread default. */
+  defaultThreadProviderId?: string | null;
   /** Reserved for future templates work; no logic yet. */
   template?: string;
   /**
@@ -1484,6 +1486,8 @@ export interface TerminalSession {
   status: 'starting' | 'running' | 'exited';
   /** Command passed to `terminal.start` for a product PTY, when set. */
   launchCommand?: string;
+  /** Machine-owned, temporary provider authentication terminal; no project checkout. */
+  providerSignIn?: { providerId: string };
   exitCode?: number;
   createdAt: number;
   /**
@@ -1875,6 +1879,12 @@ export const DEFAULT_AUTONOMOUS_BLOCKED_WAIT_MS = 4 * 60 * 60 * 1000;
 export const MIN_AUTONOMOUS_WAIT_MS = 60_000;
 export const MAX_AUTONOMOUS_WAIT_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Max `AppConfig.projectExpanded` entries kept. The renderer appends the latest
+ * toggle last and the server keeps the newest entries, so both must share this.
+ */
+export const PROJECT_EXPANDED_CAP = 200;
+
 export interface AppConfig {
   version: 1;
   /**
@@ -1894,8 +1904,10 @@ export interface AppConfig {
   terminalTheme?: TerminalThemeId;
   shell: string;
   claudeBinary: string;
-  /** Optional global agent-harness default. Absent preserves Claude compatibility fallback. */
+  /** Optional global CLI-agent harness default. Absent preserves Claude compatibility fallback. */
   defaultHarness?: HarnessFamily;
+  /** Explicit default for new threads, independent of the CLI-agent default. */
+  defaultThreadProviderId?: string | null;
   /** Structured global model defaults, keyed by owning harness. */
   harnessRouting?: HarnessModelRoutingV1;
   /** User-declared provider models merged over live discovery (bounded and main-validated). */
@@ -2147,6 +2159,11 @@ export interface AppConfig {
    * Absent key = expanded. Migrated once from `zcc.collapsedSections`.
    */
   collapsedSections?: Record<string, boolean>;
+  /**
+   * Per-project session-tree disclosure map in the Projects rail.
+   * Absent key falls back to auto-expanding when the project has live sessions.
+   */
+  projectExpanded?: Record<string, boolean>;
   /** Hide projects with no live sessions in the Projects rail. */
   hideIdleProjects?: boolean;
   /** Hide projects with no schedules in the Scheduler rail. */
@@ -6322,6 +6339,8 @@ export interface PluginUpdateStatus {
 export type PluginUpdatePolicy = 'bundled' | 'local' | 'independent' | 'migration-required';
 
 export interface PluginAppEntry {
+  /** Runtime declared settings, without reading values. Omitted while unavailable or on older hosts. */
+  hasSettings?: boolean;
   id: string;
   name: string;
   description: string;

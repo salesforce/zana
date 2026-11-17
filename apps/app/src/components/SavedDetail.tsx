@@ -61,7 +61,7 @@ export function SavedDetail({ visible }: SavedDetailProps) {
   if (records.length === 0) {
     return (
       <PaneEmptyState
-        art="inbox"
+        art="saved"
         title="No saved reports yet"
         hint="Open a report in the inbox and click the bookmark to save a durable copy here. Saved reports keep a frozen snapshot of their documents."
         testId="saved-detail-empty"

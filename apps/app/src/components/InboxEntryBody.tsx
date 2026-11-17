@@ -1,12 +1,13 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useState } from 'react';
-import { Copy, Download, Loader2 } from 'lucide-react';
+import { Copy, Download } from 'lucide-react';
 import type { FsReadResult, InboxDoc, InboxEntry, Project } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store.js';
 import { inboxPrimaryTitle } from '../lib/inboxPresentation.js';
 import { renderReportHtml, type ReportDoc as PdfReportDoc } from '../lib/renderReportHtml.js';
 import { MarkdownContent } from './MarkdownContent.js';
 import { InboxDocContent, readInboxDocPreview } from './InboxDocContent.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /** Cap on total source markdown re-read for a copy/PDF export; mirrors InboxDetail. */
 const EXPORT_TOTAL_BYTES_CAP = 32 * 1024 * 1024; // 32 MB
@@ -162,7 +163,7 @@ function ReportDoc({ doc, project }: { doc: InboxDoc; project: Project | null })
       </div>
       {result === null ? (
         <div className="agent-report-doc-loading">
-          <Loader2 size={13} className="spin" /> Loading…
+          <ZanaSpinner size={13} className="spin" /> Loading…
         </div>
       ) : result.ok && typeof result.content === 'string' ? (
         <InboxDocContent path={doc.path} content={result.content} />

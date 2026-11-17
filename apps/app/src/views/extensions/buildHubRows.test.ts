@@ -129,7 +129,8 @@ describe('Installed collection chrome', () => {
     expect(source).toContain('Add plugin');
     expect(source).toContain('aria-label="Add a plugin"');
     expect(source).toContain('CREATE_PLUGIN_PROMPT');
-    expect(source).toContain('shouldMountHostSettings');
+    const settingsSource = readFileSync(new URL('../settings/PluginSettingsView.tsx', import.meta.url), 'utf8');
+    expect(settingsSource).toContain('shouldMountHostSettings');
     expect(source).toContain('moduleHostCallReady');
     expect(source).toContain('ext-installed-switch-spacer');
     expect(source).toContain("id: 'all', label: 'All'");

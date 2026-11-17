@@ -360,6 +360,13 @@ describe('PluginAppSnapshotSchema peers flag', () => {
   });
 });
 
+it('keeps optional settings discovery metadata across the strict runtime boundary', () => {
+  const row = { id: 'sample', name: 'Sample', description: '', icon: 'Puzzle', enabled: true, provenance: 'direct', status: 'running', appUrl: null };
+  expect(PluginAppSnapshotSchema.parse(row)).not.toHaveProperty('hasSettings');
+  for (const hasSettings of [true, false]) expect(PluginAppSnapshotSchema.parse({ ...row, hasSettings })).toHaveProperty('hasSettings', hasSettings);
+  expect(PluginAppSnapshotSchema.safeParse({ ...row, hasSettings: 'yes' }).success).toBe(false);
+});
+
 describe('thread-queue-turn runtime contract', () => {
   const base = {
     type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
@@ -405,4 +412,10 @@ describe('DispatchAdmissionMainRequestSchema prompt', () => {
     expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'x'.repeat(DISPATCH_ADMISSION_MAIN_PROMPT_MAX_CHARS + 1) } }).success).toBe(false);
     expect(DispatchAdmissionMainRequestSchema.safeParse({ ...base, prompt: { text: 'hi', extra: 1 } }).success).toBe(false);
   });
+});
+
+it('accepts finite numeric plugin settings writes at the desktop runtime boundary', () => {
+  const numericRequest = { ...request, operation: 'plugins-settings-set', pluginId: 'notes' };
+  expect(ServerRuntimeInboundSchema.safeParse({ ...numericRequest, values: { budget: 7, name: 'Saved', active: true, cleared: null } }).success).toBe(true);
+  for (const budget of [NaN, Infinity, {}]) expect(ServerRuntimeInboundSchema.safeParse({ ...numericRequest, values: { budget } }).success).toBe(false);
 });

@@ -131,17 +131,6 @@ describe('dev-local turbo TUI', () => {
     expect(prepareLocalDevEnv({ ZCC_DATA_DIR: packagedDir, PATH: '/usr/bin' }, { target: 'packaged' }).env.ZCC_DEV_PEER_KEY_FILE).toBeUndefined();
   });
 
-  it('honors an explicit ZCC_POSTHOG_API_KEY', () => {
-    const dataDir = join(makeTempDir(), 'zcc');
-    mkdirSync(dataDir, { recursive: true });
-    const prepared = prepareLocalDevEnv({
-      ZCC_DATA_DIR: dataDir,
-      ZCC_POSTHOG_API_KEY: 'phc_test',
-      PATH: '/usr/bin'
-    });
-    expect(prepared.env.ZCC_POSTHOG_API_KEY).toBe('phc_test');
-  });
-
   it('honors an explicit ZCC_APP_URL over the repo file', () => {
     const dataDir = join(makeTempDir(), 'zcc');
     mkdirSync(dataDir, { recursive: true });

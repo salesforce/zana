@@ -117,7 +117,7 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'output-activity' },
+  status: { mode: 'output-activity', apiErrorSignal: 'none' },
   evidence: [
     cursorEvidence('cursor.facet.opening-prompt', 'CLI accepts opening prompt as spawn argument.'),
     ...['auto', 'default', 'cursor-grok-4.6-high', 'cursor-grok-4.5-high', 'claude-opus-5-high', 'gpt-5.6-sol-medium', 'claude-sonnet-5-high',

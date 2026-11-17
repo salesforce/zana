@@ -25,7 +25,7 @@ test('packaged CLI creates, exercises, reloads, and diagnoses a plugin in built 
   const shippedCli = await app.electron.evaluate(({ app }) => {
     return app.isPackaged ? `${process.resourcesPath}/zcc-cli/bin/zcc` : null;
   });
-  if (!shippedCli) cpSync(resolve('packages/cli/dist'), copiedCli, { recursive: true, dereference: true });
+  if (!shippedCli) cpSync(resolve(process.env.ZCC_E2E_APP_ROOT ?? '.', 'packages/cli/dist'), copiedCli, { recursive: true, dereference: true });
   const cli = shippedCli ?? join(copiedCli, 'bin/zcc');
   expect(existsSync(cli)).toBe(true);
   const source = join(home, `zcc-plugin-${id}`);

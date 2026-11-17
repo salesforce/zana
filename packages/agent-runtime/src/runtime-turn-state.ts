@@ -37,6 +37,12 @@ export class RuntimeTurnState {
     this.resolveWaiters(threadId, null);
   }
 
+  clearStaleTurn(threadId: string, expectedTurnId: string): boolean {
+    if (this.getActiveTurnId(threadId) !== expectedTurnId) return false;
+    this.clearThread(threadId);
+    return true;
+  }
+
   getActiveTurnId(threadId: string): string | null {
     return this.activeTurnIdByThreadId.get(threadId) ?? null;
   }

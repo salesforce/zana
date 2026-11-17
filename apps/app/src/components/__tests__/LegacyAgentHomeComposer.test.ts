@@ -89,7 +89,7 @@ describe('LegacyAgentHomeComposer', () => {
 
   it('shows a sending spinner on the launch button while createTerminal is in flight', () => {
     const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
-    expect(source).toContain('Loader2');
+    expect(source).toContain('ZanaSpinner');
     expect(source).toContain('is-sending');
     expect(source).toContain('aria-busy={launching}');
     expect(source).toContain('thread-command-send-spin');

@@ -1,7 +1,8 @@
 import { product } from '../lib/product-client.js';
 import { useState } from 'react';
-import { Sparkles, Undo2, Loader2 } from 'lucide-react';
+import { Sparkles, Undo2 } from 'lucide-react';
 import { useUi } from '../store.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 /**
  * "✨ Improve prompt" — a small ghost button that sits under an
@@ -87,7 +88,7 @@ export function ImprovePromptButton({ value, onChange, className }: Props) {
         title={canImprove ? 'Rewrite this into a clearer prompt (LLM)' : 'Type an instruction first'}
       >
         {busy ? (
-          <Loader2 size={13} className="improve-prompt-spin" aria-hidden="true" />
+          <ZanaSpinner size={13} className="improve-prompt-spin" aria-hidden="true" />
         ) : (
           <Sparkles size={13} aria-hidden="true" />
         )}

@@ -2,7 +2,6 @@ import { product } from '../../lib/product-client.js';
 import { useState, useEffect } from 'react';
 import {
   Sparkles,
-  Loader2,
   CheckCircle2,
   AlertTriangle,
   Download,
@@ -20,6 +19,7 @@ import {
 } from '@zana-ai/zcc-domain/product';
 import { useUpdates, openWhatsNewAll } from '@/store';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
+import { ZanaSpinner } from '../../components/fairy/ZanaSpinner.js';
 
 type UpdateTone = 'ok' | 'busy' | 'action' | 'warn' | 'muted';
 
@@ -32,7 +32,7 @@ type UpdateTone = 'ok' | 'busy' | 'action' | 'warn' | 'muted';
 function updateStatusView(
   status: import('@zana-ai/zcc-domain/product').UpdateStatus,
   progress: import('@zana-ai/zcc-domain/product').UpdateProgress | null
-): { tone: UpdateTone; Icon: LucideIcon; title: string; detail?: string } {
+): { tone: UpdateTone; Icon: LucideIcon | typeof ZanaSpinner; title: string; detail?: string } {
   switch (status.kind) {
     case 'idle':
       return {
@@ -49,7 +49,7 @@ function updateStatusView(
         detail: 'Updates only work in the packaged app, not a dev build.'
       };
     case 'checking':
-      return { tone: 'busy', Icon: Loader2, title: 'Checking for updates…' };
+      return { tone: 'busy', Icon: ZanaSpinner, title: 'Checking for updates…' };
     case 'available':
       return {
         tone: 'action',
@@ -62,7 +62,7 @@ function updateStatusView(
     case 'downloading':
       return {
         tone: 'busy',
-        Icon: Loader2,
+        Icon: ZanaSpinner,
         title: `Downloading ${status.version ? `v${status.version}` : 'update'}…`,
         detail: progress ? `${Math.round(progress.percent)}% complete` : undefined
       };

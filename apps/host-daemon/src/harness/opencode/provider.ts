@@ -165,6 +165,7 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
   },
   status: {
     mode: 'screen-scan',
+    apiErrorSignal: 'none',
     detectBlockedPrompt(recentText) {
       const t = recentText.toLowerCase();
       return (

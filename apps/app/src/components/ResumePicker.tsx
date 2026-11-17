@@ -5,6 +5,7 @@ import { profileLabel } from '@zana-ai/zcc-domain/launch-provider';
 import { useData, useUi } from '../store.js';
 import { fuzzyScore } from '../lib/fuzzy.js';
 import { StencilList } from './ui/Skeleton.js';
+import { FairyEmpty } from './fairy/ZanaSpinner.js';
 
 interface Props {
   project: Project;
@@ -153,7 +154,7 @@ export function ResumePicker({ project, onClose }: Props) {
           ) : sessions.length === 0 ? (
             <div className="palette-empty">No previous Claude sessions for this folder.</div>
           ) : filtered.length === 0 ? (
-            <div className="palette-empty">No matches</div>
+            <div className="palette-empty"><FairyEmpty title="No matches" /></div>
           ) : (
             filtered.map((s, i) => (
               <button

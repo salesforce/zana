@@ -65,7 +65,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         summary: 'An action in the rail utility dock.',
         bullets: [
           '`run` receives `openSettings()` and `toPluginPanel(path)`.',
-          '`openSettings()` opens this plugin’s Plugins hub detail.',
+          '`openSettings()` opens this plugin’s page under Settings → Plugins.',
           '`toPluginPanel` opens a `navPanel`, including `placement: "unlisted"` pages.'
         ],
         apiSymbols: ['PluginAppSlots.sidebarFooterAction', 'PluginSidebarFooterActionRegistration'],
@@ -313,7 +313,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         summary: 'A React settings UI on the plugin’s hub page.',
         apiSymbols: ['PluginAppSlots.settingsSection', 'ZccPluginApi.settings'],
         bullets: [
-          'Renders `title` and `description` on the plugin’s hub Configure block.',
+          'Renders `title` and `description` under Settings → Plugins → [plugin name].',
           'Host `zcc.settings.define` form mounts on the same page.'
         ],
         firstParty: ['Custom instructions', 'Connect', 'Keep-awake']

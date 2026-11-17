@@ -11,6 +11,7 @@ import { ThreadSecondaryPanel } from './thread/secondary-panel/ThreadSecondaryPa
 import { ThreadNewTabPage } from './thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from './thread/secondary-panel/ThreadFilePreviewTab.js';
 import { BrowserTabDeck } from './thread/secondary-panel/BrowserTabDeck.js';
+import { DockedTerminalTab } from './thread/secondary-panel/DockedTerminalTab.js';
 import { ThreadPluginTab } from './thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from './thread/secondary-panel/ThreadExplorerTab.js';
 import { ThreadInboxTab } from './thread/secondary-panel/ThreadInboxTab.js';
@@ -39,9 +40,8 @@ import { SplitPaneHeaderActions } from '../views/thread-detail/SplitPaneHeaderAc
  * chrome threads use on the right (Info / Diff / extra tabs). Hide/show,
  * resize, and maximize are the thread chrome — not AgentDetailPanel's rail.
  *
- * Sidecar "Start terminal" is omitted: TerminalSurface can portal the live grid
- * to only one anchor, and the agent modal/monitor anchors outrank the thread
- * panel terminal.
+ * Sidecar terminals have individual portal targets so they can accompany the
+ * live agent grid, including a shell carried over from New chat.
  */
 
 function isAbsoluteFsPath(path: string): boolean {
@@ -345,11 +345,7 @@ function DesktopAgentSessionView({
   } else if (closable?.kind === 'inbox') {
     panelBody = <ThreadInboxTab projectId={projectId} />;
   } else if (closable?.kind === 'terminal') {
-    panelBody = (
-      <p className="thread-detail-empty">
-        A sidecar terminal cannot share this inspector with the live agent session.
-      </p>
-    );
+    panelBody = closable.sessionId ? <DockedTerminalTab sessionId={closable.sessionId} /> : null;
   }
 
   return (

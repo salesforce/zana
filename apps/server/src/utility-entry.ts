@@ -639,7 +639,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
         return;
       }
-      const values: Record<string, string | boolean | undefined> = {};
+      const values: Record<string, string | number | boolean | undefined> = {};
       for (const [key, value] of Object.entries(message.values ?? {})) {
         values[key] = value === null ? undefined : value;
       }

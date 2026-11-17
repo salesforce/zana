@@ -156,7 +156,8 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'output-activity', interactionHook: codexInteractionHook },
+  // No failure event in Codex's hook schema (checked 0.166.0); see #649.
+  status: { mode: 'output-activity', apiErrorSignal: 'none', interactionHook: codexInteractionHook },
   legacyRouting: codexLegacyRouting,
   evidence: [
     codexEvidence('codex.facet.opening-prompt', 'local', 'CLI binds opening prompt at spawn.'),

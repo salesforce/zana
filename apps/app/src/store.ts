@@ -1,4 +1,4 @@
-import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type CloseFollowupKeptOpen, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
+import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, PROJECT_EXPANDED_CAP, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type CloseFollowupKeptOpen, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
 import { subscribeClientRecovery } from './lib/client-recovery.js';
 import { create } from 'zustand';
 import type {
@@ -64,8 +64,10 @@ import {
 import { product } from './lib/product-client.js';
 import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog, threadModelCatalogForHost, modelDiscoveryConfigKey, invalidateModelCatalogs } from './components/thread/pickers/thread-model-catalog.js';
-import { decodeRoutePath } from './lib/decode-route.js';
+import { decodeRouteString } from './lib/decode-route.js';
+import { liveRoutePath, markSessionsLive, markSessionsRemoved } from './lib/removed-routes.js';
 import {
+  APP_ROOT_ROUTE_PATH,
   getExtensionsTabRoutePath,
   getFollowUpsRoutePath,
   getNavRoutePath,
@@ -569,6 +571,8 @@ interface UiState {
   // keyed by a stable section id like 'scheduler:groups'. Persisted on AppConfig.
   collapsedSections: Record<string, boolean>;
   toggleSection: (key: string) => void;
+  /** One-time rename of a collapse key; an existing `to` value wins, `from` is dropped. */
+  migrateSectionKey: (from: string, to: string) => void;
   sidebarNavOrder: unknown;
   projectSidebarNavOrder: unknown;
   setSidebarNavOrder: (storageKey: string, order: string[]) => void;
@@ -816,6 +820,7 @@ export type ExplorerMinimapPatch = ExplorerMinimapConfig;
 function mirroredConfigFlags(config: AppConfig) {
   return {
     defaultHarness: config.defaultHarness ?? null,
+    defaultThreadProviderId: config.defaultThreadProviderId ?? null,
     fontSize: config.fontSize,
     // Mirror AppConfig.theme so the xterm palette (which paints to a canvas and
     // can't read the CSS `data-theme` cascade) tracks light/dark like every
@@ -900,13 +905,56 @@ function persistSidebarChrome(patch: Partial<AppConfig>) {
   product.config.set(patch).catch(() => {});
 }
 
-let collapsedSectionsTimer: number | null = null;
-function persistCollapsedSections(next: Record<string, boolean>) {
-  if (collapsedSectionsTimer !== null) window.clearTimeout(collapsedSectionsTimer);
-  collapsedSectionsTimer = window.setTimeout(() => {
-    collapsedSectionsTimer = null;
-    persistSidebarChrome({ collapsedSections: next });
+/**
+ * Debounced write of one disclosure map. It stays pending from the first local
+ * change until the config write settles, so a broadcast that lands mid-write
+ * cannot replace newer local state (see applySidebarChrome).
+ */
+interface DisclosureWrite { timer: number | null; inFlight: number }
+const collapsedSectionsWrite: DisclosureWrite = { timer: null, inFlight: 0 };
+const projectExpandedWrite: DisclosureWrite = { timer: null, inFlight: 0 };
+
+function isDisclosureWritePending(write: DisclosureWrite): boolean {
+  return write.timer !== null || write.inFlight > 0;
+}
+
+function scheduleDisclosureWrite(write: DisclosureWrite, patch: Partial<AppConfig>) {
+  if (write.timer !== null) window.clearTimeout(write.timer);
+  write.timer = window.setTimeout(() => {
+    write.timer = null;
+    let result: unknown;
+    try {
+      result = product.config.set(patch);
+    } catch {
+      result = undefined;
+    }
+    write.inFlight += 1;
+    Promise.resolve(result)
+      .catch(() => {})
+      .finally(() => { write.inFlight -= 1; });
   }, 200);
+}
+
+function persistCollapsedSections(next: Record<string, boolean>) {
+  scheduleDisclosureWrite(collapsedSectionsWrite, { collapsedSections: next });
+}
+
+// Re-insert the touched key at the end so insertion order tracks recency; the
+// server keeps the newest PROJECT_EXPANDED_CAP entries, so a fresh toggle is
+// never the one trimmed.
+export function withRecentProjectExpanded(
+  current: Record<string, boolean>,
+  key: string,
+  value: boolean
+): Record<string, boolean> {
+  const rest = { ...current };
+  delete rest[key];
+  const entries = Object.entries({ ...rest, [key]: value });
+  return Object.fromEntries(entries.slice(-PROJECT_EXPANDED_CAP));
+}
+
+function persistProjectExpanded(next: Record<string, boolean>) {
+  scheduleDisclosureWrite(projectExpandedWrite, { projectExpanded: next });
 }
 
 function readStoredNavOrder(key: string): unknown {
@@ -999,12 +1047,18 @@ export function pushErrorToast(message: string) {
 }
 
 const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
-/** Base for parsing an app route (path + query + hash) with `URL`. */
-const ROUTE_PARSE_BASE = 'http://zcc.local';
 
-function decodeDestination(path: string) {
-  const url = new URL(path, ROUTE_PARSE_BASE);
-  return decodeRoutePath(url.pathname, url.hash, url.search);
+/**
+ * The return leg of a toggle shortcut: the remembered route, or null (go Home)
+ * when there is none or its project was removed. A removed thread or session
+ * falls back to its project's home, or Home outside a project.
+ */
+function liveReturnRoute(before: string | null): string | null {
+  if (!before) return null;
+  const beforeProjectId = decodeRouteString(before).focusedProjectId;
+  const projectGone =
+    beforeProjectId != null && !useData.getState().projects.some((p) => p.id === beforeProjectId);
+  return projectGone ? null : liveRoutePath(before, null);
 }
 
 /**
@@ -1022,7 +1076,7 @@ function applyDestination(
   path: string,
   extra?: Partial<UiState>
 ) {
-  const decoded = decodeDestination(path);
+  const decoded = decodeRouteString(path);
   set((s) => {
     const keepFocus =
       s.focusedProjectId != null &&
@@ -1153,6 +1207,15 @@ export const useUi = create<UiState>((set, get) => ({
   toggleSection: (key) =>
     set((s) => {
       const next = { ...s.collapsedSections, [key]: !s.collapsedSections[key] };
+      persistCollapsedSections(next);
+      return { collapsedSections: next };
+    }),
+  migrateSectionKey: (from, to) =>
+    set((s) => {
+      if (from === to || !(from in s.collapsedSections)) return s;
+      const next = { ...s.collapsedSections };
+      if (!(to in next)) next[to] = next[from];
+      delete next[from];
       persistCollapsedSections(next);
       return { collapsedSections: next };
     }),
@@ -1299,15 +1362,15 @@ export const useUi = create<UiState>((set, get) => ({
     if (projectId) {
       // Back to the project route it was opened from (a schedule, a thread…),
       // else to the project's last view.
-      const before = getRouteBeforeProjectSettings();
-      if (decodeDestination(before).focusedProjectId === projectId) {
+      const before = liveRoutePath(getRouteBeforeProjectSettings(), APP_ROOT_ROUTE_PATH);
+      if (decodeRouteString(before).focusedProjectId === projectId) {
         applyDestination(set, before);
       } else {
         s.setProjectView(projectId, s.projectView[projectId] ?? 'agents');
       }
       return;
     }
-    applyDestination(set, getRememberedAppRoutePath());
+    applyDestination(set, liveRoutePath(getRememberedAppRoutePath(), APP_ROOT_ROUTE_PATH));
   },
   toggleInbox: () => {
     const s = get();
@@ -1315,11 +1378,8 @@ export const useUi = create<UiState>((set, get) => ({
       s.setNav('inbox');
       return;
     }
-    const before = getRouteBeforeInbox();
-    const beforeProjectId = before ? decodeDestination(before).focusedProjectId : null;
-    const projectGone =
-      beforeProjectId != null && !useData.getState().projects.some((p) => p.id === beforeProjectId);
-    if (before && !projectGone) applyDestination(set, before);
+    const before = liveReturnRoute(getRouteBeforeInbox());
+    if (before) applyDestination(set, before);
     else s.setNav('home');
   },
   setExtensionsTab: (extensionsTab) =>
@@ -1519,13 +1579,17 @@ export const useUi = create<UiState>((set, get) => ({
       }
     })),
   toggleProjectExpanded: (projectId) =>
-    set((s) => ({
-      projectExpanded: { ...s.projectExpanded, [projectId]: !s.projectExpanded[projectId] }
-    })),
+    set((s) => {
+      const next = withRecentProjectExpanded(s.projectExpanded, projectId, !s.projectExpanded[projectId]);
+      persistProjectExpanded(next);
+      return { projectExpanded: next };
+    }),
   setProjectExpanded: (projectId, expanded) =>
-    set((s) => ({
-      projectExpanded: { ...s.projectExpanded, [projectId]: expanded }
-    })),
+    set((s) => {
+      const next = withRecentProjectExpanded(s.projectExpanded, projectId, expanded);
+      persistProjectExpanded(next);
+      return { projectExpanded: next };
+    }),
   setSplitLayout: (projectId, layout) =>
     set((s) => {
       const cap = SPLIT_CAPACITY[layout];
@@ -1599,6 +1663,7 @@ export interface ClosedTab {
 interface DataState {
   /** Main-owned global default; null keeps Claude compatibility fallback. */
   defaultHarness: AppConfig['defaultHarness'] | null;
+  defaultThreadProviderId: string | null;
   /** True once the first main config read completed. */
   configLoaded: boolean;
   projects: Project[];
@@ -1882,9 +1947,11 @@ interface DataState {
       defaultAgents?: string[];
       defaultPersonas?: string[];
       launchDefault?: Project['launchDefault'];
+      defaultThreadProviderId?: Project['defaultThreadProviderId'];
       favorite?: boolean;
       remotePath?: string;
-    }
+    },
+    options?: { throwOnError?: boolean }
   ) => Promise<void>;
   reorderProjects: (orderedIds: string[]) => Promise<void>;
   removeProject: (id: string) => Promise<void>;
@@ -2144,10 +2211,15 @@ export function sortProjectsAlphabetically(projects: Project[]): Project[] {
 }
 
 function applySidebarChrome(config: AppConfig) {
+  // A local write that is debounced or still in flight is newer than any
+  // broadcast that arrives before it settles; keep the local map so the next
+  // toggle is not built on stale state.
+  const local = useUi.getState();
   useUi.setState({
     hideIdleProjects: config.hideIdleProjects === true,
     hideSchedulelessProjects: config.hideSchedulelessProjects === true,
-    collapsedSections: config.collapsedSections ?? {},
+    collapsedSections: isDisclosureWritePending(collapsedSectionsWrite) ? local.collapsedSections : config.collapsedSections ?? {},
+    projectExpanded: isDisclosureWritePending(projectExpandedWrite) ? local.projectExpanded : config.projectExpanded ?? {},
     sidebarNavOrder: config.sidebarNavOrder ?? null,
     projectSidebarNavOrder: config.projectSidebarNavOrder ?? null,
     sidebarNavHidden: config.sidebarNavHidden ?? [],
@@ -2229,6 +2301,7 @@ export const useData = create<DataState>((set, get) => ({
   suggestionsEnabled: false,
   structuredQuestionsEnabled: true,
   defaultHarness: null,
+  defaultThreadProviderId: null,
   configLoaded: false,
   closingFollowupIds: new Set<string>(),
   harnessCursorEnabled: false,
@@ -3089,6 +3162,7 @@ export const useData = create<DataState>((set, get) => ({
     // or a scheduler-spawned tab being broadcast) come in via this push so the
     // tab strip re-renders without polling.
     product.terminals.onUpdated((session) => {
+      if (session.providerSignIn) return; // Owned by the Settings sign-in panel.
       set((s) => {
         const list = s.terminals[session.projectId];
         if (!list) {
@@ -3360,10 +3434,13 @@ export const useData = create<DataState>((set, get) => ({
     }
   },
 
-  async updateProject(id, patch) {
+  async updateProject(id, patch, options) {
     try {
       const updated = await product.projects.update(id, patch);
-      if (!updated) return;
+      if (!updated) {
+        if (options?.throwOnError) throw new Error('Project no longer exists');
+        return;
+      }
       // Preserve the in-memory lastActiveAt (and sortIndex). Disk may have a
       // newer lastActiveAt from an earlier `touch`, but adopting it here would
       // re-sort the sidebar mid-session — same reason selectProject doesn't.
@@ -3376,6 +3453,7 @@ export const useData = create<DataState>((set, get) => ({
       }));
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to update project'));
+      if (options?.throwOnError) throw err;
     }
   },
 
@@ -3457,7 +3535,18 @@ export const useData = create<DataState>((set, get) => ({
       drop('splitLayout');
       drop('splitTabIds');
       drop('selectedTabId');
-      drop('projectExpanded');
+      const nextExpanded = { ...s.projectExpanded };
+      let expandedChanged = false;
+      for (const key of Object.keys(nextExpanded)) {
+        if (key === id || key.endsWith(`:${id}`)) {
+          delete nextExpanded[key];
+          expandedChanged = true;
+        }
+      }
+      if (expandedChanged) {
+        patch.projectExpanded = nextExpanded;
+        persistProjectExpanded(nextExpanded);
+      }
       drop('recentFiles');
       drop('explorerFile');
       drop('explorerGoto');
@@ -3515,6 +3604,9 @@ export const useData = create<DataState>((set, get) => ({
           terminals: { ...s.terminals, [projectId]: [...list, result.value] }
         };
       });
+      // Main mints a fresh id per launch today; if it ever reuses one, the
+      // route is live again.
+      markSessionsLive([result.value.id]);
       return result.value;
     } catch (err) {
       const message = errorMessage(err, 'Failed to create terminal');
@@ -3555,6 +3647,7 @@ export const useData = create<DataState>((set, get) => ({
           if (list.some((terminal) => terminal.id === created.id)) return state;
           return { terminals: { ...state.terminals, [item.projectId]: [...list, created] } };
         });
+        markSessionsLive([created.id]);
       }
     }
   },
@@ -3604,6 +3697,7 @@ export const useData = create<DataState>((set, get) => ({
         detachedStack: { ...s.detachedStack, [projectId]: detached }
       };
     });
+    markSessionsRemoved([sessionId]);
     // Drop the session's live agent state so the project rollup dot recomputes
     // (else a closed-while-idle session leaves a stale green dot behind). Runs
     // after the terminals `set` so recomputeRollup sees the session gone.
@@ -3647,6 +3741,7 @@ export const useData = create<DataState>((set, get) => ({
         sessionIds.filter((sessionId) => !ids.has(sessionId))
       ]))
     }));
+    markSessionsRemoved(ids);
     for (const sessionId of ids) {
       useUi.getState().clearUnread(sessionId);
       const projectId = projectIdBySession.get(sessionId) ?? null;

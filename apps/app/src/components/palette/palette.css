@@ -107,8 +107,6 @@
 .command-palette .palette-section-more { font-size: 11px; }
 .command-palette .palette-subsection { font-size: 11px; }
 .command-palette .palette-empty { padding: 28px 20px; }
-.command-palette-empty-title { color: var(--text-primary); margin-bottom: 6px; }
-.command-palette-empty-help { font-size: 12px; }
 
 .command-palette-footer {
   display: flex;

@@ -45,7 +45,7 @@ import { PROJECT_COLORS } from '@zana-ai/zcc-domain/project-colors';
 import { ListPaneResizer } from '../ListPaneResizer.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
-import { pinDefaultProjectFirst, pinFavoriteProjectsFirst } from './project-rail.js';
+import { machineSectionKey, pinDefaultProjectFirst, pinFavoriteProjectsFirst, projectRailDisclosureId } from './project-rail.js';
 import { useProjectRailDisclosure } from './useProjectRailDisclosure.js';
 import { useMobileNavDismiss } from '../mobile-nav-context.js';
 import { ProjectAgentRailRow, ProjectThreadRailRow } from './project-session-rail-rows.js';
@@ -223,6 +223,7 @@ export function ProjectsList({
   const [mobileProjectsOpen, setMobileProjectsOpen] = useState(true);
   const projectsCollapsed = mobile ? !mobileProjectsOpen : sidebarProjectsCollapsed;
   const toggleSection = useUi((s) => s.toggleSection);
+  const migrateSectionKey = useUi((s) => s.migrateSectionKey);
   // Non-null in a per-project window: the rail is locked to this one project.
   const scopedProjectId = getScopedProjectId();
   const projectMenuActions = useSyncExternalStore(
@@ -511,6 +512,13 @@ export function ProjectsList({
   // Keep every project in one uninterrupted tree. Display order stays stable
   // from the persisted project ordering or the selected sort preference.
   const machineGroups = useMemo(() => groupProjectsByMachine(sortedProjects, hosts), [sortedProjects, hosts]);
+  // Older builds keyed the primary machine section by its host id. Once hosts
+  // load and that id is known, move the entry to the stable `local` key.
+  const primaryMachine = machineGroups.find(machine => machine.primary);
+  const legacyPrimaryKey = primaryMachine && primaryMachine.id !== 'local' ? `sidebar:machine:${primaryMachine.id}` : null;
+  useEffect(() => {
+    if (legacyPrimaryKey && legacyPrimaryKey in collapsedSections) migrateSectionKey(legacyPrimaryKey, machineSectionKey({ id: 'local', primary: true }));
+  }, [legacyPrimaryKey, collapsedSections, migrateSectionKey]);
   const railGroups = useMemo<RailGroup[]>(() => {
     if (!inSidebar || scopedProjectId) return [{ projects: visibleProjects }];
     return machineGroups.map(machine => ({ machine, projects: machine.projects.filter(project =>
@@ -709,7 +717,7 @@ export function ProjectsList({
     );
     const railThreads = (railThreadsByProject.get(p.id) ?? []).filter(thread => !scratch || !group.machine
       || thread.hostId === group.machine.hostId || (group.machine.primary && !thread.hostId));
-    const disclosureId = scratch && group.machine ? `${group.machine.id}:${p.id}` : p.id;
+    const disclosureId = projectRailDisclosureId(p, group.machine);
     const expanded = disclosure.isExpanded(disclosureId, liveList.length + railThreads.length > 0);
     const nestedCount = liveList.length + railThreads.length;
     const displayName = composerProjectLabel(p);
@@ -1267,8 +1275,11 @@ export function ProjectsList({
             onDragCancel={handleDragCancel}
             onDragEnd={handleDragEnd}
           >
-            {railGroups.map((group) => (
-              <div key={group.machine?.id ?? 'projects'} className={`project-rail-group${group.machine ? ' machine-project-group' : ''}`} data-machine-id={group.machine?.id}>
+            {railGroups.map((group) => {
+              const sectionKey = group.machine ? machineSectionKey(group.machine) : '';
+              const machineCollapsed = Boolean(group.machine && collapsedSections[sectionKey]);
+              return (
+              <div key={group.machine ? (group.machine.primary ? 'local' : group.machine.id) : 'projects'} className={`project-rail-group${group.machine ? ' machine-project-group' : ''}`} data-machine-id={group.machine?.id}>
                 {group.machine && <div className="machine-project-heading"
                   onContextMenu={event => {
                     event.preventDefault();
@@ -1282,10 +1293,10 @@ export function ProjectsList({
                     const rect = event.currentTarget.getBoundingClientRect();
                     openMachineMenu(group.machine!.id, event.currentTarget, rect.left, rect.bottom);
                   }}>
-                  <button type="button" className="machine-project-disclosure" aria-label={`${collapsedSections[`sidebar:machine:${group.machine.id}`] && !filter ? 'Expand' : 'Collapse'} ${group.machine.name}`} aria-expanded={!collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)} onClick={() => toggleSection(`sidebar:machine:${group.machine!.id}`)}>
-                    <ChevronRight size={13} className={!collapsedSections[`sidebar:machine:${group.machine.id}`] || filter ? 'open' : ''} />
+                  <button type="button" className="machine-project-disclosure" aria-label={`${machineCollapsed && !filter ? 'Expand' : 'Collapse'} ${group.machine.name}`} aria-expanded={!machineCollapsed || Boolean(filter)} onClick={() => toggleSection(sectionKey)}>
+                    <ChevronRight size={13} className={!machineCollapsed || filter ? 'open' : ''} />
                   </button>
-                  <button type="button" className="machine-project-name" aria-label={group.machine.name} aria-expanded={!collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)} onClick={() => toggleSection(`sidebar:machine:${group.machine!.id}`)}>
+                  <button type="button" className="machine-project-name" aria-label={group.machine.name} aria-expanded={!machineCollapsed || Boolean(filter)} onClick={() => toggleSection(sectionKey)}>
                     {group.machine.primary ? <Laptop size={15} /> : <Server size={15} />}
                     <span>{group.machine.name}</span>
                     <span className={`machine-project-status${group.machine.host?.status === 'connected' ? ' online' : ''}`} title={group.machine.host?.status === 'connected' ? 'Online' : group.machine.host ? 'Offline' : group.machine.hostId ? 'Unavailable' : group.machine.remote ? 'Setup needed' : 'Local'} />
@@ -1301,14 +1312,15 @@ export function ProjectsList({
                       ...(group.machine.host && group.machine.host.status !== 'connected' ? [{ id: 'reconnect', label: 'Manage connection', icon: <Server size={14} />, run: () => { void navigate('/settings/machines'); } }] : [])
                     ]} />
                 </div>}
-                {(!group.machine || !collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)) && <div className={group.machine ? 'machine-project-children' : undefined}>
+                {(!group.machine || !machineCollapsed || Boolean(filter)) && <div className={group.machine ? 'machine-project-children' : undefined}>
                   <SortableContext items={group.projects.map(project => isScratchWorkspaceProject(project) && group.machine && !group.machine.primary && project.hostId !== group.machine.hostId ? `${group.machine.id}:${project.id}` : project.id)} strategy={verticalListSortingStrategy}>
                     {group.projects.map(project => renderProject(group, project))}
                   </SortableContext>
                   {group.machine && group.projects.length === 0 && <button type="button" className="machine-project-add-child" onClick={() => setAddingMachine(group.machine!)}><Plus size={12} />Add project</button>}
                 </div>}
               </div>
-            ))}
+              );
+            })}
           </DndContext>
         )}
       </div>

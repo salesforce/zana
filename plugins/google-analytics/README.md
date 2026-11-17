@@ -1,9 +1,8 @@
 # Google Analytics
 
-An independent GA4 plugin for comparing Google Analytics with PostHog. It is
-installed and enabled by default. It sends nothing until a Measurement ID and
-Measurement Protocol API secret have been configured. PostHog remains separate:
-changing this plugin's settings never changes PostHog's settings.
+A GA4 plugin for app usage analytics, installed and enabled by default. It sends
+nothing until a Measurement ID and Measurement Protocol API secret have been
+configured.
 
 Open **Plugins → Google Analytics** and enter a **GA4 Measurement ID** (`G-…`)
 and a **Measurement Protocol API secret**. Use a Web data stream, preferably a
@@ -39,14 +38,13 @@ does not navigate to that address. Advertising consent fields are sent as
 the network connection's IP address. The random id is pseudonymous, not an
 account or email, and counts installations rather than unique people.
 
-## View and compare
+## View usage
 
 In GA4, use **Reports → Realtime** for recent activity and pages. The plugin
 includes `session_id` and `engagement_time_msec`, which
 [Google recommends for Realtime](https://developer.chrome.com/docs/extensions/how-to/integrate/google-analytics-4#use_recommended_parameters_session_id_and_engagement_time_msec).
 Explore `app_open`, `page_view`, and `app_engagement` to see opens and section
-usage. For comparable page numbers, enable page tracking in PostHog as well;
-its existing agent lifecycle events are a different activity measure.
+usage.
 
 This uses GA4 Measurement Protocol without loading remote JavaScript. Google
 documents [partial reporting for Measurement Protocol-only collection](https://developers.google.com/analytics/devguides/collection/protocol/ga4#full_server-to-server).

@@ -66,6 +66,12 @@ legacy behaviour kept for older plugins; new plugins should opt into
 `harness`. `sdk.providers.list()` reports `available: false` for a provider
 whose bridge failed or whose harness is not installed and enabled on the host.
 
+`sdk.providers.usage({ providerId, hostId })` reads a provider's optional
+`usage(hostId)` declaration on the selected enrolled host. It returns
+`{ supported: false }` when absent, or a supported reading with subscription
+windows, reset times, and authentication/error status. Credentials stay on the
+execution host.
+
 AI-harness overrides: a `harness: "project-default"` spawn also applies the
 resolved harness's overrides the way a new agent launch does — Settings → AI
 Harness, then the project's AI harness overrides — mapped onto the thread's
@@ -175,7 +181,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 ### Configure
 
 - `notificationSoundProvider` — controls in Settings → Notifications, plus an exclusive host-gated background audio lifecycle.
-- `settingsSection` — React settings UI on the plugin’s Plugins hub detail (Configure)
+- `settingsSection` — React settings UI under **Settings → Plugins → [plugin name]** (`/settings/plugins/:pluginId`). The Plugins hub keeps installation and management actions.
 
 ### Platform
 
@@ -318,7 +324,7 @@ It mounts only the selected provider while the master sound switch is on, even
 when Settings is closed. The provider owns its own clips, imports, volume,
 event choices, cooldowns and playback policy. Do not add a second master switch
 or register the same player using general contentScripts. Ordinary
-settingsSection still belongs to the plugin's hub Configure page.
+settingsSection belongs to the plugin’s page under Settings → Plugins.
 
 The stable provider key is pluginId/slotId. The persisted app settings are
 notificationSoundProvider (builtin by default) and notificationSoundsEnabled.

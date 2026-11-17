@@ -13,6 +13,8 @@ import { classifyExpectedRpcError } from '@zana-ai/zcc-contracts/rpc-error';
 import { LibraryDocumentRequestSchema, LIBRARY_DOCUMENT_BODY_LIMIT } from '@zana-ai/zcc-contracts/library-documents';
 import { recoverFailedTerminalStart } from './terminal-start-recovery.js';
 import { registerProductTerminal } from './terminal-retention.js';
+import { handleProviderReadinessApi } from './provider-readiness-api.js';
+import { handleMachineEnvironmentApi } from './machine-environment-api.js';
 import { readProjectImage, ProjectFsError } from './project-fs-via-host.js';
 import { projectGit } from './project-git.js';
 import { usesConnect } from '../services/hosts/connect-enrollment.js';
@@ -339,10 +341,10 @@ async function handlePluginAppSettingsSet(
     sendJson(response, 400, { error: 'values required' });
     return;
   }
-  const values: Record<string, string | boolean | undefined> = {};
+  const values: Record<string, string | number | boolean | undefined> = {};
   for (const [key, value] of Object.entries(body.values as Record<string, unknown>)) {
     if (value === null || value === undefined) values[key] = undefined;
-    else if (typeof value === 'string' || typeof value === 'boolean') values[key] = value;
+    else if (typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) values[key] = value;
     else {
       sendJson(response, 400, { error: `invalid setting ${key}` });
       return;
@@ -541,6 +543,8 @@ export async function handleProductHttp(
   }
 
   try {
+    if (await handleProviderReadinessApi(request, response, ctx, requestUrl)) return true;
+    if (await handleMachineEnvironmentApi(request, response, ctx, requestUrl)) return true;
     if (await handleOnboardingApi(response, path, method, ctx.onboardingGitAuth)) return true;
     if (await handleHelpVideosApi(request, response, ctx.helpVideos, path, method)) return true;
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;
@@ -691,7 +695,7 @@ export async function handleProductHttp(
 
     const projectOne = routeParams(path, '/api/v1/projects/:id');
     if (projectOne && method === 'PATCH') {
-      const patch = (await readJsonBody(request)) as { name?: string; color?: string; icon?: Project['icon']; category?: string; remotePath?: string };
+      const patch = (await readJsonBody(request)) as { name?: string; color?: string; icon?: Project['icon']; category?: string; remotePath?: string; defaultThreadProviderId?: string | null };
       const project = await ctx.projects.update(projectOne.id, patch);
       if (!project) {
         sendJson(response, 404, { error: 'project not found' });

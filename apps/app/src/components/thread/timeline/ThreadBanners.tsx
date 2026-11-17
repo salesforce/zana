@@ -1,6 +1,6 @@
 import { type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ListTodo, Loader2, X } from 'lucide-react';
+import { ChevronDown, ListTodo, X } from 'lucide-react';
 import type {
   ActiveThinking,
   ThreadTimelineGoal,
@@ -19,6 +19,7 @@ import {
 import { useThreadWorkingPhrase } from '../useThreadWorkingPhrase.js';
 import { useWorkingElapsed } from '../useWorkingElapsed.js';
 import { ThreadActivityLabel } from './ThreadActivityLabel.js';
+import { ZanaSpinner } from '../../fairy/ZanaSpinner.js';
 
 const TODO_STATUS_SORT_RANK: Record<ThreadTimelinePendingTodoItemStatus, number> = {
   in_progress: 0,
@@ -108,7 +109,7 @@ export function ThreadPromptModeCard({
             onClick={onExitPlanMode}
           >
             {isExitPending ? (
-              <Loader2 size={14} className="spin" aria-hidden="true" />
+              <ZanaSpinner size={14} className="spin" aria-hidden="true" />
             ) : (
               <X size={14} aria-hidden="true" />
             )}

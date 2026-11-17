@@ -2586,7 +2586,7 @@ describe('product HTTP plugins', () => {
     await expect(after.json()).resolves.toEqual({ apps: [] });
   });
 
-  it('omits secret plugin setting values when asked (?secrets=omit) and keeps descriptors', async () => {
+  it('omits secret plugin setting values and defaults when asked (?secrets=omit)', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-secrets-'));
     server = await startTestProductServer({
       dataDir,
@@ -2594,7 +2594,7 @@ describe('product HTTP plugins', () => {
     });
     const settings = {
       descriptors: {
-        apiKey: { type: 'string' as const, label: 'API key', secret: true },
+        apiKey: { type: 'string' as const, label: 'API key', secret: true, default: 'fixture-default-should-not-leave' },
         region: { type: 'string' as const, label: 'Region' }
       },
       values: { apiKey: 'sk-live-should-not-leave', region: 'eu' } as Record<string, string | boolean | undefined>
@@ -2608,9 +2608,10 @@ describe('product HTTP plugins', () => {
 
     const redacted = await fetch(`${server.url}api/v1/plugin-apps/demo/settings?secrets=omit`);
     const body = await redacted.json();
-    expect(body.descriptors).toEqual(settings.descriptors);
+    expect(body.descriptors).toEqual({ ...settings.descriptors, apiKey: { type: 'string', label: 'API key', secret: true } });
     expect(body.values).toEqual({ region: 'eu' });
     expect(JSON.stringify(body)).not.toContain('sk-live-should-not-leave');
+    expect(JSON.stringify(body)).not.toContain('fixture-default-should-not-leave');
 
     // Without the flag the Configure page keeps its existing contract.
     const full = await fetch(`${server.url}api/v1/plugin-apps/demo/settings`);
@@ -2659,7 +2660,7 @@ describe('product HTTP plugins', () => {
     });
     const settings = {
       descriptors: { token: { type: 'string' as const, label: 'Token' } },
-      values: { token: 'secret' as string | boolean | undefined }
+      values: { token: 'secret' as string | number | boolean | undefined }
     };
     server.ctx.plugins = {
       snapshot: () => [],
@@ -2672,7 +2673,7 @@ describe('product HTTP plugins', () => {
         if (pluginId !== 'pr-monitor') return { descriptors: {}, values: {} };
         return settings;
       },
-      setSettings: async (pluginId: string, values: Record<string, string | boolean | undefined>) => {
+      setSettings: async (pluginId: string, values: Record<string, string | number | boolean | undefined>) => {
         if (pluginId !== 'pr-monitor') throw new Error(`plugin not running: ${pluginId}`);
         settings.values = { ...settings.values, ...values };
       }
@@ -2705,14 +2706,14 @@ describe('product HTTP plugins', () => {
     const written = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ values: { token: 'next' } })
+      body: JSON.stringify({ values: { token: 'next', retryBudget: 7 } })
     });
-    await expect(written.json()).resolves.toMatchObject({ values: { token: 'next' } });
+    await expect(written.json()).resolves.toMatchObject({ values: { token: 'next', retryBudget: 7 } });
 
     const invalid = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ values: { token: 1 } })
+      body: JSON.stringify({ values: { token: { invalid: true } } })
     });
     expect(invalid.status).toBe(400);
 

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ArrowRight, Loader2, Monitor, Sparkles } from 'lucide-react';
+import { ArrowRight, Monitor, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { product } from '../lib/product-client.js';
 import { startHostRepairAgent } from '../lib/host-repair-agent.js';
@@ -9,6 +9,7 @@ import { useData, useUi } from '../store.js';
 import { useThreads } from '../thread-store.js';
 import { inspectThread } from '../lib/inspect-session.js';
 import './host-repair-agent.css';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 export function HostRepairAgentAction({ state, target, onStarted }: {
   state: Pick<HostInstallDrawerState, 'target' | 'error' | 'logs' | 'stages'>;
@@ -47,7 +48,7 @@ export function HostRepairAgentAction({ state, target, onStarted }: {
     <h3><Sparkles size={15} aria-hidden="true" />Let an agent take a look</h3>
     <p>A local agent can read this log, find what’s wrong, and help reconnect your machine.</p>
     <button type="button" className="host-repair-agent-start" disabled={busy} onClick={() => void start()}>
-      {busy ? <Loader2 size={14} className="thread-command-send-spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
+      {busy ? <ZanaSpinner size={14} className="thread-command-send-spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
       {busy ? 'Starting local agent…' : 'Fix with agent'}
       <ArrowRight size={14} aria-hidden="true" />
     </button>

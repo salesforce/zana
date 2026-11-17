@@ -6,7 +6,7 @@ describe('SavedDetail empty', () => {
 
   it('uses PaneEmptyState and drops the debug project id', () => {
     expect(source).toContain('<PaneEmptyState');
-    expect(source).toContain('art="inbox"');
+    expect(source).toContain('art="saved"');
     expect(source).not.toContain('inbox-detail-meta-id');
   });
 });

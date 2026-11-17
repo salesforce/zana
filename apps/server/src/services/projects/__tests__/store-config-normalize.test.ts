@@ -131,17 +131,30 @@ describe('normalizeConfig — sidebar chrome', () => {
   it('keeps collapse maps, hide flags, and nav order', () => {
     expect(normalizeConfig({
       collapsedSections: { 'scheduler:groups': true, skip: 'nope' as never },
+      projectExpanded: { 'proj-1': false, 'local:default': false, '': true, skip: 'nope' as never },
       hideIdleProjects: true,
       hideSchedulelessProjects: false,
       sidebarNavOrder: ['home', 'inbox', 'home', ''],
       projectSidebarNavOrder: ['agents']
     })).toEqual(expect.objectContaining({
       collapsedSections: { 'scheduler:groups': true },
+      projectExpanded: { 'proj-1': false, 'local:default': false },
       hideIdleProjects: true,
       hideSchedulelessProjects: false,
       sidebarNavOrder: ['home', 'inbox'],
       projectSidebarNavOrder: ['agents']
     }));
+  });
+
+  it('keeps the newest 200 projectExpanded entries so a fresh toggle is never dropped', () => {
+    const input: Record<string, boolean> = {};
+    for (let i = 0; i < 205; i += 1) input[`p${i}`] = true;
+    input.fresh = false;
+    const kept = normalizeConfig({ projectExpanded: input }).projectExpanded!;
+    expect(Object.keys(kept)).toHaveLength(200);
+    expect(kept.fresh).toBe(false);
+    expect(kept.p0).toBeUndefined();
+    expect(kept.p6).toBe(true);
   });
 
   it('normalizes and bounds hidden destinations independently for each rail', () => {
@@ -448,6 +461,13 @@ describe('normalizeConfig — auto-close-idle flags', () => {
 });
 
 describe('harness settings containers', () => {
+  it('persists thread providers independently and retains an unavailable provider id', () => {
+    expect(normalizeConfig({ defaultThreadProviderId: ' custom-provider ' }).defaultThreadProviderId).toBe('custom-provider');
+    expect(normalizeConfig({ defaultThreadProviderId: 123 as never })).not.toHaveProperty('defaultThreadProviderId');
+    store.setConfig({ defaultThreadProviderId: 'removed-plugin' });
+    store.setConfig({ defaultHarness: 'claude', harnessCodexEnabled: false });
+    expect(store.getConfig().defaultThreadProviderId).toBe('removed-plugin');
+  });
   it('accepts only boolean native agent discovery settings', () => {
     expect(normalizeConfig({ nativeAgentDiscoveryEnabled: true }).nativeAgentDiscoveryEnabled).toBe(true);
     expect(normalizeConfig({ nativeAgentDiscoveryEnabled: false }).nativeAgentDiscoveryEnabled).toBe(false);

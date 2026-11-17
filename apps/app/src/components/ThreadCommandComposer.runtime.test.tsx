@@ -48,7 +48,8 @@ const h = vi.hoisted(() => {
       rosterReady: true, serviceTierOptions: undefined as undefined | Array<{ id: string; label: string }>,
       acpModeOptions: [], modelOptions: [], moreModelOptions: [], reasoningOptions: [], modelIsLoading: false,
       setProviderId: vi.fn(), setModel: vi.fn(), setReasoningLevel: vi.fn(), setAcpMode: vi.fn(),
-      refreshAcpModeOptions: vi.fn(), refreshModels: vi.fn()
+      refreshAcpModeOptions: vi.fn(), refreshModels: vi.fn(),
+      resetForNewThread: vi.fn(), useDefaultProvider: vi.fn(), providerSelectionSource: 'default'
     },
     permissionError: undefined as string | undefined, rememberSendMode: vi.fn(),
     clear: vi.fn(), insertText: vi.fn(), removeAttachment: vi.fn(),
@@ -102,7 +103,9 @@ vi.mock('./composer/use-composer-prompt-field.js', () => ({
       serialize: () => ({ text: h.text, mentions: [], references: h.references }), clear: h.clear, insertText: h.insertText,
       captureRevision: () => JSON.stringify([h.text, h.images, h.attachments]),
       clearIfRevision: (revision: string) => {
-        if (revision === JSON.stringify([h.text, h.images, h.attachments])) h.clear();
+        if (revision !== JSON.stringify([h.text, h.images, h.attachments])) return false;
+        h.clear();
+        return true;
       },
       restoreText: h.restoreText, removeRestoredAttachment: h.removeAttachment, setText: vi.fn(), replacePrompt: vi.fn(), focus: vi.fn(),
       markRestoreFocus: vi.fn(), handleChromeKeyDown: vi.fn(), dropHandlers: {},
@@ -396,6 +399,7 @@ describe('Modern composer voice submission', () => {
       cwd: '/tmp/project', environment: { kind: 'unmanaged' }, input: [{ type: 'text', text: 'Spoken words', mentions: [] }] }));
     expect(onCreated).toHaveBeenCalledWith('created');
     expect(h.clear).toHaveBeenCalledOnce();
+    expect(h.options.resetForNewThread).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -452,6 +456,7 @@ describe('Modern composer voice submission', () => {
     await act(async () => { await expect(h.frozenSend!('Spoken words')).rejects.toThrow('Host unavailable'); });
     expect(h.upsert).not.toHaveBeenCalled();
     expect(h.clear).not.toHaveBeenCalled();
+    expect(h.options.resetForNewThread).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Stop and transcribe recording' }));
     expect(h.voice.stop).toHaveBeenLastCalledWith();
   });
@@ -596,11 +601,15 @@ describe('Modern composer retained-draft guards', () => {
     render(composer());
     expect(screen.getByRole('status').textContent).toBe('Saved choice is unavailable.');
     fireEvent.click(sendButton());
-    await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toBe('Saved choice is unavailable.'));
+    if (_name === 'provider selection') {
+      expect((sendButton() as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByRole('status').textContent).toBe('Saved choice is unavailable.');
+    } else {
+      await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toBe('Saved choice is unavailable.'));
+      expect(screen.queryByRole('status')).toBeNull();
+    }
     expect(h.send).not.toHaveBeenCalled();
     expect(h.clear).not.toHaveBeenCalled();
-    // The status line yields to the (identical) error rather than showing twice.
-    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it('blocks a send when the saved composer mode is gone once the catalogue settled', async () => {

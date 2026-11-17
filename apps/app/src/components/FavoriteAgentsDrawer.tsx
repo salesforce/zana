@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Star, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useFavoriteAgents, favoriteKey, threadFavoriteKey } from '../store.js';
 import { inspectAgentSession, inspectThread } from '../lib/inspect-session.js';
@@ -10,6 +10,7 @@ import type { AgentCard } from './AgentBoard.js';
 import { QuickAccessPanel } from './QuickAccessPanel.js';
 import { isVisibleThread, threadTitle } from './fleet-item.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
+import { ZanaFairy } from './fairy/ZanaFairy.js';
 
 /**
  * Right-edge slide-over listing the agents the user has STARRED (followed),
@@ -142,7 +143,7 @@ export function FavoriteAgentsDrawer() {
       onViewAll={() => { setOpen(false); useUi.getState().setNav('agents'); }}>
       {total === 0 ? (
         <div className="quick-access-empty">
-          <span className="quick-access-empty-icon"><Star size={22} aria-hidden="true" /></span>
+          <span className="quick-access-empty-icon quick-access-empty-icon--fairy"><ZanaFairy mood="still" /></span>
           <h3>Keep important work close</h3>
           <p>Star a thread or agent to follow its progress here, across all your projects.</p>
         </div>

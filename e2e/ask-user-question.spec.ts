@@ -21,7 +21,12 @@ export default function(pi) {
       { question: 'Pick a size', options: ['S', 'M', 'L'] }
     ] },
     D: { questions: [] },
-    E: normal
+    E: normal,
+    F: { questions: [
+      { header: 'Target', question: 'Choose a target', options: ['Desktop', 'Browser'] },
+      { header: 'Pattern', question: 'Choose an answer pattern', options: ['Other on every question', 'Custom DNS'] },
+      { header: 'Version', question: 'Which version?', options: ['Latest'] }
+    ] }
   };
   pi.registerProvider('question-fixture', {
     baseUrl: 'http://127.0.0.1:1', apiKey: 'fixture-only', api: 'question-fixture-api',
@@ -32,7 +37,7 @@ export default function(pi) {
       const done = last?.role === 'toolResult';
       const user = context.messages.findLast(message => message.role === 'user');
       const input = typeof user.content === 'string' ? user.content : user.content.map(part => part.text ?? '').join(' ');
-      const key = input.match(/CASE_([A-E])/)[1];
+      const key = input.match(/CASE_([A-F])/)[1];
       const reply = done ? 'RESULT_' + key + ': ' + last.content.map(part => part.text ?? '').join(' ') : '';
       const content = done ? [{ type: 'text', text: reply }] : [{ type: 'toolCall', id: 'ask-' + key, name: 'ask_user_question', arguments: cases[key] }];
       const message = { role: 'assistant', content, api: model.api, provider: model.provider, model: model.id,
@@ -144,4 +149,35 @@ test('Pi question cards normalize legacy input, render details, reject empty inp
   await expect(timeline).toContainText('"outcome":"cancelled"');
   await expect(banner).toHaveCount(0);
   await idle();
+
+  await ask('F');
+  await expect(banner).toContainText('Choose a target');
+  // Skipping an answer is allowed, but the final action must explain and review it.
+  await banner.getByRole('button', { name: 'Next', exact: true }).click();
+  await banner.getByRole('button', { name: 'Other on every question', exact: true }).click();
+  await expect(banner.getByRole('textbox')).toHaveCount(0);
+  await expect(banner.getByRole('button', { name: 'Other…', exact: true })).toBeVisible();
+  await banner.getByRole('button', { name: 'Next', exact: true }).click();
+  await banner.getByRole('button', { name: 'Other…', exact: true }).click();
+  const customAnswer = banner.getByRole('textbox');
+  await expect(customAnswer).toBeFocused();
+  // Real key events must type the version, rather than changing the option to 2.
+  await window.keyboard.type('2.0.1');
+  await expect(customAnswer).toHaveValue('2.0.1');
+  await expect(banner.getByRole('button', { name: 'Other…', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(banner.getByRole('status')).toHaveText('Answer before submitting: Target.');
+  await banner.getByRole('button', { name: 'Submit', exact: true }).click();
+  await expect(banner).toContainText('1 of 3');
+  await expect(banner.getByRole('button', { name: 'Desktop', exact: true })).toBeFocused();
+  await banner.getByRole('button', { name: 'Desktop', exact: true }).click();
+  await banner.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(banner.getByRole('button', { name: 'Other on every question', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await banner.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(customAnswer).toHaveValue('2.0.1');
+  await banner.getByRole('button', { name: 'Back', exact: true }).click();
+  await banner.getByRole('button', { name: 'Next', exact: true }).click();
+  // Next must only navigate even when all three answers are already complete.
+  await expect(banner.getByRole('button', { name: 'Submit', exact: true })).toBeEnabled();
+  await submitted('"freeText":"2.0.1"');
+  await expect(timeline).toContainText('"selected":["Other on every question"]');
 });

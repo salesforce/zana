@@ -1,11 +1,29 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { defaultShellSetting } from '@zana-ai/zcc-process-utils';
 import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domain/product';
 import { createConfigStore } from '@zana-ai/zcc-server';
 
 describe('createConfigStore', () => {
+  it('migrates the old harness default once and keeps thread and CLI defaults independent', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-thread-default-'));
+    const configFile = join(homeDir, 'config.json');
+    writeFileSync(configFile, JSON.stringify({ defaultHarness: 'codex' }));
+    const config = createConfigStore({ homeDir, configFile }, {
+      normalizeConfig: input => input, projectConfigCompatibility: input => input,
+      canonicalConfigForWrite: input => input, harnessEnabled: () => true
+    });
+    expect(config.getConfig().defaultThreadProviderId).toBe('codex');
+    expect(JSON.parse(readFileSync(configFile, 'utf8')).defaultThreadProviderId).toBe('codex');
+    expect(config.setConfig({ defaultHarness: 'claude' }).defaultThreadProviderId).toBe('codex');
+    expect(config.setConfig({ defaultThreadProviderId: 'plugin-provider' }).defaultHarness).toBe('claude');
+    expect(config.setConfig({ harnessCodexEnabled: false }).defaultThreadProviderId).toBe('plugin-provider');
+    expect(config.snapshot().config.defaultThreadProviderId).toBe('plugin-provider');
+    const snapshot = config.snapshot();
+    expect(config.replaceConfig(snapshot.config, snapshot.hash).defaultThreadProviderId).toBe('plugin-provider');
+  });
   it('enables reviewed communication by default and owns the generation across set and replace', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'zcc-peer-config-'));
     const configFile = join(homeDir, 'config.json');
@@ -44,7 +62,7 @@ describe('createConfigStore', () => {
     expect(config.getConfig()).toMatchObject({
       version: 1,
       theme: 'dark',
-      shell: process.env.SHELL || '/bin/zsh',
+      shell: defaultShellSetting({ windows: process.env.SHELL || '/bin/zsh' }),
       autoModeEnabled: true,
       tmuxScope: 'all'
     });
@@ -334,5 +352,86 @@ describe('createConfigStore plugin harness routing', () => {
     writeFileSync(configFile, '[1]');
     expect(() => store.setPluginHarnessRouting('a', routing('x'))).toThrow('config file is not a JSON object');
     expect(readFileSync(configFile, 'utf8')).toBe('[1]');
+  });
+
+  describe('default shell', () => {
+    const only = (...present: string[]) => (path: string) => present.includes(path);
+    const storeWith = (shellProbe: NonNullable<Parameters<typeof createConfigStore>[1]['shellProbe']>, saved?: object) => {
+      const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-shell-'));
+      const configFile = join(homeDir, 'config.json');
+      if (saved) writeFileSync(configFile, JSON.stringify(saved));
+      return createConfigStore({ homeDir, configFile }, {
+        normalizeConfig: input => input, projectConfigCompatibility: input => input,
+        canonicalConfigForWrite: input => input, harnessEnabled: () => true, shellProbe
+      });
+    };
+
+    it('uses SHELL when it exists', () => {
+      expect(storeWith({ platform: 'linux', env: { SHELL: '/usr/bin/fish' }, loginShell: () => '/bin/zsh', isExecutable: only('/usr/bin/fish', '/bin/zsh') }).getConfig().shell)
+        .toBe('/usr/bin/fish');
+    });
+
+    it('skips a SHELL that is set but missing and takes the passwd login shell', () => {
+      expect(storeWith({ platform: 'linux', env: { SHELL: '/bin/zsh' }, loginShell: () => '/bin/bash', isExecutable: only('/bin/bash', '/bin/sh') }).getConfig().shell)
+        .toBe('/bin/bash');
+    });
+
+    it('keeps zsh on macOS through the login shell when SHELL is unset', () => {
+      expect(storeWith({ platform: 'darwin', env: {}, loginShell: () => '/bin/zsh', isExecutable: only('/bin/zsh', '/bin/sh') }).getConfig().shell)
+        .toBe('/bin/zsh');
+    });
+
+    it('skips a nologin or false passwd shell or SHELL and falls back to /bin/bash', () => {
+      expect(storeWith({ platform: 'linux', env: {}, loginShell: () => '/usr/sbin/nologin', isExecutable: only('/usr/sbin/nologin', '/bin/bash') }).getConfig().shell)
+        .toBe('/bin/bash');
+      expect(storeWith({ platform: 'linux', env: { SHELL: '/bin/false' }, loginShell: () => null, isExecutable: only('/bin/false', '/bin/bash') }).getConfig().shell)
+        .toBe('/bin/bash');
+    });
+
+    it('falls back to /bin/bash, then /bin/sh', () => {
+      expect(storeWith({ platform: 'linux', env: {}, loginShell: () => null, isExecutable: only('/bin/bash', '/bin/sh') }).getConfig().shell).toBe('/bin/bash');
+      expect(storeWith({ platform: 'linux', env: {}, loginShell: () => null, isExecutable: only('/bin/sh') }).getConfig().shell).toBe('/bin/sh');
+    });
+
+    it('logs a clear error when no shell exists and still loads the config', () => {
+      const warn = vi.fn();
+      expect(storeWith({ platform: 'linux', env: {}, loginShell: () => null, isExecutable: () => false, warn }).getConfig().shell).toBe('/bin/sh');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('No usable shell found. Tried /bin/bash, /bin/sh.'));
+    });
+
+    it('keeps the previous SHELL-or-/bin/zsh value on Windows', () => {
+      const isExecutable = vi.fn(() => false);
+      try {
+        vi.stubEnv('SHELL', String.raw`C:\Git\usr\bin\bash.exe`);
+        expect(storeWith({ platform: 'win32', isExecutable }).getConfig().shell).toBe(String.raw`C:\Git\usr\bin\bash.exe`);
+        vi.stubEnv('SHELL', '');
+        expect(storeWith({ platform: 'win32', isExecutable }).getConfig().shell).toBe('/bin/zsh');
+      } finally {
+        vi.unstubAllEnvs();
+      }
+      expect(isExecutable).not.toHaveBeenCalled();
+    });
+
+    it('keeps a saved shell and looks the default up once per store', () => {
+      const isExecutable = vi.fn(only('/bin/sh'));
+      const store = storeWith({ platform: 'linux', env: {}, loginShell: () => null, isExecutable });
+      store.getConfig();
+      store.getConfig();
+      expect(isExecutable).toHaveBeenCalledTimes(2);
+    });
+
+    it('does no lookup and logs nothing when config.json saves a shell', () => {
+      const isExecutable = vi.fn(() => false);
+      const loginShell = vi.fn(() => null);
+      const warn = vi.fn();
+      const store = storeWith({ platform: 'linux', env: {}, loginShell, isExecutable, warn }, { shell: '/opt/custom/sh' });
+      expect(store.getConfig().shell).toBe('/opt/custom/sh');
+      expect(store.snapshot().config.shell).toBe('/opt/custom/sh');
+      expect(store.setConfig({ fontSize: 14 }).shell).toBe('/opt/custom/sh');
+      expect(store.replaceConfig(store.getConfig(), store.snapshot().hash).shell).toBe('/opt/custom/sh');
+      expect(isExecutable).not.toHaveBeenCalled();
+      expect(loginShell).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    });
   });
 });

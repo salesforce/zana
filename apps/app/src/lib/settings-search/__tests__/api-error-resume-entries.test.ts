@@ -7,3 +7,12 @@ it('reports the resume cap, falling back to the shared defaults', () => {
   expect(value({ config: { apiErrorResume: { maxPerWindow: 5, windowMinutes: 30 } } })).toBe('5 in 30 min');
   expect(value({ config: {} })).toBe(`${D.maxPerWindow} in ${D.windowMinutes} min`);
 });
+
+// #649 REQ-8: the search entry repeats the section's help sentence, with no harness name in it.
+const NEUTRAL_HELP = "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors.";
+
+it('uses the harness-neutral help sentence for the intro entry', () => {
+  const intro = entries.find((e) => e.id === 'agents.api-error-resume.intro')!;
+  expect(intro.help).toBe(NEUTRAL_HELP);
+  expect(intro.help).not.toMatch(/Claude Code/);
+});

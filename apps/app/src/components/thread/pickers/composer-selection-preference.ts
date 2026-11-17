@@ -64,6 +64,8 @@ export function rememberComposerSelection(input: {
   providerId: string;
   model: string;
   reasoningLevel?: string;
+  /** Threads remember models per provider without changing CLI-agent harness history. */
+  rememberProvider?: boolean;
 }): void {
   const providerId = input.providerId.trim();
   const model = input.model.trim();
@@ -79,7 +81,8 @@ export function rememberComposerSelection(input: {
     }
     byProvider[providerId] = reasoningLevel ? { model, reasoningLevel } : { model };
   }
-  writeComposerSelectionPreference({ providerId, byProvider });
+  const selectedProvider = input.rememberProvider === false ? current.providerId : providerId;
+  writeComposerSelectionPreference({ ...(selectedProvider ? { providerId: selectedProvider } : {}), byProvider });
 }
 
 export function rememberedProviderId(): string | undefined {

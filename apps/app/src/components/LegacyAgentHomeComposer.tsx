@@ -1,7 +1,7 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUp, Folder, Loader2, Paperclip } from 'lucide-react';
+import { ArrowUp, Folder, Paperclip } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
 import type {
   EffectiveHarnessDefaultResult,
@@ -101,6 +101,7 @@ import { ComposerDaemonRestart } from './ComposerDaemonRestart.js';
 import { resolveComposerHostAction } from './composer-host-status.js';
 import { effectiveWorktreeIsolation } from '../lib/workspace-choice.js';
 import { sortCatalogueByName } from '../lib/catalogue-sort.js';
+import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 const CLI_WORK_MODE_ENTRIES = composerModeEntries({
@@ -120,11 +121,13 @@ export function LegacyAgentHomeComposer({
   onComposerProjectIdChange,
   initialText,
   onLaunched,
+  onCreated,
   onClose
 }: {
   project?: Project;
   initialText?: string;
   onLaunched?: (session: TerminalSession, projectId: string) => void;
+  onCreated?: (session: TerminalSession) => void;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
   const session = useComposerSession();
@@ -723,6 +726,7 @@ export function LegacyAgentHomeComposer({
         onError: setError
       });
       if (!session) return;
+      onCreated?.(session);
       field.clearIfRevision(revision);
       if (onLaunched) {
         onLaunched(session, project.id);
@@ -899,7 +903,7 @@ export function LegacyAgentHomeComposer({
                     onClick={() => void launch()}
                   >
                     {launching ? (
-                      <Loader2 size={16} className="thread-command-send-spin" aria-hidden="true" />
+                      <ZanaSpinner size={16} className="thread-command-send-spin" aria-hidden="true" />
                     ) : (
                       <ArrowUp size={16} />
                     )}

@@ -43,9 +43,14 @@ interface MarketplaceStoreDocument {
 export interface MarketplaceStore {
   list(): MarketplaceCatalogRow[];
   add(source: string, index: MarketplaceIndex, opts?: { official?: boolean } & MarketplacePackCache): Promise<MarketplaceCatalogRow>;
-  refresh(source: string, index: MarketplaceIndex, packs?: MarketplacePackCache): Promise<MarketplaceCatalogRow>;
-  recordRefreshError(source: string, error: string): Promise<MarketplaceCatalogRow | null>;
+  beginRefresh(source: string): MarketplaceRefresh | null;
   remove(source: string): Promise<boolean>;
+}
+
+/** A refresh belongs to the registration that existed before fetching began. */
+export interface MarketplaceRefresh {
+  complete(index: MarketplaceIndex, packs?: MarketplacePackCache): Promise<MarketplaceCatalogRow>;
+  fail(error: string): Promise<MarketplaceCatalogRow | null>;
 }
 
 export interface MarketplacePackCache {
@@ -260,6 +265,9 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
 
   let document = read();
   if (document.migrationNeeded) write(document);
+  // Only current registrations are retained; removal invalidates all in-flight
+  // attempts, even when the same source is re-added in the same millisecond.
+  const registrations = new Map(document.catalogs.map(row => [row.source, Symbol()]));
 
   return {
     list: () => document.catalogs,
@@ -287,49 +295,62 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
         const next = { ...document, catalogs: upsert(document, row), migrationNeeded: false };
         write(next);
         document = next;
+        registrations.set(row.source, Symbol());
         return row;
       });
     },
-    refresh(source, index, packs) {
-      return queue.run(async () => {
-        const existing = findCatalog(document.catalogs, source);
-        const now = Date.now();
-        const parsed = parseMarketplaceSource(source);
-        const row: MarketplaceCatalogRow = {
-          source: storedSource(parsed),
-          sourceKind: parsed.kind,
-          name: index.name,
-          displayName: index.displayName,
-          addedAt: existing?.addedAt ?? now,
-          entryCount: index.plugins.length,
-          lastRefreshAt: now,
-          lastAttemptAt: now,
-          lastError: null,
-          official: existing?.official === true,
-          cachedIndex: index,
-          ...packCacheFields(packs, existing),
-          url: parsed.kind === 'https' ? marketplaceSourceDisplay(parsed) : undefined
-        };
-        const next = { ...document, catalogs: upsert(document, row), migrationNeeded: false };
-        write(next);
-        document = next;
-        return row;
-      });
-    },
-    recordRefreshError(source, error) {
-      return queue.run(async () => {
-        const existing = findCatalog(document.catalogs, source);
-        if (!existing) return null;
-        const row: MarketplaceCatalogRow = {
-          ...existing,
-          lastAttemptAt: Date.now(),
-          lastError: error
-        };
-        const next = { ...document, catalogs: upsert(document, row), migrationNeeded: false };
-        write(next);
-        document = next;
-        return row;
-      });
+    beginRefresh(source) {
+      const catalog = findCatalog(document.catalogs, source);
+      if (!catalog) return null;
+      const registration = registrations.get(catalog.source);
+      const current = () => {
+        const row = findCatalog(document.catalogs, source);
+        return row && registrations.get(row.source) === registration ? row : undefined;
+      };
+      return {
+        complete(index, packs) {
+          return queue.run(async () => {
+            const existing = current();
+            if (!existing) throw new Error('Marketplace was removed or replaced during refresh');
+            const now = Date.now();
+            const parsed = parseMarketplaceSource(existing.source);
+            const row: MarketplaceCatalogRow = {
+              source: storedSource(parsed),
+              sourceKind: parsed.kind,
+              name: index.name,
+              displayName: index.displayName,
+              addedAt: existing.addedAt,
+              entryCount: index.plugins.length,
+              lastRefreshAt: now,
+              lastAttemptAt: now,
+              lastError: null,
+              official: existing.official,
+              cachedIndex: index,
+              ...packCacheFields(packs, existing),
+              url: parsed.kind === 'https' ? marketplaceSourceDisplay(parsed) : undefined
+            };
+            const next = { ...document, catalogs: upsert(document, row), migrationNeeded: false };
+            write(next);
+            document = next;
+            return row;
+          });
+        },
+        fail(error) {
+          return queue.run(async () => {
+            const existing = current();
+            if (!existing) return null;
+            const row: MarketplaceCatalogRow = {
+              ...existing,
+              lastAttemptAt: Date.now(),
+              lastError: error
+            };
+            const next = { ...document, catalogs: upsert(document, row), migrationNeeded: false };
+            write(next);
+            document = next;
+            return row;
+          });
+        }
+      };
     },
     remove(source) {
       return queue.run(async () => {
@@ -343,6 +364,7 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
         };
         write(next);
         document = next;
+        registrations.delete(existing.source);
         return true;
       });
     }

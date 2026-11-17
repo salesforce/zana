@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -40,6 +40,7 @@ vi.mock('../sidebar/paneContentSplitIndicator.js', () => ({
 }));
 
 import { SidebarRail } from '../SidebarRail.js';
+import { registerAppNavigate } from '../../lib/app-navigate';
 
 function mount() {
   render(
@@ -56,7 +57,7 @@ beforeEach(() => {
   h.enter.mockReturnValue(Promise.resolve());
 });
 afterEach(() => {
-  cleanup();
+  cleanup(); h.footer = []; registerAppNavigate(null);
   vi.clearAllMocks();
   vi.restoreAllMocks();
 });
@@ -65,7 +66,7 @@ describe('SidebarRail Command Center button', () => {
   it('omits the companion shortcut even when Command Center is enabled on macOS', () => {
     mount();
     expect(screen.queryByLabelText('Minimize to Command Center')).toBeNull();
-    expect(screen.getByLabelText('Remote access')).toBeTruthy();
+    expect(screen.queryByLabelText('Remote access')).toBeNull();
     expect(screen.getByLabelText('Settings')).toBeTruthy();
     expect(h.enter).not.toHaveBeenCalled();
   });
@@ -78,4 +79,12 @@ describe('SidebarRail Command Center button', () => {
     mount();
     expect(screen.queryByLabelText('Minimize to Command Center')).toBeNull();
   });
+});
+
+it('opens the owning plugin Settings page from a contributed footer action', () => {
+  const navigate = vi.fn(); registerAppNavigate(navigate);
+  h.footer = [{ id: 'configure', pluginId: 'sample', generation: 1, title: 'Configure sample', icon: 'Puzzle',
+    run: (context: { openSettings(): void }) => context.openSettings() }] as never[];
+  mount(); fireEvent.click(screen.getByRole('button', { name: 'Configure sample' }));
+  expect(navigate).toHaveBeenCalledWith('/settings/plugins/sample', undefined);
 });

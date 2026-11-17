@@ -42,7 +42,8 @@ function defaultSpawn(
 ): EnrolledPtyHandle {
   const handle = pty.spawn(file, args, options);
   return {
-    pid: handle.pid,
+    // node-pty on Windows reports 0 until ConPTY connects; read it at close time.
+    get pid() { return handle.pid; },
     write: (data) => handle.write(data),
     resize: (cols, rows) => handle.resize(cols, rows),
     kill: (signal?: string) => handle.kill(signal),

@@ -51,6 +51,5 @@ it('runs action-only destinations and closes the mobile drawer without invoking 
   expect(close).toHaveBeenCalledTimes(2);
   fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
   expect(close).toHaveBeenCalledTimes(3);
-  fireEvent.click(screen.getByRole('link', { name: 'Remote access' }));
-  expect(close).toHaveBeenCalledTimes(4);
+  expect(screen.queryByRole('link', { name: 'Remote access' })).toBeNull();
 });

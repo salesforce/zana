@@ -28,6 +28,7 @@ it('accepts the engine requirements of every automatically installed bundled plu
 /** Definition completeness only. Official plugins stay installable; feature depth is per plugin. */
 
 const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[number]> = {
+  'provider-usage': 'Agent interaction',
   'slack-bridge-2ff2': 'Agent interaction',
   'ask-user-question': 'Agent interaction',
   'agent-city': 'Interface',
@@ -52,7 +53,6 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   'monaco-editor': 'Interface',
   'pdf-preview': 'Interface',
   'plugin-guide': 'Developer tools',
-  'posthog-analytics': 'Host access',
   'google-analytics': 'Host access',
   'pr-monitor': 'Developer tools',
   'prompt-library': 'Context & knowledge',
@@ -70,6 +70,7 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
 };
 
 const EXPECTED_ICONS: Record<string, string> = {
+  'provider-usage': 'Gauge',
   'slack-bridge-2ff2': './icons/slack.png',
   'ask-user-question': 'CircleHelp',
   'agent-city': 'Building2',
@@ -94,7 +95,6 @@ const EXPECTED_ICONS: Record<string, string> = {
   'monaco-editor': 'Code',
   'pdf-preview': 'FileText',
   'plugin-guide': 'Puzzle',
-  'posthog-analytics': 'LineChart',
   'google-analytics': 'ChartNoAxesColumn',
   'pr-monitor': 'GitPullRequest',
   'prompt-library': 'BookMarked',
@@ -124,11 +124,12 @@ describe('retired first-party plugins', () => {
     expect([...RETIRED_FIRST_PARTY_PLUGIN_IDS].sort()).toEqual([
       'browsercode',
       'consensus',
+      'posthog-analytics',
       'slack',
       'zana',
       'zana-hub'
     ]);
-    const official = new Set(OFFICIAL_PLUGINS.map((plugin) => plugin.pluginId));
+    const official = new Set(BUNDLED_PLUGINS.map((plugin) => plugin.pluginId));
     for (const id of RETIRED_FIRST_PARTY_PLUGIN_IDS) {
       expect(official.has(id)).toBe(false);
       expect(isRetiredFirstPartyPluginId(id)).toBe(true);
@@ -153,8 +154,10 @@ describe('promoted autoInstall reclaim', () => {
 });
 
 describe('bundled plugin registry invariants', () => {
-  it('installs both analytics plugins by default with independent user opt-out', () => {
-    for (const pluginId of ['google-analytics', 'posthog-analytics']) {
+  it('installs Google Analytics independently and keeps retired PostHog out of the catalog', () => {
+    expect(BUNDLED_PLUGINS.some(plugin => plugin.pluginId === 'posthog-analytics')).toBe(false);
+    expect(isRetiredFirstPartyPluginId('posthog-analytics')).toBe(true);
+    for (const pluginId of ['google-analytics']) {
       expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === pluginId)).toMatchObject({
         autoInstall: true, defaultEnabled: true
       });

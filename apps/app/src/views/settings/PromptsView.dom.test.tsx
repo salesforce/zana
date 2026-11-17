@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PromptsView } from './PromptsView.js';
 import { entries } from '../../lib/settings-search/entries/prompts.js';
@@ -7,10 +7,11 @@ import { entries } from '../../lib/settings-search/entries/prompts.js';
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   availableProviders: vi.fn(async () => ['claude-cli']),
-  onChanged: vi.fn(() => () => undefined)
+  onChanged: vi.fn(() => () => undefined),
+  test: vi.fn()
 }));
 vi.mock('../../lib/product-client.js', () => ({
-  product: { llmPrompts: { list: mocks.list, availableProviders: mocks.availableProviders, onChanged: mocks.onChanged, save: vi.fn(), delete: vi.fn(), test: vi.fn() } }
+  product: { llmPrompts: { list: mocks.list, availableProviders: mocks.availableProviders, onChanged: mocks.onChanged, save: vi.fn(), delete: vi.fn(), test: mocks.test } }
 }));
 
 afterEach(cleanup);
@@ -35,5 +36,21 @@ describe('PromptsView settings-search targets', () => {
     expect(container.textContent).toContain('to fill');
     expect(container.querySelector('[data-settings-target="prompts.intro"]')).toBeTruthy();
     expect(container.querySelector('[data-settings-target="prompts.test"]')).toBeTruthy();
+  });
+
+  it('shows the fairy spinner while a test run is in flight', async () => {
+    mocks.list.mockResolvedValue([
+      { id: 'user:x', label: 'X', source: 'user', provider: 'claude-cli', systemPrompt: 's', userTemplate: 'plain' }
+    ]);
+    let finish!: (value: unknown) => void;
+    mocks.test.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const { container } = render(<PromptsView />);
+    const button = await screen.findByRole('button', { name: 'Test' });
+    expect(button.querySelector('.fairy-spinner')).toBeNull();
+    fireEvent.click(button);
+    const running = await screen.findByRole('button', { name: 'Running…' });
+    expect(running.querySelector('svg.fairy-spinner.prompts-spin')).toBeTruthy();
+    await act(async () => { finish({ ok: true, text: 'done', provider: 'claude-cli', ms: 1 }); });
+    expect(container.querySelector('.fairy-spinner')).toBeNull();
   });
 });

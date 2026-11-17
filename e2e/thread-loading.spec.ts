@@ -66,7 +66,9 @@ test('thread loading is illustrated, motion-aware, and settles on success, failu
     await expect(timeline).toHaveAttribute('aria-busy', 'true');
     await expect(timeline).not.toContainText('Waiting for the first turn');
     await expect(timeline.locator('.thread-working-indicator')).toHaveCount(0);
-    await expect(loading.locator('.pane-empty-loading-lines span').first()).toHaveCSS('animation-name', 'pane-empty-loading-line');
+    await expect(loading).toHaveAttribute('data-art', 'conversation');
+    await expect(loading.locator('.fairy')).toHaveCSS('animation-name', 'fairy-conv-flight');
+    await expect(loading.locator('.fairy-bubble').first()).toHaveCSS('animation-name', 'fairy-conv-bubble-1');
 
     // Metadata can update the surrounding layout during the entrance animation;
     // measure both centers in the same frame and wait for that layout to settle.
@@ -87,10 +89,9 @@ test('thread loading is illustrated, motion-aware, and settles on success, failu
     }
     await window.emulateMedia({ reducedMotion: 'reduce' });
     await expect(loading).toHaveCSS('animation-name', 'none');
-    await expect(loading.locator('.pane-empty-loading-lines span').first()).toHaveCSS('animation-name', 'none');
-    expect(await loading.locator('.pane-empty-well').evaluate((node) =>
-      getComputedStyle(node, '::before').animationName
-    )).toBe('none');
+    await expect(loading.locator('.fairy')).toHaveCSS('animation-name', 'none');
+    await expect(loading.locator('.fairy-bubble').first()).toHaveCSS('animation-name', 'none');
+    await expect(loading.locator('.fairy-bubble').last()).toHaveCSS('opacity', '1');
   } finally {
     release();
   }
@@ -116,6 +117,13 @@ test('thread loading is illustrated, motion-aware, and settles on success, failu
   }
   await expect(loading).toHaveCount(0);
   await expect(timeline).toContainText('Waiting for the first turn…');
+  const firstTurn = timeline.getByTestId('thread-first-turn');
+  await expect(firstTurn).toHaveAttribute('data-art', 'first-turn');
+  // Reduced motion is still emulated from above: the waiting scene is visible but still.
+  await expect(firstTurn.locator('.fairy-first-agent')).toBeVisible();
+  await expect(firstTurn.locator('.fairy-first-agent span').first()).toHaveCSS('animation-name', 'none');
+  await window.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect(firstTurn.locator('.fairy-first-agent span').first()).toHaveCSS('animation-name', 'fairy-dot');
   await expect(timeline).toHaveAttribute('aria-busy', 'false');
 });
 

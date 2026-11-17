@@ -12,7 +12,10 @@ const h = vi.hoisted(() => ({
   terminals: {} as Record<string, TerminalSession[]>,
   threads: [] as ThreadListItem[],
   hideIdleProjects: false,
-  enterProjectFocus: vi.fn(), selectProject: vi.fn(), toggleSection: vi.fn(),
+  projectExpanded: {} as Record<string, boolean>,
+  collapsedSections: {} as Record<string, boolean>,
+  setProjectExpanded: vi.fn((id: string, expanded: boolean) => { h.projectExpanded = { ...h.projectExpanded, [id]: expanded }; }),
+  enterProjectFocus: vi.fn(), selectProject: vi.fn(), toggleSection: vi.fn(), migrateSectionKey: vi.fn(),
   addProjectByPath: vi.fn(async () => ({ id: 'added' })),
   noActions: [] as never[],
   creators: [] as import('@zana-ai/zcc-plugin-sdk').PluginCreateProjectActionRegistration[]
@@ -27,9 +30,10 @@ vi.mock('../../store.js', () => ({
     addProjectByPath: h.addProjectByPath
   }),
   useUi: (select: (state: unknown) => unknown) => select({
-    selectedProjectId: null, focusedProjectId: null, selectedTabId: {}, unread: {}, projectExpanded: {},
-    hideIdleProjects: h.hideIdleProjects, collapsedSections: {}, enterProjectFocus: h.enterProjectFocus,
-    selectProject: h.selectProject, toggleSection: h.toggleSection
+    selectedProjectId: null, focusedProjectId: null, selectedTabId: {}, unread: {}, projectExpanded: h.projectExpanded,
+     setProjectExpanded: h.setProjectExpanded,
+    hideIdleProjects: h.hideIdleProjects, collapsedSections: h.collapsedSections, enterProjectFocus: h.enterProjectFocus,
+    selectProject: h.selectProject, toggleSection: h.toggleSection, migrateSectionKey: h.migrateSectionKey
   }),
   useAgentStatus: (select: (state: unknown) => unknown) => select({ byId: {} }),
   useSubagents: (select: (state: unknown) => unknown) => select({ byId: {} }),
@@ -104,6 +108,9 @@ beforeEach(() => {
   h.creators = [];
   h.hosts = [];
   h.hideIdleProjects = false;
+  h.projectExpanded = {};
+  h.collapsedSections = {};
+  h.setProjectExpanded.mockClear();
   h.projects = [project('p1', 'local-core'), project('p2', 'zana-builder'), project('p3', 'empty-one')];
   h.threads = [
     thread('t1', 'p1', 'Check my ticket', 1_000),
@@ -271,6 +278,21 @@ describe('machine project hierarchy', () => {
     expect(h.toggleSection).toHaveBeenCalledWith('sidebar:machine:remote');
   });
 
+  it('migrates a primary machine collapsed under its legacy host-id key to the stable key', () => {
+    h.hosts = [{ id: 'laptop', name: 'Laptop', isPrimary: true, status: 'connected' }, { id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
+    h.projects = [project('api', 'API')]; h.threads = []; h.terminals = {};
+    h.collapsedSections = { 'sidebar:machine:laptop': true };
+    h.migrateSectionKey.mockClear();
+    renderList();
+    expect(h.migrateSectionKey).toHaveBeenCalledWith('sidebar:machine:laptop', 'sidebar:machine:local');
+    cleanup();
+    h.collapsedSections = { 'sidebar:machine:local': true };
+    h.toggleSection.mockClear();
+    renderList();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand This machine' }));
+    expect(h.toggleSection).toHaveBeenCalledWith('sidebar:machine:local');
+  });
+
   it('nests only the host-owned threads below each default and searches machines', () => {
     h.hosts = [{ id: 'local', name: 'Laptop', isPrimary: true, status: 'connected' }, { id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
     h.projects = [{ ...project('default', 'Default Project'), quickAgent: true }, { ...project('api', 'API'), hostId: 'remote' }];
@@ -340,4 +362,18 @@ it('uses the registered plugin title and default icon when a creator supplies no
   fireEvent.click(within(document.querySelector('[data-machine-id="local"]') as HTMLElement).getByRole('button', { name: /^Add project on / }));
   fireEvent.click(screen.getByRole('menuitem', { name: 'CRM project' }));
   expect(h.openSetup).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'plugin', state: expect.objectContaining({ title: 'CRM project', params: null }) }));
+});
+it('keeps collapsed Default Project and primary machine collapsed when hosts hydrate with a primary host id', () => {
+  h.hosts = [];
+  h.projects = [{ ...project('default', 'Default Project'), quickAgent: true }];
+  h.threads = [{ ...thread('t-local', 'default', 'Local thread', 100), hostId: undefined as unknown as string }];
+  h.projectExpanded = { 'local:default': false };
+  const { rerender } = render(<MemoryRouter><ProjectsList placement="sidebar" /><LocationProbe /></MemoryRouter>);
+  expect(screen.queryByRole('button', { name: 'Local thread' })).toBeNull();
+
+  // Hosts finish loading with a non-'local' primary host ID:
+  h.hosts = [{ id: 'host-primary-uuid', name: 'Laptop', isPrimary: true, status: 'connected' }] as typeof h.hosts;
+  h.threads = [{ ...thread('t-local', 'default', 'Local thread', 100), hostId: 'host-primary-uuid' }];
+  rerender(<MemoryRouter><ProjectsList placement="sidebar" /><LocationProbe /></MemoryRouter>);
+  expect(screen.queryByRole('button', { name: 'Local thread' })).toBeNull();
 });

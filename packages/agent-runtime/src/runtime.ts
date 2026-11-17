@@ -2478,12 +2478,13 @@ function createAgentRuntimeInternal(
           } catch (error) {
             if (
               error instanceof JsonRpcResponseError &&
-              isAcpProviderId(pid) &&
-              error.code === BRIDGE_JSON_RPC_ERRORS.NO_ACTIVE_TURN
+              (error.recovery?.kind === "staleTurn" ||
+                error.code === BRIDGE_JSON_RPC_ERRORS.NO_ACTIVE_TURN)
             ) {
-              turnState.clearThread(threadId);
-              proc.adapter.clearActiveTurnState?.(threadId);
-              return { status: "stale", activeTurnId: null };
+              if (turnState.clearStaleTurn(threadId, expectedTurnId)) {
+                proc.adapter.clearActiveTurnState?.(threadId);
+              }
+              return { status: "stale", activeTurnId: turnState.getActiveTurnId(threadId) };
             }
             throw error;
           }
