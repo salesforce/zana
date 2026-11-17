@@ -2146,6 +2146,13 @@ export class DesignDocSyncStore {
     this.consentRefusals.set(member, { count: (prior?.count ?? 0) + 1, lastDocId: docId, lastAt: this.now() });
   }
 
+  private readonly manualAnswers = new Map<string, { at: number; outcome: 'accepted' | 'not-accepted' | 'error' }>();
+
+  /** Remembers (in memory, per start) how a computer answered our manual consent request. */
+  noteManualAnswer(member: string, outcome: 'accepted' | 'not-accepted' | 'error'): void {
+    this.manualAnswers.set(member, { at: this.now(), outcome });
+  }
+
   private consentState(repoId: string, member: string): PeerConsentState {
     const rows = this.db.prepare(`SELECT direction, state, COUNT(*) AS n FROM sync_manual_sessions
       WHERE repo_id = ? AND member_replica_id = ? GROUP BY direction, state`).all(repoId, member) as Array<{ direction: string; state: string; n: number }>;
@@ -2154,7 +2161,20 @@ export class DesignDocSyncStore {
     return { knownHeads: (this.db.prepare('SELECT COUNT(*) AS n FROM sync_peer_known WHERE repo_id = ? AND member_replica_id = ?').get(repoId, member) as { n: number }).n,
       outbound: { waiting: count('out', 'waiting'), accepted: count('out', 'accepted') },
       inbound: { waiting: count('in', 'waiting'), accepted: count('in', 'accepted') },
-      refused: { count: refused?.count ?? 0, lastDocId: refused?.lastDocId ?? null, lastAt: refused?.lastAt ?? null } };
+      refused: { count: refused?.count ?? 0, lastDocId: refused?.lastDocId ?? null, lastAt: refused?.lastAt ?? null },
+      queued: this.queuedHeadCoverage(repoId, member),
+      oldestWaitingOutAt: (this.db.prepare(`SELECT MIN(created_at) AS at FROM sync_manual_sessions
+        WHERE repo_id = ? AND member_replica_id = ? AND direction = 'out' AND state = 'waiting'`).get(repoId, member) as { at: number | null }).at,
+      lastAnswer: this.manualAnswers.get(member) ?? null };
+  }
+
+  private queuedHeadCoverage(repoId: string, member: string): { total: number; namedByOutbound: number } {
+    const row = this.db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(EXISTS (SELECT 1 FROM sync_manual_sessions s, json_each(s.heads_json) h
+      WHERE s.repo_id = i.repo_id AND s.member_replica_id = i.member_replica_id AND s.direction = 'out'
+        AND h.key = i.doc_id AND h.value = i.frozen_head)), 0) AS named
+      FROM sync_intents i WHERE i.repo_id = ? AND i.member_replica_id = ? AND i.state IN ('pending', 'blocked')`)
+      .get(repoId, member) as { total: number; named: number };
+    return { total: row.total, namedByOutbound: row.named };
   }
 
   /** Per other computer: queue depth, oldest queued age and the last 20 errors. Read-only. */

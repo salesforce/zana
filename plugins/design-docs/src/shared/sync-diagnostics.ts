@@ -29,6 +29,12 @@ export interface PeerConsentState {
   inbound: { waiting: number; accepted: number };
   /** Draft transfers this computer refused from it since startup, with the newest doc and time. */
   refused: { count: number; lastDocId: string | null; lastAt: number | null };
+  /** Queued sends to it, and how many of their heads are named by an outbound session (the other side can only accept a head it was told about). */
+  queued: { total: number; namedByOutbound: number };
+  /** When the oldest still-waiting outbound session was opened. */
+  oldestWaitingOutAt: number | null;
+  /** Its newest answer to our consent request since startup: accepted, not-accepted (it has not chosen Sync now), or error. */
+  lastAnswer: { at: number; outcome: 'accepted' | 'not-accepted' | 'error' } | null;
 }
 
 export interface PeerDiagnostics {

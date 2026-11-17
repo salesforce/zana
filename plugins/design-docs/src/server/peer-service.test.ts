@@ -1062,6 +1062,9 @@ describe('private draft awaiting the other computer\'s consent', () => {
     const diagnostics = a.sync.peerDiagnostics()[0]!;
     expect(diagnostics.fault).toMatchObject({ code: 'consent' });
     expect(diagnostics.fault!.hint).toContain('Sync now');
+    // The sender's own diagnostics say why: the head is named by a waiting session and the other computer has not accepted it.
+    expect(diagnostics.consent).toMatchObject({ queued: { total: 1, namedByOutbound: 1 }, outbound: { waiting: 1 },
+      lastAnswer: { outcome: 'not-accepted' } });
     expect(b.store.find(doc.id)).toBeNull();
     // The other computer's user chooses Sync now: its own consent completes the two-sided handshake.
     b.sync.prepareManual();

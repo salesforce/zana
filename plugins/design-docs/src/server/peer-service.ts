@@ -166,13 +166,14 @@ export class DesignDocPeerService {
           // Manual consent packets stay at the oldest supported version; they carry no ancestry.
           const body = { ...this.handshakeFor(member.replicaId, grants[0]!.grantEpoch, PEER_MIN_PROTOCOL_VERSION), ...consent };
           const reply = await peers.call(member.machineId, 'manual', body, options) as { accepted?: unknown; manualId?: unknown };
-          if (reply?.accepted !== true || reply.manualId !== consent.manualId) { unanswered = true; continue; }
+          if (reply?.accepted !== true || reply.manualId !== consent.manualId) { unanswered = true; this.sync.noteManualAnswer(member.replicaId, 'not-accepted'); continue; }
+          this.sync.noteManualAnswer(member.replicaId, 'accepted');
           await this.completeManualAck(peers, body, member.machineId);
           this.requireCurrentHandshake(body, member.machineId);
           await peers.call(member.machineId, 'manual-deliver', body, options);
         }
         if (unanswered) awaiting++;
-      } catch (error) { awaiting++; this.warnOnce(`manual sync with ${member.machineId} awaiting`, error); }
+      } catch (error) { awaiting++; this.sync.noteManualAnswer(member.replicaId, 'error'); this.warnOnce(`manual sync with ${member.machineId} awaiting`, error); }
     }
     const result = await this.deliverPending(peers);
     return { ...result, blocked: result.blocked + awaiting, waiting: result.waiting + awaiting };
@@ -200,6 +201,7 @@ export class DesignDocPeerService {
         const body = { ...this.handshakeFor(member.replicaId, grants[0]!.grantEpoch, PEER_MIN_PROTOCOL_VERSION), manualId: consent.manualId, heads: consent.heads };
         const reply = await peers.call(member.machineId, 'manual', body,
           { scope: local.repoId, timeoutMs: PEER_CALL_TIMEOUT_MS, signal: this.abort.signal }) as { accepted?: unknown; manualId?: unknown };
+        this.sync.noteManualAnswer(member.replicaId, reply?.accepted === true && reply.manualId === consent.manualId ? 'accepted' : 'not-accepted');
         if (reply?.accepted === true && reply.manualId === consent.manualId) {
           await this.completeManualAck(peers, body, member.machineId);
         }

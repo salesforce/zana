@@ -17,7 +17,10 @@ export function formatDiagnostics(data: SyncDiagnostics, nameOf: (peerId: string
     const c = peer.consent;
     if (c) lines.push(`  consent: ${c.knownHeads} known heads from it; sessions out waiting ${c.outbound.waiting}/accepted ${c.outbound.accepted}, ` +
       `in waiting ${c.inbound.waiting}/accepted ${c.inbound.accepted}; refused drafts ${c.refused.count}` +
-      (c.refused.lastAt ? ` (last ${c.refused.lastDocId} ${relativeTime(c.refused.lastAt, now)})` : ''));
+      (c.refused.lastAt ? ` (last ${c.refused.lastDocId} ${relativeTime(c.refused.lastAt, now)})` : '') +
+      `; queued heads named by an outbound session ${c.queued?.namedByOutbound ?? 0}/${c.queued?.total ?? 0}` +
+      (c.oldestWaitingOutAt ? `, oldest waiting session ${relativeTime(c.oldestWaitingOutAt, now)}` : '') +
+      (c.lastAnswer ? `; it last answered ${c.lastAnswer.outcome} ${relativeTime(c.lastAnswer.at, now)}` : '; no answer from it since startup'));
     if (peer.fault) lines.push(`  Likely cause (${peer.fault.code}): ${peer.fault.hint}`);
     for (const error of peer.recentErrors) lines.push(`  ${error.docId} x${error.attempts} ${relativeTime(error.at, now)}: ${boundSyncError(error.error)}`);
   }
