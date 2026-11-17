@@ -98,7 +98,7 @@ function ForkReview({ docId, remoteHead, onResolved }: { docId: string; remoteHe
     </ul></details> : null}
     {stale ? <p role="alert">Document head changed while loading the file. Review again before resolving.</p> : null}
     {questions.length && question ? <>
-      <div ref={heading} tabIndex={-1}><p role="status">File {step + 1} of {questions.length}</p></div>
+      <div ref={heading} tabIndex={-1}><p role="status">{question.kind === 'file' ? 'File' : 'Item'} {step + 1} of {questions.length}</p></div>
       <QuestionReview key={question.key} docId={docId} remoteHead={remoteHead} localHead={data.localHead} question={question}
         choice={choices[question.key]} onStale={setFileStale} onChoice={(choice) => setChoices((current) => ({ ...current, [question.key]: choice }))} />
       <button type="button" className="btn" disabled={step === 0 || busy} onClick={() => move(step - 1)}>Back</button>
@@ -129,7 +129,7 @@ export function PeerConflictView({ docId, onClose, onOpenHistory }: { docId: str
       {onOpenHistory ? <button type="button" className="btn" onClick={onOpenHistory}>Open history</button> : null}</section> : null}
     {page.error ? <p role="alert">{page.error}</p> : page.loading && !page.data ? <p role="status">Loading conflicts...</p> :
       page.data?.remoteHeads.length ? <>
-        <label className="dd-field"><span>Peer version</span><select className="dd-input" value={selected} onChange={(event) => setRemoteHead(event.target.value)}>
+        <label className="dd-field"><span>Peer version</span><select className="dd-input" value={selected} onChange={(event) => { setResolved(false); setRemoteHead(event.target.value); }}>
           {page.data.remoteHeads.map((head) => <option key={head}>{head}</option>)}
         </select></label>
         <ForkReview key={selected} docId={docId} remoteHead={selected} onResolved={() => { setResolved(true); setRemoteHead(''); page.reload(); }} />

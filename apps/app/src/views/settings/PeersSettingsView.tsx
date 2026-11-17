@@ -15,6 +15,7 @@ import './peers-settings.css';
 const TERMINAL_CONNECTION_STATES = new Set<PeerConnection['state']>(['ready', 'denied', 'cancelled', 'expired', 'failed']);
 const CANCELLABLE_CONNECTION_STATES = new Set<PeerConnection['state']>(['open', 'redeeming', 'reserved']);
 const CONNECTION_POLL_MS = 2000;
+const COPIED_LABEL_MS = 2000;
 
 
 const STATE_LABELS: Record<PeerLinkState, string> = {
@@ -169,6 +170,12 @@ export function PeersSettingsView() {
     if (previous !== null && previous !== connectionStates) void load(true);
   }, [connectionStates, load]);
 
+  const copyDiagnostics = () => {
+    void copyText(formatPeerDiagnostics(links ?? [], diagnostics)).then(() => {
+      setCopied(true);
+      setTimeout(() => { if (!disposed.current) setCopied(false); }, COPIED_LABEL_MS);
+    }, () => setError('Could not copy diagnostics.'));
+  };
   const groups = links ? groupLinks(links) : [];
   const hasPeerPlugin = plugins?.some((plugin) => plugin.enabled && plugin.peers) ?? false;
   const refreshAll = useCallback(() => { void loadConnections(); void load(true); }, [loadConnections, load]);
@@ -243,7 +250,7 @@ export function PeersSettingsView() {
       <div className="peers-actions peers-page-actions">
         <button type="button" className="btn primary" onClick={() => setPanel(panel === 'add' ? null : 'add')}>Add computer</button>
         <button type="button" className="btn" onClick={() => setPanel(panel === 'join' ? null : 'join')}>Join computer</button>
-        <button type="button" className="btn" onClick={() => { void copyText(formatPeerDiagnostics(links ?? [], diagnostics)).then(() => { setCopied(true); setTimeout(() => { if (!disposed.current) setCopied(false); }, 2000); }, () => setError('Could not copy diagnostics.')); }}>{copied ? 'Copied' : 'Copy diagnostics'}</button>
+        <button type="button" className="btn" onClick={copyDiagnostics}>{copied ? 'Copied' : 'Copy diagnostics'}</button>
       </div>
       {panel === 'add' && <PeerDialog title="Add a computer"><AddComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
       {panel === 'join' && <PeerDialog title="Join computer"><JoinComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}

@@ -74,6 +74,21 @@ const ENROLL_BUDGET_MS = 45_000, NOTICE_MS = 5_000, REPLY_DELAY_MS = 1_000, CONT
 const LABEL_MAX = 80;
 
 export type PeerLinkState = 'connected' | 'reconnecting' | 'disconnected';
+/** Short, address-free description of a forwarder acquire failure: an error code or the message with hosts, ports and paths removed. */
+export function forwarderFailureText(error: unknown): string {
+  if (!(error instanceof Error)) return 'acquire failed';
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === 'string' && /^[A-Z0-9_]{3,32}$/.test(code)) return code;
+  const text = error.message
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b(?::\d+)?/g, '[addr]')
+    .replace(/\[[0-9a-f:]+\](?::\d+)?/gi, '[addr]')
+    .replace(/(?:\/[\w.@-]+){2,}/g, '[path]')
+    .replace(/\b[\w.-]+:\d{2,5}\b/g, '[addr]')
+    .replace(/\b\d{4,5}\b/g, '[port]')
+    .replace(/\s+/g, ' ').trim();
+  return (text || 'acquire failed').slice(0, 160);
+}
+
 export interface PeerLinkDiagnostic {
   peerInstanceId: string; peerName?: string; role: string; phase: string; side: 'server' | 'client'; state: string; reason?: string; paused: boolean;
   /** Bounded text when this inviter link's forwarder was blocked at startup; null otherwise. */
@@ -1427,7 +1442,7 @@ export class PeerLinks implements PeerLinksControlPort {
       if (port !== rec.ssh.targetPort) { await ssh.forwarder.release(rec.invitationId).catch(() => undefined); throw new Error('forwarder port moved'); }
     } catch (error) {
       // Silent before: the link then reads `ssh-down` with no trace of why (port held by another Zana, lease lost, port moved).
-      const why = error instanceof Error ? error.message.slice(0, 160) : 'acquire failed';
+      const why = forwarderFailureText(error);
       this.forwarderBlockReason.set(rec.invitationId, why);
       console.warn(`[zcc] peer link ${rec.invitationId.slice(0, 8)} forwarder blocked: ${why}`);
       await this.blockForwarder(rec);

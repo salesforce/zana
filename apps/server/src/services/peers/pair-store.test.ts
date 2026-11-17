@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { PairStore, peerMacPayload, type PairStoreOptions, type PeerPairInput, type PeerTransferBinding } from './pair-store.js';
 import { canonicalPeerMac, MAX_PEER_BODY_BYTES, MAX_PEER_STORE_BYTES, parsePeerMac, peerBodyHash, peerRoute, PrivatePeerStorage, sealPeerBytes, serializePeerStorage, unsealPeerBytes } from './peer-auth.js';
 import { PEER_REQUEST_TTL_MS } from './peer-replay-window.js';
@@ -348,6 +348,7 @@ describe('Canonical peer auth', () => {
 
   it('re-revoking an already revoked pair (startup recovery) does not fail a concurrent transaction as fenced', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
     let armed = false, revoking: Promise<void> | undefined;
     // eslint-disable-next-line prefer-const -- the guard needs the store that is created with these options
     let store: PairStore;

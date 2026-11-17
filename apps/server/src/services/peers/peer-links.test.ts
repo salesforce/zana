@@ -10,7 +10,8 @@ import { EnrolledPeerChannels } from './enrolled-peer-channels.js';
 import { InvitationError } from './peer-invitation.js';
 import { BootstrapRejection } from './peer-link-bootstrap.js';
 import {
-  LINK_LINE_TTL_MS, PEER_LINK_BOOTSTRAP_SKEW_MS, PEER_LINK_PRE_CONSENT_MAX_MS, PEER_LINK_ROTATION_MS, PEER_OFFLINE_AFTER_MS, PEER_RELINK_ACCEPT_INTERVAL_MS, PEER_RELINK_AFTER_MS, PeerLinks
+  LINK_LINE_TTL_MS, PEER_LINK_BOOTSTRAP_SKEW_MS, PEER_LINK_PRE_CONSENT_MAX_MS, PEER_LINK_ROTATION_MS, PEER_OFFLINE_AFTER_MS, PEER_RELINK_ACCEPT_INTERVAL_MS, PEER_RELINK_AFTER_MS, PeerLinks,
+  forwarderFailureText,
 } from './peer-links.js';
 import type { AuthorizedKeyInput, AuthorizedKeyKind, OpenTunnelInput, PeerSshEndpoint, SshReason } from './peer-ssh-contract.js';
 
@@ -1010,6 +1011,16 @@ describe('bootstrap line expiry', () => {
     links.onInboundConnected(mint.offer.hostId);
     await f.settle(links, 2000);
     expect(f.connector.enroll).not.toHaveBeenCalled();
+  });
+});
+
+describe('forwarderFailureText', () => {
+  it('never carries addresses, ports or paths', () => {
+    expect(forwarderFailureText(Object.assign(new Error('listen EADDRINUSE: address already in use 127.0.0.1:58021'), { code: 'EADDRINUSE' }))).toBe('EADDRINUSE');
+    const text = forwarderFailureText(new Error('bind failed on 10.1.2.3:8781 and host.local:9000 via /Users/x/.zcc/sock port 58021'));
+    expect(text).not.toMatch(/10\.1\.2\.3|8781|9000|58021|\/Users/);
+    expect(forwarderFailureText('nope')).toBe('acquire failed');
+    expect(forwarderFailureText(new Error('   '))).toBe('acquire failed');
   });
 });
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { boundSyncError } from '../shared/sync-classify.js';
 import type { SyncDiagnostics } from './api.js';
 import { errorMessage, toast, useApi } from './api.js';
@@ -33,13 +33,17 @@ export function SyncDiagnosticsPanel({ nameOf }: { nameOf(peerId: string): strin
   const [data, setData] = useState<SyncDiagnostics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshed, setRefreshed] = useState(false);
+  const latest = useRef(0);
   const load = useCallback(() => {
-    api.syncDiagnostics().then((value) => { setData(value); setError(null); setRefreshed(true); }, (failure) => setError(errorMessage(failure)));
+    const request = ++latest.current;
+    api.syncDiagnostics().then((value) => { if (request === latest.current) { setData(value); setError(null); setRefreshed(true); } }, (failure) => { if (request === latest.current) setError(errorMessage(failure)); });
   }, [api]);
   useEffect(() => { load(); }, [load]);
   // Diagnostics are an aid: a failed read is shown as a quiet note, never as the page's error banner.
-  if (error) return <p className="dd-peers-hint" data-testid="diagnostics-unavailable">{`Diagnostics unavailable: ${error}`}</p>;
-  if (!data) return null;
+  if (!data) {
+    return error ? <div className="dd-peers-block"><p className="dd-peers-hint" data-testid="diagnostics-unavailable">{`Diagnostics unavailable: ${error}`}</p>
+      <button type="button" className="btn" onClick={() => load()}>Refresh</button></div> : null;
+  }
   const copy = () => { void copyText(formatDiagnostics(data, nameOf)).then((ok) => toast(ok ? 'Diagnostics copied' : 'Could not copy diagnostics', ok ? 'info' : 'error')); };
   return (
     <section className="dd-peers-block dd-diag" aria-label="Sync diagnostics">
@@ -63,9 +67,10 @@ export function SyncDiagnosticsPanel({ nameOf }: { nameOf(peerId: string): strin
       ))}
       <div className="dd-actions">
         <button type="button" className="btn" onClick={copy}>Copy diagnostics</button>
-        <button type="button" className="btn" onClick={() => { setRefreshed(false); load(); }}>Refresh</button>
+        <button type="button" className="btn" onClick={() => { setRefreshed(false); setError(null); load(); }}>Refresh</button>
       </div>
-      <p className="dd-peers-hint" role="status" data-testid="diagnostics-status">{refreshed ? 'Diagnostics up to date' : 'Refreshing diagnostics…'}</p>
+      {error ? <p className="dd-peers-hint" role="alert" data-testid="diagnostics-unavailable">{`Diagnostics unavailable: ${error}. Showing the last loaded values.`}</p> : null}
+      <p className="dd-peers-hint" role="status" data-testid="diagnostics-status">{error ? 'Refresh failed' : refreshed ? 'Diagnostics up to date' : 'Refreshing diagnostics…'}</p>
     </section>
   );
 }

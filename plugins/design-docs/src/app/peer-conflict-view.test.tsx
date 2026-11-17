@@ -137,7 +137,7 @@ describe('peer conflict review', () => {
     await screen.findByText('File 1 of 2');
     fireEvent.click(screen.getByRole('radio', { name: 'Keep mine' }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByText('File 2 of 2');
+    await screen.findByText('Item 2 of 2');
     expect(screen.getByText('Local title', { selector: 'dd' })).toBeTruthy();
     expect(screen.getByText('Remote title', { selector: 'dd' })).toBeTruthy();
     fireEvent.click(screen.getByRole('radio', { name: 'Use theirs' }));

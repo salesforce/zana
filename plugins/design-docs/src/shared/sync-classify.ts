@@ -31,9 +31,10 @@ export function classifyDelivery(message: string | null | undefined): 'waiting' 
 /** Redacts credentials and query strings, collapses whitespace and truncates; safe to store, log and show. */
 export function boundSyncError(message: string): string {
   const clean = message
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[redacted]@')
     .replace(/\b(authorization|proxy-authorization)\b\s*[:=]\s*(?:bearer|basic)?\s*[^\s,;"']+/gi, '$1: [redacted]')
     .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}/gi, '$1 [redacted]')
-    .replace(/\b(token|access_token|refresh_token|api[_-]?key|secret|password|passwd|signature|sig)\b(["']?\s*[:=]\s*["']?)[^\s&,;"']+/gi, '$1$2[redacted]')
+    .replace(/\b(token|access_token|refresh_token|api[_-]?key|secret|password|passwd|signature|sig)\b(["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,;"']+)/gi, '$1$2[redacted]')
     .replace(/\?[^\s"')]*/g, '?[redacted]')
     .replace(/\s+/g, ' ')
     .trim();

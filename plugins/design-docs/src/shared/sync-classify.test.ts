@@ -42,6 +42,14 @@ describe('diagnoseFault', () => {
   });
 });
 
+describe('boundSyncError credentials', () => {
+  it('redacts quoted values containing spaces and URL userinfo', () => {
+    const text = boundSyncError('failed password="private value" secret=\'two words\' at https://user:pass@example.test/x');
+    expect(text).not.toMatch(/private value|two words|user:pass|pass@/);
+    expect(text).toContain('https://[redacted]@example.test');
+  });
+});
+
 describe('boundSyncError', () => {
   it('redacts credentials and query strings', () => {
     const text = boundSyncError('failed https://h/x?token=SECRET&a=1 Authorization: Bearer abc123456789 password=hunter2 {"api_key":"KEY999"}');

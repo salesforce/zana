@@ -337,7 +337,8 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
       };
       const docs = deps.store.list(filter);
       const total = deps.store.count(filter);
-      if (json) return JSON.stringify({ docs, total, offset, limit }, null, 2);
+      // `--json` keeps its original bare-array shape; truncation is reported on stderr like the text form.
+      if (json) return { stdout: JSON.stringify(docs, null, 2), ...(docs.length < total ? { stderr: `showing ${docs.length} of ${total}` } : {}) };
       const header = scope === 'project' && caller.projectId
         ? 'Design docs for this project (plus global docs), newest first:'
         : 'Design docs across all projects, newest first:';

@@ -77,4 +77,15 @@ describe('SyncDiagnosticsPanel', () => {
     expect(await screen.findByText('Nothing queued')).toBeTruthy();
     expect(screen.getByText('This computer: 147 docs')).toBeTruthy();
   });
+  it('recovers after a failed first read via Refresh, and keeps old data on a failed refresh', async () => {
+    api.syncDiagnostics.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(data).mockRejectedValueOnce(new Error('later'));
+    render(<SyncDiagnosticsPanel nameOf={(id) => id} />);
+    await screen.findByTestId('diagnostics-unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByText(/2 queued for 2 docs/);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect((await screen.findByTestId('diagnostics-unavailable')).textContent).toContain('later');
+    expect(screen.getByText(/2 queued for 2 docs/)).toBeTruthy();
+    expect(screen.getByTestId('diagnostics-status').textContent).toBe('Refresh failed');
+  });
 });

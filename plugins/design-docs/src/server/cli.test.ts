@@ -247,9 +247,9 @@ describe('zcc design-docs', () => {
 
     expect((await run(['list'])).stdout).toContain('"Billing v2"');
     expect((await run(['list', '--all-projects', '--query', 'shared'])).stdout).toContain('"Shared conventions"');
-    const listed = JSON.parse((await run(['list', '--json'])).stdout!) as { docs: Array<{ id: string }>; total: number; offset: number; limit: number };
-    expect(listed.docs.map((entry) => entry.id)).toContain(doc.id);
-    expect(listed).toMatchObject({ total: 2, offset: 0, limit: 50 });
+    const listed = JSON.parse((await run(['list', '--json'])).stdout!) as Array<{ id: string }>;
+    expect(Array.isArray(listed)).toBe(true);
+    expect(listed.map((entry) => entry.id)).toContain(doc.id);
 
     expect((await run(['show', doc.slug])).stdout).toContain('## Entry file');
     expect((await run(['show', doc.slug, '--all'])).stdout).toContain('path="api/openapi.yaml"');
@@ -270,14 +270,14 @@ describe('zcc design-docs', () => {
     }
 
     const json = await run(['list', '--json', '--offset', '20', '--limit', '25']);
-    expect(json.stderr).toBeUndefined();
-    const page = JSON.parse(json.stdout!) as { docs: unknown[]; total: number; offset: number; limit: number };
-    expect(page.docs).toHaveLength(25);
-    expect(page).toMatchObject({ total: 120, offset: 20, limit: 25 });
+    // --json stays a bare array (as before pagination existed); truncation is on stderr only, so stdout stays parseable.
+    expect(json.stderr).toBe('showing 25 of 120\n');
+    const page = JSON.parse(json.stdout!) as unknown[];
+    expect(page).toHaveLength(25);
 
-    const capped = JSON.parse((await run(['list', '--json', '--limit', '1000'])).stdout!) as { docs: unknown[]; limit: number };
-    expect(capped.docs).toHaveLength(120);
-    expect(capped.limit).toBe(200);
+    const capped = await run(['list', '--json', '--limit', '1000']);
+    expect(JSON.parse(capped.stdout!)).toHaveLength(120);
+    expect(capped.stderr).toBeUndefined();
 
     const plain = await run(['list', '--offset', '100', '--limit', '50']);
     expect(plain.stdout).toContain('Design docs for this project');
