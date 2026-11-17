@@ -516,8 +516,13 @@ function parsePersona(content: string): ParsedPersona {
   return { persona: projectPersonaFields(migratePersonaIfNeeded(sanitized)) };
 }
 
+/** A throw while normalising one file (read error included) drops that file with the fixed 'malformed-json' reason; it never aborts a refresh. */
+function parsePersonaSafely(read: () => string): ParsedPersona {
+  try { return parsePersona(read()); } catch { return { persona: null, reason: 'malformed-json' }; }
+}
+
 function readPersonaFile(path: string): ParsedPersona {
-  try { return parsePersona(readFileSync(path, 'utf8')); } catch { return { persona: null, reason: 'malformed-json' }; }
+  return parsePersonaSafely(() => readFileSync(path, 'utf8'));
 }
 
 function listInDir(dir: string, source: Persona['source'], onDrop: (warning: PersonaLoadWarning) => void): Persona[] {
@@ -630,7 +635,7 @@ export class PersonaStore extends EventEmitter {
       if (entry.kind === 'remote') {
         const source = entry.source;
         for (const record of source.records) {
-          const { persona: value } = parsePersona(record);
+          const { persona: value } = parsePersonaSafely(() => record);
           if (value) merged.set(value.id, { ...value, source: { projectId: source.projectId, projectName: source.projectName } });
         }
         continue;

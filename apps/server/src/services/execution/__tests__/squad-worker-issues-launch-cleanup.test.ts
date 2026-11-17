@@ -169,6 +169,41 @@ describe('failed-run teardown order and launch settling (A1, A7, R-2, A6)', () =
   }));
 });
 
+describe('a stopped Modern worker raises the worker warning (A3, REQ-20)', () => {
+  const modernLifecycle = (transport: string) => async () => ({
+    workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', task: 'unknown', process: 'exited', transport }]
+  });
+
+  async function startWithClaim(filePath: string, transport: string, claim: boolean) {
+    const onWorkerWarning = vi.fn();
+    const d = deps(filePath, { getTeamLaunch: modernLifecycle(transport), onWorkerWarning });
+    const store = (d as unknown as { store: ReturnType<typeof createExecutionStore> }).store;
+    const service = new SquadExecutionService(d);
+    await service.start('session-1', 'project-1', request);
+    const record = (await store.get('execution-1'))!;
+    if (claim) {
+      (record as { workUnits?: unknown }).workUnits = [{ id: 'u1', state: 'CLAIMED', assignedSlotId: 'slot-1' }];
+      store.get = async () => record;
+    }
+    return { service, onWorkerWarning };
+  }
+
+  it('warns once when a Modern worker stopped while holding a claimed unit', async () => fixture(async (filePath) => {
+    const { service, onWorkerWarning } = await startWithClaim(filePath, 'MODERN', true);
+    await service.warnModernWorkerStopped('execution-1', 'slot-1');
+    await service.warnModernWorkerStopped('execution-1', 'slot-1');
+    expect(onWorkerWarning).toHaveBeenCalledTimes(1);
+    service.dispose();
+  }));
+
+  it('does not warn for an idle seat or a CLI worker', async () => fixture(async (filePath) => {
+    const idle = await startWithClaim(filePath, 'MODERN', false);
+    await idle.service.warnModernWorkerStopped('execution-1', 'slot-1');
+    expect(idle.onWorkerWarning).not.toHaveBeenCalled();
+    idle.service.dispose();
+  }));
+});
+
 describe('Cancel waits for sessions that are still closing (REQ-14)', () => {
   it('A2: reports CANCEL_INCOMPLETE when a session told to close is still live on the second look', async () => fixture(async (filePath) => {
     let calls = 0;

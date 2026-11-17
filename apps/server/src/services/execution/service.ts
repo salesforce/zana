@@ -442,6 +442,7 @@ interface ExtractedLifecycle {
     authorizationId?: string;
     projectId?: string;
     process?: string;
+    transport?: string;
     /** Set on a seat that starts on demand (it may have no session). */
     onDemand?: true;
     /** Units the current session accepted; present only for a seat that starts a fresh session per unit (#579). */
@@ -1264,6 +1265,26 @@ export class ExecutionService {
     }]);
     const changed = await this.escalateKickoffFailures(reclaimed);
     if (reclaimed.stateVersion !== record.stateVersion || changed) await this.cascadeDispatch(reclaimed.id);
+  }
+
+  /**
+   * A Modern worker has no PTY exit code: when the runtime reports its thread stopped while it still
+   * holds a claimed unit, that is the REQ-20 worker-exit warning (once per worker). An idle seat stopping is normal.
+   */
+  async warnModernWorkerStopped(executionId: string, slotId: string): Promise<void> {
+    const record = await this.deps.store.get(executionId);
+    if (!record || isResumeGrantTerminal(record.state)) return;
+    let lifecycle: ExtractedLifecycle | undefined;
+    try {
+      lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+    } catch (error) {
+      this.deps.logError?.(`Execution Modern worker-stop lifecycle read failed for ${record.id}`, error);
+      return;
+    }
+    const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.transport === 'MODERN');
+    const holdsClaim = record.workUnits?.some((unit) => unit.state === 'CLAIMED' && unit.assignedSlotId === slotId);
+    if (!worker || !holdsClaim) return;
+    await this.raiseWorkerWarning(record, slotId, 'exit', `Worker ${slotId} stopped while it still held a claimed unit`);
   }
 
   /**
