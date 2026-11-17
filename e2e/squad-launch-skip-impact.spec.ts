@@ -92,9 +92,16 @@ test.describe('launch card skip impact and plan Checks', () => {
 
       // The agent text carries the Checks too (squad_plan_check result logged by the fake proposer).
       const log = readCoordinatorLog(ctx);
-      expect(log).toContain('can run at the same time');
+      // The fake proposer calls squad_plan_check with a path only (no Squad), so the roster-dependent
+      // width Check is not part of the agent text; it appears in the card, where the Squad is known.
       expect(log).toContain('changes both a server contract and the screen that uses it');
 
+      // The proposer's own terminal lingers over the board; its backdrop blocks clicks.
+      const agentModal = ctx.window.getByRole('dialog', { name: /^Agent / }).first();
+      if (await agentModal.count()) {
+        await agentModal.getByRole('button', { name: 'Close' }).click();
+        await expect(agentModal).toBeHidden();
+      }
       await ctx.window.getByTestId('nav-inbox').or(ctx.window.getByTestId('project-nav-inbox')).click();
       const row = ctx.window.locator('.inbox-row').filter({ hasText: `Squad launch ready: ${TITLE}` }).first();
       await expect(row).toBeVisible({ timeout: 30_000 });
