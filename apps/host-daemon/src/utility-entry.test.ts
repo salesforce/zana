@@ -32,7 +32,7 @@ it('forwards explicit provenance and replacement only on authenticated enrollmen
   for (const data of [null, 'enroll', { type: 'enroll', protocolVersion: 0 }, { type: 'enroll', protocolVersion }]) await f.send(data);
   expect(deps.enroll).not.toHaveBeenCalled();
   await f.send({ type: 'enroll', protocolVersion, serverUrl: 'http://127.0.0.1:1', token: 'fixture', dataDir: '/fixture', provenance: 'tunnel', replaceEnrollment: true });
-  expect(deps.enroll).toHaveBeenCalledWith({ serverUrl: 'http://127.0.0.1:1', token: 'fixture', dataDir: '/fixture', provenance: 'tunnel', replaceEnrollment: true, stealLock: true });
+  expect(deps.enroll).toHaveBeenCalledWith({ serverUrl: 'http://127.0.0.1:1', token: 'fixture', dataDir: '/fixture', provenance: 'tunnel', replaceEnrollment: true, stealLock: true, signal: expect.any(AbortSignal) });
   await f.send({ type: 'relaunch', protocolVersion, serverUrl: 'http://127.0.0.1:1', token: 'fixture', dataDir: '/fixture' });
   expect(deps.enroll.mock.calls[1][0]).toMatchObject({ provenance: 'non-tunnel', replaceEnrollment: false });
   expect(close).toHaveBeenCalledOnce();
@@ -46,6 +46,44 @@ it.each([new Error('refused'), 'refused'])('reports enrollment and relaunch fail
     await f.send({ type, protocolVersion, serverUrl: 'http://127.0.0.1:1', token: 'fixture', dataDir: '/fixture' });
     expect(f.postMessage).toHaveBeenLastCalledWith({ type: 'error', protocolVersion, message: 'refused' });
   }
+});
+it('serializes duplicate enrollment and relaunch without acquiring two daemon locks', async () => {
+  const f = await fixture(), pending = Promise.withResolvers<{ hostId: string; close: () => Promise<void> }>();
+  const close = vi.fn(async () => {});
+  deps.enroll.mockReturnValueOnce(pending.promise).mockResolvedValue({ hostId: 'host', close });
+  const message = { type: 'enroll', protocolVersion, serverUrl: 'http://127.0.0.1:1', token: 'fixture', dataDir: '/fixture' };
+  const first = f.send(message);
+  await vi.waitFor(() => expect(deps.enroll).toHaveBeenCalledOnce());
+  const duplicate = f.send(message), restart = f.send({ ...message, type: 'relaunch' });
+  expect(close).not.toHaveBeenCalled(); expect(deps.enroll).toHaveBeenCalledOnce();
+  pending.resolve({ hostId: 'host', close });
+  await Promise.all([first, duplicate, restart]);
+  expect(deps.enroll).toHaveBeenCalledTimes(2); expect(close).toHaveBeenCalledOnce();
+  expect(f.postMessage.mock.calls.filter(([reply]) => reply.type === 'enrolled')).toHaveLength(3);
+});
+it('aborts pending enrollment before shutdown and rejects later enrollment work', async () => {
+  const f = await fixture();
+  deps.enroll.mockImplementation(({ signal }: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+  }));
+  const message = { type: 'enroll', protocolVersion, serverUrl: 'http://127.0.0.1:1', token: 'fixture', dataDir: '/fixture' };
+  const enrolling = f.send(message);
+  await vi.waitFor(() => expect(deps.enroll).toHaveBeenCalledOnce());
+  vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  const stopped = f.send({ type: 'stop', protocolVersion });
+  await Promise.all([enrolling, stopped]);
+  expect(process.exit).toHaveBeenCalledWith(0);
+  await f.send(message); expect(deps.enroll).toHaveBeenCalledOnce();
+});
+it('passes validated desktop evidence on both enroll and relaunch, rejecting malformed evidence', async () => {
+  const f = await fixture();
+  const desktopEnrollment = { serverInstanceId: '33333333-3333-4333-8333-333333333333', serverUrl: 'http://127.0.0.1:1', host: null };
+  const message = { type: 'enroll', protocolVersion, serverUrl: desktopEnrollment.serverUrl, token: 'fixture', dataDir: '/fixture', desktopEnrollment };
+  deps.enroll.mockResolvedValue({ hostId: 'host', close: async () => {} });
+  await f.send({ ...message, desktopEnrollment: {} }); expect(deps.enroll).not.toHaveBeenCalled();
+  await f.send(message);
+  await f.send({ ...message, type: 'relaunch' });
+  expect(deps.enroll.mock.calls.every(([options]) => options.desktopEnrollment.serverInstanceId === desktopEnrollment.serverInstanceId)).toBe(true);
 });
 it('starts private terminal transport and releases it on stop and process exit', async () => {
   const f = await fixture(), close = vi.fn(async () => {}), managerClose = vi.fn(); let emit!: (event: unknown) => void;
@@ -78,6 +116,7 @@ it('reaps probes before waiting on enrollment cleanup, only for an authenticated
   vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
   const stopped = f.send({ type: 'stop', protocolVersion });
   expect(deps.shutdownCommands).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(2));
   expect(close).toHaveBeenCalledTimes(2);
   expect(deps.shutdownCommands.mock.invocationCallOrder[0]).toBeLessThan(close.mock.invocationCallOrder[1]!);
   expect(process.exit).not.toHaveBeenCalled();

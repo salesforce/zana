@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ children: [] as any[], queued: undefined as unknown, queueRequests: [] as any[], pv: 0 }));
+const h = vi.hoisted(() => ({ children: [] as any[], queued: undefined as unknown, queueRequests: [] as any[], pv: 0, enroll: vi.fn(async () => 'host-1'), proof: undefined as unknown }));
 
 vi.mock('electron', () => ({
   utilityProcess: {
@@ -16,6 +16,9 @@ vi.mock('electron', () => ({
           setImmediate(() => child.emit('message', {
             type: 'ready', protocolVersion: h.pv, url: `http://127.0.0.1/${entry}`, hostId: 'host-1', instanceId: 'inst-1'
           }));
+        } else if (message.type === 'request' && message.operation === 'desktop-host-enrollment') {
+          setImmediate(() => child.emit('message', { type: 'result', protocolVersion: h.pv, id: message.id,
+            value: h.proof ?? { serverInstanceId: '33333333-3333-4333-8333-333333333333', serverUrl: 'http://127.0.0.1:8780', host: null } }));
         } else if (message.type === 'request' && (['thread-queue-turn', 'plugins-update-all', 'plugins-dispatch-admission', 'plugins-tool-settled', 'plugins-tool-policy-inventory'].includes(message.operation) || message.operation.startsWith('plugins-pty-') || message.operation.startsWith('plugin-packs-'))) {
           h.queueRequests.push(message);
           setImmediate(() => child.emit('message', h.queued === 'runtime-error'
@@ -31,14 +34,82 @@ vi.mock('electron', () => ({
     }
   }
 }));
-vi.mock('./enroll-host-utility.js', () => ({ enrollHostUtility: async () => 'host-1' }));
+vi.mock('./enroll-host-utility.js', () => ({ enrollHostUtility: h.enroll }));
 
 h.pv = (await import('@zana-ai/zcc-contracts/runtime')).SERVER_RUNTIME_PROTOCOL_VERSION;
 const { startRuntimeSupervisor } = await import('./runtime-supervisor.js');
 
-afterEach(() => { h.children.length = 0; });
+afterEach(() => { h.children.length = 0; h.proof = undefined; h.enroll.mockReset().mockResolvedValue('host-1'); vi.useRealTimers(); });
 
 describe('utility-backed runtime supervisor', () => {
+  it('opens the window after the startup bound while keeping only one enrollment in flight', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-initial-bound-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    const pending = Promise.withResolvers<string>(); h.enroll.mockReturnValueOnce(pending.promise);
+    const boot = startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    // Child boot and RPC replies use real setImmediate; enrollment timers are virtual.
+    await vi.waitFor(() => expect(h.enroll).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(15_000);
+    const runtime = await boot;
+    try {
+      const server = h.children.find(child => child.entry.endsWith('server-runtime.js'));
+      expect(server.postMessage.mock.calls.some(([message]: any[]) => message.type === 'local-host')).toBe(false);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(h.enroll).toHaveBeenCalledOnce();
+      pending.resolve('host-1');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(server.postMessage).toHaveBeenCalledWith({ type: 'local-host', protocolVersion: h.pv, hostId: 'host-1' });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { await runtime.close(); error.mockRestore(); vi.unstubAllEnvs(); }
+  });
+  it('retries failed initial enrollment and clears the retry after reconnection', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-retry-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    h.enroll.mockRejectedValueOnce(new Error('temporary handshake failure'));
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    try {
+      expect(h.enroll).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(h.enroll).toHaveBeenCalledTimes(2), { timeout: 8_000 });
+      const server = h.children.find(child => child.entry.endsWith('server-runtime.js'));
+      expect(server.postMessage).toHaveBeenCalledWith({ type: 'local-host', protocolVersion: h.pv, hostId: 'host-1' });
+    } finally { await runtime.close(); error.mockRestore(); vi.unstubAllEnvs(); }
+  }, 12_000);
+  it('does not publish an enrollment acknowledgement after shutdown', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-shutdown-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    try {
+      const pending = Promise.withResolvers<string>(); h.enroll.mockReturnValueOnce(pending.promise);
+      const restart = runtime.relaunchEnrolledHost();
+      await vi.waitFor(() => expect(h.enroll).toHaveBeenCalledTimes(2));
+      await runtime.close(); pending.resolve('host-1');
+      await expect(restart).resolves.toEqual({ ok: false, message: 'Background service unavailable' });
+      const server = h.children.find(child => child.entry.endsWith('server-runtime.js'));
+      expect(server.postMessage.mock.calls.filter(([message]: any[]) => message.type === 'local-host')).toHaveLength(1);
+    } finally { await runtime.close(); vi.unstubAllEnvs(); }
+  });
+  it('coalesces concurrent restarts and recovers a failed attempt with fresh server evidence', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-enrollment-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    try {
+      const pending = Promise.withResolvers<string>(); h.enroll.mockReturnValueOnce(pending.promise);
+      const a = runtime.relaunchEnrolledHost(), b = runtime.relaunchEnrolledHost();
+      await vi.waitFor(() => expect(h.enroll).toHaveBeenCalledTimes(2));
+      pending.resolve('host-1');
+      await expect(a).resolves.toEqual({ ok: true }); await expect(b).resolves.toEqual({ ok: true });
+      h.enroll.mockRejectedValueOnce(new Error('temporary handshake failure'));
+      await expect(runtime.relaunchEnrolledHost()).resolves.toEqual({ ok: false, message: 'temporary handshake failure' });
+      await expect(runtime.relaunchEnrolledHost()).resolves.toEqual({ ok: true });
+      h.proof = {};
+      const calls = h.enroll.mock.calls.length;
+      expect((await runtime.relaunchEnrolledHost()).ok).toBe(false);
+      expect(h.enroll).toHaveBeenCalledTimes(calls);
+    } finally { await runtime.close(); vi.unstubAllEnvs(); }
+  });
   it('forwards validated local thread activity and clears it on runtime loss and shutdown', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-power-'));
     vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
