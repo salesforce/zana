@@ -343,6 +343,7 @@ export function jobCoordinatorPrompt(input: {
     [
       'Coordination contract:',
       '- Preserve source-declared execution semantics in generic work units: dependency ids become `dependencies`; bounded work becomes `task`; mutating paths become `files`; read-only work sets `readOnly: true`; checks become `verification`. Every mutating unit needs non-empty `files` before registration.',
+      '- Give independent units disjoint, narrow files scopes (specific files or small directories). Units with overlapping scopes run one at a time.',
       '- Workers must close each unit with `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`.',
       '- Scheduling is host-managed: a pre-registered plan is already dispatched, and registering a plan auto-dispatches its ready units. Do NOT call `execution.work.dispatch_ready` yourself; the engine assigns and re-dispatches ready units to workers. End the turn and remain parked after any authoring. Do not relay assignments or routine results with `agent_send`. Never let workers independently execute the whole goal.',
       '- If a step has no qualified worker, the engine blocks it and wakes you with a `blockerId`. The plan is immutable and no reply can run the step on a non-matching worker: answer with `execution.work.answer` to skip the step, or stop the run so the plan can be fixed. If you do not answer, it goes to the human.',
