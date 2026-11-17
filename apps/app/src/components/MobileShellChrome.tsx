@@ -43,6 +43,10 @@ export function useMobileNavigation() {
         '--mobile-viewport-top',
         `${viewport?.offsetTop ?? 0}px`
       );
+      // A soft keyboard leaves well under the full height; secondary hints give way to the composer.
+      const height = viewport?.height ?? window.innerHeight;
+      if (height < window.innerHeight * 0.75) document.documentElement.dataset.mobileKeyboard = 'true';
+      else delete document.documentElement.dataset.mobileKeyboard;
     };
     resize();
     viewport?.addEventListener('resize', resize);
@@ -54,6 +58,7 @@ export function useMobileNavigation() {
       window.removeEventListener('resize', resize);
       document.documentElement.style.removeProperty('--mobile-viewport-height');
       document.documentElement.style.removeProperty('--mobile-viewport-top');
+      delete document.documentElement.dataset.mobileKeyboard;
     };
   }, [isCompact]);
   return { isCompact, drawerOpen, setDrawerOpen };
