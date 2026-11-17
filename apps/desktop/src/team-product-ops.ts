@@ -54,6 +54,7 @@ function jobStatus(record: ExecutionRecord): ProductTeamStatus {
     ...(projection.objective ? { goal: projection.objective } : {}),
     ...(projection.summary ? { summary: projection.summary } : {}),
     ...(result === undefined ? {} : { result }),
+    ...(record.failureReason ? { failureReason: record.failureReason } : {}),
     blockers: (record.blockers ?? []).map((blocker) => ({
       id: blocker.id,
       question: blocker.question,

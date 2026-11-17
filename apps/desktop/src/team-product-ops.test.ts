@@ -102,6 +102,16 @@ describe('createTeamProductOps', () => {
     }
   });
 
+  it('returns the failure reason of a failed run and omits it when absent', async () => {
+    let record = job({ state: 'FAILED', failureReason: 'no portable plan steps found' });
+    const ops = createTeamProductOps({ startTeamJobFromUi: vi.fn(), getExecution: async () => record,
+      status: async () => record, stopJob: vi.fn(), respondToBlocker: vi.fn() });
+    expect(await ops.status('ex-1')).toMatchObject({ ok: true, value: { failureReason: 'no portable plan steps found' } });
+    record = job({ state: 'FAILED' });
+    const older = await ops.status('ex-1');
+    expect(older.ok && older.value).not.toHaveProperty('failureReason');
+  });
+
   it('maps both launch modes to one durable execution path', async () => {
     const startTeamJobFromUi = vi.fn(async () => ({ ok: true as const, value: { executionId: 'ex-1', state: 'RUNNING' } }));
     const ops = createTeamProductOps({

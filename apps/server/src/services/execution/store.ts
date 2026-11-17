@@ -777,9 +777,18 @@ export interface ExecutionRunWarning {
 
 /** Bounds untrusted failure text (no control characters, at most `max` characters). */
 export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
-  void text; void max;
-  throw new Error('not implemented: boundReason');
+  const cleaned = text
+    .replace(ABSOLUTE_PATH, (match) => match.split(/[\\/]/).filter(Boolean).pop() ?? '')
+    .replace(CONTROL_CHARACTERS, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+  return cleaned.length > max ? cleaned.slice(0, max) : cleaned;
 }
+
+// POSIX (/a/b) and Windows (C:\a\b) absolute paths; reduced to the last segment so no home or project path leaks.
+const ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|(?<![\w.:/-])\/)[^\s"'`<>|;,()]*/g;
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
 const MAX_WORK_UNITS = 100;
 export const MAX_REPORTED_BLOCKER_IDS = 100;
 const MAX_UNIT_LIST = 100;
@@ -910,6 +919,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.successorLaunchRequestId === undefined || validString(record.successorLaunchRequestId))
     && (record.successorExecutionId === undefined || validString(record.successorExecutionId))
     && (record.recoveryRequestId === undefined || validString(record.recoveryRequestId))
+    && (record.failureReason === undefined || typeof record.failureReason === 'string' && record.failureReason.length <= MAX_FAILURE_REASON)
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
     && (record.assembledResult === undefined || validAssembledResult(record.assembledResult))
     && (record.usageObservations === undefined || Array.isArray(record.usageObservations) && record.usageObservations.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION && record.usageObservations.every(validUsageObservation))
@@ -2076,6 +2086,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.state = state;
       record.stateVersion += 1;
       record.updatedAt = timestamp;
+      if (state === 'FAILED') {
+        const failureReason = boundReason(summary);
+        if (failureReason) record.failureReason = failureReason;
+      }
       append(snapshot.state, record, state, severity, string(summary, 'event summary'), timestamp, { kind: 'transition', fromState, toState: state });
       persist(snapshot.state, snapshot);
       return clone(record);

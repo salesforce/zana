@@ -32,6 +32,7 @@ interface TeamStatusValue {
   goal?: string;
   summary?: string;
   result?: ProductTeamStatus['result'];
+  failureReason?: string;
   blockers?: Array<{ id?: string; question?: string; resolved?: boolean }>;
 }
 
@@ -94,7 +95,8 @@ async function resolveGoal(raw: string | undefined): Promise<{ ok: true; goal: s
 }
 
 function formatStatus(row: TeamStatusValue): string {
-  return `${row.id ?? '?'}\t${row.kind ?? '?'}\t${row.state ?? '?'}\t${row.teamId ?? '-'}`;
+  const line = `${row.id ?? '?'}\t${row.kind ?? '?'}\t${row.state ?? '?'}\t${row.teamId ?? '-'}`;
+  return row.failureReason ? `${line}\n  Failure: ${row.failureReason}` : line;
 }
 
 function isTerminal(state: string | undefined): boolean {
@@ -120,6 +122,11 @@ async function waitForId(
     }
     const row = shown.data.value ?? (shown.data as TeamStatusValue);
     if (isTerminal(row.state)) {
+      if ((row.result === undefined || row.result === null) && row.failureReason) {
+        return json
+          ? { exitCode: 1, stdout: `${JSON.stringify({ state: row.state, failureReason: row.failureReason })}\n`, stderr: '' }
+          : errResult(`execution ${id} ${(row.state ?? 'failed').toLowerCase()}: ${row.failureReason}`);
+      }
       if (row.result === undefined || row.result === null) {
         return errResult(`terminal execution ${id} has no persisted result payload`);
       }

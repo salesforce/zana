@@ -264,7 +264,7 @@ type McpSafeExecutionRecord = Omit<ExecutionRecord, 'deliveries'>;
 type BoundSnapshotExecutionRecord = Pick<ExecutionRecord,
   'id' | 'projectId' | 'teamId' | 'launchKind' | 'launchDisplay' | 'jobTitle' | 'summary'
   | 'attempt' | 'state' | 'stateVersion' | 'lastEventSequence' | 'workUnits'
-  | 'blockers' | 'finalSummary' | 'coordinationMode' | 'createdAt' | 'updatedAt' | 'dismissedAt'
+  | 'blockers' | 'finalSummary' | 'failureReason' | 'coordinationMode' | 'createdAt' | 'updatedAt' | 'dismissedAt'
 >;
 
 function toMcpSafeExecution(record: ExecutionRecord): McpSafeExecutionRecord {
@@ -275,12 +275,12 @@ function toMcpSafeExecution(record: ExecutionRecord): McpSafeExecutionRecord {
 function toBoundSnapshotExecution(record: ExecutionRecord): BoundSnapshotExecutionRecord {
   const {
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
-    lastEventSequence, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
+    lastEventSequence, workUnits, blockers, finalSummary, failureReason, coordinationMode, createdAt, updatedAt,
     dismissedAt
   } = record;
   return sanitizeStructuredResults({
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
-    lastEventSequence, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
+    lastEventSequence, workUnits, blockers, finalSummary, failureReason, coordinationMode, createdAt, updatedAt,
     dismissedAt
   }) as BoundSnapshotExecutionRecord;
 }

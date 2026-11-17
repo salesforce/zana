@@ -339,6 +339,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...(deliveries ? { deliveries } : {}),
     ...(coordinatorWakes ? { coordinatorWakes } : {}),
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
+    ...(record.failureReason ? { failureReason: record.failureReason } : {}),
     ...(assembledResult ? { assembledResult } : {}),
     ...(record.resourceBlock ? { resourceBlock: record.resourceBlock } : {}),
     ...(record.routeFitProposal ? { routeFitProposal: record.routeFitProposal } : {}),

@@ -36,6 +36,16 @@ describe('buildSquadReport', () => {
     expect(text).toContain('Units: 0 done, 0 failed, 0 skipped. Summary: none.');
   });
 
+  it('reports the failure reason in place of a missing summary on a failed run', () => {
+    const text = buildSquadReport(record({ state: 'FAILED', finalSummary: undefined, workUnits: undefined, failureReason: 'no portable plan steps found' }), {});
+    expect(text).toContain('Failure reason: no portable plan steps found.');
+    expect(text).not.toContain('Summary: none');
+  });
+
+  it('keeps the final summary when a failed run has both', () => {
+    expect(buildSquadReport(record({ state: 'FAILED', failureReason: 'boom' }), {})).toContain('Summary: All good.');
+  });
+
   const worktree = { path: '/tmp/wt', branch: 'squad/x', baseBranch: 'main' };
   it('does not claim Squad kept a user-owned worktree', () => {
     const owned = record({ squadWorktree: { ...worktree, ownership: 'user' } as never });
