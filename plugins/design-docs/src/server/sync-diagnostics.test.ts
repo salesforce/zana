@@ -127,6 +127,9 @@ describe('queued delivery diagnostics', () => {
     expect(deliveryReasonCode('conflict')).toBe('stage-conflict');
     expect(deliveryReasonCode('peer grant unavailable')).toBe('offline');
     expect(deliveryReasonCode('secret detail')).toBe('error');
+    expect(deliveryReasonCode('peer request failed: 409: peer-request-cancelled')).toBe('peer-cancelled');
+    expect(deliveryReasonCode('peer enrollment changed or revoked')).toBe('enrollment');
+    expect(deliveryReasonCode('peer request failed: 408')).toBe('offline');
   });
 });
 

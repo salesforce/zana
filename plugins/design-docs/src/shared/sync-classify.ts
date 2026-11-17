@@ -58,5 +58,8 @@ export function diagnoseFault(message: string | null | undefined): PeerFault | n
 export function deliveryReasonCode(message: string | null | undefined): string {
   if (!message) return 'none';
   if (isStageToken(message)) return `stage-${message}`;
+  // Fixed, more specific codes so a log reader can tell "receiver cancelled the request" and "pairing changed" from plain offline.
+  if (/^peer request failed: 409: peer-request-cancelled\b/i.test(message)) return 'peer-cancelled';
+  if (/enrollment changed|revoked/i.test(message)) return 'enrollment';
   return isOfflineSyncError(message) ? 'offline' : 'error';
 }

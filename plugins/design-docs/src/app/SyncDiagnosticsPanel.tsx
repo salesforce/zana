@@ -35,7 +35,7 @@ export function SyncDiagnosticsPanel({ nameOf }: { nameOf(peerId: string): strin
   if (!data) return null;
   const copy = () => { void copyText(formatDiagnostics(data, nameOf)).then((ok) => toast(ok ? 'Diagnostics copied' : 'Could not copy diagnostics', ok ? 'info' : 'error')); };
   return (
-    <section className="dd-peers-block" aria-label="Sync diagnostics">
+    <section className="dd-peers-block dd-diag" aria-label="Sync diagnostics">
       <h4>Diagnostics</h4>
       <p>{`This computer: ${data.counts.total} docs${data.counts.unmapped ? `, ${data.counts.unmapped} unmapped` : ''}`}</p>
       <p className="dd-peers-hint">{Object.entries(data.counts.byStatus).map(([status, n]) => `${status} ${n}`).join(' · ')}</p>

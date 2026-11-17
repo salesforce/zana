@@ -190,6 +190,12 @@ export const DESIGN_DOCS_STYLES = `
 .dd-peers-heading { margin: 0; font-size: 12.5px; font-weight: 650; }
 .dd-peers-block { display: flex; flex-direction: column; gap: 4px; }
 .dd-peers-connect { align-self: flex-start; }
+.dd-diag { gap: 10px; }
+.dd-diag > h4 { margin: 0 0 2px; }
+.dd-diag p { margin: 0; line-height: 1.5; }
+.dd-peers-diag { display: flex; flex-direction: column; gap: 4px; padding-top: 10px; border-top: 1px solid var(--border); }
+.dd-peers-diag .dd-peers-list { margin-top: 2px; line-height: 1.5; }
+.dd-diag > .dd-actions { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border); }
 .dd-peers-computers { gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); }
 .dd-peers-computers > h4 { margin: 0; color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .dd-peers-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
