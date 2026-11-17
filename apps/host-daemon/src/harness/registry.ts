@@ -103,6 +103,12 @@ export function providerFor(profile: LaunchProfileId): LaunchProvider {
   return providersByProfile.get(profile) ?? leastCapable;
 }
 
+/** Whether an adapter reports API-error stops: 'none' or no status means unsupported. */
+export function apiErrorResumeSupport(adapter: { readonly status?: { readonly apiErrorSignal?: string } }): 'supported' | 'unsupported' {
+  const signal = adapter.status?.apiErrorSignal;
+  return signal && signal !== 'none' ? 'supported' : 'unsupported';
+}
+
 /** One trusted implementation per registered harness, in display order. */
 export function registeredAdapters(): readonly LaunchProvider[] {
   const providers = HARNESS_REGISTRATIONS.map((registration) => registration.implementation);
@@ -120,6 +126,7 @@ export function harnessAdapterDescriptors(
     const provider = inventory ? withLiveModelTargets(shared, inventory.models) : shared;
     return ({
     ...provider.adapter.descriptor,
+    apiErrorResume: apiErrorResumeSupport(provider.adapter),
     targets: provider.adapter.descriptor.targets ? {
       ...provider.adapter.descriptor.targets,
       executionTargets: executionTargetsFor(provider)

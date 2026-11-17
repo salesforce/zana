@@ -52,4 +52,22 @@ describe('Codex interaction hooks', () => {
     for (let n = 0; n < 35; n++) input = { child: input };
     expect(hook({ hook_event_name: 'PermissionRequest', tool_input: input })).toBeNull();
   });
+
+  // #649 REQ-2: Codex declares apiErrorSignal 'none', so its hook must never claim an API-error stop.
+  it.each([
+    'PreModelRequest', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PreCompact', 'PostCompact', 'SessionStart',
+    'SessionEnd', 'SubagentStart', 'SubagentStop', 'Interrupt', 'Stop', 'UserPromptSubmit', 'StopFailure', 'TurnError'
+  ])('never returns api-error-stop for %s, even with error fields', (name) => {
+    const plain = hook({ hook_event_name: name });
+    const withError = hook({ hook_event_name: name, error: 'rate_limit', error_details: '429 overloaded', last_assistant_message: 'API Error: 500' });
+    expect(plain?.kind).not.toBe('api-error-stop');
+    expect(withError?.kind).not.toBe('api-error-stop');
+  });
+
+  it('never turns an unknown event name or a Claude-shaped StopFailure body into api-error-stop', () => {
+    const claudeBody = JSON.stringify({ hook_event_name: 'StopFailure', error: 'server_error', error_details: '500', last_assistant_message: 'API Error' });
+    expect(codexInteractionHook(claudeBody)?.kind).not.toBe('api-error-stop');
+    expect(hook({ hook_event_name: 'SomeFutureEvent', error: 'rate_limit' })?.kind).not.toBe('api-error-stop');
+    expect(codexInteractionHook('{"hook_event_name":"StopFailure","error":')).toBeNull();
+  });
 });

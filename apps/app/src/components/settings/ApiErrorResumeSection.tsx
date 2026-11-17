@@ -9,7 +9,11 @@ import {
   type ApiErrorResumeConfig,
   type ApiErrorResumeRule
 } from '@zana-ai/zcc-domain/product';
+import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { CheckboxField, Section } from '@/components/settings/FormFields';
+import { API_ERROR_RESUME_HELP, apiErrorResumeCoverage, apiErrorResumeCoverageLine } from '@/components/settings/api-error-resume-coverage';
+import { hasDesktopBridge } from '@/lib/app-surface';
+import { product } from '@/lib/product-client';
 import './api-error-resume.css';
 
 const D = API_ERROR_RESUME_DEFAULTS;
@@ -299,24 +303,31 @@ function ErrorCheck({ rows }: { rows: ApiErrorResumeRule[] }) {
   );
 }
 
-export function ApiErrorResumeSection({
-  config,
-  onUpdate,
-  onConfigDraft
-}: {
-  config: AppConfig;
-  onUpdate: (patch: Partial<AppConfig>, opts?: { throwOnError?: boolean }) => Promise<void> | void;
-  onConfigDraft: (next: AppConfig) => void;
-}) {
-  const current = config.apiErrorResume ?? EMPTY;
+/** Installed agents' descriptors, or null until loaded (and for good when they can't be). */
+function useHarnessDescriptors(): HarnessAdapterDescriptor[] | null {
+  const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[] | null>(null);
+  useEffect(() => {
+    const load = hasDesktopBridge() ? product.harness.descriptors : undefined;
+    if (typeof load !== 'function') return;
+    let cancelled = false;
+    load()
+      .then((next) => { if (!cancelled) setDescriptors(next); })
+      .catch((error) => console.warn('[settings] loading harness descriptors failed; API-error coverage is hidden', error));
+    return () => { cancelled = true; };
+  }, []);
+  return descriptors;
+}
+
+type UpdateConfig = (patch: Partial<AppConfig>, opts?: { throwOnError?: boolean }) => Promise<void> | void;
+
+/** Saves whole `apiErrorResume` objects, serialised against saves still in flight. */
+function useResumeSave(current: ApiErrorResumeConfig, onUpdate: UpdateConfig) {
   const [saveFailed, setSaveFailed] = useState(false);
   // While saves are in flight the next one builds on the newest sent config, not
   // the stored one, so two quick changes (say, two suggestions) both land.
   const inFlight = useRef<{ count: number; sent: ApiErrorResumeConfig }>({ count: 0, sent: current });
   const saveSeq = useRef(0);
   const base = () => (inFlight.current.count > 0 ? inFlight.current.sent : current);
-  const draft = (patch: Partial<ApiErrorResumeConfig>) =>
-    onConfigDraft({ ...config, apiErrorResume: { ...current, ...patch } });
   // Always a whole object.
   const save: Save = async (patch) => {
     const from = base();
@@ -334,15 +345,33 @@ export function ApiErrorResumeSection({
       inFlight.current = { ...inFlight.current, count: inFlight.current.count - 1 };
     }
   };
+  return { save, base, saveFailed };
+}
+
+export function ApiErrorResumeSection({
+  config,
+  onUpdate,
+  onConfigDraft
+}: {
+  config: AppConfig;
+  onUpdate: UpdateConfig;
+  onConfigDraft: (next: AppConfig) => void;
+}) {
+  const current = config.apiErrorResume ?? EMPTY;
+  const { save, base, saveFailed } = useResumeSave(current, onUpdate);
+  const draft = (patch: Partial<ApiErrorResumeConfig>) =>
+    onConfigDraft({ ...config, apiErrorResume: { ...current, ...patch } });
   const rules = useResumeRules(current, save, () => base().rules);
+  const coverageLine = apiErrorResumeCoverageLine(apiErrorResumeCoverage(useHarnessDescriptors()));
 
   return (
     <Section
       anchorId="api-error-resume"
       searchId="agents.api-error-resume.intro"
       title="Resume after API errors"
-      help="When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Works with Claude Code sessions: CLI Agent tabs, Squad engineers and scheduled runs."
+      help={API_ERROR_RESUME_HELP}
     >
+      {coverageLine && <p className="settings-help">{coverageLine}</p>}
       <CheckboxField
         label="Resume after matching API errors"
         searchId="agents.api-error-resume"

@@ -87,7 +87,7 @@ const MASTRACODE_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'output-activity' },
+  status: { mode: 'output-activity', apiErrorSignal: 'none' },
   evidence: [MASTRACODE_OPENING_PROMPT_EVIDENCE]
 };
 

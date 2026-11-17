@@ -3,7 +3,27 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { ApiErrorResumeSection } from './ApiErrorResumeSection';
+import { apiErrorResumeCoverage } from './api-error-resume-coverage';
+
+const descriptorsMock = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/product-client', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../lib/product-client')>();
+  return { ...original, product: { ...original.product, harness: { ...original.product.harness, descriptors: descriptorsMock } } };
+});
+
+const descriptor = (id: string, label: string, over: Partial<HarnessAdapterDescriptor> & { installed?: boolean } = {}) => {
+  const { installed = true, ...rest } = over;
+  return { id, label, agentDefaultEligible: true, availability: { enabled: true, installed, reason: '' }, ...rest } as unknown as HarnessAdapterDescriptor;
+};
+const claude = descriptor('claude', 'Claude Code', { apiErrorResume: 'supported' });
+const codex = descriptor('codex', 'Codex', { apiErrorResume: 'unsupported' });
+const opencode = descriptor('opencode', 'OpenCode', { apiErrorResume: 'unsupported' });
+const NEUTRAL_HELP = "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors.";
+const NONE_LINE = 'None of the agents installed on this machine can report API errors yet. Agents on other hosts may still be covered.';
+const toggle = () => screen.getByRole('switch', { name: 'Resume after matching API errors' }) as HTMLInputElement;
+const coverageLines = () => screen.queryAllByText(/^(On this machine, works with:|None of the agents installed)/);
 
 const base = { version: 1, theme: 'system', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null } as AppConfig;
 const rule = (o: object = {}) => ({ id: 'a', match: 'overloaded', matchMode: 'contains', message: 'continue', delaySeconds: 20, enabled: true, ...o });
@@ -20,7 +40,7 @@ function setup(config: AppConfig) {
 }
 
 const check = vi.fn();
-beforeEach(() => { (window as any).cc = { apiErrorResume: { check } }; check.mockReset(); });
+beforeEach(() => { (window as any).cc = { apiErrorResume: { check } }; check.mockReset(); descriptorsMock.mockReset().mockResolvedValue([]); });
 afterEach(() => { cleanup(); delete (window as any).cc; });
 
 describe('ApiErrorResumeSection', () => {
@@ -408,5 +428,124 @@ describe('ApiErrorResumeSection', () => {
     setup(on());
     fireEvent.click(screen.getByText('Check'));
     await waitFor(() => expect(screen.getByText('Check is only available in the desktop app.')).toBeTruthy());
+  });
+});
+
+// #649 REQ-5..REQ-8: the section says which installed agents the setting covers.
+describe('ApiErrorResumeSection coverage', () => {
+  it('REQ-8: shows the harness-neutral help text', () => {
+    setup(base);
+    expect(screen.getByText(NEUTRAL_HELP)).toBeTruthy();
+    expect(screen.queryByText(/Works with Claude Code sessions/)).toBeNull();
+  });
+
+  it('REQ-5: names covered and uncovered installed agents and keeps the checkbox working', async () => {
+    descriptorsMock.mockResolvedValue([claude, codex]);
+    const { onUpdate } = setup(base);
+    await waitFor(() => expect(screen.getByText('On this machine, works with: Claude Code. Not available yet: Codex.')).toBeTruthy());
+    expect(toggle().disabled).toBe(false);
+    fireEvent.click(toggle());
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('REQ-5: lists every uncovered agent in descriptor order and omits the second sentence when none are uncovered', async () => {
+    descriptorsMock.mockResolvedValue([claude, codex, opencode]);
+    setup(base);
+    await waitFor(() => expect(screen.getByText('On this machine, works with: Claude Code. Not available yet: Codex, OpenCode.')).toBeTruthy());
+    cleanup();
+    descriptorsMock.mockResolvedValue([claude]);
+    setup(base);
+    await waitFor(() => expect(screen.getByText('On this machine, works with: Claude Code.')).toBeTruthy());
+  });
+
+  it('REQ-5: ignores harnesses that are not installed, not agent-capable or without a declared support', async () => {
+    descriptorsMock.mockResolvedValue([
+      claude, codex,
+      descriptor('pi', 'Pi', { apiErrorResume: 'unsupported', installed: false }),
+      descriptor('shell', 'Shell', { apiErrorResume: 'unsupported', agentDefaultEligible: false }),
+      descriptor('grok', 'Grok')
+    ]);
+    setup(base);
+    await waitFor(() => expect(screen.getByText('On this machine, works with: Claude Code. Not available yet: Codex.')).toBeTruthy());
+  });
+
+  it('REQ-6: with only uncovered agents on this machine, says so and keeps the checkbox working (other hosts may be covered)', async () => {
+    descriptorsMock.mockResolvedValue([codex, opencode]);
+    const { onUpdate } = setup(base);
+    await waitFor(() => expect(screen.getByText(NONE_LINE)).toBeTruthy());
+    expect(toggle().disabled).toBe(false);
+    fireEvent.click(toggle());
+    expect(onUpdate).toHaveBeenCalledWith({ apiErrorResume: expect.objectContaining({ enabled: true }) }, THROW);
+  });
+
+  it('REQ-6: with the setting on, the checkbox can be turned off', async () => {
+    descriptorsMock.mockResolvedValue([codex]);
+    const { onUpdate } = setup(on());
+    await waitFor(() => expect(screen.getByText(NONE_LINE)).toBeTruthy());
+    expect(toggle().disabled).toBe(false);
+    fireEvent.click(toggle());
+    expect(onUpdate).toHaveBeenCalledWith({ apiErrorResume: expect.objectContaining({ enabled: false }) }, THROW);
+  });
+
+  it('REQ-7: a failed descriptor load shows no coverage line and a working checkbox', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    descriptorsMock.mockRejectedValue(new Error('offline'));
+    const { onUpdate } = setup(base);
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(coverageLines()).toHaveLength(0);
+    expect(toggle().disabled).toBe(false);
+    fireEvent.click(toggle());
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it.each([
+    ['empty', [] as HarnessAdapterDescriptor[]],
+    ['without apiErrorResume (older host)', [descriptor('claude', 'Claude Code'), descriptor('codex', 'Codex')]],
+    ['nothing installed', [descriptor('claude', 'Claude Code', { apiErrorResume: 'supported', installed: false })]]
+  ])('REQ-7: descriptors %s show no coverage line and a working checkbox', async (_name, list) => {
+    descriptorsMock.mockResolvedValue(list);
+    setup(base);
+    await waitFor(() => expect(descriptorsMock).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(coverageLines()).toHaveLength(0);
+    expect(toggle().disabled).toBe(false);
+  });
+
+  it('REQ-7: without a desktop bridge the descriptors are not requested and nothing changes', async () => {
+    delete (window as any).cc;
+    setup(base);
+    await act(async () => { await Promise.resolve(); });
+    expect(descriptorsMock).not.toHaveBeenCalled();
+    expect(coverageLines()).toHaveLength(0);
+    expect(toggle().disabled).toBe(false);
+  });
+});
+
+describe('apiErrorResumeCoverage', () => {
+  it('REQ-5: some covered', () => {
+    expect(apiErrorResumeCoverage([claude, codex, opencode])).toEqual({ kind: 'some', covered: ['Claude Code'], uncovered: ['Codex', 'OpenCode'] });
+  });
+
+  it('REQ-6: none covered but some installed', () => {
+    expect(apiErrorResumeCoverage([codex])).toEqual({ kind: 'none', covered: [], uncovered: ['Codex'] });
+  });
+
+  it.each([[null], [undefined], [[]], [[descriptor('claude', 'Claude Code')]], [[descriptor('shell', 'Shell', { apiErrorResume: 'unsupported', agentDefaultEligible: false })]]])(
+    'REQ-7: unknown for %j', (input) => {
+      expect(apiErrorResumeCoverage(input as HarnessAdapterDescriptor[] | null | undefined)).toEqual({ kind: 'unknown', covered: [], uncovered: [] });
+    }
+  );
+});
+
+describe('apiErrorResumeCoverage enabled flag (#649 A3)', () => {
+  const off = { availability: { enabled: false, installed: true, reason: '' } };
+  it('ignores an installed harness that is turned off', () => {
+    expect(apiErrorResumeCoverage([descriptor('claude', 'Claude Code', { apiErrorResume: 'supported', ...off }), codex]))
+      .toEqual({ kind: 'none', covered: [], uncovered: ['Codex'] });
+  });
+
+  it('is unknown when the only installed harness is turned off', () => {
+    expect(apiErrorResumeCoverage([descriptor('claude', 'Claude Code', { apiErrorResume: 'supported', ...off })]).kind).toBe('unknown');
   });
 });

@@ -168,6 +168,18 @@ test('Settings → Agents adds a suggested rule and checks an error against it',
   try {
     await win.getByRole('link', { name: 'Settings', exact: true }).click();
     await win.getByTestId('settings-nav-agents').click();
+    // #649: the help text is harness neutral and the section says which installed agents it covers.
+    const help = win.locator('#settings-anchor-api-error-resume .settings-section-help');
+    await expect(help).toHaveText(/Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors\./);
+    await expect(help).not.toContainText('Claude Code');
+    const descriptors = await win.evaluate(() => window.cc.harness.descriptors());
+    const installed = descriptors.filter((d) => d.agentDefaultEligible && d.availability.installed && d.availability.enabled && d.apiErrorResume);
+    const claude = installed.find((d) => d.id === 'claude');
+    if (claude) {
+      await expect(win.getByText(/^On this machine, works with: .*Claude Code/)).toBeVisible({ timeout: 15_000 });
+    } else {
+      testInfo.annotations.push({ type: 'skipped-assertion', description: 'No Claude Code in the E2E home descriptors: coverage line check skipped' });
+    }
     await win.getByRole('switch', { name: 'Resume after matching API errors' }).click();
     await win.getByRole('button', { name: '+ Connection lost mid-response' }).click();
     await expect.poll(async () => (await win.evaluate(() => window.cc.config.get())).apiErrorResume?.rules?.[0]?.match)
