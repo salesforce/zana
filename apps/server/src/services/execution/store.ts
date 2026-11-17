@@ -784,7 +784,10 @@ export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
     .replace(CONTROL_CHARACTERS, ' ')
     .replace(/ {2,}/g, ' ')
     .trim();
-  return cleaned.length > max ? cleaned.slice(0, max) : cleaned;
+  if (cleaned.length <= max) return cleaned;
+  // Never end on the high half of a surrogate pair: drop it with the pair it belongs to.
+  const last = cleaned.charCodeAt(max - 1);
+  return cleaned.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
 }
 
 // POSIX (/a/b) and Windows (C:\a\b) absolute paths; reduced to the last segment so no home or project path leaks.

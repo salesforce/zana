@@ -13,6 +13,16 @@ const storeRequest = {
   request: { version: 1 as const, slots: [{ initialTask: 'Run tests' }], resolvedModels: [] }
 };
 
+describe('boundReason code-point safety (REQ-3)', () => {
+  it('never splits a surrogate pair at the limit', () => {
+    const text = `${'a'.repeat(9)}\u{1F600}tail`;
+    const bounded = boundReason(text, 10);
+    expect(bounded).toBe('a'.repeat(9));
+    expect(bounded).not.toMatch(/[\ud800-\udbff]$/);
+    expect(boundReason(`${'a'.repeat(8)}\u{1F600}tail`, 10)).toBe(`${'a'.repeat(8)}\u{1F600}`);
+  });
+});
+
 describe('boundReason path sanitization (REQ-3, OBL-013)', () => {
   it('reduces a plain absolute path and a Windows drive path', () => {
     expect(boundReason('failed at /home/alice/private/token.txt now')).toBe('failed at token.txt now');
