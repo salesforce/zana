@@ -6,6 +6,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { checkPersonaJson } from '@zana-ai/zcc-domain';
 import type {
   Project,
   Persona,
@@ -77,59 +78,27 @@ export function readPersonas(
   const warnings: string[] = [];
   const personas: Persona[] = [];
 
-  // Read global personas
-  const globalDir = join(dataDir, 'personas');
-  if (existsSync(globalDir)) {
-    const files = readdirSync(globalDir).filter(f => f.endsWith('.json'));
-    for (const file of files) {
-      const path = join(globalDir, file);
+  const readDir = (dir: string, label: string, source: Persona['source']) => {
+    if (!existsSync(dir)) return;
+    for (const file of readdirSync(dir).filter(f => f.endsWith('.json'))) {
+      let checked;
       try {
-        const content = readFileSync(path, 'utf-8');
-        const parsed = JSON.parse(content);
-        if (isValidPersona(parsed)) {
-          personas.push({ ...parsed, source: 'user' });
-        } else {
-          warnings.push(`personas/${file}: invalid shape, skipped`);
-        }
-      } catch (err) {
-        warnings.push(`personas/${file}: ${(err as Error).message}`);
+        checked = checkPersonaJson(readFileSync(join(dir, file), 'utf-8'));
+      } catch {
+        warnings.push(`${label}/${file}: unreadable, skipped`);
+        continue;
       }
+      if (checked.reason) warnings.push(`${label}/${file}: dropped (${checked.reason})`);
+      else personas.push({ ...(checked.raw as Persona), source });
     }
-  }
+  };
 
-  // Read per-project personas
+  readDir(join(dataDir, 'personas'), 'personas', 'user');
   for (const project of projects) {
-    const projDir = join(project.path, '.zcc', 'personas');
-    if (!existsSync(projDir)) continue;
-
-    const files = readdirSync(projDir).filter(f => f.endsWith('.json'));
-    for (const file of files) {
-      const path = join(projDir, file);
-      try {
-        const content = readFileSync(path, 'utf-8');
-        const parsed = JSON.parse(content);
-        if (isValidPersona(parsed)) {
-          personas.push({
-            ...parsed,
-            source: { projectId: project.id, projectName: project.name }
-          });
-        } else {
-          warnings.push(`${project.name}/personas/${file}: invalid shape, skipped`);
-        }
-      } catch (err) {
-        warnings.push(`${project.name}/personas/${file}: ${(err as Error).message}`);
-      }
-    }
+    readDir(join(project.path, '.zcc', 'personas'), `${project.name}/personas`, { projectId: project.id, projectName: project.name });
   }
 
   return { data: personas, warnings };
-}
-
-function isValidPersona(obj: any): obj is Persona {
-  return obj &&
-         typeof obj === 'object' &&
-         typeof obj.id === 'string' &&
-         typeof obj.name === 'string';
 }
 
 /**

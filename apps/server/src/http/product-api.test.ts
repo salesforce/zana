@@ -68,6 +68,23 @@ afterEach(async () => {
 });
 
 describe('product HTTP', () => {
+  it('lists dropped persona files by basename and fixed reason on /api/v1/personas (REQ-16)', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-personas-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    mkdirSync(join(dataDir, 'personas'));
+    writeFileSync(join(dataDir, 'personas', 'good.json'), JSON.stringify({ id: 'good', name: 'Good' }));
+    writeFileSync(join(dataDir, 'personas', 'bad.json'), JSON.stringify({ id: 's3cr3t', name: 'Bad', permissionMode: 'wild' }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+
+    const response = await fetch(`${server.url}api/v1/personas`);
+    const body = await response.json() as { personas: unknown[]; warnings: unknown[] };
+    expect(body.personas).toHaveLength(2);
+    expect(body.warnings).toEqual([{ file: 'bad.json', source: 'user', reason: 'bad-permission-mode' }]);
+
+    const blocked = await fetch(`${server.url}api/v1/personas`, { headers: { Origin: 'https://evil.example' } });
+    expect(blocked.status).toBe(403);
+  });
+
   it('serves host-owned onboarding metadata through the product API origin guard', async () => {
     const profile = { id: 'employees', organization: 'Example', question: 'Employee?', prerequisite: 'Connect first.', marketplaceSource: 'path:/fixture' };
     vi.stubEnv('ZCC_ONBOARDING_PROFILE', JSON.stringify(profile));

@@ -121,6 +121,7 @@ export { titleFromObjective, titleFromPrompt } from './prompt-title.js';
 export type * from './voice.js';
 export * from './persona.js';
 export type * from './persona-load-warning.js';
+export * from './persona-validation.js';
 export type * from './goal.js';
 export * from './follow-up.js';
 export type * from './feed.js';

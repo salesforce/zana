@@ -57,6 +57,7 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
+import { personaFileWarnings } from './persona-warnings.js';
 import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson, beginNdjson } from './json.js';
 import {
   TEAM_GOAL_MAX_CHARS,
@@ -899,7 +900,8 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/personas' && method === 'GET') {
-      sendJson(response, 200, { personas: listJsonFiles(join(ctx.dataDir, 'personas')) });
+      const personasDir = join(ctx.dataDir, 'personas');
+      sendJson(response, 200, { personas: listJsonFiles(personasDir), warnings: personaFileWarnings(personasDir, 'user') });
       return true;
     }
 

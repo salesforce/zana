@@ -14,15 +14,18 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import { PERSONA_REASONING_LEVELS, BUILTIN_PERSONA_SKILLS, normalizeRoles, sanitizePersonaSkills, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
-import type { PersonaLoadWarning } from '@zana-ai/zcc-domain';
-import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
+import { BUILTIN_PERSONA_SKILLS, normalizeRoles, sanitizePersonaSkills, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessRoutingV1 } from '@zana-ai/zcc-domain/product';
+import { personaDropReason, checkPersonaJson, sanitizeHarnessRouting, type PersonaLoadWarning, type PersonaDropReason } from '@zana-ai/zcc-domain';
+import { seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { sanitizeLegacyMcpServers } from './persona-mcp-sanitize.js';
 import { atomicDurableWrite } from '../harness-routing/storage.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
 import { electronZccDataDir } from '../../electron-data-dir.js';
+
+/** Most dropped-file warnings one refresh keeps. */
+const PERSONA_LOAD_WARNING_CAP = 100;
 
 const userPersonasDir = () => join(electronZccDataDir(), 'personas');
 const projectPersonasDir = (project: Project) =>
@@ -46,13 +49,6 @@ function canonicalDir(dir: string): string {
   }
 }
 
-const VALID_MODES: Array<NonNullable<Persona['permissionMode']>> = [
-  'default',
-  'acceptEdits',
-  'plan',
-  'bypassPermissions'
-];
-
 /** Filesystem-safe filename for a persona id (mirrors prompt-registry). */
 function fileNameForId(id: string): string {
   return `${id.replace(/[^a-zA-Z0-9._-]+/g, '_')}.json`;
@@ -62,6 +58,9 @@ function writeJsonAtomic(file: string, value: unknown) {
   atomicDurableWrite(file, Buffer.from(JSON.stringify(value, null, 2)));
 }
 
+export { sanitizeHarnessRouting };
+export { sanitizeLegacyMcpServers };
+
 /**
  * Validate + normalize a raw object into a {@link Persona}, or null if it's
  * missing required fields / carries an invalid enum. Shared by the disk loader
@@ -69,114 +68,15 @@ function writeJsonAtomic(file: string, value: unknown) {
  * so a hand-edited file and a form-authored persona pass through the SAME gate.
  * Never returns the `source` field (the loader stamps that).
  */
-export function sanitizeHarnessRouting(routing: unknown): PersonaHarnessRoutingV1 | null {
-  if (!routing || typeof routing !== 'object') return null;
-  const r = routing as any;
-  if (r.schemaVersion !== 1) return null;
-  if (!r.byAdapter || typeof r.byAdapter !== 'object') return null;
-  
-  const byAdapter: Partial<Record<HarnessFamily, PersonaHarnessIntentV1>> = {};
-  const validFamilies: HarnessFamily[] = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode', 'afcode'];
-  
-  for (const [key, value] of Object.entries(r.byAdapter)) {
-    if (!validFamilies.includes(key as HarnessFamily)) return null;
-    if (!value || typeof value !== 'object') return null;
-    const v = value as any;
-    
-    const intent: PersonaHarnessIntentV1 = {};
-    if (v.roleTargetId !== undefined) {
-      if (typeof v.roleTargetId !== 'string') return null;
-      intent.roleTargetId = v.roleTargetId;
-    }
-    if (v.providerTargetId !== undefined) {
-      if (typeof v.providerTargetId !== 'string') return null;
-      intent.providerTargetId = v.providerTargetId;
-    }
-    if (v.modelTargetId !== undefined) {
-      if (typeof v.modelTargetId !== 'string') return null;
-      intent.modelTargetId = v.modelTargetId;
-    }
-    if (v.executionTargetId !== undefined) {
-      if (typeof v.executionTargetId !== 'string') return null;
-      intent.executionTargetId = v.executionTargetId;
-    }
-    if (v.executionState !== undefined) {
-      if (!['plan', 'interactive', 'accept-edits', 'autonomous'].includes(v.executionState)) return null;
-      intent.executionState = v.executionState;
-    }
-    
-    if (v.compatibility !== undefined) {
-      if (!v.compatibility || typeof v.compatibility !== 'object') return null;
-      const c = v.compatibility;
-      const compat: PersonaHarnessIntentV1['compatibility'] = {};
-      if (c.model !== undefined) {
-        if (typeof c.model !== 'string') return null;
-        compat.model = c.model;
-      }
-      if (c.permissionMode !== undefined) {
-        if (typeof c.permissionMode !== 'string') return null;
-        compat.permissionMode = c.permissionMode;
-      }
-      if (c.codexSandbox !== undefined) {
-        if (typeof c.codexSandbox !== 'string') return null;
-        compat.codexSandbox = c.codexSandbox;
-      }
-      if (c.codexApproval !== undefined) {
-        if (typeof c.codexApproval !== 'string') return null;
-        compat.codexApproval = c.codexApproval;
-      }
-      intent.compatibility = compat;
-    }
-    
-    byAdapter[key as HarnessFamily] = intent;
-  }
-  
-  return {
-    schemaVersion: 1,
-    byAdapter
-  };
-}
-
-export { sanitizeLegacyMcpServers };
-
 export function sanitizePersona(raw: unknown): Persona | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Partial<Persona>;
-  if (typeof r.id !== 'string' || !r.id.trim()) return null;
-  if (typeof r.name !== 'string' || !r.name.trim()) return null;
-  if (r.baseProfile && !VALID_PROFILES.includes(r.baseProfile)) return null;
-  // model is a provider-dialect string (claude aliases vs a codex model id), so
-  // it's validated for TYPE only — the per-profile allowed set lives in the
-  // renderer's `providerUiSchema` picker, not this shared gate.
-  if (r.model !== undefined && typeof r.model !== 'string') return null;
-  if (r.permissionMode && !VALID_MODES.includes(r.permissionMode)) return null;
-  if (r.codexSandbox && !['read-only', 'workspace-write', 'danger-full-access'].includes(r.codexSandbox)) return null;
-  if (r.codexApproval && !['untrusted', 'on-request', 'never'].includes(r.codexApproval)) return null;
-
-  if (r.modelLevel !== undefined) {
-    if (typeof r.modelLevel !== 'string' || !['low', 'medium', 'high', 'extra-high'].includes(r.modelLevel)) {
-      return null;
-    }
-  }
-  if (r.reasoningLevel !== undefined) {
-    if (typeof r.reasoningLevel !== 'string' || !(PERSONA_REASONING_LEVELS as readonly string[]).includes(r.reasoningLevel)) {
-      return null;
-    }
-  }
-  if (r.executionState !== undefined) {
-    if (typeof r.executionState !== 'string' || !['plan', 'interactive', 'accept-edits', 'autonomous'].includes(r.executionState)) {
-      return null;
-    }
-  }
+  if (personaDropReason(raw)) return null;
+  const r = raw as Persona;
   let harnessRouting: PersonaHarnessRoutingV1 | undefined = undefined;
   if (r.harnessRouting !== undefined) {
-    const sanitized = sanitizeHarnessRouting(r.harnessRouting);
-    if (!sanitized) return null;
-    harnessRouting = sanitized;
+    harnessRouting = sanitizeHarnessRouting(r.harnessRouting) ?? undefined;
   }
 
-  const skills = sanitizePersonaSkills(r.skills);
-  if (skills === null) return null;
+  const skills = sanitizePersonaSkills(r.skills) ?? undefined;
   const roles = normalizeRoles(r.roles) ?? undefined;
 
   const strArray = (v: unknown): string[] | undefined =>
@@ -605,38 +505,33 @@ export function projectPersonaFields(p: Persona): Persona {
   return res;
 }
 
-function parsePersona(content: string): Persona | null {
-  try {
-    const raw = JSON.parse(content);
-    // Forward compatibility: a persona file written by a newer Zana may carry an
-    // effort level this version does not know. Ignore just that field (the file
-    // is not rewritten) instead of dropping the whole persona.
-    if (raw && typeof raw === 'object' && raw.reasoningLevel !== undefined
-      && !(PERSONA_REASONING_LEVELS as readonly unknown[]).includes(raw.reasoningLevel)) {
-      delete raw.reasoningLevel;
-    }
-    const sanitized = sanitizePersona(raw);
-    if (!sanitized) return null;
-    const migrated = migratePersonaIfNeeded(sanitized);
-    return projectPersonaFields(migrated);
-  } catch {
-    return null;
-  }
+type ParsedPersona = { persona: Persona; reason?: undefined } | { persona: null; reason: PersonaDropReason };
+
+/** Parse persona file text. A dropped file carries a reason from the shared fixed table. */
+function parsePersona(content: string): ParsedPersona {
+  const checked = checkPersonaJson(content);
+  if (checked.reason) return { persona: null, reason: checked.reason };
+  const sanitized = sanitizePersona(checked.raw);
+  if (!sanitized) return { persona: null, reason: 'not-an-object' };
+  return { persona: projectPersonaFields(migratePersonaIfNeeded(sanitized)) };
 }
 
-function readPersonaFile(path: string): Persona | null {
-  try { return parsePersona(readFileSync(path, 'utf8')); } catch { return null; }
+function readPersonaFile(path: string): ParsedPersona {
+  try { return parsePersona(readFileSync(path, 'utf8')); } catch { return { persona: null, reason: 'malformed-json' }; }
 }
 
-function listInDir(dir: string, source: Persona['source']): Persona[] {
+function listInDir(dir: string, source: Persona['source'], onDrop: (warning: PersonaLoadWarning) => void): Persona[] {
   if (!existsSync(dir)) return [];
   const out: Persona[] = [];
+  const warningSource: PersonaLoadWarning['source'] = source === 'user' ? 'user' : 'project';
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.json')) continue;
-    const p = readPersonaFile(join(dir, name));
-    if (p) {
-      p.source = source;
-      out.push(p);
+    const { persona, reason } = readPersonaFile(join(dir, name));
+    if (persona) {
+      persona.source = source;
+      out.push(persona);
+    } else {
+      onDrop({ file: name, source: warningSource, reason });
     }
   }
   return out;
@@ -652,6 +547,7 @@ function listInDir(dir: string, source: Persona['source']): Persona[] {
  */
 export class PersonaStore extends EventEmitter {
   private cache: Persona[] = [];
+  private warnings: PersonaLoadWarning[] = [];
   private projectsRef: () => Project[];
   private registry?: PersonaTeamRegistry;
   private registryUnsub: (() => void) | null = null;
@@ -713,6 +609,8 @@ export class PersonaStore extends EventEmitter {
   /** Re-discover all sources. Cheap; called on watch events and on project changes. */
   refresh() {
     const merged = new Map<string, Persona>();
+    const warnings: PersonaLoadWarning[] = [];
+    const onDrop = (warning: PersonaLoadWarning) => { if (warnings.length < PERSONA_LOAD_WARNING_CAP) warnings.push(warning); };
     // Extension personas first: their ids are `ext:*`, so they can never
     // collide with `builtin:`/user/project ids. Inserting them before builtins
     // is defensive — a same-id file later would still win the precedence merge.
@@ -721,7 +619,7 @@ export class PersonaStore extends EventEmitter {
     }
     for (const p of BUILTIN) merged.set(p.id, { ...p, source: 'builtin' });
     const userDir = userPersonasDir();
-    for (const p of listInDir(userDir, 'user')) merged.set(p.id, p);
+    for (const p of listInDir(userDir, 'user', onDrop)) merged.set(p.id, p);
     // Canonical user dir, so a project whose `.zcc/personas` resolves to the
     // SAME folder (a project registered at HOME or any ancestor of `~/.zcc`) is
     // recognized and skipped — otherwise its pass, which runs last, would
@@ -732,7 +630,7 @@ export class PersonaStore extends EventEmitter {
       if (entry.kind === 'remote') {
         const source = entry.source;
         for (const record of source.records) {
-          const value = parsePersona(record);
+          const { persona: value } = parsePersona(record);
           if (value) merged.set(value.id, { ...value, source: { projectId: source.projectId, projectName: source.projectName } });
         }
         continue;
@@ -741,15 +639,16 @@ export class PersonaStore extends EventEmitter {
       const projectDir = projectPersonasDir(project);
       if (canonicalDir(projectDir) === canonicalUserDir) continue;
       const projectSource: Persona['source'] = { projectId: project.id, projectName: project.name };
-      for (const p of listInDir(projectDir, projectSource)) merged.set(p.id, p);
+      for (const p of listInDir(projectDir, projectSource, onDrop)) merged.set(p.id, p);
     }
     this.cache = [...merged.values()];
+    this.warnings = warnings;
     this.emit('changed');
   }
 
   /** Persona files the last refresh dropped, with the reason each was dropped. */
   loadWarnings(): PersonaLoadWarning[] {
-    throw new Error('not implemented: loadWarnings');
+    return [...this.warnings];
   }
 
   /** Hook for `store.addProject` / `store.removeProject`. */
