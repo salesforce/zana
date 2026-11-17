@@ -9,9 +9,10 @@ import {
   type SlotRouteSnapshotV1, type WorkUnitRoutingV1
 } from '../execution/routing-policy.js';
 import type { PortablePlanFinding } from '../execution/portable-plan.js';
+import { lintPlan, type LintUnit } from './plan-lint.js';
 import { antiAffinityResults, type AdmissionCheck, type PlanUnitRouting, type TierFitFinding } from './preflight.js';
 
-export interface PlanFindingUnit extends PlanUnitRouting {
+export interface PlanFindingUnit extends PlanUnitRouting, Partial<Pick<LintUnit, 'dependencies' | 'files' | 'readOnly'>> {
   requires?: { skills?: readonly string[]; mcpServers?: readonly string[] };
 }
 
@@ -115,6 +116,11 @@ export function hardFindingCounts(findings: readonly SquadPlanFinding[]): Record
   return counts;
 }
 
+const toLintUnit = (unit: PlanFindingUnit): LintUnit => ({
+  id: unit.id, dependencies: unit.dependencies ?? [],
+  ...(unit.files ? { files: unit.files } : {}), ...(unit.readOnly === undefined ? {} : { readOnly: unit.readOnly })
+});
+
 export function buildPlanFindings(input: PlanFindingInput): SquadPlanFinding[] {
   const now = input.now ?? Date.now();
   const exempt = new Set((input.degradedSlots ?? []).map((slot) => slot.slotId));
@@ -165,5 +171,6 @@ export function buildPlanFindings(input: PlanFindingInput): SquadPlanFinding[] {
       degraded: input.degradedSlots.map((slot) => ({ slotId: slot.slotId, why: slot.why }))
     });
   }
+  out.push(...lintPlan({ units: input.units.map(toLintUnit), workerCount: pool.length || undefined }));
   return out;
 }

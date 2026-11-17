@@ -35,12 +35,15 @@ describe('requiredRoleFindings', () => {
   });
 });
 
+/** One-step fixtures on a two-worker Squad also get the width Check; these tests are about the roster findings. */
+const withoutWidthCheck = (findings: ReturnType<typeof buildPlanFindings>) => findings.filter((finding) => !(finding.requirement === 'plan' && finding.severity === 'warning'));
+
 describe('buildPlanFindings', () => {
   it('maps parser findings and judges the roster in one shape', () => {
-    const findings = buildPlanFindings({
+    const findings = withoutWidthCheck(buildPlanFindings({
       units: [unit('a', { requiredRole: 'auditor', preferRoles: ['nobody'] })], slotRoutes: slots,
       parserFindings: [{ severity: 'repair', requirement: 'format', stepId: 'a', message: 'label fixed' }, { severity: 'blocking', requirement: 'plan', message: 'unterminated' }]
-    });
+    }));
     expect(findings.map((finding) => [finding.requirement, finding.severity])).toEqual([
       ['format', 'repair'], ['plan', 'blocking'], ['required-role', 'blocking'], ['prefer-role', 'warning']
     ]);
@@ -49,7 +52,7 @@ describe('buildPlanFindings', () => {
     expect(hardFindingCounts(findings)).toEqual({ plan: 1, 'required-role': 1 });
   });
   it('skips prefer-role when any slot matches', () => {
-    expect(buildPlanFindings({ units: [unit('a', { preferRoles: ['checker'] })], slotRoutes: slots })).toEqual([]);
+    expect(withoutWidthCheck(buildPlanFindings({ units: [unit('a', { preferRoles: ['checker'] })], slotRoutes: slots }))).toEqual([]);
   });
   it('names both Squads on a declared-Squad mismatch and stays quiet on a match', () => {
     const mismatch = buildPlanFindings({ units: [], slotRoutes: slots, declaredSquad: 'debug', launchSquad: { id: 'delivery', name: 'Delivery' } });
@@ -75,7 +78,7 @@ describe('buildPlanFindings', () => {
       { code: 'SKILL_AVAILABLE' as const, status: 'PASS' as const, required: true, subject: 'a', message: 'm' },
       { code: 'SKILL_AVAILABLE' as const, status: 'FAIL' as const, required: true, message: 'no subject' }
     ];
-    const findings = buildPlanFindings({ units: [unit('a')], slotRoutes: slots, admissionChecks: checks });
+    const findings = withoutWidthCheck(buildPlanFindings({ units: [unit('a')], slotRoutes: slots, admissionChecks: checks }));
     expect(findings.map((finding) => finding.requirement)).toEqual(['skill', 'mcp']);
     expect(findings[0].suggestion).toContain('lint');
     expect(findings[1].suggestion).toBe('');

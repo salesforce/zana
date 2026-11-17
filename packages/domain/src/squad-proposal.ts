@@ -394,6 +394,8 @@ function tidyDetail(detail: string | undefined, stepId: string | undefined): str
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
+const PLAN_CHECK_ADVICE = 'Launch is still allowed. You can launch as is, or ask the agent to revise the plan.';
+
 export function formatSquadPlanFinding(finding: SquadPlanFinding): string {
   const step = finding.stepId ? `Step ${finding.stepId}` : 'The plan';
   const offered = nameList([...new Set(finding.candidateSlots.map(slotName))]);
@@ -418,7 +420,7 @@ export function formatSquadPlanFinding(finding: SquadPlanFinding): string {
       return `${step}: ${detail}${finding.severity === 'repair' ? ' Zana fixed this for you.' : `${fix} Launch is still allowed. You can launch as is, or ask the agent to revise the plan.`}`.trim();
     case 'plan':
     default:
-      return `${step}: ${detail || 'the plan has a problem.'}${fix} Ask the agent to revise the plan, or edit it and launch again.`.trim();
+      return `${step}: ${detail || 'the plan has a problem.'}${fix} ${finding.severity === 'warning' ? PLAN_CHECK_ADVICE : 'Ask the agent to revise the plan, or edit it and launch again.'}`.trim();
   }
 }
 
@@ -450,7 +452,7 @@ export function formatSquadPlanFindingProblem(finding: SquadPlanFinding): string
       return `${step}: ${detail}`.trim();
     case 'plan':
     default:
-      return `${step}: ${detail || 'the plan has a problem.'}`;
+      return `${step}: ${detail || 'the plan has a problem.'}${finding.severity === 'warning' ? ` ${PLAN_CHECK_ADVICE}` : ''}`;
   }
 }
 
