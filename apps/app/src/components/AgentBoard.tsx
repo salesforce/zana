@@ -5,7 +5,7 @@ import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, Paus
 import type { AgentState, ExecutionBoardProjection, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
-import { isRecentlyFinished } from '../lib/sessionBuckets.js';
+import { isHeldSquadWorker, isRecentlyFinished } from '../lib/sessionBuckets.js';
 import { sortProjectsForDisplay, usePersonas, useData, useScheduler, useTeams, useUi } from '../store.js';
 import { agentSessionTransport, isModernSquadThread, squadTransportClass, squadTransportKind } from '../lib/squad-transport.js';
 import { useSessionGit } from '../lib/gitInfo.js';
@@ -781,6 +781,15 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
   const [executionMenu, setExecutionMenu] = useState<{ card: AgentCard; execution: ExecutionBoardProjection; x: number; y: number } | null>(null);
   const [laneMenu, setLaneMenu] = useState<{ x: number; y: number; agents: AgentCard[] } | null>(null);
   const { done: pendingDone, busy: moving } = useAgentBoardMoves();
+  // Exited Squad workers the person dismissed; they stay hidden when the same cards arrive again.
+  const [dismissedWorkers, setDismissedWorkers] = useState<ReadonlySet<string>>(new Set());
+  const dismissWorker = (card: AgentCard) => {
+    const session = card.session;
+    setDismissedWorkers((prev) => new Set(prev).add(session.id));
+    useData.getState().dismissTerminals([session.id]);
+    // The close drops the session in main so it does not return on reload; the card is already gone here.
+    void closeBoardItem(agentFleetItem(card)).catch((error: unknown) => console.error(`[AgentBoard] dismiss ${session.id} failed`, error));
+  };
   const dragging = useRef<string | null>(null);
   const [dropLane, setDropLane] = useState<LaneKey | null>(null);
 
@@ -897,8 +906,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
         ...lane,
         cards: laneCards.filter(
           (item) =>
-            pendingDone[boardItemKey(item)] !== undefined || (item.kind === 'agent' &&
-            (item.card.isSyntheticExecutionHost || isRecentlyFinished(item.card.session, now)))
+            pendingDone[boardItemKey(item)] !== undefined || (item.kind === 'agent' && !dismissedWorkers.has(item.id) &&
+            (item.card.isSyntheticExecutionHost || isHeldSquadWorker(item.card.session) || isRecentlyFinished(item.card.session, now)))
         )
       };
     }
@@ -1102,6 +1111,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
               ssh couldn't bind the forward, so a remote agent that can't reach the
               app never looks healthy. Silent on the ok/absent cases. */}
           <TunnelChip status={t.remoteTunnel} />
+          {t.process === 'spawn-failed' && <span className="agent-card-badge" title="The worker never started">spawn-failed</span>}
           <span className="grow" />
           {subagents > 0 && (
             <span
@@ -1325,6 +1335,15 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     const node = item.kind === 'thread' ? renderThreadCard(item, laneKey, grouped)
       : item.kind === 'schedule' ? renderScheduleCard(item, laneKey, grouped)
       : renderCard(item.card, laneKey, grouped);
+    // A kept failed Squad worker gets a Dismiss next to its card (a button inside the card button would nest controls).
+    if (item.kind === 'agent' && isHeldSquadWorker(item.card.session)) {
+      return (
+        <div key={boardItemKey(item)} className="agent-card-held">
+          {node}
+          <button type="button" className="agent-card-dismiss" onClick={() => dismissWorker(item.card)}>Dismiss</button>
+        </div>
+      );
+    }
     // Phones can't drag to Done; swipe left closes like the agents drawer.
     if (!compact || !canSwipeClose(item) || moving.has(boardItemKey(item))) return node;
     return (

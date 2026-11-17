@@ -1022,6 +1022,76 @@ describe('execution claim recovery', () => {
     expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
   }));
 
+  describe('worker warnings (REQ-20)', () => {
+    async function claimedRun(filePath: string, now: () => number) {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
+      let record = (await store.claim({ callerPrincipalId: 'owner', coordinationMode: 'job-team', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
+      record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+      record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+      record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true, verification: ['run it'] }]);
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+      return { store, record };
+    }
+    const exitedWorker = (extra: Record<string, unknown>) => async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'exited', ...extra }] });
+    const warningsOf = async (store: ReturnType<typeof createExecutionStore>) =>
+      (await store.events('owner', 'project-1', 'execution-1')).events.filter((event) => event.severity === 'warning' && /^Worker /.test(event.summary));
+
+    it('warns once, with a bounded reason, when a claimed worker exits non-zero', async () => fixture(async (filePath) => {
+      const { store, record } = await claimedRun(filePath, () => 1_000);
+      const onWorkerWarning = vi.fn();
+      const service = new ExecutionService(deps(filePath, { store, now: () => 1_000, onWorkerWarning, getTeamLaunch: exitedWorker({ exitCode: 1, exitReason: 'bad model at /Users/x/y.js' }) }));
+      await service.recoverExitedWorker(record.id, 'slot-1');
+      await service.recoverExitedWorker(record.id, 'slot-1');
+      const warnings = await warningsOf(store);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].summary).toContain('exited (1)');
+      expect(warnings[0].summary).not.toContain('/Users/x');
+      expect(onWorkerWarning).toHaveBeenCalledTimes(1);
+      expect(onWorkerWarning).toHaveBeenCalledWith(expect.objectContaining({ id: record.id }), expect.objectContaining({ slotId: 'slot-1' }));
+    }));
+
+    it('does not warn for a clean exit', async () => fixture(async (filePath) => {
+      const { store, record } = await claimedRun(filePath, () => 1_000);
+      const service = new ExecutionService(deps(filePath, { store, now: () => 1_000, getTeamLaunch: exitedWorker({ exitCode: 0 }) }));
+      await service.recoverExitedWorker(record.id, 'slot-1');
+      expect(await warningsOf(store)).toHaveLength(0);
+    }));
+
+    it('does not warn for an idle on-demand seat that exits non-zero without a claim', async () => fixture(async (filePath) => {
+      const { store, record } = await claimedRun(filePath, () => 1_000);
+      const service = new ExecutionService(deps(filePath, { store, now: () => 1_000, getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-9', sessionId: 'w9', projectId: 'project-1', process: 'exited', exitCode: 1, onDemand: true }] }) }));
+      await service.recoverExitedWorker(record.id, 'slot-9');
+      expect(await warningsOf(store)).toHaveLength(0);
+    }));
+
+    it('warns once when a claimed worker takes no turn within the injected window, and not before', async () => fixture(async (filePath) => {
+      let now = 1_000;
+      const { store } = await claimedRun(filePath, () => now);
+      const onWorkerWarning = vi.fn();
+      const service = new ExecutionService(deps(filePath, { store, now: () => now, noTurnWarnMs: 5_000, onWorkerWarning }));
+      now = 3_000;
+      await service.redispatchStalled();
+      expect(onWorkerWarning).not.toHaveBeenCalled();
+      now = 7_000;
+      await service.redispatchStalled();
+      await service.redispatchStalled();
+      expect(onWorkerWarning).toHaveBeenCalledTimes(1);
+      expect((await warningsOf(store))[0].summary).toContain('no turn');
+    }));
+
+    it('does not raise a no-turn warning once the worker has taken a turn', async () => fixture(async (filePath) => {
+      let now = 1_000;
+      const { store, record } = await claimedRun(filePath, () => now);
+      const unit = record.workUnits![0];
+      await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, unit.id, { claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, turnCount: 1 });
+      const onWorkerWarning = vi.fn();
+      const service = new ExecutionService(deps(filePath, { store, now: () => now, noTurnWarnMs: 5_000, onWorkerWarning }));
+      now = 60_000;
+      await service.redispatchStalled();
+      expect(onWorkerWarning).not.toHaveBeenCalled();
+    }));
+  });
+
   it('does not reclaim a live worker while its output-renewed lease is still fresh', async () => fixture(async (filePath) => {
     // The host renews the claim lease from observed PTY output (renewWorkerLease). A worker
     // that keeps emitting output — even while non-restful ('working') — keeps its lease fresh

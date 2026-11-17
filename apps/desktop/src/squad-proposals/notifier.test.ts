@@ -354,6 +354,26 @@ describe('PTY delivery gating', () => {
   });
 });
 
+describe('onWorkerWarning', () => {
+  it('posts one comment-bearing Inbox entry for the run, deduped by worker and text', async () => {
+    const { deps, notifier } = setup();
+    await notifier.onWorkerWarning(record(), { slotId: 'slot-2', summary: 'Worker slot-2 exited (1): bad model' });
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'p1', executionId: 'e1', comments: 'Worker slot-2 exited (1): bad model', report: true,
+      dedupeKey: 'squad-worker-warning:e1:slot-2:Worker slot-2 exited (1): bad model'
+    }));
+  });
+
+  it('logs and swallows an Inbox failure, and posts nothing after dispose', async () => {
+    const failing = setup({ appendInbox: vi.fn(async () => { throw new Error('inbox down'); }) });
+    await expect(failing.notifier.onWorkerWarning(record(), { slotId: 's', summary: 'x' })).resolves.toBeUndefined();
+    const { deps, notifier } = setup();
+    notifier.dispose();
+    await notifier.onWorkerWarning(record(), { slotId: 's', summary: 'x' });
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+  });
+});
+
 describe('forget and dispose', () => {
   it('forget clears the queue and its timer', async () => {
     const ctx = setup();

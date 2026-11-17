@@ -22,6 +22,16 @@ export function isRecentlyFinished(session: TerminalSession, now: number): boole
 }
 
 /**
+ * A Squad worker that exited non-zero (or never started) keeps its Done card
+ * until the person dismisses it, so a failed worker is not lost after the
+ * linger window (REQ-21). A clean exit and a non-Squad session still auto-dismiss.
+ */
+export function isHeldSquadWorker(session: TerminalSession): boolean {
+  if (session.status !== 'exited' || session.cohort?.role !== 'worker') return false;
+  return session.process === 'spawn-failed' || typeof session.exitCode === 'number' && session.exitCode !== 0;
+}
+
+/**
  * Status bucket a session is sorted into for Project Focus Mode. Ordering of
  * the union mirrors the display order (most-urgent first), but the canonical
  * order lives in {@link BUCKET_ORDER} — don't rely on union order at runtime.

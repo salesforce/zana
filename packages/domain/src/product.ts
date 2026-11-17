@@ -1709,6 +1709,8 @@ export interface TerminalSession {
    * and marks the orchestrator. Absent on every non-team session.
    */
   cohort?: SessionCohort;
+  /** Squad worker process state when it never started; the board shows it on the kept card. */
+  process?: 'spawn-failed';
   /**
    * For a REMOTE session wrapped in a persistent tmux session on the box, the
    * STABLE tmux session id (the `<id>` in `cc-<id>`). It equals the pty `id` on

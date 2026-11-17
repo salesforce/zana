@@ -37,6 +37,8 @@ export interface SquadProposalNotifier {
    */
   onTerminal(record: ExecutionRecord, opts?: { worktree?: SquadWorktreeOutcome }): Promise<void>;
   onHumanBlocker(record: ExecutionRecord, blocker: Blocker): Promise<void>;
+  /** A worker exited non-zero or took no turn: one Inbox SIGNAL row, deduped per run and worker text. */
+  onWorkerWarning(record: ExecutionRecord, warning: { slotId: string; summary: string }): Promise<void>;
   onState(sessionId: string, state: AgentState): void;
   forget(sessionId: string): void;
   dispose(): void;
@@ -104,7 +106,7 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   }
 
   /** An Inbox entry carrying a report's text for the run's project; false when it could not be written. */
-  async function postEntry(kind: 'result' | 'blocker', record: ExecutionRecord, subject: string, text: string, dedupeKey: string): Promise<boolean> {
+  async function postEntry(kind: 'result' | 'blocker' | 'warning', record: ExecutionRecord, subject: string, text: string, dedupeKey: string): Promise<boolean> {
     try {
       await deps.appendInbox({
         projectId: record.projectId,
@@ -296,6 +298,11 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
     }
   }
 
+  async function onWorkerWarning(record: ExecutionRecord, warning: { slotId: string; summary: string }): Promise<void> {
+    if (disposed || !record) return;
+    await postEntry('warning', record, `Squad worker needs attention: ${record.jobTitle}`, warning.summary, `squad-worker-warning:${record.id}:${warning.slotId}:${warning.summary}`);
+  }
+
   /** Whether the target conversation is live; undefined when the check itself failed (not the same as gone). */
   async function targetLive(record: ExecutionRecord, target: ExecutionReportTarget): Promise<boolean | undefined> {
     try {
@@ -352,6 +359,7 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   return {
     onTerminal,
     onHumanBlocker,
+    onWorkerWarning,
     onState(sessionId, state) { if (!disposed) ptyQueue.flush(sessionId, state); },
     forget(sessionId) { ptyQueue.forget(sessionId); },
     dispose() {

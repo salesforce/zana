@@ -7723,6 +7723,7 @@ const squadExecutionService = new SquadExecutionService({
     await handleSquadTerminalWithReport(record);
   },
   onHumanBlocker: (record, blocker) => squadProposalNotifier.onHumanBlocker(record, blocker),
+  onWorkerWarning: (record, warning) => squadProposalNotifier.onWorkerWarning(record, warning),
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
   preflightWorkflow: (teamId, workflow) => {

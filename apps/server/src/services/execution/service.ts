@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { boundReason, EXECUTION_RETENTION_MS, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
@@ -299,6 +299,10 @@ export interface ExecutionServiceDeps {
   retainParkedWorker?: (record: ExecutionRecord, sessionId: string, retainUntilMs: number | null) => Promise<void>;
   /** Called once when a human-audience blocker is created. Failures are logged and never fail the engine. */
   onHumanBlocker?: (record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number]) => void | Promise<void>;
+  /** Called once per worker that exited non-zero or took no turn after launch (REQ-20). Failures are logged and never fail the engine. */
+  onWorkerWarning?: (record: ExecutionRecord, warning: { slotId: string; summary: string }) => void | Promise<void>;
+  /** How long a claimed worker may take no turn before it is warned about; defaults to the claim stall limit. */
+  noTurnWarnMs?: number;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   /** Trusted total slot count of the record's team; enables the all-slots-restorable gate. */
@@ -692,6 +696,8 @@ const CANCEL_VERIFY_POLL_MS = 250;
 export class ExecutionService {
   private runCheckCompletions = new Map<string, { controller: AbortController; pending: Promise<readonly string[]> }>();
   private checkCompletions = new Map<string, { executionId: string; workUnitId: string; claimId?: string; claimGeneration?: number; controller: AbortController; running?: Promise<ExecutionCheckResultV1>; pending: ReturnType<ExecutionService['completeWorkChecked']> }>();
+  /** `executionId:slotId:cause` keys already warned about, so a repeated sweep does not repeat the warning. */
+  private readonly warnedWorkers = new Set<string>();
   private readonly starting = new Map<string, number>();
   private readonly bindingTails = new Map<string, Promise<void>>();
   private readonly usageTails = new Map<string, Promise<void>>();
@@ -1234,6 +1240,10 @@ export class ExecutionService {
     const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
     if (!worker || !DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return;
     const unit = record.workUnits?.find((candidate) => candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId);
+    // Only a worker launched with an assignment or claim warns: an idle on-demand seat exiting is normal.
+    if ((unit || worker.onDemand !== true) && (worker.process === 'spawn-failed' || typeof worker.exitCode === 'number' && worker.exitCode !== 0)) {
+      await this.raiseWorkerWarning(record, slotId, 'exit', `Worker ${slotId} exited (${worker.exitCode ?? worker.process}): ${worker.exitReason ?? 'no reason reported'}`);
+    }
     if (!unit?.claimId || unit.claimGeneration === undefined) return;
     const reclaimed = await this.deps.store.reclaimExpiredClaims(record.id, [{
       workUnitId: unit.id,
@@ -1321,6 +1331,32 @@ export class ExecutionService {
     return { wedgedClaims, liveClaim };
   }
 
+  /** Record one bounded worker-warning event and tell the person (Inbox) once per worker and cause. */
+  private async raiseWorkerWarning(record: ExecutionRecord, slotId: string, cause: string, text: string): Promise<void> {
+    const key = `${record.id}:${slotId}:${cause}`;
+    if (this.warnedWorkers.has(key)) return;
+    this.warnedWorkers.add(key);
+    try {
+      const summary = boundReason(text);
+      await this.deps.store.warning(record.id, { kind: 'worker-warning', slotId, summary });
+      const hook = this.deps.onWorkerWarning;
+      if (hook) await Promise.resolve(hook(record, { slotId, summary }));
+    } catch (error) {
+      this.deps.logError?.(`Execution worker warning failed for ${record.id}/${slotId}`, error);
+    }
+  }
+
+  /** Warn about claimed workers that took no turn within the window (never idle seats: they hold no claim). */
+  private async warnNoTurnWorkers(record: ExecutionRecord, now: number): Promise<void> {
+    const windowMs = this.deps.noTurnWarnMs ?? record.request.policy?.maxClaimStallMs ?? DEFAULT_DURABLE_CLAIM_STALL_MS;
+    for (const unit of record.workUnits ?? []) {
+      if (unit.state !== 'CLAIMED' || !unit.assignedSlotId || unit.claimedAt === undefined) continue;
+      if ((unit.turnCount ?? 0) > 0 || now - unit.claimedAt < windowMs) continue;
+      await this.raiseWorkerWarning(record, unit.assignedSlotId, `no-turn:${unit.claimId ?? unit.id}`,
+        `Worker ${unit.assignedSlotId} has taken no turn ${Math.round(windowMs / 60_000)} min after launch on ${unit.id}`);
+    }
+  }
+
   async redispatchStalled(): Promise<void> {
     let records: ExecutionRecord[];
     try { records = await this.deps.store.listActive(); }
@@ -1331,6 +1367,7 @@ export class ExecutionService {
     for (const record of records) {
       if (record.state !== 'RUNNING' && record.state !== 'STARTING') continue;
       if (!isDurableCoordination(record.coordinationMode)) continue;
+      await this.warnNoTurnWorkers(record, now);
       const units = record.workUnits ?? [];
       if (!units.length) continue; // planless → PlanReadinessWatchdog owns it
       const { wedgedClaims, liveClaim } = this.classifyStalledClaims(record, now, enforce);
@@ -1512,6 +1549,7 @@ export class ExecutionService {
     const clearTimer = this.deps.clearTimer ?? clearTimeout;
     for (const timer of this.autoFinalizeTimers.values()) clearTimer(timer);
     this.autoFinalizeTimers.clear();
+    this.warnedWorkers.clear();
     this.routeFactCircuits.clear();
     this.wakeConfirmations.dispose();
   }
