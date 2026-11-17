@@ -7,14 +7,14 @@
       "title": "Your first project in 30 seconds",
       "description": "A project is just a folder. Add one, pick an agent, get a design doc, preview the build and read the Inbox report.",
       "duration": "0:34",
-      "details": "Captions · no audio",
+      "details": "English voiceover and captions",
       "alsoIn": "Walkthrough",
       "fileName": "zana-first-project.mp4",
-      "silent": true,
+      "silent": false,
       "src": {
-        "path": "content/videos/media/guided-start-ec6c607aab0ef696ccfadffe4748e2636999df73592ab70035a5bd724b506156.mp4",
-        "sha256": "ec6c607aab0ef696ccfadffe4748e2636999df73592ab70035a5bd724b506156",
-        "bytes": 3848079
+        "path": "content/videos/media/guided-start-336ba9e60e712bafcd879a6130a37ae159c49c1a260af5cd85239497bcae5c22.mp4",
+        "sha256": "336ba9e60e712bafcd879a6130a37ae159c49c1a260af5cd85239497bcae5c22",
+        "bytes": 4333403
       },
       "poster": {
         "path": "content/videos/media/guided-start-b9363038e7d3511e75f30fc420ce302373f8f7de5b67b0a095139723d7bc4bcb.jpg",
@@ -22,9 +22,9 @@
         "bytes": 94489
       },
       "captions": {
-        "path": "content/videos/media/guided-start-63e5d3fa682dde2c26e884864c295377fc809190877303f347dc6c870df2f107.vtt",
-        "sha256": "63e5d3fa682dde2c26e884864c295377fc809190877303f347dc6c870df2f107",
-        "bytes": 716
+        "path": "content/videos/media/guided-start-233536b08d1c314438f48125e21bf933bb1cef3532cd28769d8b008c6310f82a.vtt",
+        "sha256": "233536b08d1c314438f48125e21bf933bb1cef3532cd28769d8b008c6310f82a",
+        "bytes": 529
       }
     },
     {

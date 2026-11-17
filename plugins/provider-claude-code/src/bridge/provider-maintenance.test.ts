@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { __testing } from "./provider-maintenance.js";
+
+const hostPlatform = process.platform;
+afterEach(() => {
+  Object.defineProperty(process, "platform", { value: hostPlatform });
+});
 
 function missingInstallationStatus() {
   return {
@@ -59,7 +64,8 @@ describe("Claude Code provider maintenance", () => {
     });
   });
 
-  it("updates an npm global install with npm install -g", () => {
+  it("updates a Windows npm global install with npm install -g", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
     const run = __testing.buildProviderInstallationRun(
       {
         ...missingInstallationStatus(),
@@ -88,7 +94,8 @@ describe("Claude Code provider maintenance", () => {
     });
   });
 
-  it("updates an npm global install on the stable channel with @stable", () => {
+  it("updates a Windows npm global install on the stable channel with @stable", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
     const npm = process.platform === "win32" ? "npm.cmd" : "npm";
     const displayCommand = `${npm} install -g @anthropic-ai/claude-code@stable`;
     const run = __testing.buildProviderInstallationRun(
@@ -121,6 +128,7 @@ describe("Claude Code provider maintenance", () => {
   });
 
   it("falls back to @latest when the auto-update channel is unknown", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
     const npm = process.platform === "win32" ? "npm.cmd" : "npm";
     const run = __testing.buildProviderInstallationRun(
       {
@@ -151,6 +159,7 @@ describe("Claude Code provider maintenance", () => {
   });
 
   it("uses the same npm update command for display and execution on Windows", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
     for (const channel of ["latest", "stable", null] as const) {
       const tag = channel === "stable" ? "stable" : "latest";
       const execution = __testing.claudeUpdateExecution("npmGlobal", channel, "win32");
