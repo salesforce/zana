@@ -189,6 +189,9 @@ test('Stop reaps a worker that ignores close, escalating to a hard kill, and lea
     expect(JSON.stringify(stopped)).not.toContain('CANCEL_INCOMPLETE');
     const live = await app.window.evaluate(async (id) => (await window.cc.terminals.list(id)).filter((session) => session.status !== 'exited').length, run.projectId);
     expect(live).toBe(0);
+    // A user Stop is not a worker fault: let the pty exit events settle, then no worker-exit warning may be in the run.
+    await app.window.waitForTimeout(3_000);
+    expect((await snapshotOf(app.window, run.projectId))?.text ?? '').not.toMatch(/Worker .* (exited|stopped)/i);
   } finally { await run.cleanup(); agent.cleanup(); }
 });
 

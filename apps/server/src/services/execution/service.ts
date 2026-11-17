@@ -433,6 +433,10 @@ export class ExecutionSnapshotTimeoutError extends Error {
 interface ExtractedLifecycle {
   /** Lifecycle record id; the deferred-seat spawner is keyed by it. */
   recordId?: string;
+  /** Teardown marker (Stop/Cancel/failure cleanup): worker exits after it are ours, not the worker's fault. */
+  closing?: true;
+  /** Lifecycle record state ('canceled' once a cancel fenced it). */
+  state?: string;
   orchestratorSessionId?: string;
   orchestratorAuthorizationId?: string;
   retainOrchestrator?: boolean;
@@ -468,6 +472,11 @@ function countedRecordId(record: ExecutionRecord, lifecycle: ExtractedLifecycle 
   return worker?.deliveredUnitCount === undefined ? undefined : lifecycle?.recordId;
 }
 
+/** True when a worker's stop was caused by our own teardown (user Stop/Cancel), so it must not raise a worker warning. */
+export function workerStoppedByTeardown(lifecycle: { closing?: boolean; state?: string } | undefined, worker: { process?: string } | undefined): boolean {
+  return lifecycle?.closing === true || lifecycle?.state === 'canceled' || worker?.process === 'canceled';
+}
+
 function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
   if (!lifecycle) return undefined;
   const launchResult = lifecycle.launchResult;
@@ -479,6 +488,8 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
 
   return {
     ...(typeof lifecycle.id === 'string' ? { recordId: lifecycle.id } : {}),
+    ...(lifecycle.closing === true ? { closing: true as const } : {}),
+    ...(typeof lifecycle.state === 'string' ? { state: lifecycle.state } : {}),
     orchestratorSessionId,
     orchestratorAuthorizationId,
     retainOrchestrator: lifecycle.retainOrchestrator === true,
@@ -1252,8 +1263,11 @@ export class ExecutionService {
     if (!worker || !DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return;
     const unit = record.workUnits?.find((candidate) => candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId);
     // Only a worker launched with an assignment or claim warns: an idle on-demand seat exiting is normal.
+    const teardown = workerStoppedByTeardown(lifecycle, worker);
     const badExit = worker.process === 'spawn-failed' || typeof worker.exitCode === 'number' && worker.exitCode !== 0;
-    if ((unit || worker.onDemand !== true) && badExit) {
+    if (teardown) {
+      // A user Stop closes the ptys while the record is still RUNNING: that is not a worker fault.
+    } else if ((unit || worker.onDemand !== true) && badExit) {
       await this.raiseWorkerWarning(record, slotId, 'exit', `Worker ${slotId} exited (${worker.exitCode ?? worker.process}): ${worker.exitReason ?? 'no reason reported'}`);
     } else if (unit) {
       // A tmux-backed local pty reports its client's status (always 0), not the pane command's, so a
@@ -1288,7 +1302,7 @@ export class ExecutionService {
     }
     const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.transport === 'MODERN');
     const holdsClaim = record.workUnits?.some((unit) => unit.state === 'CLAIMED' && unit.assignedSlotId === slotId);
-    if (!worker || !holdsClaim) return;
+    if (!worker || !holdsClaim || workerStoppedByTeardown(lifecycle, worker)) return;
     await this.raiseWorkerWarning(record, slotId, 'exit', `Worker ${slotId} stopped while it still held a claimed unit`);
   }
 

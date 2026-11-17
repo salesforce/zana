@@ -1050,6 +1050,31 @@ describe('execution claim recovery', () => {
       expect(onWorkerWarning).toHaveBeenCalledWith(expect.objectContaining({ id: record.id }), expect.objectContaining({ slotId: 'slot-1' }));
     }));
 
+    it('raises no worker-exit warning or Inbox row when a user Stop cancelled the worker (process canceled) or the lifecycle is closing', async () => fixture(async (filePath) => {
+      for (const lifecycle of [{ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'canceled', exitCode: 1 }] },
+        { closing: true, workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'exited', exitCode: 0 }] },
+        { state: 'canceled', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'exited', exitCode: 1 }] }]) {
+        const { store, record } = await claimedRun(`${filePath}-${Math.random()}`, () => 1_000);
+        const onWorkerWarning = vi.fn();
+        const service = new ExecutionService(deps(filePath, { store, now: () => 1_000, onWorkerWarning, getTeamLaunch: async () => lifecycle }));
+        await service.recoverExitedWorker(record.id, 'slot-1');
+        expect(await warningsOf(store)).toHaveLength(0);
+        expect(onWorkerWarning).not.toHaveBeenCalled();
+      }
+    }));
+
+    it('warns for a Modern worker that stopped while holding a claim, but not when the launch is closing', async () => fixture(async (filePath) => {
+      const { store, record } = await claimedRun(filePath, () => 1_000);
+      const modern = { slotId: 'slot-1', projectId: 'project-1', transport: 'MODERN' };
+      const live = new ExecutionService(deps(filePath, { store, now: () => 1_000, getTeamLaunch: async () => ({ workers: [modern] }) }));
+      await live.warnModernWorkerStopped(record.id, 'slot-1');
+      expect(await warningsOf(store)).toHaveLength(1);
+      const { store: store2, record: record2 } = await claimedRun(`${filePath}-2`, () => 1_000);
+      const closing = new ExecutionService(deps(filePath, { store: store2, now: () => 1_000, getTeamLaunch: async () => ({ closing: true, workers: [modern] }) }));
+      await closing.warnModernWorkerStopped(record2.id, 'slot-1');
+      expect(await warningsOf(store2)).toHaveLength(0);
+    }));
+
     it('warns when a worker exits with status 0 (tmux hides the pane status) while it still holds a claimed unit', async () => fixture(async (filePath) => {
       const { store, record } = await claimedRun(filePath, () => 1_000);
       const service = new ExecutionService(deps(filePath, { store, now: () => 1_000, getTeamLaunch: exitedWorker({ exitCode: 0 }) }));
