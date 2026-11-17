@@ -66,6 +66,9 @@ type Failure = { ok: false; code: SquadProposalErrorCode; message: string };
 export interface ConfinedSource { source: SquadProposalSource; identity: { dev: number; ino: number } }
 export type Confined = ({ ok: true } & ConfinedSource) | Failure;
 
+/** `<scheme>://...`; a Windows drive (`C:\\`) has no `//`, so it is not matched. */
+const URI_SOURCE = /^[a-z][a-z0-9+.-]*:\/\//i;
+
 const fail = (code: SquadProposalErrorCode, message: string): Failure => ({ ok: false, code, message });
 
 /** `real`'s path relative to `root` when it is strictly inside it, else undefined. */
@@ -96,6 +99,7 @@ function refusedMessage(rawPath: string, refusal: SourceRefusal, policy: SourceP
  * source policy allows. Symlinks are resolved first, so a link can't reach a refused file.
  */
 export async function confineSource(fs: SquadProposalFs, scope: SquadSourceScope, rawPath: string): Promise<Confined> {
+  if (URI_SOURCE.test(rawPath)) return fail('SOURCE_NOT_ALLOWED', `${rawPath} is not a file. Read the document and pass its text as the plan text or as an attachment.`);
   if (!isAbsolute(rawPath) && !scope.projectRoot) return fail('SOURCE_NOT_ALLOWED', `${rawPath} is relative, and this Project's files are not readable from here. Attach a file under the data folders by absolute path.`);
   const candidate = isAbsolute(rawPath) ? rawPath : resolve(scope.projectRoot!, rawPath);
   let real: string;

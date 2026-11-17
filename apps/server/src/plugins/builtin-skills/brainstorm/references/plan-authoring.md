@@ -22,7 +22,8 @@ If `design_doc_read` is unavailable, use flow B.
 1. Read the doc with `design_doc_read` (research, issue or proposal; the plan is its
    `plan.md`). A Design Docs doc has no path on disk.
 2. Pass the plan text as an attachment: `attachments: [{ name: 'plan.md', text }]`.
-   Do not pass a guessed path, and do not copy the doc to disk.
+   Do not pass a guessed path, and do not copy the doc to disk. A `doc://` or other
+   `scheme://` source is refused, so never pass one.
 3. If the plan has no executable steps, write them in the format below, keeping the
    doc's requirements, and say you did so.
 

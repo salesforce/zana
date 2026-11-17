@@ -194,6 +194,11 @@ describe('squad-plan block', () => {
 
 describe('failure metadata', () => {
   it('stamps parserVersion and a blocking finding on every failure', () => {
-    expect(parsePortablePlan('')).toEqual({ ok: false, reason: 'empty plan text', parserVersion: PARSER_VERSION, findings: [{ severity: 'blocking', requirement: 'plan', message: 'empty plan text' }] });
+    expect(parsePortablePlan('')).toEqual({
+      ok: false,
+      reason: 'empty plan text',
+      parserVersion: PARSER_VERSION,
+      findings: [{ severity: 'blocking', requirement: 'plan', message: expect.stringMatching(/^empty plan text\. .*paste or write/) }]
+    });
   });
 });

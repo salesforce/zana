@@ -776,19 +776,32 @@ function checkNotSameWorker(units: readonly PortablePlanWorkUnitInput[]): Failur
   return undefined;
 }
 
-function withFailureMeta(failure: { ok: false; reason: string }): Extract<PortablePlanParse, { ok: false }> {
-  return { ...failure, parserVersion: PARSER_VERSION, findings: [{ severity: 'blocking', requirement: 'plan', message: failure.reason }] };
+const NO_STEPS_REASON = 'no executable steps found';
+const EMPTY_PLAN_REASON = 'empty plan text';
+const STEP_HEADING_SHAPE = /^\s*###\s+[A-Za-z0-9][A-Za-z0-9_-]*\s*:\s*\S/;
+
+/** Plain words for the blocking finding: what the parser saw and what to change. Other reasons stay as they are. */
+function failureMessage(reason: string, text: string): string {
+  if (reason === EMPTY_PLAN_REASON) return `${reason}. The plan is empty: paste or write the plan, with one \`### <id>: <title>\` block per step.`;
+  if (reason !== NO_STEPS_REASON) return reason;
+  const headings = text.split(/\r?\n/).filter((line) => STEP_HEADING_SHAPE.test(line)).length;
+  if (!headings) return `${reason}. The plan has no step headings: write each step as a \`### <id>: <title>\` block with a Work line under it.`;
+  return `${reason}. The plan has ${headings} step heading${headings === 1 ? '' : 's'}, but none has a Work field: add a \`- **Work:** ...\` line under each step.`;
+}
+
+function withFailureMeta(failure: { ok: false; reason: string }, text: string): Extract<PortablePlanParse, { ok: false }> {
+  return { ...failure, parserVersion: PARSER_VERSION, findings: [{ severity: 'blocking', requirement: 'plan', message: failureMessage(failure.reason, text) }] };
 }
 
 export function parsePortablePlan(text: string): PortablePlanParse {
   const result = parsePlanDocument(text);
-  return result.ok ? result : withFailureMeta(result);
+  return result.ok ? result : withFailureMeta(result, typeof text === 'string' ? text : '');
 }
 
 type DocumentParse = Extract<PortablePlanParse, { ok: true }> | Failure;
 
 function parsePlanDocument(raw: string): DocumentParse {
-  if (typeof raw !== 'string' || !raw.trim()) return { ok: false, reason: 'empty plan text' };
+  if (typeof raw !== 'string' || !raw.trim()) return { ok: false, reason: EMPTY_PLAN_REASON };
   const extracted = extractSquadPlan(raw);
   if (!extracted.ok) return extracted;
   const text = extracted.text;
@@ -817,7 +830,7 @@ function parsePlanDocument(raw: string): DocumentParse {
     }
   }
   const blocks = collected.blocks;
-  if (!blocks.length) return { ok: false, reason: 'no executable steps found' };
+  if (!blocks.length) return { ok: false, reason: NO_STEPS_REASON };
 
   const units: PortablePlanWorkUnitInput[] = [];
   const normalizations: string[] = [];
