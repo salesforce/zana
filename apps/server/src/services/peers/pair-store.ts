@@ -191,7 +191,7 @@ export class PairStore {
       throw new Error('peer revocation fence capacity exceeded');
     }
     fence.pending.set(pairId, (fence.pending.get(pairId) ?? 0) + 1);
-    this.abortLeases(pairId);
+    this.abortLeases(pairId, 'revoke-start');
     try {
       await this.transaction(async (state, save) => {
         const pair = state.pairs.find((item) => item.pairId === pairId);
@@ -211,7 +211,7 @@ export class PairStore {
         }
         // Retry uncertain writes durably, even if rename committed before fsync failed.
         await save();
-        this.abortLeases(pairId);
+        this.abortLeases(pairId, 'revoke-saved');
       }, { validate: false, pairId });
       fence.failed.delete(pairId);
     } catch (error) { fence.failed.add(pairId); throw error; }
@@ -442,12 +442,15 @@ export class PairStore {
     };
   }
 
-  private abortLeases(pairId?: string): void {
+  /** `why` is a fixed label for the call site; with pair ids it is what lets a log reader tell which path cancelled a live request. */
+  private abortLeases(pairId: string | undefined, why: string): void {
     const id = resolve(this.directory), active = leases.get(id);
     if (!active) return;
+    const aborted = new Set<string>();
     for (const [controller, lease] of active) {
-      if (pairId === undefined || lease.pairId === pairId) { controller.abort(); active.delete(controller); }
+      if (pairId === undefined || lease.pairId === pairId) { controller.abort(); active.delete(controller); aborted.add(lease.pairId); }
     }
+    if (aborted.size) console.warn(`[zcc] peer leases aborted why=${why} scope=${pairId === undefined ? 'all-pairs' : 'pair'} pairs=${[...aborted].join(',')}`);
     if (active.size === 0) leases.delete(id);
   }
 
@@ -479,7 +482,7 @@ export class PairStore {
           let changed = false;
           for (const pair of state.pairs) if (pair.status !== 'revoked' && guards.has(pair.pairId) && !current(pair)) {
             if (pair.epoch < Number.MAX_SAFE_INTEGER) pair.epoch++;
-            pair.status = 'revoked'; pair.secret = null; this.abortLeases(pair.pairId); changed = true;
+            pair.status = 'revoked'; pair.secret = null; this.abortLeases(pair.pairId, 'guard-not-current'); changed = true;
           }
           if (changed) await save();
           // Storage save yields; a rotation during it must not reach a synchronous consumer.
@@ -490,7 +493,7 @@ export class PairStore {
           if (validate && this.options?.validateGrant) for (const pair of state.pairs) {
             const guard = guards.get(pair.pairId);
             if (pair.status !== 'revoked' && (!guard?.current || !sameGrant(pair, guard.grant) || !guard.current())) {
-              this.abortLeases(pair.pairId); throw new Error('peer enrollment changed');
+              this.abortLeases(pair.pairId, 'assert-current'); throw new Error('peer enrollment changed');
             }
           }
         };
@@ -500,16 +503,16 @@ export class PairStore {
         if (validate && this.options?.validateGrant) for (const pair of state.pairs) {
           const guard = guards.get(pair.pairId);
           if ((pair.status !== 'revoked' && guard && (!guard.current || !guard.current())) || this.isFenced(pair.pairId)) {
-            this.abortLeases(pair.pairId); throw new Error('peer enrollment changed or revoked');
+            this.abortLeases(pair.pairId, 'post-run-guard'); throw new Error('peer enrollment changed or revoked');
           }
         }
         return result;
       });
     }
-    catch (error) { this.abortLeases(inRun ? pairId : undefined); throw error; }
+    catch (error) { this.abortLeases(inRun ? pairId : undefined, inRun ? 'run-failed' : 'transaction-failed-all'); throw error; }
   }
 
-  dispose(): void { this.disposed = true; this.abortLeases(); this.storage.dispose(); }
+  dispose(): void { this.disposed = true; this.abortLeases(undefined, 'dispose'); this.storage.dispose(); }
   whenIdle(): Promise<void> { return this.storage.whenIdle(); }
 
   private isFenced(pairId: string): boolean {

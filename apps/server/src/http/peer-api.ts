@@ -71,6 +71,7 @@ async function handleAdmittedPeer(request: IncomingMessage, response: ServerResp
   const lifetime = new AbortController();
   const abort = () => { if (!response.writableEnded) disconnected.abort(); };
   response.once('close', abort);
+  const startedAt = Date.now();
   const signal = AbortSignal.any([lease.signal, disconnected.signal, AbortSignal.timeout(30_000)]);
   let cancel: (() => void) | undefined;
   try {
@@ -104,6 +105,11 @@ async function handleAdmittedPeer(request: IncomingMessage, response: ServerResp
       response.end(encoded);
     }
   } catch {
+    // Which of the three sources cancelled it: the sender cannot tell, and a lease abort means pairing state moved under a live request.
+    if (signal.aborted) {
+      const cause = lease.signal.aborted ? 'lease' : disconnected.signal.aborted ? 'disconnect' : 'timeout';
+      console.warn(`[zcc] peer request cancelled plugin=${pluginId} method=${peerMethod} pair=${lease.grant.pairId} cause=${cause} elapsedMs=${Date.now() - startedAt}`);
+    }
     if (!response.destroyed) sendJson(response, signal.aborted ? 409 : 400,
       { ok: false, code: signal.aborted ? 'peer-request-cancelled' : 'peer-request-rejected' });
   } finally {

@@ -149,11 +149,17 @@ describe('peer API canonical authorization', () => {
       await new Promise<void>(resolve => value.signal.addEventListener('abort', () => resolve(), { once: true }));
       return value.commitSync(committed);
     });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const response = peer.send(await peer.packet());
     await ready;
     await peer.pairs.revoke('pair-a');
     expect((await response).status).toBe(409);
     expect(request.signal.aborted).toBe(true);
+    const lines = warn.mock.calls.map(call => String(call[0]));
+    // The sender only sees 409; these say which source cancelled and which path aborted the lease.
+    expect(lines.some(line => /peer request cancelled plugin=\S+ method=\S+ pair=pair-a cause=lease elapsedMs=\d+/.test(line))).toBe(true);
+    expect(lines.some(line => line.includes('peer leases aborted why=revoke-start') && line.includes('pairs=pair-a'))).toBe(true);
+    warn.mockRestore();
     expect(committed).not.toHaveBeenCalled();
     expect((await peer.send(await peer.packet())).status).toBe(401);
   });
