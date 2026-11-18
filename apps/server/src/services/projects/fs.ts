@@ -13,7 +13,8 @@ import {
   rmSync,
   type Dirent
 } from 'node:fs';
-import { opendir, realpath, stat as asyncStat, open } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { opendir, realpath, stat as asyncStat, lstat as asyncLstat, open } from 'node:fs/promises';
 import { join, relative, extname, resolve, dirname, sep, isAbsolute } from 'node:path';
 import type { FsEntry, FsReadResult, FsWriteResult, FsMutateResult, FsReadDataUrlResult, SearchHit, SearchResult, SearchOptions } from '@zana-ai/zcc-domain/product';
 import { createRegexScanner } from './regex-worker.js';
@@ -25,7 +26,14 @@ const DENY = new Set([
   'build',
   '.next',
   '.turbo',
-  '.DS_Store'
+  '.DS_Store',
+  '.venv',
+  'venv',
+  '__pycache__',
+  'coverage',
+  '.pytest_cache',
+  '.cache',
+  'target'
 ]);
 
 const MAX_ENTRIES = 2000;
@@ -259,26 +267,88 @@ export interface WalkedFile {
   path: string;
 }
 
-export async function walkFiles(root: string): Promise<WalkedFile[]> {
-  const out: WalkedFile[] = [];
+export interface WalkResult {
+  files: WalkedFile[];
+  /** true when MAX_WALK_FILES, MAX_WALK_DEPTH or MAX_WALK_ENTRIES cut the listing short */
+  truncated: boolean;
+}
+
+const GIT_LS_TIMEOUT_MS = 10_000;
+const GIT_LS_MAX_BUFFER = 16 * 1024 * 1024;
+
+function outsideRoot(realRoot: string, target: string): boolean {
+  const rel = relative(realRoot, target);
+  return rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+}
+
+/**
+ * List tracked + untracked-but-not-ignored files via git. Returns null when
+ * root is not inside a git work tree (or git fails/times out) so the caller can
+ * fall back to a filesystem walk. No shell; cwd is the already-resolved root.
+ */
+async function gitListFiles(root: string, realRoot: string): Promise<WalkResult | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await new Promise<{ stdout: string }>((resolveP, rejectP) => {
+      execFile(
+        'git',
+        ['ls-files', '-z', '-co', '--exclude-standard'],
+        { cwd: root, timeout: GIT_LS_TIMEOUT_MS, maxBuffer: GIT_LS_MAX_BUFFER, encoding: 'utf8', windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
+        (err, out) => (err ? rejectP(err) : resolveP({ stdout: out }))
+      );
+    }));
+  } catch {
+    return null;
+  }
+  const rels = [...new Set(stdout.split('\0').filter(Boolean))]
+    .filter((r) => !r.split('/').some((seg) => DENY.has(seg)))
+    .map((r) => ({ r, depth: r.split('/').length - 1 }))
+    // Shallow files first so the cap never drops them in favour of deep ones.
+    .sort((x, y) => x.depth - y.depth);
+  const files: WalkedFile[] = [];
+  let truncated = false;
+  for (const { r, depth } of rels) {
+    if (depth > MAX_WALK_DEPTH) { truncated = true; continue; }
+    const full = join(root, r);
+    try {
+      let st = await asyncLstat(full);
+      if (st.isSymbolicLink()) {
+        const target = await realpath(full);
+        if (outsideRoot(realRoot, target)) continue;
+        st = await asyncStat(target);
+      }
+      if (!st.isFile()) continue;
+    } catch {
+      continue; // deleted-but-tracked or unreadable
+    }
+    if (files.length >= MAX_WALK_FILES) { truncated = true; break; }
+    files.push({ rel: r, path: full });
+  }
+  return { files, truncated };
+}
+
+export async function walkFiles(root: string): Promise<WalkResult> {
   let realRoot: string;
-  try { realRoot = await realpath(root); } catch { return out; }
-  const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  try { realRoot = await realpath(root); } catch { return { files: [], truncated: false }; }
+  const viaGit = await gitListFiles(root, realRoot);
+  if (viaGit) return viaGit;
+  const out: WalkedFile[] = [];
+  let truncated = false;
+  // Breadth-first: shallow files survive a cap hit in a deep sibling subtree.
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
   const visited = new Set<string>();
   let examined = 0;
-  while (stack.length > 0 && out.length < MAX_WALK_FILES && examined < MAX_WALK_ENTRIES) {
-    const { dir, depth } = stack.pop()!;
-    if (depth > MAX_WALK_DEPTH) continue;
+  walk: while (queue.length > 0) {
+    const { dir, depth } = queue.shift()!;
     try {
       const canonical = await realpath(dir);
-      const rel = relative(realRoot, canonical);
-      if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel) || visited.has(canonical)) continue;
+      if (outsideRoot(realRoot, canonical) || visited.has(canonical)) continue;
       visited.add(canonical);
       // Stream directory entries and yield during I/O. A file-count cap alone
       // doesn't bound a tree of empty directories or symlink cycles.
       const entries = await opendir(dir);
       for await (const d of entries) {
-        if (++examined > MAX_WALK_ENTRIES) break;
+        if (++examined > MAX_WALK_ENTRIES) { truncated = true; break walk; }
         if (DENY.has(d.name)) continue;
         const full = join(dir, d.name);
         let isDir = d.isDirectory();
@@ -286,8 +356,7 @@ export async function walkFiles(root: string): Promise<WalkedFile[]> {
         if (d.isSymbolicLink()) {
           try {
             const target = await realpath(full);
-            const rel = relative(realRoot, target);
-            if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+            if (outsideRoot(realRoot, target)) continue;
             const st = await asyncStat(target);
             isDir = st.isDirectory();
             isFile = st.isFile();
@@ -295,18 +364,19 @@ export async function walkFiles(root: string): Promise<WalkedFile[]> {
             continue;
           }
         }
-        if (isDir && depth < MAX_WALK_DEPTH) {
-          stack.push({ dir: full, depth: depth + 1 });
+        if (isDir) {
+          if (depth < MAX_WALK_DEPTH) queue.push({ dir: full, depth: depth + 1 });
+          else truncated = true;
         } else if (isFile) {
+          if (out.length >= MAX_WALK_FILES) { truncated = true; break walk; }
           out.push({ rel: relative(root, full).split('\\').join('/'), path: full });
-          if (out.length >= MAX_WALK_FILES) break;
         }
       }
     } catch {
       // Unreadable or disappearing directories must not abort the whole scan.
     }
   }
-  return out;
+  return { files: out, truncated };
 }
 
 /**
@@ -375,7 +445,7 @@ export async function resolveDoc(
   //    the same basename) → decline rather than guess the wrong one.
   const base = cleanReported.split(/[/\\]/).pop() ?? cleanReported;
   if (base) {
-    const matches = (await walkFiles(root)).filter(
+    const matches = (await walkFiles(root)).files.filter(
       (f) => (f.rel.split('/').pop() ?? f.rel) === base
     );
     if (matches.length === 1) return { ok: true, rel: matches[0].rel };
@@ -418,7 +488,8 @@ export async function searchFiles(
       try { await scanner.scan('', trimmed, flags); }
       catch (error) { return { hits: [], scanned: 0, truncated: !(error instanceof Error && error.message === 'Invalid search expression') }; }
     }
-    const files = await walkFiles(root);
+    const { files, truncated: walkTruncated } = await walkFiles(root);
+    if (walkTruncated) truncated = true;
     outer: for (const f of files) {
       if (Date.now() > deadline) { truncated = true; break; }
       let stat;

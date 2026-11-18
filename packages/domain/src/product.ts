@@ -3880,6 +3880,12 @@ export interface WalkedFile {
   path: string;
 }
 
+/** Result of a bounded project walk; `truncated` means a cap cut the listing short. */
+export interface WalkResult {
+  files: WalkedFile[];
+  truncated: boolean;
+}
+
 export interface SearchOptions {
   caseSensitive?: boolean;
   regex?: boolean;

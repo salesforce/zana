@@ -56,7 +56,20 @@ interface LaunchRow {
 
 // Per-root file cache, lifetime = renderer process. Mirrors QuickOpen so the
 // `@` mode reuses an already-warmed index when the user has opened QuickOpen.
-const fileCache = new Map<string, WalkedFile[]>();
+interface FileCacheEntry { files: WalkedFile[]; truncated: boolean; at: number }
+const fileCache = new Map<string, FileCacheEntry>();
+/** A cached index older than this is shown immediately but re-walked in the background. */
+const FILE_CACHE_TTL_MS = 30_000;
+const FILE_CACHE_MAX_ROOTS = 16;
+function rememberFiles(root: string, entry: FileCacheEntry) {
+  fileCache.delete(root);
+  fileCache.set(root, entry);
+  while (fileCache.size > FILE_CACHE_MAX_ROOTS) {
+    const oldest = fileCache.keys().next().value;
+    if (oldest === undefined) break;
+    fileCache.delete(oldest);
+  }
+}
 const FILE_MAX_RESULTS = 80;
 
 // SSH host list, fetched once per renderer process the first time `#` launch
@@ -250,23 +263,30 @@ export function CommandPalette({ onClose }: Props) {
 
   // --- file index (lazy, only once `@` mode is entered) --------------------
   const [files, setFiles] = useState<WalkedFile[] | null>(null);
+  const [filesTruncated, setFilesTruncated] = useState(false);
   useEffect(() => {
     if (!fileMode || !selectedProject) return;
-    const cached = fileCache.get(selectedProject.path);
+    const root = selectedProject.path;
+    const cached = fileCache.get(root);
     if (cached) {
-      setFiles(cached);
-      return;
+      setFiles(cached.files);
+      setFilesTruncated(cached.truncated);
+      if (Date.now() - cached.at < FILE_CACHE_TTL_MS) return;
+    } else {
+      setFiles(null);
+      setFilesTruncated(false);
     }
+    // Missing or stale: (re-)walk. A stale index stays visible meanwhile.
     let cancelled = false;
-    setFiles(null);
-    product.fs.walkFiles(selectedProject.path)
-      .then((list) => {
+    product.fs.walkFilesWithStatus(root)
+      .then((res) => {
         if (cancelled) return;
-        fileCache.set(selectedProject.path, list);
-        setFiles(list);
+        rememberFiles(root, { files: res.files, truncated: res.truncated, at: Date.now() });
+        setFiles(res.files);
+        setFilesTruncated(res.truncated);
       })
       .catch(() => {
-        if (!cancelled) setFiles([]);
+        if (!cancelled && !cached) setFiles([]);
       });
     return () => { cancelled = true; };
   }, [fileMode, selectedProject?.path]);
@@ -587,7 +607,7 @@ export function CommandPalette({ onClose }: Props) {
       activeIndex={activeIdx} rowCount={rowCount} total={modeLabel ? rowCount : search.total}
       inputRef={inputRef} listRef={listRef} onInputKeyDown={onKeyDown} onClose={onClose}>
       {fileMode
-        ? renderFileRows(files, fileRows, activeIdx, setActiveIdx, chooseFile)
+        ? renderFileRows(files, fileRows, activeIdx, setActiveIdx, chooseFile, filesTruncated)
         : launchMode
           ? renderLaunchRows(launchRows, hosts, activeIdx, setActiveIdx, completeTarget,
               launchShowBanner, committedTarget, launchBody,
@@ -604,10 +624,22 @@ function renderFileRows(
   fileRows: FileRow[],
   activeIdx: number,
   setActiveIdx: (i: number) => void,
-  chooseFile: (f: WalkedFile) => void
+  chooseFile: (f: WalkedFile) => void,
+  truncated: boolean
 ) {
   if (files === null) return <div className="palette-empty">Indexing project files…</div>;
-  if (fileRows.length === 0) return <div className="palette-empty"><FairyEmpty title="No matching files" /></div>;
+  if (fileRows.length === 0) {
+    return (
+      <div className="palette-empty">
+        <FairyEmpty title="No matching files" />
+        {truncated && (
+          <div role="status" className="palette-hint-inline">
+            This project is large, so only part of it is indexed. The file you want may not be listed.
+          </div>
+        )}
+      </div>
+    );
+  }
   return fileRows.map((r, i) => (
     <button
       key={r.file.path}
