@@ -38,6 +38,7 @@ import { RenameStaleNotice, useDocActions, useTitleRename, type RenameStale } fr
 import { ProjectMark } from './ProjectMark.js';
 import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, pruneCollapsed, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
+import { PinnableContext } from './pin.js';
 import { useDocs, useNow, usePersistentState, useProjects, useRemovedProjects, useTemplates, useUnassignedDocs, useUnassignedProjects } from './hooks.js';
 import { UNASSIGNED_LABEL, UnassignedProjectsDialog } from './UnassignedProjects.js';
 import { buildUnassignedGroups, OTHER_KEY, type LabelSource, type UnassignedGroup } from './unassigned-groups.js';
@@ -1095,7 +1096,29 @@ export function Workbench({
   const [templateId, setTemplateId] = useState<string | null>(null);
   const peerSync = usePeerSync();
   const projectList = projects.data ?? [];
-  const publishPageContext = useZccNavigate().setPageContext;
+  const navigate = useZccNavigate();
+  const publishPageContext = navigate.setPageContext;
+  const global = variant === 'global';
+  const setPanelScope = navigate.setPanelScope;
+  // One agent panel per doc on the nav page: the doc id is the pinned tab's item key and the scope id.
+  useEffect(() => {
+    if (!global || !setPanelScope) return;
+    setPanelScope(location.docId ? { id: location.docId, ...(projectId ? { projectId } : {}) } : null);
+  }, [global, setPanelScope, location.docId, projectId]);
+  // The doc the page itself just opened (list, new doc) is not a pinned-tab activation.
+  const selfOpened = useRef<string | null>(null);
+  const opened = useRef<{ docId: string | null; agent: boolean }>({ docId: null, agent: false });
+  if (opened.current.docId !== location.docId) {
+    opened.current = {
+      docId: location.docId,
+      agent: global && !!location.docId && selfOpened.current !== location.docId && !!navigate.isPinned?.(location.docId)
+    };
+    selfOpened.current = null;
+  }
+  const openLocation = (docId: string | null) => {
+    selfOpened.current = docId;
+    onLocationChange({ docId, path: null });
+  };
   useLayoutEffect(() => {
     if (view !== 'settings' && (location.docId || templateId)) return;
     publishPageContext?.({ title: view === 'settings' ? 'Design Docs settings' : 'Design Docs catalogue' });
@@ -1118,6 +1141,7 @@ export function Workbench({
   }
 
   return (
+    <PinnableContext.Provider value={global}>
     <div className="dd-root dd-workbench">
       {listOpen ? (
         <DocList
@@ -1125,8 +1149,9 @@ export function Workbench({
           showProjects={variant === 'global'}
           projects={projectList}
           activeId={location.docId}
-          onSelect={(docId) => { setTemplateId(null); onLocationChange({ docId, path: null }); }}
+          onSelect={(docId) => { setTemplateId(null); openLocation(docId); }}
           onDeleted={(docId) => {
+            if (navigate.isPinned?.(docId)) navigate.updatePinnedItem?.(docId, { available: false });
             if (docId === location.docId) onLocationChange({ docId: null, path: null });
           }}
           onNew={() => setCreating({ template: null })}
@@ -1161,6 +1186,7 @@ export function Workbench({
             path={location.path}
             layout="workbench"
             contextProjectId={projectId}
+            openAgent={opened.current.agent}
             onOpenPath={(path, replace) => onLocationChange({ docId: location.docId, path }, replace ?? true)}
             onDeleted={() => onLocationChange({ docId: null, path: null })}
           />
@@ -1179,9 +1205,10 @@ export function Workbench({
           defaultProjectId={projectId}
           projects={projectList}
           onClose={() => setCreating(null)}
-          onCreated={(docId) => onLocationChange({ docId, path: null })}
+          onCreated={openLocation}
         />
       ) : null}
     </div>
+    </PinnableContext.Provider>
   );
 }

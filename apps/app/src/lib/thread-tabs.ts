@@ -11,21 +11,38 @@ export interface ThreadTabsState {
 }
 
 export const MAX_THREAD_TABS = 40;
-const MAX_CLOSED_TABS = 10;
+export const MAX_CLOSED_TABS = 10;
+/** Plugin-contributed tabs are bounded separately so they never displace conversations. */
+export const MAX_PLUGIN_TABS = 20;
+export const MAX_PLUGIN_TABS_PER_PLUGIN = 10;
+/** Serialized plugin rows stay far below the 128,000-char restore limit that wipes everything. */
+export const MAX_PLUGIN_ROWS_CHARS = 100_000;
+export const MAX_PLUGIN_TITLE_CHARS = 120;
+export const MAX_PLUGIN_ITEM_KEY_CHARS = 256;
+export const MAX_PLUGIN_ICON_CHARS = 32;
 const empty = (): ThreadTabsState => ({ open: [], closed: [] });
+
+/** Validates one persisted thread row; returns a normalized copy or null. */
+export function parseThreadTab(row: unknown, scope: string | null): ThreadTab | null {
+  if (!row || typeof row !== 'object') return null;
+  const r = row as Record<string, unknown>;
+  if (typeof r.threadId !== 'string' || !r.threadId || r.threadId.length > 512
+    || typeof r.projectId !== 'string' || !r.projectId || r.projectId.length > 512
+    || typeof r.projectScoped !== 'boolean' || (scope && r.projectId !== scope)) return null;
+  return { threadId: r.threadId, projectId: r.projectId, projectScoped: r.projectScoped };
+}
 
 function entries(value: unknown, scope: string | null, limit: number): ThreadTab[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
-  return value.filter((row): row is ThreadTab => {
-    if (!row || typeof row !== 'object') return false;
-    if (typeof row.threadId !== 'string' || !row.threadId || row.threadId.length > 512
-      || typeof row.projectId !== 'string' || !row.projectId || row.projectId.length > 512
-      || typeof row.projectScoped !== 'boolean' || (scope && row.projectId !== scope)
-      || seen.has(row.threadId)) return false;
-    seen.add(row.threadId);
-    return true;
-  }).slice(-limit).map(({ threadId, projectId, projectScoped }) => ({ threadId, projectId, projectScoped }));
+  const rows: ThreadTab[] = [];
+  for (const row of value) {
+    const tab = parseThreadTab(row, scope);
+    if (!tab || seen.has(tab.threadId)) continue;
+    seen.add(tab.threadId);
+    rows.push(tab);
+  }
+  return rows.slice(-limit);
 }
 
 export function readThreadTabs(storage: Pick<Storage, 'getItem'>, scope: string | null): ThreadTabsState {

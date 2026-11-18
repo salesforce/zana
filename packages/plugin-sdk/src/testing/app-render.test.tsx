@@ -64,6 +64,30 @@ function WindowPanel() {
   );
 }
 
+function PinPanel() {
+  const navigate = useZccNavigate();
+  const [pinned, setPinned] = useState(false);
+  const [result, setResult] = useState('');
+  useEffect(() => {
+    setPinned(navigate.isPinned?.('doc-1') ?? false);
+    return navigate.onPinnedChange?.(() => setPinned(navigate.isPinned?.('doc-1') ?? false));
+  }, [navigate]);
+  return (
+    <>
+      <button type="button" onClick={() => setResult(String(navigate.pinTab?.({ itemKey: 'doc-1', title: 'Doc' })))}>
+        Pin
+      </button>
+      <button type="button" onClick={() => {
+        navigate.unpinTab?.('doc-1');
+        navigate.updatePinnedItem?.('doc-1', { available: false });
+      }}>
+        Unpin
+      </button>
+      <output>{`${String(pinned)}:${result}`}</output>
+    </>
+  );
+}
+
 function TitledPanel() {
   const [agent, setAgent] = useState<string | null>('Help');
   useWindowTitle(agent ? { title: `Agentforce · ${agent}`, badge: 'Production', tone: 'danger' } : null);
@@ -213,6 +237,30 @@ describe('loadPluginApp + renderSlot', () => {
     slot.lifecycle.unmount();
     const plain = renderSlot(app.navPanels[0]!, { pluginId: 'notes', subPath: '' });
     expect(plain.getByRole('button', { name: 'no surface' })).toBeTruthy();
+  });
+
+  it('fakes the pin API and releases its listener on unmount', async () => {
+    const app = await loadPluginApp(() =>
+      Promise.resolve(
+        definePluginApp((pluginApp) => {
+          pluginApp.slots.navPanel({ id: 'main', title: 'Notes', icon: 'FileText', component: PinPanel });
+        })
+      )
+    );
+    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'notes', subPath: '' });
+    expect(slot.container.querySelector('output')!.textContent).toBe('false:');
+    await act(async () => slot.getByRole('button', { name: 'Pin' }).click());
+    expect(slot.container.querySelector('output')!.textContent).toBe('true:true');
+    await act(async () => slot.getByRole('button', { name: 'Pin' }).click());
+    await act(async () => slot.getByRole('button', { name: 'Unpin' }).click());
+    expect(slot.container.querySelector('output')!.textContent).toBe('false:true');
+    expect(slot.inspection.navigateCalls.map((call) => call.method)).toEqual([
+      'pinTab', 'pinTab', 'unpinTab', 'updatePinnedItem'
+    ]);
+    slot.lifecycle.unmount();
+    const refused = renderSlot(app.navPanels[0]!, { pluginId: 'notes', subPath: '' }, { pinTab: false });
+    await act(async () => refused.getByRole('button', { name: 'Pin' }).click());
+    expect(refused.container.querySelector('output')!.textContent).toBe('false:false');
   });
 
   it('records the window title while it is mounted', async () => {

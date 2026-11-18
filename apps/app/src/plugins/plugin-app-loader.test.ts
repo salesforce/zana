@@ -149,6 +149,15 @@ describe('plugin page recovery', () => {
 });
 
 describe('server plugin app loader', () => {
+  it('flags the first finished reconcile and ignores a superseded one', async () => {
+    usePluginAppModules.setState({ reconciled: false });
+    const stale = reconcilePluginApps([], {}, -1);
+    await stale;
+    expect(usePluginAppModules.getState().reconciled).toBe(false);
+    await reconcilePluginApps([]);
+    expect(usePluginAppModules.getState().reconciled).toBe(true);
+  });
+
   it('registers a running app and exposes its nav module', async () => {
     await reconcilePluginApps(
       [

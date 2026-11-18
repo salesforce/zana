@@ -1,5 +1,6 @@
 import { SetupPagesHost } from './components/setup/SetupPagesHost.js';
 import { SETUP_ROUTE_PATH, useSetupPages } from './components/setup/setup-pages.js';
+import { useApplicationTabs } from './lib/application-tabs.js';
 import {
   recoverModelCatalogsAfterWake,
   recoverStaleModelCatalogs,
@@ -249,6 +250,7 @@ export function App() {
 
 function AppShell() {
   const hasSetupPages = useSetupPages(s => s.pages.length > 0);
+  const hasPluginTabs = useApplicationTabs(s => s.open.some(tab => tab.kind === 'plugin' && (!getScopedProjectId() || tab.projectId === getScopedProjectId())));
   const onboardingActive = useOnboarding(s => !s.loaded || s.open);
   const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
   useRouteSync();
@@ -792,7 +794,7 @@ function AppShell() {
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
-        {(threadTabsEnabled || hasSetupPages) && !mobileNavigation.isCompact ? <ApplicationTabs includeThreads={threadTabsEnabled} project={titlebarProject} /> : (
+        {(threadTabsEnabled || hasSetupPages || hasPluginTabs) && !mobileNavigation.isCompact ? <ApplicationTabs includeThreads={threadTabsEnabled} project={titlebarProject} /> : (
           <ShellTitlebarTitle
             project={titlebarProject}
             label={titlebarLabel}

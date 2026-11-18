@@ -3,6 +3,7 @@ import type { Project } from '@zana-ai/zcc-domain/product';
 import {
   FolderPlus,
   MessageSquareText,
+  Pin,
   Server,
   TriangleAlert
 } from 'lucide-react';
@@ -25,8 +26,18 @@ import {
   applicationTabId,
   saveApplicationTabs,
   useApplicationTabs,
-  type ApplicationTab
+  type ApplicationTab,
+  type ClosedApplicationTab,
+  type PluginApplicationTab
 } from '../lib/application-tabs.js';
+import { pluginTabPath } from '../lib/plugin-tab-route.js';
+import { usePluginAppModules } from '../plugins/plugin-app-loader.js';
+import {
+  getItemState,
+  getTabDisplayTitle,
+  usePinnedItemOverrides
+} from '../plugins/plugin-pinned-tabs.js';
+import { usePluginPinResolver } from '../plugins/plugin-pin-resolver.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 import { ProjectDot } from './listpane/ProjectDot.js';
 import { TitlebarProjectButton } from './TitlebarProjectButton.js';
@@ -54,10 +65,15 @@ export function ApplicationTabs({
   const scope = getScopedProjectId();
   const threads = useThreads((s) => s.threads);
   const projects = useData((s) => s.projects);
+  const projectsLoaded = useData((s) => s.configLoaded);
   const setups = useSetupPages((s) => s.pages);
   const open = useApplicationTabs((s) => s.open);
   const closed = useApplicationTabs((s) => s.closed);
   const initialized = useApplicationTabs((s) => s.initializedScope);
+  // Plugin tab state is read through plain getters; these subscriptions re-render when it changes.
+  usePluginAppModules((s) => s.reconciled && s.modules);
+  usePinnedItemOverrides((s) => s.byId);
+  const { resolve } = usePluginPinResolver();
   const currentPath = useRef(location.pathname);
   currentPath.current = location.pathname;
   const fallback = scope ? getProjectRoutePath(scope) : getAgentsRoutePath();
@@ -110,13 +126,27 @@ export function ApplicationTabs({
       ? thread
       : null;
   };
+  const validPlugin = (tab: PluginApplicationTab) =>
+    (!projectsLoaded || projects.some((project) => project.id === tab.projectId)) &&
+    (!scope || tab.projectId === scope);
   const path = (tab: ApplicationTab) =>
     tab.kind === 'thread'
       ? getThreadRoutePath(
           tab.threadId,
           scope ?? (tab.projectScoped ? tab.projectId : null)
         )
-      : setupPath(tab.setupId);
+      : tab.kind === 'setup'
+        ? setupPath(tab.setupId)
+        : (pluginTabPath(tab) ?? currentPath.current);
+  // Opening a pinned item happens under the project it was pinned in.
+  const activate = (tab: ApplicationTab) => {
+    if (tab.kind === 'plugin') {
+      resolve(tab);
+      if (!scope && useUi.getState().selectedProjectId !== tab.projectId)
+        useUi.getState().selectProject(tab.projectId);
+    }
+    void navigate(path(tab));
+  };
   const archive = (thread: ThreadListItem) => {
     const current =
       useThreads.getState().threads.find((row) => row.id === thread.id) ??
@@ -174,7 +204,34 @@ export function ApplicationTabs({
         }
       ];
     }
+    if (tab.kind === 'plugin') {
+      if (!validPlugin(tab)) return [];
+      const state = getItemState(tab);
+      const unavailable = state === 'unavailable';
+      const title = getTabDisplayTitle(tab);
+      const projectName =
+        projects.find((project) => project.id === tab.projectId)?.name ?? '';
+      const context = unavailable ? 'Unavailable' : projectName;
+      return [
+        {
+          id,
+          kind: 'plugin',
+          title,
+          context,
+          label: context ? `${title} — ${context}` : title,
+          active: pluginTabPath(tab) === location.pathname,
+          busy: false,
+          dimmed: unavailable,
+          closeHint: unavailable
+            ? 'Remove unavailable tab'
+            : 'Remove tab (keeps the item)',
+          icon: <Pin size={13} />,
+          actions: []
+        }
+      ];
+    }
     if (!includeThreads) return [];
+    if (tab.kind !== 'thread') return [];
     const thread = validThread(tab);
     if (!thread) return [];
     const project = projects.find((project) => project.id === tab.projectId)!;
@@ -254,12 +311,30 @@ export function ApplicationTabs({
       }
     ];
   });
-  const lastClosed = includeThreads
-    ? [...closed].reverse().find((tab) => validThread(tab))
-    : undefined;
+  const lastClosed: ClosedApplicationTab | undefined = [...closed]
+    .reverse()
+    .find((tab) =>
+      tab.kind === 'plugin'
+        ? validPlugin(tab)
+        : includeThreads && !!validThread(tab)
+    );
+  const activePluginTab = open.find(
+    (tab): tab is PluginApplicationTab =>
+      tab.kind === 'plugin' && pluginTabPath(tab) === location.pathname
+  );
+  const activePluginId = activePluginTab && applicationTabId(activePluginTab);
+  useEffect(() => {
+    if (activePluginTab) resolve(activePluginTab);
+    // Keyed on identity so a re-render alone does not ask again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePluginId, resolve]);
   const select = (id: string) => {
     const tab = open.find((tab) => applicationTabId(tab) === id);
-    if (tab) void navigate(path(tab));
+    if (tab) activate(tab);
+  };
+  const hover = (id: string) => {
+    const tab = open.find((tab) => applicationTabId(tab) === id);
+    if (tab?.kind === 'plugin') resolve(tab);
   };
   const close = (ids: string[]) => {
     const selected = views.find((tab) => tab.active);
@@ -302,6 +377,7 @@ export function ApplicationTabs({
       leading={project ? <TitlebarProjectButton key={project.id} project={project} /> : undefined}
       onSelect={select}
       onClose={close}
+      onHover={hover}
       onMove={(id, to) => useApplicationTabs.getState().moveTab(id, to)}
       locationKey={location.pathname + location.search + location.hash}
       onNewThread={
@@ -317,8 +393,12 @@ export function ApplicationTabs({
       onReopen={
         lastClosed
           ? () => {
-              useApplicationTabs.getState().openTab(lastClosed);
-              void navigate(path(lastClosed));
+              const refusal = useApplicationTabs.getState().openTab(lastClosed);
+              if (refusal && refusal !== 'invalid')
+                useUi
+                  .getState()
+                  .pushToast('Too many pinned tabs. Unpin one first.', 'error');
+              else if (!refusal) activate(lastClosed);
             }
           : undefined
       }
