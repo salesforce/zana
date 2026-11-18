@@ -1,6 +1,7 @@
 import { createContext, useEffect, useRef, useState } from 'react';
 import { buildCorpus } from './corpus';
 import { getStaticEntries } from './registry';
+import { keepRevealedInPlace } from './reveal-settle';
 import type { SettingsSearchEntry, SettingsValueSnapshot } from './types';
 
 export const REVEAL_WAIT_MS = 2_000;
@@ -65,10 +66,16 @@ function openDetails(el: HTMLElement): void {
   if (wrapped) wrapped.open = true;
 }
 
-/** Open, scroll to, flash (self-removing) and focus a located row. */
+/**
+ * Open, scroll to, flash (self-removing) and focus a located row, then keep it
+ * centred while content above it is still loading (see reveal-settle.ts).
+ */
 export function revealElement(el: HTMLElement): void {
   openDetails(el);
   el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
+  // Corrections jump straight there: the row has already moved once, and a
+  // second animation would chase a target that may move again.
+  keepRevealedInPlace(el, () => el.scrollIntoView({ behavior: 'auto', block: 'center' }));
   el.classList.add(FLASH_CLASS);
   // ToggleSwitch puts the target attribute on the control itself.
   (el.matches(FOCUSABLE) ? el : el.querySelector<HTMLElement>(FOCUSABLE))?.focus({ preventScroll: true });
