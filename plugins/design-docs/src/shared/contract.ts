@@ -48,6 +48,11 @@ export interface DesignDocSummary {
   projectId: string | null;
   /** Received doc whose project belongs to the peer: it cannot be moved, only mapped to a local project. */
   projectLocked?: boolean;
+  /**
+   * Opaque grouping key: the peer's project id. Present only on `list({ unassigned: true })` results; never
+   * rendered, and never carried by MCP, CLI or export output.
+   */
+  foreignProjectId?: string;
   tags: string[];
   entryPath: string;
   fileCount: number;

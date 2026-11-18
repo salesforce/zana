@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { ALIAS_LIVE, DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT } from './project-refs.js';
+import { ALIAS_LIVE, DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT, MAX_FOREIGN_ID_LENGTH } from './project-refs.js';
 import type { PluginDatabase, PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
 import type { DocCounts } from '../shared/sync-diagnostics.js';
 import {
@@ -596,11 +596,28 @@ export class DesignDocStore {
       ORDER BY d.updated_at DESC, d.id LIMIT ? OFFSET ?`;
     const rows = this.db.prepare(sql).all(...params, limit, offset) as DocRow[];
     const mapped = aliases ? this.aliasedProjects(rows.filter((row) => row.project_id === null).map((row) => row.id)) : new Map<string, string>();
+    const foreign = filter.unassigned && aliases ? this.foreignProjectIds(rows.map((row) => row.id)) : new Map<string, string>();
     return rows.map((row) => {
       const summary = toSummary(row);
       const local = mapped.get(row.id);
-      return local ? { ...summary, projectId: local } : summary;
+      const base = local ? { ...summary, projectId: local } : summary;
+      const foreignId = foreign.get(row.id);
+      return foreignId === undefined ? base : { ...base, foreignProjectId: foreignId };
     });
+  }
+
+  /** Foreign project id per received doc, for grouping unassigned lists. Non-string or oversized ids are dropped. */
+  private foreignProjectIds(ids: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    for (let index = 0; index < ids.length; index += 500) {
+      const chunk = ids.slice(index, index + 500);
+      const rows = this.db.prepare(`SELECT r.doc_id AS id, json_extract(r.project_json, '$') AS fid FROM sync_doc_references r
+        WHERE r.project_json <> 'null' AND r.doc_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk) as Array<{ id: string; fid: unknown }>;
+      for (const row of rows) {
+        if (typeof row.fid === 'string' && row.fid.length > 0 && row.fid.length <= MAX_FOREIGN_ID_LENGTH) out.set(row.id, row.fid);
+      }
+    }
+    return out;
   }
 
   /** Effective project of received docs: the local project their foreign id is mapped to. */

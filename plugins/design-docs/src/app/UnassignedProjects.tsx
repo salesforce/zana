@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorMessage, toast, useApi, type ProjectInfo, type UnassignedProject } from './api.js';
 import { useProjectMappings, useProjects } from './hooks.js';
+import { headingLabel } from './unassigned-groups.js';
 import { Dialog } from './ui.js';
 
 export const UNASSIGNED_LABEL = 'Unassigned from peers';
@@ -16,11 +17,6 @@ const LIST_CAP = 200;
 const countLabel = (n: number) => (n >= LIST_CAP ? `${LIST_CAP}+` : String(n));
 
 const docs = (count: number) => `${count} ${count === 1 ? 'doc' : 'docs'}`;
-
-/** Heading for a foreign project: the sender's name, else its first doc title; ids are never shown. */
-function headingLabel(item: { senderName: string | null; sampleTitles: string[] }): string {
-  return item.senderName ?? item.sampleTitles[0] ?? 'Unnamed project';
-}
 
 type TitlesState = { status: 'loading' } | { status: 'ready'; titles: string[] } | { status: 'error'; message: string };
 
@@ -84,11 +80,14 @@ function TitleList({ id, total, state, load }: { id: string; total: number; stat
 export function UnassignedProjectsDialog({
   unassigned,
   projects: initialProjects,
+  focusForeignId,
   onClose,
   onChanged
 }: {
   unassigned: UnassignedProject[];
   projects: ProjectInfo[];
+  /** Foreign project to scroll to and highlight; matched by id equality and ignored when it is not in the list. */
+  focusForeignId?: string;
   onClose(): void;
   onChanged(): void;
 }) {
@@ -130,6 +129,17 @@ export function UnassignedProjectsDialog({
       seenCounts.current.set(entry.foreignProjectId, entry.docCount);
     }
   }, [unassigned, mappings.data, invalidate, loadTitles, openDocs]);
+
+  // The shortcut from the tree opens the dialog on one card. Nothing is applied: the suggestion is only preselected.
+  const focusCard = useRef<HTMLElement | null>(null);
+  const focusSelect = useRef<HTMLSelectElement | null>(null);
+  const focused = focusForeignId === undefined ? undefined : unassigned.find((item) => item.foreignProjectId === focusForeignId);
+  const focusedId = focused?.foreignProjectId;
+  useEffect(() => {
+    if (focusedId === undefined) return;
+    focusCard.current?.scrollIntoView?.({ block: 'center' });
+    focusSelect.current?.focus();
+  }, [focusedId]);
 
   const toggleDocs = (id: string) => {
     const next = !openDocs.get(id);
@@ -201,13 +211,26 @@ export function UnassignedProjectsDialog({
         const shownPreview = item.sampleTitles.slice(0, 2);
         const preview = shownPreview.join(' · ');
         return (
-          <section key={id} className="dd-map-card" aria-label={`Project ${label}`}>
+          <section
+            key={id}
+            ref={id === focusedId ? focusCard : undefined}
+            className={`dd-map-card${id === focusedId ? ' dd-map-card-focus' : ''}`}
+            aria-label={`Project ${label}`}
+          >
             <div className="dd-map-card-head">
               <strong>{label}</strong>
               <span className="dd-muted">
                 {docs(item.docCount)} · from another computer{item.senderTag ? ` (${item.senderTag})` : ''}
               </span>
             </div>
+            {id === focusedId ? (
+              <dl className="dd-map-detail">
+                <dt>Sender name</dt><dd>{item.senderName ?? 'None'}</dd>
+                <dt>Tag</dt><dd>{item.senderTag ?? 'None'}</dd>
+                <dt>Docs</dt><dd>{item.docCount}</dd>
+                <dt>Sample titles</dt><dd>{item.sampleTitles.length ? item.sampleTitles.join(' · ') : 'None'}</dd>
+              </dl>
+            ) : null}
             {open ? (
               <TitleList id={id} total={item.docCount} state={titles.state.get(id)} load={titles.load} />
             ) : preview ? (
@@ -219,6 +242,7 @@ export function UnassignedProjectsDialog({
             <div className="dd-map-pick">
               <span className="dd-muted" aria-hidden="true">Map to</span>
               <select
+                ref={id === focusedId ? focusSelect : undefined}
                 className="dd-input dd-select"
                 aria-label={`Your Project for ${label}`}
                 value={picked}
